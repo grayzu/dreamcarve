@@ -3576,6 +3576,76 @@ mod tests {
         }
     }
 
+    /// #392: the plaque's Panel (100 × 50 with 5 mm corners and a 20 mm
+    /// island, placed at (35, 52) as in the plaque) at 0° with a wall pass
+    /// last and a helix entry, moved up by 1 to 50 µm, the size of the
+    /// noise an SVG import leaves, plans the same toolpath moved by as
+    /// much: the same moves of the same kinds in the same order, at the
+    /// same Z (so the same safe Z and plunge depth), within 1e-6 mm in XY
+    /// once moved back, at the same feeds. From a line end, the stay-down
+    /// links one step-over up and one down are a tie, so float noise in
+    /// the scan lines' Y cannot pick between them (it did at 5 µm).
+    #[test]
+    fn raster_plan_ignores_a_micrometre_shift_of_the_scan_lines() {
+        // The plaque's panel: 100 × 50 with 5 mm corners, a 20 mm island.
+        let b = (PI / 8.0).tan();
+        let profiles = || {
+            vec![
+                Polyline::new(
+                    vec![
+                        Vertex::new(5.0, 0.0, 0.0),
+                        Vertex::new(95.0, 0.0, b),
+                        Vertex::new(100.0, 5.0, 0.0),
+                        Vertex::new(100.0, 45.0, b),
+                        Vertex::new(95.0, 50.0, 0.0),
+                        Vertex::new(5.0, 50.0, b),
+                        Vertex::new(0.0, 45.0, 0.0),
+                        Vertex::new(0.0, 5.0, b),
+                    ],
+                    true,
+                ),
+                Polyline::circle(Point::new(50.0, 25.0), 10.0),
+            ]
+        };
+        let plan = |shift_mm: f64| {
+            let p = project(
+                profiles(),
+                &[("i1", Transform::translate(35.0, 52.0 + shift_mm))],
+            );
+            let mut op = raster_op(&p, CutDirection::Climb, 0.0, WallPass::Last);
+            op.entry = Entry::Helix {
+                diameter_fraction: 0.8,
+                angle_deg: 15.0,
+            };
+            generate(&p, &op).0
+        };
+        let base = plan(0.0);
+        for k in 1..=20 {
+            let shift_mm = f64::from(k) * 1e-6;
+            let moved = plan(shift_mm);
+            assert_eq!(
+                moved.moves.len(),
+                base.moves.len(),
+                "shift {k} µm: move count"
+            );
+            for (i, (a, b)) in base.moves.iter().zip(&moved.moves).enumerate() {
+                let same_kind = std::mem::discriminant(&a.kind) == std::mem::discriminant(&b.kind);
+                let back = Point::new(b.to.x, b.to.y - shift_mm);
+                assert!(
+                    same_kind
+                        && (a.to.z - b.to.z).abs() <= 1e-9
+                        && a.to.xy().distance_to(back) <= 1e-6
+                        && match (a.feed_mm_min, b.feed_mm_min) {
+                            (Some(f), Some(g)) => (f - g).abs() <= 1e-6 * f,
+                            (None, None) => true,
+                            _ => false,
+                        },
+                    "shift {k} µm, move {i}: {a:?} against {b:?}"
+                );
+            }
+        }
+    }
+
     /// The radius of the circle island's tool-centre ring: the island's
     /// 10 mm plus the tool radius.
     const ISLAND_RING_MM: f64 = 10.0 + RADIUS_MM;

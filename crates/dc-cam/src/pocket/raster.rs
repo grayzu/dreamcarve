@@ -45,7 +45,7 @@
 use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
 use crate::footprint::capsule;
-use crate::sequence::{link_inside_cleared, nearest_of};
+use crate::sequence::{link_inside_cleared, nearest_first_order, nearest_of};
 use dc_geometry::{
     EPS_MM, Point, Polyline, Region, Vertex, area_mm2, difference, intersection, union,
 };
@@ -352,7 +352,8 @@ pub(super) fn order_nearest_first(
 }
 
 /// For every end of every piece, the ends of other pieces a stay-down link
-/// reaches from it, nearest first, ties by index: a straight link at most
+/// reaches from it, nearest first, ties by index (lengths within
+/// [`crate::sequence::NEAREST_TIE_MM`] are a tie, #392): a straight link at most
 /// `link_max_mm` long and inside both strips, else an edge link along a
 /// ring of `edges` no longer than that, measured along it, and
 /// returned from each end to the other. A link is the same either way, so
@@ -414,8 +415,10 @@ fn stay_down_links(
         .into_iter()
         .map(|lists| {
             lists.map(|mut list| {
-                list.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-                list.into_iter().map(|(_, end)| end).collect()
+                // By index, then nearest first with ties (#215) kept in
+                // that order (#392).
+                list.sort_by_key(|&(_, end)| end);
+                nearest_first_order(list.into_iter().map(|(d, end)| (end, d)).collect())
             })
         })
         .collect();
@@ -927,6 +930,47 @@ mod tests {
         }
         assert!(links >= 4, "{ordered:?}");
         assert_eq!(order_nearest_first(pieces, None, 4.0, &edges), ordered);
+    }
+
+    /// #392: from the end of the middle line of a 20 × 10 rect (lines at
+    /// Y 9, 7, 5, 3, 1, step 2), the lines above and below are both one
+    /// step away. Moving the line above by 1e-14 mm either way, float noise
+    /// of the size an import leaves in the scan lines, makes it nearer or
+    /// further by that much; within `NEAREST_TIE_MM` that is a tie, so the
+    /// lower index, the line above, comes first either way.
+    #[test]
+    fn stay_down_ties_within_tolerance_take_the_lower_index() {
+        let r = rect(20.0, 10.0);
+        let settings = RasterSettings {
+            stepover_mm: 2.0,
+            radius_mm: 1.0,
+            angle_deg: 0.0,
+            tolerance_mm: TOL,
+            wall: WallRings::Omitted,
+            direction: CutDirection::Climb,
+        };
+        let pieces: Vec<Piece> = raster_lines(&r, 2.0, 0.0, TOL, false, 100)
+            .unwrap()
+            .into_iter()
+            .map(|l| (l, strip(&r, &l, &settings)))
+            .collect();
+        assert_approx_eq!(pieces[2].0.start.y, 5.0, 1e-9);
+        assert_approx_eq!(pieces[2].0.end.x, 20.0, 1e-9);
+        for noise_mm in [1e-14, -1e-14, 0.0] {
+            let mut moved = pieces.clone();
+            moved[1].0.start.y += noise_mm;
+            moved[1].0.end.y += noise_mm;
+            let (links, _) = stay_down_links(&moved, 4.0, &RingEdges::default());
+            // The middle line's end (2, 1) reaches the line above's start
+            // (1, 0) and the line below's start (3, 0), 2 mm each.
+            assert_eq!(
+                links[2][1].first(),
+                Some(&(1, 0)),
+                "noise {noise_mm}: {:?}",
+                links[2][1]
+            );
+            assert!(links[2][1].contains(&(3, 0)), "{:?}", links[2][1]);
+        }
     }
 
     #[test]
