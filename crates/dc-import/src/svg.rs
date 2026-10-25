@@ -27,7 +27,7 @@
 
 mod arc;
 
-use crate::{ImportError, ImportWarning};
+use crate::{ImportError, ImportWarning, round};
 use arc::ArcPiece;
 use dc_geometry::{
     EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, MAX_COORDINATE_MM, Point, Polyline,
@@ -430,14 +430,23 @@ impl Walker {
         }
 
         let mut profiles: Vec<Polyline> = Vec::new();
-        for (subpath, polyline) in flattened.into_iter().enumerate() {
-            if polyline.is_closed() && polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM {
+        for (subpath, built) in flattened.into_iter().enumerate() {
+            // Rounded once closure is decided (#389); a subpath that
+            // rounds to fewer than two points is dropped as one that
+            // flattens to them is.
+            let rounded = round::round_polyline(&built);
+            let Some(polyline) = rounded
+                .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM))
+            else {
+                if !built.is_closed() {
+                    continue;
+                }
                 self.warnings.push(ImportWarning::ZeroAreaDropped {
                     path: name.clone(),
                     subpath,
                 });
                 continue;
-            }
+            };
             if let Some(b) = polyline.bounds() {
                 self.bounds = Some(match self.bounds {
                     Some(acc) => acc.including(b.min).including(b.max),

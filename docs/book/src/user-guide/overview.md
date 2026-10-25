@@ -81,7 +81,9 @@ and written as `G2`/`G3` where the post-processor allows. That holds under
 moves, rotations, uniform scaling and mirroring; a drawing stretched more
 one way than the other turns a circle into an ellipse. Every other curve
 (ellipses, Bézier curves, and circles under such a stretch) is converted
-to short straight lines within 0.01 mm of the drawing. Text, images, clip
+to short straight lines within 0.01 mm of the drawing. Coordinates are
+rounded to 6 decimal places of a millimetre (a micrometre), in SVG and DXF
+alike; a closed shape stays closed. Text, images, clip
 paths and masks are ignored with a warning: convert text to paths before
 you save.
 

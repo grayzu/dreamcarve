@@ -2,6 +2,70 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Rounding of imported polylines (#389, functional spec capability 20a).
+//! Both importers round each polyline once its closure is decided, so a
+//! project made from an SVG or a DXF reads as the drawing does: x and y to
+//! [`dc_project::LENGTH_DECIMALS`] places of a millimetre, bulges to
+//! [`BULGE_DECIMALS`] places.
+
+use dc_geometry::{Polyline, Vertex};
+use dc_project::round_length_mm;
+
+/// Decimal places a bulge keeps: a quarter arc is `0.414214`.
+const BULGE_DECIMALS: i32 = 6;
+
+/// The smallest bulge rounding leaves on an arc, so a real arc is never
+/// rounded into a line.
+const MIN_BULGE: f64 = 1e-6;
+
+/// `polyline` with every coordinate rounded by [`round_length_mm`] and
+/// every bulge by [`round_bulge`], keeping its closure. A vertex that
+/// rounds onto the one before it is dropped, its bulge taking the place
+/// of the zero-length segment's; so is a closed polyline's last vertex
+/// when it rounds onto the first. `None` when fewer than 2 vertices are
+/// left.
+pub(crate) fn round_polyline(polyline: &Polyline) -> Option<Polyline> {
+    let mut out: Vec<Vertex> = Vec::with_capacity(polyline.vertices().len());
+    for v in polyline.vertices() {
+        let rounded = Vertex::new(
+            round_coordinate(v.x),
+            round_coordinate(v.y),
+            round_bulge(v.bulge),
+        );
+        match out.last_mut() {
+            Some(last) if last.point() == rounded.point() => last.bulge = rounded.bulge,
+            _ => out.push(rounded),
+        }
+    }
+    let ends_meet =
+        out.len() > 1 && out.first().map(|v| v.point()) == out.last().map(|v| v.point());
+    if polyline.is_closed() && ends_meet {
+        out.pop();
+    }
+    (out.len() >= 2).then(|| Polyline::new(out, polyline.is_closed()))
+}
+
+/// `value_mm` rounded, with `-0` written as `0`.
+fn round_coordinate(value_mm: f64) -> f64 {
+    round_length_mm(value_mm) + 0.0
+}
+
+/// `bulge` rounded to [`BULGE_DECIMALS`] places; a non-zero bulge that
+/// would round to 0 keeps its sign at [`MIN_BULGE`], so an arc stays an
+/// arc. NaN and the infinities pass through.
+#[must_use]
+pub(crate) fn round_bulge(bulge: f64) -> f64 {
+    let scale = 10_f64.powi(BULGE_DECIMALS);
+    let scaled = bulge * scale;
+    if !(scaled.is_finite() && scaled.abs() < 2_f64.powi(52)) {
+        return bulge;
+    }
+    let rounded = scaled.round() / scale + 0.0;
+    if rounded == 0.0 && bulge != 0.0 {
+        MIN_BULGE.copysign(bulge)
+    } else {
+        rounded
+    }
+}
 
 #[cfg(test)]
 mod tests {

@@ -288,6 +288,14 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   fraction is rounded to 6 places. Values in millimetres are kept as written.
   A library is not rounded when it opens: re-import with `tools import
   --replace` to update tools imported by an earlier build ([#380]).
+- **Imported shapes have exact coordinates.** `init` rounds every SVG and
+  DXF coordinate to 6 decimal places of a millimetre, and every bulge to 6
+  places, so a corner the SVG transform left at `10.00000027815501` is `10`
+  and a quarter arc's bulge is `0.414214`. Closed shapes stay closed, a
+  vertex that rounds onto its neighbour is dropped, and an arc is never
+  rounded into a line. A tool-centre coordinate that sat on a rounding
+  boundary, such as the coaster's 46.5875 mm offset, may now be written one
+  micrometre the other way ([#389]).
 
 - **Shapes in one operation are cut nearest-first.** Shapes that are not nested
   are visited nearest-neighbour, starting from the first shape drawn, instead of
@@ -751,3 +759,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#377]: https://github.com/grayzu/dreamcarve/issues/377
 [#384]: https://github.com/grayzu/dreamcarve/issues/384
 [#387]: https://github.com/grayzu/dreamcarve/issues/387
+[#389]: https://github.com/grayzu/dreamcarve/issues/389
