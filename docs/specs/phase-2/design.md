@@ -57,7 +57,7 @@ tabs needed two operations in the right order.)
 | `dc-cam::pocket` | `src/engine/toolpaths/pocket.ts` (`buildInsetRegions`, `buildOffsetRegionTree`, `cutOffsetRegionNode` inner-first, `buildPocketParallelSegments`, `transitionToCutEntry`, `generateStepLevels`, `orderClosedContoursGreedy`, `rotateContourToNearestEntry`), `pocketPatterns.ts` (`OPERATION_PATTERN_SUPPORT`, `areaCoverage`) | Only `offset` and `parallel` (named `raster`). No seeded offset, trochoidal, slot feed, engagement feed, corner rounding, wall cleanup, model sections, clamps. Clipper integer paths become `dc-geometry` offsets with cavalier_contours and booleans with i_overlay. Direction rule re-derived (see Pocket algorithm). `pocketAngle` sign re-derived. Islands come from `nest`, not the band resolver. |
 | `dc-cam::pocket::rest` | `src/engine/toolpaths/restRegions.ts`, `finishFloorCoverage.ts` (`regionAreaPaths`, `floorCoverage`, `restrictFloorRoot` noise rule) | Rest region = region minus the earlier tool's reachable area. The coverage test is ported; the island-face floor restriction is not (no multi-depth instances in phase 2). |
 | `dc-cam::drill` | `src/engine/toolpaths/drilling.ts` (`generateDrillingToolpath`, `emitDrillCycle`, `sortTargetsByNearestNeighbor`, `DrillCycle`), `drillingRetract.test.ts`, `camOperationSmoke.test.ts` drill cases, `toolpaths.test.ts` drill ordering | Circle detection on polylines, not a `circle` feature kind. Chip-break gap is a mm field, not a constant in project units. Dwell is emitted as `G4` when expanded (upstream loses it). Pecks count from the retract plane `R`, as controllers count `G83`/`G73`, not from the stock top (#153). No helical bore, no countersink (phase 3), no clamps. Nearest neighbour starts from the first target in drawing order (D5), not the origin. |
-| `dc-cam::bore` | `src/engine/toolpaths/drilling.ts` (the `helical` drill type: `HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO`, its too-small and too-large checks), `src/engine/toolpaths/entry.ts` (`emitCenterLockedCircularBore` in finish-bore mode) | Its own operation, not a Drill cycle (maintainer decision 2026-10-24). Pitch per turn (Fusion's "Pitch"), not a ramp angle. Starts 1 mm above the stock top (#214), not at a retract height reached through the hole's centre. Chords per turn from the flatten tolerance, at least 48. The bottom revolution is four exact arcs, not 48 chords, and is followed by a move to the centre (Fusion's "Lead To Center") before the lift. Radial allowance added. The too-small limit is a 0.05 mm helix radius, not `hole ≤ tool`. Helix sense from `entry::helix_is_ccw` (Y-up), not `helixAngularDirection`. |
+| `dc-cam::bore` | `src/engine/toolpaths/drilling.ts` (the `helical` drill type: `HELICAL_BORE_MAX_HOLE_TO_TOOL_RATIO`, its too-small and too-large checks), `src/engine/toolpaths/entry.ts` (`emitCenterLockedCircularBore` in finish-bore mode) | Its own operation, not a Drill cycle (maintainer decision 2026-10-24). Pitch per turn (Fusion's "Pitch"), not a ramp angle. Starts 1 mm above the stock top (#214), not at a retract height reached through the hole's centre. Chords per turn from the flatten tolerance, at least 48. The bottom revolution is four exact arcs, not 48 chords, and is followed by a move to the centre (Fusion's "Lead To Center") before the lift. Radial stock to leave added (changed: maintainer decision 2026-10-25, #394: "allowance"). The too-small limit is a 0.05 mm helix radius, not `hole ≤ tool`. Helix sense from `entry::helix_is_ccw` (Y-up), not `helixAngularDirection`. |
 | `dc-cam::engrave` | `src/engine/toolpaths/carving.ts` (`generateFollowLineToolpath`, `buildCarveLevels`), `carving.test.ts` direct-mode cases | Direct mode only; no trochoidal carve, no region masks. Depth is from the stock top and clamped by S1, not to absolute 0. Direction alternation added (D9). |
 | `dc-cam::entry` | `src/engine/toolpaths/entry.ts` (`synthesizeEntry`, `findHelixPlacement`, `findLargestClearanceCircle`, `findRampPlacement`, `emitHelix`, `emitRamp`, `pitchFromRampAngle`, `plungeLimitedFeedScale`, `helixAngularDirection`), `entry.test.ts` | Helix sense re-derived for Y-up. Search caps kept (`MAX_HELIX_RADIUS_ATTEMPTS`, 72 angles, 12 endpoint candidates, 20 000 cells). Profile ramp (along the path) is DreamCarve's; PureCutCNC's zigzag ramp serves Pocket. |
 | `dc-cam::lead` | `src/engine/toolpaths/xyLead.ts` (`planXyLeadIn`, `planXyLeadOut`, `contourArrivals` corner scoring, `validateLead`, radius and sweep ladders), `xyLead.test.ts`, `xyLeadEdge.test.ts` | The user sets the radius (VCarve); the ladder shrinks from it. Sweep ladder kept. Overcut is DreamCarve's (VCarve). Feed is the cut feed, not the plunge-scaled feed, because the descent is finished before the lead. |
@@ -181,7 +181,9 @@ pub struct PocketOp {
     pub step_down_mm: Option<f64>,            // overrides tool.step_down_mm
     pub step_over_fraction: Option<f64>,      // overrides tool.step_over_fraction; (0, 1]
     pub direction: CutDirection,
-    pub allowance_mm: f64,                    // init 0; ≥ 0 leaves material on walls (VCarve sign)
+    pub stock_to_leave_mm: f64,               // init 0; ≥ 0 leaves material on walls (VCarve sign);
+                                              // format 19, was `allowance_mm` (changed:
+                                              // maintainer decision 2026-10-25, #394)
     pub rest_of: Option<OperationId>,         // an earlier enabled Pocket with the same targets
     pub entry: Entry,
     pub corner_relief: CornerRelief,
@@ -219,7 +221,9 @@ pub struct BoreOp {
     pub depth_mm: Option<f64>,                // from stock top; None until set
     pub pitch_mm: Option<f64>,                // Z per helix turn; None: tool.step_down_mm; (0, step-down]
     pub direction: CutDirection,              // init climb (counter-clockwise)
-    pub allowance_mm: f64,                    // radial stock to leave; init 0; ≥ 0
+    pub stock_to_leave_mm: f64,               // radial stock to leave; init 0; ≥ 0; format 19,
+                                              // was `allowance_mm` (changed: maintainer
+                                              // decision 2026-10-25, #394)
     pub through_cut_allowance_mm: f64,
     pub safe_z_mm: f64,
 }
@@ -452,10 +456,11 @@ instance, x_mm, y_mm)`, `ReliefCornerNotCut (…)`, `ReliefSkipped (op,
 reason)`, `PocketNoRoom (op, instance, instance_name, profile, tool,
 diameter_mm)` (tool wider than the region; the tool-centre region does
 not depend on the pass, so there is no `pass`), `PocketIslandTooClose
-(op, instance, island, other, gap_mm, needed_mm, allowance_mm, tool,
+(op, instance, island, other, gap_mm, needed_mm, stock_to_leave_mm, tool,
 diameter_mm)` (once per island-wall or island-island pair closer than
-`needed_mm = diameter + 2 × allowance_mm`; `other` is `wall` or a profile
-index; changed in #168: the allowance was ignored),
+`needed_mm = diameter + 2 × stock_to_leave_mm`; `other` is `wall` or a profile
+index; changed in #168: the stock to leave was ignored; changed:
+maintainer decision 2026-10-25, #394: was `allowance_mm`),
 `DrillTargetNotCircle (op, instance, profile)`, `DrillHoleTooSmall (op,
 instance, hole_mm, tool_mm)` (the hole is skipped), `DrillToolWiderThanHole
 (op, instance, hole_mm, tool_mm)` (drilled anyway at the tool's size,
@@ -466,10 +471,11 @@ depth_mm)` (once per operation: every hole has the same depth),
 `DrillRetractBelowStockTop (op, requested_mm, used_mm)` (a negative
 `retract_mm` is raised to the stock top), `BoreTargetNotCircle (op,
 instance, profile)`, `BoreNoRoom (op, instance, hole_mm, tool_mm,
-allowance_mm)` (the helix radius is under `BORE_MIN_HELIX_RADIUS_MM`; the
+stock_to_leave_mm)` (the helix radius is under `BORE_MIN_HELIX_RADIUS_MM`; the
 hole is skipped), `BoreLeavesCore (op, instance, hole_mm, tool_mm,
-allowance_mm, core_mm)` (the hole is skipped), `BoreNoHoles (op)` (format
-18; maintainer decision 2026-10-24), `EngravePathDegenerate (op,
+stock_to_leave_mm, core_mm)` (the hole is skipped), `BoreNoHoles (op)` (format
+18; maintainer decision 2026-10-24; `stock_to_leave_mm` was
+`stock_to_leave_mm`, changed: maintainer decision 2026-10-25, #394), `EngravePathDegenerate (op,
 instance, profile)`, `CutInsideFreedPart (op, earlier_op, instance)`,
 `CutInsideTabHeldPart (op, earlier_op, instance, held)` (#269),
 `ToolChangeAvoidable (tool, ops)`, `RestOfClearsNothing (op, rest_of,
@@ -512,14 +518,15 @@ op, line }` (S9 on the parsed program), and `ArcFitViolation { op, line }`
 
 S9 on the parsed program (`dc-gcode::material`) works out each
 operation's material from the project, never from the generator. A
-Pocket's tool centre stays in its regions, `r + allowance` from their
+Pocket's tool centre stays in its regions, `r + stock to leave` from their
 walls. A Drill's stays in its holes, and an Engrave's on its lines. A
 Pocket's corner-relief notches may cut into their corners' relief zones.
-A Bore's stays within `ρ − r − allowance` of the centre of one of its
+A Bore's stays within `ρ − r − stock to leave` of the centre of one of its
 holes (radius `ρ`, Drill's circle test), the same hole for a move's ends
 and middle (changed: maintainer decision 2026-10-24).
 A Profile is held to its waste (#177). Inside, the tool centre stays in a
-target region, `r` from its walls, as a Pocket with no allowance. Outside,
+target region, `r` from its walls, as a Pocket with no stock to leave
+(changed: maintainer decision 2026-10-25, #394: "allowance"). Outside,
 it stays outside every target region, `r` from every outline. Which side
 of an outline an Outside cut or a lap is on is judged at the cut's
 middle, not its start. (changed in #231: judged at its start, a T-bone's
@@ -658,7 +665,8 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    regions (outer CCW, holes CW). Each region is one pocket; its holes are
    islands. A region nested inside an island is its own pocket (depth 2),
    cut as a separate region, ordered after the island by containment.
-2. **Tool-centre region.** `r = diameter/2`, `inset = r + allowance_mm`.
+2. **Tool-centre region.** `r = diameter/2`, `inset = r + stock_to_leave_mm`
+   (changed: maintainer decision 2026-10-25, #394: was `allowance_mm`).
    `tc = inset_region(region, inset)`: outer offset by −inset, islands by
    +inset, then boolean difference (i_overlay, non-zero), split into
    regions (an island can split a pocket into several). An empty result
@@ -672,12 +680,12 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    polygonal result. (changed in slice 4, #137: PureCutCNC mitres the
    outer; cavalier_contours cannot.)
 3. **Rest region** (`rest_of` set): let `R` be the earlier Pocket's tool
-   radius and `A` its allowance, read from the project (S14: never its
+   radius and `A` its stock to leave, read from the project (S14: never its
    toolpath). Its reachable area is `offset(inset_region(region, R + A),
    +R)` (what its tool of radius `R` swept along its tool-centre region
    covers; PureCutCNC `generateAreaRestRegionDrafts`). What it left is
-   `inset_region(region, allowance) − reachable` (this operation's own
-   allowance), less pieces thinner than twice the flatten tolerance
+   `inset_region(region, stock_to_leave) − reachable` (this operation's own
+   stock to leave), less pieces thinner than twice the flatten tolerance
    (area under `tolerance × perimeter`, the noise rule below). The
    tool-centre region of step 2 is then cut down to the centres within
    `r` of what is left: `tc ∩ offset(left, +r)`. The rest region it
@@ -688,8 +696,9 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    region itself by `r` would leave nothing of a band narrower than the
    tool.) If nothing is left that this tool reaches, in every region with
    room for it, warn `RestOfClearsNothing` and emit nothing. Because the
-   reference's `allowance_mm` is in the inset, a rough pocket with
-   allowance 0.5 leaves a 0.5 mm band the rest pass removes. A chain
+   reference's `stock_to_leave_mm` is in the inset, a rough pocket with
+   stock to leave 0.5 leaves a 0.5 mm band the rest pass removes
+   (changed: maintainer decision 2026-10-25, #394: "allowance"). A chain
    (rest of a rest) needs no special case: the second rest's reference
    reaches exactly what its tool can, which is what the first two
    operations cleared. A root ring of the rest tool-centre region that
@@ -875,18 +884,20 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    it down to its Z). (changed in #214: pass 0 started at safe Z, later
    passes at the previous pass Z.)
 10. **Corner relief** (`relief` module): with `cleared = region inset by
-    allowance` and `walls = tool-centre region's root rings`, collect
+    stock to leave` and `walls = tool-centre region's root rings`, collect
     corners, then splice each corner's levels into the wall or island
     ring of each pass that reaches its descend point, before the blocks
     are sequenced ("Corner relief", step 5). Corners with no such ring,
-    and every corner of a Pocket with an allowance, get notch blocks in
+    and every corner of a Pocket that leaves stock, get notch blocks in
     their own group at the end, stepping down at the tool's step-down
     (step 6). (changed: maintainer decision 2026-10-24: every notch was
-    in that group at the end.)
+    in that group at the end. Changed: maintainer decision 2026-10-25,
+    #394: "allowance".)
 11. **Blocks → `sequence`** with containment pairs from `nest` depth.
 12. **Footprint check** (S9): `footprint(toolpath, r)` must lie inside
-    `region` inset by `allowance_mm` (offset by `+EPS_MM`) and outside
-    every island grown by it; else `CamError::OffMaterial`. Descents are
+    `region` inset by `stock_to_leave_mm` (offset by `+EPS_MM`) and outside
+    every island grown by it; else `CamError::OffMaterial` (changed:
+    maintainer decision 2026-10-25, #394: was `allowance_mm`). Descents are
     checked on their tool centres against the tool-centre regions, which
     is exact for a round tool; sweeping a helix's chords through
     `footprint` is too slow (#158). A rest operation is checked against
@@ -992,8 +1003,9 @@ does.
 1. **Resolve holes.** Every closed profile of every target, placed by its
    transform, through Drill's circle test (`dc_geometry::as_circle` at
    the flatten tolerance); anything else warns `BoreTargetNotCircle` and
-   is skipped. With hole radius `ρ`, tool radius `r` and allowance `a`,
-   the helix radius is `R = ρ − r − a`.
+   is skipped. With hole radius `ρ`, tool radius `r` and stock to leave
+   `a` (changed: maintainer decision 2026-10-25, #394: "allowance"), the
+   helix radius is `R = ρ − r − a`.
    - `R < BORE_MIN_HELIX_RADIUS_MM` (0.05 mm): skipped with `BoreNoRoom`.
      At 48 chords a turn a helix that small has chords 2·0.05·sin(3.75°) =
      0.0065 mm long, more than √2 units of the coarsest place a
@@ -1172,7 +1184,7 @@ cut direction and cut side.
   less the tab keep-outs holds it, stopped `safety` short
   (`EntryPlan::following`); with no run left, a target the two plans do
   not share, or a pass above that plunged, helixed or cut another path
-  (a last pass after its allowance passes), it plunges one step down at
+  (a last pass after its stock passes), it plunges one step down at
   its target with `EntryFallback`, `no_room`; and one that would fall
   less than `RAMP_MIN_LAST_DROP_MM`, whose one run runs the whole line,
   plunges with `too_small`. The tab re-seam below judges a candidate the
@@ -1463,10 +1475,10 @@ Profile is narrower than the bit (a hole round an island, two parts
 whose kerfs overlap: the gouge `ToolpathsOverlap` warns of), one
 outline's lap runs within the radius of the other's tab and would cut it
 away below its top. The tab is the material the other outline's last
-pass leaves standing, which is found as an allowance path's tabs are
+pass leaves standing, which is found as a stock path's tabs are
 from its own last pass (A8 step 3, `last_pass::twin_tabs`): a point
 within `r` of the last pass stands as high as the lowest the last pass
-cuts within `r` of it. Each part path, and each allowance path, is
+cuts within `r` of it. Each part path, and each stock path, is
 raised over every stretch whose cutter reaches that material of another
 part path, at the tab's top, rect if the tab is and smooth with slopes
 no longer than keep it above the material if not, a lattice step longer
@@ -1503,7 +1515,7 @@ lists every hole tab a Profile crosses, and `tabs place` and `tabs clear`
 warn `TabOnHole` once for each tab they place on a hole. A hole tab
 marked `false` (a hand edit) warns on every export, wherever it sits; one
 marked `true` warns on none, on the hole's outline or after a change of
-bit or side. The flag changes no cut, and a last pass's allowance path
+bit or side. The flag changes no cut, and a last pass's stock path
 carries no warning of its own. (changed in #300: every hole tab warned on
 every `check` and `export`, and a user who kept the tabs a migrated
 request asked for could not silence it. Changed again in #302: #300 told
@@ -1850,7 +1862,7 @@ meaning and the labels are VCarve's.
   past the end. `profile::check_open_ends` refuses a path with a piece
   that ends on that circle and none that ends square there:
   `CamError::EndSegmentHasNoRoom { op, shape, vertex, length_mm,
-  diameter_mm, allowance_mm }`, at the end vertex as drawn. Clipping the
+  diameter_mm, stock_to_leave_mm }`, at the end vertex as drawn. Clipping the
   piece back to the normal instead, as the issue first proposed, would
   stop it more than `r` from the vertex with nothing cut beside the end
   segment, where it crosses the normal at all; the bit cannot follow
@@ -1931,7 +1943,7 @@ meaning and the labels are VCarve's.
   to the kept side, cut short at the first line of the operation it
   meets, so that where the end segment is short and turns toward the
   kept side the end stops at the segment it runs into. Each piece keeps
-  `r` from those too, `r + a` for the allowance paths:
+  `r` from those too, `r + a` for the stock paths:
   `profile::left_right_cut_into_the_strip_past_an_end_is_refused`.)
 - **S9** (`Material::SideProfile`): every cut's ends and middle lie within
   the slack of one of the targets' open paths offset by `r` to the side
@@ -2029,11 +2041,11 @@ Ported from `cornerRelief.ts`.
      reaches `P` at the pass's Z within the guard (`RELIEF_POSITION_
      TOLERANCE_MM` plus the flatten tolerance):
      - Pocket: a closed ring of the corner's region, the wall ring or an
-       island ring (`wall_pass: first` or `last`, and `allowance_mm` 0).
+       island ring (`wall_pass: first` or `last`, and `stock_to_leave_mm` 0;
+       changed: maintainer decision 2026-10-25, #394: was `allowance_mm`).
        Inner rings never reach `P`, and open raster lines never count.
      - Profile: the shape's lap. With a last pass (#284) that is the
-       last pass's lap only. The allowance passes run on the allowance
-       paths, which never get a notch.
+       last pass's lap only. The stock passes run on the stock paths, which never get a notch.
    - **The detour** is #193's splice, on every pass with levels, not
      only the freeing one. Where the final-wall path first reaches `P` at
      its Z (a lap move that passes `P` in its middle is split there), the
@@ -2077,9 +2089,12 @@ Ported from `cornerRelief.ts`.
    plunging at every corner and level.)
 6. **Fallback to the separate pass** (step 4), only where there is no
    final-wall path to cut from:
-   - A Pocket with `allowance_mm` above 0: its rings are allowance paths,
-     not the final wall. Every corner is cut by the separate pass after
-     the main passes, sized to the wall the allowance leaves, as before.
+   - A Pocket with `stock_to_leave_mm` above 0: its rings are not the
+     final wall. Every corner is cut by the separate pass after the main
+     passes, sized to the wall the stock to leave leaves, as before.
+     (changed: maintainer decision 2026-10-25, #394: was `allowance_mm`,
+     and its rings were called allowance paths, the Profile last pass's
+     term.)
    - A Pocket corner where some pass that has levels for it has no
      final-wall path reaching `P` at its Z, for example a rest Pocket
      that skips the wall ring (#167): that corner, all its levels, goes
@@ -2975,7 +2990,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `pocket::raster_lifts_around_island_are_minimised`, `pocket::raster::pieces_round_a_square_island_are_cut_nearest_first`, `pocket::raster::scan_order_is_kept_round_a_circle` (#150).
 - `pocket::raster_links_follow_a_round_island_edge`, `pocket::edge_link_never_enters_the_island`, `pocket::raster::pieces_round_a_circle_link_along_its_edge`, `safety::raster_edge_links_round_an_island_pass_s9` (#202; `pocket::raster_lifts_around_island_are_minimised` updated).
 - `pocket::raster_links_follow_a_concave_wall`, `pocket::edge_link_never_leaves_the_wall`, `safety::raster_edge_links_along_a_concave_wall_pass_s9` (#218).
-- `pocket::allowance_leaves_material_on_walls` — footprint stays `allowance` from the wall.
+- `pocket::stock_to_leave_stays_on_walls` — footprint stays `stock_to_leave_mm` from the wall (changed: maintainer decision 2026-10-25, #394: was `allowance_leaves_material_on_walls`).
 - `pocket::rest_region_is_corners_and_wall_band`, `pocket::rest_coverage_with_rough_reaches_small_tool_inset` (acceptance 22), `pocket::rest_of_that_clears_nothing_warns`, `pocket::rest_footprint_stays_inside_region` (S14).
 - `pocket::step_down_from_tool_when_operation_unset`, `pocket::depth_below_bottom_is_error`.
 - `pocket::levels_rapid_at_safe_z_before_plunging` (port: "level transitions rapid at safe Z").
@@ -3011,7 +3026,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 **dc-cam — relief**
 - `relief::dogbone_ends_on_bisector_at_radius` (port), `relief::t_bone_ends_on_longer_edge_at_radius` (port, placement rule changed), `relief::notch_depth_past_wall` (port), `relief::right_angle_t_bone_leaves_perpendicular_wall` (port), `relief::clears_whole_wedge_at_every_angle` (port, both styles), `relief::stopping_short_leaves_corner` (port).
 - `relief::square_pocket_yields_four_corners_and_descend_points` (port), `relief::cleared_outside_loop_relieves_concave_only` (port), `relief::too_tight_corner_rejected_with_warning` (port), `relief::none_collects_nothing` (port), `relief::uncut_corner_emits_no_motion_and_warns` (port).
-- `relief::pocket_square_clears_all_four_corners_eight_cuts` (port), `relief::island_reflex_corners_relieved_convex_not` (port), `relief::arcs_and_fillets_produce_no_relief` (port), `relief::steps_down_at_tool_step_down` (port), `relief::no_step_down_skips_with_warning` (port), `relief::allowance_sizes_relief_to_the_wall_left` (port), `relief::rough_with_allowance_then_rest_with_relief_clears_corner` (port).
+- `relief::pocket_square_clears_all_four_corners_eight_cuts` (port), `relief::island_reflex_corners_relieved_convex_not` (port), `relief::arcs_and_fillets_produce_no_relief` (port), `relief::steps_down_at_tool_step_down` (port), `relief::no_step_down_skips_with_warning` (port), `relief::stock_to_leave_sizes_relief_to_the_wall_left` (port), `relief::rough_with_stock_to_leave_then_rest_with_relief_clears_corner` (port) (changed: maintainer decision 2026-10-25, #394: `allowance` in both names).
 - `relief::inside_profile_relieves_hole_corners` (port), `relief::outside_profile_relieves_concave_part_corners` (port), `relief::corner_under_tab_is_skipped` (port).
 - `relief::footprint_of_notch_stays_in_removed_material` (S9).
 - `relief::profile_notches_precede_the_freeing_pass` (#189: inside and outside, both orders; the bottom level within the freeing lap since #193), `cli::pocket_dogbone_exports_and_passes_safety` (an inside Profile through the stock: a full lap at the bottom, closing after the last notch).
@@ -3090,7 +3105,7 @@ Ordered; each is one issue and one PR. Dependencies in brackets.
    footprint, coverage. Tests: pocket offset/direction/footprint/coverage
    tests. [1, 2, 3]
 5. **Pocket, raster strategy.** Tests: pocket raster tests. [4]
-6. **Pocket allowance and rest machining.** Tests: allowance and rest
+6. **Pocket stock to leave and rest machining.** Tests: stock to leave and rest
    tests. [4]
 7. **Drill.** Generator, `Dwell` move, `DrillHole` records, S15. Tests:
    drill group. [1, 2, 3]
@@ -3167,6 +3182,7 @@ updated in the same PR. The other six change no persisted field.
 | (follow-up) Tool vendor and product id | maintainer decision 2026-10-24 | `Tool::vendor`, `Tool::product_id`; library version 2 | 16 (or the next free one) | #302 |
 | (follow-up) Skip Drill holes narrower than the tool | maintainer decision 2026-10-24 | `DrillOp::allow_tool_wider_than_hole` | 17 | tool vendor (16) |
 | (follow-up) Bore operation | maintainer decision 2026-10-24 | `Operation::Bore(BoreOp)` | 18 (or the next free one) | Drill holes (17) |
+| (follow-up) Stock to Leave | #394, maintainer decision 2026-10-25 | `PocketOp`, `BoreOp` and `LastPass` `allowance_mm` renamed `stock_to_leave_mm` | 19 (or the next free one) | Bore (18) |
 
 A definition's own version (`grblhal/v3`) is separate from the `.dcv`
 version and follows `definitions/README.md`, "Versions". A3 adds the only
@@ -3658,10 +3674,16 @@ above:
 
 ### A8. Profile last pass (format version 13)
 
+(changed: maintainer decision 2026-10-25, #394: throughout this section
+the last pass's "allowance" is its stock to leave, `allowance_mm` is
+`stock_to_leave_mm` from format 19, the allowance path is the stock path
+and the allowance passes are the stock passes; the type and test names
+follow, as "Stock to Leave (format version 19)" lists.)
+
 ```rust
 pub struct ProfileOp { /* … */ pub last_pass: Option<LastPass> }  // after `corner_relief`
 pub struct LastPass {
-    pub allowance_mm: f64,          // (0, D/3]
+    pub stock_to_leave_mm: f64,          // (0, D/3]; format 19, was `allowance_mm` (changed: maintainer decision 2026-10-25, #394)
     pub thickness_mm: Option<f64>,  // (0, depth_mm]; None = the normal last pass
     pub reverse: bool,
 }
@@ -3670,8 +3692,8 @@ pub struct LastPass {
 **Migration v12 → v13**: `last_pass: null` on every Profile. Fixture
 `dcv/v12/sample.dcv`. `init` writes `null`.
 
-**Validation** (errors): `allowance_mm` not in (0, D/3]
-(`Problem::LastPassAllowance`, naming the bit diameter and the limit);
+**Validation** (errors): `stock_to_leave_mm` not in (0, D/3]
+(`Problem::LastPassStockToLeave`, naming the bit diameter and the limit);
 `thickness_mm` not in (0, depth]; `last_pass` on `Side::OnLine`
 (`Problem::LastPassNeedsSide`). (changed in #284: Left and Right are
 `LastPassNeedsSide` too, as capability 34's "Inside and Outside only"
@@ -3681,7 +3703,7 @@ generator refuses the same values, `CamError::InvalidLastPass` and
 above the step-down in effect, the operation's or else the tool's, is
 `Problem::LastPassThickerThanStepDown`, located at the thickness and
 naming the step-down's field, so a last pass is never thicker than a
-pass; and a cut of only one pass, whose allowance nothing leaves, warns
+pass; and a cut of only one pass, whose stock to leave nothing leaves, warns
 `last_pass_unused`. Changed in #311: Left and Right take a last pass, so
 `LastPassNeedsSide` is On line only, `Side::has_wall`.)
 
@@ -3690,45 +3712,44 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
 1. **Depths.** With `thickness_mm = t`, `pass_z_mm` runs to `depth − t`,
    then one pass at `depth`; without, the usual depths.
 2. **Paths.** Each outline gets two tool-centre paths: the final path,
-   at `r` as now, and the allowance path, at `r + a` on the waste side
+   at `r` as now, and the stock path, at `r + a` on the waste side
    (the same offset call with the larger distance). Passes but the last
-   cut the allowance path; the last cuts the final path, in the opposite
+   cut the stock path; the last cuts the final path, in the opposite
    direction when `reverse`. The band and narrowness checks
-   (#192, #199, #223) run with `D + 2a` for the allowance path, so a band
-   that fits the bit but not the allowance is refused, naming it.
+   (#192, #199, #223) run with `D + 2a` for the stock path, so a band
+   that fits the bit but not the stock to leave is refused, naming it.
    (changed in #284: the checks are `dc-cam::profile::last_pass::twins`.
-   Inside, an allowance path within `r + a` of another line of its
-   region is `CamError::BandNarrowerThanAllowance`. Where the outline is
-   wider than `D` but narrower than `D + 2a` somewhere, the allowance
+   Inside, a stock path within `r + a` of another line of its
+   region is `CamError::BandNarrowerThanStockToLeave`. Where the outline is
+   wider than `D` but narrower than `D + 2a` somewhere, the stock to leave
    offset loses or gains loops (a neck, a small hole, an inlet's mouth):
-   `CamError::ShapeNarrowerThanAllowance`. An allowance path within `r`
+   `CamError::ShapeNarrowerThanStockToLeave`. A stock path within `r`
    of a line of another region, or (Outside) inside another region's
-   material, is `BandNarrowerThanAllowance` too, its needed gap `D + a`:
+   material, is `BandNarrowerThanStockToLeave` too, its needed gap `D + a`:
    S9 holds only a lap at the radius to D6's warning, so such a pass
-   would fail the safety pass. Allowance paths join D6's overlap check,
-   its needed gap grown by `a`. A cut of one pass has no allowance path:
+   would fail the safety pass. Stock paths join D6's overlap check,
+   its needed gap grown by `a`. A cut of one pass has no stock path:
    its one pass is the last. Changed again in the #310 review: the last
-   pass removes at most what its cutter reaches past the allowance
-   passes', which is at most the farthest its path runs from theirs; that
+   pass removes at most what its cutter reaches past the stock passes', which is at most the farthest its path runs from theirs; that
    must be at most `√2 · a + 0.05 mm`, a square corner's, or
-   `ShapeNarrowerThanAllowance`. This replaces the earlier bound of `r`,
+   `ShapeNarrowerThanStockToLeave`. This replaces the earlier bound of `r`,
    which let a notch, slot or tip the earlier passes skip be cut whole at
    full depth; it refuses every path corner sharper than 90°, at any
-   allowance, since there the last pass takes `a / sin(θ/2)`. Changed in
+   stock to leave, since there the last pass takes `a / sin(θ/2)`. Changed in
    #324, `last_pass::cuts_only_corners`: the part path is sampled every
    `min(r/8, 0.25)` mm and at each vertex, with its distance to the
-   allowance path. Nowhere may it be farther than
+   stock path. Nowhere may it be farther than
    `max(D/3, √2 · a + 0.05)`. A *departure* is a stretch farther than
    `a + 0.05`; one that reaches past `√2 · a + 0.05` must be a corner:
    its turning, summed between samples, is one way (at most 1° the other,
    for sampling and flattening) and less than 179°. Otherwise it is
-   `ShapeNarrowerThanAllowance`. Why: a corner's earlier passes cut both
+   `ShapeNarrowerThanStockToLeave`. Why: a corner's earlier passes cut both
    its walls and stop `a / sin(θ/2)` short of the last pass, which takes
    only the wedge between. D/3 is the thickest skin `check` lets the
-   allowance be on a straight wall, so the wedge is never thicker than a
+   stock to leave be on a straight wall, so the wedge is never thicker than a
    skin the last pass may already take at full depth; `√2 · a + 0.05`
    keeps everything #310 cut. A stretch that turns back, or as far as a
-   U-turn, goes into a notch, slot or inlet the allowance path bridges:
+   U-turn, goes into a notch, slot or inlet the stock path bridges:
    the earlier passes never enter it, and the last pass cuts it whole,
    about as wide as the bit. Thickness alone cannot tell the two apart:
    a 7 × 3 mm notch cut outside at 0.5 mm with a 6.35 mm bit takes 1.0 mm
@@ -3740,50 +3761,48 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    meets the next wall's skin in any inside corner, square ones
    included, is not what this bounds; #310 allowed that too.)
 3. **Tabs** are laid out on the final path (the tabs left on the part).
-   On the allowance path each tab stretch is the nearest-point projection
+   On the stock path each tab stretch is the nearest-point projection
    of the final stretch's ends, widened by `a` each way, so the raised
    stretch covers the same tab. (changed in the #310 review: widening by
-   arc length let the allowance passes cut into tabs at sharp corners,
-   where the allowance path runs past the corner beside the next edge's
+   arc length let the stock passes cut into tabs at sharp corners,
+   where the stock path runs past the corner beside the next edge's
    tab. `last_pass::twin_tabs` finds the tab's material instead, the stock
    the last pass leaves standing above its floor, on a lattice of `r/12`
-   within the radius of its raised cuts, and raises each allowance-path
+   within the radius of its raised cuts, and raises each stock-path
    point to the highest of it within `r + r/12`, each raised stretch
    `r/12` longer at both ends; rect if any tab under it is, else smooth,
    its ramps no longer than keeps it at or above that height, which holds
    at every earlier pass's Z.)
 4. **Entry and lead** are planned per path, each in its own domain; the
-   last pass descends where the allowance passes have already cut to
+   last pass descends where the stock passes have already cut to
    `depth − t` (its XY is within `a < r` of their path), so S2's rapid
    down stops 1 mm above that floor. (changed in #284: S2's floor counts
    a cut only within `CLEARED_POINT_TOLERANCE_MM` of the rapid's XY, and
-   the final path is `a` from the allowance path, so the rapid stops 1 mm
+   the final path is `a` from the stock path, so the rapid stops 1 mm
    above the stock and the plunge at the plunge rate runs down the
    cleared column to `depth − t`, then the entry; a helix, which has no
    bore of the earlier passes to rejoin, helixes from 1 mm above the stock
-   instead. S2 is unchanged. The allowance path's domain is the waste less
+   instead. S2 is unchanged. The stock path's domain is the waste less
    the part grown by `r + a`; a reversed last pass's helix turns the other
    way. Changed in #339, `profile::last_pass_block` and
-   `last_pass::enter_from_twin`: that plunge went through the allowance's
+   `last_pass::enter_from_twin`: that plunge went through the stock to leave's
    uncut strip, which stands to the stock top beside the part, so it ran
    up to the full depth into material. Of the issue's two options this takes the
    first, the configured entry from the earlier passes' floor: a staged
    straight plunge at the last pass's own XY can never start in cleared
    material, since the strip lies under the cutter there at every depth.
    The last pass's block is built from the block one more pass of the
-   allowance path would be at the last depth, its descent by the entry
+   stock path would be at the last depth, its descent by the entry
    from the previous pass Z where that pass ended: a plunge one step-down
-   (or `t`) deep; a helix rejoining its bore; a ramp along the allowance
-   path itself (`PathEntry::Along`, its run cut short before a tab as On
+   (or `t`) deep; a helix rejoining its bore; a ramp along the stock path itself (`PathEntry::Along`, its run cut short before a tab as On
    line's), in the kerf every earlier pass cut, so it never leaves it (a
-   led allowance path keeps the entry planned at its staging point, which
+   led stock path keeps the entry planned at its staging point, which
    its earlier passes descended at). Then, at or below the Z the last
-   pass's lap starts at (a tab's height, #337), the allowance pass's cut
+   pass's lap starts at (a tab's height, #337), the stock pass's cut
    on to its point nearest the last pass's start (its lap start, or its
    lead's staging point); straight up there to that Z if lower; and one
    step at the feed to the last pass's start. (Changed in the #339 review: below the tab top
-   that was the domain less the tabs' entry keep-outs, the allowance
-   path's widened stretches grown by `r`, which is right for a ramp or
+   that was the domain less the tabs' entry keep-outs, the stock path's widened stretches grown by `r`, which is right for a ramp or
    helix but refused a 0.5 mm step on the far side of a hole from its tab:
    318 projects main cut, every one with a ramp, helix or lead and tabs.
    The step is now held to what it sweeps: no nearer any line of the
@@ -3798,29 +3817,29 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    `max(D/3, √2·a + 0.05) + 0.05` mm away, the bound
    `cuts_only_corners` holds every point of the part path to. A part
    path whose seam is free (no lead, no explicit start) is re-seamed at
-   its point nearest the allowance path's start, so the step is the
-   allowance and nothing of the allowance pass is cut again; an
-   allowance path is led in at its point nearest the part path's lead
+   its point nearest the stock path's start, so the step is the
+   stock to leave and nothing of the stock pass is cut again; an
+   stock path is led in at its point nearest the part path's lead
    arrival (`lead_in_beside`), so with the same arc the step joins the
    staging points `a` apart. A last pass lead-in whose staging point is
    farther is left off with `lead_dropped` (`no_room`), the step going
-   to its lap start; no step that fits is `ShapeNarrowerThanAllowance`.
+   to its lap start; no step that fits is `ShapeNarrowerThanStockToLeave`.
    Measured on the emitted G-code with a 0.1 mm heightfield
    (`last_pass_entry::last_pass_entry_never_plunges_deeper_than_step_down`,
    12 mm in 4 mm steps with a 6.35 mm bit): before, the deepest plunge
    into uncut material was 12 mm with a plunge entry, 8 mm with a ramp
    (11 mm with `thickness_mm` 1); after, 4 mm, the step-down, in every
    case. Where the last pass's lap starts on a tab (#337), the step runs
-   at the height the lap starts at; if the allowance path's cut is
+   at the height the lap starts at; if the stock path's cut is
    higher there (a smooth tab's slope), at its height, and the tool comes
    down at the start onto the slope, no lower than the lap cuts there.
    A tab taller than the step-down still has the last pass come down its
    height in one move there and at a rect tab's far end: #348.)
    (Changed in #348, `profile::tab_descent`: the earlier passes never cut
-   the allowance strip, so wherever the last pass comes down it stands
+   the stock to leave strip, so wherever the last pass comes down it stands
    under the cutter at the height the lap last cut it, and a straight drop
    there goes its whole height into uncut material. Of the issue's
-   options this takes the staged descent: ending the allowance path's
+   options this takes the staged descent: ending the stock path's
    raised stretches where the last pass's end cannot help, since in the
    cases triage measured (#353, #358) those stretches are already the
    shorter, and the strip is uncut whatever they do. Refusing or warning
@@ -3867,9 +3886,9 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    a 12.96 mm tab in 1.44 mm steps) dropped 10.02 mm; after, at most the
    step-down.)
 5. **Relief** is planned on the final path, as now; its notches are in
-   waste beyond the allowance. (changed in #284: every relief level is
+   waste beyond the stock to leave. (changed in #284: every relief level is
    cut from the last pass, the only one whose lap opens the column at a
-   notch's descend point; an allowance pass is `a` off it.)
+   notch's descend point; a stock pass is `a` off it.)
 6. The last pass is the block that `frees`; `pass_first` orders by pass
    index as now.
 7. **Feed round inside arcs** (added in #335, `last_pass::EdgeFeed`,
@@ -3891,14 +3910,13 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    cuts, outside arcs (where the edge is slower than the centre), the
    ramps and lifts over tabs, and the earlier passes, which cut a full
    slot as without a last pass, keep the feed. A level arc over a tab's
-   top is slowed like the rest of the lap: it still cuts the allowance
+   top is slowed like the rest of the lap: it still cuts the stock to leave
    above the tab. (Changed in the #335 review: this said every move over
    a tab kept the feed, which the code never did.) The scale is never below `a / (a + r)`, the
    edge's in the smallest hole the last pass cuts (`D + 2a`, its centre
    on a circle of `a`): S3 accepts a last pass's level cut down to
    `feed · a / (a + r)` and no slower, so the generator cannot invent a
-   feed. A tighter inside arc, a fillet under `r + a` that the allowance
-   path turns as a corner, runs at that floor, and its edge moves faster
+   feed. A tighter inside arc, a fillet under `r + a` that the stock path turns as a corner, runs at that floor, and its edge moves faster
    than the feed: `Warning::LastPassEdgeFaster` names the shape, the arc's
    radius, its feed and the edge's multiple of the feed (one per shape,
    the tightest). The emitter writes a level cut slower than the tool's
@@ -3907,7 +3925,7 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    without a last pass has such a cut, so they are byte-identical. Curves
    drawn as straight segments are not slowed (#350). Measured on the emitted
    G-code (`last_pass_entry::last_pass_small_hole_load`, 0.05 mm
-   lattice, at a layer the earlier passes left the allowance on, every
+   lattice, at a layer the earlier passes left the stock to leave on, every
    entry): before, in the 8 mm hole the edge moved at 4.85 times the feed
    and the lap removed 3.6 (0.5 mm) to 4.1 (0.2 mm) times a straight
    wall's share per minute, 2.0 to 2.5 in the 10 mm hole, 1.2 to 1.6 in
@@ -3963,12 +3981,12 @@ pass; and a cut of only one pass, whose allowance nothing leaves, warns
    at 0.5 mm warns at about 1.9; the 60 × 40 mm rectangle, Inside and
    Outside, true-arc holes, and hexagons to 24-gons 20 mm across do not.
 
-S9 in the safety pass is unchanged: the allowance passes keep more than
+S9 in the safety pass is unchanged: the stock passes keep more than
 `r` from the part, which it already accepts. The generator tests hold
 them to `r + a`. (changed in the #310 review: "the part" in S9 is every
 target region, the operation's other parts included, and the generator
-holds the allowance passes to `r` from those, and outside them. Between
-`r` and `r + a` of another part an allowance pass cuts only that part's
+holds the stock passes to `r` from those, and outside them. Between
+`r` and `r + a` of another part a stock pass cuts only that part's
 skin, which its own last pass removes, and is allowed.)
 
 **Left and Right** (added in #311; VCarve's Last Pass Allowance applies
@@ -3976,14 +3994,14 @@ to its Profile of an open vector cut to the left or right, the A8 page;
 PureCutCNC has neither). A Left or Right Profile cuts one flank of the
 bit against the part, so it takes a last pass as Inside and Outside do.
 
-1. **Side.** The allowance path is the open path offset by `r + a` to
+1. **Side.** The stock path is the open path offset by `r + a` to
    the cut side, `offset_open(path, ±(r + a))`, the same call as the
    last pass's with the larger distance (`last_pass::open_twins`). It
    runs the way the last pass's path runs (`open_runs_reversed`, the
    #287 spindle rule), so the earlier passes and the last mill alike.
 2. **Ends.** Both offsets end square on the normals through the path's
    end vertices (an end segment with room for `r` but not `r + a` is
-   `EndSegmentHasNoRoom` with the allowance, #342: the allowance path
+   `EndSegmentHasNoRoom` with the stock to leave, #342: the stock path
    would run past the normal), so the earlier passes end where the last
    pass ends:
    neither is shortened nor extended. No pass reaches the part side past
@@ -3994,26 +4012,26 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    full-width cut at each end; extending them would cut past the end.
 3. **Narrowness and corners.** The pieces of the two offsets must pair
    one for one (an arc, U or hairpin on the cut side that fits the bit
-   but not the bit plus the allowance makes the larger offset vanish or
+   but not the bit plus the stock to leave makes the larger offset vanish or
    split), and the last pass is held to `cuts_only_corners` as on an
    outline, scanned from the path's start to its end with no wrap; a
    departure that reaches an end of the path is no corner, so it may be
    no thicker than a square corner's. Either is
-   `ShapeNarrowerThanAllowance`. So the thickness cap
+   `ShapeNarrowerThanStockToLeave`. So the thickness cap
    `max(D/3, √2·a + 0.05)` applies to a V cut inside its tip.
-4. **Neighbours.** `check_kept_sides` runs on the allowance paths with
+4. **Neighbours.** `check_kept_sides` runs on the stock paths with
    the reach `r + a` (the kept edges stay `r` off their lines): an
-   allowance path within `r + a` of another line of the operation, or of
+   stock path within `r + a` of another line of the operation, or of
    any line's kept edge, would take that line's skin, which its own last
    pass is to cut, or cut its kept strip. That is
-   `CamError::AllowanceCutsIntoKeptSide { op, shape, other, diameter_mm,
-   allowance_mm }`, the counterpart of Inside's `D + 2a` band rule. Two
+   `CamError::StockToLeaveCutsIntoKeptSide { op, shape, other, diameter_mm,
+   stock_to_leave_mm }`, the counterpart of Inside's `D + 2a` band rule. Two
    lines cut towards each other need `D + 2a` between them; a cut towards
    another line's kept side needs `3r + 2a`. Lines that meet at an outer
    corner keep exactly `r + a` and are cut. Closed targets are skipped,
    so they are no neighbours.
 5. **Tabs** are laid on the last pass's path (`PathEnds::Open`, from the
-   end beside the first vertex) and carried onto the allowance path by
+   end beside the first vertex) and carried onto the stock path by
    `last_pass::twin_tabs`, its raised stretches cut short at the path's
    ends (`PathTabs::from_spans` with `closed: false`); a smooth stretch
    an end cuts short has no ramp at that end and holds the tab's top to it
@@ -4023,19 +4041,19 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    samples each raised cut's reach all round it, just inside it
    (`RING_INSET_MM`): where the last pass rises onto a tab, the tab's
    foot at the far side of its kerf is a cusp thinner than the `r/12`
-   lattice, which the allowance pass, `a` nearer that side, reaches up to
+   lattice, which the stock pass, `a` nearer that side, reaches up to
    `√(2ar − a²)` before the rise. This applies to outlines too, whose
    rises it lengthens by at most a lattice step.
 6. **Entries, leads, relief.** A pass whose lap starts on a tab
    descends no lower than the tab there (#337, which this relies on: a
-   reversed last pass, or an allowance pass, can start on a tab at a
+   reversed last pass, or a stock pass, can start on a tab at a
    path's end). Each pass ramps along its own path
    (`entry::along_path`); a helix stays `HelixNeedsWasteSide`. No lead
    and no relief, as without a last pass. The last pass plunges through
    the column the earlier passes cleared, as on an outline (step 4).
    (Changed in #339: as on an outline, the last pass goes down on the
-   allowance path, ramping along it, and steps across on the end normal;
-   with `reverse` it goes down on the allowance path run backwards
+   stock path, ramping along it, and steps across on the end normal;
+   with `reverse` it goes down on the stock path run backwards
    (`Polyline::reversed`, `PathTabs::reversed_open`), at the end where
    the earlier passes ended, so the tool does not retract.)
 7. **`reverse`** runs the last pass's path backwards (`Polyline::reversed`)
@@ -4046,7 +4064,7 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    offset by `r + a` to the side are tool-centre paths too; every cut
    still keeps `r` from every open path and kept edge. (Changed in #339:
    so is the last pass's step across the band between the two offsets,
-   `AllowanceBand`: a level move from the `r + a` offset to the `r` one,
+   `StockToLeaveBand`: a level move from the `r + a` offset to the `r` one,
    through points whose distances to them add up to `a`, no longer than
    `dc_cam::last_pass_step_reach_mm`, the generator's own bound. A move
    along the band, steps chained inside it, or one that falls through it
@@ -4081,18 +4099,18 @@ and `cli::left_right_last_pass_exports_and_without_is_byte_identical`,
 whose projects without a last pass export the programs the build before
 #311 wrote. The Left and Right property projects get random last passes.
 #358 adds
-`material::allowance_band_tests::last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed`,
-`material::allowance_band_tests::last_pass_step_past_an_open_end_or_on_the_kept_side_fails`
+`material::stock_to_leave_band_tests::last_pass_step_between_starts_trimmed_by_the_end_vertex_is_allowed`,
+`material::stock_to_leave_band_tests::last_pass_step_past_an_open_end_or_on_the_kept_side_fails`
 and the property case `left_open_path_last_pass_plunge_exports`.
 
 Tests: `migrate::v12_to_v13_adds_null_last_pass`,
-`validate::last_pass_allowance_limit`, `validate::last_pass_on_line_is_error`,
+`validate::last_pass_stock_to_leave_limit`, `validate::last_pass_on_line_is_error`,
 `validate::last_pass_thickness_range`,
-`profile::last_pass_allowance_offsets_earlier_passes` (acceptance 46),
+`profile::last_pass_stock_to_leave_offsets_earlier_passes` (acceptance 46),
 `profile::last_pass_thickness_adds_final_depth`,
 `profile::last_pass_reverse_flips_direction`,
 `profile::last_pass_tabs_cover_same_stretch`,
-`profile::last_pass_band_too_narrow_for_allowance`,
+`profile::last_pass_band_too_narrow_for_stock_to_leave`,
 `profile::last_pass_inside_rectangle`, `profile::no_last_pass_is_byte_identical`,
 `safety::last_pass_program_passes_s9`; and (#339) `profile::last_pass_uses_the_configured_entry`
 and the G-code heightfield checks (`dc-gcode`)
@@ -4163,7 +4181,7 @@ today. Open paths ignore it. (changed in #285: in
 `dc-cam::profile::start`, after `centre_paths` in both `generate_profile`
 and `op_tabs`. The nearest point is `nearest_point`'s: first along the
 path on a tie, except the middle of an arc centred on the target. The
-allowance twin (#284) is re-seamed nearest the same target before
+stock to leave twin (#284) is re-seamed nearest the same target before
 `twin_tabs` carries the tabs onto it, and a reversed last pass keeps its
 start. The lead is `lead::plan_lead_in_at_start`. Changed again in #337:
 `contour_block` starts a pass's descent at the previous pass Z or the
@@ -4172,10 +4190,10 @@ descends below the tab there, and comes down to its depth past the tab's
 end as it leaves any tab; this held for `auto` with a plunge entry too.
 The safety pass's S9 refuses a straight plunge below a tab's top within
 its span along the bit's path (the outline offset by the radius, and by
-the radius plus a last pass's allowance; over a smooth tab's slope, below
+the radius plus a last pass's stock to leave; over a smooth tab's slope, below
 the slope the last pass cuts), from the placed tabs and the request's
 placement, not the toolpath. Changed in #353: on the path of the passes
-before a last pass (the radius plus the allowance) the span is not the
+before a last pass (the radius plus the stock to leave) the span is not the
 rule, because those passes cut beside the tab, not over it, and
 `twin_tabs` ends their raised stretch where their cutter stops touching
 the tab the last pass leaves. There S9 refuses a plunge below a tab's top
@@ -4212,9 +4230,9 @@ Tests: `migrate::v13_to_v14_adds_corner_and_start_defaults`,
 for #337, `profile::start_under_a_tab_never_plunges_into_it`,
 `safety::s9_refuses_a_descent_into_a_tab` and
 `safety::start_under_a_tab_passes_s9`; for #353,
-`safety::allowance_pass_leaves_a_tab_at_its_stretch_end`,
-`safety::allowance_pass_dropping_onto_a_tab_fails_s9`,
-`safety::allowance_pass_past_the_span_onto_a_tab_fails_s9` and the
+`safety::stock_to_leave_pass_leaves_a_tab_at_its_stretch_end`,
+`safety::stock_to_leave_pass_dropping_onto_a_tab_fails_s9`,
+`safety::stock_to_leave_pass_past_the_span_onto_a_tab_fails_s9` and the
 property cases `inside_last_pass_helix_tabs_pass_first_exports`,
 `inside_last_pass_plunge_short_tab_exports` and
 `outside_last_pass_small_tab_on_a_hole_exports`.
@@ -4292,7 +4310,7 @@ lengths), or more than its tool's step-down
 (`Problem::BorePitchOverStepDown { operation, pitch_mm, step_down_mm }`);
 a Bore with no `pitch_mm` whose tool has no step-down
 (`Problem::ToolValueUnset` on `step_down_mm`, as Pocket's); a negative or
-non-finite `allowance_mm` (`OutOfRange`); a Bore whose tool is not a
+non-finite `stock_to_leave_mm` (`OutOfRange`); a Bore whose tool is not a
 flat end mill (`Problem::CutterNotFlat`, as a Pocket's): it cuts the wall
 with the side of the bit, which a twist drill, V-bit or engraver does not
 do to size (Fusion's help names flat and bull-nose end mills for Bore). The CLI writes no
@@ -4304,7 +4322,7 @@ like any operation; `preview` draws it as a cut, not a drill point.
 
 **Plaque.** op3 "Screw holes" becomes a Bore with T2 (`t3`, the 3.175 mm
 end mill), `depth_mm` 12, through-cut allowance 0.2, `pitch_mm` null,
-`direction` climb, `allowance_mm` 0: the holes come out 5 mm, as drawn.
+`direction` climb, `stock_to_leave_mm` 0: the holes come out 5 mm, as drawn.
 The operations run op3, op5, op1, op2, op4: one bit change, the holes
 before the cut-out, which stays last, op3 before op5 as before. The
 programs become `plaque-1-T2.nc` (Bore, Engrave) and `plaque-2-T1.nc`
@@ -4320,7 +4338,7 @@ Tests:
   `bore::starts_one_mm_above_stock_top`,
   `bore::climb_is_ccw_conventional_is_cw`,
   `bore::pitch_defaults_to_tool_step_down`,
-  `bore::pitch_over_step_down_is_error`, `bore::allowance_shrinks_helix`,
+  `bore::pitch_over_step_down_is_error`, `bore::stock_to_leave_shrinks_helix`,
   `bore::descent_feed_is_plunge_limited` (S10),
   `bore::hole_too_small_is_skipped_no_room`,
   `bore::hole_bit_size_is_skipped_pointing_to_drill`,
@@ -4337,7 +4355,7 @@ Tests:
   `serialize::bore_round_trips`,
   `validate::bore_pitch_over_step_down_is_error`,
   `validate::bore_without_pitch_or_step_down_is_error`,
-  `validate::bore_negative_allowance_is_error`,
+  `validate::bore_negative_stock_to_leave_is_error`,
   `validate::bore_needs_flat_end_mill`.
 - dc-gcode: `safety::bore_inside_hole_passes_s9`,
   `safety::bore_doctored_outside_hole_fails_s9` (S9 refuses a program
@@ -4355,6 +4373,85 @@ Tests:
   `quick_start`, and the plaque in the `rs274`, LinuxCNC and GRBL
   simulator corpora (their canned-cycle variants drill the holes as the
   plaque did before).
+
+### Stock to Leave (format version 19)
+
+(changed: maintainer decision 2026-10-25, #394.) "`allowance_mm` and
+`through_cut_allowance_mm` in the bore operation have different meanings
+but use the same term… change allowance to `stock_to_leave` which matches
+the meaning of the current `allowance_mm`, aligns with Fusion and just
+makes sense." The material an operation leaves on the wall is its
+**stock to leave**, Fusion's "Stock to Leave" (radial): a Pocket's or a
+Bore's for a later operation (VCarve's "Pocket Allowance"), and a
+Profile last pass's for that last pass (VCarve's "Last Pass Allowance").
+The through-cut allowance, depth below the stock bottom, is the only
+allowance left, and keeps its name. It is a pure rename: no cut and no
+program changes.
+
+**Model.** `PocketOp::allowance_mm`, `BoreOp::allowance_mm` and
+`LastPass::allowance_mm` become `stock_to_leave_mm`, in the same place in
+their fields, with the same meaning, range and `init` value.
+`through_cut_allowance_mm` is unchanged on every operation.
+
+**Migration v18 → v19** (`migrate::v18_to_v19`): the key `allowance_mm`
+is renamed `stock_to_leave_mm` in place, keeping its value and the key
+order, in each operation of `"kind": "pocket"` or `"bore"` and in each
+Profile's non-null `last_pass`. Nothing else changes. It fails, naming
+the key, where the new key is already there (not a version 18 file).
+Saving always writes `stock_to_leave_mm`; nothing writes `allowance_mm`.
+The fixture `crates/dc-project/tests/fixtures/dcv/v18/stock-to-leave.dcv`
+is the sample project with a last pass on its Profile, and a Pocket and a
+Bore, all leaving stock. If another change takes 19 first, this is the
+next free version, rebased on top.
+
+**Names.** Code and glossary agree; "allowance" stays only for the
+through-cut allowance and in VCarve's own names:
+- Validation: the paths `operations[<id>].stock_to_leave_mm` and
+  `operations[<id>].last_pass.stock_to_leave_mm`;
+  `Problem::LastPassAllowance` is `Problem::LastPassStockToLeave`, code
+  `last_pass_stock_to_leave` (was `last_pass_allowance`; no spec or
+  chapter pinned the code).
+- dc-cam: `CamError::InvalidAllowance`, `BandNarrowerThanAllowance`,
+  `ShapeNarrowerThanAllowance` and `AllowanceCutsIntoKeptSide` are
+  `InvalidStockToLeave`, `BandNarrowerThanStockToLeave`,
+  `ShapeNarrowerThanStockToLeave` and `StockToLeaveCutsIntoKeptSide`, each
+  with `stock_to_leave_mm`; `InvalidBoreSetting` names
+  `stock_to_leave_mm`; the warnings `PocketIslandTooClose`, `BoreNoRoom`,
+  `BoreLeavesCore` and `LastPassEdgeFaster` carry `stock_to_leave_mm`. The
+  last pass's allowance path and allowance passes are its **stock path**
+  and **stock passes** (`stock_paths`, …). No warning code has
+  "allowance" in it, so none changes.
+- dc-gcode: `material::AllowanceBand` is `StockToLeaveBand`; the
+  `Material`, notch and trench rules' fields are `stock_to_leave_mm`.
+- Messages say "stock to leave" for "allowance": "with 0.5 mm stock to
+  leave", "a 0.5 mm last pass stock to leave", "make
+  last_pass.stock_to_leave_mm smaller". `check` and `export` print them as
+  before; no committed `.warnings` file holds one.
+- Tests named for the concept are renamed to match; each keeps its
+  assertions.
+
+**Docs.** CONTEXT's "Pocket Allowance" is **Stock to Leave** and "Last
+Pass Allowance" is **Last Pass Stock to Leave**, VCarve's and Fusion's
+names kept as aliases; Through-cut Allowance stays. The Pocket, Bore,
+Profile, warnings, safety, project file, quick start and plaque chapters,
+and CHANGELOG, use the new names; the project file chapter lists version
+19.
+
+Tests:
+- dc-project: `migrate::v18_allowance_loads_as_stock_to_leave` (the v18
+  fixture loads with each value as `stock_to_leave_mm`; the step renames
+  the key in place, Pocket, Bore and last pass, and changes nothing
+  else), `migrate::v18_with_stock_to_leave_already_present_fails`,
+  `migrate::version_19_is_newer_than_18`,
+  `serialize::save_writes_stock_to_leave_never_allowance` (a Pocket, a
+  Bore and a last pass save `stock_to_leave_mm` and no `allowance_mm`, and
+  load back).
+- CLI: `cli::version_18_stock_to_leave_project_exports_byte_identical_programs`:
+  `tests/fixtures/stock-to-leave-migration/pocket-bore.dcv`, a version 18
+  project with stock left by a Pocket, a Bore and a Profile's last pass,
+  exports byte for byte the programs the build before #394 wrote,
+  committed under `tests/expected/stock-to-leave-migration/`, and so does
+  the same project saved at version 19.
 
 ### Documentation (every item)
 
