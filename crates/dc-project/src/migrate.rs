@@ -2346,6 +2346,92 @@ mod tests {
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }
 
+    // Version 18 → 19 (#394): `allowance_mm` is `stock_to_leave_mm` on a
+    // Pocket, a Bore and a Profile's last pass.
+
+    const V18_STOCK_TO_LEAVE_FIXTURE: &[u8] =
+        include_bytes!("../tests/fixtures/dcv/v18/stock-to-leave.dcv");
+
+    /// The version 18 fixture with its Profile's last pass, Pocket and
+    /// Bore loads with each value as `stock_to_leave_mm`, and the step
+    /// renames the key in place, keeping the key order, and changes
+    /// nothing else.
+    #[test]
+    fn v18_allowance_loads_as_stock_to_leave() {
+        let loaded = load(V18_STOCK_TO_LEAVE_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.problems, vec![]);
+        let saved: Value = serde_json::from_str(&save(&loaded.project).unwrap()).unwrap();
+        let ops = &saved["operations"];
+        assert_eq!(ops[0]["last_pass"]["stock_to_leave_mm"], json!(0.5));
+        assert_eq!(ops[1]["kind"], json!("pocket"));
+        assert_eq!(ops[1]["stock_to_leave_mm"], json!(0.5));
+        assert_eq!(ops[2]["kind"], json!("bore"));
+        assert_eq!(ops[2]["stock_to_leave_mm"], json!(0.1));
+
+        let before: Value = serde_json::from_slice(V18_STOCK_TO_LEAVE_FIXTURE).unwrap();
+        let migrated = migrate(before.clone(), 18).unwrap();
+        let text = serde_json::to_string_pretty(&before).unwrap();
+        assert_eq!(text.matches("\"allowance_mm\"").count(), 3);
+        let mut expected: Value =
+            serde_json::from_str(&text.replace("\"allowance_mm\"", "\"stock_to_leave_mm\""))
+                .unwrap();
+        expected["version"] = json!(CURRENT_VERSION);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap()
+        );
+        assert_eq!(
+            migrate(sample_root_at(18), 18).unwrap(),
+            sample_root_at(CURRENT_VERSION)
+        );
+    }
+
+    /// A Pocket, Bore or last pass that already has `stock_to_leave_mm` is
+    /// not a version 18 file.
+    #[test]
+    fn v18_with_stock_to_leave_already_present_fails() {
+        let root: Value = serde_json::from_slice(V18_STOCK_TO_LEAVE_FIXTURE).unwrap();
+        for (path, named) in [
+            (
+                &["operations", "0", "last_pass"][..],
+                "`operations[0].last_pass.stock_to_leave_mm`",
+            ),
+            (
+                &["operations", "1"][..],
+                "`operations[1].stock_to_leave_mm`",
+            ),
+            (
+                &["operations", "2"][..],
+                "`operations[2].stock_to_leave_mm`",
+            ),
+        ] {
+            let mut root = root.clone();
+            let mut at = &mut root;
+            for key in path {
+                at = match key.parse::<usize>() {
+                    Ok(i) => &mut at[i],
+                    Err(_) => &mut at[*key],
+                };
+            }
+            at["stock_to_leave_mm"] = json!(0.0);
+            let err = migrate(root, 18).unwrap_err();
+            assert!(
+                matches!(&err, LoadError::Migration { from: 18, to: 19, message, .. }
+                    if message.contains(named)),
+                "{named}: {err:?}"
+            );
+        }
+    }
+
+    /// A version 18 reader refuses a version 19 file as newer (ADR-0002).
+    #[test]
+    fn version_19_is_newer_than_18() {
+        assert_eq!(CURRENT_VERSION, 19);
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
     #[test]
     fn current_version_is_unchanged() {
         let root = serde_json::to_value(sample_project()).unwrap();

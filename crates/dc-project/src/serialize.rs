@@ -1064,6 +1064,32 @@ mod tests {
         assert_eq!(load(text.as_bytes()).unwrap().project, p);
     }
 
+    /// #394 (format 19): a Pocket, a Bore and a Profile's last pass save
+    /// the stock they leave as `stock_to_leave_mm`, never `allowance_mm`,
+    /// and load back.
+    #[test]
+    fn save_writes_stock_to_leave_never_allowance() {
+        let project = load(include_bytes!(
+            "../tests/fixtures/dcv/v18/stock-to-leave.dcv"
+        ))
+        .unwrap()
+        .project;
+        let text = save(&project).unwrap();
+        assert!(!text.contains("\"allowance_mm\""), "{text}");
+        assert_eq!(
+            text.matches("\"stock_to_leave_mm\": 0.5").count(),
+            2,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("\"stock_to_leave_mm\": 0.1").count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(text.matches("\"through_cut_allowance_mm\"").count(), 3);
+        assert_eq!(load(text.as_bytes()).unwrap().project, project);
+    }
+
     /// Format 18: an unknown field in a Bore is named, as in any operation.
     #[test]
     fn bore_unknown_field_is_named() {

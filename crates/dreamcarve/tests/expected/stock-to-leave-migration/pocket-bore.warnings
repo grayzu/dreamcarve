@@ -1,0 +1,4 @@
+pocket-bore.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+warning: lead_shrunk: operation `op4`: the lead arc on `outline` (instance `i1`, profile 0) is 3 mm in radius over 60°, smaller than the 3 mm over 90° asked for, because a larger one does not fit there
+warning: tool_change_avoidable: tool `t3` (`1/8 end mill`) is used by operations `op3`, `op5`, `op6`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
+warning: tool_change_avoidable: tool `t2` (`1/4 end mill`) is used by operations `op2`, `op4`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)

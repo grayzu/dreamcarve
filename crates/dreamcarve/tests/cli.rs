@@ -9169,3 +9169,55 @@ fn version_14_projects_export_byte_identical_programs_and_warnings() {
     assert!(hole_warnings >= 5, "the corpus warns for hole tabs");
     assert!(quiet_hole_tabs >= 6, "and holds slugs without a warning");
 }
+
+/// #394 (`migrate::v18_allowance_loads_as_stock_to_leave`): a version 18
+/// project whose Pockets, Bore and Profile last pass leave stock, saved as
+/// `allowance_mm`, exports byte for byte the programs the build before
+/// #394 wrote, committed under `tests/expected/stock-to-leave-migration/`
+/// with its warnings; so does the same project once `dc_project::save`
+/// has written it at the current version, which names the stock
+/// `stock_to_leave_mm` and never `allowance_mm`. The rename changes no
+/// cut.
+#[test]
+fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
+    let dir = work_dir("version_18_stock_to_leave_project_exports_byte_identical_programs");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("tests/fixtures/stock-to-leave-migration/pocket-bore.dcv");
+    let expected_dir = root.join("tests/expected/stock-to-leave-migration");
+    let old = std::fs::read_to_string(&fixture).expect("fixture readable");
+    assert!(old.contains("\"version\": 18"), "a version 18 file");
+    assert_eq!(old.matches("\"allowance_mm\"").count(), 4, "{old}");
+    assert!(!old.contains("stock_to_leave_mm"));
+    let warnings = std::fs::read_to_string(expected_dir.join("pocket-bore.warnings"))
+        .expect("expected warnings readable");
+
+    let saved = dc_project::save(&load_file(&fixture).project).expect("project saves");
+    assert!(
+        saved.contains(&format!("\"version\": {}", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
+    assert_eq!(dc_project::CURRENT_VERSION, 19);
+    assert!(!saved.contains("\"allowance_mm\""), "{saved}");
+    assert_eq!(saved.matches("\"stock_to_leave_mm\"").count(), 4, "{saved}");
+
+    for (step, text) in [("v18", old), ("saved", saved)] {
+        let at = dir.join(step);
+        std::fs::create_dir_all(&at).expect("step dir created");
+        std::fs::write(at.join("pocket-bore.dcv"), text).expect("project written");
+        let out = run(&at, &["export", "pocket-bore.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{step}: {}", stderr(&out));
+        let programs = exported_programs(&at, "pocket-bore");
+        assert_eq!(programs.len(), 4, "{step}: {programs:?}");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{step}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{step}: {program} differs from the program before #394:\n{text}"
+            );
+        }
+        if step == "v18" {
+            assert_eq!(stderr(&out), warnings, "{step}: export's warnings");
+        }
+    }
+}
