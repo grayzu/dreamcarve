@@ -148,9 +148,11 @@ mod tests {
 
     /// #389: bulges are not lengths and are not rounded (maintainer
     /// decision 2026-10-25: rounding one moves the arc's centre by
-    /// micrometres). The DXF's quarter arcs are tan(π/8) exactly; the
-    /// SVG's, rebuilt from Bézier curves, are within 1e-12 of it and keep
-    /// every digit they were computed with.
+    /// micrometres). The DXF's quarter arcs keep the bulge the file writes,
+    /// `0.4142135623730951`, to every digit; the SVG's, rebuilt from Bézier
+    /// curves, are within 1e-12 of tan(π/8). (`tan` itself differs in the
+    /// last digit between platforms' maths libraries, so the file's value
+    /// is compared, not a computed one.)
     #[test]
     fn import_keeps_bulges_unrounded() {
         let quarter = (PI / 8.0).tan();
@@ -168,7 +170,10 @@ mod tests {
                     "{format}: a quarter arc's bulge is not rounded"
                 );
                 if format == "dxf" {
-                    assert_eq!(b, quarter, "{format}: the file's bulge, to every digit");
+                    assert_eq!(
+                        b, 0.414_213_562_373_095_1,
+                        "{format}: the file's bulge, to every digit"
+                    );
                 } else {
                     assert!((b - quarter).abs() < 1e-12, "{format}: {b}");
                 }
