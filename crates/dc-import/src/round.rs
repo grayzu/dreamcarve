@@ -3,34 +3,24 @@
 
 //! Rounding of imported polylines (#389, functional spec capability 20a).
 //! Both importers round each polyline once its closure is decided, so a
-//! project made from an SVG or a DXF reads as the drawing does: x and y to
-//! [`dc_project::LENGTH_DECIMALS`] places of a millimetre, bulges to
-//! [`BULGE_DECIMALS`] places.
+//! project made from an SVG or a DXF has no coordinate finer than
+//! [`dc_project::LENGTH_DECIMALS`] places of a millimetre. Bulges are kept
+//! at full precision: rounding one keeps the arc's ends but moves its
+//! centre, and so a program's I and J, by several micrometres
+//! (maintainer decision 2026-10-25).
 
 use dc_geometry::{Polyline, Vertex};
 use dc_project::round_length_mm;
 
-/// Decimal places a bulge keeps: a quarter arc is `0.414214`.
-const BULGE_DECIMALS: i32 = 6;
-
-/// The smallest bulge rounding leaves on an arc, so a real arc is never
-/// rounded into a line.
-const MIN_BULGE: f64 = 1e-6;
-
-/// `polyline` with every coordinate rounded by [`round_length_mm`] and
-/// every bulge by [`round_bulge`], keeping its closure. A vertex that
-/// rounds onto the one before it is dropped, its bulge taking the place
-/// of the zero-length segment's; so is a closed polyline's last vertex
-/// when it rounds onto the first. `None` when fewer than 2 vertices are
-/// left.
+/// `polyline` with every coordinate rounded by [`round_length_mm`],
+/// bulges unchanged, keeping its closure. A vertex that rounds onto the
+/// one before it is dropped, its bulge taking the place of the zero-length
+/// segment's; so is a closed polyline's last vertex when it rounds onto
+/// the first. `None` when fewer than 2 vertices are left.
 pub(crate) fn round_polyline(polyline: &Polyline) -> Option<Polyline> {
     let mut out: Vec<Vertex> = Vec::with_capacity(polyline.vertices().len());
     for v in polyline.vertices() {
-        let rounded = Vertex::new(
-            round_coordinate(v.x),
-            round_coordinate(v.y),
-            round_bulge(v.bulge),
-        );
+        let rounded = Vertex::new(round_coordinate(v.x), round_coordinate(v.y), v.bulge);
         match out.last_mut() {
             Some(last) if last.point() == rounded.point() => last.bulge = rounded.bulge,
             _ => out.push(rounded),
@@ -47,24 +37,6 @@ pub(crate) fn round_polyline(polyline: &Polyline) -> Option<Polyline> {
 /// `value_mm` rounded, with `-0` written as `0`.
 fn round_coordinate(value_mm: f64) -> f64 {
     round_length_mm(value_mm) + 0.0
-}
-
-/// `bulge` rounded to [`BULGE_DECIMALS`] places; a non-zero bulge that
-/// would round to 0 keeps its sign at [`MIN_BULGE`], so an arc stays an
-/// arc. NaN and the infinities pass through.
-#[must_use]
-pub(crate) fn round_bulge(bulge: f64) -> f64 {
-    let scale = 10_f64.powi(BULGE_DECIMALS);
-    let scaled = bulge * scale;
-    if !(scaled.is_finite() && scaled.abs() < 2_f64.powi(52)) {
-        return bulge;
-    }
-    let rounded = scaled.round() / scale + 0.0;
-    if rounded == 0.0 && bulge != 0.0 {
-        MIN_BULGE.copysign(bulge)
-    } else {
-        rounded
-    }
 }
 
 #[cfg(test)]
@@ -174,43 +146,33 @@ mod tests {
         );
     }
 
-    /// #389 (scope change 2026-10-25): bulges are rounded to 6 decimals in
-    /// both importers, so the plaque's quarter arcs are ±0.414214 and not
-    /// three spellings of tan(π/8).
+    /// #389: bulges are not lengths and are not rounded (maintainer
+    /// decision 2026-10-25: rounding one moves the arc's centre by
+    /// micrometres). The DXF's quarter arcs are tan(π/8) exactly; the
+    /// SVG's, rebuilt from Bézier curves, are within 1e-12 of it and keep
+    /// every digit they were computed with.
     #[test]
-    fn import_rounds_bulges_to_six_decimals() {
+    fn import_keeps_bulges_unrounded() {
         let quarter = (PI / 8.0).tan();
         for (format, definitions) in [("svg", svg(PLAQUE_SVG)), ("dxf", dxf(PLAQUE_DXF))] {
-            let mut quarters = 0;
-            for (name, v) in vertices(&definitions) {
-                let b = v.bulge;
-                assert!(
-                    (b * 1e6).round() / 1e6 == b,
-                    "{format} {name}: bulge {b} is not rounded to 6 decimals"
+            let quarters: Vec<f64> = vertices(&definitions)
+                .into_iter()
+                .map(|(_, v)| v.bulge.abs())
+                .filter(|b| (b - quarter).abs() < 1e-4)
+                .collect();
+            // Four rounded corners on each of outline, pocket and border.
+            assert_eq!(quarters.len(), 12, "{format}: quarter arcs");
+            for b in quarters {
+                assert_ne!(
+                    b, 0.414214,
+                    "{format}: a quarter arc's bulge is not rounded"
                 );
-                if (b.abs() - quarter).abs() < 1e-4 {
-                    assert_eq!(b.abs(), 0.414214, "{format} {name}: a quarter arc");
-                    quarters += 1;
+                if format == "dxf" {
+                    assert_eq!(b, quarter, "{format}: the file's bulge, to every digit");
+                } else {
+                    assert!((b - quarter).abs() < 1e-12, "{format}: {b}");
                 }
             }
-            // Four rounded corners on each of outline, pocket and border.
-            assert_eq!(quarters, 12, "{format}: quarter arcs");
-        }
-    }
-
-    /// #389: a bulge too small to survive rounding to 6 decimals stays an
-    /// arc, at its sign × 1e-6, and is never rounded into a line.
-    #[test]
-    fn rounding_never_flattens_an_arc() {
-        for (bulge, expected) in [(4e-7, 1e-6), (-4e-7, -1e-6)] {
-            let dxf_text = format!(
-                "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
-                 0\nLWPOLYLINE\n8\nflat\n90\n2\n70\n0\n10\n0.0\n20\n0.0\n42\n{bulge}\n10\n100.0\n20\n0.0\n\
-                 0\nENDSEC\n0\nEOF\n"
-            );
-            let definitions = dxf(dxf_text.as_bytes());
-            let flat = profile(&definitions, "flat");
-            assert_eq!(flat.vertices()[0].bulge, expected, "bulge {bulge}");
         }
     }
 

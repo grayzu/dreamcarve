@@ -468,16 +468,6 @@ mod tests {
     /// rounding of a transform or a unit conversion.
     const TOL_MM: f64 = 1e-6;
 
-    /// An arc's centre and radius, mm. Imported bulges are rounded to 6
-    /// decimals (#389), which keeps the arc's ends and moves its sagitta by
-    /// nanometres but moves the centre of a quarter arc of radius 5 by
-    /// about 4 µm, and of radius 10 by about 8 µm.
-    const ARC_TOL_MM: f64 = 1e-5;
-
-    /// An arc's sweep, radians: the same rounding moves a quarter arc's by
-    /// about 1.5e-6 rad.
-    const SWEEP_TOL_RAD: f64 = 1e-5;
-
     macro_rules! fixture {
         ($name:literal) => {
             include_bytes!(concat!("../../../tests/fixtures/dxf/", $name))
@@ -690,11 +680,11 @@ mod tests {
         let poly = only(&result, "arc");
         let seg = poly.segments().next().unwrap();
         let arc = seg.arc().expect("the segment is an arc");
-        assert_approx_eq!(arc.centre.x, 10.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.centre.y, 10.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.radius_mm, 5.0, ARC_TOL_MM);
+        assert_approx_eq!(arc.centre.x, 10.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 10.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 5.0, TOL_MM);
         assert_approx_eq!(arc.start_angle_rad, 0.0, TOL_MM);
-        assert_approx_eq!(arc.sweep_rad, FRAC_PI_2, SWEEP_TOL_RAD);
+        assert_approx_eq!(arc.sweep_rad, FRAC_PI_2, TOL_MM);
         assert_approx_eq!(poly.vertices()[0].bulge, (FRAC_PI_2 / 4.0).tan(), TOL_MM);
         assert_approx_eq!(seg.start.x, 15.0, TOL_MM);
         assert_approx_eq!(seg.start.y, 10.0, TOL_MM);
@@ -929,9 +919,9 @@ mod tests {
         assert_approx_eq!(mirrored.vertices()[0].y, 0.0, TOL_MM);
         let arc = mirrored.segments().next().unwrap().arc().unwrap();
         assert!(arc.sweep_rad < 0.0, "clockwise after the mirror");
-        assert_approx_eq!(arc.centre.x, 0.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.centre.y, 0.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.radius_mm, 10.0, ARC_TOL_MM);
+        assert_approx_eq!(arc.centre.x, 0.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 0.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 10.0, TOL_MM);
     }
 
     /// Under X scale 2, Y scale 1 the quarter circle becomes a quarter
@@ -1194,13 +1184,13 @@ mod tests {
         let pocket_arcs: Vec<_> = pocket.segments().filter_map(|s| s.arc()).collect();
         assert_eq!(pocket_arcs.len(), 4, "four rounded corners");
         for arc in &pocket_arcs {
-            assert_approx_eq!(arc.radius_mm, 5.0, ARC_TOL_MM);
-            assert_approx_eq!(arc.sweep_rad, FRAC_PI_2, SWEEP_TOL_RAD);
+            assert_approx_eq!(arc.radius_mm, 5.0, TOL_MM);
+            assert_approx_eq!(arc.sweep_rad, FRAC_PI_2, TOL_MM);
         }
         assert!(
             pocket_arcs
                 .iter()
-                .any(|a| a.centre.distance_to(Point::new(120.0, 47.0)) <= ARC_TOL_MM)
+                .any(|a| a.centre.distance_to(Point::new(120.0, 47.0)) <= TOL_MM)
         );
         let island = only(&from_dxf, "island");
         assert_eq!(island, &Polyline::circle(Point::new(75.0, 67.0), 10.0));
@@ -1332,10 +1322,10 @@ mod tests {
         assert_approx_eq!(poly.vertices()[1].x, -20.0, TOL_MM);
         assert_approx_eq!(poly.vertices()[1].y, 10.0, TOL_MM);
         let arc = first_arc(&result, "arc");
-        assert_approx_eq!(arc.centre.x, -20.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.centre.y, 5.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.radius_mm, 5.0, ARC_TOL_MM);
-        assert_approx_eq!(arc.sweep_rad, -FRAC_PI_2, SWEEP_TOL_RAD);
+        assert_approx_eq!(arc.centre.x, -20.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 5.0, TOL_MM);
+        assert_approx_eq!(arc.radius_mm, 5.0, TOL_MM);
+        assert_approx_eq!(arc.sweep_rad, -FRAC_PI_2, TOL_MM);
 
         let lw = only(&result, "lwpolyline");
         assert!(!lw.is_closed());

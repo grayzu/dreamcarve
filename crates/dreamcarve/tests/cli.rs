@@ -5005,12 +5005,16 @@ fn init_svg_writes_rounded_coordinates() {
 /// more than rounding to 6 decimals removes.
 const SVG_SCALE_NOISE_MM: f64 = 5e-6;
 
+/// How far an SVG bulge may be from the DXF's: bulges are not rounded
+/// (#389), and the SVG's are rebuilt from Bézier curves, a few units in
+/// the last place from the DXF's on the plaque.
+const BULGE_TOL: f64 = 1e-12;
+
 /// Whether `a` and `b` are one shape: as closed, with as many vertices,
 /// each within `tolerance_mm` of its counterpart in `b` or `b` reversed,
-/// from some start, with an equal bulge; two whole circles have the same
+/// from some start, with a bulge within [`BULGE_TOL`]; two whole circles have the same
 /// centre and radius within `tolerance_mm`. Direction and start point may
 /// differ; see `init_svg_and_dxf_write_same_shapes`.
-#[allow(clippy::float_cmp, reason = "rounded bulges are compared exactly")]
 fn same_shape(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Result<(), String> {
     if a.is_closed() != b.is_closed() {
         return Err("one is closed, the other open".to_owned());
@@ -5041,7 +5045,7 @@ fn same_shape(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Result<(), Strin
                 w.get((start + i) % n).is_some_and(|u| {
                     (v.x - u.x).abs() <= tolerance_mm
                         && (v.y - u.y).abs() <= tolerance_mm
-                        && (!bulge_used || v.bulge == u.bulge)
+                        && (!bulge_used || (v.bulge - u.bulge).abs() <= BULGE_TOL)
                 })
             });
             if matches {
@@ -5058,13 +5062,13 @@ fn same_shape(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Result<(), Strin
 
 /// The centre and radius of `p` when it is a whole circle of two
 /// half-circle arcs.
-#[allow(
-    clippy::float_cmp,
-    reason = "a half circle's rounded bulge is exactly 1"
-)]
 fn whole_circle(p: &Polyline) -> Option<(Point, f64)> {
     match p.vertices() {
-        [u, v] if p.is_closed() && u.bulge.abs() == 1.0 && v.bulge == u.bulge => {
+        [u, v]
+            if p.is_closed()
+                && (u.bulge.abs() - 1.0).abs() <= BULGE_TOL
+                && (v.bulge - u.bulge).abs() <= BULGE_TOL =>
+        {
             let centre = Point::new((u.x + v.x) / 2.0, (u.y + v.y) / 2.0);
             Some((centre, centre.distance_to(u.point())))
         }
@@ -5073,9 +5077,9 @@ fn whole_circle(p: &Polyline) -> Option<(Point, f64)> {
 }
 
 /// #389: the shapes `init` writes from `plaque.svg` and `plaque.dxf` are
-/// the same. Both importers round coordinates and bulges to 6 decimals, so
-/// every bulge, the quarter arcs' `±0.414214` included, is equal in the
-/// two. The differences that remain, and why each is expected:
+/// the same. Both importers round coordinates to 6 decimals; bulges keep
+/// full precision and agree within [`BULGE_TOL`]. The differences that
+/// remain, and why each is expected:
 ///
 /// - every SVG coordinate may be off by up to [`SVG_SCALE_NOISE_MM`]: the
 ///   noise is usvg's `f32` view-box scale, a relative error, not rounding;
