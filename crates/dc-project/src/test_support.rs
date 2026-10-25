@@ -51,7 +51,7 @@ pub fn tool_6_35_upcut() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v18/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v19/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -168,7 +168,7 @@ pub fn sample_pocket() -> PocketOp {
         step_down_mm: None,
         step_over_fraction: None,
         direction: CutDirection::Climb,
-        allowance_mm: 0.0,
+        stock_to_leave_mm: 0.0,
         rest_of: None,
         entry: Entry::Plunge,
         corner_relief: CornerRelief::None,
@@ -209,7 +209,7 @@ pub fn sample_bore() -> BoreOp {
         depth_mm: Some(3.0),
         pitch_mm: None,
         direction: CutDirection::Climb,
-        allowance_mm: 0.0,
+        stock_to_leave_mm: 0.0,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
     }

@@ -68,7 +68,7 @@ pub enum WarningCode {
     PocketNoRoom,
     /// Two of a pocket's boundaries, an island and the wall or two
     /// islands, are closer than the tool needs to pass between them (its
-    /// diameter plus twice the allowance), so the material between them
+    /// diameter plus twice the stock to leave), so the material between them
     /// stays.
     PocketIslandTooClose,
     /// The entry asked for did not fit a shape, so its passes start with
@@ -100,10 +100,10 @@ pub enum WarningCode {
     /// uncut material.
     ReliefCornerNotCut,
     /// A Profile has a last pass, but its cut is one pass deep, so that
-    /// pass is the last and no pass leaves the allowance (#310 review).
+    /// pass is the last and no pass leaves stock (#310 review).
     LastPassUnused,
     /// A Profile's last pass turns on an inside arc tighter than its
-    /// allowance, where its feed is lowered only to the least the safety
+    /// stock to leave, where its feed is lowered only to the least the safety
     /// pass accepts, so its cutting edge moves faster than the feed
     /// (#335).
     LastPassEdgeFaster,
@@ -156,10 +156,10 @@ pub enum WarningCode {
     BoreTargetNotCircle,
     /// A Bore hole leaves the helix less than
     /// [`crate::BORE_MIN_HELIX_RADIUS_MM`] of radius: the tool, with
-    /// the allowance, does not fit it or fits it too closely to spiral, so
+    /// the stock to leave, does not fit it or fits it too closely to spiral, so
     /// it was skipped.
     BoreNoRoom,
-    /// A Bore hole is wider than twice the tool plus twice the allowance:
+    /// A Bore hole is wider than twice the tool plus twice the stock to leave:
     /// the helix would leave a core standing in the middle, loose in a
     /// through hole, so it was skipped.
     BoreLeavesCore,
@@ -483,10 +483,10 @@ pub enum Warning {
         other: IslandNeighbour,
         /// The distance between them.
         gap_mm: f64,
-        /// The distance the tool needs: `diameter_mm + 2 × allowance_mm`.
+        /// The distance the tool needs: `diameter_mm + 2 × stock_to_leave_mm`.
         needed_mm: f64,
-        /// The operation's allowance.
-        allowance_mm: f64,
+        /// The operation's stock to leave.
+        stock_to_leave_mm: f64,
         /// The tool's name.
         tool: String,
         /// The tool's id.
@@ -589,8 +589,8 @@ pub enum Warning {
         shape: ShapeRef,
         /// The tightest such arc's radius, the tool centre's, mm.
         radius_mm: f64,
-        /// The allowance, mm.
-        allowance_mm: f64,
+        /// The stock to leave, mm.
+        stock_to_leave_mm: f64,
         /// The feed the arc runs at, mm/min.
         feed_mm_min: f64,
         /// How many times the feed the cutting edge moves at there.
@@ -719,8 +719,8 @@ pub enum Warning {
         hole_mm: f64,
         /// The tool's diameter.
         tool_mm: f64,
-        /// The operation's radial allowance.
-        allowance_mm: f64,
+        /// The operation's radial stock to leave.
+        stock_to_leave_mm: f64,
         /// The hole is the tool's size within the flatten tolerance or
         /// wider, so a Drill cuts it.
         drill_fits: bool,
@@ -735,8 +735,8 @@ pub enum Warning {
         hole_mm: f64,
         /// The tool's diameter.
         tool_mm: f64,
-        /// The operation's radial allowance.
-        allowance_mm: f64,
+        /// The operation's radial stock to leave.
+        stock_to_leave_mm: f64,
         /// The diameter of the core the helix would leave.
         core_mm: f64,
     },
@@ -1144,7 +1144,7 @@ impl fmt::Display for Warning {
                 other,
                 gap_mm,
                 needed_mm,
-                allowance_mm,
+                stock_to_leave_mm,
                 tool,
                 diameter_mm,
                 ..
@@ -1153,10 +1153,10 @@ impl fmt::Display for Warning {
                     IslandNeighbour::Wall => "the pocket wall".to_owned(),
                     IslandNeighbour::Island(index) => format!("island profile {index}"),
                 };
-                let needs = if *allowance_mm > 0.0 {
+                let needs = if *stock_to_leave_mm > 0.0 {
                     format!(
-                        "tool `{tool}` needs with a {} mm allowance ({} mm)",
-                        mm(*allowance_mm),
+                        "tool `{tool}` needs with {} mm stock to leave ({} mm)",
+                        mm(*stock_to_leave_mm),
                         diameter(*needed_mm)
                     )
                 } else {
@@ -1299,20 +1299,20 @@ impl fmt::Display for Warning {
                 mm(*y_mm)
             ),
             Self::LastPassUnused { .. } => f.write_str(
-                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves stock; it cuts as with last_pass null",
             ),
             Self::LastPassEdgeFaster {
                 shape,
                 radius_mm,
-                allowance_mm,
+                stock_to_leave_mm,
                 feed_mm_min,
                 edge_ratio,
                 ..
             } => write!(
                 f,
-                "its last pass round {shape} turns on an inside arc of {} mm, tighter than the {} mm allowance, where it runs at {} mm/min, the least the safety pass allows, so its cutting edge there moves at {} times the feed; use a smaller bit, larger inside radii or a smaller allowance",
+                "its last pass round {shape} turns on an inside arc of {} mm, tighter than the {} mm stock to leave, where it runs at {} mm/min, the least the safety pass allows, so its cutting edge there moves at {} times the feed; use a smaller bit, larger inside radii or a smaller stock to leave",
                 rounded(*radius_mm, 3),
-                mm(*allowance_mm),
+                mm(*stock_to_leave_mm),
                 mm(*feed_mm_min),
                 rounded(*edge_ratio, 2)
             ),
@@ -1325,7 +1325,7 @@ impl fmt::Display for Warning {
                 ..
             } => write!(
                 f,
-                "its last pass round {shape} follows a curve drawn as straight segments, which it does not slow down for, and near ({}, {}) mm its tool path bends on a radius of about {} mm, so its cutting edge there moves at about {} times the feed; lower the feed, use a smaller allowance or redraw the curve with arcs",
+                "its last pass round {shape} follows a curve drawn as straight segments, which it does not slow down for, and near ({}, {}) mm its tool path bends on a radius of about {} mm, so its cutting edge there moves at about {} times the feed; lower the feed, use a smaller stock to leave or redraw the curve with arcs",
                 mm(*x_mm),
                 mm(*y_mm),
                 rounded(*radius_mm, 2),
@@ -1415,7 +1415,7 @@ impl fmt::Display for Warning {
                 shape,
                 hole_mm,
                 tool_mm,
-                allowance_mm,
+                stock_to_leave_mm,
                 drill_fits,
                 ..
             } => {
@@ -1425,8 +1425,8 @@ impl fmt::Display for Warning {
                     diameter(*hole_mm),
                     diameter(*tool_mm)
                 )?;
-                if *allowance_mm > 0.0 {
-                    write!(f, " and its {} mm allowance", mm(*allowance_mm))?;
+                if *stock_to_leave_mm > 0.0 {
+                    write!(f, " and its {} mm stock to leave", mm(*stock_to_leave_mm))?;
                 }
                 if *drill_fits {
                     write!(
@@ -1760,7 +1760,7 @@ mod tests {
                     other: IslandNeighbour::Wall,
                     gap_mm: 4.999_9,
                     needed_mm: 6.35,
-                    allowance_mm: 0.0,
+                    stock_to_leave_mm: 0.0,
                     tool: "t".to_owned(),
                     tool_id: "t1".into(),
                     diameter_mm: 6.35,
@@ -1775,12 +1775,12 @@ mod tests {
                     other: IslandNeighbour::Island(4),
                     gap_mm: 7.0,
                     needed_mm: 7.350_000_1,
-                    allowance_mm: 0.5,
+                    stock_to_leave_mm: 0.5,
                     tool: "t".to_owned(),
                     tool_id: "t1".into(),
                     diameter_mm: 6.35,
                 },
-                "in the pocket of `Shape` (instance `i1`, profile 2), island profile 3 is 7 mm from island profile 4, closer than tool `t` needs with a 0.5 mm allowance (7.35 mm), so the material between them is left uncut",
+                "in the pocket of `Shape` (instance `i1`, profile 2), island profile 3 is 7 mm from island profile 4, closer than tool `t` needs with 0.5 mm stock to leave (7.35 mm), so the material between them is left uncut",
             ),
             (
                 Warning::EntryFallback {
@@ -1929,18 +1929,18 @@ mod tests {
             ),
             (
                 Warning::LastPassUnused { op: op() },
-                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves the allowance; it cuts as with last_pass null",
+                "it has a last_pass, but its cut is only one pass deep, so that pass is the last and no pass leaves stock; it cuts as with last_pass null",
             ),
             (
                 Warning::LastPassEdgeFaster {
                     op: op(),
                     shape: shape(),
                     radius_mm: 0.325,
-                    allowance_mm: 0.5,
+                    stock_to_leave_mm: 0.5,
                     feed_mm_min: 136.054_421_768_707_5,
                     edge_ratio: 1.465_201_465,
                 },
-                "its last pass round `Shape` (instance `i1`, profile 2) turns on an inside arc of 0.325 mm, tighter than the 0.5 mm allowance, where it runs at 136.05 mm/min, the least the safety pass allows, so its cutting edge there moves at 1.47 times the feed; use a smaller bit, larger inside radii or a smaller allowance",
+                "its last pass round `Shape` (instance `i1`, profile 2) turns on an inside arc of 0.325 mm, tighter than the 0.5 mm stock to leave, where it runs at 136.05 mm/min, the least the safety pass allows, so its cutting edge there moves at 1.47 times the feed; use a smaller bit, larger inside radii or a smaller stock to leave",
             ),
             (
                 Warning::LastPassFlattenedCurve {
@@ -1951,7 +1951,7 @@ mod tests {
                     y_mm: 20.0,
                     edge_ratio: 3.571_9,
                 },
-                "its last pass round `Shape` (instance `i1`, profile 2) follows a curve drawn as straight segments, which it does not slow down for, and near (25.5, 20) mm its tool path bends on a radius of about 1.23 mm, so its cutting edge there moves at about 3.6 times the feed; lower the feed, use a smaller allowance or redraw the curve with arcs",
+                "its last pass round `Shape` (instance `i1`, profile 2) follows a curve drawn as straight segments, which it does not slow down for, and near (25.5, 20) mm its tool path bends on a radius of about 1.23 mm, so its cutting edge there moves at about 3.6 times the feed; lower the feed, use a smaller stock to leave or redraw the curve with arcs",
             ),
             (
                 Warning::EngravePathDegenerate {
@@ -2052,7 +2052,7 @@ mod tests {
                     shape: shape(),
                     hole_mm: 3.0,
                     tool_mm: 3.175,
-                    allowance_mm: 0.0,
+                    stock_to_leave_mm: 0.0,
                     drill_fits: false,
                 },
                 "the 3 mm hole `Shape` (instance `i1`, profile 2) leaves the 3.175 mm tool no room: the tool does not fit, so it is not bored; use a smaller end mill",
@@ -2063,10 +2063,10 @@ mod tests {
                     shape: shape(),
                     hole_mm: 3.175,
                     tool_mm: 3.175,
-                    allowance_mm: 0.02,
+                    stock_to_leave_mm: 0.02,
                     drill_fits: true,
                 },
-                "the 3.175 mm hole `Shape` (instance `i1`, profile 2) leaves the 3.175 mm tool and its 0.02 mm allowance no room to spiral, so it is not bored; a hole the bit's size is a Drill's: drill it with a Drill",
+                "the 3.175 mm hole `Shape` (instance `i1`, profile 2) leaves the 3.175 mm tool and its 0.02 mm stock to leave no room to spiral, so it is not bored; a hole the bit's size is a Drill's: drill it with a Drill",
             ),
             (
                 Warning::BoreLeavesCore {
@@ -2074,7 +2074,7 @@ mod tests {
                     shape: shape(),
                     hole_mm: 10.0,
                     tool_mm: 3.175,
-                    allowance_mm: 0.0,
+                    stock_to_leave_mm: 0.0,
                     core_mm: 3.65,
                 },
                 "the 10 mm hole `Shape` (instance `i1`, profile 2) is more than twice the 3.175 mm tool: a helix along its wall would leave a 3.65 mm core standing, which comes loose in a through hole, so it is not bored; clear it with a Pocket, or use a bigger end mill",

@@ -101,7 +101,7 @@ fn circles(diameter_mm: f64, centres: &[(f64, f64)]) -> Project {
 }
 
 /// The plaque's Bore of every instance: through 11.8 mm with 0.2 mm
-/// allowance, climb, pitch from the tool.
+/// through-cut allowance, climb, pitch from the tool.
 fn bore_op(project: &Project) -> BoreOp {
     BoreOp {
         id: OperationId::new("o1"),
@@ -112,7 +112,7 @@ fn bore_op(project: &Project) -> BoreOp {
         depth_mm: Some(12.0),
         pitch_mm: None,
         direction: CutDirection::Climb,
-        allowance_mm: 0.0,
+        stock_to_leave_mm: 0.0,
         through_cut_allowance_mm: 0.2,
         safe_z_mm: 15.0,
     }
@@ -363,13 +363,13 @@ fn pitch_over_step_down_is_error() {
     );
 }
 
-/// The allowance leaves that much on the wall: the helix radius is the
-/// hole's less the tool's and the allowance. A negative one is refused.
+/// The stock to leave stays on the wall: the helix radius is the
+/// hole's less the tool's and the stock to leave. A negative one is refused.
 #[test]
-fn allowance_shrinks_helix() {
+fn stock_to_leave_shrinks_helix() {
     let p = circles(5.0, &[(50.0, 50.0)]);
     let mut op = bore_op(&p);
-    op.allowance_mm = 0.1;
+    op.stock_to_leave_mm = 0.1;
     let (toolpath, warnings) = generate(&p, &op);
     assert!(warnings.is_empty(), "{warnings:?}");
     let centre = Point::new(50.0, 50.0);
@@ -379,13 +379,13 @@ fn allowance_shrinks_helix() {
     for (_, m) in helix_moves(&toolpath) {
         assert_approx_eq!(m.to.xy().distance_to(centre), 0.8125, TOL);
     }
-    op.allowance_mm = -0.1;
+    op.stock_to_leave_mm = -0.1;
     let err = generate_bore(&p, &op).unwrap_err();
     assert!(
         matches!(
             err,
             CamError::InvalidBoreSetting {
-                field: "allowance_mm",
+                field: "stock_to_leave_mm",
                 ..
             }
         ),

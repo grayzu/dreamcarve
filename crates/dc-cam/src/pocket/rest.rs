@@ -10,13 +10,13 @@
 //! step 3): what an earlier Pocket of the same region left, and where this
 //! operation's tool centre must go to clear it.
 //!
-//! The earlier Pocket is known only by its tool radius `R` and allowance
+//! The earlier Pocket is known only by its tool radius `R` and stock to leave
 //! `A`, read from the project; its toolpath is never trusted (S14). The
 //! area it reached is its tool-centre region (the region inset by `R + A`)
 //! grown by `R`, as upstream `generateAreaRestRegionDrafts` builds it
 //! (`buildInsetRegions` by `toolRadius + radialLeave`, then a round offset by
 //! `toolRadius`). What it left is the region, less this operation's own
-//! allowance, minus that.
+//! stock to leave, minus that.
 //!
 //! Upstream turns the leftover into draft features (corner triangles and
 //! residual blobs) that a later operation pockets as regions of their own.
@@ -42,8 +42,8 @@ use dc_geometry::{Contour, Region, difference, distance_mm, intersection, nest, 
 pub struct Reference {
     /// Its tool's radius, mm.
     pub radius_mm: f64,
-    /// Its `allowance_mm`.
-    pub allowance_mm: f64,
+    /// Its `stock_to_leave_mm`.
+    pub stock_to_leave_mm: f64,
 }
 
 /// `region` grown by `by_mm` (≥ 0): its outer offset outward and its holes
@@ -83,24 +83,24 @@ pub(super) fn grow_all(regions: &[Region], by_mm: f64, tolerance_mm: f64) -> Vec
 pub fn reachable(region: &Region, reference: Reference, tolerance_mm: f64) -> Vec<Region> {
     let centre = inset_region(
         region,
-        reference.radius_mm + reference.allowance_mm,
+        reference.radius_mm + reference.stock_to_leave_mm,
         tolerance_mm,
     );
     grow_all(&centre, reference.radius_mm, tolerance_mm)
 }
 
 /// The material of `region` the reference left that this operation, at
-/// `allowance_mm`, should remove: the region less the allowance, minus
+/// `stock_to_leave_mm`, should remove: the region less the stock to leave, minus
 /// [`reachable`], noise dropped. Empty when the reference left nothing.
 #[must_use]
 pub fn left_by(
     region: &Region,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     reference: Reference,
     tolerance_mm: f64,
 ) -> Vec<Region> {
-    let material = if allowance_mm > 0.0 {
-        inset_region(region, allowance_mm, tolerance_mm)
+    let material = if stock_to_leave_mm > 0.0 {
+        inset_region(region, stock_to_leave_mm, tolerance_mm)
     } else {
         vec![region.clone()]
     };
@@ -216,14 +216,14 @@ mod tests {
         assert!(grown[0].holes().is_empty());
     }
 
-    /// A reference with no allowance reaches the walls of a rect: only the
+    /// A reference with no stock to leave reaches the walls of a rect: only the
     /// four corner wedges are left, `(4 − π) R²` in all.
     #[test]
-    fn reference_without_allowance_leaves_corner_wedges() {
+    fn reference_without_stock_to_leave_leaves_corner_wedges() {
         let region = rect(0.0, 0.0, 100.0, 50.0);
         let reference = Reference {
             radius_mm: 5.0,
-            allowance_mm: 0.0,
+            stock_to_leave_mm: 0.0,
         };
         let left = left_by(&region, 0.0, reference, TOL);
         assert_eq!(left.len(), 4, "{left:?}");
@@ -255,14 +255,14 @@ mod tests {
         assert!(!in_air(&around(2.0), &left, TOL, TOL));
     }
 
-    /// With an allowance the reference leaves a band of that width too:
+    /// With a stock to leave the reference leaves a band of that width too:
     /// one ring-shaped piece.
     #[test]
-    fn reference_allowance_leaves_a_band() {
+    fn reference_stock_to_leave_leaves_a_band() {
         let region = rect(0.0, 0.0, 100.0, 50.0);
         let reference = Reference {
             radius_mm: 5.0,
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
         };
         let left = left_by(&region, 0.0, reference, TOL);
         assert_eq!(left.len(), 1, "{left:?}");
@@ -270,7 +270,7 @@ mod tests {
         // The band plus the corners beyond it.
         let band = 5000.0 - 99.0 * 49.0;
         assert!(area_mm2(&left) > band, "{}", area_mm2(&left));
-        // At the same allowance as the reference only the corners are left.
+        // At the same stock to leave as the reference only the corners are left.
         let left = left_by(&region, 0.5, reference, TOL);
         assert_eq!(left.len(), 4, "{left:?}");
     }

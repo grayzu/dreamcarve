@@ -18,7 +18,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   them: `offset` (rings stepping in from the wall) and `raster` (parallel lines
   at an angle you choose, joined in a zigzag). Both end with a wall pass, first,
   last or none. Stepover is a fraction of the tool diameter (`init` and the tool
-  library default to 0.4), and `allowance_mm` leaves material on the walls for a
+  library default to 0.4), and `stock_to_leave_mm` leaves material on the walls for a
   finishing pass.
 - **Rest machining.** A Pocket can name an earlier Pocket in `rest_of` and then
   clears only what the larger tool could not reach.
@@ -37,7 +37,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   inside the hole, `pitch_mm` a turn (the tool's step-down by default, never
   more), from 1 mm above the stock top to the depth, then cuts one full circle
   there and moves to the centre before it lifts. `direction` is climb or
-  conventional, and `allowance_mm` leaves material on the wall for a second,
+  conventional, and `stock_to_leave_mm` leaves material on the wall for a second,
   finishing Bore. A hole the bit has no room to spiral in is skipped with
   `bore_no_room` (one the bit's size is a Drill's, and the warning says so),
   and one wider than twice the bit with `bore_leaves_core`, since the helix
@@ -70,7 +70,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   inside corners a round bit cannot reach, so square parts fit. The notches
   are cut as part of the wall pass: on every pass, the Pocket's wall ring or
   the Profile's lap goes out to each corner and back as it turns it, with no
-  lift, stepping down at the tool's step-down. A Pocket with an allowance
+  lift, stepping down at the tool's step-down. A Pocket with stock to leave
   still cuts its notches in a separate pass after the pocket ([#373]).
 - **On line Profile of open paths.** An open path can now be cut On line, with
   ramps and tabs, as VCarve's Profile "On" does ([#175]). Inside and Outside still
@@ -195,33 +195,33 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   for a length, 3 for a feed, [#380]), so the program is the one the
   millimetre numbers give; a bad unit is an error at its line and column. A
   command that saves the file writes millimetre numbers back ([#282]).
-- **Profile last pass allowance; project format version 13.** A Profile's
-  `last_pass` (`allowance_mm`, `thickness_mm`, `reverse`) is VCarve's "Last
-  Pass Allowance": every pass but the last runs `allowance_mm` farther from
+- **Profile last pass stock to leave; project format version 13.** A Profile's
+  `last_pass` (`stock_to_leave_mm`, `thickness_mm`, `reverse`) is VCarve's "Last
+  Pass Allowance": every pass but the last runs `stock_to_leave_mm` farther from
   the part, and the last pass cuts on the part's path at full depth, so it
   takes an even skin off the whole wall and leaves no step marks
   ([#284]). `thickness_mm` sets how deep that last pass is; `reverse` cuts it
   the other way round. Tabs, leads, ramps, helixes and corner relief work with
   it: the earlier passes rise over a slightly longer stretch round each tab,
-  and the notches are cut from the last pass. The allowance must be more than
+  and the notches are cut from the last pass. The stock to leave must be more than
   0 and at most a third of the bit's diameter, on an Inside, Outside, Left
   or Right Profile, and `thickness_mm` at most the step-down. The last pass takes
-  off at most the allowance (√2 times it in a square corner), except in a
+  off at most the stock to leave (√2 times it in a square corner), except in a
   sharp corner, where it takes the wedge the earlier passes stop short of,
   up to a third of the bit ([#324]): triangles and stars cut inside, V
   notches cut outside and letters such as A, V and W are cut, not refused.
   A drawing the earlier passes cannot follow (a band, neck, slot, notch or
-  hole that fits the bit but not the bit plus the allowance, a tip whose
+  hole that fits the bit but not the bit plus the stock to leave, a tip whose
   wedge is thicker than that, or a part that close to another) is refused,
   naming the shapes. A one-pass
   cut warns `last_pass_unused`. `last_pass` is `null` in
   `init` and in upgraded projects, which cut exactly as before. Older
   DreamCarve versions cannot read version 13 files. Left and Right
   Profiles take a last pass too ([#311]): the earlier passes run the
-  allowance farther to the cut side and end on the same lines through the
+  stock to leave farther to the cut side and end on the same lines through the
   path's ends as the last pass, so none cuts past an end and the skin is
   taken off right up to each; `reverse` starts the last pass at the other
-  end. The earlier passes must keep the bit's radius plus the allowance
+  end. The earlier passes must keep the bit's radius plus the stock to leave
   from every other line and the strip it keeps. On an outline or an open
   path, the earlier passes now also rise over the thin edge of a tab where
   the last pass rises onto it, at the far side of its cut.
@@ -270,7 +270,7 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
   moves more than 1.5 times the feed (in a 12 × 8 mm ellipse cut Inside with a
   6.35 mm bit, about 1.9 times), the operation warns
   `last_pass_flattened_curve`, naming the shape and where. Feeds and G-code
-  are unchanged. Lower the feed, use a smaller allowance, or redraw the curve
+  are unchanged. Lower the feed, use a smaller stock to leave, or redraw the curve
   with arcs ([#350]).
 - **Documentation:** a quick start, "A pocketed plaque from DXF", and chapters
   for Pocket, Drill, Bore, Engrave, machining order, importing DXF, the tool library,
@@ -281,6 +281,14 @@ controllers. This section becomes `0.2.0` when phase 2 is tagged.
 
 These change what a project from 0.1 exports, or how DreamCarve behaves.
 
+- **`allowance_mm` is `stock_to_leave_mm`; project format version 19.**
+  The material a Pocket, a Bore or a Profile's last pass leaves on the wall
+  is its stock to leave, as Fusion names it, so it no longer shares a name
+  with `through_cut_allowance_mm`, the depth a cut may go below the stock
+  (#394). A version 18 file loads with each value under the new name, and
+  exports the same G-code; saving writes only `stock_to_leave_mm`. The
+  validation code `last_pass_allowance` is now `last_pass_stock_to_leave`,
+  and messages say "stock to leave" for "allowance".
 - **Inch tools import with exact millimetre values.** Fusion import rounds
   every value it converts from inches, lengths to 6 decimal places and feeds
   to 3, so 3/16" is 4.7625 mm and 60 in/min 1524 mm/min instead of
@@ -454,26 +462,26 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
 
 ### Fixed
 
-- A Profile's last pass no longer plunges through its allowance. It went
-  straight down at its own start, where the allowance stands uncut to the
+- A Profile's last pass no longer plunges through its stock to leave. It went
+  straight down at its own start, where the stock to leave stands uncut to the
   stock top, as far as the earlier passes' floor before its ramp, or to the
   full depth with a plunge entry: up to 12 mm into material on a 12 mm cut in
   4 mm passes. It now goes down where the earlier passes ended, into their
   floor, with the operation's entry (a plunge one step-down deep, a ramp
   along their path inside their slot, a helix in their bore), then steps
-  across the allowance onto its own path. No plunge goes deeper into uncut
+  across the stock to leave onto its own path. No plunge goes deeper into uncut
   material than a step-down. A last pass lead-in that starts too far from
   the earlier passes' cut is left off with `lead_dropped` ([#339]).
 - A Left or Right Profile with a last pass no longer fails export when its
   open path's end comes back beside its start. The two passes then start
   where they come within their own distance of that end, on two circles round
-  it, so the last pass's step across the allowance runs a little off the
+  it, so the last pass's step across the stock to leave runs a little off the
   normal, and the safety check refused it although it stays between the
   first segment's two passes, in material the operation cuts. The check now
   accepts a step between one segment's two offsets as well; a step past an
   open end or on the kept side still fails ([#358]).
 - A Profile's last pass no longer comes down a tab taller than the step-down
-  in one move. The earlier passes never cut the allowance, so at a rect tab's
+  in one move. The earlier passes never cut the stock to leave, so at a rect tab's
   far end it dropped the tab's whole height into it: 6 mm for a 6 mm tab cut
   in 4 mm passes, 10 mm in a 1.44 mm-step cut. It now comes down in stages,
   first to the floor of the earlier pass beside it, then one pass level at a
@@ -511,7 +519,7 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   0.05 mm² of the strip the path keeps for a 30° V with a 2 mm last segment
   and a 6.35 mm bit. Such a path is now refused, naming the vertex
   (`EndSegmentHasNoRoom`), with a last pass too when only the bit plus the
-  allowance has no room; the strip a line keeps ends square at its end
+  stock to leave has no room; the strip a line keeps ends square at its end
   vertices, so a cut that reaches into it past an end is refused; and the
   safety pass's S9 holds every program to that strip ([#342]).
 - A Profile whose cut starts under a tab no longer plunges into the tab on
@@ -539,8 +547,7 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   bit diameters) into full-height stock at the cutting feed: 19 mm, about
   11 mm deep, for a 15 mm boss with a lead. Each pass now ramps along the
   line the pass above ramped on, cut short of the tabs, or plunges one step
-  down at its start with `entry_fallback`. A last pass after its allowance
-  passes, and a pass after one that plunged or went down by helix, plunge
+  down at its start with `entry_fallback`. A last pass after its stock passes, and a pass after one that plunged or went down by helix, plunge
   the same way, and so does a ramp that would go down less than 0.05 mm,
   whose one leg ran the whole line. Four committed programs change by one
   or two lines, each a ramp that left the trench ([#352]).
@@ -611,7 +618,7 @@ it is written:
   cut of the operation where that cut ran below the stock top, unless it
   started at or above the stock top ([#352], [#356]).
 - **S3, changed:** a Profile's last pass may run a level cut slower than
-  the tool's feed, down to the feed times the allowance over the allowance plus
+  the tool's feed, down to the feed times the stock to leave over the stock to leave plus
   the bit's radius, the speed its inside arcs run at in the smallest hole it
   cuts ([#335]).
 - **S10:** a ramp or helix never descends faster than the plunge rate.

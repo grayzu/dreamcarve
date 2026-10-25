@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `18`. |
+| `version` | Format version. This build writes `19`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -418,7 +418,7 @@ Profile cuts them as set:
 | `entry` | How the tool reaches each pass depth: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` (angle greater than 0 and at most 45), or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }` (fraction greater than 0 and at most 1, same angle range). A helix needs material the cut removes, so it is an error on an On line, Left or Right Profile. `init` writes the 15° ramp; a project upgraded from version 7 keeps `"plunge"`, so it cuts as before. See [Entry](profile.md#entry). |
 | `lead` | `null`, or `{ "radius_mm": 2.0, "sweep_deg": 90.0, "lead_out": true, "overcut_mm": 0.0 }`: an arc tangent to the cut on the way in and, with `lead_out`, out. Radius greater than 0; sweep greater than 0 and at most 180; overcut 0 or more. Profile only; not cut On line, Left or Right. See [Leads](profile.md#leads). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each internal corner a round tool cannot reach. Pocket and Profile. Steps down at the tool's `step_down_mm`, so that must be set. See [Pocket: corner relief](pocket.md#corner-relief) and [Profile: corner relief](profile.md#corner-relief). |
-| `last_pass` | `null`, or `{ "allowance_mm": 0.5, "thickness_mm": null, "reverse": false }`: every pass but the last leaves `allowance_mm` on the wall (more than 0, at most a third of the bit's diameter), and the last pass cuts to size at full depth. `thickness_mm` is `null` for the usual last pass, or how deep the last pass cuts (more than 0, at most `depth_mm`); It may be no thicker than the step-down in effect. `reverse` cuts the last pass the other way round. All three keys are needed. Inside, Outside, Left and Right Profiles; not On line. `init` writes `null`, and a project upgraded from version 12 gets `null`, so it cuts as before. See [Last pass](profile.md#last-pass). |
+| `last_pass` | `null`, or `{ "stock_to_leave_mm": 0.5, "thickness_mm": null, "reverse": false }`: every pass but the last leaves `stock_to_leave_mm` on the wall (more than 0, at most a third of the bit's diameter), and the last pass cuts to size at full depth. `thickness_mm` is `null` for the usual last pass, or how deep the last pass cuts (more than 0, at most `depth_mm`); It may be no thicker than the step-down in effect. `reverse` cuts the last pass the other way round. All three keys are needed. Inside, Outside, Left and Right Profiles; not On line. `init` writes `null`, and a project upgraded from version 12 gets `null`, so it cuts as before. See [Last pass](profile.md#last-pass). |
 | `start` | `"auto"`, `"first_vertex"` or `{ "near": { "x_mm": 0.0, "y_mm": 0.0 } }`: where each closed outline's cut starts, at the point of the bit's path nearest the outline's first vertex as drawn or nearest that project point. Tabs a request lays are measured from there, a lead arrives there or is dropped, and an entry with no room there falls back rather than moving. Open paths ignore it. `init` writes `"auto"`, and a project upgraded from version 13 gets `"auto"`, so it cuts as before. Profile only. See [Start point](profile.md#start-point). |
 
 A Pocket, Drill, Bore or Engrave has `kind`, `id`, `name`, `enabled`, `targets`,
@@ -427,9 +427,9 @@ same meaning, plus its own fields:
 
 | Kind | Own fields |
 | --- | --- |
-| `"pocket"` | `strategy`: `"offset"` or `{ "raster": { "angle_deg": 45.0 } }` (0 or more, less than 180); `wall_pass`: `"last"`, `"first"` or `"none"`; `step_down_mm` and `step_over_fraction` (`null` for the tool's); `direction`; `allowance_mm` (0 or more, material left on the walls); `rest_of` (`null`, or the id of an earlier enabled Pocket with the same `targets`, whose leftovers this one clears); `entry`; `corner_relief`; `machining_order`. The tool must be an `"end_mill"`. |
+| `"pocket"` | `strategy`: `"offset"` or `{ "raster": { "angle_deg": 45.0 } }` (0 or more, less than 180); `wall_pass`: `"last"`, `"first"` or `"none"`; `step_down_mm` and `step_over_fraction` (`null` for the tool's); `direction`; `stock_to_leave_mm` (0 or more, material left on the walls); `rest_of` (`null`, or the id of an earlier enabled Pocket with the same `targets`, whose leftovers this one clears); `entry`; `corner_relief`; `machining_order`. The tool must be an `"end_mill"`. |
 | `"drill"` | `cycle`: `"simple"` or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, where `peck_depth_mm` may be `null` for the tool's `step_down_mm` and `retract` is `"full"` or `{ "chip_break": { "gap_mm": 0.5 } }` (greater than 0); `dwell_s` (0 or more; 0 is none); `retract_mm` (0 or more, above the hole top); `allow_tool_wider_than_hole` (`false` skips a circle smaller than the bit, with a warning; `true` drills it at the bit's size; from format version 17, `false` on upgrade). A cutter other than `"drill"` or `"end_mill"` is a warning. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
-| `"bore"` | `pitch_mm` (how far the helix goes down a turn; `null` for the tool's `step_down_mm`, and no more than it); `direction`; `allowance_mm` (0 or more, material left on the wall). The tool must be an `"end_mill"`. From format version 18. See [Bore](bore.md). |
+| `"bore"` | `pitch_mm` (how far the helix goes down a turn; `null` for the tool's `step_down_mm`, and no more than it); `direction`; `stock_to_leave_mm` (0 or more, material left on the wall). The tool must be an `"end_mill"`. From format version 18. See [Bore](bore.md). |
 | `"engrave"` | `step_down_mm` (`null` for the tool's); `alternate_direction` (`true` or `false`); `machining_order`. Any cutter; a V-bit deeper than its cone is tall is a warning. |
 
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md),
@@ -525,6 +525,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 16 | Adds each tool's `vendor` and `product_id` after its `name`, `null` on upgrade: who makes the tool and the maker's part number, which Fusion import fills in. No program uses them, so the project exports as before. See [`tools`](#tools). |
 | 17 | Adds `allow_tool_wider_than_hole` to each Drill, `false` on upgrade. A Drill now skips a circle smaller than its bit, with the warning `drill_hole_too_small`, where an older build drilled it at the bit's size: an upgraded project with such holes gives a different program. Set it to `true` to drill them as before. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
 | 18 | Adds the `"bore"` operation kind, which cuts circles bigger than the bit to size. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 18 file rather than misread a kind it does not know. See [Bore](bore.md). |
+| 19 | Renames `allowance_mm` to `stock_to_leave_mm` in each Pocket, each Bore and each Profile's `last_pass` (#394): the material they leave on the wall is their stock to leave, and `through_cut_allowance_mm` is the only allowance. The upgrade keeps each value, so the project exports as before; saving writes the new name. |
 
 ## What `check` reports
 
@@ -542,7 +543,7 @@ Errors stop export. Warnings do not.
 | A cut deeper than the stock plus its through-cut allowance | |
 | Shapes that cross each other, or a shape that crosses itself | |
 | A Profile whose tool does not fit between two lines of one shape, Inside or On line, or that would remove a whole part narrower than the bit On line ([Bands narrower than the bit](profile.md#bands-narrower-than-the-bit)) | |
-| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one, or one whose path ends in a segment too short for the bit, or for the bit plus the last pass allowance, on the inside of the turn before it ([Left and right](profile.md#left-and-right)) | |
+| A Left or Right Profile whose cut would cross another of its lines or reach the part side of one, or one whose path ends in a segment too short for the bit, or for the bit plus the last pass stock to leave, on the inside of the turn before it ([Left and right](profile.md#left-and-right)) | |
 | A post-processor `file_extension` that is not 1 to 8 letters or digits, or is `dcv` | |
 | A feed or plunge rate above 20 000 mm/min | A step-down deeper than the tool's diameter |
 | An Outside, Inside, Left or Right Profile, or a Pocket, whose tool is not an `"end_mill"` | A plunge rate above the feed rate |
@@ -551,8 +552,8 @@ Errors stop export. Warnings do not.
 | A Pocket's `rest_of` that is not an earlier enabled Pocket with the same `targets` | A Drill whose cutter is not `"drill"` or `"end_mill"` |
 | A `step_over_fraction`, lead, entry, raster angle, dwell, retract, peck or chip-break value outside its range (see [`operations`](#operations)) | `corner_relief` on a tool with no `step_down_mm` (the relief is skipped) |
 | A helix `entry` on an On line, Left or Right Profile | An Engrave with a V-bit deeper than the bit's cone |
-| A `last_pass` on an On line Profile; a `last_pass.thickness_mm` that is 0 or less, deeper than `depth_mm` or (for an enabled Profile) thicker than its step-down; a `last_pass.allowance_mm` that is 0 or less or more than a third of the tool's diameter | |
-| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the allowance on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or an allowance pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, an allowance pass that would come within the bit's radius plus the allowance of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
+| A `last_pass` on an On line Profile; a `last_pass.thickness_mm` that is 0 or less, deeper than `depth_mm` or (for an enabled Profile) thicker than its step-down; a `last_pass.stock_to_leave_mm` that is 0 or less or more than a third of the tool's diameter | |
+| A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the stock to leave on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or a stock pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, a stock pass that would come within the bit's radius plus the stock to leave of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at

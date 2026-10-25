@@ -65,7 +65,7 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     // #335: a last pass's inside arcs run as slow as `feed · a / (a + r)`.
     let level_floor_mm_min = match op {
         Operation::Profile(p) => p.last_pass.as_ref().map_or(feed_mm_min, |l| {
-            feed_mm_min * l.allowance_mm / (l.allowance_mm + tool.diameter_mm / 2.0)
+            feed_mm_min * l.stock_to_leave_mm / (l.stock_to_leave_mm + tool.diameter_mm / 2.0)
         }),
         _ => feed_mm_min,
     };

@@ -1,7 +1,7 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! #311: a Left or Right Profile with a last pass allowance, checked on
+//! #311: a Left or Right Profile with a last pass stock to leave, checked on
 //! the emitted G-code with a material heightfield, independently of the
 //! generator. The program of an open L, cut beside it, is parsed back into
 //! project space and every cut is swept through the stock on a 0.1 mm
@@ -32,7 +32,7 @@ use dc_project::{
 
 const STOCK_MM: f64 = 12.0;
 const RADIUS_MM: f64 = 6.35 / 2.0;
-const ALLOWANCE_MM: f64 = 0.5;
+const STOCK_TO_LEAVE_MM: f64 = 0.5;
 const LATTICE_MM: f64 = 0.1;
 /// How far a written move may depart from the path, as S9 lets it: the
 /// project's flatten tolerance (a smooth tab's ramp on an arc is cut as
@@ -51,7 +51,7 @@ fn ell() -> Vec<Point> {
 
 /// The sample project on 200 × 150 × 12 mm stock, its one definition the
 /// open L, cut by `op` 12 mm deep in 4 mm passes with a 0.5 mm last pass
-/// allowance after `edit`.
+/// stock to leave after `edit`.
 fn project(side: Side, direction: CutDirection, edit: impl FnOnce(&mut ProfileOp)) -> Project {
     project_of(
         &[(0.0, 0.0), (60.0, 0.0), (60.0, 40.0)],
@@ -93,7 +93,7 @@ fn project_of(
     op.tabs = None;
     op.entry = Entry::Plunge;
     op.last_pass = Some(LastPass {
-        allowance_mm: ALLOWANCE_MM,
+        stock_to_leave_mm: STOCK_TO_LEAVE_MM,
         thickness_mm: None,
         reverse: false,
     });
@@ -159,7 +159,7 @@ struct Cut {
 
 /// The program `project` exports, its cutting moves split into passes:
 /// each run of cuts between rapids, a reversed last pass from its step
-/// across the allowance onto its path beside `line` (#339). `None` when the
+/// across the stock to leave onto its path beside `line` (#339). `None` when the
 /// generator refuses the drawing with an error that names it.
 fn passes(project: &Project, rough_floor_mm: f64, line: &[Point]) -> Option<Vec<Vec<Cut>>> {
     let Operation::Profile(op) = &project.operations[0] else {
@@ -168,8 +168,8 @@ fn passes(project: &Project, rough_floor_mm: f64, line: &[Point]) -> Option<Vec<
     let (toolpath, _) = match generate_profile(project, op) {
         Ok(generated) => generated,
         Err(
-            dc_cam::CamError::ShapeNarrowerThanAllowance { .. }
-            | dc_cam::CamError::AllowanceCutsIntoKeptSide { .. }
+            dc_cam::CamError::ShapeNarrowerThanStockToLeave { .. }
+            | dc_cam::CamError::StockToLeaveCutsIntoKeptSide { .. }
             | dc_cam::CamError::CutsIntoKeptSide { .. },
         ) => return None,
         Err(e) => panic!("{e}"),
@@ -279,7 +279,7 @@ struct Heights {
 impl Heights {
     /// Over the points within the cuts' reach of `line`.
     fn new(line: &[Point]) -> Self {
-        let margin = 2.0 * RADIUS_MM + ALLOWANCE_MM + 1.0;
+        let margin = 2.0 * RADIUS_MM + STOCK_TO_LEAVE_MM + 1.0;
         let (lo, hi) = line.iter().fold(
             (
                 Point::new(f64::MAX, f64::MAX),
@@ -390,7 +390,7 @@ fn check(project: &Project, expect: &Expect) -> bool {
     assert_eq!(passes.len(), expect.passes, "{case}: one run per pass");
     let last_index = passes.len() - 1;
     // #339: the last pass goes down on the earlier passes' path, then
-    // steps across the allowance, on the normal through the end it starts
+    // steps across the stock to leave, on the normal through the end it starts
     // at, onto its own: the cuts up to the first that ends `r` from the L.
     let mut passes = passes;
     let last = passes.pop().expect("a last pass");
@@ -403,7 +403,7 @@ fn check(project: &Project, expect: &Expect) -> bool {
         for p in &cut.samples {
             let gap_mm = place(line, p.xy()).gap_mm;
             assert!(
-                (gap_mm - (RADIUS_MM + ALLOWANCE_MM)).abs() <= SLACK_MM,
+                (gap_mm - (RADIUS_MM + STOCK_TO_LEAVE_MM)).abs() <= SLACK_MM,
                 "{case}: the last pass goes down {gap_mm} mm from the L at {p:?}"
             );
         }
@@ -411,8 +411,8 @@ fn check(project: &Project, expect: &Expect) -> bool {
     let across = &entry[step];
     assert!(
         (across.from.z - across.to.z).abs() <= 1e-6
-            && (across.from.xy().distance_to(across.to.xy()) - ALLOWANCE_MM).abs() <= SLACK_MM,
-        "{case}: the step across the allowance runs {:?} to {:?}; {:?}",
+            && (across.from.xy().distance_to(across.to.xy()) - STOCK_TO_LEAVE_MM).abs() <= SLACK_MM,
+        "{case}: the step across the stock to leave runs {:?} to {:?}; {:?}",
         across.from,
         across.to,
         entry.iter().map(|c| (c.from, c.to)).collect::<Vec<_>>()
@@ -429,7 +429,7 @@ fn check(project: &Project, expect: &Expect) -> bool {
     let entry: Vec<Cut> = entry.iter().map(clone_cut).collect();
     for (k, pass) in passes.iter().enumerate() {
         let away_mm = if k < last_index {
-            RADIUS_MM + ALLOWANCE_MM
+            RADIUS_MM + STOCK_TO_LEAVE_MM
         } else {
             RADIUS_MM
         };
@@ -538,17 +538,17 @@ fn check(project: &Project, expect: &Expect) -> bool {
             }
             // The skin, along the L away from its corner, where its
             // offsets are straight: up to each end normal the earlier
-            // passes leave the allowance standing and clear the rest of
+            // passes leave the stock to leave standing and clear the rest of
             // their kerf, and the last pass takes it off.
             let inside = at.along_mm > 0.0 && at.along_mm < length_mm;
             let off_corner = corners_mm
                 .iter()
-                .all(|c| (at.along_mm - c).abs() > 2.0 * RADIUS_MM + ALLOWANCE_MM + 1.0);
+                .all(|c| (at.along_mm - c).abs() > 2.0 * RADIUS_MM + STOCK_TO_LEAVE_MM + 1.0);
             if expect.tabbed || !inside || !off_corner {
                 continue;
             }
             let near_end = at.along_mm < 0.3 || at.along_mm > length_mm - 0.3;
-            if s > 0.05 && s < ALLOWANCE_MM - 0.05 {
+            if s > 0.05 && s < STOCK_TO_LEAVE_MM - 0.05 {
                 skin += 1;
                 ends += usize::from(near_end);
                 assert!(
@@ -556,7 +556,7 @@ fn check(project: &Project, expect: &Expect) -> bool {
                     "{case}: an earlier pass cuts the skin at {q:?}"
                 );
             }
-            if s > ALLOWANCE_MM + 0.05 && s < 2.0 * RADIUS_MM + ALLOWANCE_MM - 0.05 {
+            if s > STOCK_TO_LEAVE_MM + 0.05 && s < 2.0 * RADIUS_MM + STOCK_TO_LEAVE_MM - 0.05 {
                 assert!(
                     b <= expect.rough_floor_mm + 1e-6,
                     "{case}: the earlier passes leave {b} at {q:?}"
@@ -599,7 +599,7 @@ fn clone_cut(c: &Cut) -> Cut {
 ///   exactly `r`;
 /// - the ends: every pass starts and ends on the normals through the L's
 ///   end vertices, so none cuts past them or stops short; the earlier
-///   passes leave the allowance standing right up to each end and the
+///   passes leave the stock to leave standing right up to each end and the
 ///   last pass takes it off there too;
 /// - nothing goes below the material bottom;
 /// - every feed is the tool's, or derived from them and rounded down
@@ -629,7 +629,7 @@ fn left_right_last_pass_keeps_the_kept_side_and_cuts_to_the_ends() {
         let project = project(side, direction, |op| {
             op.entry = entry.clone();
             op.last_pass = Some(LastPass {
-                allowance_mm: ALLOWANCE_MM,
+                stock_to_leave_mm: STOCK_TO_LEAVE_MM,
                 thickness_mm,
                 reverse,
             });
@@ -780,7 +780,7 @@ fn left_right_last_pass_keeps_tabs_at_the_ends() {
                                         avoid_corners: false,
                                     });
                                     op.last_pass = Some(LastPass {
-                                        allowance_mm: ALLOWANCE_MM,
+                                        stock_to_leave_mm: STOCK_TO_LEAVE_MM,
                                         thickness_mm,
                                         reverse,
                                     });
@@ -873,13 +873,13 @@ fn notch(angle_deg: f64, last_mm: f64) -> Vec<(f64, f64)> {
 /// cut into the strip the path keeps there (about 0.05 mm² at 30° and
 /// 2 mm, the issue's repro) or the part past the end. Each is refused
 /// with `EndSegmentHasNoRoom`, located at the last vertex, the bit (not
-/// the allowance) having no room. Round the V every case is cut, and a
+/// the stock to leave) having no room. Round the V every case is cut, and a
 /// material heightfield of its emitted G-code shows no cut on the kept
 /// side within a radius of the path, past either end included, while the
 /// cut reaches both end normals. The exception, as before #342, is the
-/// 30° V with a 1 mm last segment and a last pass: the allowance pass's
+/// 30° V with a 1 mm last segment and a last pass: the stock pass's
 /// square end comes within `r + a` (3.58 mm) of the edge of the strip the
-/// first arm keeps inside the V, `AllowanceCutsIntoKeptSide`.
+/// first arm keeps inside the V, `StockToLeaveCutsIntoKeptSide`.
 #[test]
 fn open_path_short_end_segment_keeps_the_kept_strip() {
     let at = (60.0, 40.0);
@@ -929,7 +929,7 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
                             Err(dc_cam::CamError::EndSegmentHasNoRoom {
                                 vertex,
                                 length_mm,
-                                allowance_mm,
+                                stock_to_leave_mm,
                                 ..
                             }) if inside => {
                                 assert_eq!(vertex, 2, "{case}: the last vertex");
@@ -937,7 +937,7 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
                                     (length_mm - last_mm).abs() < 1e-9,
                                     "{case}: {length_mm} mm"
                                 );
-                                assert_eq!(allowance_mm, None, "{case}: the bit has no room");
+                                assert_eq!(stock_to_leave_mm, None, "{case}: the bit has no room");
                                 refused += 1;
                                 continue;
                             }
@@ -956,7 +956,7 @@ fn open_path_short_end_segment_keeps_the_kept_strip() {
                                     kept.first()
                                 );
                             }
-                            Err(dc_cam::CamError::AllowanceCutsIntoKeptSide { .. })
+                            Err(dc_cam::CamError::StockToLeaveCutsIntoKeptSide { .. })
                                 if !inside && last_pass && angle_deg < 40.0 && last_mm < 1.5 =>
                             {
                                 narrow += 1;

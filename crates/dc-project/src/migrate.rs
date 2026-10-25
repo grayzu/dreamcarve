@@ -87,6 +87,15 @@
 //!   hole narrower than its tool unless the setting is `true`. An earlier
 //!   file drilled such a hole at the tool's size; migrated, it skips it
 //!   with a warning, the behaviour change the decision asks for.
+//! - **18**: adds the Bore operation, `"kind": "bore"` (maintainer decision
+//!   2026-10-24). No version 17 file holds one, so the migration changes
+//!   only the version.
+//! - **19**: renames `allowance_mm` to `stock_to_leave_mm` in each Pocket,
+//!   each Bore and each Profile's non-null `last_pass` (#394, maintainer
+//!   decision 2026-10-25): the material they leave on the wall is their
+//!   stock to leave, and the through-cut allowance is the only allowance.
+//!   The value and the key's place are kept, so the file exports what it
+//!   did.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -97,7 +106,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 18;
+pub const CURRENT_VERSION: u32 = 19;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -124,6 +133,7 @@ fn step(from: u32) -> Option<Step> {
         15 => Some(v15_to_v16),
         16 => Some(v16_to_v17),
         17 => Some(v17_to_v18),
+        18 => Some(v18_to_v19),
         _ => None,
     }
 }
@@ -746,6 +756,66 @@ fn v17_to_v18(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
+/// Version 18 → 19 (#394, maintainer decision 2026-10-25): `allowance_mm`
+/// becomes `stock_to_leave_mm`, in place and with its value, in each
+/// Pocket, each Bore and each Profile's non-null `last_pass`. Other
+/// operations, and `through_cut_allowance_mm`, are unchanged. Fails if
+/// one of them already has `stock_to_leave_mm`: that is not a version 18
+/// file.
+fn v18_to_v19(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        let (target, at) = match op.get("kind").and_then(Value::as_str) {
+            Some("pocket" | "bore") => (op, format!("operations[{i}].")),
+            Some("profile") => match op.get_mut("last_pass") {
+                Some(last_pass @ Value::Object(_)) => {
+                    (last_pass, format!("operations[{i}].last_pass."))
+                }
+                _ => continue,
+            },
+            _ => continue,
+        };
+        let Value::Object(fields) = std::mem::take(target) else {
+            return Err(format!("`{at}` is not an object"));
+        };
+        *target = Value::Object(rename_key(
+            fields,
+            "allowance_mm",
+            "stock_to_leave_mm",
+            &at,
+        )?);
+    }
+    Ok(root)
+}
+
+/// `map` with key `from` renamed `to`, in its place. Fails if `to` is
+/// already there, naming it under `at` (a path prefix such as
+/// `operations[1].`).
+fn rename_key(
+    map: Map<String, Value>,
+    from: &str,
+    to: &str,
+    at: &str,
+) -> Result<Map<String, Value>, String> {
+    if map.contains_key(to) {
+        return Err(format!(
+            "a version 18 file has no `{at}{to}`, but this one does"
+        ));
+    }
+    Ok(map
+        .into_iter()
+        .map(|(k, v)| {
+            if k == from {
+                (to.to_owned(), v)
+            } else {
+                (k, v)
+            }
+        })
+        .collect())
+}
+
 /// `map` with `key: value` inserted right after `after`, or at the end
 /// when `after` is absent. Fails if `key` is already there, naming it
 /// under `at` (a path prefix such as `tools[0].`).
@@ -900,6 +970,20 @@ mod tests {
     const V3_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v3/sample.dcv");
     const V4_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v4/sample.dcv");
     const V5_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v5/sample.dcv");
+
+    /// The sample Pocket as raw JSON of `version`: before version 19 its
+    /// `stock_to_leave_mm` is `allowance_mm` (#394).
+    fn pocket_root_at(version: u32) -> Value {
+        let pocket =
+            serde_json::to_value(Operation::Pocket(crate::test_support::sample_pocket())).unwrap();
+        if version >= 19 {
+            return pocket;
+        }
+        let text = serde_json::to_string(&pocket)
+            .unwrap()
+            .replace("\"stock_to_leave_mm\"", "\"allowance_mm\"");
+        serde_json::from_str(&text).unwrap()
+    }
 
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it. Before version 7 it embeds the whole GRBL
@@ -1703,10 +1787,7 @@ mod tests {
         let profile = root["operations"][0].clone();
         let mut second = profile.clone();
         second["id"] = json!("o2");
-        let pocket = serde_json::to_value(crate::Operation::Pocket(
-            crate::test_support::sample_pocket(),
-        ))
-        .unwrap();
+        let pocket = pocket_root_at(12);
         let operations = root["operations"].as_array_mut().unwrap();
         operations.push(second);
         operations.push(pocket.clone());
@@ -1720,7 +1801,11 @@ mod tests {
             // Version 14 (#285) adds `start` after it.
             assert_eq!(keys.len(), at("last_pass") + 2, "{keys:?}");
         }
-        assert_eq!(operations[2], pocket, "a Pocket has no last pass");
+        assert_eq!(
+            operations[2],
+            pocket_root_at(CURRENT_VERSION),
+            "a Pocket has no last pass"
+        );
 
         let migrated = migrate(sample_root_at(12), 12).unwrap();
         assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
@@ -1782,14 +1867,14 @@ mod tests {
     fn last_pass_round_trips() {
         let mut p = sample_project();
         crate::test_support::profile_mut(&mut p).last_pass = Some(crate::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: Some(1.0),
             reverse: true,
         });
         let text = save(&p).unwrap();
         assert!(
             text.contains(
-                "\"last_pass\": {\n        \"allowance_mm\": 0.5,\n        \"thickness_mm\": 1.0,\n        \"reverse\": true\n      }"
+                "\"last_pass\": {\n        \"stock_to_leave_mm\": 0.5,\n        \"thickness_mm\": 1.0,\n        \"reverse\": true\n      }"
             ),
             "{text}"
         );
@@ -1822,10 +1907,7 @@ mod tests {
         let mut untabbed = profile.clone();
         untabbed["id"] = json!("o2");
         untabbed["tabs"] = Value::Null;
-        let pocket = serde_json::to_value(crate::Operation::Pocket(
-            crate::test_support::sample_pocket(),
-        ))
-        .unwrap();
+        let pocket = pocket_root_at(13);
         let operations = root["operations"].as_array_mut().unwrap();
         operations.push(untabbed);
         operations.push(pocket.clone());
@@ -1845,7 +1927,11 @@ mod tests {
             Some("avoid_corners")
         );
         assert_eq!(operations[1]["tabs"], Value::Null, "no request, no key");
-        assert_eq!(operations[2], pocket, "a Pocket has neither");
+        assert_eq!(
+            operations[2],
+            pocket_root_at(CURRENT_VERSION),
+            "a Pocket has neither"
+        );
 
         let migrated = migrate(sample_root_at(13), 13).unwrap();
         assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
@@ -2341,7 +2427,7 @@ mod tests {
     /// what the bump is for (ADR-0002).
     #[test]
     fn version_18_is_newer_than_17() {
-        assert_eq!(CURRENT_VERSION, 18);
+        const { assert!(CURRENT_VERSION > 18) };
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

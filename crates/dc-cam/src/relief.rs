@@ -30,7 +30,7 @@
 //! the wall because a finishing pass cut full depth at once would slot each
 //! notch full depth; the levels still step at the tool's step-down here, so
 //! that cannot happen. The separate pass ([`Relief::cut`]) is the
-//! fallback: for every corner of a Pocket with an allowance (its rings are
+//! fallback: for every corner of a Pocket with stock to leave (its rings are
 //! not the final wall), for a Pocket corner some pass has no ring for, and,
 //! on a Profile, for a pass whose lap does not reach the corner. A Pocket's
 //! separate pass follows all its main passes, as upstream (a Pocket never
@@ -683,7 +683,7 @@ impl Relief {
     /// pass's Z; each such ring then carries that pass's levels
     /// ([`Relief::splice`]). Any other corner is left whole for the
     /// separate pass, so its levels are still cut top first. With
-    /// `final_wall` false (an allowance: the rings are not the final
+    /// `final_wall` false (a stock to leave: the rings are not the final
     /// wall) every corner is left for it.
     pub(crate) fn inline_pocket(
         &self,
@@ -859,7 +859,7 @@ impl Relief {
     /// are taken nearest-neighbour from where its first block ends, the
     /// same order at every pass. With `only_pass` (#284) every level goes
     /// to that pass, the last pass, whose lap is the only one on the
-    /// part's path: the allowance passes never carry a notch.
+    /// part's path: the stock passes never carry a notch.
     fn interleave(
         &self,
         sites: &[Site],
@@ -1122,7 +1122,7 @@ pub(crate) fn lobe(corner: &ReliefCorner, radius_mm: f64, tolerance_mm: f64) -> 
 }
 
 /// The relief site of one Pocket region: the area it clears (`cleared`,
-/// the region less the allowance) and its tool-centre region (`centre`,
+/// the region less the stock to leave) and its tool-centre region (`centre`,
 /// restricted for rest machining), all named after the pocket's outline.
 pub(crate) fn pocket_site(cleared: &[Region], centre: &[Region], shape: &ShapeRef) -> Site {
     let outlines = |r: &Region| {
@@ -1161,8 +1161,8 @@ pub(crate) struct ProfileGeometry<'a> {
     /// The wall each path cuts and the index of its region.
     pub walls: &'a [(Wall, usize)],
     /// The only pass whose laps run on `paths` (#284: the last pass of a
-    /// Profile with a last pass allowance, whose earlier passes run on the
-    /// allowance path and open no column where a notch descends); `None`
+    /// Profile with a last pass stock to leave, whose earlier passes run on the
+    /// stock path and open no column where a notch descends); `None`
     /// when every pass does.
     pub only_pass: Option<usize>,
 }
@@ -1575,7 +1575,7 @@ mod tests {
             step_down_mm: None,
             step_over_fraction: Some(0.4),
             direction: CutDirection::Climb,
-            allowance_mm: 0.0,
+            stock_to_leave_mm: 0.0,
             rest_of: None,
             entry: Entry::Plunge,
             corner_relief: relief,
@@ -2176,9 +2176,9 @@ mod tests {
     /// path has cut the floor at Z 4, starts from a rapid straight down
     /// from safe Z that stops 1 mm above that floor, not at safe Z. Since
     /// the maintainer decision of 2026-10-24 that is the separate pass, the
-    /// fallback (design "Corner relief", step 6): a Pocket with an
-    /// allowance, its descend points the radius in from the wall the
-    /// allowance leaves. The last rapid down at a descend point is the
+    /// fallback (design "Corner relief", step 6): a Pocket that leaves
+    /// stock, its descend points the radius in from the wall the
+    /// stock leaves. The last rapid down at a descend point is the
     /// notch's.
     #[test]
     fn notch_rapids_to_just_above_the_cut_floor() {
@@ -2186,7 +2186,7 @@ mod tests {
         let descend_points = [at(2.5, 2.5), at(37.5, 2.5), at(37.5, 37.5), at(2.5, 37.5)];
         let safe_z_mm = THICKNESS_MM + 5.0;
         let op = PocketOp {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             ..pocket_op(CornerRelief::Dogbone)
         };
         let pocket = generate_pocket(&p, &op).unwrap().0;
@@ -2342,12 +2342,12 @@ mod tests {
 
     /// Upstream: "radial stock sizes the relief to the wall the pass
     /// actually leaves": the excursion ends one radius from the corner of
-    /// the region inset by the allowance.
+    /// the region inset by the stock to leave.
     #[test]
-    fn allowance_sizes_relief_to_the_wall_left() {
+    fn stock_to_leave_sizes_relief_to_the_wall_left() {
         let p = one_tool(vec![rect(40.0, 40.0)]);
         let op = PocketOp {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             ..pocket_op(CornerRelief::Dogbone)
         };
         let (_, warnings, cut) = pocket_run(&p, &op);
@@ -2364,12 +2364,12 @@ mod tests {
 
     /// Upstream: "rough big with stock and no relief, then finish small
     /// with relief, clears the corner", the finish as DreamCarve's rest
-    /// machining: a 10 mm rough at a 0.4 mm allowance, then a rest Pocket
+    /// machining: a 10 mm rough at a 0.4 mm stock to leave, then a rest Pocket
     /// with a 3 mm bit and dogbones. Together they sweep the corner wedge,
     /// and the finish bites no further past a wall than the notch depth,
     /// `r(1 − sin 45°)`.
     #[test]
-    fn rough_with_allowance_then_rest_with_relief_clears_corner() {
+    fn rough_with_stock_to_leave_then_rest_with_relief_clears_corner() {
         let mut p = project(
             vec![rect(40.0, 40.0)],
             vec![
@@ -2381,7 +2381,7 @@ mod tests {
             id: OperationId::new("rough"),
             tool: ToolId::new("rough"),
             depth_mm: Some(4.0),
-            allowance_mm: 0.4,
+            stock_to_leave_mm: 0.4,
             ..pocket_op(CornerRelief::None)
         };
         let finish = PocketOp {
@@ -3198,13 +3198,13 @@ mod tests {
         }
     }
 
-    /// Spec step 6: a Pocket with an allowance has no final-wall ring, so
+    /// Spec step 6: a Pocket with stock to leave has no final-wall ring, so
     /// its notches are the separate pass after the main path, as before.
     #[test]
-    fn pocket_with_allowance_falls_back_to_the_separate_pass() {
+    fn pocket_with_stock_to_leave_falls_back_to_the_separate_pass() {
         let p = one_tool(vec![rect(40.0, 30.0)]);
         let op = PocketOp {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             ..two_pass_pocket(WallPass::Last)
         };
         let (with, warnings) = generate_pocket(&p, &op).unwrap();
@@ -3329,15 +3329,15 @@ mod tests {
     }
 
     /// Spec step 5: a Profile with a last pass cuts its notches from the
-    /// last pass's lap only, every level, and the allowance passes before
+    /// last pass's lap only, every level, and the stock passes before
     /// it carry none.
     #[test]
-    fn profile_last_pass_allowance_paths_have_no_notches() {
+    fn profile_last_pass_stock_paths_have_no_notches() {
         let p = one_tool(vec![rect(40.0, 30.0)]);
         let op = ProfileOp {
             depth_mm: Some(4.0),
             last_pass: Some(dc_project::LastPass {
-                allowance_mm: 0.5,
+                stock_to_leave_mm: 0.5,
                 thickness_mm: None,
                 reverse: false,
             }),

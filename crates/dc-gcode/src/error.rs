@@ -393,7 +393,7 @@ pub enum ExportError {
         line: usize,
     },
     /// S9: a cutting move takes the tool out of the material its operation
-    /// may cut: past a Pocket's wall, its allowance, or into an island; off
+    /// may cut: past a Pocket's wall, its stock to leave, or into an island; off
     /// a Drill's holes; or off an Engrave's lines.
     #[error("emitted line {line} takes operation `{op}`'s tool outside the material it may cut")]
     OffMaterial {

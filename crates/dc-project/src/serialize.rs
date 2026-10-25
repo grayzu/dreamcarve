@@ -389,7 +389,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v18/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v19/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1032,7 +1032,7 @@ mod tests {
         let mut bore = crate::test_support::sample_bore();
         bore.pitch_mm = Some(1.5);
         bore.direction = crate::model::CutDirection::Conventional;
-        bore.allowance_mm = 0.1;
+        bore.stock_to_leave_mm = 0.1;
         p.operations.push(Operation::Bore(bore));
         let text = save(&p).unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1054,7 +1054,7 @@ mod tests {
                 "depth_mm",
                 "pitch_mm",
                 "direction",
-                "allowance_mm",
+                "stock_to_leave_mm",
                 "through_cut_allowance_mm",
                 "safe_z_mm"
             ]

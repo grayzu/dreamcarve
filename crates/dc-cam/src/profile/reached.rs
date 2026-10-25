@@ -8,7 +8,7 @@
 //! one outline's lap runs within the radius of the other's tab and would
 //! cut it away below its top. The tab is the material the other outline's
 //! last pass leaves standing; the lap's raised stretches over it are
-//! found as an allowance path's are from its own last pass
+//! found as a stock path's are from its own last pass
 //! ([`last_pass::twin_tabs`]): every stretch whose cutter reaches that
 //! material, at the tab's top and shape, merged with the lap's own.
 

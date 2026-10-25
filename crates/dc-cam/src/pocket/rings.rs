@@ -756,7 +756,7 @@ mod tests {
     }
 
     /// A band thinner than twice the inset (what a rough Pocket's
-    /// allowance leaves for rest machining) insets to nothing. The grown
+    /// stock to leave makes for rest machining) insets to nothing. The grown
     /// island then encloses the shrunk outer, and must not be read back
     /// as the outer of an inverted annulus, which grows on every inset.
     #[test]

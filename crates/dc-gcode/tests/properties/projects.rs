@@ -197,7 +197,7 @@ pub struct Setup {
     origin: MachineOrigin,
 }
 
-/// The operation's depth and allowance.
+/// The operation's depth and through-cut allowance.
 #[derive(Debug, Clone, Copy)]
 pub struct Depth {
     /// Through the stock, or this fraction of it.
@@ -448,7 +448,7 @@ fn start() -> impl Strategy<Value = StartAt> {
 
 /// A last pass (#284) where the side has a wall to leave it on (Left and
 /// Right too since #311), as
-/// (allowance as a fraction of a third of the bit, thickness as a fraction
+/// (stock to leave as a fraction of a third of the bit, thickness as a fraction
 /// of the depth, reverse).
 fn last_pass(wall: bool) -> BoxedStrategy<Option<(f64, Option<f64>, bool)>> {
     if wall {
@@ -549,8 +549,8 @@ fn profile_project_of(
                         entry,
                         lead,
                         corner_relief: relief,
-                        last_pass: last_pass.map(|(allowance, thickness, reverse)| LastPass {
-                            allowance_mm: allowance * s.tool.diameter_mm / 3.0,
+                        last_pass: last_pass.map(|(stock_to_leave, thickness, reverse)| LastPass {
+                            stock_to_leave_mm: stock_to_leave * s.tool.diameter_mm / 3.0,
                             // At most the depth and the step-down in
                             // effect (#310 review).
                             thickness_mm: thickness.map(|t| {
@@ -600,7 +600,7 @@ pub fn pocket_project() -> impl Strategy<Value = Project> {
             |(
                 setup,
                 (strategy, wall_pass, depth, step_down_mm, step_over_fraction),
-                (direction, allowance_mm, entry, relief, order),
+                (direction, stock_to_leave_mm, entry, relief, order),
                 safe_z_mm,
             )| {
                 project(setup, |s, targets| {
@@ -616,7 +616,7 @@ pub fn pocket_project() -> impl Strategy<Value = Project> {
                         step_down_mm,
                         step_over_fraction,
                         direction,
-                        allowance_mm,
+                        stock_to_leave_mm,
                         rest_of: None,
                         entry,
                         corner_relief: relief,
@@ -681,7 +681,7 @@ pub fn drill_project() -> impl Strategy<Value = Project> {
 /// are bored and some skipped as too small or as leaving a core, and
 /// sometimes a rectangle, skipped as not a circle; any pitch from a
 /// quarter of the step-down (at least 0.2 mm) to the step-down, either
-/// direction, an allowance, any depth.
+/// direction, a stock to leave, any depth.
 pub fn bore_project() -> impl Strategy<Value = Project> {
     setup(end_mill(), false)
         .prop_flat_map(|setup| {
@@ -715,7 +715,7 @@ pub fn bore_project() -> impl Strategy<Value = Project> {
             )
         })
         .prop_map(
-            |(mut setup, drawings, pitch, direction, allowance_mm, depth, safe_z_mm)| {
+            |(mut setup, drawings, pitch, direction, stock_to_leave_mm, depth, safe_z_mm)| {
                 for ((_, cell), profiles) in setup.cells.iter_mut().zip(drawings) {
                     cell.profiles = profiles;
                 }
@@ -731,7 +731,7 @@ pub fn bore_project() -> impl Strategy<Value = Project> {
                         depth_mm: Some(depth.depth_mm(s.thickness_mm)),
                         pitch_mm,
                         direction,
-                        allowance_mm,
+                        stock_to_leave_mm,
                         through_cut_allowance_mm: depth.allowance_mm,
                         safe_z_mm,
                     })

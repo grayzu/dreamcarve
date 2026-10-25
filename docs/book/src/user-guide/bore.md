@@ -23,7 +23,7 @@ plywood with a 3.175 mm end mill:
   "depth_mm": 12.0,
   "pitch_mm": null,
   "direction": "climb",
-  "allowance_mm": 0.0,
+  "stock_to_leave_mm": 0.0,
   "through_cut_allowance_mm": 0.2,
   "safe_z_mm": 15.0
 }
@@ -41,7 +41,7 @@ plywood with a 3.175 mm end mill:
 | `depth_mm` | How deep to cut, measured down from the stock top. **Required.** To cut through, use the stock's `thickness_mm` plus `through_cut_allowance_mm`. |
 | `pitch_mm` | How far the helix goes down in each turn. `null` uses the tool's `step_down_mm`. It must be more than 0 and no more than the tool's `step_down_mm`; a larger pitch is an error at `check`. See [Pitch](#pitch). |
 | `direction` | `"climb"` (the usual) or `"conventional"`, as for [Pocket](pocket.md) and [Profile](profile.md). Climb turns counter-clockwise seen from above, conventional clockwise. |
-| `allowance_mm` | Material to leave on the wall, 0 or more: the hole comes out this much smaller all round. 0 by default. See [Finishing](#finishing). |
+| `stock_to_leave_mm` | Material to leave on the wall, 0 or more: the hole comes out this much smaller all round. 0 by default. See [Finishing](#finishing). |
 | `through_cut_allowance_mm` | How far below the stock bottom the hole may go, as for [Profile](profile.md#cutting-through). 0 by default. |
 | `safe_z_mm` | The height above the stock top for moves between holes. Must be more than 0. |
 
@@ -57,7 +57,7 @@ For each hole:
    hole's east side (+X), then straight down to 1 mm above the stock
    top. It never plunges into the material.
 2. It spirals down a helix centred on the hole. The helix radius is the
-   hole's radius less the bit's radius and less `allowance_mm`, so the
+   hole's radius less the bit's radius and less `stock_to_leave_mm`, so the
    edge of the bit runs on the wall. Each turn goes down `pitch_mm`.
    The helix is written as short straight `G1` moves, at least 48 a turn,
    each with its own Z. Each move bows in from the true circle by no
@@ -98,7 +98,7 @@ A Bore cuts only what it can cut as drawn. It skips these holes, and
 still cut, and the program is still written:
 
 - **Too small for the bit** (`bore_no_room`). The bit, with the
-  allowance, has no room to spiral: the helix radius would be under
+  stock to leave, has no room to spiral: the helix radius would be under
   0.05 mm. A hole smaller than the bit cannot be cut with it at all; use a
   smaller end mill. A hole about the bit's size is a Drill's job, and the
   message says so:
@@ -127,14 +127,14 @@ If every target is skipped, the operation cuts nothing and warns
 
 With a 3.175 mm end mill a Bore cuts holes from about 3.28 mm to 6.35 mm
 across; with a 6.35 mm one, from about 6.45 mm to 12.7 mm. A 0.1 mm
-allowance takes 0.2 mm off both ends.
+stock to leave takes 0.2 mm off both ends.
 
 ## Finishing
 
 One helix and one circle cut the hole. There are no separate finishing
 passes. For a cleaner wall in a hard material, use two Bores of the same
-holes: the first with an `allowance_mm` of, say, 0.2 to rough them, and
-the second with `allowance_mm: 0` to take the last 0.2 mm off the wall.
+holes: the first with an `stock_to_leave_mm` of, say, 0.2 to rough them, and
+the second with `stock_to_leave_mm: 0` to take the last 0.2 mm off the wall.
 
 ## Safety
 
@@ -151,7 +151,7 @@ out; after it, `check` warns `cut_inside_freed_part` or
 | Code | Meaning |
 | --- | --- |
 | `bore_target_not_circle` | A target outline is not a circle, or is open, so it is not bored. |
-| `bore_no_room` | The bit, with the allowance, does not fit the hole or fits it too closely to spiral, so it is not bored. Use a smaller end mill, or a Drill for a hole the bit's size. |
+| `bore_no_room` | The bit, with the stock to leave, does not fit the hole or fits it too closely to spiral, so it is not bored. Use a smaller end mill, or a Drill for a hole the bit's size. |
 | `bore_leaves_core` | The hole is more than twice the bit's diameter, so a helix would leave a core standing; it is not bored. Use a Pocket, or a bigger end mill. |
 | `bore_no_holes` | Every target was skipped, so the operation cuts nothing. |
 

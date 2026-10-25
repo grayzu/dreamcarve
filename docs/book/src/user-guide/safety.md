@@ -43,7 +43,7 @@ written. There are no safety warnings, only errors.
    Profile's [last pass](profile.md#last-pass) runs its inside arcs slower
    than the feed rate, so that its cutting edge moves at the feed rate; the
    check lets a level move of such a Profile go as slow as the feed rate
-   times the allowance over the allowance plus the bit's radius, and no
+   times the stock to leave over the stock to leave plus the bit's radius, and no
    slower. A
    feed rate that would go down faster once rounded to the decimal places
    written is rounded down instead: a plunge rate the written places cannot
@@ -133,7 +133,7 @@ written. There are no safety warnings, only errors.
     toolpath, and holds every cutting move to it:
 
     - a [Pocket](pocket.md): the whole width of the bit stays inside the
-      pocket's outline and outside its islands, `allowance_mm` away from
+      pocket's outline and outside its islands, `stock_to_leave_mm` away from
       both, arcs counted all the way round. Entry ramps and helixes count
       too. A rest machining Pocket is held to its own outline the same
       way.
@@ -141,7 +141,7 @@ written. There are no safety warnings, only errors.
       drills.
     - a [Bore](bore.md): the centre of the bit stays within the helix
       radius of one of its circles' centres, the circle's radius less the
-      bit's and the allowance, on the helix, the circle at the bottom and
+      bit's and the stock to leave, on the helix, the circle at the bottom and
       the move to the centre, so the hole is never cut wider than drawn.
     - an [Engrave](engrave.md): the centre of the bit stays on the line.
     - a [Profile](profile.md): the whole width of the bit stays in the
@@ -179,7 +179,7 @@ written. There are no safety warnings, only errors.
       An Inside or Outside Profile cuts only a trench, so below the stock
       top a ramp leg or helix move must run where the operation already
       cut: on the bit's path round the part (widened by a
-      [last pass](profile.md#last-pass)'s allowance), or along an earlier
+      [last pass](profile.md#last-pass)'s stock to leave), or along an earlier
       cut where that cut ran below the stock top. A ramp that leaves them,
       into stock that stands full height,
       stops the export. A ramp or helix that starts at or above the stock

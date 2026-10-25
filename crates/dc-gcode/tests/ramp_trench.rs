@@ -300,7 +300,7 @@ fn lead_ramp_below_tab_top_stays_in_the_trench() {
 }
 
 /// [`first_uncut`], checking only the ramps: the moves that fall while
-/// they move in XY. A last pass's lap takes the allowance standing to the
+/// they move in XY. A last pass's lap takes the stock to leave standing to the
 /// stock top beside its path, which no pass above cut, so its level cuts
 /// are not held to the trench; its descent is.
 fn first_uncut_ramp(cuts: &[Vec<Point3>]) -> Option<Uncut> {
@@ -337,9 +337,9 @@ fn first_uncut_ramp(cuts: &[Vec<Point3>]) -> Option<Uncut> {
 }
 
 /// #352 with #339: the issue's last-pass case. A 16/12 mm five-point star
-/// cut Inside, conventional, a 0.5 mm last pass allowance with `reverse`,
+/// cut Inside, conventional, a 0.5 mm last pass stock to leave with `reverse`,
 /// the lead and a 10° ramp, three 6 × 3 mm rect tabs, requested and
-/// placed. On the emitted G-code every ramp, the allowance passes' and the
+/// placed. On the emitted G-code every ramp, the stock passes' and the
 /// last pass's, runs only through stock the moves before it cleared to
 /// within one step down of the floor of the pass above. Before #354 the
 /// last pass's ramp left the X 60.141 trench by 0.55 mm.
@@ -368,7 +368,7 @@ fn last_pass_ramps_stay_in_the_trench() {
             definition.profiles = vec![star.clone()];
         }
         dc_project::test_support::profile_mut(&mut p).last_pass = Some(dc_project::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: true,
         });

@@ -3,12 +3,12 @@
 
 //! #348: how a Profile's last pass comes down off a tab taller than the
 //! step-down (`docs/specs/phase-2/design.md`, A8 step 4). The passes
-//! before it run on the allowance path, `a` farther from the wall, so
-//! wherever the last pass comes down, the allowance strip under its
+//! before it run on the stock path, `a` farther from the wall, so
+//! wherever the last pass comes down, the stock to leave strip under its
 //! cutter stands to the height the lap last cut it at: a straight drop
 //! there goes its whole height into material no earlier pass cut. Two
 //! places do that: a rect tab's far end, and a lap that starts low on a
-//! smooth tab's slope where the allowance path is held higher.
+//! smooth tab's slope where the stock path is held higher.
 //!
 //! - **A rect tab's far end** ([`stage_tab_descents`]): the drop is cut in
 //!   stages, each at most a step-down, as #339 holds every other plunge
@@ -20,7 +20,7 @@
 //!   a layer just cut and nothing touches the tab.
 //! - **A lap that starts on a smooth tab's slope** ([`onto_slope`]): the
 //!   tool enters the lap where the lap is as high as the step across the
-//!   allowance ran, and follows the lap's own slope back down to its
+//!   stock to leave ran, and follows the lap's own slope back down to its
 //!   start. An open path's lap must start at its end, so moving the start
 //!   off the tab (#176) is no option there.
 
@@ -254,9 +254,9 @@ pub(super) fn stage_tab_descents(
 }
 
 /// #348: the moves that take the tool from `target`, the start of the
-/// lap `cuts`, at `step_z_mm`, where the step across the allowance ran,
+/// lap `cuts`, at `step_z_mm`, where the step across the stock to leave ran,
 /// down to `start_z_mm`, where the lap starts on a smooth tab's slope,
-/// without a straight drop into the allowance strip: level along the lap
+/// without a straight drop into the stock to leave strip: level along the lap
 /// at `step_z_mm` to where its slope rises to that height, then down the
 /// lap's own slope back to `target`. The lap's slope rises forwards from
 /// its start, or (a closed lap, `closed`, that starts on a tab's far

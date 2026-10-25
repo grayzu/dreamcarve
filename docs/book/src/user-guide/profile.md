@@ -59,7 +59,7 @@ This is the Profile `init` writes, with `depth_mm` and
 | `entry` | How the bit reaches each pass depth: `"plunge"`, a ramp, or a helix. `init` writes a 15° ramp. See [Entry](#entry). |
 | `lead` | An arc onto the outline at the start of each pass and off it at the end, or `null` for none. See [Leads](#leads). |
 | `corner_relief` | `"none"` (as `init` writes it), `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
-| `last_pass` | `null` (as `init` writes it), or a last pass allowance: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside, Outside, Left and Right; not On line. See [Last pass](#last-pass). |
+| `last_pass` | `null` (as `init` writes it), or a last pass stock to leave: every pass but the last leaves a thin skin on the wall, and the last pass cuts it off at full depth. Inside, Outside, Left and Right; not On line. See [Last pass](#last-pass). |
 | `start` | Where each closed outline's cut starts: `"auto"` (as `init` writes it), `"first_vertex"`, or `{ "near": { "x_mm": …, "y_mm": … } }`. See [Start point](#start-point). |
 
 ## Side
@@ -510,7 +510,7 @@ to the operation's depth: a lap that is deeper than the last notch level
 by more than that cuts the levels in between at the corner, stepping
 down in the slot it has just cut. With a [last pass](#last-pass) the
 notches are cut from the last pass's lap only, every level, and never
-from the passes before it, which run the allowance off the wall.
+from the passes before it, which run the stock to leave off the wall.
 (Changed before 0.2.0: each notch level was cut after its pass's lap,
 lifting to safe Z and plunging at each corner.) In the rare case that a
 lap does not pass a corner at its depth, that pass's notch is cut right
@@ -547,7 +547,7 @@ Every pass of a Profile cuts the finished wall, so each one leaves a faint
 step where it ended, and the bit is pushed off the line by the full depth
 of material on every pass. `last_pass` is VCarve's **Last Pass
 Allowance**: the passes before the last run a little farther from the
-part, the **allowance**, and the last pass runs on the part's path at the
+part, leaving the **stock to leave** (`stock_to_leave_mm`, Fusion's "Stock to Leave"), and the last pass runs on the part's path at the
 full depth. It takes an even skin off the whole wall in one go, so the
 wall is cut by one pass from top to bottom and comes out clean and to
 size. (Fusion calls the same thing radial stock to leave with a
@@ -555,7 +555,7 @@ finishing pass.)
 
 ```json
 "last_pass": {
-  "allowance_mm": 0.5,
+  "stock_to_leave_mm": 0.5,
   "thickness_mm": null,
   "reverse": false
 }
@@ -563,23 +563,23 @@ finishing pass.)
 
 | Field | Meaning |
 | --- | --- |
-| `allowance_mm` | How much every pass but the last leaves on the wall, in mm. More than 0 and at most a third of the bit's diameter (2.117 mm for a 6.35 mm bit), as VCarve advises: the last pass cuts the full depth, so keep its skin thin. 0.2 to 0.5 mm is usual. |
+| `stock_to_leave_mm` | How much every pass but the last leaves on the wall, in mm. More than 0 and at most a third of the bit's diameter (2.117 mm for a 6.35 mm bit), as VCarve advises: the last pass cuts the full depth, so keep its skin thin. 0.2 to 0.5 mm is usual. |
 | `thickness_mm` | `null` for the usual depth passes, the last of which is the last pass. A number sets how deep the last pass cuts (VCarve's "Set Last Pass Thickness"): the other passes step down to `depth_mm` less it, then the last pass cuts the whole depth. More than 0 and at most `depth_mm` and the step-down in effect (the operation's `step_down_mm`, else the tool's): the last pass is never thicker than a pass. |
 | `reverse` | `true` cuts the last pass the other way round (VCarve's "Reverse direction"): conventional after climbing passes, or climb after conventional ones. Each has its finish; try both on scrap. |
 
 All three keys are needed. An outside Profile of a 60 × 40 mm rectangle,
-12 mm deep in 4 mm passes with a 6.35 mm bit and a 0.5 mm allowance, cuts
+12 mm deep in 4 mm passes with a 6.35 mm bit and a 0.5 mm stock to leave, cuts
 its first two passes 0.5 mm farther out (a 67.35 × 47.35 mm path across
 its centre line) and the third on the 66.35 × 46.35 mm path it cuts with
 no last pass. With `thickness_mm` 1 the passes are 4, 8, 11 and 12 mm
 deep, and only the 12 mm pass is on the part's path. Cut inside, the
 earlier passes run 0.5 mm farther into the hole instead.
 
-**How it cuts.** The allowance stands uncut from the stock top down
+**How it cuts.** The stock to leave stands uncut from the stock top down
 beside the part, so the last pass never goes straight down at its own
 start. It enters the way one more earlier pass would: where the earlier
 passes ended, it goes down into their floor with the operation's
-[entry](#entry), then steps across the allowance onto its own path.
+[entry](#entry), then steps across the stock to leave onto its own path.
 
 - A **plunge** goes one step-down deep (or `thickness_mm` deep), into
   the floor of the earlier passes' cut.
@@ -589,9 +589,9 @@ passes ended, it goes down into their floor with the operation's
 - A **helix** goes back into the bore the earlier passes' helix cut and
   helixes down one more step.
 - Then, at the full depth, the bit moves at the feed rate straight across
-  the allowance onto the last pass's path, which starts beside where the
+  the stock to leave onto the last pass's path, which starts beside where the
   earlier passes start, and cuts its lap. The step is short: the
-  allowance, or the wedge in a corner.
+  stock to leave, or the wedge in a corner.
 - With a [lead](#leads), the earlier passes are led in beside where the
   last pass's lead comes in, so the bit goes down at their lead's start
   and steps across to the last pass's. If that is too far to step (the
@@ -606,7 +606,7 @@ passes ended, it goes down into their floor with the operation's
   slope.
 
 **Tabs taller than the step-down.** The earlier passes never cut the
-allowance, so where the last pass comes off a rect tab, the skin under
+stock to leave, so where the last pass comes off a rect tab, the skin under
 the bit stands as high as the tab. Rather than drop the tab's whole
 height in one move there, the last pass comes down in stages: straight
 down to the floor of the earlier pass beside it, then one pass level at
@@ -620,7 +620,7 @@ last pass's path, where it cuts lower anyway, so the tab is not touched.
 So no plunge goes deeper into uncut material than a step-down, whatever
 the entry or the tabs. (Changed in #339: the last pass plunged at its own start
 from 1 mm above the stock down to the earlier passes' floor, through the
-allowance, which with a plunge entry meant the full depth. Changed in
+stock to leave, which with a plunge entry meant the full depth. Changed in
 [#348](https://github.com/grayzu/dreamcarve/issues/348): it came down a
 tab taller than the step-down in one move at a rect tab's far end, and
 at a start low on a smooth tab's slope.)
@@ -635,7 +635,7 @@ run beside the next edge's tab, sooner still. A smooth tab's earlier
 passes ramp up at least as high as the tab's slope wherever they reach
 it. [Leads](#leads)
 and [entries](#entry) are planned for each path, the earlier passes' kept
-the allowance farther from the part. [Corner relief](#corner-relief)
+the stock to leave farther from the part. [Corner relief](#corner-relief)
 notches are cut from the last pass only, the one that cuts the corner:
 an earlier pass does not reach it, so a notch after it would plunge into
 the skin.
@@ -656,7 +656,7 @@ Straight walls, outside corners and the earlier passes keep the feed, and
 the lowered feed is written rounded down, never up. The feed is lowered
 no further than the smallest hole the last pass cuts needs,
 `feed × a / (a + r)` (136 mm/min at 0.5 mm with a 6.35 mm bit). An inside
-corner rounded to less than the bit's radius plus the allowance (a 3.5 mm
+corner rounded to less than the bit's radius plus the stock to leave (a 3.5 mm
 corner radius with a 6.35 mm bit at 0.5 mm) needs more, so there the
 edge moves faster than the feed, and `last_pass_edge_faster` says so.
 Only true arcs are slowed: a curve drawn as many short lines (an ellipse
@@ -666,7 +666,7 @@ Where such a curve bends so tightly that the cutting edge moves more than
 naming the shape and about where: in a 12 × 8 mm ellipse cut Inside with
 a 6.35 mm bit at 0.5 mm, the edge moves about 1.9 times the feed. With a
 6.35 mm bit that is any round bend of the wall under about 9.5 mm radius.
-The feed is not changed. Lower the feed, use a smaller allowance, which
+The feed is not changed. Lower the feed, use a smaller stock to leave, which
 leaves a thinner skin for the faster edge to take, or redraw the curve
 with arcs, which the last pass slows down for
 ([#350](https://github.com/grayzu/dreamcarve/issues/350)).
@@ -677,40 +677,40 @@ outside, the corners of letters such as A, V, W, M and K), the earlier
 passes cut both walls and stop short of where they meet. The last pass
 then takes the wedge between, `a / sin(θ/2)` thick at a corner of `θ`:
 2a in a 60° corner, 2.6a in a 45° one. That is allowed up to a third of
-the bit's diameter, the thickest skin the allowance itself may be (or √2
-times the allowance, a square corner's, where that is more). With a
+the bit's diameter, the thickest skin the stock to leave itself may be (or √2
+times the stock to leave, a square corner's, where that is more). With a
 6.35 mm bit that is 2.1 mm, so corners down to about 27° are cut at
 0.5 mm, and down to about 11° at 0.2 mm. A square corner is cut at any
-allowance.
+stock to leave.
 
 **When it does not fit.** The earlier passes need the bit plus the
-allowance on both sides wherever the last pass goes, and the last pass
-may take off no more than a square corner's √2 times the allowance
+stock to leave on both sides wherever the last pass goes, and the last pass
+may take off no more than a square corner's √2 times the stock to leave
 (plus 0.05 mm) except in a corner as above. A drawing where that is not
 so is refused, naming the shapes, and nothing is exported:
 
 - A notch, slot, neck or small hole that the bit fits but the bit plus
-  the allowance does not: the earlier passes bridge it and skip it, and
+  the stock to leave does not: the earlier passes bridge it and skip it, and
   the last pass would cut it whole, about as wide as the bit, at full
   depth. A 7 × 3 mm notch in a part cut outside with a 6.35 mm bit and
   0.5 mm is refused, though the last pass would take only 1 mm off
   there, and so is a 10 × 4 mm one with 2.1 mm.
 - A tip so narrow that its wedge is thicker than a third of the bit: a
   20° tip cut inside with a 6.35 mm bit and 0.5 mm, whose wedge is
-  2.9 mm. A smaller allowance helps: the same tip is cut at 0.2 mm.
+  2.9 mm. A smaller stock to leave helps: the same tip is cut at 0.2 mm.
 - Inside, an island closer to the outline than the bit plus twice the
-  allowance (a 7 mm band with a 6.35 mm bit and 0.5 mm, which needs
+  stock to leave (a 7 mm band with a 6.35 mm bit and 0.5 mm, which needs
   7.35 mm).
-- A part closer to another than the bit plus the allowance, so that the
+- A part closer to another than the bit plus the stock to leave, so that the
   earlier passes would come within the bit's radius of it or run inside
   it: a part 6.6 mm from the wall of a frame's hole with a 6.35 mm bit
   and 0.5 mm. An earlier pass that comes nearer another part than the
-  allowance but no nearer than the radius only cuts that part's skin,
+  stock to leave but no nearer than the radius only cuts that part's skin,
   which its own last pass takes off anyway, and is allowed.
 
-Make `allowance_mm` smaller, or set `last_pass` to `null`. An On line
+Make `stock_to_leave_mm` smaller, or set `last_pass` to `null`. An On line
 Profile cuts with both sides of the bit and has no wall for the
-allowance, so a `last_pass` there is an error; so is an allowance of 0
+stock to leave, so a `last_pass` there is an error; so is a stock to leave of 0
 or less or above a third of the bit, or a `thickness_mm` of 0 or less,
 deeper than `depth_mm` or thicker than the step-down. A cut of only one
 pass is the last pass, on the part's path, and warns `last_pass_unused`.
@@ -720,18 +720,18 @@ pass is the last pass, on the part's path, and warns `last_pass_unused`.
 A [Left or Right](#left-and-right) Profile cuts one side of the bit
 against the part, as an outline cut does, so it takes a last pass too,
 as VCarve's Profile of an open vector does. The earlier passes run the
-allowance farther to the cut side, and the last pass on the bit's usual
+stock to leave farther to the cut side, and the last pass on the bit's usual
 path beside the line.
 
 A 60 mm line from (20, 20) to (80, 20) cut `"left"`, 12 mm deep in 4 mm
-passes with a 6.35 mm bit and a 0.5 mm allowance: the first two passes
+passes with a 6.35 mm bit and a 0.5 mm stock to leave: the first two passes
 run at Y 23.675 and the third at Y 23.175, the path it cuts with no last
 pass. Every pass runs from X 20 to X 80.
 
 - **Ends.** Every pass ends square on the same lines through the path's
   end vertices, square to the path. The earlier passes are neither
   shorter nor longer than the last: none cuts past an end on the part
-  side, and the earlier passes leave the allowance standing right up to
+  side, and the earlier passes leave the stock to leave standing right up to
   each end, where the last pass takes it off.
 - **Direction.** The earlier passes and the last run the way
   [Direction](#direction) says, from the same end. With `reverse` the
@@ -740,7 +740,7 @@ pass. Every pass runs from X 20 to X 80.
   after conventional ones.
 - **Ramps, tabs and leads.** Each earlier pass ramps along its own path.
   The last pass goes down on the earlier passes' path, ramping along it
-  (or plunging one step), then steps across the allowance on the line
+  (or plunging one step), then steps across the stock to leave on the line
   square to the path at its starting end, as on an outline; with
   `reverse` it goes down at the end where the earlier passes finished,
   so it does not retract first. Tabs are
@@ -754,25 +754,25 @@ pass. Every pass runs from X 20 to X 80.
   cut inside is cut at 0.5 mm, a 20° one only at 0.2 mm. Round a turn it
   takes an even skin.
 - **When it does not fit.** The rules above apply to the path: a U, slot
-  or notch the bit fits but the bit plus the allowance does not (the
+  or notch the bit fits but the bit plus the stock to leave does not (the
   inside of a U 7 mm wide, with a 6.35 mm bit and 0.5 mm), a tip whose
   wedge is thicker than a third of the bit, or a stretch at an end that
   the earlier passes stop short of, is refused naming the path. So is an
   end segment with room for the bit but not for the bit plus the
-  allowance (see [A short end segment](#left-and-right)): the error
+  stock to leave (see [A short end segment](#left-and-right)): the error
   says "too short for its 6.35 mm tool and its 0.5 mm last pass
-  allowance". An L 3.4 mm long on its last leg, cut inside its corner,
+  stock to leave". An L 3.4 mm long on its last leg, cut inside its corner,
   is cut at 0.2 mm and refused at 0.5 mm. The
-  earlier passes must also keep the bit's radius plus the allowance from
+  earlier passes must also keep the bit's radius plus the stock to leave from
   every other line of the operation and from the strip each line keeps,
   so they never take another line's skin: two lines 6.85 mm apart cut
   towards each other, which the bit alone fits, are refused at 0.5 mm
   and cut at 0.2 mm.
 
   ``operation `o1` cuts beside `Edge` (instance `i1`, profile 0) and
-  `Edge` (instance `i1`, profile 1) with a 0.5 mm last pass allowance,
+  `Edge` (instance `i1`, profile 1) with a 0.5 mm last pass stock to leave,
   but a pass before the last comes within the 6.35 mm tool's radius plus
-  the allowance of one of them or of the material it keeps, ...``
+  the stock to leave of one of them or of the material it keeps, ...``
 
   A part drawn as four separate lines and cut on its outside, whose
   lines meet at its corners, is cut.
@@ -849,7 +849,7 @@ one drawn (see [Machining order](machining-order.md)). For each outline:
 3. Cut one full lap at the feed rate, ending where it began.
 4. Go down to the next pass the same way, from the floor of the last, and
    cut another lap, until the last pass. With a [last pass](#last-pass)
-   the passes before it run on the allowance path, and the tool rapids up
+   the passes before it run on the stock path, and the tool rapids up
    to safe Z before the last, which it reaches through the slot already
    cut. Under
    `"pass_first"` the tool instead rapids up to safe Z and goes on to the

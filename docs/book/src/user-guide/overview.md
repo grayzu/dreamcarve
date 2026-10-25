@@ -243,7 +243,7 @@ output: …`.
   leads, corner relief.
 - [Tabs](tabs.md): holding the part in place.
 - [Pocket operation](pocket.md): offset and raster clearing, islands,
-  allowance, rest machining.
+  stock to leave, rest machining.
 - [Engrave operation](engrave.md): following lines at a fixed depth.
 - [Drill operation](drill.md): simple, peck and dwell cycles, canned
   cycles.

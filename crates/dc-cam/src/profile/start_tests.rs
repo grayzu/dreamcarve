@@ -563,12 +563,12 @@ fn open_path_ignores_start() {
 }
 
 /// #285 with #284: with a last pass every pass starts nearest the point,
-/// the allowance passes on their own path a little farther out, and tabs
+/// the stock passes on their own path a little farther out, and tabs
 /// laid off corners keep their material on every pass (the safety pass's
 /// S9, which `dreamcarve`'s export runs, is checked at the CLI). A
 /// reversed last pass starts at the same point. (Changed in #339: every
-/// plunge is on the allowance path, the last pass's too, which then steps
-/// across the allowance to its own start at full depth.)
+/// plunge is on the stock path, the last pass's too, which then steps
+/// across the stock to leave to its own start at full depth.)
 #[test]
 fn explicit_start_with_last_pass_starts_every_pass_there() {
     let p = rect_project();
@@ -577,7 +577,7 @@ fn explicit_start_with_last_pass_starts_every_pass_there() {
     for reverse in [false, true] {
         let mut op = profile_op(&p, Side::Outside, ORIGIN);
         op.last_pass = Some(LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse,
         });
@@ -682,7 +682,7 @@ fn material_heights(tp: &Toolpath, radius_mm: f64, points: &[Point]) -> Vec<f64>
 /// mm along the path, starts on the first tab: from a `near` start in the
 /// middle of the bottom edge with every entry (plunge, ramp, helix, lead),
 /// and from the `auto` start with a plunge (which #176 leaves where it
-/// is); rect and smooth; with and without a last pass (allowance 0.5,
+/// is); rect and smooth; with and without a last pass (stock to leave 0.5,
 /// thickness 1); in both orders. No plunge ends inside the tab, and the
 /// stock the program leaves across the whole kerf stands at the tab top
 /// over a rect tab's middle 4 mm (0.4 mm where the `auto` start's tab
@@ -729,7 +729,7 @@ fn start_under_a_tab_never_plunges_into_it() {
             for last_pass in [
                 None,
                 Some(LastPass {
-                    allowance_mm: 0.5,
+                    stock_to_leave_mm: 0.5,
                     thickness_mm: Some(1.0),
                     reverse: false,
                 }),

@@ -63,7 +63,7 @@ fn config(cases: u32) -> ProptestConfig {
 /// how the shapes and the tool meet: the cutter would leave the stock, a
 /// band between two lines is narrower than the tool, an On line part is
 /// nowhere as wide as the tool (#223), or a Left or Right cut reaches what
-/// a line keeps (#207), with its last pass allowance too (#311), or an
+/// a line keeps (#207), with its last pass stock to leave too (#311), or an
 /// end segment has no room for it (#342). Any other error from a project
 /// that validates is a defect.
 fn rejects_drawing(error: &CamError) -> bool {
@@ -73,9 +73,9 @@ fn rejects_drawing(error: &CamError) -> bool {
             | CamError::BandNarrowerThanTool { .. }
             | CamError::PartNarrowerThanTool { .. }
             | CamError::CutsIntoKeptSide { .. }
-            | CamError::BandNarrowerThanAllowance { .. }
-            | CamError::ShapeNarrowerThanAllowance { .. }
-            | CamError::AllowanceCutsIntoKeptSide { .. }
+            | CamError::BandNarrowerThanStockToLeave { .. }
+            | CamError::ShapeNarrowerThanStockToLeave { .. }
+            | CamError::StockToLeaveCutsIntoKeptSide { .. }
             | CamError::EndSegmentHasNoRoom { .. }
     )
 }
@@ -155,7 +155,7 @@ proptest! {
         exports_safely(&project)?;
     }
 
-    /// Pocket: offset and raster at any angle, any wall pass, allowance,
+    /// Pocket: offset and raster at any angle, any wall pass, stock to leave,
     /// step-over, entry (plunge, ramp, helix) and corner relief.
     #[test]
     fn random_valid_pockets_never_panic_and_pass_safety(project in projects::pocket_project()) {
@@ -171,8 +171,8 @@ proptest! {
     }
 
     /// Bore (format 18): circles from under the tool's size to more than
-    /// twice it, any pitch up to the step-down, either direction, an
-    /// allowance; holes it cannot cut are skipped with a warning.
+    /// twice it, any pitch up to the step-down, either direction, a
+    /// stock to leave; holes it cannot cut are skipped with a warning.
     #[test]
     fn random_valid_bores_never_panic_and_pass_safety(project in projects::bore_project()) {
         exports_safely(&project)?;

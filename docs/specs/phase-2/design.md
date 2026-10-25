@@ -3818,7 +3818,7 @@ pass; and a cut of only one pass, whose stock to leave nothing leaves, warns
    `cuts_only_corners` holds every point of the part path to. A part
    path whose seam is free (no lead, no explicit start) is re-seamed at
    its point nearest the stock path's start, so the step is the
-   stock to leave and nothing of the stock pass is cut again; an
+   stock to leave and nothing of the stock pass is cut again; a
    stock path is led in at its point nearest the part path's lead
    arrival (`lead_in_beside`), so with the same arc the step joins the
    staging points `a` apart. A last pass lead-in whose staging point is
@@ -4020,7 +4020,7 @@ bit against the part, so it takes a last pass as Inside and Outside do.
    `ShapeNarrowerThanStockToLeave`. So the thickness cap
    `max(D/3, √2·a + 0.05)` applies to a V cut inside its tip.
 4. **Neighbours.** `check_kept_sides` runs on the stock paths with
-   the reach `r + a` (the kept edges stay `r` off their lines): an
+   the reach `r + a` (the kept edges stay `r` off their lines): a
    stock path within `r + a` of another line of the operation, or of
    any line's kept edge, would take that line's skin, which its own last
    pass is to cut, or cut its kept strip. That is

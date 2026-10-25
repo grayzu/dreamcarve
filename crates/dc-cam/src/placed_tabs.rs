@@ -1211,7 +1211,7 @@ mod tests {
     /// last pass, places hole tabs that hold their slugs. They cut what
     /// the request cut, and none warns `tab_on_hole`, before or after
     /// placing. The same tabs marked `false` cut the same and warn once
-    /// each, not once more for the allowance path they are carried onto.
+    /// each, not once more for the stock path they are carried onto.
     #[test]
     fn hole_tabs_hold_their_slugs_off_corners_with_a_last_pass() {
         let mut p = frame_with_hole();
@@ -1221,7 +1221,7 @@ mod tests {
             y_mm: 0.0,
         };
         op.last_pass = Some(dc_project::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: false,
         });
