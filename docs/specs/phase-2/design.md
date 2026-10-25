@@ -2590,6 +2590,16 @@ Option<Vec<String>> }`.
 6. **Definitions:** one per shape, named `<layer>` (numbered when a layer
    has several), one instance each with identity transform, as SVG.
    Coordinate limit (`MAX_COORDINATE_MM`) as SVG.
+   Before that, every polyline is rounded (`dc-import::round`, shared
+   with SVG, which rounds each path's profiles once they are built):
+   x and y through `dc_project::round_length_mm`, bulges unchanged (a
+   rounded bulge would move the arc's centre, and I and J, by µm), a
+   vertex equal to the one before it after rounding dropped (it takes
+   over the dropped segment's place with its own bulge), and so is a
+   closed polyline's last vertex equal to its first. A polyline left
+   with fewer than 2 vertices is dropped; a closed one with a
+   `ZeroAreaDropped` warning, and so is a closed one whose area the
+   rounding takes to zero. (changed: maintainer decision 2026-10-25.)
 7. `init` accepts `.dxf` by extension; `--units`, `--join-tolerance`,
    `--layer` (repeatable) are DXF-only flags.
 

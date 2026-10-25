@@ -31,7 +31,7 @@ mod stitch;
 
 use std::collections::BTreeMap;
 
-use crate::{ImportError, ImportWarning};
+use crate::{ImportError, ImportWarning, round};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Transform};
 use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Units};
 
@@ -289,19 +289,21 @@ pub fn import_dxf(
         })
         .collect();
     let shapes = stitch::stitch(stitch::dedupe(shapes), join_mm);
-    // A chain that closed on itself can enclose nothing (collinear lines).
+    // Rounded once stitching has decided closure (#389). A chain that
+    // closed on itself can enclose nothing (collinear lines), and rounding
+    // can leave a shape too few points.
     let shapes: Vec<Shape> = shapes
         .into_iter()
-        .filter(|s| {
-            let empty =
-                s.polyline.is_closed() && s.polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM;
-            if empty {
+        .filter_map(|s| {
+            let rounded = round::round_polyline(&s.polyline)
+                .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM));
+            if rounded.is_none() && s.polyline.is_closed() {
                 warnings.push(ImportWarning::ZeroAreaDropped {
                     path: s.layer.clone(),
                     subpath: 0,
                 });
             }
-            !empty
+            rounded.map(|polyline| Shape { polyline, ..s })
         })
         .collect();
 
