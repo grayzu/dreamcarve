@@ -284,6 +284,16 @@ named layers. Open segments whose ends meet within `--join-tolerance`
 shape. Entities DreamCarve does not read (TEXT, MTEXT, DIMENSION,
 HATCH, 3D meshes) are listed in a warning with their counts, never
 dropped silently.
+20a. **Exact imported coordinates.** SVG and DXF import round every
+    coordinate to 6 decimal places of a millimetre, as 22b rounds
+    lengths, so a corner drawn at 10 mm is `10`, not `10.00000027815501`.
+    Bulges are rounded to 6 decimal places too, so a quarter arc is
+    `0.414214` and a half circle `1`; a bulge that would round to 0
+    becomes ±0.000001, so an arc never becomes a line. Rounding never
+    changes topology: closure is decided before rounding, and a vertex
+    that rounds onto the one before it is dropped. (changed: maintainer
+    decision 2026-10-25. Imported shapes carried transform and
+    flattening noise.)
 
 ### Tools
 
