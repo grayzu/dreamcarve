@@ -799,7 +799,13 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    rule below), entered at its nearer end, so a segment may run either
    way; when none is, the tool lifts, to the nearest end that no
    stay-down link reaches from a segment still to cut (a dead end), else
-   to the nearest end. Ties go by scan order, start before end. When scan
+   to the nearest end. Ties go by scan order, start before end: two ends
+   are a tie when their distances, or the lengths of the stay-down links
+   that reach them, are within `NEAREST_TIE_MM` (0.001 mm, #215) of each
+   other. (changed in #392: stay-down link lengths were compared exactly,
+   so float noise in the scan lines' Y chose between the lines one
+   step-over above and below a line's end, and an SVG and a DXF of one
+   drawing planned different rasters.) When scan
    order would lift fewer times, it is kept. (changed in #150: scan order
    lifted once per line an island splits, 11 times per pass on the
    island test pocket; nearest-first zigzags down one side of the island
