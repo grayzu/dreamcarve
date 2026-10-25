@@ -4948,6 +4948,177 @@ fn plaque_dxf_imports_same_shapes_as_svg() {
     );
 }
 
+/// The numbers a `.dcv` writes for `"x"` and `"y"`, as written.
+fn written_coordinates(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    for key in ["\"x\": ", "\"y\": "] {
+        let mut rest = text;
+        while let Some(at) = rest.find(key) {
+            rest = &rest[at + key.len()..];
+            let end = rest
+                .find(|c: char| !(c.is_ascii_digit() || matches!(c, '.' | '-' | 'e' | 'E' | '+')))
+                .unwrap_or(rest.len());
+            out.push(&rest[..end]);
+        }
+    }
+    out
+}
+
+/// Whether `written`, a number as the `.dcv` spells it, has at most 6
+/// decimal places of a millimetre: plain decimals are counted, and a
+/// number in exponent form (`-2e-6`) must be its own 6-decimal rounding.
+#[allow(clippy::float_cmp, reason = "a rounded value is compared exactly")]
+fn has_at_most_six_decimals(written: &str) -> bool {
+    if written.contains(['e', 'E']) {
+        let value: f64 = written.parse().expect("a number");
+        return (value * 1e6).round() / 1e6 == value;
+    }
+    written
+        .split_once('.')
+        .is_none_or(|(_, decimals)| decimals.len() <= 6)
+}
+
+/// #389: `init` writes the SVG's shapes with every coordinate rounded to
+/// 6 decimals of a millimetre; before the fix the plaque had 88 such as
+/// `10.00000027815501`.
+#[test]
+fn init_svg_writes_rounded_coordinates() {
+    let dir = work_dir("init_svg_writes_rounded_coordinates");
+    copy_fixture(&dir, "plaque.svg", "plaque.svg");
+    let out = run(&dir, &["init", "plaque.svg", "-o", "plaque.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let text = std::fs::read_to_string(dir.join("plaque.dcv")).expect("project written");
+    let coordinates = written_coordinates(&text);
+    assert!(coordinates.len() > 100, "the shapes' vertices are written");
+    let long: Vec<&&str> = coordinates
+        .iter()
+        .filter(|c| !has_at_most_six_decimals(c))
+        .collect();
+    assert!(
+        long.is_empty(),
+        "coordinates of more than 6 decimals: {long:?}"
+    );
+}
+
+/// The SVG's coordinates still carry usvg's `f32` view-box scale, 2.8e-8
+/// of their distance from the origin: up to 4.2 µm on the plaque's 150 mm,
+/// more than rounding to 6 decimals removes.
+const SVG_SCALE_NOISE_MM: f64 = 5e-6;
+
+/// Whether `a` and `b` are one shape: as closed, with as many vertices,
+/// each within `tolerance_mm` of its counterpart in `b` or `b` reversed,
+/// from some start, with an equal bulge; two whole circles have the same
+/// centre and radius within `tolerance_mm`. Direction and start point may
+/// differ; see `init_svg_and_dxf_write_same_shapes`.
+#[allow(clippy::float_cmp, reason = "rounded bulges are compared exactly")]
+fn same_shape(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Result<(), String> {
+    if a.is_closed() != b.is_closed() {
+        return Err("one is closed, the other open".to_owned());
+    }
+    if a.vertices().len() != b.vertices().len() {
+        return Err(format!(
+            "{} vertices against {}",
+            a.vertices().len(),
+            b.vertices().len()
+        ));
+    }
+    if let (Some(p), Some(q)) = (whole_circle(a), whole_circle(b)) {
+        let apart = p.0.distance_to(q.0).max((p.1 - q.1).abs());
+        return if apart <= tolerance_mm {
+            Ok(())
+        } else {
+            Err(format!("circles {p:?} and {q:?}"))
+        };
+    }
+    let n = a.vertices().len();
+    let starts = if a.is_closed() { n } else { 1 };
+    for other in [b.clone(), b.reversed()] {
+        let w = other.vertices();
+        for start in 0..starts {
+            // An open path's last bulge is unused; a reversed one moves it.
+            let matches = a.vertices().iter().enumerate().all(|(i, v)| {
+                let bulge_used = a.is_closed() || i + 1 < n;
+                w.get((start + i) % n).is_some_and(|u| {
+                    (v.x - u.x).abs() <= tolerance_mm
+                        && (v.y - u.y).abs() <= tolerance_mm
+                        && (!bulge_used || v.bulge == u.bulge)
+                })
+            });
+            if matches {
+                return Ok(());
+            }
+        }
+    }
+    Err(format!(
+        "no start or direction matches: {:?} against {:?}",
+        a.vertices(),
+        b.vertices()
+    ))
+}
+
+/// The centre and radius of `p` when it is a whole circle of two
+/// half-circle arcs.
+#[allow(
+    clippy::float_cmp,
+    reason = "a half circle's rounded bulge is exactly 1"
+)]
+fn whole_circle(p: &Polyline) -> Option<(Point, f64)> {
+    match p.vertices() {
+        [u, v] if p.is_closed() && u.bulge.abs() == 1.0 && v.bulge == u.bulge => {
+            let centre = Point::new((u.x + v.x) / 2.0, (u.y + v.y) / 2.0);
+            Some((centre, centre.distance_to(u.point())))
+        }
+        _ => None,
+    }
+}
+
+/// #389: the shapes `init` writes from `plaque.svg` and `plaque.dxf` are
+/// the same. Both importers round coordinates and bulges to 6 decimals, so
+/// every bulge, the quarter arcs' `±0.414214` included, is equal in the
+/// two. The differences that remain, and why each is expected:
+///
+/// - every SVG coordinate may be off by up to [`SVG_SCALE_NOISE_MM`]: the
+///   noise is usvg's `f32` view-box scale, a relative error, not rounding;
+/// - the pocket, the island and the four holes run the other way, and the
+///   holes start elsewhere: the DXF's CIRCLE is counter-clockwise from +X
+///   and its block is rotated, the SVG's are clockwise. Toolpaths do not
+///   depend on either (`plaque_dxf_exports_same_programs_as_svg`);
+/// - the squiggle is flattened differently from an SVG cubic and a DXF
+///   SPLINE (acceptance test 34 holds it within 0.01 mm).
+#[test]
+fn init_svg_and_dxf_write_same_shapes() {
+    let dir = work_dir("init_svg_and_dxf_write_same_shapes");
+    copy_fixture(&dir, "plaque.dxf", "plaque.dxf");
+    copy_fixture(&dir, "plaque.svg", "plaque.svg");
+    for drawing in ["plaque.dxf", "plaque.svg"] {
+        let out = run(&dir, &["init", drawing, "-o", &format!("{drawing}.dcv")]);
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "init {drawing}: {}",
+            stderr(&out)
+        );
+    }
+    let from_dxf = load_file(&dir.join("plaque.dxf.dcv")).project;
+    let from_svg = load_file(&dir.join("plaque.svg.dcv")).project;
+    assert_eq!(definition_names(&from_dxf), definition_names(&from_svg));
+    for name in definition_names(&from_dxf) {
+        let (a, b) = (
+            &definition_named(&from_dxf, &name).profiles,
+            &definition_named(&from_svg, &name).profiles,
+        );
+        assert_eq!(a.len(), 1, "{name}");
+        assert_eq!(b.len(), 1, "{name}");
+        if name == "squiggle" {
+            assert_eq!(a[0].is_closed(), b[0].is_closed(), "{name}");
+            continue;
+        }
+        if let Err(why) = same_shape(&a[0], &b[0], SVG_SCALE_NOISE_MM) {
+            panic!("{name} differs between the DXF and the SVG: {why}");
+        }
+    }
+}
+
 /// How far two exports of one part may differ, mm: each drawing is within
 /// the 0.01 mm flatten tolerance of the true curve, so two flattenings of
 /// one curve (the squiggle: an SVG cubic and a DXF SPLINE) are within
@@ -5131,7 +5302,7 @@ fn runs_apart(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
 /// operation the same rapids within 0.01 mm and the same runs of cutting
 /// moves, in the same order, at the same feeds, each run's path within
 /// `PARITY_TOLERANCE_MM` of its counterpart's both ways. The SVG's
-/// coordinates carry noise of about 1e-6 mm (usvg reads them as `f32`);
+/// coordinates carry noise of up to 4e-6 mm (usvg reads them as `f32`);
 /// nearest-first ties within `NEAREST_TIE_MM` keep drawing order (#215),
 /// so the noise no longer settles a tie between two equally near
 /// corner-relief notches the other way. The squiggle is flattened differently from an SVG cubic and a DXF SPLINE,
@@ -5198,7 +5369,10 @@ fn plaque_dxf_exports_same_programs_as_svg() {
                 // so it falls no faster than the plunge rate (#325): the
                 // SVG's noise moves an end by a unit in the last place,
                 // and the Bore's helix chords (format 18) are short, so
-                // such a feed may differ by up to 0.1 %.
+                // such a feed may differ by up to 0.1 %. Rounding imported
+                // coordinates (#389) does not remove that noise, which is
+                // usvg's f32 view-box scale and reaches 4 µm, so this
+                // tolerance stays.
                 assert!(
                     feeds.len() == other_feeds.len()
                         && feeds

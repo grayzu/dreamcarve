@@ -10,6 +10,7 @@
 //! makes the result untrustworthy is an [`ImportError`].
 
 pub mod dxf;
+mod round;
 pub mod svg;
 
 pub use dxf::{
