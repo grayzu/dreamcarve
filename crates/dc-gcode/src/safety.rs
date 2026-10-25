@@ -1235,16 +1235,16 @@ fn is_level_cut(mv: &MachineMove) -> bool {
 }
 
 /// The least feed, mm/min, a level cut of a Profile with a last pass may
-/// carry (#335): its tool's feed times `a / (a + r)`, the allowance over
-/// the allowance plus the tool radius, as slow as the generator runs the
+/// carry (#335): its tool's feed times `a / (a + r)`, the stock to leave over
+/// the stock to leave plus the tool radius, as slow as the generator runs the
 /// last pass's tightest inside arc. `None` for any other operation.
 fn last_pass_floor_mm_min(limits: &Limits<'_>) -> Option<f64> {
     let (Some(Operation::Profile(op)), Some(tool)) = (limits.op, limits.tool) else {
         return None;
     };
-    let allowance_mm = op.last_pass.as_ref()?.allowance_mm;
+    let stock_to_leave_mm = op.last_pass.as_ref()?.stock_to_leave_mm;
     let feed_mm_min = tool.feed_mm_min?;
-    Some(feed_mm_min * allowance_mm / (allowance_mm + tool.diameter_mm / 2.0))
+    Some(feed_mm_min * stock_to_leave_mm / (stock_to_leave_mm + tool.diameter_mm / 2.0))
 }
 
 /// True for a `G1`, `G2` or `G3` that falls while it moves in XY, every
@@ -2392,7 +2392,7 @@ mod tests {
                 if (z_mm + 0.1).abs() < 1e-6 && floor_mm.abs() < 1e-6),
             "{err:?}"
         );
-        // An explicit allowance permits exactly that much.
+        // An explicit through-cut allowance permits exactly that much.
         op.through_cut_allowance_mm = 0.2;
         if let Some(Operation::Profile(p)) = project.operations.first_mut() {
             p.through_cut_allowance_mm = 0.2;
@@ -2697,7 +2697,7 @@ mod tests {
         };
         let with_last_pass = |op: &mut dc_project::ProfileOp| {
             op.last_pass = Some(dc_project::LastPass {
-                allowance_mm: 0.5,
+                stock_to_leave_mm: 0.5,
                 thickness_mm: None,
                 reverse: false,
             });
@@ -4826,10 +4826,10 @@ mod tests {
     /// stock, a 100 × 50 mm rectangle at (20, 20) with a 20 mm circle
     /// island at its centre (70, 45), an offset Pocket 4 mm deep in the
     /// 6.35 mm tool's 2 mm steps, 40 % step-over, entering by `entry`, with
-    /// `allowance_mm`.
+    /// `stock_to_leave_mm`.
     fn island_pocket(
         entry: dc_project::Entry,
-        allowance_mm: f64,
+        stock_to_leave_mm: f64,
     ) -> (Project, dc_project::PocketOp) {
         let mut project = sample_project();
         project.stock = dc_project::Stock {
@@ -4848,7 +4848,7 @@ mod tests {
             depth_mm: Some(4.0),
             step_over_fraction: Some(0.4),
             entry,
-            allowance_mm,
+            stock_to_leave_mm,
             ..dc_project::test_support::sample_pocket()
         };
         project.operations = vec![Operation::Pocket(op.clone())];
@@ -4911,7 +4911,7 @@ mod tests {
     }
 
     /// S9: a Pocket cut that brings the 6.35 mm tool past the region's
-    /// wall, into its allowance, or onto an island fails with
+    /// wall, into its stock to leave, or onto an island fails with
     /// `OffMaterial` at that line; the generated Pocket passes. The sample
     /// rectangle spans X 10 to 60, so a tool centre at X 56.8 is 0.025 mm
     /// inside the wall and one at 58 is 1.175 mm past it.
@@ -4930,9 +4930,9 @@ mod tests {
             "{err:?}"
         );
 
-        // A 0.5 mm allowance keeps the tool 0.5 mm off the wall.
+        // A 0.5 mm stock to leave keeps the tool 0.5 mm off the wall.
         let left = dc_project::PocketOp {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             ..op.clone()
         };
         let err = emit_pocket(&project, &left, Some(one_pass(20.0, 56.8, 25.0))).unwrap_err();
@@ -4955,12 +4955,12 @@ mod tests {
 
     /// S9 on a raster Pocket round the 20 mm circle island (#202): with a
     /// wall pass the links between line ends against the island follow
-    /// its tool-centre ring, and the program passes, with an allowance
+    /// its tool-centre ring, and the program passes, with stock to leave
     /// too, at angles that meet the island's curve everywhere.
     #[test]
     fn raster_edge_links_round_an_island_pass_s9() {
-        for allowance_mm in [0.0, 0.5] {
-            let (project, op) = island_pocket(dc_project::Entry::Plunge, allowance_mm);
+        for stock_to_leave_mm in [0.0, 0.5] {
+            let (project, op) = island_pocket(dc_project::Entry::Plunge, stock_to_leave_mm);
             for angle_deg in [0.0, 45.0, 90.0] {
                 for wall_pass in [dc_project::WallPass::Last, dc_project::WallPass::First] {
                     let op = dc_project::PocketOp {
@@ -4971,7 +4971,7 @@ mod tests {
                     let text = emit_pocket(&project, &op, None);
                     assert!(
                         text.is_ok(),
-                        "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
+                        "{stock_to_leave_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
                     );
                 }
             }
@@ -4981,13 +4981,13 @@ mod tests {
     /// S9 on an offset Pocket at step-over 1.0 (#267): the corner clean-up
     /// rings are cut from inside the laps of the rings that leave them,
     /// out from a corner and back, and the program passes, on the rect with
-    /// and without its island, with an allowance too, the wall pass last
+    /// and without its island, with stock to leave too, the wall pass last
     /// or first, plunging or by helix.
     #[test]
     fn offset_corner_cleanups_pass_s9() {
-        for allowance_mm in [0.0, 0.5] {
+        for stock_to_leave_mm in [0.0, 0.5] {
             for entry in [dc_project::Entry::Plunge, helix()] {
-                let (island, op) = island_pocket(entry, allowance_mm);
+                let (island, op) = island_pocket(entry, stock_to_leave_mm);
                 let mut plain = island.clone();
                 if let Some(def) = plain.definitions.values_mut().next() {
                     def.profiles.truncate(1);
@@ -5002,7 +5002,7 @@ mod tests {
                         let text = emit_pocket(project, &op, None);
                         assert!(
                             text.is_ok(),
-                            "{allowance_mm} mm, {:?}, {wall_pass:?}: {text:?}",
+                            "{stock_to_leave_mm} mm, {:?}, {wall_pass:?}: {text:?}",
                             op.entry
                         );
                     }
@@ -5015,8 +5015,8 @@ mod tests {
     /// reflex corner rounds the tool-centre region by the tool radius, and
     /// a rect with a half-disc bay of radius 15 pushed in from its top.
     /// With a wall pass the links between line ends against those arcs
-    /// follow the tool-centre ring, and the program passes, with an
-    /// allowance too, at several angles.
+    /// follow the tool-centre ring, and the program passes, with a
+    /// stock to leave too, at several angles.
     #[test]
     fn raster_edge_links_along_a_concave_wall_pass_s9() {
         use dc_geometry::{Polyline, Vertex};
@@ -5046,8 +5046,8 @@ mod tests {
             true,
         );
         for outline in [l_shape, bay] {
-            for allowance_mm in [0.0, 0.5] {
-                let (mut project, op) = island_pocket(dc_project::Entry::Plunge, allowance_mm);
+            for stock_to_leave_mm in [0.0, 0.5] {
+                let (mut project, op) = island_pocket(dc_project::Entry::Plunge, stock_to_leave_mm);
                 if let Some(def) = project.definitions.values_mut().next() {
                     def.profiles = vec![outline.clone()];
                 }
@@ -5062,7 +5062,7 @@ mod tests {
                         let text = emit_pocket(&project, &op, None);
                         assert!(
                             text.is_ok(),
-                            "{allowance_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
+                            "{stock_to_leave_mm} mm, {angle_deg}°, {wall_pass:?}: {text:?}"
                         );
                     }
                 }
@@ -5246,7 +5246,7 @@ mod tests {
     }
 
     /// The sample project cut by its Profile on `side` with a 1 mm last
-    /// pass allowance, no tab request, and one placed 2 × 2 mm rect tab at
+    /// pass stock to leave, no tab request, and one placed 2 × 2 mm rect tab at
     /// (`x_mm`, `y_mm`) on its outline, drawn `width_mm` wide: the 6.35 mm
     /// tool's tab spans 4.175 mm either way along the lap.
     fn last_pass_tab_project(side: dc_project::Side, width_mm: f64, at: (f64, f64)) -> Project {
@@ -5262,7 +5262,7 @@ mod tests {
         profile.side = side;
         profile.tabs = None;
         profile.last_pass = Some(dc_project::LastPass {
-            allowance_mm: 1.0,
+            stock_to_leave_mm: 1.0,
             thickness_mm: None,
             reverse: false,
         });
@@ -5279,31 +5279,31 @@ mod tests {
         format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG1 Z-5 F300\nG0 Z5\n")
     }
 
-    /// #353: S9 holds an allowance pass off a tab only as far as the tab
+    /// #353: S9 holds a stock pass off a tab only as far as the tab
     /// material the last pass's lap leaves standing, not the lap's span.
     /// An inside Profile of an 8.5 mm wide slot (X 10 to 18.5, Y 10 to 40)
     /// with a tab on its left wall at Y 25: the lap on the right wall (X
     /// 15.325) cuts the far side of the left lap's kerf down to its floor
-    /// (X 12.15 on), so the allowance cutter on the left allowance path (X
+    /// (X 12.15 on), so the stock cutter on the left stock path (X
     /// 14.175) clears the tab the left lap leaves `4.175 − √(r² −
     /// 1.025²) + √(r² − 2.025²)` = 3.62 mm along from the tab. A plunge
     /// there 3.75 mm along either way, inside the lap's span less a tenth
     /// of the radius (3.86 mm), cuts none of it and passes.
     #[test]
-    fn allowance_pass_leaves_a_tab_at_its_stretch_end() {
+    fn stock_to_leave_pass_leaves_a_tab_at_its_stretch_end() {
         let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
         let op = sample_profile_op_of(&project);
         check_material_text(&plunge_at(14.175, 28.75), &project, &op).unwrap();
         check_material_text(&plunge_at(14.175, 21.25), &project, &op).unwrap();
     }
 
-    /// #353: an allowance pass that comes down onto the tab material the
+    /// #353: a stock pass that comes down onto the tab material the
     /// lap leaves still fails S9. In the slot of
-    /// [`allowance_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 or
-    /// 3.55 mm along the left allowance path from the tab, short of the
+    /// [`stock_to_leave_pass_leaves_a_tab_at_its_stretch_end`], a plunge 3.3 or
+    /// 3.55 mm along the left stock path from the tab, short of the
     /// 3.62 mm where its cutter clears the tab, or at the tab, is refused.
     #[test]
-    fn allowance_pass_dropping_onto_a_tab_fails_s9() {
+    fn stock_to_leave_pass_dropping_onto_a_tab_fails_s9() {
         let project = last_pass_tab_project(dc_project::Side::Inside, 8.5, (0.0, 15.0));
         let op = sample_profile_op_of(&project);
         for y in [28.3, 21.7, 28.55, 21.45, 25.0] {
@@ -5317,15 +5317,15 @@ mod tests {
 
     /// #353: on a straight wall the lap's kerf keeps its far side, where
     /// the tab stands the lap's whole span (4.175 mm) either side of the
-    /// tab, and the allowance cutter reaches it until it is
+    /// tab, and the stock cutter reaches it until it is
     /// `√(2ar − a²)` = 2.31 mm farther along: 6.49 mm in all, the last
     /// half millimetre of it the tab's tip, thinner than the slack. The
     /// sample rectangle cut outside with a tab on its bottom edge at X 35:
-    /// a plunge on the allowance path (Y 5.825) 5 or 5.8 mm along, past
+    /// a plunge on the stock path (Y 5.825) 5 or 5.8 mm along, past
     /// the lap's span less a tenth of the radius (3.86 mm), is refused;
     /// one 6.7 mm along passes.
     #[test]
-    fn allowance_pass_past_the_span_onto_a_tab_fails_s9() {
+    fn stock_to_leave_pass_past_the_span_onto_a_tab_fails_s9() {
         let project = last_pass_tab_project(dc_project::Side::Outside, 50.0, (25.0, 0.0));
         let op = sample_profile_op_of(&project);
         for x in [40.0, 30.0, 40.8, 29.2] {
@@ -6252,7 +6252,7 @@ mod tests {
 
     /// #284 (acceptance 46, S9 with a last pass): the sample made a 60 × 40
     /// mm rectangle on 12 mm stock, cut 12 mm deep in 4 mm passes with a
-    /// 0.5 mm last pass allowance, passes every rule of the safety pass
+    /// 0.5 mm last pass stock to leave, passes every rule of the safety pass
     /// (S1–S16), Inside and Outside; with a plunge, a ramp and lead, and a
     /// helix, lead and dogbones; with its tab request and with those tabs
     /// placed; with `thickness_mm: 1` and with `reverse`. Every program
@@ -6299,12 +6299,12 @@ mod tests {
             ] {
                 for last_pass in [
                     dc_project::LastPass {
-                        allowance_mm: 0.5,
+                        stock_to_leave_mm: 0.5,
                         thickness_mm: None,
                         reverse: false,
                     },
                     dc_project::LastPass {
-                        allowance_mm: 0.5,
+                        stock_to_leave_mm: 0.5,
                         thickness_mm: Some(1.0),
                         reverse: true,
                     },
@@ -6355,9 +6355,9 @@ mod tests {
     /// with a plunge and a ramp, its tab request and those tabs placed,
     /// and a 0.5 mm last pass, also with `thickness_mm: 1` and `reverse`:
     /// every program passes the safety pass (S1–S16). S9 holds the
-    /// allowance passes to the open paths offset by `r + a`, and every
+    /// stock passes to the open paths offset by `r + a`, and every
     /// pass to the radius from every line and kept strip; a hand-written
-    /// pass half the allowance off the path fails it.
+    /// pass half the stock to leave off the path fails it.
     #[test]
     fn left_right_last_pass_passes_s9() {
         let mut base = sample_project();
@@ -6392,12 +6392,12 @@ mod tests {
                 ] {
                     for last_pass in [
                         dc_project::LastPass {
-                            allowance_mm: 0.5,
+                            stock_to_leave_mm: 0.5,
                             thickness_mm: None,
                             reverse: false,
                         },
                         dc_project::LastPass {
-                            allowance_mm: 0.5,
+                            stock_to_leave_mm: 0.5,
                             thickness_mm: Some(1.0),
                             reverse: true,
                         },
@@ -6437,13 +6437,13 @@ mod tests {
         }
         assert_eq!(programs, 32);
 
-        // By hand: Left of the line, at the allowance path (Y 63.675) and
-        // at half the allowance off it.
+        // By hand: Left of the line, at the stock path (Y 63.675) and
+        // at half the stock to leave off it.
         let mut project = base.clone();
         let op = dc_project::test_support::profile_mut(&mut project);
         op.side = dc_project::Side::Left;
         op.last_pass = Some(dc_project::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: false,
         });
@@ -6455,9 +6455,9 @@ mod tests {
         let err = check_material_text(&cut(63.425), &project, &op).unwrap_err();
         assert!(
             matches!(&err, ExportError::OffMaterial { line: 5, .. }),
-            "half the allowance off: {err:?}"
+            "half the stock to leave off: {err:?}"
         );
-        // #339: the last pass's step across the allowance, from the
+        // #339: the last pass's step across the stock to leave, from the
         // earlier passes' path to its own, level, passes; the same step in
         // two halves, or falling as it crosses, fails at the move that
         // starts or falls inside the band.
@@ -6803,7 +6803,7 @@ mod tests {
 
     /// S9 for a Bore refuses a doctored program whose circle runs 0.1 mm
     /// wider than the helix radius, at its first cut there: that would cut
-    /// the hole 0.2 mm oversize. With a 0.1 mm allowance even the helix
+    /// the hole 0.2 mm oversize. With a 0.1 mm stock to leave even the helix
     /// radius of the hole as drawn is too wide.
     #[test]
     fn bore_doctored_outside_hole_fails_s9() {
@@ -6824,7 +6824,7 @@ mod tests {
                 if at == &op.id && *line == plunge_line),
             "{err:?}"
         );
-        op.allowance_mm = 0.1;
+        op.stock_to_leave_mm = 0.1;
         project.operations = vec![Operation::Bore(op.clone())];
         let err = emit_bore(&project, &op, bore_circle_at(1.825)).unwrap_err();
         assert!(matches!(&err, ExportError::OffMaterial { .. }), "{err:?}");

@@ -149,7 +149,7 @@ struct Case {
     side: Side,
     direction: CutDirection,
     entering: Entering,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     thickness_mm: Option<f64>,
     reverse: bool,
     tabs: Option<TabSpec>,
@@ -163,7 +163,7 @@ impl Case {
             self.side,
             self.direction,
             self.entering,
-            self.allowance_mm,
+            self.stock_to_leave_mm,
             self.thickness_mm,
             self.reverse,
             self.tabs
@@ -195,7 +195,7 @@ impl Case {
         op.lead = self.entering.lead();
         op.tabs.clone_from(&self.tabs);
         op.last_pass = last_pass.then_some(LastPass {
-            allowance_mm: self.allowance_mm,
+            stock_to_leave_mm: self.stock_to_leave_mm,
             thickness_mm: self.thickness_mm,
             reverse: self.reverse,
         });
@@ -225,8 +225,8 @@ fn program(project: &Project) -> Option<(String, Vec<Cut>)> {
     let (toolpath, _) = match generate_profile(project, op) {
         Ok(generated) => generated,
         Err(
-            CamError::ShapeNarrowerThanAllowance { .. }
-            | CamError::BandNarrowerThanAllowance { .. }
+            CamError::ShapeNarrowerThanStockToLeave { .. }
+            | CamError::BandNarrowerThanStockToLeave { .. }
             | CamError::HelixNeedsWasteSide { .. },
         ) => return None,
         Err(e) => panic!("{e}"),
@@ -345,7 +345,7 @@ fn check_tabs(name: &str, outline: &Polyline, cuts: &[Cut]) {
 }
 
 /// Every case of the issue's matrix: Inside, Outside, Left and Right; a
-/// plunge, a ramp, a helix and a lead; allowances of 0.2, 0.5 and 2 mm;
+/// plunge, a ramp, a helix and a lead; stocks to leave of 0.2, 0.5 and 2 mm;
 /// and the round holes of 8, 10 and 15 mm cut Inside.
 fn matrix() -> Vec<Case> {
     let mut cases = Vec::new();
@@ -359,7 +359,7 @@ fn matrix() -> Vec<Case> {
     let open = [(ell(), Side::Left), (ell(), Side::Right)];
     for (drawing, side) in closed.into_iter().chain(open) {
         for entering in ENTERINGS {
-            for (k, allowance_mm) in [0.2, 0.5, 2.0].into_iter().enumerate() {
+            for (k, stock_to_leave_mm) in [0.2, 0.5, 2.0].into_iter().enumerate() {
                 cases.push(Case {
                     drawing: drawing.clone(),
                     side,
@@ -369,7 +369,7 @@ fn matrix() -> Vec<Case> {
                         CutDirection::Climb
                     },
                     entering,
-                    allowance_mm,
+                    stock_to_leave_mm,
                     thickness_mm: (k == 2).then_some(1.0),
                     reverse: k == 1,
                     tabs: None,
@@ -436,7 +436,7 @@ fn last_pass_entry_keeps_the_tabs() {
                     side,
                     direction: CutDirection::Climb,
                     entering,
-                    allowance_mm: 0.5,
+                    stock_to_leave_mm: 0.5,
                     thickness_mm: None,
                     reverse,
                     tabs: Some(two_tabs(shape)),
@@ -452,7 +452,7 @@ fn last_pass_entry_keeps_the_tabs() {
     }
 }
 
-/// #339 review: the step across the allowance is held to what it sweeps,
+/// #339 review: the step across the stock to leave is held to what it sweeps,
 /// not to the waste less the tabs' entry keep-outs. The review's repro, a
 /// 15 mm hole cut Inside with one 6 × 3 mm rect tab at 0.5 mm, and the
 /// 24 × 16 mm rectangle cut Inside with two tabs at 1 mm and Outside with
@@ -461,7 +461,7 @@ fn last_pass_entry_keeps_the_tabs() {
 /// [`last_pass_entry_keeps_the_tabs`] hold.
 #[test]
 fn last_pass_entry_steps_clear_of_tabs() {
-    for (drawing, side, count, allowance_mm) in [
+    for (drawing, side, count, stock_to_leave_mm) in [
         (hole("15 mm hole", 15.0), Side::Inside, 1, 0.5),
         (rect(), Side::Inside, 2, 1.0),
         (rect(), Side::Outside, 4, 2.0),
@@ -478,7 +478,7 @@ fn last_pass_entry_steps_clear_of_tabs() {
                     side,
                     direction: CutDirection::Climb,
                     entering,
-                    allowance_mm,
+                    stock_to_leave_mm,
                     thickness_mm: None,
                     reverse: false,
                     tabs: Some(TabSpec {
@@ -504,9 +504,9 @@ fn line() -> Drawing {
 /// #339 with #337: a last pass that starts on a tab. The 60 mm line cut
 /// Left and Right with 8 × 3 mm tabs 3 mm from each end of the last
 /// pass's path, rect and smooth, from either end, with a plunge and a
-/// ramp: the allowance passes and the last pass both start on a tab, the
+/// ramp: the stock passes and the last pass both start on a tab, the
 /// smooth one partway up its slope, where the last pass comes down from
-/// the allowance pass's height after its step. The checks of
+/// the stock pass's height after its step. The checks of
 /// [`last_pass_entry_keeps_the_tabs`] hold, and every case is cut.
 #[test]
 fn last_pass_entry_starting_on_a_tab() {
@@ -519,7 +519,7 @@ fn last_pass_entry_starting_on_a_tab() {
                         side,
                         direction: CutDirection::Climb,
                         entering,
-                        allowance_mm: 0.5,
+                        stock_to_leave_mm: 0.5,
                         thickness_mm: None,
                         reverse,
                         tabs: Some(TabSpec {
@@ -539,7 +539,7 @@ fn last_pass_entry_starting_on_a_tab() {
 
 /// The layer the last pass's load is measured at, mm above the stock
 /// bottom (#335): above every earlier pass's floor, so only the
-/// allowance stands there for the last pass to take.
+/// stock to leave stands there for the last pass to take.
 const LOAD_LAYER_MM: f64 = 6.0;
 
 /// How hard the last pass's lap works in one program (#335).
@@ -550,7 +550,7 @@ struct Load {
     edge: f64,
     /// The material it removes per minute at [`LOAD_LAYER_MM`], as a
     /// multiple of what a straight wall's last pass removes there at the
-    /// tool's feed, `feed × allowance` mm² per minute.
+    /// tool's feed, `feed × stock to leave` mm² per minute.
     removal: f64,
 }
 
@@ -600,15 +600,15 @@ fn load(case: &Case) -> Option<Load> {
         .filter(|&k| before.z[k] > LOAD_LAYER_MM && after.z[k] <= LOAD_LAYER_MM)
         .count();
     let area_mm2 = removed as f64 * 0.05 * 0.05;
-    let removal = area_mm2 / minutes / (feed_mm_min * case.allowance_mm);
+    let removal = area_mm2 / minutes / (feed_mm_min * case.stock_to_leave_mm);
     Some(Load { edge, removal })
 }
 
 /// #335: in the round holes of 8, 10 and 15 mm cut Inside with a 6.35 mm
-/// bit, with every entry and allowances of 0.2, 0.5 and 2 mm (the 8 and
+/// bit, with every entry and stocks to leave of 0.2, 0.5 and 2 mm (the 8 and
 /// 10 mm holes refuse 2 mm), the last pass's cutting edge never moves
 /// faster than the feed, and its lap removes no more per minute at a
-/// layer the earlier passes left the allowance on than a straight wall's
+/// layer the earlier passes left the stock to leave on than a straight wall's
 /// last pass does at the feed (within the lattice's 5%). Before #335 the
 /// edge in the 8 mm hole moved at 4.8 times the feed and removed 4.5
 /// times as much. The checks of
@@ -618,20 +618,23 @@ fn last_pass_small_hole_load() {
     let mut measured = 0;
     for diameter_mm in [8.0, 10.0, 15.0] {
         for entering in ENTERINGS {
-            for allowance_mm in [0.2, 0.5, 2.0] {
+            for stock_to_leave_mm in [0.2, 0.5, 2.0] {
                 let case = Case {
                     drawing: hole("hole", diameter_mm),
                     side: Side::Inside,
                     direction: CutDirection::Climb,
                     entering,
-                    allowance_mm,
+                    stock_to_leave_mm,
                     thickness_mm: None,
                     reverse: false,
                     tabs: None,
                 };
                 let name = format!("{diameter_mm} mm {}", case.name());
                 let Some(load) = load(&case) else {
-                    assert!(diameter_mm < 6.35 + 2.0 * allowance_mm, "{name} is refused");
+                    assert!(
+                        diameter_mm < 6.35 + 2.0 * stock_to_leave_mm,
+                        "{name} is refused"
+                    );
                     continue;
                 };
                 assert!(check(&case).is_some(), "{name}");
@@ -661,7 +664,7 @@ fn last_pass_small_hole_load() {
             side,
             direction: CutDirection::Climb,
             entering: Entering::Plunge,
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: false,
             tabs: None,
@@ -685,7 +688,7 @@ fn no_last_pass_programs_are_unchanged() {
     let mut fingerprint: u64 = 0xcbf2_9ce4_8422_2325;
     for case in matrix()
         .iter()
-        .filter(|c| (c.allowance_mm - 0.5).abs() < 1e-9)
+        .filter(|c| (c.stock_to_leave_mm - 0.5).abs() < 1e-9)
     {
         let Some((text, _)) = program(&case.project(false)) else {
             continue;
@@ -740,7 +743,7 @@ fn last_pass_entry_with_tall_tabs() {
                         side,
                         direction: CutDirection::Climb,
                         entering,
-                        allowance_mm: 0.5,
+                        stock_to_leave_mm: 0.5,
                         thickness_mm: None,
                         reverse,
                         tabs: Some(TabSpec {

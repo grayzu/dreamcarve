@@ -109,13 +109,16 @@ strategies**, named as VCarve names them (VCarve Pro Reference Manual,
       (`step_over_fraction`, from the tool by default, overridable on the
       operation like `step_down_mm`; `init` and the library default to 0.4).
       `direction` (climb or conventional) applies to every ring and to the
-      wall pass; raster lines alternate. **Pocket allowance** (`allowance_mm`,
-      VCarve's "Pocket Allowance"): a positive value leaves that much
-      material on the walls, so a roughing pocket with a large tool can be
-      followed by a finishing pocket with a small one.
+      wall pass; raster lines alternate. **Stock to leave**
+      (`stock_to_leave_mm`, VCarve's "Pocket Allowance", Fusion's "Stock
+      to Leave"): a positive value leaves that much material on the walls,
+      so a roughing pocket with a large tool can be followed by a finishing
+      pocket with a small one. (changed: maintainer decision 2026-10-25,
+      #394: the field was `allowance_mm`, from format version 19; an older
+      file's value carries over.)
 13. **Rest machining.** A Pocket may name an earlier Pocket in `rest_of`.
 It then clears only the material that pocket's tool could not reach
-(corners narrower than that tool, plus the allowance it left), as
+(corners narrower than that tool, plus the stock it left), as
 Fusion's "Rest Machining" and VCarve's "Use Larger Area Clearance
 Tool" do. Rough plus rest leaves no material the smaller tool can
 reach, which is what the coverage test checks.
@@ -168,7 +171,7 @@ Fusion help, "Bore reference" and "Generate a Bore toolpath"; VCarve has
 no bore toolpath, and PureCutCNC's `helical` drill type is the algorithm
 reference). A target is circular by Drill's test (capability 14). For each
 hole the tool spirals down a helix centred on the hole, whose radius is
-the hole's radius less the tool's radius and less `allowance_mm`, so the
+the hole's radius less the tool's radius and less `stock_to_leave_mm`, so the
 bit's edge runs on the wall. The helix starts 1 mm above the stock top,
 straight over its start, which the bit reaches by a rapid down from safe
 Z as before any ramp or helix (S2), so the bit never plunges into
@@ -181,22 +184,23 @@ and to size and the floor flat, then moves to the hole's centre (Fusion's
 "Lead To Center") and lifts straight up to safe Z, so it does not drag up
 the finished wall. `direction` is `climb` (default; counter-clockwise
 seen from above) or `conventional`, as on Pocket and Profile; the helix
-and the circle turn the same way. `allowance_mm` (default 0, at least 0)
-is Fusion's radial stock to leave: the hole comes out that much smaller
-all round, for a second Bore to finish. The helix's descent never
+and the circle turn the same way. `stock_to_leave_mm` (default 0, at
+least 0) is Fusion's radial stock to leave: the hole comes out that much
+smaller all round, for a second Bore to finish (changed: maintainer
+decision 2026-10-25, #394: was `allowance_mm`). The helix's descent never
 exceeds the plunge rate in Z (S10). Holes are visited nearest-first from
 the first in drawing order and linked at safe Z, as a Drill's are.
 Fusion's finishing passes, multiple passes, repeat (spring) passes, ramp
 angle and tapered walls are not in phase 2: one helix and one circle cut
-the hole, and a second Bore with a smaller allowance is the finishing
+the hole, and a second Bore with less stock to leave is the finishing
 pass. A hole a Bore cannot cut as drawn is skipped with a warning that
 `check` and `export` print, and the other holes are cut:
     - **`bore_no_room`**: the helix radius would be under 0.05 mm, so the
-     bit (with the allowance) does not fit the hole, or fits it so
+     bit (with the stock to leave) does not fit the hole, or fits it so
      closely there is no room to spiral. A hole the bit's size is a
      Drill's, and the message says so.
     - **`bore_leaves_core`**: the hole is wider than twice the bit's
-     diameter plus twice the allowance (beyond the flatten tolerance). A
+     diameter plus twice the stock to leave (beyond the flatten tolerance). A
      helix whose edge runs on the wall then misses the middle, and leaves
      a core standing; in a through hole the core comes loose at the last
      turn and spins against the bit, which can throw it. Bore never cuts
@@ -254,10 +258,11 @@ steps down at the tool's step-down: a wall level deeper than one tool
 step below the last notch level cuts the levels between in the same
 column, stepping down at the corner. Where there is no final-wall path
 to cut from, the notches fall back to the separate notch pass: on a
-Pocket with an allowance (its rings are not the final wall), and for
-any corner whose final-wall path does not reach it at depth. Allowance
-paths (a Pocket's allowance, a Profile's passes before its last pass)
-never get notches. Corners under tabs stay skipped, and S9's notch rule
+Pocket with stock to leave (its rings are not the final wall), and for
+any corner whose final-wall path does not reach it at depth. Paths
+off the final wall (a Pocket's that leave stock, a Profile's passes
+before its last pass) never get notches (changed: maintainer decision
+2026-10-25, #394: "a Pocket's allowance"). Corners under tabs stay skipped, and S9's notch rule
 is unchanged. (changed: maintainer decision 2026-10-24. The notch pass
 ran after the main passes, or among a Profile's passes, lifting and
 plunging at every corner, as PureCutCNC cuts it.)
@@ -528,7 +533,7 @@ every line is at 45°. Consecutive lines alternate direction and are
 joined by a cut inside the region, not a retract. The wall pass is
 last by default and first with `wall_pass: first`.
 22. **Rough then rest.** The rectangle with a 10 mm × 10 mm notch,
-pocketed with a 12.7 mm tool at `allowance_mm` 0.5, then a rest Pocket
+pocketed with a 12.7 mm tool at `stock_to_leave_mm` 0.5, then a rest Pocket
 with a 3.175 mm tool: the rest operation cuts only the notch and the
 wall band; the union of both operations' footprints covers the region
 inset by 1.5875 mm (the small tool's radius) within 0.05 mm; the rest
@@ -717,7 +722,7 @@ phase:
 - **S9 Every operation's cuts stay in its own material.** A Pocket's
 footprint stays inside its region and outside its islands; a Bore's tool
 centre stays within its hole's radius, less the tool's radius and the
-allowance, of the hole's centre, on every move of the helix, the circle
+stock to leave, of the hole's centre, on every move of the helix, the circle
 and the move to the centre, and S1 keeps it above the allowed bottom
 (changed: maintainer decision 2026-10-24); an entry
 helix, ramp, lead arc or corner-relief notch stays in material the
@@ -725,7 +730,7 @@ operation removes, never in the part. Checked on the toolpath by a
 footprint-containment test per operation, and by the existing overlap
 check between shapes. An inside or outside Profile removes only its
 trench, so its ramp or helix below the stock top also runs only on the
-bit's path round its targets (widened by a last pass's allowance) or
+bit's path round its targets (widened by a last pass's stock to leave) or
 along an earlier cut of the operation where that cut ran below the stock
 top, unless the run of falling moves started at or above the stock top;
 checked on the parsed program (changed in #352: a ramp below the tab top
@@ -802,7 +807,7 @@ border and squiggle. Drawn once as `fixtures/plaque.svg` and once as
 | T2               | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm                                |
 | op1 Pocket (T1)  | 100 × 50 mm rounded rectangle, `raster` at 0°, 4 mm deep, wall pass last, `entry: helix`, with a 20 mm circle island |
 | op2 Pocket (T1)  | 30 × 30 mm square, `offset`, 6 mm deep, `corner_relief: dogbone`, `entry: ramp`                                      |
-| op3 Bore (T2)    | four 5 mm circles at the corners, cut to 5 mm, 12 mm deep, through-cut allowance 0.2 mm, climb, `pitch_mm` unset (the tool's 2 mm step-down), no allowance (changed: maintainer decision 2026-10-24: a Drill with T1 and `allow_tool_wider_than_hole: true`, so the holes came out 6.35 mm) |
+| op3 Bore (T2)    | four 5 mm circles at the corners, cut to 5 mm, 12 mm deep, through-cut allowance 0.2 mm, climb, `pitch_mm` unset (the tool's 2 mm step-down), no stock to leave (changed: maintainer decision 2026-10-24: a Drill with T1 and `allow_tool_wider_than_hole: true`, so the holes came out 6.35 mm) |
 | op4 Profile (T1) | outside, 12 mm deep, 4 tabs 8 × 3 mm, climb, `entry: ramp`, `lead` 3 mm radius, through-cut allowance 0.2 mm         |
 | op5 Engrave (T2) | closed border 5 mm inside the outline and an open squiggle, 1 mm deep in one pass                                    |
 | Order            | op3, op5, op1, op2, op4: the two T2 operations first, then the three T1 ones, so one bit change, and the holes before the cut-out, which stays last; op3 before op5 as before (changed: maintainer decision 2026-10-24: op1 to op5 in id order) |
@@ -822,9 +827,9 @@ deviations below.
 
 ## Documentation deliverables
 
-- User Guide: Pocket operation (both strategies, islands, allowance, rest
+- User Guide: Pocket operation (both strategies, islands, stock to leave, rest
 machining); Drill operation (cycles, canned cycles per controller);
-Bore operation (pitch, direction, allowance, the holes it skips; added:
+Bore operation (pitch, direction, stock to leave, the holes it skips; added:
 maintainer decision 2026-10-24);
 Engrave operation; Profile operation updated (entry, leads, corner
 relief); Machining order and cut order (the fixed rules and the one
@@ -1065,32 +1070,35 @@ built (design addendum, "Order and format versions").
 
 ### A8. Profile last pass (#284)
 
-34. **Last pass allowance** (`last_pass` on Profile; VCarve 2D Profile
+34. **Last pass stock to leave** (`last_pass` on Profile; VCarve 2D Profile
     "Last Pass Allowance",
     <https://docs.vectric.com/docs/V9.5/VCarvePro/ENU/Help/Reference%20Manual/Toolpaths/2D%20Profile%20Toolpath/2D%20Profile%20Toolpath.html>;
     Fusion 2D Contour "Stock to Leave" and finishing passes,
     <https://help.autodesk.com/cloudhelp/ENU/Fusion-CAM/files/GUID75B6821B-DE26-4E3B-AF10-4A54131CD9E4.htm>).
-    Every pass but the last leaves `allowance_mm` on the wall; the last
-    pass cuts to size, so it takes a thin, even skin off the whole wall
+    Every pass but the last leaves `last_pass.stock_to_leave_mm` on the
+    wall (changed: maintainer decision 2026-10-25, #394: was
+    `allowance_mm`, from format version 19, and this capability's
+    "allowance" is its stock to leave throughout); the last pass cuts to
+    size, so it takes a thin, even skin off the whole wall
     and leaves no step marks. `thickness_mm` (VCarve "Set Last Pass
     Thickness") sets the depth of that last pass; unset, it is the normal
     last depth pass. `reverse` (VCarve "Reverse direction") cuts the last
-    pass the other way. The allowance must be more than 0 and at most a
+    pass the other way. The stock to leave must be more than 0 and at most a
     third of the bit diameter, as VCarve advises. Inside and Outside only:
     On line has no wall to leave material on. Unset (`null`) by default,
     in `init` and in migrated projects. (changed in #284: Left and Right
     are refused as On line is. A drawing the earlier passes cannot follow,
-    where it fits the bit but not the bit plus the allowance on both sides
+    where it fits the bit but not the bit plus the stock to leave on both sides
     or an earlier pass would come within the bit's radius of another
     part, is refused naming the shapes. Changed again in the #310 review:
     `thickness_mm` may be no more than the step-down; the last pass may
-    take off no more than the allowance, √2 times it in a square corner,
+    take off no more than the stock to leave, √2 times it in a square corner,
     so a corner sharper than 90° is refused; and a one-pass cut warns
     `last_pass_unused`. Changed again in #324: a sharp corner is cut. The
     earlier passes cut both its walls and stop short of where they meet,
     so the last pass takes the wedge between, `a / sin(θ/2)` thick at a
     corner of `θ`; that may be up to a third of the bit diameter, the
-    thickest skin the allowance itself may be, or √2 times the allowance
+    thickest skin the stock to leave itself may be, or √2 times the stock to leave
     where that is more. With a 6.35 mm bit that cuts corners down to
     about 27° at 0.5 mm and 11° at 0.2 mm: triangles and stars cut
     inside, V notches cut outside, and the corners of letters such as A,
@@ -1101,21 +1109,21 @@ built (design addendum, "Order and format versions").
     pass, as VCarve's Profile of an open vector does; they cut one flank
     of the bit against the part, as Inside and Outside do, and only On
     line, which cuts with both, is refused. The earlier passes run the
-    allowance farther to the cut side and end square on the same end
+    stock to leave farther to the cut side and end square on the same end
     normals as the last pass, so no pass cuts past an end on the part
     side and the last pass takes the skin off right up to each end;
     `reverse` starts the last pass at the path's other end, where the
     earlier passes end, so it mills the other way. The refusals above
     apply to the path, a stretch at an end the earlier passes stop short
     of counting as no corner, and the earlier passes must keep the bit's
-    radius plus the allowance from every other line and every kept
+    radius plus the stock to leave from every other line and every kept
     strip. Changed again in #339: the last pass enters as one more
-    earlier pass would, never straight down through the allowance,
+    earlier pass would, never straight down through the stock to leave,
     which stands uncut to the stock top beside the part. It goes down
     into the earlier passes' floor where they ended, with the
     operation's entry (a plunge one step-down or `thickness_mm` deep, a
     ramp along the earlier passes' own path inside their kerf, or a
-    helix in their bore), then steps across the allowance at the feed
+    helix in their bore), then steps across the stock to leave at the feed
     onto its own path, whose start is beside theirs. So every plunge
     into uncut material is at most the step-down, whatever the entry.
     With a lead, the earlier passes are led in beside the last pass's
@@ -1172,7 +1180,7 @@ built (design addendum, "Order and format versions").
     their start is the end the cut direction sets (#242). (changed in
     #285: "nearest" is `nearest_point`'s, which takes the middle of an arc
     centred on the target, so `first_vertex` on a convex corner cut
-    outside starts mid-arc round it; a last pass's allowance passes start
+    outside starts mid-arc round it; a last pass's stock passes start
     at their own path's point nearest the same target. Changed again in
     #337: on a start under a tab, the first pass below the tab top plunges
     only to the tab top there, warned `entry_fallback`; each later pass
@@ -1224,11 +1232,11 @@ built (design addendum, "Order and format versions").
     `clearance_mm` below an enabled operation's `safe_z_mm` is an error;
     with all three unset the program is byte-identical to before.
 46. **Last pass.** An outside Profile of a 60 × 40 mm rectangle, 12 mm
-    deep in 4 mm passes, with `last_pass: {allowance_mm: 0.5}`: the first
+    deep in 4 mm passes, with `last_pass: {stock_to_leave_mm: 0.5}`: the first
     two passes run 0.5 mm farther from the part than the third, which is
     on the phase 1 path. With `thickness_mm: 1` the passes are 4, 8, 11
     and 12 mm deep and only the 12 mm pass is on the part's path. With
-    `reverse` the last pass runs the other way. An allowance of 2.2 mm
+    `reverse` the last pass runs the other way. A stock to leave of 2.2 mm
     with a 6.35 mm bit, or any `last_pass` on an On line Profile, is an
     error.
 47. **Corners and start.** A 50 mm square rotated 45°, cut outside with 4
@@ -1263,26 +1271,27 @@ built (design addendum, "Order and format versions").
   unset; changed in #283: safe Z), to the park point, then
   make the S16 lift; S2 holds for that rapid. A link between parts rises
   to the clearance height; a link between passes of one part, to safe Z.
-- **S9 with a last pass.** Every pass but the last keeps `allowance_mm`
+- **S9 with a last pass.** (changed: maintainer decision 2026-10-25,
+  #394: `allowance_mm`.) Every pass but the last keeps `stock_to_leave_mm`
   more than `r` from the part; the last keeps `r`, as now. (changed in
   the #310 review: every pass but the last also keeps at least `r` from,
   and stays out of, the operation's other parts; nearer than `r + a` it
   cuts only their skin, which is allowed. The last pass takes off at most
-  `√2 · allowance_mm` plus 0.05 mm anywhere, and no pass before it cuts
+  `√2 · stock_to_leave_mm` plus 0.05 mm anywhere, and no pass before it cuts
   into stock a tab leaves. Changed in #324: at a corner, where the
   earlier passes cut both walls, the last pass may take off up to a third
   of the bit diameter, or that bound where it is more; nowhere else more
   than the square corner's. Changed in #311: on a Left or Right Profile
   every pass but the last runs on the targets' open paths offset by
-  `r + allowance_mm` to the side, and every pass keeps `r` from every open
+  `r + stock_to_leave_mm` to the side, and every pass keeps `r` from every open
   path and kept edge, as without a last pass. Changed in #339: the last
-  pass's step across the allowance, from the path the earlier passes cut
+  pass's step across the stock to leave, from the path the earlier passes cut
   to its own, may run between the two, on Left and Right too, still `r`
   from every open path and kept edge: one level move from one path to the
   other, no longer than the generator's bound.)
 - **S3 with a last pass** (#335). A level cut of a Profile with a last
   pass may run slower than its tool's feed, down to
-  `feed · a / (a + r)`, the allowance `a` over the allowance plus the
+  `feed · a / (a + r)`, the stock to leave `a` over the stock to leave plus the
   tool radius: the last pass's inside arcs run at `feed · ρ / (ρ + r)`,
   no lower than that. Slower, or faster than the feed, is still
   `feed_not_from_tool`; so is a slower level cut of any other operation.

@@ -158,7 +158,7 @@ const STEP_DOWN_MM: f64 = 4.0;
 /// Edits the `.dcv` at `path` as the quick start does: every tool gets
 /// `feed`, `plunge`, `rpm` and the 4 mm step-down; the stock gets the
 /// measured thickness; and every Profile cuts through it by the test part's
-/// 0.2 mm allowance.
+/// 0.2 mm through-cut allowance.
 fn fill_in(path: &Path, feed_mm_min: f64, plunge_mm_min: f64, rpm: u32) {
     let mut project = load_file(path).project;
     for tool in &mut project.tools {
@@ -232,7 +232,7 @@ fn no_arguments_prints_usage_and_fails() {
 /// End to end on the phase 1 test part: `init` on `fixtures/coaster.svg`,
 /// the feeds from the functional spec's "Test part" table filled in (1500,
 /// 500, 18000), the quick start's measured 11.8 mm thickness, and a depth
-/// through it by the table's 0.2 mm allowance, then `export`. The program must match the committed
+/// through it by the table's 0.2 mm through-cut allowance, then `export`. The program must match the committed
 /// `tests/expected/coaster-grblhal.nc` byte for byte. Regenerate that file
 /// only when the change to it is intended, and say why in the commit.
 #[test]
@@ -1448,7 +1448,7 @@ fn on_line_square_exports_with_arc_fitting_on() {
 
 /// Slice 6 (#163), capabilities 12 and 13, S9 and S14 end to end: a 40 ×
 /// 20 mm rectangle with a 6 × 6 mm notch inside the coaster, roughed with
-/// the coaster's 6.35 mm bit at a 0.5 mm allowance and then rest-machined
+/// the coaster's 6.35 mm bit at a 0.5 mm stock to leave and then rest-machined
 /// with a 3.175 mm bit, checks with no error and exports one program per
 /// tool run, which the emitter's safety pass accepted. The rest program
 /// cuts only near the walls and in the notch, where the rough bit cannot
@@ -1502,12 +1502,12 @@ fn pocket_rough_then_rest_exports_and_passes_safety() {
     rough.targets = vec![InstanceId::new("notched1")];
     rough.tool = project.operations[0].tool().clone();
     rough.step_over_fraction = Some(0.4);
-    rough.allowance_mm = 0.5;
+    rough.stock_to_leave_mm = 0.5;
     let mut rest = rough.clone();
     rest.id = OperationId::new("rest");
     rest.name = "Rest".into();
     rest.tool = ToolId::new("t2");
-    rest.allowance_mm = 0.0;
+    rest.stock_to_leave_mm = 0.0;
     rest.rest_of = Some(rough.id.clone());
     project.operations.insert(0, Operation::Pocket(rough));
     project.operations.insert(1, Operation::Pocket(rest));
@@ -6704,7 +6704,7 @@ fn version_9_tab_settings_export_byte_identical_programs() {
     }
 }
 
-// ── #284: the last pass allowance ──
+// ── #284: the last pass stock to leave ──
 
 /// #284 (`migrate::v12_to_v13_adds_null_last_pass`): every project of
 /// the corpus saved at format 12 (the #105 corpus without its version 6
@@ -6770,7 +6770,7 @@ fn version_12_projects_export_byte_identical_programs() {
 /// #284 (acceptance 46) from the CLI: the coaster with a 0.5 mm last pass
 /// exports; every pass but the last runs 0.5 mm farther out, and the last
 /// on the phase 1 path, which the program without a last pass cuts on
-/// every pass. A 2.2 mm allowance with the 6.35 mm bit, or a last pass on
+/// every pass. A 2.2 mm stock to leave with the 6.35 mm bit, or a last pass on
 /// an On line Profile, fails `check` and `export` naming the setting.
 #[test]
 fn last_pass_exports_and_refuses_what_cannot_work() {
@@ -6781,13 +6781,13 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
     let plain = std::fs::read_to_string(dir.join("coaster.nc")).expect("program");
 
-    let set_last_pass = |side: Side, allowance_mm: f64| {
+    let set_last_pass = |side: Side, stock_to_leave_mm: f64| {
         let mut project = load_file(&dcv).project;
         for op in &mut project.operations {
             if let Operation::Profile(p) = op {
                 p.side = side;
                 p.last_pass = Some(dc_project::LastPass {
-                    allowance_mm,
+                    stock_to_leave_mm,
                     thickness_mm: None,
                     reverse: false,
                 });
@@ -6805,11 +6805,11 @@ fn last_pass_exports_and_refuses_what_cannot_work() {
         "saved at the current version"
     );
 
-    for (side, allowance_mm, needle) in [
+    for (side, stock_to_leave_mm, needle) in [
         (Side::Outside, 2.2, "a third of the bit"),
         (Side::OnLine, 0.5, "Inside, Outside, Left or Right"),
     ] {
-        set_last_pass(side, allowance_mm);
+        set_last_pass(side, stock_to_leave_mm);
         if dir.join("coaster.nc").exists() {
             std::fs::remove_file(dir.join("coaster.nc")).expect("program removed");
         }
@@ -6860,7 +6860,7 @@ fn left_right_last_pass_exports_and_without_is_byte_identical() {
             let op = as_profile_mut(&mut project.operations[0]);
             assert!(matches!(op.side, Side::Left | Side::Right), "{name}");
             op.last_pass = Some(dc_project::LastPass {
-                allowance_mm: 0.5,
+                stock_to_leave_mm: 0.5,
                 thickness_mm,
                 reverse,
             });
@@ -8172,7 +8172,7 @@ fn heights_plaque_one_program() {
             .and_then(|(_, op, _)| *op)
     };
 
-    // S1: the plaque is 11.8 mm thick, cut through with 0.2 mm allowance.
+    // S1: the plaque is 11.8 mm thick, cut through with 0.2 mm through-cut allowance.
     for mv in &moves {
         if let Some(z) = mv.to.z {
             assert!(
@@ -8959,7 +8959,7 @@ fn tabs_place_count_on_holes_holds_slugs() {
     edit(&|p: &mut Project| {
         let op = as_profile_mut(&mut p.operations[0]);
         op.last_pass = Some(dc_project::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: false,
         });
@@ -9084,7 +9084,7 @@ fn hand_edited_holds_slug_is_refused_with_its_place() {
 /// cut, then the bit changed, which warn too; and `--count --on-holes`
 /// tabs, off corners, on a Profile with a last pass and a start point,
 /// which sit on the path and do not. (Changed in #339: that last pass now
-/// enters from the allowance path, as one more earlier pass would, so its
+/// enters from the stock path, as one more earlier pass would, so its
 /// committed program is the one the build with #339 writes; the other
 /// programs, without a last pass, are unchanged.)
 /// #377: these files predate `allow_tool_wider_than_hole`, so the plaque's
@@ -9168,4 +9168,56 @@ fn version_14_projects_export_byte_identical_programs_and_warnings() {
     }
     assert!(hole_warnings >= 5, "the corpus warns for hole tabs");
     assert!(quiet_hole_tabs >= 6, "and holds slugs without a warning");
+}
+
+/// #394 (`migrate::v18_allowance_loads_as_stock_to_leave`): a version 18
+/// project whose Pockets, Bore and Profile last pass leave stock, saved as
+/// `allowance_mm`, exports byte for byte the programs the build before
+/// #394 wrote, committed under `tests/expected/stock-to-leave-migration/`
+/// with its warnings; so does the same project once `dc_project::save`
+/// has written it at the current version, which names the stock
+/// `stock_to_leave_mm` and never `allowance_mm`. The rename changes no
+/// cut.
+#[test]
+fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
+    let dir = work_dir("version_18_stock_to_leave_project_exports_byte_identical_programs");
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let fixture = root.join("tests/fixtures/stock-to-leave-migration/pocket-bore.dcv");
+    let expected_dir = root.join("tests/expected/stock-to-leave-migration");
+    let old = std::fs::read_to_string(&fixture).expect("fixture readable");
+    assert!(old.contains("\"version\": 18"), "a version 18 file");
+    assert_eq!(old.matches("\"allowance_mm\"").count(), 4, "{old}");
+    assert!(!old.contains("stock_to_leave_mm"));
+    let warnings = std::fs::read_to_string(expected_dir.join("pocket-bore.warnings"))
+        .expect("expected warnings readable");
+
+    let saved = dc_project::save(&load_file(&fixture).project).expect("project saves");
+    assert!(
+        saved.contains(&format!("\"version\": {}", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
+    assert_eq!(dc_project::CURRENT_VERSION, 19);
+    assert!(!saved.contains("\"allowance_mm\""), "{saved}");
+    assert_eq!(saved.matches("\"stock_to_leave_mm\"").count(), 4, "{saved}");
+
+    for (step, text) in [("v18", old), ("saved", saved)] {
+        let at = dir.join(step);
+        std::fs::create_dir_all(&at).expect("step dir created");
+        std::fs::write(at.join("pocket-bore.dcv"), text).expect("project written");
+        let out = run(&at, &["export", "pocket-bore.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{step}: {}", stderr(&out));
+        let programs = exported_programs(&at, "pocket-bore");
+        assert_eq!(programs.len(), 4, "{step}: {programs:?}");
+        for (program, text) in programs {
+            let expected = std::fs::read_to_string(expected_dir.join(&program))
+                .unwrap_or_else(|e| panic!("{step}: expected {program}: {e}"));
+            assert!(
+                text == expected,
+                "{step}: {program} differs from the program before #394:\n{text}"
+            );
+        }
+        if step == "v18" {
+            assert_eq!(stderr(&out), warnings, "{step}: export's warnings");
+        }
+    }
 }

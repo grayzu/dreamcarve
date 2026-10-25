@@ -237,14 +237,14 @@ pub enum CamError {
         /// The feature, as the user would name it (`a raster strategy`).
         feature: String,
     },
-    /// A Pocket's `allowance_mm` is negative or not a number. Validation
-    /// reports it too; a negative allowance would cut into the walls.
-    #[error("operation `{op}` has allowance_mm {allowance_mm}; it must be 0 or more")]
-    InvalidAllowance {
+    /// A Pocket's `stock_to_leave_mm` is negative or not a number. Validation
+    /// reports it too; a negative stock to leave would cut into the walls.
+    #[error("operation `{op}` has stock_to_leave_mm {stock_to_leave_mm}; it must be 0 or more")]
+    InvalidStockToLeave {
         /// The operation.
         op: OperationId,
-        /// The allowance given, mm.
-        allowance_mm: f64,
+        /// The stock to leave given, mm.
+        stock_to_leave_mm: f64,
     },
     /// A rest Pocket's `rest_of` is not an earlier enabled Pocket with the
     /// same targets. Validation reports it too; the generator refuses it
@@ -397,7 +397,7 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// A Profile's last pass has an allowance that is not more than 0 and
+    /// A Profile's last pass has a stock to leave that is not more than 0 and
     /// at most a third of the bit's diameter, or a thickness that is not
     /// more than 0 and at most the depth (#284). Validation rejects both;
     /// the generator does not trust its callers.
@@ -405,7 +405,7 @@ pub enum CamError {
     InvalidLastPass {
         /// The operation.
         op: OperationId,
-        /// `allowance_mm` or `thickness_mm`.
+        /// `stock_to_leave_mm` or `thickness_mm`.
         field: &'static str,
         /// The value set, mm.
         value: f64,
@@ -413,30 +413,30 @@ pub enum CamError {
         range: String,
     },
     /// A Profile that cuts On line has a last pass (#284): it cuts with
-    /// both flanks, so it leaves no wall to take the allowance off.
+    /// both flanks, so it leaves no wall to take the stock to leave off.
     /// Validation rejects it; the generator refuses it too. (changed in
     /// #311: Left and Right take a last pass.)
     #[error(
-        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the allowance off, so set last_pass to null or cut Inside, Outside, Left or Right"
+        "operation `{op}` has a last_pass but cuts on the line; a last pass needs a wall to take the stock to leave off, so set last_pass to null or cut Inside, Outside, Left or Right"
     )]
     LastPassNeedsSide {
         /// The operation.
         op: OperationId,
     },
-    /// #284: a Profile with a last pass allowance cuts two lines closer
+    /// #284: a Profile with a last pass stock to leave cuts two lines closer
     /// than its passes before the last need, `needed_mm`. Inside, two
-    /// lines of one region need the tool and the allowance on both,
-    /// `diameter + 2 · allowance`: those passes, `allowance_mm` farther
+    /// lines of one region need the tool and the stock to leave on both,
+    /// `diameter + 2 · stock to leave`: those passes, `stock_to_leave_mm` farther
     /// from each line, would cut into the skin the other line's passes
     /// leave, or into the part. Between two regions (a part and another
     /// part, or one inside another's hole) the passes need
-    /// `diameter + allowance`, or they would come within the radius of the
+    /// `diameter + stock to leave`, or they would come within the radius of the
     /// other part (#310 review). `shape` is the one drawn first; `other`
     /// is boxed to keep the error small.
     #[error(
-        "operation `{op}` cuts {shape} and {other} with a {allowance_mm} mm last pass allowance, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the allowance need there, so the passes before the last would cut into material the Profile keeps; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} and {other} with a {stock_to_leave_mm} mm last pass stock to leave, but the gap between them is {band_mm:.3} mm, narrower than the {needed_mm:.3} mm its {diameter_mm} mm tool and the stock to leave need there, so the passes before the last would cut into material the Profile keeps; make last_pass.stock_to_leave_mm smaller or set last_pass to null; no toolpath was produced"
     )]
-    BandNarrowerThanAllowance {
+    BandNarrowerThanStockToLeave {
         /// The operation.
         op: OperationId,
         /// One line of the band, the one drawn first.
@@ -447,32 +447,32 @@ pub enum CamError {
         band_mm: f64,
         /// The tool's diameter, mm.
         diameter_mm: f64,
-        /// The last pass allowance, mm.
-        allowance_mm: f64,
+        /// The last pass stock to leave, mm.
+        stock_to_leave_mm: f64,
         /// The gap the passes before the last need, mm.
         needed_mm: f64,
     },
     /// #284, #310 review, changed in #324: somewhere the passes before the
     /// last on `shape` skip material the last pass would then cut whole at
     /// full depth: a neck, slot, notch, inlet or small hole wider than the
-    /// tool but narrower than the tool plus the allowance on both sides,
+    /// tool but narrower than the tool plus the stock to leave on both sides,
     /// which they bridge (refused once the last pass would take off more
-    /// than a square corner's `√2` times the allowance there), or a tip so
+    /// than a square corner's `√2` times the stock to leave there), or a tip so
     /// narrow that the last pass would take off more than a third of the
-    /// tool (or `√2` times the allowance, if more) where they stop short.
+    /// tool (or `√2` times the stock to leave, if more) where they stop short.
     /// A corner whose wedge is thinner than that is cut.
     #[error(
-        "operation `{op}` cuts {shape} with a {allowance_mm} mm last pass allowance, but somewhere the passes before the last cannot follow it and the last pass would cut what they skip at full depth: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the allowance on both sides, or a tip so narrow that the last pass would take off more than a third of the tool there; make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts {shape} with a {stock_to_leave_mm} mm last pass stock to leave, but somewhere the passes before the last cannot follow it and the last pass would cut what they skip at full depth: a notch, slot, neck or hole that fits its {diameter_mm} mm tool but not the tool plus the stock to leave on both sides, or a tip so narrow that the last pass would take off more than a third of the tool there; make last_pass.stock_to_leave_mm smaller or set last_pass to null; no toolpath was produced"
     )]
-    ShapeNarrowerThanAllowance {
+    ShapeNarrowerThanStockToLeave {
         /// The operation.
         op: OperationId,
-        /// The shape the allowance passes cannot follow.
+        /// The shape the stock passes cannot follow.
         shape: ShapeRef,
         /// The tool's diameter, mm.
         diameter_mm: f64,
-        /// The last pass allowance, mm.
-        allowance_mm: f64,
+        /// The last pass stock to leave, mm.
+        stock_to_leave_mm: f64,
     },
     /// A Left or Right Profile's cut beside one open path comes within the
     /// tool radius of another line of the operation, or of the strip one
@@ -494,20 +494,20 @@ pub enum CamError {
         /// The tool's diameter, mm.
         diameter_mm: f64,
     },
-    /// #311: a Left or Right Profile's passes before the last, `allowance_mm`
+    /// #311: a Left or Right Profile's passes before the last, `stock_to_leave_mm`
     /// farther from each open path than its last pass, come within the
-    /// tool radius plus the allowance of another line of the operation,
+    /// tool radius plus the stock to leave of another line of the operation,
     /// or of the strip one radius wide that a line keeps on its part side:
     /// they would take that line's skin, which its own last pass is to cut,
     /// or cut into the part. This is [`CamError::CutsIntoKeptSide`]'s rule
-    /// with the radius grown by the allowance, as Inside's band rule needs
-    /// `diameter + 2 · allowance` ([`CamError::BandNarrowerThanAllowance`]).
+    /// with the radius grown by the stock to leave, as Inside's band rule needs
+    /// `diameter + 2 · stock to leave` ([`CamError::BandNarrowerThanStockToLeave`]).
     /// `shape` and `other` are in drawing order and may be the same path;
     /// `other` is boxed to keep the error small.
     #[error(
-        "operation `{op}` cuts beside {shape} and {other} with a {allowance_mm} mm last pass allowance, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the allowance of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.allowance_mm smaller or set last_pass to null; no toolpath was produced"
+        "operation `{op}` cuts beside {shape} and {other} with a {stock_to_leave_mm} mm last pass stock to leave, but a pass before the last comes within the {diameter_mm} mm tool's radius plus the stock to leave of one of them or of the material it keeps, so it would cut the skin that line's last pass takes off, or the part; move the lines apart, make last_pass.stock_to_leave_mm smaller or set last_pass to null; no toolpath was produced"
     )]
-    AllowanceCutsIntoKeptSide {
+    StockToLeaveCutsIntoKeptSide {
         /// The operation.
         op: OperationId,
         /// One of the two paths, the one drawn first.
@@ -516,12 +516,12 @@ pub enum CamError {
         other: Box<ShapeRef>,
         /// The tool's diameter, mm.
         diameter_mm: f64,
-        /// The last pass allowance, mm.
-        allowance_mm: f64,
+        /// The last pass stock to leave, mm.
+        stock_to_leave_mm: f64,
     },
     /// #342: a Left or Right Profile's cut beside an open path has no room
     /// at one of the path's ends. The segment that ends there is too short
-    /// for the tool, plus the last pass allowance when `allowance_mm` is
+    /// for the tool, plus the last pass stock to leave when `stock_to_leave_mm` is
     /// set, to cut beside it: on the inside of the turn before it, the cut
     /// beside the earlier segment reaches past the normal through the end
     /// vertex, where every cut must stop (A8, "Ends"), and into the strip
@@ -529,7 +529,7 @@ pub enum CamError {
     /// the error small.
     #[error(
         "operation `{op}` cuts beside {shape}, but the segment ending at its vertex {vertex} is {length_mm:.3} mm long, too short for its {diameter_mm} mm tool{} to cut beside it: the cut would reach past the path's end into the part; lengthen or remove that segment, cut the other side, or use a smaller tool; no toolpath was produced",
-        with_allowance(*.allowance_mm)
+        with_stock_to_leave(*.stock_to_leave_mm)
     )]
     EndSegmentHasNoRoom {
         /// The operation.
@@ -543,9 +543,9 @@ pub enum CamError {
         length_mm: f64,
         /// The tool's diameter, mm.
         diameter_mm: f64,
-        /// The last pass allowance, mm, when only the passes before the
+        /// The last pass stock to leave, mm, when only the passes before the
         /// last have no room.
-        allowance_mm: Option<f64>,
+        stock_to_leave_mm: Option<f64>,
     },
     /// A target shape cannot be used: it encloses no area, crosses itself, or its
     /// instance transform collapses it or distorts its arcs.
@@ -596,13 +596,13 @@ pub enum CamError {
     /// A Bore setting the generator cannot cut (format 18): a pitch that is
     /// not positive, above the tool's step-down, or too fine for the
     /// program's decimal places or for [`crate::entry::MAX_DESCENT_MOVES`],
-    /// or an allowance that is negative. Validation reports the first two
+    /// or a stock to leave that is negative. Validation reports the first two
     /// before export.
     #[error("operation `{op}` has {field} {value}; {expected}")]
     InvalidBoreSetting {
         /// The operation.
         op: OperationId,
-        /// Which setting: `pitch_mm` or `allowance_mm`.
+        /// Which setting: `pitch_mm` or `stock_to_leave_mm`.
         field: &'static str,
         /// The value in effect.
         value: f64,
@@ -633,9 +633,9 @@ pub enum CamError {
 }
 
 /// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
-/// allowance: none without one.
-fn with_allowance(allowance_mm: Option<f64>) -> String {
-    allowance_mm.map_or_else(String::new, |a| {
-        format!(" and its {a} mm last pass allowance")
+/// stock to leave: none without one.
+fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
+    stock_to_leave_mm.map_or_else(String::new, |a| {
+        format!(" and its {a} mm last pass stock to leave")
     })
 }

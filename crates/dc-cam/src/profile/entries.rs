@@ -47,9 +47,9 @@ pub(super) struct EntrySetup<'a, 'b> {
     pub entry_tool: &'a dyn Fn(Wall) -> EntryTool,
     pub tolerance_mm: f64,
     /// How much farther than the radius each path runs from its wall: a
-    /// last pass allowance (#284), 0 for the part's own path. Missing
+    /// last pass stock to leave (#284), 0 for the part's own path. Missing
     /// entries are 0.
-    pub allowances: &'a [f64],
+    pub stocks_to_leave: &'a [f64],
     /// The paths cut against `op.direction` (#284: a reversed last
     /// pass), whose entries turn the other way. Missing entries are
     /// false.
@@ -422,7 +422,7 @@ pub(super) fn wall_domains(setup: &EntrySetup<'_, '_>) -> Vec<PathDomain> {
         .map(|(i, ((path, _), (_, region)))| WallPath {
             path,
             region: *region,
-            allowance_mm: setup.allowances.get(i).copied().unwrap_or(0.0),
+            stock_to_leave_mm: setup.stocks_to_leave.get(i).copied().unwrap_or(0.0),
         })
         .collect();
     let domains = waste::domains(
@@ -581,7 +581,7 @@ impl PathEntry {
     ///   `no_room`, when that leaves no run (#356: a first pass's ramp
     ///   starts above the stock, and its first runs cut nothing);
     /// - any other ramp (the pass above plunged, helixed, or cut another
-    ///   path: a last pass after its allowance passes, #284) plunges at
+    ///   path: a last pass after its stock passes, #284) plunges at
     ///   the target, off the tabs, one step down, warned `no_room`;
     /// - a ramp that would fall less than [`RAMP_MIN_LAST_DROP_MM`] cuts
     ///   its one run the whole length of its line, farther than the passes
@@ -841,7 +841,7 @@ mod tests {
     }
 
     /// #352: a ramp after the first pass that the pass above did not cut
-    /// (no pass above on this path, as on a last pass after its allowance
+    /// (no pass above on this path, as on a last pass after its stock to leave
     /// passes, or one that plunged) plunges; so does one that would fall
     /// less than `RAMP_MIN_LAST_DROP_MM`, whose one run would run the
     /// whole line.

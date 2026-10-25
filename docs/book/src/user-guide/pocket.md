@@ -25,7 +25,7 @@ Profile. A complete Pocket:
   "step_down_mm": null,
   "step_over_fraction": 0.4,
   "direction": "climb",
-  "allowance_mm": 0.0,
+  "stock_to_leave_mm": 0.0,
   "rest_of": null,
   "entry": "plunge",
   "corner_relief": "none",
@@ -55,7 +55,7 @@ is free, the pocket would be cut in a loose part (`check` warns
 | `step_down_mm` | The most to cut in one pass. `null` uses the tool's `step_down_mm`; if both are `null`, export refuses. |
 | `step_over_fraction` | The stepover as a fraction of the tool diameter, more than 0 and at most 1. `null` uses the tool's `step_over_fraction`; if both are `null`, export refuses. See [Stepover](#stepover). |
 | `direction` | `"climb"` or `"conventional"`, for the rings. Raster lines ignore it. See [Direction](#direction). |
-| `allowance_mm` | Material to leave on the walls and round the islands, mm, 0 or more. See [Allowance](#allowance). |
+| `stock_to_leave_mm` | Material to leave on the walls and round the islands, mm, 0 or more. See [Stock to leave](#stock-to-leave). |
 | `rest_of` | `null`, or the id of an earlier Pocket of the same targets whose leftovers this one clears. See [Rest machining](#rest-machining). |
 | `entry` | How the bit gets down to each pass: `"plunge"`, `{ "ramp": { "angle_deg": 15.0 } }` or `{ "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }`. See [Entry](#entry). |
 | `corner_relief` | `"none"`, `"dogbone"` or `"t_bone"`: a notch in each corner the round bit cannot reach. See [Corner relief](#corner-relief). |
@@ -97,8 +97,8 @@ island. Then the tool-centre area splits into separate pieces, each with
 its own rings, and the bit lifts to safe Z to go from one to the other:
 it never cuts across an island. The material in the gap is narrower than
 the bit and stays; `pocket_island_too_close` names the island and the
-gap. With an [allowance](#allowance) the bit needs its diameter plus
-twice the allowance to pass, so a gap narrower than that warns too.
+gap. With [stock to leave](#stock-to-leave) the bit needs its diameter plus
+twice the stock to leave to pass, so a gap narrower than that warns too.
 
 A shape inside an island is a pocket of its own, cut after the pocket
 around the island.
@@ -273,37 +273,37 @@ The ramp or helix is inside the tool-centre area of the pass, and out of
 every island grown by the bit's radius, so the whole bit stays in the
 material the pocket removes: the [safety](#safety) check covers it.
 
-## Allowance
+## Stock to leave
 
-`allowance_mm` leaves that much material on every wall and round every
+`stock_to_leave_mm` leaves that much material on every wall and round every
 island, for a finishing Pocket to take off later (VCarve's "Pocket
-Allowance"; the sign is VCarve's: a positive value leaves material). The
-bit's centre stays its radius plus the allowance from the wall, so the
+Allowance", Fusion's "Stock to Leave"; the sign is VCarve's: a positive value leaves material). The
+bit's centre stays its radius plus the stock to leave from the wall, so the
 wall ring, the clearing rings or raster lines, and the ramp or helix all
-move in by the allowance, and the floor is cut as usual. A negative
-allowance, which would cut past the drawn wall, is refused.
+move in by the stock to leave, and the floor is cut as usual. A negative
+stock to leave, which would cut past the drawn wall, is refused.
 
-A 100 × 50 mm rectangle with a 6.35 mm bit at an allowance of 0.5 mm is
+A 100 × 50 mm rectangle with a 6.35 mm bit leaving 0.5 mm of stock is
 cleared to 99 × 49 mm, with the wall ring 92.65 × 42.65 mm across its
 centre line.
 
-The usual use is roughing: clear the pocket quickly with a large bit and
-an allowance, then finish it with a smaller bit, either a full Pocket at
-0 allowance or, quicker, a [rest machining](#rest-machining) Pocket.
+The usual use is roughing: clear the pocket quickly with a large bit,
+leaving stock, then finish it with a smaller bit, either a full Pocket at
+0 stock to leave or, quicker, a [rest machining](#rest-machining) Pocket.
 
 ## Rest machining
 
 A Pocket with `rest_of` set to the id of an earlier Pocket clears only the
 material that Pocket left (Fusion's "Rest Machining"; VCarve's "Use
 Larger Area Clearance Tool" does the same in one toolpath): the band its
-allowance left on the walls, the corners its bit was too round to reach,
+stock to leave left on the walls, the corners its bit was too round to reach,
 and slots and notches too narrow for it. It uses its own bit, stepover,
-strategy, entry and allowance. Everything else in the middle of the
+strategy, entry and stock to leave. Everything else in the middle of the
 pocket, which the earlier Pocket already cut, it leaves alone.
 
 ```json
 { "kind": "pocket", "id": "op3", "name": "Rest", "tool": "t2",
-  "targets": [ "i1" ], "rest_of": "op2", "allowance_mm": 0.0, … }
+  "targets": [ "i1" ], "rest_of": "op2", "stock_to_leave_mm": 0.0, … }
 ```
 
 The earlier Pocket must come before this one in `operations`, be enabled,
@@ -313,28 +313,28 @@ second, and then clears what the second's bit could not reach.
 
 **How the leftover is worked out.** DreamCarve does not look at the
 earlier Pocket's toolpath. It takes that Pocket's bit diameter and
-allowance from the project and works out, from the shape alone, where
+stock to leave from the project and works out, from the shape alone, where
 that bit could reach: the pocket shrunk by the bit's radius plus the
-allowance, grown back by the radius. What is outside that, less this
-Pocket's own allowance, is the leftover. This Pocket's bit then runs
+stock to leave, grown back by the radius. What is outside that, less this
+Pocket's own stock to leave, is the leftover. This Pocket's bit then runs
 wherever it would touch the leftover: along every wall, which also takes
-off the earlier allowance, into each corner as far as it can, and through
+off the earlier stock to leave, into each corner as far as it can, and through
 each narrow slot, overlapping the cleared area by up to its own width so
 no ridge is left at the edge. It does not run along the inner edge of
 that band, where its bit would only touch air the earlier Pocket cleared.
 
 **Safety.** A rest machining Pocket is checked exactly as any Pocket: its cut
-stays inside its own shape, the allowance off the walls and out of every
+stays inside its own shape, the stock to leave off the walls and out of every
 island (safety rule S14). If the earlier Pocket's settings were wrong,
 the rest machining Pocket cuts more air or leaves material; it never cuts outside
 the shape.
 
 **When there is nothing to do.** If this Pocket's bit reaches nothing the
 earlier one left (it is the same bit or a larger one, at the same or a
-larger allowance), it warns `rest_of_clears_nothing` and cuts nothing.
+larger stock to leave), it warns `rest_of_clears_nothing` and cuts nothing.
 
 A 100 × 50 mm rectangle with a 10 × 10 mm notch, roughed with a 12.7 mm
-bit at 0.5 mm allowance, then rest-machined with a 3.175 mm bit: the rest
+bit at 0.5 mm stock to leave, then rest-machined with a 3.175 mm bit: the rest
 Pocket cuts a band about 2 mm wide along the walls, the four corners and
 the notch, under a tenth of the length a full 3.175 mm Pocket would cut.
 
@@ -384,9 +384,9 @@ A tool with no `step_down_mm` skips the relief with `relief_skipped`
 Two cases still cut the notches as a separate pass after the pocket,
 nearest corner first, lifting between corners:
 
-- A Pocket with an `allowance_mm` leaves its walls for a later finishing
+- A Pocket with an `stock_to_leave_mm` leaves its walls for a later finishing
   cut, so its rings are not the final wall. Its notches are sized to the
-  wall the pocket leaves, the allowance in from the drawn one.
+  wall the pocket leaves, the stock to leave in from the drawn one.
 - A [rest machining](#rest-machining) Pocket whose rings miss a corner on
   some pass cuts that corner after the pocket instead.
 
@@ -404,7 +404,7 @@ block fits; with `"t_bone"` each notch runs along a 40 mm edge instead.
 
 Before a Pocket's toolpath is handed to the post-processor, DreamCarve
 sweeps the bit along every cutting move and checks that the swept area
-stays inside the pocket, the allowance off its walls, and out of every
+stays inside the pocket, the stock to leave off its walls, and out of every
 island (safety rule S9), and that
 it stays on the stock. Ramp and helix moves are checked on the bit's
 centre, which must stay in the tool-centre area: the same rule, measured
@@ -418,7 +418,7 @@ walls, nowhere else. If not, export fails and nothing is written.
 | Code | Meaning |
 | --- | --- |
 | `pocket_no_room` | The bit is wider than the pocket everywhere; that shape is not cut. |
-| `pocket_island_too_close` | An island is nearer the wall or another island than the bit needs to pass (its diameter plus twice the allowance); the material between them stays. |
+| `pocket_island_too_close` | An island is nearer the wall or another island than the bit needs to pass (its diameter plus twice the stock to leave); the material between them stays. |
 | `entry_fallback` | The helix or ramp asked for does not fit a shape; it uses a ramp or a plunge instead. |
 | `helix_diameter_reduced` | The helix fits a shape only smaller than asked; it is cut at the size that fits. |
 | `relief_skipped` | The tool has no `step_down_mm`, so no corner is relieved. |

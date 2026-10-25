@@ -416,26 +416,26 @@ pub enum Problem {
         /// half the included angle.
         cone_height_mm: f64,
     },
-    /// An enabled Profile's last pass allowance is not more than 0 and at
+    /// An enabled Profile's last pass stock to leave is not more than 0 and at
     /// most a third of its bit's diameter (#284; VCarve advises keeping it
     /// well below a third). An error.
-    LastPassAllowance {
+    LastPassStockToLeave {
         /// The operation.
         operation: OperationId,
         /// Its display name.
         name: String,
         /// The tool's display name.
         tool_name: String,
-        /// The allowance set, mm.
-        allowance_mm: f64,
+        /// The stock to leave set, mm.
+        stock_to_leave_mm: f64,
         /// The bit's diameter, mm.
         diameter_mm: f64,
-        /// The largest allowance allowed, mm: a third of the diameter.
+        /// The largest stock to leave allowed, mm: a third of the diameter.
         limit_mm: f64,
     },
     /// A Profile has a last pass but cuts On line (#284): it cuts with
     /// both flanks of the bit, so it leaves no wall for the last pass to
-    /// take the allowance off. An error. (changed in #311: Left and Right,
+    /// take the stock to leave off. An error. (changed in #311: Left and Right,
     /// which cut one flank against the part, take a last pass.)
     LastPassNeedsSide {
         /// The operation.
@@ -529,7 +529,7 @@ impl Problem {
             Self::DrillCutterUnusual { .. } => "drill_cutter_unusual",
             Self::ReliefNeedsStepDown { .. } => "relief_needs_step_down",
             Self::EngraveDeeperThanCone { .. } => "engrave_deeper_than_cone",
-            Self::LastPassAllowance { .. } => "last_pass_allowance",
+            Self::LastPassStockToLeave { .. } => "last_pass_stock_to_leave",
             Self::LastPassNeedsSide { .. } => "last_pass_needs_side",
             Self::LastPassThickerThanStepDown { .. } => "last_pass_thicker_than_step_down",
             Self::BorePitchOverStepDown { .. } => "bore_pitch_over_step_down",
@@ -558,7 +558,7 @@ impl Problem {
             | Self::RestOfInvalid { .. }
             | Self::HelixNeedsWasteSide { .. }
             | Self::CannedCyclesUnsupported { .. }
-            | Self::LastPassAllowance { .. }
+            | Self::LastPassStockToLeave { .. }
             | Self::LastPassNeedsSide { .. }
             | Self::LastPassThickerThanStepDown { .. }
             | Self::BorePitchOverStepDown { .. }
@@ -672,9 +672,9 @@ impl Problem {
             Self::EngraveDeeperThanCone { operation, .. } => {
                 Some(format!("operations[{operation}].depth_mm"))
             }
-            Self::LastPassAllowance { operation, .. } => {
-                Some(format!("operations[{operation}].last_pass.allowance_mm"))
-            }
+            Self::LastPassStockToLeave { operation, .. } => Some(format!(
+                "operations[{operation}].last_pass.stock_to_leave_mm"
+            )),
             Self::LastPassNeedsSide { operation, .. } => {
                 Some(format!("operations[{operation}].last_pass"))
             }
@@ -868,16 +868,16 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
             ),
-            Self::LastPassAllowance {
+            Self::LastPassStockToLeave {
                 operation,
                 name,
                 tool_name,
-                allowance_mm,
+                stock_to_leave_mm,
                 diameter_mm,
                 limit_mm,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) has last_pass.allowance_mm {allowance_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
+                "operation `{name}` (`{operation}`) has last_pass.stock_to_leave_mm {stock_to_leave_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
             ),
             Self::LastPassNeedsSide {
                 operation,
@@ -885,7 +885,7 @@ impl fmt::Display for Problem {
                 side,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the allowance off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
+                "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
                 match side {
                     Side::OnLine => "on the line",
                     Side::Left => "to the left of open paths",
@@ -1511,21 +1511,21 @@ impl Validator {
                 tool_name: tool.name.clone(),
             });
         }
-        // #284: VCarve advises an allowance well below a third of the bit.
+        // #284: VCarve advises a stock to leave well below a third of the bit.
         if let Operation::Profile(profile) = op
             && let Some(last_pass) = &profile.last_pass
-            && last_pass.allowance_mm.is_finite()
+            && last_pass.stock_to_leave_mm.is_finite()
             && tool.diameter_mm.is_finite()
             && tool.diameter_mm > 0.0
         {
             let limit_mm = tool.diameter_mm / 3.0;
-            let allowance_mm = last_pass.allowance_mm;
-            if allowance_mm <= 0.0 || allowance_mm > limit_mm {
-                self.problems.push(Problem::LastPassAllowance {
+            let stock_to_leave_mm = last_pass.stock_to_leave_mm;
+            if stock_to_leave_mm <= 0.0 || stock_to_leave_mm > limit_mm {
+                self.problems.push(Problem::LastPassStockToLeave {
                     operation: op.id().clone(),
                     name: op.name().to_owned(),
                     tool_name: tool.name.clone(),
-                    allowance_mm,
+                    stock_to_leave_mm,
                     diameter_mm: tool.diameter_mm,
                     limit_mm,
                 });
@@ -1598,13 +1598,13 @@ impl Validator {
         }
     }
 
-    /// A last pass's values that need no tool (#284): a finite allowance
+    /// A last pass's values that need no tool (#284): a finite stock to leave
     /// (its range needs the bit, [`Self::enabled_operation`]), a thickness
     /// in (0, depth], and an Inside or Outside side.
     fn last_pass(&mut self, op: &ProfileOp, last_pass: &LastPass, at: &str) {
         self.finite(
-            &format!("{at}.last_pass.allowance_mm"),
-            last_pass.allowance_mm,
+            &format!("{at}.last_pass.stock_to_leave_mm"),
+            last_pass.stock_to_leave_mm,
         );
         if let Some(thickness_mm) = last_pass.thickness_mm {
             let field = format!("{at}.last_pass.thickness_mm");
@@ -1642,7 +1642,7 @@ impl Validator {
                 self.out_of_range(field, fraction, FRACTION);
             }
         }
-        self.non_negative(&format!("{at}.allowance_mm"), op.allowance_mm);
+        self.non_negative(&format!("{at}.stock_to_leave_mm"), op.stock_to_leave_mm);
         // #117: rest machining clears what an earlier Pocket of the same
         // shapes left (functional spec, capability 13).
         if let Some(rest_of) = &op.rest_of {
@@ -1701,7 +1701,7 @@ impl Validator {
         if let Some(pitch_mm) = op.pitch_mm {
             self.positive(&format!("{at}.pitch_mm"), pitch_mm);
         }
-        self.non_negative(&format!("{at}.allowance_mm"), op.allowance_mm);
+        self.non_negative(&format!("{at}.stock_to_leave_mm"), op.stock_to_leave_mm);
         self.non_negative(
             &format!("{at}.through_cut_allowance_mm"),
             op.through_cut_allowance_mm,
@@ -3719,46 +3719,46 @@ mod tests {
 
     /// The last pass acceptance 46 asks for, on the sample's Outside
     /// Profile (#284).
-    fn last_pass(allowance_mm: f64) -> LastPass {
+    fn last_pass(stock_to_leave_mm: f64) -> LastPass {
         LastPass {
-            allowance_mm,
+            stock_to_leave_mm,
             thickness_mm: None,
             reverse: false,
         }
     }
 
-    /// #284 (capability 34, acceptance 46): the allowance is more than 0
+    /// #284 (capability 34, acceptance 46): the stock to leave is more than 0
     /// and at most a third of the bit's diameter, as VCarve advises. 0, a
     /// negative value and 2.2 mm with the 6.35 mm bit are errors naming the
     /// diameter and the limit; 0.5 and exactly a third are valid.
     #[test]
-    fn last_pass_allowance_limit() {
+    fn last_pass_stock_to_leave_limit() {
         let mut p = sample_project();
-        for allowance_mm in [0.5, 6.35 / 3.0] {
-            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
-            assert_eq!(validate(&p), vec![], "{allowance_mm}");
+        for stock_to_leave_mm in [0.5, 6.35 / 3.0] {
+            profile_mut(&mut p).last_pass = Some(last_pass(stock_to_leave_mm));
+            assert_eq!(validate(&p), vec![], "{stock_to_leave_mm}");
         }
-        for allowance_mm in [0.0, -0.5, 2.2] {
-            profile_mut(&mut p).last_pass = Some(last_pass(allowance_mm));
+        for stock_to_leave_mm in [0.0, -0.5, 2.2] {
+            profile_mut(&mut p).last_pass = Some(last_pass(stock_to_leave_mm));
             let problems = validate(&p);
             assert_eq!(
                 problems,
-                vec![Problem::LastPassAllowance {
+                vec![Problem::LastPassStockToLeave {
                     operation: OperationId::new("o1"),
                     name: "Cut out".into(),
                     tool_name: "6.35 mm upcut".into(),
-                    allowance_mm,
+                    stock_to_leave_mm,
                     diameter_mm: 6.35,
                     limit_mm: 6.35 / 3.0,
                 }],
-                "{allowance_mm}"
+                "{stock_to_leave_mm}"
             );
             let problem = &problems[0];
             assert!(problem.is_error());
-            assert_eq!(problem.code(), "last_pass_allowance");
+            assert_eq!(problem.code(), "last_pass_stock_to_leave");
             assert_eq!(
                 problem.field().as_deref(),
-                Some("operations[o1].last_pass.allowance_mm")
+                Some("operations[o1].last_pass.stock_to_leave_mm")
             );
             let message = problem.to_string();
             for part in ["6.35 mm", "2.117 mm", "a third"] {
@@ -3769,7 +3769,7 @@ mod tests {
         assert_eq!(
             validate(&p),
             vec![Problem::NonFinite {
-                field: "operations[o1].last_pass.allowance_mm".into()
+                field: "operations[o1].last_pass.stock_to_leave_mm".into()
             }]
         );
     }
@@ -3812,7 +3812,7 @@ mod tests {
 
     /// #311: a Left or Right Profile cuts one flank of the bit against the
     /// part, as Inside and Outside do, so it takes a last pass: no
-    /// `LastPassNeedsSide`, and the allowance and thickness are checked
+    /// `LastPassNeedsSide`, and the stock to leave and thickness are checked
     /// as on Inside and Outside. On line still errors.
     #[test]
     fn last_pass_left_right_is_valid() {
@@ -3829,7 +3829,7 @@ mod tests {
             assert!(
                 problems
                     .iter()
-                    .any(|q| matches!(q, Problem::LastPassAllowance { .. })),
+                    .any(|q| matches!(q, Problem::LastPassStockToLeave { .. })),
                 "{side:?}: {problems:?}"
             );
             assert!(
@@ -4243,15 +4243,15 @@ mod tests {
         assert_eq!(validate(&p), vec![]);
     }
 
-    /// Format 18: the allowance is a distance of 0 or more.
+    /// Format 18: the stock to leave is a distance of 0 or more.
     #[test]
-    fn bore_negative_allowance_is_error() {
+    fn bore_negative_stock_to_leave_is_error() {
         let mut bore = sample_bore();
-        bore.allowance_mm = -0.1;
+        bore.stock_to_leave_mm = -0.1;
         assert_eq!(
             validate(&with_ops(vec![Operation::Bore(bore)])),
             vec![Problem::OutOfRange {
-                field: "operations[o5].allowance_mm".into(),
+                field: "operations[o5].stock_to_leave_mm".into(),
                 value: -0.1,
                 expected: NON_NEGATIVE,
             }]
@@ -4322,13 +4322,13 @@ mod tests {
                 "{field}"
             );
         }
-        let mut allowance = sample_pocket();
-        allowance.allowance_mm = -0.1;
-        let p = with_ops(vec![Operation::Pocket(allowance)]);
+        let mut stock = sample_pocket();
+        stock.stock_to_leave_mm = -0.1;
+        let p = with_ops(vec![Operation::Pocket(stock)]);
         assert_eq!(
             validate(&p),
             vec![Problem::OutOfRange {
-                field: "operations[o2].allowance_mm".into(),
+                field: "operations[o2].stock_to_leave_mm".into(),
                 value: -0.1,
                 expected: NON_NEGATIVE,
             }]

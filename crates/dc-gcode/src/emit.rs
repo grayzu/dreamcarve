@@ -5788,7 +5788,7 @@ mod tests {
         op.side = dc_project::Side::Inside;
         op.tabs = None;
         op.last_pass = Some(dc_project::LastPass {
-            allowance_mm: 0.5,
+            stock_to_leave_mm: 0.5,
             thickness_mm: None,
             reverse: false,
         });
@@ -6803,7 +6803,7 @@ mod tests {
     /// `interp_cycles.cc` 926-931, 976), here Z 20, so the controller
     /// crosses between holes at the clearance height. The expansion
     /// (S11) plunges each hole from `R` to the bottom (Z −12, the stock
-    /// bottom less the 0.2 mm allowance), goes back to Z 20 after each,
+    /// bottom less the 0.2 mm through-cut allowance), goes back to Z 20 after each,
     /// never lower, and is the plain program's motion once its rapids
     /// along one vertical line are joined.
     #[test]

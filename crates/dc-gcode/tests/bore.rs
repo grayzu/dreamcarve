@@ -48,7 +48,7 @@ const DATE: &str = "2026-10-24";
 
 /// A 80 × 60 × 11.8 mm project with one 5 mm circle at (40, 30), the
 /// plaque's 3.175 mm end mill, and a Bore of it through the stock with
-/// 0.2 mm allowance, climb, pitch from the 2 mm step-down.
+/// 0.2 mm through-cut allowance, climb, pitch from the 2 mm step-down.
 fn five_mm_hole() -> (Project, BoreOp) {
     let mut project = sample_project();
     project.stock = Stock {
@@ -97,7 +97,7 @@ fn five_mm_hole() -> (Project, BoreOp) {
         depth_mm: Some(12.0),
         pitch_mm: None,
         direction: CutDirection::Climb,
-        allowance_mm: 0.0,
+        stock_to_leave_mm: 0.0,
         through_cut_allowance_mm: 0.2,
         safe_z_mm: 15.0,
     };

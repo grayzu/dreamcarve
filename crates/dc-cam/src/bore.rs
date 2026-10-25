@@ -21,7 +21,7 @@
 //! chord would bow in by more than the flatten tolerance. The bottom
 //! revolution is four exact arcs, not 48 chords, and the tool then moves to
 //! the centre before it lifts (Fusion's "Lead To Center"). A radial
-//! allowance is added. A hole is too small when the helix radius is under
+//! stock to leave is added. A hole is too small when the helix radius is under
 //! [`BORE_MIN_HELIX_RADIUS_MM`], not when it is no wider than the tool.
 //! The helix sense is [`helix_is_ccw`], re-derived for Y-up (ADR-0001),
 //! not upstream's `helixAngularDirection`. Upstream's too-large bound,
@@ -66,7 +66,7 @@ struct Hole {
 /// transform, whose outline is a circle within the project's flatten
 /// tolerance is a hole (Drill's test); anything else warns
 /// [`Warning::BoreTargetNotCircle`] and is skipped. With hole radius `ρ`,
-/// tool radius `r` and allowance `a`, the helix radius is `R = ρ − r − a`:
+/// tool radius `r` and stock to leave `a`, the helix radius is `R = ρ − r − a`:
 ///
 /// - under [`BORE_MIN_HELIX_RADIUS_MM`] the hole is skipped with
 ///   [`Warning::BoreNoRoom`];
@@ -93,7 +93,7 @@ struct Hole {
 /// (operation or tool step-down) is missing; when the pitch is not
 /// positive, above the tool's step-down, or so fine that a chord would
 /// fall less than one unit of the program's last place or the helix need
-/// more than [`MAX_DESCENT_MOVES`] chords; when the allowance is negative;
+/// more than [`MAX_DESCENT_MOVES`] chords; when the stock to leave is negative;
 /// when the depth passes the stock bottom plus allowance; when an id does
 /// not resolve or a target cannot be placed; or when the cutter would
 /// leave the stock ([`CamError::OffStock`]).
@@ -131,11 +131,11 @@ pub fn generate_bore(project: &Project, op: &BoreOp) -> Result<(Toolpath, Vec<Wa
             safe_z_mm: op.safe_z_mm,
         });
     }
-    if !(op.allowance_mm.is_finite() && op.allowance_mm >= 0.0) {
+    if !(op.stock_to_leave_mm.is_finite() && op.stock_to_leave_mm >= 0.0) {
         return Err(CamError::InvalidBoreSetting {
             op: op.id.clone(),
-            field: "allowance_mm",
-            value: op.allowance_mm,
+            field: "stock_to_leave_mm",
+            value: op.stock_to_leave_mm,
             expected: "it must be 0 or more",
         });
     }
@@ -260,14 +260,14 @@ fn resolve_holes(
             continue;
         };
         let hole_mm = 2.0 * radius_mm;
-        let helix_radius_mm = radius_mm - tool_radius_mm - op.allowance_mm;
+        let helix_radius_mm = radius_mm - tool_radius_mm - op.stock_to_leave_mm;
         if helix_radius_mm < BORE_MIN_HELIX_RADIUS_MM {
             warnings.push(Warning::BoreNoRoom {
                 op: op.id.clone(),
                 shape,
                 hole_mm,
                 tool_mm: tool_diameter_mm,
-                allowance_mm: op.allowance_mm,
+                stock_to_leave_mm: op.stock_to_leave_mm,
                 // The outline is a circle within the tolerance, so a hole
                 // drawn at the bit's size is a Drill's (Drill's own rule).
                 drill_fits: hole_mm + tolerance_mm >= tool_diameter_mm,
@@ -284,7 +284,7 @@ fn resolve_holes(
                 shape,
                 hole_mm,
                 tool_mm: tool_diameter_mm,
-                allowance_mm: op.allowance_mm,
+                stock_to_leave_mm: op.stock_to_leave_mm,
                 core_mm: 2.0 * core_radius_mm,
             });
             continue;

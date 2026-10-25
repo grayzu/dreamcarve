@@ -1,5 +1,5 @@
 {
-  "version": 18,
+  "version": 19,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -76,7 +76,7 @@
       "depth_mm": 12.0,
       "pitch_mm": null,
       "direction": "climb",
-      "allowance_mm": 0.0,
+      "stock_to_leave_mm": 0.0,
       "through_cut_allowance_mm": 0.2,
       "safe_z_mm": 15.0
     },
@@ -107,7 +107,7 @@
       "step_down_mm": null,
       "step_over_fraction": null,
       "direction": "climb",
-      "allowance_mm": 0.0,
+      "stock_to_leave_mm": 0.0,
       "rest_of": null,
       "entry": { "helix": { "diameter_fraction": 0.8, "angle_deg": 15.0 } },
       "corner_relief": "none",
@@ -128,7 +128,7 @@
       "step_down_mm": null,
       "step_over_fraction": null,
       "direction": "climb",
-      "allowance_mm": 0.0,
+      "stock_to_leave_mm": 0.0,
       "rest_of": null,
       "entry": { "ramp": { "angle_deg": 15.0 } },
       "corner_relief": "dogbone",

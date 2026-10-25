@@ -429,7 +429,7 @@ fn ramp_with_a_sliver_of_a_last_leg_exports() {
 }
 
 /// #235: an offset Pocket of a circle with a rectangular island holding a
-/// nested circular pocket. With the 0.55 mm allowance the nested pocket's
+/// nested circular pocket. With the 0.55 mm stock to leave the nested pocket's
 /// tool-centre region is 1.4994 mm in radius, 5.0006 step-overs, so its
 /// sixth ring was 0.00018 mm in radius: three arcs whose ends all round
 /// to one point, which the program cannot reproduce (S6).
@@ -448,7 +448,7 @@ fn offset_pocket_with_a_sub_tolerance_last_ring_exports() {
         wall_pass: WallPass::None,
         depth_mm: Some(1.0),
         step_over_fraction: Some(0.174_767_951_923_974_57),
-        allowance_mm: 0.549_697_563_087_318_1,
+        stock_to_leave_mm: 0.549_697_563_087_318_1,
         ..sample_pocket()
     };
     let mut project = case(
@@ -843,7 +843,7 @@ fn steep_ramp_on_circles() -> Project {
 /// #355 (the Pocket property, `PROPTEST_RNG_SEED=33` and 22 at 512
 /// cases): an Offset Pocket of a 24.96 × 37.53 mm rectangle round a
 /// circular island of 4.64 mm radius, by a 1.273 mm tool, through 3.88 mm
-/// stock with a 1.706 mm allowance, rotated 44°, written in inch on
+/// stock with 1.706 mm stock to leave, rotated 44°, written in inch on
 /// LinuxCNC with arcs fitted at 0.01 mm. S12 refused a fitted arc round
 /// the island (`ArcFitViolation` at line 134). The program exports, and
 /// every arc it writes stays within the arc-fit tolerance (plus the
@@ -972,7 +972,7 @@ fn pocket_round_a_circle_island() -> Project {
         depth_mm: Some(thickness_mm),
         step_over_fraction: Some(0.888_442_811_577_295_3),
         direction: dc_project::CutDirection::Conventional,
-        allowance_mm: 1.705_889_174_804_463_3,
+        stock_to_leave_mm: 1.705_889_174_804_463_3,
         safe_z_mm: 13.378_563_052_393_277,
         ..sample_pocket()
     };
@@ -1060,7 +1060,7 @@ fn t_bone_pocket_round_a_rect_island() -> Project {
         step_down_mm: Some(0.767_061_048_153_407_7),
         step_over_fraction: Some(0.892_292_758_843_146_3),
         direction: dc_project::CutDirection::Conventional,
-        allowance_mm: 0.322_996_617_915_775_2,
+        stock_to_leave_mm: 0.322_996_617_915_775_2,
         entry: Entry::Ramp {
             angle_deg: 2.064_141_769_483_755_6,
         },
@@ -1150,12 +1150,12 @@ fn shallow_ramp_round_a_circle_with_a_small_hole() -> Project {
 
 /// #358 case 1: a 0.29 mm deep Left Profile of an open path with two arcs,
 /// beside three closed outlines it skips, by a 5.31 mm tool, plunged,
-/// with a 0.09 mm last pass allowance and a 0.015 mm last pass, in mm on
+/// with a 0.09 mm last pass stock to leave and a 0.015 mm last pass, in mm on
 /// GRBL. The path's drawn end lies 3.2 mm from its start, so both
 /// offsets start where they come within `r` and `r + a` of that end
 /// vertex, on two circles round it and not on one normal. The last pass's
-/// 0.11 mm step (line 26) from the allowance path's start to its own then
-/// ends 0.114 mm from the allowance path, which S9's allowance band
+/// 0.11 mm step (line 26) from the stock path's start to its own then
+/// ends 0.114 mm from the stock path, which S9's stock to leave band
 /// refused (`OffMaterial`) though it lies between the first segment's
 /// two offsets.
 #[test]
@@ -1166,7 +1166,7 @@ fn left_open_path_last_pass_plunge_exports() {
 /// #358 case 2: a 19.09 mm deep Inside Profile of a 13.6 × 20.3 mm
 /// rectangle with one 1.38 × 12.96 mm rect tab, by a 7.78 mm tool in
 /// 1.44 mm steps, helixed, pass first, with a 1.00 mm last pass
-/// allowance, in inch on UCCNC. S9's tab rule refused each allowance
+/// stock to leave, in inch on UCCNC. S9's tab rule refused each stock to leave
 /// pass below the tab top coming down at the end of its raised stretch
 /// (line 2576 first, `OffMaterial`), as #353's. Its last pass also came
 /// down the tab's 10 mm height in one move at the tab's far end (#348),
@@ -1191,8 +1191,8 @@ fn inside_last_pass_helix_tabs_pass_first_exports() {
 
 /// #358's `201280a2` regression: the rectangle of case 2 cut Inside
 /// through its 22.03 mm stock with one 1.0 × 1.10 mm rect tab, plunged,
-/// full depth first, with a 2.24 mm last pass allowance. S9's tab rule
-/// refused the allowance pass at Z 0.49 coming down at the end of its
+/// full depth first, with a 2.24 mm last pass stock to leave. S9's tab rule
+/// refused the stock pass at Z 0.49 coming down at the end of its
 /// raised stretch (line 90, `OffMaterial`), as #353's.
 #[test]
 fn inside_last_pass_plunge_short_tab_exports() {
@@ -1203,9 +1203,9 @@ fn inside_last_pass_plunge_short_tab_exports() {
 /// replays its unshrunk project, which exports, and the shrunk one was
 /// not kept): a 28.9 mm circle cut Outside through 10.1 mm stock with a
 /// 8.4 × 10 mm rectangular hole, rotated 30°, by a 2.1 mm tool in
-/// 1.21 mm steps, plunged, with a 0.60 mm last pass allowance and a
+/// 1.21 mm steps, plunged, with a 0.60 mm last pass stock to leave and a
 /// 3.64 × 0.51 mm rect tab at 55.18 mm on each outline. S9 refused the
-/// hole's allowance pass at Z 0.39 coming down at the end of its raised
+/// hole's stock pass at Z 0.39 coming down at the end of its raised
 /// stretch over the tab (line 53, `OffMaterial`).
 #[test]
 fn outside_last_pass_small_tab_on_a_hole_exports() {
@@ -1216,7 +1216,7 @@ fn outside_last_pass_small_tab_on_a_hole_exports() {
 /// Inside Profile of a 39.6 × 34.7 mm rectangle with a 16.0 × 17.1 mm
 /// rectangular hole and a 4.79 mm circle in it, by a 5.09 mm tool in
 /// 5.53 mm steps, ramped at 16.7°, with a 0.5 mm lead over 173° and a
-/// 0.085 mm last pass allowance (5.46 mm thick), untabbed, full depth
+/// 0.085 mm last pass stock to leave (5.46 mm thick), untabbed, full depth
 /// first, in mm on Mach3 with arc fitting off. S9 refused line 32
 /// (`OffMaterial`): pass 2's ramp ran 0.41 mm past the trench pass 1's
 /// ramp cut below the stock top, ending 8.05 mm deep in uncut stock, as
@@ -1558,7 +1558,7 @@ fn left_open_path_last_pass_plunge() -> Project {
             0.294_704_283_231_769_4,
             Entry::Plunge,
             LastPass {
-                allowance_mm: 0.088_504_229_190_802_82,
+                stock_to_leave_mm: 0.088_504_229_190_802_82,
                 thickness_mm: Some(0.014_735_214_161_588_47),
                 reverse: false,
             },
@@ -1644,7 +1644,7 @@ fn inside_last_pass_helix_tabs_pass_first() -> Project {
                 angle_deg: 2.152_324_848_967_854,
             },
             LastPass {
-                allowance_mm: 1.002_757_156_741_800_5,
+                stock_to_leave_mm: 1.002_757_156_741_800_5,
                 thickness_mm: None,
                 reverse: false,
             },
@@ -1672,7 +1672,7 @@ fn inside_last_pass_plunge_short_tab() -> Project {
             22.031_217_735_812_504,
             Entry::Plunge,
             LastPass {
-                allowance_mm: 2.240_394_252_311_478_6,
+                stock_to_leave_mm: 2.240_394_252_311_478_6,
                 thickness_mm: None,
                 reverse: false,
             },
@@ -1708,7 +1708,7 @@ fn outside_last_pass_small_tab_on_a_hole() -> Project {
             thickness_mm,
             Entry::Plunge,
             LastPass {
-                allowance_mm: 0.60,
+                stock_to_leave_mm: 0.60,
                 thickness_mm: None,
                 reverse: false,
             },
@@ -1773,7 +1773,7 @@ fn inside_last_pass_ramp_lead() -> Project {
                 angle_deg: 16.726_834_643_729_2,
             },
             LastPass {
-                allowance_mm: 0.084_813_751_702_528_82,
+                stock_to_leave_mm: 0.084_813_751_702_528_82,
                 thickness_mm: Some(5.463_977_798_488_451),
                 reverse: false,
             },

@@ -781,7 +781,7 @@ impl PathTabs {
 
     /// The raised stretches `spans` on a path `length_mm` long, laid for
     /// `tab_count` tabs, merged where they overlap or touch (#310 review:
-    /// an allowance path's spans, found from the tabs' material). On a
+    /// a stock path's spans, found from the tabs' material). On a
     /// `closed` path a span may run through its start; on an open one
     /// (#311) each is cut short at the path's ends.
     pub(crate) fn from_spans(

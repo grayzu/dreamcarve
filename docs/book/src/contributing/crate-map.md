@@ -99,10 +99,10 @@ dev-dependencies only.
 | `profile.rs` | `generate_profile` on blocks; the direction rule `traversal_is_ccw`. |
 | `profile/entries.rs` | Each Profile pass's entry, placed in the waste domain, with and without the tab keep-outs. |
 | `profile/waste.rs` | The Profile waste domain: where an entry or lead may go because the material there is cut away anyway. |
-| `pocket.rs` | `generate_pocket`: regions and islands, allowance, wall pass, direction (`ring_is_ccw`), entries and relief hooks. |
+| `pocket.rs` | `generate_pocket`: regions and islands, stock to leave, wall pass, direction (`ring_is_ccw`), entries and relief hooks. |
 | `pocket/rings.rs` | `inset_region` and `RingTree`: the offset ring tree and its inner-first walk. |
 | `pocket/raster.rs` | `raster_lines` and `order_nearest_first`: the raster strategy. |
-| `pocket/rest.rs` | Rest machining: the leftover of an earlier Pocket, from its tool and allowance only (S14). |
+| `pocket/rest.rs` | Rest machining: the leftover of an earlier Pocket, from its tool and stock to leave only (S14). |
 | `bore.rs` | `generate_bore` (format 18): circle targets, a helix of the hole's radius less the tool's at `pitch_mm` a turn, one circle at the depth, the holes it skips (too small, or leaving a core). |
 | `drill.rs` | `generate_drill`: circle targets, simple, peck and chip-break cycles, dwell, retract height, `DrillHole` records for canned cycles (S15). |
 | `engrave.rs` | `generate_engrave`: every path traced with the tool centre on the line; `alternate_direction`. |

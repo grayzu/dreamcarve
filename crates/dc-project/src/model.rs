@@ -586,7 +586,7 @@ pub struct ProfileOp {
     /// Migration: none.
     pub corner_relief: CornerRelief,
     /// A finishing pass (#284): every pass but the last leaves
-    /// [`LastPass::allowance_mm`] on the wall and the last cuts it to
+    /// [`LastPass::stock_to_leave_mm`] on the wall and the last cuts it to
     /// size. Inside and Outside only. `init` and migration: none.
     #[serde(deserialize_with = "Option::deserialize")]
     pub last_pass: Option<LastPass>,
@@ -625,9 +625,9 @@ pub enum StartAt {
     },
 }
 
-/// A Profile's last pass allowance (#284, functional spec capability 34;
+/// A Profile's last pass stock to leave (#284, functional spec capability 34;
 /// VCarve's 2D Profile "Last Pass Allowance", Fusion's 2D Contour stock to
-/// leave and finishing pass): every pass but the last runs `allowance_mm`
+/// leave and finishing pass): every pass but the last runs `stock_to_leave_mm`
 /// farther from the part, and the last pass cuts on the part's path, so
 /// it takes an even skin off the whole wall and leaves no step marks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -636,7 +636,7 @@ pub struct LastPass {
     /// Material every pass but the last leaves on the wall, millimetres:
     /// more than 0 and at most a third of the bit's diameter.
     #[serde(deserialize_with = "units_input::mm")]
-    pub allowance_mm: f64,
+    pub stock_to_leave_mm: f64,
     /// How deep the last pass cuts, millimetres, more than 0 and at most
     /// `depth_mm` (VCarve's "Set Last Pass Thickness"): the other passes
     /// step down to `depth_mm − thickness_mm`. `None`: the last pass is the
@@ -708,7 +708,7 @@ pub struct PocketOp {
     pub direction: CutDirection,
     /// Material to leave on the walls, millimetres, 0 or more.
     #[serde(deserialize_with = "units_input::mm")]
-    pub allowance_mm: f64,
+    pub stock_to_leave_mm: f64,
     /// An earlier enabled Pocket with the same targets whose tool could
     /// not reach everything: this one clears only what it left
     /// (functional spec, capability 13).
@@ -833,7 +833,7 @@ pub struct BoreOp {
     /// Material left on the wall, millimetres, 0 or more: the hole comes
     /// out this much smaller all round.
     #[serde(deserialize_with = "units_input::mm")]
-    pub allowance_mm: f64,
+    pub stock_to_leave_mm: f64,
     /// How far below the stock bottom the cut may go, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
@@ -922,7 +922,7 @@ impl Side {
     }
 
     /// True for the sides that cut one flank of the bit against the part,
-    /// leaving a wall a last pass can take an allowance off (#284, #311):
+    /// leaving a wall a last pass can take a stock to leave off (#284, #311):
     /// Inside, Outside, Left and Right. On line cuts with both flanks.
     #[must_use]
     pub const fn has_wall(self) -> bool {

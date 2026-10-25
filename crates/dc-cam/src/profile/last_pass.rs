@@ -1,15 +1,15 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! A Profile's last pass allowance (#284; `docs/specs/phase-2/design.md`,
+//! A Profile's last pass stock to leave (#284; `docs/specs/phase-2/design.md`,
 //! "Phase 2 addendum (#73)", A8; VCarve's 2D Profile "Last Pass
-//! Allowance", Fusion's 2D Contour stock to leave and finishing pass).
+//! Stock to leave", Fusion's 2D Contour stock to leave and finishing pass).
 //! PureCutCNC has no counterpart: it leaves stock with a separate rough
 //! operation, so this is DreamCarve's own.
 //!
-//! Every pass but the last runs on the allowance path, `r + a` from the
+//! Every pass but the last runs on the stock path, `r + a` from the
 //! part on the waste side, and the last on the part's path at `r`. Each
-//! allowance path is the same offset as the part's path with the larger
+//! stock path is the same offset as the part's path with the larger
 //! distance, for a closed outline and, Left or Right, for an open path
 //! (#311); this module makes it, refuses a drawing it cannot follow,
 //! and carries the part path's tabs onto it.
@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 /// Refuses a last pass the generator cannot cut (validation reports each
 /// first): one On line, which has no wall to leave material on
 /// ([`CamError::LastPassNeedsSide`]; Left and Right have one since #311),
-/// an allowance that is not more than
+/// a stock to leave that is not more than
 /// 0 and at most a third of the tool's `diameter_mm`, or a thickness that
 /// is not more than 0 and at most `depth_mm` and the `step_down_mm` in
 /// effect (#310 review: the last pass is never thicker than a step)
@@ -48,12 +48,13 @@ pub(super) fn check(
         return Err(CamError::LastPassNeedsSide { op: op.id.clone() });
     }
     let limit_mm = diameter_mm / 3.0;
-    let allowance_mm = last_pass.allowance_mm;
-    if !(allowance_mm.is_finite() && allowance_mm > 0.0 && allowance_mm <= limit_mm) {
+    let stock_to_leave_mm = last_pass.stock_to_leave_mm;
+    if !(stock_to_leave_mm.is_finite() && stock_to_leave_mm > 0.0 && stock_to_leave_mm <= limit_mm)
+    {
         return Err(CamError::InvalidLastPass {
             op: op.id.clone(),
-            field: "allowance_mm",
-            value: allowance_mm,
+            field: "stock_to_leave_mm",
+            value: stock_to_leave_mm,
             range: format!(
                 "more than 0 and at most {limit_mm:.3} mm, a third of the {diameter_mm} mm tool"
             ),
@@ -119,11 +120,11 @@ pub(super) fn pass_z(
     Ok(z_mm)
 }
 
-/// How much more than `√2 · allowance` the last pass may take off
+/// How much more than `√2 · stock to leave` the last pass may take off
 /// without being looked at further, mm (#310 review): the rounding of
 /// offsets and sampling, so that a square corner, where it takes exactly
-/// that, is cut. Also how much farther than the allowance a stretch must
-/// run from the allowance path to be one it stops short of (#324).
+/// that, is cut. Also how much farther than the stock to leave a stretch must
+/// run from the stock path to be one it stops short of (#324).
 pub(super) const THICKNESS_SLACK_MM: f64 = 0.05;
 
 /// What [`twins`] needs to know about one outline and its paths.
@@ -140,20 +141,20 @@ pub(super) struct Outline<'a> {
     pub centres: &'a [Contour],
 }
 
-/// The allowance paths of one outline (#284): the outline offset by the
-/// radius plus `allowance_mm` the same way as its part paths, one for
+/// The stock paths of one outline (#284): the outline offset by the
+/// radius plus `stock_to_leave_mm` the same way as its part paths, one for
 /// each of `outline.centres`, in their order. The design's "band and
 /// narrowness checks with `D + 2a`" (A8 step 2):
 ///
-/// - Inside, an allowance path that comes closer than `r + a` to another
+/// - Inside, a stock path that comes closer than `r + a` to another
 ///   line of the region would cut that line's skin, or the part beyond
-///   it: [`CamError::BandNarrowerThanAllowance`] naming both lines.
+///   it: [`CamError::BandNarrowerThanStockToLeave`] naming both lines.
 /// - Where the outline is wider than the bit but narrower than `D + 2a`
 ///   (a neck, a slot, a small hole, the mouth of an inlet), the
-///   allowance offset vanishes, splits or merges, so its loops are not
-///   one for each part path: [`CamError::ShapeNarrowerThanAllowance`].
+///   stock to leave offset vanishes, splits or merges, so its loops are not
+///   one for each part path: [`CamError::ShapeNarrowerThanStockToLeave`].
 /// - The last pass takes off, at any point, at most how far its path
-///   runs from the allowance path there ([`cuts_only_corners`]; #310
+///   runs from the stock path there ([`cuts_only_corners`]; #310
 ///   review, changed in #324): nowhere more than a third of the bit (or
 ///   `√2 · a` plus [`THICKNESS_SLACK_MM`], a square corner's, where that
 ///   is more), and more than a square corner's only at a corner, where
@@ -161,27 +162,27 @@ pub(super) struct Outline<'a> {
 ///   between. A notch, slot or inlet the earlier passes bridge and skip,
 ///   or a tip so narrow that its wedge is thicker, would leave the last
 ///   pass that much to cut at full depth:
-///   [`CamError::ShapeNarrowerThanAllowance`] too.
+///   [`CamError::ShapeNarrowerThanStockToLeave`] too.
 pub(super) fn twins(
     op: &ProfileOp,
     tool: &Tool,
     outline: &Outline<'_>,
     shapes: &[(ShapeRef, Contour)],
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     tolerance_mm: f64,
 ) -> Result<Vec<Contour>, CamError> {
     let radius_mm = tool.diameter_mm / 2.0;
-    let narrow = || CamError::ShapeNarrowerThanAllowance {
+    let narrow = || CamError::ShapeNarrowerThanStockToLeave {
         op: op.id.clone(),
         shape: outline.shape.clone(),
         diameter_mm: tool.diameter_mm,
-        allowance_mm,
+        stock_to_leave_mm,
     };
-    let reach_mm = radius_mm + allowance_mm;
+    let reach_mm = radius_mm + stock_to_leave_mm;
     let found = match outline.how {
         Offset::Grow => offset(outline.contour, reach_mm),
         Offset::Shrink => offset(outline.contour, -reach_mm),
-        // Refused before: On line has no allowance.
+        // Refused before: On line has no stock to leave.
         Offset::None => return Err(narrow()),
     };
     if found.len() != outline.centres.len() {
@@ -191,7 +192,7 @@ pub(super) fn twins(
         &op.id,
         op.side,
         tool,
-        allowance_mm,
+        stock_to_leave_mm,
         outline.region,
         (outline.contour, outline.shape),
         &found,
@@ -202,42 +203,42 @@ pub(super) fn twins(
         outline.centres.iter().map(Contour::polyline),
         found,
         Contour::polyline,
-        allowance_mm,
+        stock_to_leave_mm,
         tool.diameter_mm,
     )
     .ok_or_else(narrow)
 }
 
-/// The allowance paths of one open path `path` cut Left or Right (#311):
-/// `path` offset by the radius plus `allowance_mm` to the side of
+/// The stock paths of one open path `path` cut Left or Right (#311):
+/// `path` offset by the radius plus `stock_to_leave_mm` to the side of
 /// `left_mm` (positive to the left, the last pass's offset) with
 /// [`offset_open`], one for each of the last pass's pieces `centres`, in
 /// their order. Each ends square on the normals through the path's end
 /// vertices, as the last pass's do, so the earlier passes stop where the
 /// last pass stops: neither cuts past an end, and the last pass takes the
-/// allowance off right up to it. The narrowness rule is [`twins`]'s: where
-/// `path` fits the bit but not the bit plus the allowance (an arc, a U or
+/// stock to leave off right up to it. The narrowness rule is [`twins`]'s: where
+/// `path` fits the bit but not the bit plus the stock to leave (an arc, a U or
 /// a hairpin on the cut side), the offset loses or gains pieces; and the
 /// last pass takes off what [`cuts_only_corners`] allows, a departure
 /// that reaches an end of the path counting as no corner. Either is
-/// [`CamError::ShapeNarrowerThanAllowance`]. An end segment with room
-/// for the bit but not for the bit plus the allowance leaves no allowance
+/// [`CamError::ShapeNarrowerThanStockToLeave`]. An end segment with room
+/// for the bit but not for the bit plus the stock to leave leaves no stock
 /// path ending square there: [`CamError::EndSegmentHasNoRoom`] with the
-/// allowance (#342).
+/// stock to leave (#342).
 pub(super) fn open_twins(
     op: &ProfileOp,
     tool: &Tool,
     (shape, path): (&ShapeRef, &Polyline),
     centres: &[Polyline],
     left_mm: f64,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
 ) -> Result<Vec<Polyline>, CamError> {
-    let reach_mm = tool.diameter_mm / 2.0 + allowance_mm;
+    let reach_mm = tool.diameter_mm / 2.0 + stock_to_leave_mm;
     fn itself(p: &Polyline) -> &Polyline {
         p
     }
     let found = offset_open(path, reach_mm.copysign(left_mm));
-    // #342: the allowance paths end square on the end normals too, or the
+    // #342: the stock paths end square on the end normals too, or the
     // passes before the last reach past an end.
     super::check_open_ends(
         op,
@@ -245,38 +246,38 @@ pub(super) fn open_twins(
         (shape, path),
         &found,
         reach_mm.copysign(left_mm),
-        Some(allowance_mm),
+        Some(stock_to_leave_mm),
     )?;
     paired(
         centres.iter(),
         found,
         itself,
-        allowance_mm,
+        stock_to_leave_mm,
         tool.diameter_mm,
     )
-    .ok_or_else(|| CamError::ShapeNarrowerThanAllowance {
+    .ok_or_else(|| CamError::ShapeNarrowerThanStockToLeave {
         op: op.id.clone(),
         shape: shape.clone(),
         diameter_mm: tool.diameter_mm,
-        allowance_mm,
+        stock_to_leave_mm,
     })
 }
 
-/// Each of the last pass's paths `centres` with an allowance path of
+/// Each of the last pass's paths `centres` with a stock path of
 /// `found`, in `centres`' order; `None` when the two are not one for one,
 /// or the last pass on a path would take off more than
-/// [`cuts_only_corners`] allows after the allowance path paired with it.
-/// `line` gives an allowance path's polyline. The pairing is greedy, each
-/// path in turn taking the nearest allowance path not yet taken, so it
+/// [`cuts_only_corners`] allows after the stock path paired with it.
+/// `line` gives a stock path's polyline. The pairing is greedy, each
+/// path in turn taking the nearest stock path not yet taken, so it
 /// can pair a path with the wrong one; [`cuts_only_corners`] then finds
-/// the last pass far from its allowance path somewhere and the shape is
-/// refused, unless that allowance path runs beside it within the same
+/// the last pass far from its stock path somewhere and the shape is
+/// refused, unless that stock path runs beside it within the same
 /// bounds, when it serves as well.
 fn paired<'c, T>(
     centres: impl ExactSizeIterator<Item = &'c Polyline>,
     found: Vec<T>,
     line: impl Fn(&T) -> &Polyline,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     diameter_mm: f64,
 ) -> Option<Vec<T>> {
     if found.len() != centres.len() {
@@ -295,9 +296,9 @@ fn paired<'c, T>(
             .and_then(|k| left.get_mut(k))
             .and_then(Option::take)?;
         // The last pass takes off at most how far its path runs from the
-        // allowance path's (its cutter reaches no farther past theirs).
+        // stock path's (its cutter reaches no farther past theirs).
         let step_mm = (diameter_mm / 16.0).min(0.25);
-        if !cuts_only_corners(centre, line(&twin), allowance_mm, diameter_mm, step_mm) {
+        if !cuts_only_corners(centre, line(&twin), stock_to_leave_mm, diameter_mm, step_mm) {
             return None;
         }
         twins.push(twin);
@@ -305,13 +306,13 @@ fn paired<'c, T>(
     Some(twins)
 }
 
-/// #284: an allowance path `twin` of `shape`, an outline of region
+/// #284: a stock path `twin` of `shape`, an outline of region
 /// `region`, must keep the tool radius from every line of every other
 /// region and, Outside, lie outside every other region's material, or its
 /// passes would cut into that part (S9 holds them to the radius; only a
 /// lap at the radius itself is D6's warning instead):
-/// [`CamError::BandNarrowerThanAllowance`] naming both shapes, in drawing
-/// order, and the gap between them. Inside, an allowance path lies in its
+/// [`CamError::BandNarrowerThanStockToLeave`] naming both shapes, in drawing
+/// order, and the gap between them. Inside, a stock path lies in its
 /// own region, which no other region's material overlaps.
 #[allow(
     clippy::too_many_arguments,
@@ -324,7 +325,7 @@ pub(super) fn check_neighbours(
     shapes: &[(ShapeRef, Contour)],
     (twin, shape, contour): (&Polyline, &ShapeRef, &Contour),
     region: usize,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
 ) -> Result<(), CamError> {
     let radius_mm = tool.diameter_mm / 2.0;
     let drawn = |s: &ShapeRef| shapes.iter().position(|(x, _)| x == s);
@@ -348,14 +349,14 @@ pub(super) fn check_neighbours(
             } else {
                 (other, shape)
             };
-            return Err(CamError::BandNarrowerThanAllowance {
+            return Err(CamError::BandNarrowerThanStockToLeave {
                 op: op.id.clone(),
                 shape: first.clone(),
                 other: Box::new(second.clone()),
                 band_mm: distance_mm(contour.polyline(), line.polyline()),
                 diameter_mm: tool.diameter_mm,
-                allowance_mm,
-                needed_mm: tool.diameter_mm + allowance_mm,
+                stock_to_leave_mm,
+                needed_mm: tool.diameter_mm + stock_to_leave_mm,
             });
         }
     }
@@ -364,19 +365,19 @@ pub(super) fn check_neighbours(
 
 /// The most the last pass may take off anywhere, mm (#324): a third of
 /// the tool's `diameter_mm`, the thickest skin [`check`] lets the
-/// allowance itself be, so a corner's wedge is never thicker than a
+/// stock to leave itself be, so a corner's wedge is never thicker than a
 /// straight wall's skin may be; or a square corner's `√2 · a`, plus
 /// [`THICKNESS_SLACK_MM`], where that is more (the #310 rule, so nothing
 /// it cut is refused now).
-fn thickest_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
-    (diameter_mm / 3.0).max(square_corner_mm(allowance_mm))
+fn thickest_mm(diameter_mm: f64, stock_to_leave_mm: f64) -> f64 {
+    (diameter_mm / 3.0).max(square_corner_mm(stock_to_leave_mm))
 }
 
 /// What the last pass takes off in a square corner, `√2 · a`, plus
 /// [`THICKNESS_SLACK_MM`], mm: the #310 bound, within which no stretch is
 /// looked at further.
-fn square_corner_mm(allowance_mm: f64) -> f64 {
-    std::f64::consts::SQRT_2 * allowance_mm + THICKNESS_SLACK_MM
+fn square_corner_mm(stock_to_leave_mm: f64) -> f64 {
+    std::f64::consts::SQRT_2 * stock_to_leave_mm + THICKNESS_SLACK_MM
 }
 
 /// How far a corner may turn back the other way, rad (#324): 1°, for the
@@ -389,10 +390,10 @@ const CORNER_TURN_BACK_RAD: f64 = std::f64::consts::PI / 180.0;
 /// far as a U-turn goes in and comes out again: a slot's end.
 const CORNER_TURN_RAD: f64 = std::f64::consts::PI - CORNER_TURN_BACK_RAD;
 
-/// One stretch of a part path the allowance path stops short of, for
+/// One stretch of a part path the stock path stops short of, for
 /// [`cuts_only_corners`].
 struct Departure {
-    /// The farthest it lies from the allowance path, mm.
+    /// The farthest it lies from the stock path, mm.
     thickest_mm: f64,
     /// How far it turns left and right, rad.
     left_rad: f64,
@@ -410,10 +411,10 @@ impl Departure {
 }
 
 /// Whether the last pass on `path` may follow passes on `twin`, its
-/// allowance path at `allowance_mm`, with a tool of `diameter_mm` (#324),
+/// stock path at `stock_to_leave_mm`, with a tool of `diameter_mm` (#324),
 /// `path` sampled at every vertex and at most `step_mm` apart along each
 /// segment. The last pass takes off at most how far its path runs from
-/// the allowance path, and:
+/// the stock path, and:
 ///
 /// - nowhere more than [`thickest_mm`];
 /// - where it takes off more than a square corner's `√2 · a` (plus
@@ -429,7 +430,7 @@ impl Departure {
 fn cuts_only_corners(
     path: &Polyline,
     twin: &Polyline,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     diameter_mm: f64,
     step_mm: f64,
 ) -> bool {
@@ -448,22 +449,22 @@ fn cuts_only_corners(
             along_mm = (along_mm + step_mm.max(EPS_MM)).min(length_mm);
         }
     }
-    let square_mm = square_corner_mm(allowance_mm);
+    let square_mm = square_corner_mm(stock_to_leave_mm);
     if samples
         .iter()
-        .any(|(gap_mm, _)| *gap_mm > thickest_mm(diameter_mm, allowance_mm))
+        .any(|(gap_mm, _)| *gap_mm > thickest_mm(diameter_mm, stock_to_leave_mm))
     {
         return false;
     }
     if samples.iter().all(|(gap_mm, _)| *gap_mm <= square_mm) {
         return true;
     }
-    let away = |gap_mm: f64| gap_mm > allowance_mm + THICKNESS_SLACK_MM;
+    let away = |gap_mm: f64| gap_mm > stock_to_leave_mm + THICKNESS_SLACK_MM;
     let n = samples.len();
-    // Start at a sample beside the allowance path, so no stretch wraps the
+    // Start at a sample beside the stock path, so no stretch wraps the
     // scan; a path nowhere beside it is one long stretch, no corner. An
     // open path (#311) is scanned from its start to its end, and a
-    // stretch that reaches either end is no corner: the allowance path
+    // stretch that reaches either end is no corner: the stock path
     // stops short of the end, which the last pass would cut whole.
     let closed = path.is_closed();
     let order: Vec<usize> = if closed {
@@ -530,7 +531,7 @@ pub(super) struct EdgeFeed {
     pub wall_on_right: bool,
     /// The tool's radius, mm.
     pub radius_mm: f64,
-    pub allowance_mm: f64,
+    pub stock_to_leave_mm: f64,
     /// The tool's cutting feed, mm/min.
     pub feed_mm_min: f64,
 }
@@ -541,7 +542,7 @@ impl EdgeFeed {
     /// on a circle of `a`). The safety pass's S3 accepts no lower level
     /// feed, so the generator cannot invent one.
     pub(super) fn floor_fraction(&self) -> f64 {
-        self.allowance_mm / (self.allowance_mm + self.radius_mm)
+        self.stock_to_leave_mm / (self.stock_to_leave_mm + self.radius_mm)
     }
 
     /// Lowers the feed of every level arc of `cuts` (cut from a point at
@@ -550,9 +551,9 @@ impl EdgeFeed {
     /// [`EdgeFeed::floor_fraction`]. Arcs round the part's outside corners,
     /// where the edge moves slower than the centre, straight cuts, and the
     /// ramps and lifts over tabs keep their feeds; a level arc over a
-    /// tab's top is lowered too, since it still cuts the allowance above
+    /// tab's top is lowered too, since it still cuts the stock to leave above
     /// the tab. Returns the tightest radius held at the
-    /// floor, under the allowance, whose edge moves faster than the feed.
+    /// floor, under the stock to leave, whose edge moves faster than the feed.
     pub(super) fn apply(&self, cuts: &mut [Move], start_z_mm: f64) -> Option<f64> {
         let mut z_mm = start_z_mm;
         let mut tightest_mm: Option<f64> = None;
@@ -718,16 +719,16 @@ impl EdgeFeed {
     }
 }
 
-/// How far, mm, the last pass may step from its allowance path's kerf
+/// How far, mm, the last pass may step from its stock path's kerf
 /// onto its own path (#339): the most it may take off anywhere
 /// ([`thickest_mm`]), which [`cuts_only_corners`] holds every point of its
-/// path to from the allowance path, and the slack of that sampling.
-pub(super) fn step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
-    thickest_mm(diameter_mm, allowance_mm) + THICKNESS_SLACK_MM
+/// path to from the stock path, and the slack of that sampling.
+pub(super) fn step_reach_mm(diameter_mm: f64, stock_to_leave_mm: f64) -> f64 {
+    thickest_mm(diameter_mm, stock_to_leave_mm) + THICKNESS_SLACK_MM
 }
 
-/// #339: the last pass's block `own`, entered from its allowance twin's
-/// kerf instead of straight down at its own start, where the allowance
+/// #339: the last pass's block `own`, entered from its stock to leave twin's
+/// kerf instead of straight down at its own start, where the stock to leave
 /// stands uncut to the stock top. `twin` is the block one more pass of the
 /// twin would be at the last pass's depth: its descent, by the operation's
 /// entry, goes one step-down into the floor the passes before cut.
@@ -737,13 +738,13 @@ pub(super) fn step_reach_mm(diameter_mm: f64, allowance_mm: f64) -> f64 {
 /// or its lead's staging point), of the points no higher than the height
 /// `own` starts at (a tab's, #337) if one is in reach, else of all; then,
 /// if lower, straight up to that height there; then one straight step at
-/// the feed across the allowance to `own`'s start, which `rules` keep in
+/// the feed across the stock to leave to `own`'s start, which `rules` keep in
 /// the waste and run above the tab material the last pass leaves (#339
 /// review); then, if the step ran higher (over a tab, or one the twin
 /// rises over and `own` starts on the slope of), on to where `own` starts,
 /// no lower than its lap cuts there: along the lap at the step's height to
 /// where its slope is as high, and back down the slope (#348,
-/// [`onto_slope`]), not straight down through the allowance strip. That
+/// [`onto_slope`]), not straight down through the stock to leave strip. That
 /// point is at most `reach_mm` away, or the step would cut more than the
 /// last pass may take off. When `own_led` and its staging point is
 /// farther, the lead-in arc is left off and the step goes to the lap's
@@ -770,7 +771,7 @@ pub(super) fn enter_from_twin(
     entered(twin, &plain, reach_mm, rates, rules).map(|block| (block, true))
 }
 
-/// What holds the last pass's step across the allowance (#339 review):
+/// What holds the last pass's step across the stock to leave (#339 review):
 /// what the cutter sweeps along it, never the entries' tab keep-outs.
 pub(super) struct StepRules<'a> {
     /// The straight step from the first point to the second cuts no part:
@@ -782,7 +783,7 @@ pub(super) struct StepRules<'a> {
     pub clear_z_mm: &'a dyn Fn(Point, Point) -> f64,
 }
 
-/// Why the last pass cannot step across the allowance.
+/// Why the last pass cannot step across the stock to leave.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum StepRefused {
     /// No point of the earlier passes' cut is within reach of its start.
@@ -889,7 +890,7 @@ fn entered(
         ));
     }
     if step_z_mm > start_z_mm + EPS_MM {
-        // #348: not straight down through the allowance strip, which
+        // #348: not straight down through the stock to leave strip, which
         // stands to the step's height, but along the lap: level to where
         // its slope is as high, and down the slope back to its start.
         let closed = own
@@ -965,7 +966,7 @@ pub(super) fn carry_reversed(path: &Polyline, layout: &PathTabs, back: &Polyline
 /// its Z, and the top and shape of the tab it rises over there.
 type LastCut = (Point, f64, Option<(f64, TabShape)>);
 
-/// One sample of an allowance path for [`twin_tabs`]: its distance
+/// One sample of a stock path for [`twin_tabs`]: its distance
 /// along the path and, where a tab is in reach, the height it must keep
 /// above, the top of that tab, and whether every tab in reach is smooth.
 type Need = (f64, Option<(f64, f64, bool)>);
@@ -1042,7 +1043,7 @@ impl<T: Copy> Buckets<T> {
     }
 }
 
-/// The tabs of an allowance path `twin` (#310 review, replacing design A8
+/// The tabs of a stock path `twin` (#310 review, replacing design A8
 /// step 3's widening by `a`), from the tabs the last pass leaves on its
 /// path `path` (`layout`, its floor at `floor_z_mm`), cut with a tool of
 /// `radius_mm`.
@@ -1052,12 +1053,12 @@ impl<T: Copy> Buckets<T> {
 /// last pass cuts within the radius of it. Each point of `twin` is raised
 /// to at least the highest such point within the radius of it, so no
 /// pass before the last cuts any of it, however the two paths turn: at a
-/// sharp corner the allowance path runs past the corner beside the far
+/// sharp corner the stock path runs past the corner beside the far
 /// edge's tabs, which an arc length along it does not see. The heights are
 /// sampled every [`tab_step_mm`], the stock on a lattice of that step
 /// and, all round each raised cut, just inside its reach (#311: where the
 /// last pass rises onto a tab, the tab's foot at the far side of its kerf
-/// is a cusp thinner than the lattice, which the allowance pass reaches
+/// is a cusp thinner than the lattice, which the stock pass reaches
 /// first); the cutter is taken that much wider and each raised stretch
 /// that much longer at both ends, so the lattice and sampling never let a
 /// cut through. On an open path (#311) the stretches stop at its ends. A
@@ -1125,7 +1126,7 @@ pub(super) fn twin_tabs(
     // its reach. Where the last pass rises onto a tab, the tab's foot at
     // the far side of its kerf is a cusp thinner than the lattice, between
     // the circles of reach of the last cut below and the first above, and
-    // the allowance pass `a` nearer that side reaches it first.
+    // the stock pass `a` nearer that side reaches it first.
     let ring = ring_offsets(radius_mm - RING_INSET_MM, step_mm);
     for &(c, z, span) in &last {
         let Some((top, shape)) = span.filter(|_| raised(z)) else {
@@ -1144,7 +1145,7 @@ pub(super) fn twin_tabs(
         return none();
     }
     let stock = Buckets::new(radius_mm + step_mm, material);
-    // Each point of the allowance path: the height it must keep above,
+    // Each point of the stock path: the height it must keep above,
     // the tab top and whether every tab under it is smooth.
     let need: Vec<Need> = path_samples(twin, step_mm / 2.0)
         .into_iter()
@@ -1284,7 +1285,7 @@ fn lattice_point(i: i64, j: i64, step_mm: f64) -> Point {
     Point::new(i as f64 * step_mm, j as f64 * step_mm)
 }
 
-/// The raised stretches of an allowance path `length_mm` long, from the
+/// The raised stretches of a stock path `length_mm` long, from the
 /// heights `need` sampled along it every half `step_mm` ([`twin_tabs`]):
 /// each run of samples that must keep above `floor_z_mm`, a step longer
 /// at both ends, at the highest top under it, rect unless every tab under

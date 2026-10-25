@@ -60,8 +60,8 @@ pub(crate) type CutPath<'a> = (&'a Polyline, Option<&'a ShapeRef>);
 /// crosses itself are set aside as `generate_profile`'s band check sets
 /// them aside (#221).
 ///
-/// `paths` include a Profile's allowance paths (#284), which run
-/// `allowance_mm` farther from their lines than the radius, so the gap
+/// `paths` include a Profile's stock paths (#284), which run
+/// `stock_to_leave_mm` farther from their lines than the radius, so the gap
 /// the warning says two shapes need grows by it.
 #[must_use]
 #[allow(
@@ -75,7 +75,7 @@ pub(crate) fn overlap_warnings(
     regions: &[Region],
     side: Side,
     tool: &Tool,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     tolerance_mm: f64,
 ) -> Vec<Warning> {
     let radius_mm = tool.diameter_mm / 2.0;
@@ -111,7 +111,7 @@ pub(crate) fn overlap_warnings(
         tool: tool.name.clone(),
         tool_id: tool.id.clone(),
         diameter_mm: tool.diameter_mm,
-        needed_mm: needed_gap_mm(side, tool.diameter_mm) + allowance_mm,
+        needed_mm: needed_gap_mm(side, tool.diameter_mm) + stock_to_leave_mm,
     };
     let mut warned: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
     let mut warnings = Vec::new();

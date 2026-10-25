@@ -389,7 +389,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v18/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v19/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1032,7 +1032,7 @@ mod tests {
         let mut bore = crate::test_support::sample_bore();
         bore.pitch_mm = Some(1.5);
         bore.direction = crate::model::CutDirection::Conventional;
-        bore.allowance_mm = 0.1;
+        bore.stock_to_leave_mm = 0.1;
         p.operations.push(Operation::Bore(bore));
         let text = save(&p).unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
@@ -1054,7 +1054,7 @@ mod tests {
                 "depth_mm",
                 "pitch_mm",
                 "direction",
-                "allowance_mm",
+                "stock_to_leave_mm",
                 "through_cut_allowance_mm",
                 "safe_z_mm"
             ]
@@ -1062,6 +1062,32 @@ mod tests {
         assert_eq!(value["operations"][1]["kind"], json!("bore"));
         assert_eq!(value["operations"][1]["direction"], json!("conventional"));
         assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    /// #394 (format 19): a Pocket, a Bore and a Profile's last pass save
+    /// the stock they leave as `stock_to_leave_mm`, never `allowance_mm`,
+    /// and load back.
+    #[test]
+    fn save_writes_stock_to_leave_never_allowance() {
+        let project = load(include_bytes!(
+            "../tests/fixtures/dcv/v18/stock-to-leave.dcv"
+        ))
+        .unwrap()
+        .project;
+        let text = save(&project).unwrap();
+        assert!(!text.contains("\"allowance_mm\""), "{text}");
+        assert_eq!(
+            text.matches("\"stock_to_leave_mm\": 0.5").count(),
+            2,
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("\"stock_to_leave_mm\": 0.1").count(),
+            1,
+            "{text}"
+        );
+        assert_eq!(text.matches("\"through_cut_allowance_mm\"").count(), 3);
+        assert_eq!(load(text.as_bytes()).unwrap().project, project);
     }
 
     /// Format 18: an unknown field in a Bore is named, as in any operation.

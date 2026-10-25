@@ -45,7 +45,7 @@ fn pocket(project: &Project, entry: Entry) -> Operation {
         step_down_mm: None,
         step_over_fraction: None,
         direction: CutDirection::Climb,
-        allowance_mm: 0.0,
+        stock_to_leave_mm: 0.0,
         rest_of: None,
         entry,
         corner_relief: CornerRelief::None,

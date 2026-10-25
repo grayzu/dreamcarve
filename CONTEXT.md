@@ -82,23 +82,30 @@ along the boundary.
 _Avoid_: Pattern, fill, clearing mode, parallel (use Raster)
 _PureCutCNC_: pocketPattern `offset`, `parallel` (with `pocketAngle`)
 
-**Pocket Allowance**:
-Material a Pocket leaves on its walls and round its islands, `allowance_mm`
-(0 or more), so a later, smaller tool can finish them. Not the Through-cut
-Allowance, which is depth below the stock.
-_Avoid_: Stock to leave, offset, finish allowance
+**Stock to Leave**:
+Material a Pocket leaves on its walls and round its islands, or a Bore on
+its hole's wall, `stock_to_leave_mm` (0 or more), so a later operation,
+often with a smaller tool, can finish them. Fusion's "Stock to Leave"
+(radial); VCarve's "Pocket Allowance". Not the Through-cut Allowance,
+which is depth below the stock, nor the Last Pass Stock to Leave, which the
+same Profile takes off. (changed: maintainer decision 2026-10-25, #394:
+was Pocket Allowance, `allowance_mm`)
+_Avoid_: Allowance (the Through-cut Allowance is the only allowance),
+Pocket Allowance, offset
 _PureCutCNC_: stockToLeaveRadial
 
-**Last Pass Allowance**:
+**Last Pass Stock to Leave**:
 Material every pass of a Profile but the last leaves on the wall,
-`last_pass.allowance_mm` (more than 0, at most a third of the bit), so the
-last pass, on the part's path at full depth, takes an even skin off the
+`last_pass.stock_to_leave_mm` (more than 0, at most a third of the bit), so
+the last pass, on the part's path at full depth, takes an even skin off the
 whole wall and leaves no step marks. The passes before it run on the
-**allowance path**, the part's path that much farther into the waste.
+**stock path**, the part's path that much farther into the waste.
 VCarve's "Last Pass Allowance"; Fusion's radial stock to leave with a
-finishing pass.
-_Avoid_: Finishing pass (it is the same operation's last pass), Pocket
-Allowance (a Pocket's, left for another operation), stock to leave
+finishing pass. (changed: maintainer decision 2026-10-25, #394: was Last
+Pass Allowance, `last_pass.allowance_mm`, and the allowance path)
+_Avoid_: Last Pass Allowance, allowance path, finishing pass (it is the
+same operation's last pass), Stock to Leave (a Pocket's or a Bore's, left
+for another operation)
 _PureCutCNC_: none (a separate operation with stockToLeaveRadial)
 
 **Corner Relief**:
@@ -107,7 +114,7 @@ its round tool cannot reach, so a square part fits: a **dogbone** along the
 corner's bisector, or a **T-bone** along its longer edge (`corner_relief`).
 The pass that cuts the final wall cuts the notches as it goes round, at
 every level; a separate notch pass cuts only what that pass cannot reach,
-such as a Pocket's corners when it leaves a Pocket Allowance. VCarve's
+such as a Pocket's corners when it leaves Stock to Leave. VCarve's
 "Create Fillets".
 _Avoid_: Fillet (a fillet is the rounded corner relief removes), overcut
 _PureCutCNC_: cornerRelief
@@ -115,8 +122,8 @@ _PureCutCNC_: cornerRelief
 **Rest Machining**:
 A Pocket that names an earlier Pocket of the same shapes in `rest_of` and
 clears only what that Pocket's tool could not reach (corners and slots
-narrower than it, and its Pocket Allowance), worked out from that Pocket's
-tool and allowance, never from its toolpath.
+narrower than it, and its Stock to Leave), worked out from that Pocket's
+tool and stock to leave, never from its toolpath.
 _Avoid_: Rest pocket, cleanup pass, finishing pass, rest milling
 _PureCutCNC_: rest regions (Pocket Finish after Pocket Rough)
 

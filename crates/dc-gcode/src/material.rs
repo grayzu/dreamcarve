@@ -13,9 +13,9 @@
 //!
 //! - **Pocket:** the tool, swept along every cutting move, stays inside
 //!   the Pocket's regions (its targets' closed profiles, nested) shrunk by
-//!   its allowance, and outside their islands. For a round tool of radius
+//!   its stock to leave, and outside their islands. For a round tool of radius
 //!   `r` that is exactly: the move's tool-centre path lies inside a region
-//!   and at least `r + allowance` from its outline and from every island's.
+//!   and at least `r + stock to leave` from its outline and from every island's.
 //!   The check measures that distance segment against segment, arcs as
 //!   arcs ([`dc_geometry::segment_distance_mm`]), against only the outline
 //!   segments whose bounds come near the move. A helix of a thousand chords
@@ -31,7 +31,7 @@
 //!   edges at least the tool's diameter long (`dc_cam`'s corner test,
 //!   re-derived here from the project). The zone is the corner's wedge,
 //!   between its two edge lines, at least `r` from the corner (the cutter
-//!   at most touches it) and at most `(r + allowance) / sin(θ/2)` from it
+//!   at most touches it) and at most `(r + stock to leave) / sin(θ/2)` from it
 //!   (the tool-centre path's miter point, where a notch starts); the cut
 //!   must also keep its clearance from every other edge. So a notch can
 //!   bite at most `r` past one of its corner's two walls, and nowhere else.
@@ -39,7 +39,7 @@
 //!   closed profiles nested as `dc_cam::generate_profile` nests them, and
 //!   every cutting move is held to it: laps, tab rises, ramp and helix
 //!   descents, lead arcs and overcuts, and notches.
-//!   - **Inside:** as a Pocket with no allowance: the tool centre stays in
+//!   - **Inside:** as a Pocket with no stock to leave: the tool centre stays in
 //!     a target region (the hole being cut, outside its islands), at least
 //!     `r` from its walls, so no cut enters the part around the hole or an
 //!     island left in it.
@@ -90,9 +90,9 @@
 //!     refuses (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
 //!     ramp and the tabs run along the offset path; there is no lead or
 //!     notch. With a last pass (#311) the path offset by the radius plus
-//!     the allowance is a tool-centre path too, for the passes before the
+//!     the stock to leave is a tool-centre path too, for the passes before the
 //!     last; the kept edges stay one radius off.
-//!     The last pass's level step across the allowance from the earlier
+//!     The last pass's level step across the stock to leave from the earlier
 //!     passes' path onto its own (#339) runs between the two paths, or
 //!     between one segment's two offsets taken whole (#358): where an
 //!     end vertex comes back beside another segment, the two paths stop
@@ -120,7 +120,7 @@
 //!   half the tab's width plus the radius from the tab's centre along
 //!   that path, the stretch a lap rises over (ADR-0005), less a tenth of
 //!   the radius for a rect tab's step at its end. On the path of the
-//!   passes before a last pass (the radius plus its allowance, #353),
+//!   passes before a last pass (the radius plus its stock to leave, #353),
 //!   which run beside the tab rather than over it, it is refused when its
 //!   cutter reaches into the tab material the laps leave: within the
 //!   radius of a lap held above the plunge's Z by that stretch (without
@@ -138,7 +138,7 @@
 //!   below the stock top, is refused at the first point below the stock
 //!   top, checked a tenth of the tool radius apart, that lies neither on
 //!   the ring the laps cut (within the tool radius, plus a last pass's
-//!   allowance and the slack, of a target outline) nor within twice the
+//!   stock to leave and the slack, of a target outline) nor within twice the
 //!   slack of the tool-centre path of an earlier cut of the operation
 //!   where it ran below the stock top: the stock top itself, with no
 //!   slack, so a ramp leg that dips below it only at its end cut a trench
@@ -155,7 +155,7 @@
 //!   hole it drills.
 //! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
 //!   in one of the Bore's holes, the closed targets that are circles, as
-//!   for a Drill: its ends and middle lie within `ρ − r − allowance` of the
+//!   for a Drill: its ends and middle lie within `ρ − r − stock to leave` of the
 //!   hole's centre (radius `ρ`, tool radius `r`), all three in the same
 //!   hole. That is the helix's own circle, so a helix, circle or move to
 //!   the centre that reaches wider would cut the wall beyond its drawn
@@ -202,9 +202,9 @@ pub(crate) enum Material {
         /// The regions, outer and islands, from the targets' closed
         /// profiles.
         areas: Vec<Area>,
-        /// The allowance left on every wall and island, mm; 0 for a
+        /// The stock to leave left on every wall and island, mm; 0 for a
         /// Profile.
-        allowance_mm: f64,
+        stock_to_leave_mm: f64,
         /// Corner relief is on, so the notch rule applies.
         relief: bool,
         /// A Profile: the lap rule applies.
@@ -229,12 +229,12 @@ pub(crate) enum Material {
         holes: Vec<(Point, f64)>,
     },
     /// A Bore's holes (format 18): centre and radius, mm, and the radial
-    /// allowance it leaves on their walls.
+    /// stock to leave it leaves on their walls.
     Bore {
         /// Each hole.
         holes: Vec<(Point, f64)>,
-        /// The allowance, mm, 0 or more.
-        allowance_mm: f64,
+        /// The stock to leave, mm, 0 or more.
+        stock_to_leave_mm: f64,
     },
     /// An On line Profile's regions: the tool centre stays on one of
     /// their lines, at least the tool's diameter from the region's other
@@ -257,9 +257,9 @@ pub(crate) enum Material {
         /// and of its strip's two ends (#342): what the cut keeps the
         /// tool radius from.
         keep_clear: Vec<Edge>,
-        /// With a last pass (#339): where its step across the allowance,
+        /// With a last pass (#339): where its step across the stock to leave,
         /// from the earlier passes' path to its own, may run.
-        steps: Option<AllowanceBand>,
+        steps: Option<StockToLeaveBand>,
     },
     /// An Engrave's target paths, as segments.
     OnLine {
@@ -268,7 +268,7 @@ pub(crate) enum Material {
     },
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid
-    /// allowance): no cut is in the material, fail-closed.
+    /// stock to leave): no cut is in the material, fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
     /// checked.
@@ -369,12 +369,12 @@ fn corners_of(polyline: &Polyline, base: usize) -> Vec<Corner> {
     out
 }
 
-/// S9's notch rule for one operation: its tool's radius, its allowance,
+/// S9's notch rule for one operation: its tool's radius, its stock to leave,
 /// and the slack a written move may depart by.
 #[derive(Debug, Clone, Copy)]
 struct Notch {
     radius_mm: f64,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     slack_mm: f64,
 }
 
@@ -393,7 +393,7 @@ impl Notch {
             .iter()
             .filter(|c| c.edges.iter().all(|e| scope.contains(e)))
             .any(|c| {
-                let reach_mm = (r + self.allowance_mm) / c.sin_half + slack;
+                let reach_mm = (r + self.stock_to_leave_mm) / c.sin_half + slack;
                 c.shorter_mm >= 2.0 * r - slack
                     && c.in_wedge(path.start, slack)
                     && c.in_wedge(path.end, slack)
@@ -637,15 +637,16 @@ impl Material {
                             } else {
                                 -radius_mm
                             };
-                            let allowance_mm = profile.last_pass.as_ref().map(|l| l.allowance_mm);
-                            side_profile(&paths, left_mm, allowance_mm)
+                            let stock_to_leave_mm =
+                                profile.last_pass.as_ref().map(|l| l.stock_to_leave_mm);
+                            side_profile(&paths, left_mm, stock_to_leave_mm)
                         }
                         _ => Self::Unresolved,
                     },
                     Side::Inside => match regions_of(project, &profile.targets) {
                         Some(regions) => Self::Inside {
                             areas: areas_of(regions, true),
-                            allowance_mm: 0.0,
+                            stock_to_leave_mm: 0.0,
                             relief,
                             laps: true,
                             trench: trench_rule(project, profile),
@@ -663,14 +664,14 @@ impl Material {
                 }
             }
             Operation::Pocket(pocket) => {
-                let allowance_mm = pocket.allowance_mm;
-                if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
+                let stock_to_leave_mm = pocket.stock_to_leave_mm;
+                if !(stock_to_leave_mm.is_finite() && stock_to_leave_mm >= 0.0) {
                     return Self::Unresolved;
                 }
                 match regions_of(project, &pocket.targets) {
                     Some(regions) => Self::Inside {
                         areas: areas_of(regions, true),
-                        allowance_mm,
+                        stock_to_leave_mm,
                         relief: pocket.corner_relief != CornerRelief::None,
                         laps: false,
                         trench: None,
@@ -689,8 +690,8 @@ impl Material {
                 None => Self::Unresolved,
             },
             Operation::Bore(bore) => {
-                let allowance_mm = bore.allowance_mm;
-                if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
+                let stock_to_leave_mm = bore.stock_to_leave_mm;
+                if !(stock_to_leave_mm.is_finite() && stock_to_leave_mm >= 0.0) {
                     return Self::Unresolved;
                 }
                 match placed(project, &bore.targets) {
@@ -700,7 +701,7 @@ impl Material {
                             .filter(|p| p.is_closed())
                             .filter_map(|p| as_circle(p, project.flatten_tolerance_mm))
                             .collect(),
-                        allowance_mm,
+                        stock_to_leave_mm,
                     },
                     None => Self::Unresolved,
                 }
@@ -719,15 +720,15 @@ impl Material {
 /// ones with length, offset by `left_mm` (positive to the left) to give
 /// the tool-centre paths, and offset the other way to give their kept
 /// edges, with the strip's two ends along the normals through the end
-/// vertices ([`strip_ends`], #342). With a last pass `allowance_mm` (#311) each is offset by
-/// `left_mm` plus the allowance, to the same side, too: the path every
+/// vertices ([`strip_ends`], #342). With a last pass `stock_to_leave_mm` (#311) each is offset by
+/// `left_mm` plus the stock to leave, to the same side, too: the path every
 /// pass but the last cuts. The kept edges stay one radius off.
-fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> Material {
+fn side_profile(paths: &[Polyline], left_mm: f64, stock_to_leave_mm: Option<f64>) -> Material {
     let open: Vec<&Polyline> = paths
         .iter()
         .filter(|p| !p.is_closed() && p.length_mm() > EPS_MM)
         .collect();
-    let allowance_left_mm = allowance_mm
+    let stock_to_leave_left_mm = stock_to_leave_mm
         .filter(|a| a.is_finite() && *a > 0.0)
         .map(|a| (left_mm.abs() + a).copysign(left_mm));
     let offsets = |by_mm: f64| -> Vec<Edge> {
@@ -737,7 +738,7 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
             .collect()
     };
     let near = offsets(left_mm);
-    let far = allowance_left_mm.map(offsets);
+    let far = stock_to_leave_left_mm.map(offsets);
     let centres = near.iter().chain(far.iter().flatten()).copied().collect();
     // #342: the strip closed at each end by the normal through the end
     // vertex, cut short at the first line it meets, so a cutter that
@@ -752,8 +753,8 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
         .flat_map(|p| edges_of(p))
         .chain(kept.flat_map(|k| edges_of(&k).collect::<Vec<_>>()))
         .collect();
-    let steps = far.zip(allowance_left_mm).map(|(far, far_left_mm)| {
-        let allowance_mm = far_left_mm.abs() - left_mm.abs();
+    let steps = far.zip(stock_to_leave_left_mm).map(|(far, far_left_mm)| {
+        let stock_to_leave_mm = far_left_mm.abs() - left_mm.abs();
         // #358: each segment's own band, its two offsets whole.
         let strips = open
             .iter()
@@ -764,12 +765,12 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
                 Some((Edge::new(near), Edge::new(far)))
             })
             .collect();
-        AllowanceBand {
+        StockToLeaveBand {
             near,
             far,
             strips,
-            allowance_mm,
-            step_mm: dc_cam::last_pass_step_reach_mm(2.0 * left_mm.abs(), allowance_mm),
+            stock_to_leave_mm,
+            step_mm: dc_cam::last_pass_step_reach_mm(2.0 * left_mm.abs(), stock_to_leave_mm),
         }
     });
     Material::SideProfile {
@@ -780,30 +781,30 @@ fn side_profile(paths: &[Polyline], left_mm: f64, allowance_mm: Option<f64>) -> 
 }
 
 /// The band between a Left or Right Profile's last pass path and the
-/// path its earlier passes cut, `allowance_mm` farther to the side
+/// path its earlier passes cut, `stock_to_leave_mm` farther to the side
 /// (#339): the last pass steps across it at its start, from the earlier
 /// passes' kerf onto its own path.
 #[derive(Debug, Clone)]
-pub(crate) struct AllowanceBand {
+pub(crate) struct StockToLeaveBand {
     /// The last pass's paths' segments.
     near: Vec<Edge>,
     /// The earlier passes' paths' segments.
     far: Vec<Edge>,
     /// Each segment of each open path offset whole, by the radius and by
-    /// the radius plus the allowance (#358): the band beside that one
+    /// the radius plus the stock to leave (#358): the band beside that one
     /// segment, before [`offset_open`] trims each offset where it comes
     /// nearer another part of the path.
     strips: Vec<(Edge, Edge)>,
-    allowance_mm: f64,
+    stock_to_leave_mm: f64,
     /// The longest step, mm.
     step_mm: f64,
 }
 
-impl AllowanceBand {
+impl StockToLeaveBand {
     /// True when `path`, a level cut, is a step across the band: from
     /// the earlier passes' path to the last pass's, no longer than
-    /// [`AllowanceBand::step_mm`], its middle between the two
-    /// ([`AllowanceBand::holds`]). A cut along the band, several short ones
+    /// [`StockToLeaveBand::step_mm`], its middle between the two
+    /// ([`StockToLeaveBand::holds`]). A cut along the band, several short ones
     /// chained in it, or one that falls through it, is no move the
     /// generator makes: each would start or end inside the band, or fall.
     fn allows(&self, path: Segment, level: bool, slack_mm: f64) -> bool {
@@ -817,7 +818,7 @@ impl AllowanceBand {
 
     /// True when `p` lies between the two paths, or between one
     /// segment's two whole offsets (#358): its distances to them add up
-    /// to the allowance, within `slack_mm` each.
+    /// to the stock to leave, within `slack_mm` each.
     ///
     /// The second covers where the two paths are trimmed short of each
     /// other: near an open path's end vertex that comes back beside
@@ -830,9 +831,9 @@ impl AllowanceBand {
     /// slack) nor on the kept side. The cut's distance from every line, which S9 checks
     /// apart, keeps it from the vertex that trimmed them.
     fn holds(&self, p: Point, slack_mm: f64) -> bool {
-        let reach_mm = self.allowance_mm + slack_mm;
+        let reach_mm = self.stock_to_leave_mm + slack_mm;
         let at = Rect::from_point(p);
-        let within = 2.0f64.mul_add(slack_mm, self.allowance_mm);
+        let within = 2.0f64.mul_add(slack_mm, self.stock_to_leave_mm);
         let gap = |edges: &[Edge]| {
             edges
                 .iter()
@@ -851,12 +852,12 @@ impl AllowanceBand {
 }
 
 #[cfg(test)]
-mod allowance_band_tests {
+mod stock_to_leave_band_tests {
     use super::*;
     use dc_geometry::Vertex;
 
     const RADIUS_MM: f64 = 1.0;
-    const ALLOWANCE_MM: f64 = 0.3;
+    const STOCK_TO_LEAVE_MM: f64 = 0.3;
     const SLACK_MM: f64 = 0.012;
 
     fn line_path(points: &[(f64, f64)]) -> Polyline {
@@ -866,9 +867,13 @@ mod allowance_band_tests {
         )
     }
 
-    /// The allowance band of a Left Profile of `path` with a last pass.
-    fn band(path: &Polyline) -> AllowanceBand {
-        match side_profile(std::slice::from_ref(path), RADIUS_MM, Some(ALLOWANCE_MM)) {
+    /// The stock to leave band of a Left Profile of `path` with a last pass.
+    fn band(path: &Polyline) -> StockToLeaveBand {
+        match side_profile(
+            std::slice::from_ref(path),
+            RADIUS_MM,
+            Some(STOCK_TO_LEAVE_MM),
+        ) {
             Material::SideProfile {
                 steps: Some(band), ..
             } => band,
@@ -892,8 +897,8 @@ mod allowance_band_tests {
     /// loop), its end vertex E 1.5 mm above the line its first segment
     /// runs along. Both offsets start where they come `r` and `r + a`
     /// from E, so the two passes' starts are not on one normal: the last
-    /// pass's step from the allowance path's start onto its own ends
-    /// 0.52 mm from the allowance path, farther than the allowance. It
+    /// pass's step from the stock path's start onto its own ends
+    /// 0.52 mm from the stock path, farther than the stock to leave. It
     /// still runs between the first segment's own two offsets, at least
     /// `r` from every line, and is a step S9 accepts.
     #[test]
@@ -905,12 +910,12 @@ mod allowance_band_tests {
             (-0.5, 5.0),
             (-0.5, 1.5),
         ]);
-        let far = offset_start(&path, RADIUS_MM + ALLOWANCE_MM);
+        let far = offset_start(&path, RADIUS_MM + STOCK_TO_LEAVE_MM);
         let near = offset_start(&path, RADIUS_MM);
         // Each pass starts on its circle round E, not on the first
         // segment's normal through (0, 0).
         let e = Point::new(-0.5, 1.5);
-        assert!((far.distance_to(e) - (RADIUS_MM + ALLOWANCE_MM)).abs() < 1e-6);
+        assert!((far.distance_to(e) - (RADIUS_MM + STOCK_TO_LEAVE_MM)).abs() < 1e-6);
         assert!((near.distance_to(e) - RADIUS_MM).abs() < 1e-6);
         assert!((far.x - near.x).abs() > 0.4, "{far:?} {near:?}");
         let band = band(&path);
@@ -922,7 +927,7 @@ mod allowance_band_tests {
     }
 
     /// #358: the band at an open end stays the strip's. A level arc from
-    /// the allowance path's end to the last pass's path that bows past
+    /// the stock path's end to the last pass's path that bows past
     /// the path's end vertex, `r` to `r + a` from it, cuts past the open
     /// end and still fails, and no point on the kept side, `r` to `r + a`
     /// from the path, lies in the band.
@@ -936,7 +941,7 @@ mod allowance_band_tests {
         let (middle, _) = bowed.point_at(bowed.length_mm() / 2.0).expect("an arc");
         assert!(middle.x > 10.1, "{middle:?}");
         let from_end_mm = middle.distance_to(Point::new(10.0, 0.0));
-        assert!((RADIUS_MM..=RADIUS_MM + ALLOWANCE_MM).contains(&from_end_mm));
+        assert!((RADIUS_MM..=RADIUS_MM + STOCK_TO_LEAVE_MM).contains(&from_end_mm));
         assert!(bowed.length_mm() <= band.step_mm, "{}", bowed.length_mm());
         assert!(!band.allows(bowed, true, SLACK_MM));
         assert!(!band.holds(Point::new(10.4, 1.15), SLACK_MM));
@@ -998,9 +1003,9 @@ pub(crate) struct TabSpine {
     /// whose lap is the outline.
     laps: Vec<Polyline>,
     /// The paths of the passes before a last pass (#284): the outline
-    /// offset by the radius plus the last pass's allowance both ways,
+    /// offset by the radius plus the last pass's stock to leave both ways,
     /// project space. Empty without a last pass.
-    allowance_paths: Vec<Polyline>,
+    stock_paths: Vec<Polyline>,
     /// The tab's point, project space.
     point: Point,
     /// How far along a path either side of the tab's centre a lap holds
@@ -1036,7 +1041,7 @@ pub(crate) struct TabSpine {
 /// generator's along the path.
 const TAB_SPAN_MARGIN: f64 = 0.1;
 
-/// How many cells S9 looks at for tab material under one allowance
+/// How many cells S9 looks at for tab material under one stock to leave
 /// pass's plunge (#353) before it gives up and refuses the plunge: the
 /// search halves cells only where the cutter comes within a cell of the
 /// tab, so a plunge clear of it by more than the slack needs a few
@@ -1060,7 +1065,7 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
     else {
         return Vec::new();
     };
-    let allowance_mm = profile.last_pass.as_ref().map(|l| l.allowance_mm);
+    let stock_to_leave_mm = profile.last_pass.as_ref().map(|l| l.stock_to_leave_mm);
     let Some(floor_z_mm) = project
         .stock
         .thickness_mm
@@ -1097,7 +1102,7 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
                     .collect()
             };
             let laps = offsets(radius_mm);
-            let allowance_paths = allowance_mm
+            let stock_paths = stock_to_leave_mm
                 .map(|a| offsets(radius_mm + a))
                 .unwrap_or_default();
             let mut paths = vec![outline];
@@ -1114,7 +1119,7 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
                 } else {
                     laps
                 },
-                allowance_paths,
+                stock_paths,
                 point: instance.transform.apply(Point::new(tab.x_mm, tab.y_mm)),
                 hold_mm,
                 slope_mm,
@@ -1152,8 +1157,8 @@ impl TabSpine {
             let along = raw.min(path.length_mm() - raw);
             z_mm < self.lowest_z_mm(along) - slack_mm
         };
-        let on_allowance = || {
-            self.allowance_paths
+        let on_stock_path = || {
+            self.stock_paths
                 .iter()
                 .any(|path| nearest_point(path, p).is_some_and(|at| at.gap_mm <= slack_mm))
         };
@@ -1161,9 +1166,9 @@ impl TabSpine {
             return true;
         }
         if self.laps.is_empty() {
-            self.allowance_paths.iter().any(by_span)
+            self.stock_paths.iter().any(by_span)
         } else {
-            on_allowance() && self.cuts_material(p, z_mm, slack_mm, tabs)
+            on_stock_path() && self.cuts_material(p, z_mm, slack_mm, tabs)
         }
     }
 
@@ -1405,8 +1410,8 @@ fn keeps_tabs(
 pub(crate) struct TrenchRule {
     /// The stock top, above its bottom, mm.
     stock_top_mm: f64,
-    /// A last pass's allowance, mm; 0 without one.
-    allowance_mm: f64,
+    /// A last pass's stock to leave, mm; 0 without one.
+    stock_to_leave_mm: f64,
 }
 
 /// The trench rule's data for Profile `profile` of `project`; `None`
@@ -1414,10 +1419,10 @@ pub(crate) struct TrenchRule {
 fn trench_rule(project: &Project, profile: &ProfileOp) -> Option<TrenchRule> {
     project.stock.thickness_mm.map(|stock_top_mm| TrenchRule {
         stock_top_mm,
-        allowance_mm: profile
+        stock_to_leave_mm: profile
             .last_pass
             .as_ref()
-            .map_or(0.0, |l| l.allowance_mm.max(0.0)),
+            .map_or(0.0, |l| l.stock_to_leave_mm.max(0.0)),
     })
 }
 
@@ -1499,7 +1504,7 @@ impl<'a> Trench<'a> {
     /// than the slack in XY) in a run of ramping moves that started below
     /// the stock top, through a point below the stock top that lies
     /// neither on the ring the laps cut (within the tool radius, plus a
-    /// last pass's allowance and the slack, of a target outline) nor
+    /// last pass's stock to leave and the slack, of a target outline) nor
     /// within twice the slack of the tool-centre path an earlier cut ran
     /// below the stock top. The points are checked a tenth of the radius
     /// apart. Only the part of `mv` below the stock top is recorded
@@ -1536,7 +1541,7 @@ impl<'a> Trench<'a> {
         };
         let mut allowed = true;
         if !fresh && to_z < top_mm {
-            let ring_mm = self.radius_mm + self.rule.allowance_mm + slack_mm;
+            let ring_mm = self.radius_mm + self.rule.stock_to_leave_mm + slack_mm;
             let near_mm = 2.0 * slack_mm;
             let mut s_mm: f64 = 0.0;
             loop {
@@ -1688,15 +1693,15 @@ pub(crate) fn check(
             Material::Unresolved => false,
             Material::Inside {
                 areas,
-                allowance_mm,
+                stock_to_leave_mm,
                 relief,
                 laps,
                 ..
             } => {
-                let clearance_mm = radius_mm + allowance_mm - slack_mm;
+                let clearance_mm = radius_mm + stock_to_leave_mm - slack_mm;
                 let notch = relief.then_some(Notch {
                     radius_mm,
-                    allowance_mm: *allowance_mm,
+                    stock_to_leave_mm: *stock_to_leave_mm,
                     slack_mm,
                 });
                 in_regions(areas, path, clearance_mm, notch, &mut last)
@@ -1706,7 +1711,7 @@ pub(crate) fn check(
                 let clearance_mm = radius_mm - slack_mm;
                 let notch = relief.then_some(Notch {
                     radius_mm,
-                    allowance_mm: 0.0,
+                    stock_to_leave_mm: 0.0,
                     slack_mm,
                 });
                 outside_regions(areas, path, clearance_mm, notch)
@@ -1719,9 +1724,9 @@ pub(crate) fn check(
             }),
             Material::Bore {
                 holes,
-                allowance_mm,
+                stock_to_leave_mm,
             } => holes.iter().any(|(centre, r)| {
-                farthest_mm(path, *centre) <= r - radius_mm - allowance_mm + slack_mm
+                farthest_mm(path, *centre) <= r - radius_mm - stock_to_leave_mm + slack_mm
             }),
             Material::OnLineProfile { areas, open } => {
                 let band = Band {
@@ -2229,7 +2234,7 @@ mod tests {
         let slack = slack_mm(&post, Units::Mm, tolerances);
         let rule = TrenchRule {
             stock_top_mm: TOP_MM,
-            allowance_mm: 0.0,
+            stock_to_leave_mm: 0.0,
         };
         let mut trench = Trench::new(rule, &[], RADIUS_MM);
         let first = cut(

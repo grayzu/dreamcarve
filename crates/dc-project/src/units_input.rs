@@ -590,7 +590,7 @@ mod tests {
         assert_approx_eq!(distances_mm[1], 10.0, 0.0);
     }
 
-    /// The other operation kinds' own lengths: Pocket's allowance, Drill's
+    /// The other operation kinds' own lengths: Pocket's stock to leave, Drill's
     /// retract, peck depth and chip-break gap.
     #[test]
     fn pocket_and_drill_lengths_take_units() {
@@ -599,7 +599,7 @@ mod tests {
         project.operations.push(Operation::Pocket(sample_pocket()));
         project.operations.push(Operation::Drill(sample_drill()));
         let mut root = serde_json::to_value(&project).unwrap();
-        root["operations"][1]["allowance_mm"] = json!("1/64 in");
+        root["operations"][1]["stock_to_leave_mm"] = json!("1/64 in");
         root["operations"][2]["retract_mm"] = json!("1 mm");
         root["operations"][2]["cycle"] = json!({
             "peck": { "peck_depth_mm": "1/16 in", "retract": { "chip_break": { "gap_mm": "0.02 in" } } }
@@ -608,7 +608,7 @@ mod tests {
         let Operation::Pocket(pocket) = &project.operations[1] else {
             panic!("a Pocket");
         };
-        assert_approx_eq!(pocket.allowance_mm, 25.4 / 64.0, 1e-12);
+        assert_approx_eq!(pocket.stock_to_leave_mm, 25.4 / 64.0, 1e-12);
         let Operation::Drill(drill) = &project.operations[2] else {
             panic!("a Drill");
         };

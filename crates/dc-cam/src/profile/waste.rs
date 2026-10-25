@@ -52,7 +52,7 @@ pub(super) const WALL_SLACK_MM: f64 = 1e-4;
 /// bounds, in tool diameters (upstream `OUTSIDE_DOMAIN_REACH_DIAMETERS`).
 pub(super) const OUTSIDE_REACH_DIAMETERS: f64 = 3.5;
 
-/// The target regions grown for one allowance (#284): the allowance, each
+/// The target regions grown for one stock to leave (#284): the stock to leave, each
 /// region grown by the reach plus it, and the bounds of each.
 type Grown = (f64, Vec<Vec<Region>>, Vec<Option<Rect>>);
 
@@ -63,9 +63,9 @@ pub(super) struct WallPath<'a> {
     /// Index into the regions of the region whose wall it cuts.
     pub region: usize,
     /// How much farther than the radius the path runs from that wall,
-    /// mm: a last pass allowance (#284), 0 for the part's own path. Its
+    /// mm: a last pass stock to leave (#284), 0 for the part's own path. Its
     /// domain keeps the tool centre that much farther from the region.
-    pub allowance_mm: f64,
+    pub stock_to_leave_mm: f64,
 }
 
 /// The waste domain of each of `paths`, in order: tool-centre regions
@@ -91,33 +91,34 @@ pub(super) fn domains(
         }
     }
     let kerf_bounds: Vec<Option<Rect>> = kerfs.iter().map(|k| bounds_of(k)).collect();
-    // Each region grown by the reach plus each allowance a path has
-    // (#284: 0, and the last pass allowance), with its bounds.
-    let mut allowances: Vec<f64> = Vec::new();
+    // Each region grown by the reach plus each stock to leave a path has
+    // (#284: 0, and the last pass stock to leave), with its bounds.
+    let mut stocks_to_leave: Vec<f64> = Vec::new();
     for p in paths {
-        if !allowances
+        if !stocks_to_leave
             .iter()
-            .any(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
+            .any(|a| approx_eq(*a, p.stock_to_leave_mm, EPS_MM))
         {
-            allowances.push(p.allowance_mm);
+            stocks_to_leave.push(p.stock_to_leave_mm);
         }
     }
     let grown: Vec<Grown> = match side {
-        Side::Outside => allowances
+        Side::Outside => stocks_to_leave
             .iter()
-            .map(|&allowance_mm| {
+            .map(|&stock_to_leave_mm| {
                 let grown: Vec<Vec<Region>> = regions
                     .iter()
-                    .map(|r| inset_region(r, -(reach + allowance_mm), tolerance_mm))
+                    .map(|r| inset_region(r, -(reach + stock_to_leave_mm), tolerance_mm))
                     .collect();
                 let bounds = grown.iter().map(|g| bounds_of(g)).collect();
-                (allowance_mm, grown, bounds)
+                (stock_to_leave_mm, grown, bounds)
             })
             .collect(),
         Side::Inside | Side::OnLine | Side::Left | Side::Right => Vec::new(),
     };
-    // Inside domains depend only on the region and the allowance.
-    let mut inside_cache: Vec<Option<Vec<Region>>> = vec![None; regions.len() * allowances.len()];
+    // Inside domains depend only on the region and the stock to leave.
+    let mut inside_cache: Vec<Option<Vec<Region>>> =
+        vec![None; regions.len() * stocks_to_leave.len()];
 
     paths
         .iter()
@@ -135,9 +136,9 @@ pub(super) fn domains(
             };
             match side {
                 Side::Inside => {
-                    let slot = allowances
+                    let slot = stocks_to_leave
                         .iter()
-                        .position(|a| approx_eq(*a, p.allowance_mm, EPS_MM))
+                        .position(|a| approx_eq(*a, p.stock_to_leave_mm, EPS_MM))
                         .map_or(usize::MAX, |k| k * regions.len() + p.region);
                     if let Some(Some(cached)) = inside_cache.get(slot) {
                         return cached.clone();
@@ -145,7 +146,7 @@ pub(super) fn domains(
                     let Some(region) = regions.get(p.region) else {
                         return Vec::new();
                     };
-                    let area = inset_region(region, reach + p.allowance_mm, tolerance_mm);
+                    let area = inset_region(region, reach + p.stock_to_leave_mm, tolerance_mm);
                     let clip = others(bounds_of(&area));
                     let domain = if clip.is_empty() {
                         area
@@ -166,7 +167,7 @@ pub(super) fn domains(
                     };
                     let mut clip: Vec<Region> = grown
                         .iter()
-                        .filter(|(a, _, _)| approx_eq(*a, p.allowance_mm, EPS_MM))
+                        .filter(|(a, _, _)| approx_eq(*a, p.stock_to_leave_mm, EPS_MM))
                         .flat_map(|(_, grown, bounds)| grown.iter().zip(bounds))
                         .filter(|(_, b)| b.is_some_and(|b| overlaps(b, frame)))
                         .flat_map(|(g, _)| g.iter().cloned())

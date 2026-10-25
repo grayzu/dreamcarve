@@ -15,7 +15,7 @@
 //! along the path on a tie, except on an arc centred on the target, where
 //! the arc's middle is taken, as for placed tabs (ADR-0005), so a corner's
 //! first vertex starts the cut in the middle of the arc an outside path
-//! turns round it. A last pass's allowance path (#284) is re-seamed nearest
+//! turns round it. A last pass's stock path (#284) is re-seamed nearest
 //! the same point. Open paths are left alone: the end their cut starts at
 //! is the cut direction's (#242). Nothing here depends on Y-up or Y-down.
 
@@ -26,7 +26,7 @@ use dc_project::{ProfileOp, Project, StartAt};
 use crate::error::ShapeRef;
 use crate::lead::reseam_at;
 
-/// `placed`, each closed path (and its allowance twin) re-seamed nearest
+/// `placed`, each closed path (and its stock to leave twin) re-seamed nearest
 /// the start `op` sets, with which of them it set: every closed path for
 /// [`StartAt::FirstVertex`] and [`StartAt::Near`], none for
 /// [`StartAt::Auto`], which keeps today's paths.
