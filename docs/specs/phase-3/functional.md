@@ -326,9 +326,12 @@ is no GUI in this phase.
     over at the feed rate, not at a rapid, which S2 confines to safe Z.
      The grooves are spaced `line_spacing_fraction` times the full-depth
      width apart, measured perpendicular to them, with one groove through
-     the picture's bottom-left corner, clipped to the picture's footprint,
-     cut alternately in opposite directions, so nothing is cut outside the
-     picture and nothing inside it is missed. Each groove starts with a
+     the picture's top-left corner (its origin, where RasterCarve lays
+     its lines from; changed in the design spec from the bottom-left so
+     the goldens compare groove for groove), clipped to the picture's
+     footprint, cut alternately in opposite directions, so nothing is cut
+     outside the picture and nothing inside it is missed. Each groove
+     starts with a
      plunge to its first sample's depth and ends with the lift. The
      picture's area, groove count and the full-depth width are printed by
      `check`. Arc fitting (capability 24) does not apply to grooves: their
@@ -489,7 +492,8 @@ Numbering continues from phase 2's 47.
  `line_spacing_fraction: 1.1`: every cutting move lies inside the
  100 × 50 mm footprint; the grooves are straight, at 22.5° within
  0.01°, 1.179 mm apart (1.1 × 1.072 mm) within 0.001 mm, one through
- the bottom-left corner, and alternate in direction; samples over the
+ the top-left corner (changed in the design spec), and alternate in
+ direction; samples over the
  black block are at Z −2.000 and over the white block at Z 0.000
  within 0.01 mm, and over 50 % grey at Z −1.00 within 0.02 mm; with
  `invert: true` the black and white depths swap; with `line_angle_deg:  0` every groove is parallel to X; with `strategy: "hatch"` a second
@@ -515,16 +519,21 @@ S1–S16 apply to every operation and every post-processor. New in this
 phase:
 
 - **S17 A V-bit cuts only its own material.** For every cutting point of a
-V-Carve, an Inlay or a Photo V-Carve, the bit's cone (its included angle
-about the point, up to the cone height) meets the start plane only inside
-the operation's carved region: a V-Carve's targets' area, a male Inlay's
-surround, a Photo V-Carve's picture footprint. A point touching a wall is
-allowed; a point whose flank would pass through a wall below the start
-plane, or whose tip is below the flat depth, the maximum depth, or the
-cone height, is not. Checked on the toolpath per cutting move, sampled
-along the move, and again on the parsed program, where the start plane
-is the operation's `start_depth_mm` below the stock top. S9's footprint
-test is this test with a cylinder; this one is with a cone.
+V-Carve or an Inlay, the bit's cone (its included angle about the point,
+up to the cone height) meets the start plane only inside the operation's
+carved region: a V-Carve's targets' area, a male Inlay's surround. A
+point touching a wall is allowed; a point whose flank would pass through
+a wall below the start plane, or whose tip is below the flat depth or
+the cone height, is not. A Photo V-Carve's tip stays inside the picture
+and above its maximum depth (S19); its groove's width may run past the
+picture's edge by up to the full-depth half-width, since the edge is not
+a wall, and S7 keeps that on the stock (changed in the design spec: the
+draft held the whole cone inside the picture, which no edge-to-edge
+carve, RasterCarve's included, satisfies). Checked on the toolpath per
+cutting move, sampled along the move, and again on the parsed program,
+where the start plane is the operation's `start_depth_mm` below the
+stock top. S9's footprint test is this test with a cylinder; this one is
+with a cone.
 - **S18 A countersink's depth is derived, never set.** A countersink
 plunge ends at `diameter_mm / (2 · tan(α/2))` below the hole's top (the
 start plane, `start_depth_mm` below the stock top), and nowhere else; it is written as plain moves on every controller; the
