@@ -155,19 +155,21 @@ is no GUI in this phase.
  Every depth of the carve is measured from the **start plane**, that far
  below the stock top: the outline is where the bit's flanks meet the
  start plane, and the flat depth and the cone check count from it. The
- user cuts the pocket first with a Pocket of the same depth; DreamCarve
- does not check that they did, as VCarve does not. The bit rapids down
+ user cuts the pocket first with a Pocket of the same depth. `check`
+ warns `start_depth_mismatch`, naming the Pocket, when an enabled earlier
+ Pocket's region contains the targets but its depth is not the start
+ depth, and when no such Pocket exists and the start depth is above 0;
+ it is a warning, not an error, because the pocket may have been cut by
+ another program. The bit rapids down
  to the entry clearance above the stock top and plunges from there at
  the plunge rate (S2 unchanged), so a start depth over uncut stock cuts
- a slot instead of crashing. On V-Carve and Inlay only in this phase.
-42. **Depth passes** (`step_down_mm`, from the tool by default; VCarve
- adds "Z-level passes as needed based on the Pass Depth"; Corbin
- "Multiple Depths"). A carve deeper than one step-down is cut in
- passes: pass `k` is the same carve with its depth capped at
- `k · step_down_mm`, floor boundary and all, so every pass takes at
- most a step-down off the one before, and the last pass is the full
- carve. A carve no deeper than the step-down is one pass. `null` means
- one pass whatever the depth, as PureCutCNC cuts.
+ a slot instead of crashing. On V-Carve, Inlay, Photo V-Carve and a
+ countersink (44) in this phase.
+42. **One pass.** A carve is cut in one pass whatever its depth, as
+ PureCutCNC cuts; VCarve's Z-level passes ("Multiple Depths" in
+ Corbin's add-in) are out of scope and may come later. (decided
+ 2026-10-26: the draft had `step_down_mm` passes, each the carve capped
+ at `k · step_down_mm`; the maintainer chose single pass.)
 43. **Offset strategy** (`strategy: "medial"` default, or `"offset"`;
  PureCutCNC `v_carve`, "V-Carve offset"). With `offset` the carve is
  cut as concentric rings stepping in from the outline by `step_over_mm`
@@ -182,14 +184,18 @@ is no GUI in this phase.
 
 ### Drill
 
-44. **Countersink** (`cycle: { "countersink": { "diameter_mm": … } }` on
- Drill; PureCutCNC drill type `countersink`, issue #489; VCarve has no
- countersink cycle, Fusion's "Countersink" uses a countersink tool). The
- tool must be a V-bit (error `countersink_needs_v_bit`). At each
- circular target the bit plunges at the centre, at the plunge rate, to
- the depth that opens a mouth of `diameter_mm` at the stock top,
- `diameter_mm / (2 · tan(α/2))`: a 90° bit opens 6 mm at 3 mm; an 82°
- bit at 3.451 mm. The mouth may not be wider than the bit's diameter
+44. **Countersink** (`cycle: { "countersink": { "diameter_mm": …,
+ "start_depth_mm": … } }` on Drill; PureCutCNC drill type
+ `countersink`, issue #489, which measures from each target's own top
+ face; VCarve has no countersink cycle, Fusion's "Countersink" uses a
+ countersink tool). The tool must be a V-bit (error
+ `countersink_needs_v_bit`). The **hole's top** is the start plane,
+ `start_depth_mm` below the stock top (default 0; the pocket's depth for
+ a hole in a pocket floor, with the `start_depth_mismatch` check of 41).
+ At each circular target the bit plunges at the centre, at the plunge
+ rate, to the depth below the hole's top that opens a mouth of
+ `diameter_mm` there, `diameter_mm / (2 · tan(α/2))`: a 90° bit opens
+ 6 mm at 3 mm; an 82° bit at 3.451 mm. The mouth may not be wider than the bit's diameter
  (error `countersink_mouth_exceeds_tool`), and a target circle at least
  as wide as the mouth is skipped with
  `countersink_mouth_not_wider_than_hole`, since there is nothing to
@@ -251,8 +257,8 @@ is no GUI in this phase.
      meet the pocket's walls along their whole height and the plug's top
      stops `glue_gap_mm` short of the floor. The tool is a V-bit, with the
      same checks as V-Carve; the chapter says both sides must use the same
-     bit angle, which two files cannot check. `step_down_mm`, `safe_z_mm`
-     and `machining_order` are as V-Carve's; a clearing Pocket may name an
+     bit angle, which two files cannot check. `safe_z_mm` and
+     `machining_order` are as V-Carve's, and each side is one pass (42); a clearing Pocket may name an
      Inlay (40) on either side. The male stock must leave a base under the
      surround's floor: less than 6 mm warns `inlay_plug_base_thin` (Corbin:
      "Plug Base Thickness" at least 6 mm, the backing that holds the plug
@@ -338,8 +344,8 @@ is no GUI in this phase.
  `countersink_needs_v_bit`, `countersink_mouth_exceeds_tool`,
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
- `inlay_male_mirrored`, `photo_lines_overlap`, `image_colour_converted`.
- An error stops export and names the operation, shape, tool or field;
+ `inlay_male_mirrored`, `photo_lines_overlap`, `image_colour_converted`,
+ `start_depth_mismatch`. An error stops export and names the operation, shape, tool or field;
  a warning never does.
 49. **Golden parity.** The V-Carve goldens are captured from PureCutCNC's
  `v_carve_medial` and `v_carve` on fixtures the design spec lists
@@ -371,7 +377,8 @@ and rotation are done in an image editor first, as Vectric's "Edit Picture"
 does before the toolpath. Heightmap carving, where brightness is a surface
 rather than a groove depth (phase 7, Surface operations). 16-bit and TIFF
 pictures (read as 8-bit; TIFF in phase 7 with heightmaps). Canned cycles
-for a countersink. Fluting, texture and prism toolpaths (post-1.0).
+for a countersink. Depth passes on a carve: one pass whatever the depth
+(42). Fluting, texture and prism toolpaths (post-1.0).
 
 ## Acceptance tests
 
@@ -422,15 +429,15 @@ Numbering continues from phase 2's 47.
  `flat_depth_mm: 3` it exports. An end mill on a V-Carve is
  `v_carve_needs_v_bit`. An open polyline among the targets is skipped
  with `v_carve_target_open` and the closed targets are carved.
-53. **Start depth and passes.** The 20 × 5 mm rectangle with
- `start_depth_mm: 4`: every cutting Z is 4 mm lower than in 48, the
- descent from the entry clearance above the stock top to the first cut
- is at the plunge rate, and the program passes S1 and S2. The same
- rectangle with `step_down_mm: 2` and no start depth: three passes, the
- first two tracing the floor boundaries of a 2 mm and a 4 mm flat depth
- with nothing below Z −2 and Z −4, the third the full 4.330 mm carve; the
- cutting moves at or above Z −2 in pass one equal those of a V-Carve with
- `flat_depth_mm: 2`.
+53. **Start depth.** The 20 × 5 mm rectangle with `start_depth_mm: 4`
+ inside a 60 × 30 mm Pocket 4 mm deep that runs before it: every cutting
+ Z is 4 mm lower than in 48, the descent from the entry clearance above
+ the stock top to the first cut is at the plunge rate, the program
+ passes S1 and S2, and `check` is quiet. With the Pocket 3 mm deep, or
+ disabled, or the rectangle outside it, `check` warns
+ `start_depth_mismatch` naming the Pocket (or none). The carve is one
+ pass whatever its depth: the 20 × 5 mm rectangle plunges once per
+ chain and never re-traces a line at a shallower Z.
 54. **Offset strategy.** The 6 mm square with `strategy: "offset"`,
  `step_over_mm: 0.5`, 90° bit: rings inset 0.5, 1, … 2.5 mm from the
  outline at Z −0.5, −1, … −2.5, each ring's depth equal to its inset
@@ -444,6 +451,12 @@ Numbering continues from phase 2's 47.
  `diameter_mm: 3` skips every hole with
  `countersink_mouth_not_wider_than_hole`; a drill bit is
  `countersink_needs_v_bit`; `dwell_s: 0.5` writes a `G4` at the bottom.
+ The same four circles inside a 40 × 40 mm Pocket 4 mm deep that runs
+ before them, with `start_depth_mm: 4`: each plunge ends at Z −7 (the
+ 6 mm mouth opens at the pocket floor), the descent to Z −4 is at the
+ plunge rate, and `check` is quiet; with `start_depth_mm: 0` it warns
+ `start_depth_mismatch` naming the Pocket and the mouth would open 3 mm
+ above the floor, so the chapter shows this case.
 56. **Inlay female.** The star fixture (a four-point star 60 mm tip to tip
  with a 12 mm circle at its centre), `side: "female"`, 60° V-bit,
  `depth_mm: 4`: the toolpath equals a V-Carve of the same targets with
@@ -513,8 +526,8 @@ along the move, and again on the parsed program, where the start plane
 is the operation's `start_depth_mm` below the stock top. S9's footprint
 test is this test with a cylinder; this one is with a cone.
 - **S18 A countersink's depth is derived, never set.** A countersink
-plunge ends at `diameter_mm / (2 · tan(α/2))` below the hole's top, and
-nowhere else; it is written as plain moves on every controller; the
+plunge ends at `diameter_mm / (2 · tan(α/2))` below the hole's top (the
+start plane, `start_depth_mm` below the stock top), and nowhere else; it is written as plain moves on every controller; the
 mouth is never wider than the bit; S1 and S15 apply with the Drill's
 through-cut allowance. Checked on the parsed program against the
 circle's centre, the tool's angle and the setting.
@@ -668,17 +681,17 @@ and Corbin names.
 
 ## Open questions
 
-For the maintainer before the design spec starts. Each has the answer the
-capabilities above assume.
+Answered by the maintainer on 2026-10-26; the decisions are folded into the
+capabilities above, and the record stays here.
 
 
-| #   | Question                                                                                                                                                                                                                       | Assumed                                                       |
+| #   | Question                                                                                                                                                                                                                       | Decision                                                      |
 | --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| 1   | Clearing: a Pocket with `clear_for` (one tool per operation, order explicit, rest machining reused), or clearing tools listed inside the V-Carve as VCarve's form does (one operation, two tools, which export has never had)? | `clear_for` Pocket (capability 40).                           |
-| 2   | Inlay: its own operation kind with `side`, mirroring the male in place, or an `inlay` block on V-Carve?                                                                                                                        | Its own kind (45), as `CONTEXT.md`'s operation list names it. |
-| 3   | Pictures: embedded in the `.dcv` (one self-contained file, larger) or referenced by path (small file, breaks when moved)?                                                                                                      | Embedded (46), as tools are.                                  |
-| 4   | Depth passes on V-Carve (`step_down_mm`): in scope, as VCarve cuts, though PureCutCNC cuts in one pass?                                                                                                                        | In scope (42), tool default.                                  |
-| 5   | Photo parity tolerance: 0.01 mm XY, 0.05 mm Z (acceptance 60)? The design may tighten it once the sampling is matched.                                                                                                         | As stated.                                                    |
-| 6   | `init` on a picture (46): wanted, or `image add` only?                                                                                                                                                                         | Both.                                                         |
+| 1   | Clearing: a Pocket with `clear_for` (one tool per operation, order explicit, rest machining reused), or clearing tools listed inside the V-Carve as VCarve's form does (one operation, two tools, which export has never had)? | Answered 2026-10-26: agreed, `clear_for` Pocket (40). |
+| 2   | Inlay: its own operation kind with `side`, mirroring the male in place, or an `inlay` block on V-Carve?                                                                                                                        | Answered 2026-10-26: agreed, its own kind (45); V-bit inlays are complex enough to deserve one. |
+| 3   | Pictures: embedded in the `.dcv` (one self-contained file, larger) or referenced by path (small file, breaks when moved)?                                                                                                      | Answered 2026-10-26: embedded (46). |
+| 4   | Depth passes on V-Carve (`step_down_mm`): in scope, as VCarve cuts, though PureCutCNC cuts in one pass?                                                                                                                        | Answered 2026-10-26: single pass (42); multiple passes may be added later if needed. |
+| 5   | Photo parity tolerance: 0.01 mm XY, 0.05 mm Z (acceptance 60)? The design may tighten it once the sampling is matched.                                                                                                         | Answered 2026-10-26: agreed. |
+| 6   | `init` on a picture (46): wanted, or `image add` only?                                                                                                                                                                         | Answered 2026-10-26: agreed, both. |
 | 7   | Test-part bits: which V-bits does the bench have?                                                                                                                                                                              | Answered 2026-10-26: 1/4 in (6.35 mm) 15°, 30°, 60° and 90°. Every test part and acceptance test uses those; a 90° bit's cone height is 3.175 mm, which caps the sign's flat depth at 2.5 mm and its countersinks at 6 mm. |
-| 8   | Countersink depth measured from the stock top (the hole's top), as here, or from the top of an instance with its own `z_top_mm` once that field is read (PureCutCNC measures from each target's own top face)?                 | Stock top (44); `z_top_mm` is still unread in this phase.     |
+| 8   | Countersink depth measured from the stock top (the hole's top), as here, or from the top of an instance with its own `z_top_mm` once that field is read (PureCutCNC measures from each target's own top face)?                 | Answered 2026-10-26: from the hole's top, which must allow for a hole in a pocket floor. So a countersink has a `start_depth_mm` like a carve's (44), checked against an earlier Pocket by `start_depth_mismatch` (41). |
