@@ -60,7 +60,7 @@ prints `dreamcarve` followed by the version. A release prints its version
 alone, for example `dreamcarve 0.2.0`. A build from source prints the
 version it is working toward, then `-dev.` and the time it was built in UTC
 as `YYYYMMDDHHMMSS`, then the commit it was built from, for example
-`dreamcarve 0.2.0-dev.20261018234512+g1402e19`: built 2026-10-18 at
+`dreamcarve 0.2.1-dev.20261018234512+g1402e19`: built 2026-10-18 at
 23:45:12 UTC from commit `1402e19`. A later build has a larger time. A build
 from a source archive has no commit to name and leaves off the `+g` part.
 
