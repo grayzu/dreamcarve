@@ -384,7 +384,7 @@ A tool with no `step_down_mm` skips the relief with `relief_skipped`
 Two cases still cut the notches as a separate pass after the pocket,
 nearest corner first, lifting between corners:
 
-- A Pocket with an `stock_to_leave_mm` leaves its walls for a later finishing
+- A Pocket with a `stock_to_leave_mm` leaves its walls for a later finishing
   cut, so its rings are not the final wall. Its notches are sized to the
   wall the pocket leaves, the stock to leave in from the drawn one.
 - A [rest machining](#rest-machining) Pocket whose rings miss a corner on

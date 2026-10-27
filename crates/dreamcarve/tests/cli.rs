@@ -6909,6 +6909,50 @@ fn init_asks_for_four_tabs_that_tabs_place_writes() {
     }
 }
 
+/// Acceptance 38a on the coaster `init` writes: with the values `init`
+/// leaves unset filled in, its `count: 4` tab request exports
+/// byte-identical G-code as loaded and after `tabs place` has saved the
+/// request as four placed tabs.
+#[test]
+fn init_coaster_exports_byte_identical_programs_after_tabs_place() {
+    let dir = work_dir("init_coaster_exports_byte_identical_programs_after_tabs_place");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let project = load_file(&dcv).project;
+    assert!(project.tabs.is_empty(), "{:?}", project.tabs);
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, Some(init_tab_request()));
+    }
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let requested = exported_programs(&dir, "coaster");
+    assert!(!requested.is_empty(), "the request exported nothing");
+    for (file, _) in &requested {
+        std::fs::remove_file(dir.join(file)).expect("program removed");
+    }
+
+    let out = run(&dir, &["tabs", "place", "coaster.dcv", "op1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let project = load_file(&dcv).project;
+    assert_eq!(project.tabs.len(), 4, "{:?}", project.tabs);
+    for op in project.operations.iter().map(as_profile) {
+        assert_eq!(op.tabs, None);
+    }
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let placed = exported_programs(&dir, "coaster");
+    assert_eq!(
+        requested.iter().map(|(f, _)| f).collect::<Vec<_>>(),
+        placed.iter().map(|(f, _)| f).collect::<Vec<_>>()
+    );
+    for ((file, before), (_, after)) in requested.iter().zip(&placed) {
+        assert!(
+            before == after,
+            "{file} differs after `tabs place`:\n{before}\n---\n{after}"
+        );
+    }
+}
+
 /// #105: `tabs place --count` places tabs with the phase 2 rules and
 /// saves them; `tabs list` shows each with the operation that cuts round
 /// it; `tabs clear` removes them all.
@@ -8141,9 +8185,9 @@ fn code_by_operation(program: &str) -> Vec<(usize, Option<usize>, String)> {
 /// `tool_change_machine_z_mm: -5` and `park: (0, 0)`. Every move in XY
 /// between parts and between operations is at Z 20 (work zero at the
 /// stock top), and between passes of one part at its safe Z of 15: the
-/// four drilled holes, each its own part, are crossed at 20; the Cut out
+/// four bored holes, each its own part, are crossed at 20; the Cut out
 /// Profile's passes at 15. The tool change is the rise to 20, `G53 G0
-/// Z-5.000`, `M5`, `T2 M6`; the program ends with a rapid to the park
+/// Z-5.000`, `M5`, `T1 M6`; the program ends with a rapid to the park
 /// point at Z 20, then the lift, then the footer. Nothing goes below the
 /// material bottom less the through-cut allowance (S1), and the export
 /// says to home the machine.

@@ -2837,8 +2837,9 @@ mod tests {
     }
 
     /// Acceptance 29: a 40 × 30 mm pocket with dogbones gets four notches
-    /// along the corner bisectors, after the main passes, each ending
-    /// exactly one tool radius past the corner, so a 40 × 30 block fits.
+    /// along the corner bisectors, cut inline from the wall ring of each
+    /// pass that cuts the final wall (#373), each ending exactly one tool
+    /// radius past the corner, so a 40 × 30 block fits.
     #[test]
     fn acceptance_29_pocket_dogbone_four_notches_on_bisectors() {
         let p = one_tool(vec![rect(40.0, 30.0)]);
