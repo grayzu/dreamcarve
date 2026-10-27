@@ -39,4 +39,4 @@ body:
     id: version
     attributes:
       label: DreamCarve version
-      placeholder: "dreamcarve 0.1.0"
+      placeholder: "dreamcarve 0.2.0"

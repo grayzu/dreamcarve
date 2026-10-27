@@ -7,8 +7,10 @@ phases bump the patch number.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
 Phase 2: every 2.5D operation except V-Carve, from SVG or DXF, for six
-controllers. This section becomes `0.2.0` when phase 2 is tagged.
+controllers.
 
 ### Added
 
@@ -695,7 +697,8 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 - User guide and the quick start "Your first cut from an SVG". The phase 1 test
   part was cut on a grblHAL machine ([#17]).
 
-[Unreleased]: https://github.com/grayzu/dreamcarve/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/grayzu/dreamcarve/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/grayzu/dreamcarve/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/grayzu/dreamcarve/releases/tag/v0.1.0
 [#17]: https://github.com/grayzu/dreamcarve/issues/17
 [#70]: https://github.com/grayzu/dreamcarve/issues/70

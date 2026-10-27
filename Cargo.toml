@@ -21,7 +21,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 # The minimum supported Rust version, not the toolchain the gates run on.
 # rust-toolchain.toml pins that newer lint toolchain (issue #151); the MSRV
@@ -33,12 +33,12 @@ authors = ["The DreamCarve Contributors"]
 
 [workspace.dependencies]
 # Internal crates
-dc-geometry = { path = "crates/dc-geometry", version = "0.1.1" }
-dc-project = { path = "crates/dc-project", version = "0.1.1" }
-dc-cam = { path = "crates/dc-cam", version = "0.1.1" }
-dc-gcode = { path = "crates/dc-gcode", version = "0.1.1" }
-dc-import = { path = "crates/dc-import", version = "0.1.1" }
-dc-library = { path = "crates/dc-library", version = "0.1.1" }
+dc-geometry = { path = "crates/dc-geometry", version = "0.2.0" }
+dc-project = { path = "crates/dc-project", version = "0.2.0" }
+dc-cam = { path = "crates/dc-cam", version = "0.2.0" }
+dc-gcode = { path = "crates/dc-gcode", version = "0.2.0" }
+dc-import = { path = "crates/dc-import", version = "0.2.0" }
+dc-library = { path = "crates/dc-library", version = "0.2.0" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
 serde = { version = "1.0", features = ["derive"] }
