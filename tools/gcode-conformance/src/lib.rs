@@ -405,7 +405,7 @@ pub fn build_corpus(root: &Path, dreamcarve: &Path, out: &Path) -> Result<Vec<Ca
                 name: format!("plaque-{post}/{stem}"),
                 file,
                 covers: format!(
-                    "quick-start plaque on {post}: pockets, drill, profile, engrave, \
+                    "quick-start plaque on {post}: pockets, bore, profile, engrave, \
                      programs per tool"
                 ),
             });

@@ -285,7 +285,7 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   The material a Pocket, a Bore or a Profile's last pass leaves on the wall
   is its stock to leave, as Fusion names it, so it no longer shares a name
   with `through_cut_allowance_mm`, the depth a cut may go below the stock
-  (#394). A version 18 file loads with each value under the new name, and
+  ([#394]). A version 18 file loads with each value under the new name, and
   exports the same G-code; saving writes only `stock_to_leave_mm`. The
   validation code `last_pass_allowance` is now `last_pass_stock_to_leave`,
   and messages say "stock to leave" for "allowance".
@@ -605,6 +605,13 @@ These change what a project from 0.1 exports, or how DreamCarve behaves.
   release builds were unaffected. That crate is now built without its debug
   assertions in debug builds too, so both give the same results. No
   committed program changes ([#384]).
+- A raster Pocket no longer lets float noise choose its cut order. At the
+  end of a line it stays down to the nearer of the lines one stepover above
+  and below, and it compared their lengths exactly, so a difference of
+  7e-15 mm in the plaque's scan lines decided which it took, and with it
+  the whole raster after. Lengths within the tie tolerance (0.001 mm) now
+  count as equal and the lower index is taken, as other nearest-first
+  choices do. No committed program changes ([#392]).
 
 ### Safety
 
@@ -767,3 +774,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#384]: https://github.com/grayzu/dreamcarve/issues/384
 [#387]: https://github.com/grayzu/dreamcarve/issues/387
 [#389]: https://github.com/grayzu/dreamcarve/issues/389
+[#392]: https://github.com/grayzu/dreamcarve/issues/392
+[#394]: https://github.com/grayzu/dreamcarve/issues/394

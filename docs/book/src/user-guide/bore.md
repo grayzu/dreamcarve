@@ -133,7 +133,7 @@ stock to leave takes 0.2 mm off both ends.
 
 One helix and one circle cut the hole. There are no separate finishing
 passes. For a cleaner wall in a hard material, use two Bores of the same
-holes: the first with an `stock_to_leave_mm` of, say, 0.2 to rough them, and
+holes: the first with a `stock_to_leave_mm` of, say, 0.2 to rough them, and
 the second with `stock_to_leave_mm: 0` to take the last 0.2 mm off the wall.
 
 ## Safety

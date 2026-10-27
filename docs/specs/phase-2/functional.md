@@ -823,7 +823,16 @@ continuous with no plunge marks at the start of each pass; the ramp and
 lead leave no dwell mark on the outside wall. Record the date, outcome and
 deviations below.
 
-**Cut record:** not yet cut.
+**Cut record:** cut on 2026-10-26
+([#255](https://github.com/grayzu/dreamcarve/issues/255#issuecomment-6450564355)).
+
+| Item | Result |
+| --- | --- |
+| Programs | The two programs of the quick start "A pocketed plaque from DXF", exported by the build of the day |
+| Controller | Sienci LongMill MK3, grblHAL |
+| Outcome | Every success item above met: all features cut as expected and measured as they should |
+
+Deviations: none recorded.
 
 ## Documentation deliverables
 
@@ -853,7 +862,7 @@ Post-processor verification checklist.
 
   order-compared cases.
 - [ ] Each bundled post-processor's README cites its controller sources.
-- [ ] Test part cut on grblHAL and recorded above.
+- [x] Test part cut on grblHAL and recorded above.
 - [ ] Quick start and every chapter above published.
 - [ ] `v0.2.0` tagged with binaries.
 
@@ -1225,7 +1234,8 @@ built (design addendum, "Order and format versions").
     0, y_mm: 0}`: links between parts and between operations rise to Z
     20 (work zero at the stock top) and links between passes of one part
     to its safe Z; the tool change is `G0 Z20.000`, `G53 G0 Z-5.000`,
-    `M5`, `T2 M6`; the program ends with a rapid to the park point at Z
+    `M5`, `T1 M6` (changed: maintainer decision 2026-10-24, Bore
+    reorder); the program ends with a rapid to the park point at Z
     20, then `G53 G0 Z-5.000`, then the footer. On Mach3
     `tool_change_machine_z_mm` is an error naming the setting (changed in
     #306: on LinuxCNC, which now documents `G53`); a

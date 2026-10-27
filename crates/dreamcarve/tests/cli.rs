@@ -8185,9 +8185,9 @@ fn code_by_operation(program: &str) -> Vec<(usize, Option<usize>, String)> {
 /// `tool_change_machine_z_mm: -5` and `park: (0, 0)`. Every move in XY
 /// between parts and between operations is at Z 20 (work zero at the
 /// stock top), and between passes of one part at its safe Z of 15: the
-/// four drilled holes, each its own part, are crossed at 20; the Cut out
+/// four bored holes, each its own part, are crossed at 20; the Cut out
 /// Profile's passes at 15. The tool change is the rise to 20, `G53 G0
-/// Z-5.000`, `M5`, `T2 M6`; the program ends with a rapid to the park
+/// Z-5.000`, `M5`, `T1 M6`; the program ends with a rapid to the park
 /// point at Z 20, then the lift, then the footer. Nothing goes below the
 /// material bottom less the through-cut allowance (S1), and the export
 /// says to home the machine.
