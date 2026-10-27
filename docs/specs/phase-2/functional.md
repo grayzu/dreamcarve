@@ -864,7 +864,7 @@ Post-processor verification checklist.
 - [ ] Each bundled post-processor's README cites its controller sources.
 - [x] Test part cut on grblHAL and recorded above.
 - [ ] Quick start and every chapter above published.
-- [ ] `v0.2.0` tagged with binaries.
+- [x] `v0.2.0` tagged with binaries.
 
 ## Open questions
 
