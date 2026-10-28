@@ -59,6 +59,22 @@ generated from Cargo.lock at release time.
 - nix 0.31 (MIT), https://github.com/nix-rust/nix (a dependency of zip on
   macOS and the BSDs)
   Copyright (c) 2015 Carl Lerche + nix-rust Authors
+- delaunator 1.1 (ISC), https://github.com/mourner/delaunator-rs
+  Copyright (c) 2018, Mapbox
 
 When a third-party component is added, list it here with its name, version,
 license, and source URL if its license requires attribution.
+
+Test data
+---------
+
+The outline-text fixtures in tests/fixtures/vcarve/ (rag.json, g.json,
+ga-small.json, ga-large.json) are glyph outlines of the Droid fonts (Droid
+Sans Bold, Droid Serif Bold), converted to polygons by PureCutCNC from
+three.js's typeface files and modified (scaled and mirrored) for DreamCarve's
+tests; tests/fixtures/vcarve/README.md has the details. They are used under
+the Apache License, Version 2.0, and are not part of any DreamCarve binary.
+The Droid fonts' NOTICE reads:
+
+  Copyright (c) 2005-2008, The Android Open Source Project
+  Licensed under the Apache License, Version 2.0

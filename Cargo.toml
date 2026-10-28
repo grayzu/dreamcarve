@@ -56,6 +56,13 @@ cavalier_contours = "0.9"
 # Default features are off: they pull in a glam/serde bridge and f32
 # geometry types that nothing here uses.
 i_overlay = { version = "9.1", default-features = false }
+# Delaunay triangulation for the medial axis (phase 3 design, "Algorithms →
+# Medial axis"): the Rust port of the `delaunator` PureCutCNC triangulates
+# with, so the axis is built as upstream builds it. ISC; one dependency,
+# `robust` (Apache-2.0 OR MIT), the exact predicates that keep it
+# deterministic across platforms. Default features are off and `std` back
+# on: without it the crate uses its own sqrt and floor approximations.
+delaunator = { version = "1.1", default-features = false, features = ["std"] }
 # SVG parsing. Must stay >= 0.45: earlier releases are MPL-2.0. Default
 # features are off: they add text shaping, system font loading (file I/O),
 # svgz, and the writer, none of which an importer needs.

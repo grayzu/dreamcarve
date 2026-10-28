@@ -546,7 +546,7 @@ pub struct MedialGraph { pub nodes: Vec<MedialNode>, pub adjacency: Vec<Vec<usiz
 pub struct Resolution { pub step_mm: f64, pub budget_floor_mm: f64, pub budget_limited: bool }
 pub fn resolution(region: &Region) -> Option<Resolution>;
 pub fn medial_axis(region: &Region, step_mm: f64, tolerance_mm: f64) -> MedialGraph;
-pub fn convex_corners(region: &Region, min_turn_rad: f64) -> Vec<Corner>;
+pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> Vec<Corner>;  // arcs flattened as for medial_axis (#402)
 pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
 ```
 
@@ -1061,7 +1061,7 @@ toolpath holds the merged moves, so reproduction is move for move.
 | `vcarve-medial-circle` | `v_carve_medial` | 16 mm 64-gon, 60°, `maxCarveDepth` 5 | one plunge, clamped |
 | `vcarve-medial-ring` | `v_carve_medial` | 40 mm square with 20 mm square island, 90°, `maxCarveDepth` 3 | island, cycle |
 | `vcarve-medial-l` | `v_carve_medial` | the L of `testLShapeJunctionAndReflexCorner`, 60°, `maxCarveDepth` 5 | junction |
-| `vcarve-medial-text-rag` | `v_carve_medial` | outline text "Rag", 10 mm, 60°, `maxCarveDepth` 5 | the resolver's polygons are also written to `tests/fixtures/vcarve/rag.json` for the ported tests. PureCutCNC's outline font is Noto Sans SC, OFL-1.1, and the OFL treats converted glyph data as a Modified Version: `tests/fixtures/vcarve/README.md` carries the OFL text, the Reserved Font Name clause and the source commit, and `NOTICE` names it (security review L4). OFL is not on the dependency licence list; it covers fixture data only, not code, which `cargo deny` does not see |
+| `vcarve-medial-text-rag` | `v_carve_medial` | outline text "Rag", 10 mm, 60°, `maxCarveDepth` 5 | the resolver's polygons are also written to `tests/fixtures/vcarve/rag.json` for the ported tests. PureCutCNC's outline text uses three.js's Droid typefaces ("Rag" and "g" in Droid Sans Bold, `gA` in Droid Serif Bold Italic), Apache-2.0; its Noto Sans SC (OFL-1.1) serves only its PDF booklets (corrected in #402). The converted glyph data is a modified version: `tests/fixtures/vcarve/README.md` carries the Droid NOTICE and the source commit, and `NOTICE` names it (security review L4). It covers fixture data only, not code, which `cargo deny` does not see |
 | `vcarve-medial-triangle` | `v_carve_medial` | (0,0) (24,0) (12,18), 60°, `maxCarveDepth` 5 | three arms; the 11.1 mm incentre is clamped |
 | `vcarve-offset-square` | `v_carve` | 20 mm square, 60°, `stepover` 1, `maxCarveDepth` 4 | offset rings |
 
@@ -1118,7 +1118,7 @@ crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, star.svg, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (OFL notice), rag.json, g.json, ga-small.json, ga-large.json}}
+tests/fixtures/{sign.svg, star.svg, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
 crates/dc-project/tests/fixtures/dcv/{v15,v16,v17,v18}/sample.dcv
 ```
 
@@ -1254,7 +1254,7 @@ Goal: the sign carved on the bench without its countersinks.
 2. **Medial axis geometry.** `dc-geometry::medial` on `delaunator`, the
    ported geometry and resolution tests, `dc-geometry::carve::floor_regions`,
    the text fixtures captured as polygon JSON by the parity tool with
-   their OFL README. Tests: the dc-geometry medial group. [none]
+   their font-notice README. Tests: the dc-geometry medial group. [none]
 3. **Blocks with an entry Z.** `CutBlock::entry_z_mm`, the `sequence`
    change, `validate_block`; the phase 1 and 2 generators set it; every
    earlier golden unchanged. Tests: the H1 sequence tests,

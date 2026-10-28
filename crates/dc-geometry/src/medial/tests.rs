@@ -15,12 +15,18 @@
 //! The outline-text regions come from `tests/fixtures/vcarve/`, captured
 //! from PureCutCNC by `tools/parity/vcarve-fixtures.ts`.
 
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::needless_range_loop,
+    reason = "test keys and counts are small; index loops mirror upstream's"
+)]
+
 use super::*;
 use crate::contour::Contour;
 use crate::distance::point_segment_distance_mm;
 use crate::flatten::FLATTEN_TOLERANCE_DEFAULT_MM;
 use crate::polyline::Vertex;
-use crate::region::nest;
+use crate::region::{nest, nest_unchecked};
 use proptest::prelude::*;
 use proptest::test_runner::RngSeed;
 use std::collections::BTreeSet;
@@ -291,16 +297,21 @@ const G: &str = include_str!("../../../../tests/fixtures/vcarve/g.json");
 const GA_LARGE: &str = include_str!("../../../../tests/fixtures/vcarve/ga-large.json");
 const GA_SMALL: &str = include_str!("../../../../tests/fixtures/vcarve/ga-small.json");
 
+/// `shape` scaled by `by` about the origin. Upstream scales the point loops
+/// and checks nothing; so does this. At 0.2 × the glyphs' near-touching
+/// vertices come within `Contour::new`'s self-intersection tolerance, which
+/// says nothing about the medial axis, so the region is built without it.
 fn scaled(shape: &Region, by: f64) -> Region {
-    let loops: Vec<Vec<Point>> = loops_of(shape)
-        .into_iter()
+    let contours: Vec<Contour> = loops_of(shape)
+        .iter()
         .map(|l| {
-            l.into_iter()
-                .map(|p| Point::new(p.x * by, p.y * by))
-                .collect()
+            let small: Vec<Point> = l.iter().map(|p| Point::new(p.x * by, p.y * by)).collect();
+            Contour::oriented(closed(&small)).expect("a scaled loop keeps its area")
         })
         .collect();
-    region(&loops[0], &loops[1..])
+    let mut regions = nest_unchecked(contours);
+    assert_eq!(regions.len(), 1, "the scaled loops make one region");
+    regions.remove(0)
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +445,7 @@ fn circle_collapses_to_centre() {
 fn ring_with_island_is_a_cycle_without_island_tips() {
     let outer = rect_loop(0.0, 0.0, 40.0, 40.0);
     let island = rect_loop(10.0, 10.0, 20.0, 20.0);
-    let r = region(&outer, &[island.clone()]);
+    let r = region(&outer, std::slice::from_ref(&island));
     let graph = medial_axis(&r, 0.5, TOL);
 
     assert!(!graph.nodes.is_empty(), "expected nodes for the ring");
