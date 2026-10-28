@@ -4,7 +4,8 @@
 //! The project data model (`docs/specs/phase-1/design.md`, "Data model →
 //! dc-project"; `docs/specs/phase-2/design.md`, "Data model → dc-project"
 //! for the Pocket, Drill and Engrave operations, entries, leads, corner
-//! relief and tool numbers). Every type here is persisted in a `.dcv` file, so each one
+//! relief and tool numbers; `docs/specs/phase-3/design.md`, "Data model →
+//! dc-project" for the V-Carve). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
 //! required on load (`deserialize_with = "Option::deserialize"` turns off
@@ -344,8 +345,9 @@ impl ToolKind {
     }
 }
 
-/// A machining operation: Profile, Pocket, Drill, Bore or Engrave. Tagged by
-/// `kind` in the file, so each one reads as a flat object.
+/// A machining operation: Profile, Pocket, Drill, Bore, Engrave or
+/// V-Carve. Tagged by `kind` in the file, so each one reads as a flat
+/// object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Operation {
@@ -360,6 +362,9 @@ pub enum Operation {
     Bore(BoreOp),
     /// Trace open or closed paths with the tool centre on the line.
     Engrave(EngraveOp),
+    /// Carve closed outlines along their medial lines with a V-bit
+    /// (format 20).
+    VCarve(VCarveOp),
 }
 
 impl Operation {
@@ -371,6 +376,7 @@ impl Operation {
             Self::Drill(op) => &op.id,
             Self::Bore(op) => &op.id,
             Self::Engrave(op) => &op.id,
+            Self::VCarve(op) => &op.id,
         }
     }
 
@@ -382,6 +388,7 @@ impl Operation {
             Self::Drill(op) => &op.name,
             Self::Bore(op) => &op.name,
             Self::Engrave(op) => &op.name,
+            Self::VCarve(op) => &op.name,
         }
     }
 
@@ -393,6 +400,7 @@ impl Operation {
             Self::Drill(op) => op.enabled,
             Self::Bore(op) => op.enabled,
             Self::Engrave(op) => op.enabled,
+            Self::VCarve(op) => op.enabled,
         }
     }
 
@@ -404,6 +412,7 @@ impl Operation {
             Self::Drill(op) => &op.tool,
             Self::Bore(op) => &op.tool,
             Self::Engrave(op) => &op.tool,
+            Self::VCarve(op) => &op.tool,
         }
     }
 
@@ -415,6 +424,7 @@ impl Operation {
             Self::Drill(op) => &op.targets,
             Self::Bore(op) => &op.targets,
             Self::Engrave(op) => &op.targets,
+            Self::VCarve(op) => &op.targets,
         }
     }
 
@@ -426,10 +436,14 @@ impl Operation {
             Self::Drill(op) => op.safe_z_mm,
             Self::Bore(op) => op.safe_z_mm,
             Self::Engrave(op) => op.safe_z_mm,
+            Self::VCarve(op) => op.safe_z_mm,
         }
     }
 
-    /// Final depth below the stock top, millimetres; `None` until set.
+    /// Final depth below the stock top, millimetres; `None` until set. A
+    /// V-Carve has no depth of its own: with a flat depth it is the start
+    /// depth plus the flat depth, the deepest it cuts; without one, its
+    /// depth follows from the shapes, so `None`, which is not an unset value.
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
             Self::Profile(op) => op.depth_mm,
@@ -437,6 +451,7 @@ impl Operation {
             Self::Drill(op) => op.depth_mm,
             Self::Bore(op) => op.depth_mm,
             Self::Engrave(op) => op.depth_mm,
+            Self::VCarve(op) => op.flat_depth_mm.map(|f| op.start_depth_mm + f),
         }
     }
 
@@ -448,11 +463,12 @@ impl Operation {
             Self::Drill(op) => op.through_cut_allowance_mm,
             Self::Bore(op) => op.through_cut_allowance_mm,
             Self::Engrave(op) => op.through_cut_allowance_mm,
+            Self::VCarve(op) => op.through_cut_allowance_mm,
         }
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,
-    /// `drill`, `bore` or `engrave`.
+    /// `drill`, `bore`, `engrave` or `v_carve`.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
@@ -461,6 +477,7 @@ impl Operation {
             Self::Drill(_) => "drill",
             Self::Bore(_) => "bore",
             Self::Engrave(_) => "engrave",
+            Self::VCarve(_) => "v_carve",
         }
     }
 }
@@ -840,6 +857,91 @@ pub struct BoreOp {
     /// Retract height above the stock top, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
+}
+
+/// A V-Carve operation (format 20; `docs/specs/phase-3/functional.md`,
+/// capabilities 38–43): drives a V-bit along the medial lines of each
+/// closed target, as deep as the bit's flanks touch both walls, in one
+/// pass. Nested targets are islands, even-odd, as for a Pocket.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VCarveOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances whose closed outlines are carved. An open path is skipped
+    /// with a warning at export.
+    pub targets: Vec<InstanceId>,
+    /// The tool to carve with: a V-bit.
+    pub tool: ToolId,
+    /// Along the medial lines, or in offset rings.
+    pub strategy: VCarveStrategy,
+    /// Clearing passes in cut order, largest tool first (capability 40).
+    /// Empty by default: the V-bit clears its floor itself.
+    pub clearing: Vec<ClearingPass>,
+    /// Flat depth, millimetres below the start plane; `None` carves to
+    /// full depth (capability 39; VCarve "Flat Depth").
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub flat_depth_mm: Option<f64>,
+    /// The start plane, millimetres below the stock top, 0 or more
+    /// (capability 41). Every depth of the carve counts from it.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub start_depth_mm: f64,
+    /// The user's statement that another program has cleared the start
+    /// plane over the targets (capability 41). With `start_depth_mm` above
+    /// 0 and no enabled earlier Pocket containing the targets, `false` is
+    /// the error `start_depth_uncleared`; `true` exports, with the bit's
+    /// flank engagement counted from the stock top.
+    pub start_plane_cleared_externally: bool,
+    /// Step-over of the V-bit's floor passes as a fraction of the cut
+    /// width at the flat depth, in (0, 1]; overrides
+    /// [`Tool::step_over_fraction`].
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub step_over_fraction: Option<f64>,
+    /// The order shapes are visited.
+    pub machining_order: MachiningOrder,
+    /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub safe_z_mm: f64,
+}
+
+/// How a V-Carve cuts (capability 43). Saved as `"medial"`, or
+/// `{ "offset": { "step_over_mm": 0.5, "direction": "climb" } }`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+pub enum VCarveStrategy {
+    /// Along the medial lines, the default.
+    Medial,
+    /// Concentric rings stepping in from the outline.
+    Offset {
+        /// How far each ring steps in, millimetres, greater than 0.
+        #[serde(deserialize_with = "units_input::mm")]
+        step_over_mm: f64,
+        /// Climb or conventional, on every ring.
+        direction: CutDirection,
+    },
+}
+
+/// One clearing pass of a carve (capability 40): a flat end mill that
+/// clears the carve's floor before the V-bit, as a Pocket of its own tool
+/// would. Step-down and step-over come from the tool.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClearingPass {
+    /// The tool: a flat end mill.
+    pub tool: ToolId,
+    /// Offset rings or raster lines, as a Pocket's.
+    pub strategy: ClearanceStrategy,
+    /// Climb or conventional milling.
+    pub direction: CutDirection,
+    /// How each pass depth is reached, as a Pocket's.
+    pub entry: Entry,
 }
 
 /// An engrave operation: follows each target path, open or closed, with

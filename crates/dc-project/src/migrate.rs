@@ -96,6 +96,10 @@
 //!   stock to leave, and the through-cut allowance is the only allowance.
 //!   The value and the key's place are kept, so the file exports what it
 //!   did.
+//! - **20**: adds the V-Carve operation, `"kind": "v_carve"`, with its
+//!   clearing passes, start depth and flat depth (`docs/specs/phase-3/
+//!   design.md`, sub-phase 3.1). No version 19 file holds one, so the
+//!   migration changes only the version.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -134,6 +138,7 @@ fn step(from: u32) -> Option<Step> {
         16 => Some(v16_to_v17),
         17 => Some(v17_to_v18),
         18 => Some(v18_to_v19),
+        19 => Some(v19_to_v20),
         _ => None,
     }
 }
@@ -787,6 +792,15 @@ fn v18_to_v19(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
             &at,
         )?);
     }
+    Ok(root)
+}
+
+/// Version 19 → 20 (`docs/specs/phase-3/design.md`, sub-phase 3.1): the
+/// V-Carve operation, `"kind": "v_carve"`, with its clearing passes, which
+/// no version 19 file holds, so a version 19 file is already a version 20
+/// one. The bump makes a version 19 reader refuse a file with a V-Carve as
+/// newer instead of failing on an unknown kind (ADR-0002).
+fn v19_to_v20(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
@@ -2514,6 +2528,60 @@ mod tests {
     #[test]
     fn version_19_is_newer_than_18() {
         assert_eq!(CURRENT_VERSION, 19);
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 19 → 20 (sub-phase 3.1): the V-Carve operation.
+
+    const V19_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v19/sample.dcv");
+
+    #[test]
+    fn version_19_fixture_loads() {
+        let loaded = load(V19_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Format 20: the V-Carve is a new operation kind no version 19 file
+    /// holds, so the step changes only the version, whatever operations
+    /// the file has: every field of a Profile, Pocket, Drill, Bore and
+    /// Engrave comes through unchanged.
+    #[test]
+    fn v19_to_v20_bumps_the_version_only() {
+        use crate::test_support::{sample_bore, sample_engrave, sample_pocket};
+        assert_eq!(CURRENT_VERSION, 20);
+        let root: Value = serde_json::from_slice(V19_FIXTURE).unwrap();
+        let stepped = v19_to_v20(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
+
+        let mut root = sample_root_at(19);
+        assert_eq!(root["version"], json!(19));
+        for op in [
+            Operation::Pocket(sample_pocket()),
+            Operation::Drill(sample_drill()),
+            Operation::Bore(sample_bore()),
+            Operation::Engrave(sample_engrave()),
+        ] {
+            let op = serde_json::to_value(op).unwrap();
+            root["operations"].as_array_mut().unwrap().push(op);
+        }
+        let mut expected = root.clone();
+        expected["version"] = json!(20);
+        let migrated = migrate(root, 19).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+    }
+
+    /// A version 19 reader refuses a version 20 file as newer (ADR-0002).
+    #[test]
+    fn version_20_is_newer_than_19() {
+        assert_eq!(CURRENT_VERSION, 20);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_cam::{
-    Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile,
-    order, placed_tabs,
+    CamError, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
+    generate_profile, order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -194,6 +194,13 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             // motion for them is the toolpath.
             Operation::Drill(op) => generate_drill(project, op)
                 .map(|(drilled, w)| ((drilled.toolpath, Some(drilled.holes)), w)),
+            // Format 20 adds the V-Carve to the project; its generator
+            // lands in #404. Until then it is refused, so no program is
+            // ever written for one.
+            Operation::VCarve(op) => Err(CamError::NotSupportedYet {
+                op: op.id.clone(),
+                feature: "V-carving (`v_carve`)".into(),
+            }),
         };
         match generated {
             Ok(((toolpath, holes), warnings)) => {

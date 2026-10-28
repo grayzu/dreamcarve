@@ -267,6 +267,12 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             Operation::Pocket(op) => (generate_pocket(project, op).map_err(err)?.0, None),
             Operation::Engrave(op) => (generate_engrave(project, op).map_err(err)?.0, None),
             Operation::Bore(op) => (generate_bore(project, op).map_err(err)?.0, None),
+            Operation::VCarve(_) => {
+                return Err(format!(
+                    "operation {} is a V-Carve, which this build does not generate yet",
+                    operation.id()
+                ));
+            }
             Operation::Drill(op) => {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
                 (drilled.toolpath, Some(drilled.holes))
