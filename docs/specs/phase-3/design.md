@@ -12,11 +12,11 @@ axis they rest on is a new `dc-geometry` module ported from PureCutCNC's
 come in through `dc-import` and live in the project as **bitmaps**, a new
 list beside the instances. `dc-gcode` gains the cone test (S17), the
 countersink rule (S18) and the groove rule (S19). The CLI gains `init` on
-a picture and an `image` command. The format moves through versions 16 to 19, one per sub-phase ("Sub-phases").
+a picture and an `image` command. The format moves through versions 20 to 23, one per sub-phase ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
 
 ```
 SVG / DXF ──dc-import──▶ FeatureDefinitions ─┐
-PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v16–v19, dc-project)
+PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v23, dc-project)
 user edits .dcv ─────────────────────────────┘        │
                                                       ▼
    dc-cam::{profile, pocket, drill (+ countersink), engrave,
@@ -68,15 +68,16 @@ carry the DreamCarve header.
 
 ## Data model
 
-### dc-project (format versions 16 to 19)
+### dc-project (format versions 20 to 23)
 
-One version per sub-phase ("Sub-phases"): 16 adds the V-Carve kind with
-its clearing list, 17 the countersink cycle, 18 the Inlay kind, 19
+One version per sub-phase ("Sub-phases"): 20 adds the V-Carve kind with
+its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23
 `bitmaps` and the Photo V-Carve kind. Every step is additive; a file from
 an earlier version exports the same bytes.
 
 ```rust
-pub const CURRENT_VERSION: u32 = 19;   // 16 in sub-phase 3.1, 17 in 3.2, 18 in 3.3, 19 in 3.4
+pub const CURRENT_VERSION: u32 = 23;   // 20 in sub-phase 3.1, 21 in 3.2, 22 in 3.3, 23 in 3.4
+                                       // (phase 2 ended at 19: tool vendor, Drill hole width, Bore, stock to leave)
 
 pub struct Project {
     // phase 2 fields unchanged, plus:
@@ -233,12 +234,12 @@ every field present, as every persisted struct. `Operation` keeps its internal
 is the one long string in a `.dcv`; the formatter writes it on one line,
 as it writes a vertex.
 
-**Migrations.** `v15_to_v16`, `v16_to_v17` and `v17_to_v18` change no
+**Migrations.** `v19_to_v20`, `v20_to_v21` and `v21_to_v22` change no
 field: each adds an operation kind (or a cycle variant) that a file from
-before cannot contain, so they bump the version only. `v18_to_v19`
+before cannot contain, so they bump the version only. `v22_to_v23`
 inserts `"bitmaps": []` after `instances`. A file from any earlier
 version exports the same bytes. Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v15,v16,v17,v18}/sample.dcv`, each
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22}/sample.dcv`, each
 holding the kinds its version has.
 
 **Validation** (`validate.rs`), errors unless marked:
@@ -762,7 +763,7 @@ warnings) -> Result<Vec<ToolRun>, CamError>`:
    radii, as `rest_of`); nothing reachable warns `ClearingNoRoom` and
    the pass emits no run. Its depth is `start_depth + F`, its `pass_z`
    levels from its tool's step-down (the end mill steps down; the V-bit
-   does not), its allowance 0 (the floor boundary already stands the
+   does not), its `stock_to_leave_mm` 0 (the floor boundary already stands the
    V-bit's inset off the outline: Corbin's `pocket_stock_to_leave` is
    that inset, which `floor_regions` has applied).
 3. The pass is cut by the Pocket code: the generator builds a `PocketOp`
@@ -834,7 +835,12 @@ start_depth_mm: s }`:
    `start_plane_cleared_externally: false` is `StartDepthUncleared`
    (security review H4, M2).
 2. Targets as Drill (circle test); a circle whose diameter is at least
-   `D − 1e-9` is skipped with `CountersinkMouthNotWiderThanHole`.
+   `D − 1e-9` is skipped with `CountersinkMouthNotWiderThanHole`. Drill's
+   phase 2 rule that skips a hole narrower than the tool (format 17,
+   `allow_tool_wider_than_hole`) does not apply: a countersink's V-bit is
+   wider than its hole by design, and the mouth-versus-hole rule replaces
+   it (changed in spec sync 1). The field is ignored for a countersink
+   cycle and validation says so if it is `true` (`countersink_ignores_tool_width`, a warning).
 3. `top = thickness − s`; `bottom = top − depth`; S1 with the allowance.
    `retract_z = min(safe_z, thickness + max(retract_mm, 0))`: measured
    from the **stock top**, not the start plane, so the hole's single
@@ -1111,7 +1117,7 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v15_to_v16 … v18_to_v19), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ an entry point on resolved regions), pocket/rest.rs (reach shared with clearing), order.rs (+ containing_pocket, start_depth_mismatch, start_depth_uncleared), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
@@ -1119,7 +1125,7 @@ crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
 tests/fixtures/{sign.svg, star.svg, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (OFL notice), rag.json, g.json, ga-small.json, ga-large.json}}
-crates/dc-project/tests/fixtures/dcv/{v15,v16,v17,v18}/sample.dcv
+crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22}/sample.dcv
 ```
 
 New dependencies, all `[workspace.dependencies]` with
@@ -1172,7 +1178,7 @@ for V operations.
 - Property (`proptest`, small): `medial::every_node_is_inside_its_region`, `medial::every_clearance_equals_the_exact_distance` on random convex polygons.
 
 **dc-project**
-- `migrate::v15_to_v18_steps_bump_the_version_only`, `migrate::v18_project_gains_an_empty_bitmap_list`, `migrate::v18_with_bitmaps_already_present_fails`, `migrate::version_15_to_18_fixtures_load`, `cli::v15_project_exports_the_same_program`.
+- `migrate::v19_to_v22_steps_bump_the_version_only`, `migrate::v22_project_gains_an_empty_bitmap_list`, `migrate::v22_with_bitmaps_already_present_fails`, `migrate::version_19_to_22_fixtures_load`, `cli::v19_project_exports_the_same_program`.
 - `serialize::v_carve_inlay_photo_round_trip`, `serialize::v_carve_strategy_is_string_or_object`, `serialize::countersink_cycle_round_trips`, `serialize::bitmap_png_is_one_line`, `bitmap::pixels_decode_the_stored_png`, `bitmap::wrong_size_png_is_an_error`, `bitmap::colour_png_is_an_error`.
 - `validate::v_carve_with_end_mill_is_error`, `validate::v_bit_angle_out_of_range_is_error`, `validate::flat_depth_beyond_cone_is_error`, `validate::photo_max_depth_beyond_cone_is_error`, `validate::countersink_depth_beyond_cone_is_error`, `validate::clearing_needs_a_flat_depth`, `validate::clearing_pass_needs_a_flat_end_mill`, `validate::clearing_wider_than_the_pass_before_warns`, `validate::clearing_pass_naming_no_tool_is_error`, `serialize::clearing_passes_round_trip`, `validate::countersink_mouth_wider_than_tool_is_error`, `validate::negative_start_depth_is_error`, `validate::inlay_glue_gap_must_be_below_depth`, `validate::inlay_male_needs_margin`, `validate::thin_plug_base_warns`, `validate::photo_angle_and_spacing_ranges`, `validate::photo_spacing_below_one_warns`, `validate::photo_names_a_missing_bitmap`, `validate::bitmap_aspect_must_match_pixels`, `validate::countersink_drill_with_v_bit_is_not_unusual`.
 - Security review additions: `validate::uncleared_start_depth_is_an_error_unless_acknowledged` (M2: V-Carve, Photo and countersink; a containing Pocket at the depth is quiet; a disabled one does not count), `validate::male_inlay_engagement_beyond_the_cone_is_error` (H4: `D 2.5, G 0.25, P 1.5` with a 90° 6.35 mm bit fails; the star's `4, 1, 2` with the 60° bit passes), `validate::acknowledged_start_depth_counts_toward_the_cone` (H4), `validate::flatten_tolerance_above_0_1_mm_is_error` (L6), `bitmap::empty_or_oversized_bitmap_is_refused_from_the_header` (M4: a 0 × 0 and a 9000 × 10 PNG are refused without decoding image data), `bitmap::decompression_bomb_is_refused_by_the_decoder_limit` (M4: a 1 MB base64 string holding an 8192 × 8192 stream fails under the limit, not out of memory), `bitmap::header_lying_about_size_is_refused` (M4), `validate::bitmap_footprint_must_be_positive_and_on_the_coordinate_range` (M4).
@@ -1243,12 +1249,12 @@ and one PR each, with a Tests section drawn from the test plan;
 dependencies in brackets. No tag between sub-phases (`docs/plan.md`,
 "Versioning"); `v0.3.0` comes at 3.5.
 
-### 3.1 V-Carve (format v16)
+### 3.1 V-Carve (format v20)
 
 Goal: the sign carved on the bench without its countersinks.
 
-1. **Format v16: V-Carve.** `VCarveOp`, `VCarveStrategy`, `ClearingPass`,
-   `v15_to_v16`, the V-Carve and clearing validation rules including
+1. **Format v20: V-Carve.** `VCarveOp`, `VCarveStrategy`, `ClearingPass`,
+   `v19_to_v20`, the V-Carve and clearing validation rules including
    `start_depth_uncleared` and the engagement sum. Tests: the dc-project
    V-Carve, clearing and migration tests. [none]
 2. **Medial axis geometry.** `dc-geometry::medial` on `delaunator`, the
@@ -1285,19 +1291,19 @@ Goal: the sign carved on the bench without its countersinks.
     [5, 7]
 11. **V-Carve docs.** V-Carve chapter (medial lines, flat depth, clearing
     passes, start depth, one pass, offset, bit angles), Warnings, Safety
-    (S17), The project file (v16); quick start "A V-carved sign" written
+    (S17), The project file (v20); quick start "A V-carved sign" written
     against the sign with plain hanging holes. [4–10]
 12. **3.1 bench check.** The sign exported and carved without its
     countersinks, recorded in the functional spec as a partial cut.
 
 Slices 1, 2 and 3 have no dependencies: three agents start at once.
 
-### 3.2 Countersink (format v17)
+### 3.2 Countersink (format v21)
 
 Goal: the sign complete, the phase's first real cut.
 
-13. **Format v17 and the countersink.** `DrillCycle::Countersink`,
-    `v16_to_v17`, validation; the generator with the retract from the
+13. **Format v21 and the countersink.** `DrillCycle::Countersink`,
+    `v20_to_v21`, validation; the generator with the retract from the
     stock top and the engagement check; `start_depth_uncleared` for a
     countersink. Tests: the drill (countersink) group with its H3 and M2
     additions, the order group's countersink cases. [3.1]
@@ -1309,12 +1315,12 @@ Goal: the sign complete, the phase's first real cut.
 16. **3.2 bench check.** Test part 1 cut and recorded (functional spec,
     "Sign"). Exit: acceptance 48 to 55 and 61 green.
 
-### 3.3 Inlay (format v18)
+### 3.3 Inlay (format v22)
 
 Goal: the star pair cut and fitted.
 
-17. **Format v18 and the Inlay model.** `InlayOp`, `InlaySide`,
-    `v17_to_v18`, validation with the male engagement sum. Tests: the
+17. **Format v22 and the Inlay model.** `InlayOp`, `InlaySide`,
+    `v21_to_v22`, validation with the male engagement sum. Tests: the
     dc-project Inlay tests. [3.2]
 18. **Inlay geometry.** `dc-geometry::surround`, `Transform::mirror_x_about`.
     Tests: `inlay::surround_of_a_star_with_a_hole_has_the_hole_as_a_region`,
@@ -1329,13 +1335,13 @@ Goal: the star pair cut and fitted.
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 
-### 3.4 Photo V-Carve (format v19)
+### 3.4 Photo V-Carve (format v23)
 
 Goal: a photograph carved.
 
-22. **Format v19: bitmaps and Photo V-Carve.** `Bitmap`, `BitmapId`,
+22. **Format v23: bitmaps and Photo V-Carve.** `Bitmap`, `BitmapId`,
     `MAX_BITMAP_SIDE_PX`, `Bitmap::header` and `pixels` with their limits,
-    `PhotoVCarveOp`, `PhotoStrategy`, `v18_to_v19`, validation; the `png`
+    `PhotoVCarveOp`, `PhotoStrategy`, `v22_to_v23`, validation; the `png`
     and `base64` dependencies. Tests: the dc-project bitmap and Photo
     tests with the M4 additions. [3.3]
 23. **Bitmap import and the CLI.** `dc-import::bitmap` with `png` and
@@ -1350,7 +1356,7 @@ Goal: a photograph carved.
 25. **Photo goldens.** `tools/parity/photo/capture.py` and the two
     RasterCarve cases. Tests: `golden::photo_*`. [24]
 26. **Photo docs.** Photo V-Carve chapter, Images chapter (`image`,
-    pictures in the file), The project file (v19),
+    pictures in the file), The project file (v23),
     `cli::photo_quick_start_runs`. [23, 24]
 27. **3.4 bench check.** Test part 3 cut and recorded. Exit: acceptance
     58 to 60 green.
