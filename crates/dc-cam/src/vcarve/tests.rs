@@ -16,6 +16,8 @@
 //! and the comment says so. Depths are below the start plane, the stock
 //! top unless a test sets a start depth; upstream's Z 0 is the top.
 
+mod floor;
+
 use super::*;
 use crate::entry::ENTRY_CLEARANCE_MM;
 use crate::sequence::{SequenceInput, sequence};
@@ -291,7 +293,7 @@ fn runs_of(
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
     };
-    medial::runs(graph, &depth, no_simplifying, &walls)
+    medial::runs(graph, &depth, no_simplifying, &walls, &[])
 }
 
 /// [`runs_of`] as blocks, sequenced from safe Z 13 over a stock top at 10.
@@ -469,7 +471,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
     };
-    let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls)
+    let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
         .iter()
         .map(|run| medial::run_block(run, &test_shape(), rates, TOP_MM + 5.0))
         .collect();
@@ -1058,28 +1060,46 @@ fn start_depth_lowers_every_cut_and_plunges_from_the_stock_top() {
     assert_approx_eq!(plunge.to.z, TOP_MM - 4.0, 0.01);
 }
 
-/// Capability 42: one pass whatever the depth. The tool's 0.5 mm
-/// step-down, which a Pocket of this depth would cut in nine passes, is
-/// ignored: the rectangle is entered as often whether it is carved to
-/// full depth (4.33 mm) or clamped at 1 or 3 mm.
+/// Capability 42: one pass whatever the depth. The tool's step-down,
+/// which a Pocket would follow, is ignored: the rectangle carved to full
+/// depth (4.33 mm) or clamped at 1 or 3 mm is cut move for move the same
+/// with a 0.5 mm step-down as with none, and the medial carve is entered
+/// as often at any depth. (Restated in #405: with a flat depth the floor's
+/// rings are entered too, so the plunge count is no longer equal across
+/// depths.)
 #[test]
 fn one_pass_whatever_the_depth() {
-    let mut p = project(vec![rect(20.0, 5.0)]);
-    for tool in &mut p.tools {
+    let p = project(vec![rect(20.0, 5.0)]);
+    let mut stepped = p.clone();
+    for tool in &mut stepped.tools {
         tool.step_down_mm = Some(0.5);
     }
-    let entries: Vec<usize> = [None, Some(1.0), Some(3.0)]
+    let mut unstepped = p.clone();
+    for tool in &mut unstepped.tools {
+        tool.step_down_mm = None;
+    }
+    for flat_depth_mm in [None, Some(1.0), Some(3.0)] {
+        let op = VCarveOp {
+            flat_depth_mm,
+            ..carve_op(&p)
+        };
+        assert_eq!(
+            carve(&stepped, &op).0,
+            carve(&unstepped, &op).0,
+            "flat depth {flat_depth_mm:?}"
+        );
+    }
+    let medial_entries: Vec<usize> = [None, Some(1.0), Some(3.0)]
         .into_iter()
         .map(|flat_depth_mm| {
             let op = VCarveOp {
                 flat_depth_mm,
                 ..carve_op(&p)
             };
-            plunges(&carve(&p, &op).0).len()
+            plunges(&carve(&stepped, &op).0).len()
         })
         .collect();
-    assert!(entries.iter().all(|&n| n == entries[0]), "{entries:?}");
-    assert!(entries[0] < 9, "{entries:?}");
+    assert!(medial_entries.iter().all(|&n| n < 9), "{medial_entries:?}");
 }
 
 /// Steps 5 and 9: the blocks are runs of chains, each at pass 0 with its
@@ -1226,7 +1246,7 @@ fn links_never_run_below_the_final_v_surface() {
                 slope,
             };
             let walls = Walls::new(std::slice::from_ref(region), p.flatten_tolerance_mm);
-            for run in medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls) {
+            for run in medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls, &[]) {
                 let mut from = run.start;
                 for step in &run.steps {
                     if step.link {

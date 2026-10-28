@@ -208,7 +208,9 @@ pub(crate) fn runs(
     depth: &Depth,
     tolerances: Tolerances,
     walls: &Walls,
+    floors: &[Region],
 ) -> Vec<Run> {
+    let _ = floors;
     let chains: Vec<Vec<Point3>> =
         prune_redundant_leaf_chains(graph, extract_chains(graph), tolerances.redundancy_mm)
             .iter()

@@ -19,6 +19,7 @@
 //! are refused with [`CamError::NotSupportedYet`] until they land.
 
 mod cone;
+pub(crate) mod floor;
 pub(crate) mod medial;
 #[cfg(test)]
 mod tests;
@@ -111,6 +112,18 @@ pub enum ConeViolation {
 #[must_use]
 pub fn cone_height_mm(tool: &Tool) -> Option<f64> {
     v_bit(tool).map(|bit| bit.cone_mm)
+}
+
+/// The height, mm, of the ridges the V-bit leaves between its floor rings
+/// in `op` (`docs/specs/phase-3/design.md`, "V-Carve generator", step 6):
+/// two grooves `s` apart at the flat depth leave a ridge `s / (2 tan(α/2))`
+/// high, which with `s = step_over_fraction · 2 F tan(α/2)` is
+/// `step_over_fraction · F`. `None` when the carve has no floor for the
+/// V-bit to clear: no flat depth, no usable V-bit or step-over fraction,
+/// or no region wide enough.
+#[must_use]
+pub fn floor_ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
+    floor::ridge_height_mm(project, op)
 }
 
 /// A usable V-bit's slope and cone.
@@ -347,7 +360,7 @@ pub fn blocks(
             });
         }
         let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
-        let runs = medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls);
+        let runs = medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls, &[]);
         out.extend(
             runs.iter()
                 .map(|run| medial::run_block(run, shape, rates, safe_z_mm)),
