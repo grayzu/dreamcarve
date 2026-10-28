@@ -432,8 +432,10 @@ Numbering continues from phase 2's 47.
  with the 60° bit. (All V-bits in these tests are 6.35 mm, the bench's
  1/4 in set: 15°, 30°, 60° and 90°.)
 49. **Nesting and corners.** A 24 mm square with a 12 mm square hole, with
- the 90° bit: the carve runs along the ring's centreline, 3 mm from each
- wall and 3 mm deep, and rises
+ the 90° bit and `flat_depth_mm: 3` (where a corridor turns, the disc
+ touching both outer walls and the hole's corner is 6(2 − √2) = 3.51 mm,
+ past the bit's 3.175 mm cone; changed in #404): the carve runs along the
+ ring's centreline, 3 mm from each wall and 3 mm deep, and rises
  to the surface at the four outer corners; no cutting point is closer to
  any wall than its depth times tan(α/2) allows. The outline text "Rag"
  from PureCutCNC's fixture: the carve reaches every sharp corner tip at

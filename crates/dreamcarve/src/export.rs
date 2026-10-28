@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_cam::{
-    CamError, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
-    generate_profile, order, placed_tabs,
+    CamError, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
+    generate_profile, generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -43,8 +43,8 @@ use dc_gcode::{
     machine_lift_limits_note, scaling_note,
 };
 use dc_project::{
-    Operation, PostProcessorRef, Project, ResetReason, SettingReset, Severity, SourceMap, Tool,
-    ToolChangeMode, Units, validate,
+    Operation, OperationId, PostProcessorRef, Project, ResetReason, SettingReset, Severity,
+    SourceMap, Tool, ToolChangeMode, Units, validate,
 };
 
 use crate::cli::{
@@ -183,7 +183,8 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             )));
             continue;
         };
-        let plain = |toolpath: Toolpath| (toolpath, None);
+        let plain =
+            |toolpath: Toolpath| vec![EmitOp::from((operation.clone(), tool.clone(), toolpath))];
         let generated = match operation {
             Operation::Profile(op) => generate_profile(project, op).map(|(t, w)| (plain(t), w)),
             Operation::Pocket(op) => generate_pocket(project, op).map(|(t, w)| (plain(t), w)),
@@ -192,30 +193,31 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             // The hole records go to the emitter, which writes them as
             // canned cycles when the project asks and the controller's
             // motion for them is the toolpath.
-            Operation::Drill(op) => generate_drill(project, op)
-                .map(|(drilled, w)| ((drilled.toolpath, Some(drilled.holes)), w)),
-            // Format 20 adds the V-Carve to the project; its generator
-            // lands in #404. Until then it is refused, so no program is
-            // ever written for one.
-            Operation::VCarve(op) => Err(CamError::NotSupportedYet {
-                op: op.id.clone(),
-                feature: "V-carving (`v_carve`)".into(),
+            Operation::Drill(op) => generate_drill(project, op).map(|(drilled, w)| {
+                (
+                    vec![EmitOp::drill(operation.clone(), tool.clone(), drilled)],
+                    w,
+                )
+            }),
+            // Format 20: one tool run per clearing pass, then the V-bit's
+            // (`docs/specs/phase-3/design.md`, "Clearing passes", step 4);
+            // each is written with its own tool.
+            Operation::VCarve(op) => generate_vcarve(project, op).and_then(|(runs, w)| {
+                runs.into_iter()
+                    .map(|run| run_op(project, operation, run))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|runs| (runs, w))
             }),
         };
         match generated {
-            Ok(((toolpath, holes), warnings)) => {
+            Ok((runs, warnings)) => {
                 findings.warnings.extend(warnings.iter().map(|w| {
                     Finding::coded(
                         w.code().as_str(),
                         format!("operation `{}`: {w}", operation.id()),
                     )
                 }));
-                ops.push(EmitOp {
-                    op: operation.clone(),
-                    tool: tool.clone(),
-                    toolpath,
-                    holes,
-                });
+                ops.extend(runs);
             }
             Err(e) => findings.errors.push(Finding::plain(e.to_string())),
         }
@@ -268,6 +270,66 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             }
         }
     }
+}
+
+/// The emitter's entry for tool run `run` of `operation`: written with the
+/// run's own tool, as plain moves.
+fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<EmitOp, CamError> {
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == run.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: operation.id().clone(),
+            tool: run.tool.clone(),
+        })?;
+    Ok(EmitOp {
+        op: operation.clone(),
+        tool: tool.clone(),
+        toolpath: run.toolpath,
+        holes: None,
+        label: run.label,
+    })
+}
+
+/// The deepest cut of operation `op` among `generated`, mm below the
+/// stock top (`docs/specs/phase-3/design.md`, "CLI": the summary prints
+/// it for a carve, whose depth follows its shapes); `None` when it cuts
+/// nothing or the stock has no thickness.
+pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId) -> Option<f64> {
+    let thickness_mm = project.stock.thickness_mm?;
+    generated
+        .iter()
+        .filter(|e| e.op.id() == op)
+        .flat_map(|e| e.toolpath.moves.iter().filter(|m| m.is_cut()))
+        .map(|m| thickness_mm - m.to.z)
+        .reduce(f64::max)
+}
+
+/// One line per enabled V-Carve of `generated`, for `check` and `export`:
+/// its deepest cut and whether it has a flat depth (capability 39).
+pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
+    project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .filter_map(|op| match op {
+            Operation::VCarve(carve) => {
+                let deepest = deepest_cut_mm(project, generated, &carve.id)?;
+                let floor = carve.flat_depth_mm.map_or_else(
+                    || "no flat depth".to_owned(),
+                    |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
+                );
+                Some(format!(
+                    "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
+                    carve.id,
+                    carve.name,
+                    describe_length(project, deepest)
+                ))
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 fn describe_export_warning(warning: &ExportWarning) -> String {
@@ -414,6 +476,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
 
     // The programs are written; the estimate only reads them.
     let estimates = Estimates::new(&project, &programs, estimate_settings);
+    let generated = generated.unwrap_or_default();
     match (programs.as_slice(), outputs.as_slice()) {
         ([program], [output]) => report(
             &project,
@@ -422,6 +485,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
             args,
             switched.as_ref(),
             &estimates,
+            &generated,
         )?,
         _ => report_runs(
             &project,
@@ -430,7 +494,11 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
             args,
             switched.as_ref(),
             &estimates,
+            &generated,
         )?,
+    }
+    for line in describe_carves(&project, &generated) {
+        outln!("{line}")?;
     }
     if let Some(preview) = &args.preview {
         outln!("Wrote preview {}.", preview.display())?;
@@ -697,6 +765,10 @@ fn same_file(a: &Path, b: &Path) -> bool {
 /// starting (#57), then every pause and tool change with its line number
 /// and message, because the controller or sender may not show the message
 /// (design step 8).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "what was written, for what, and what generated it, each needed"
+)]
 fn report(
     project: &Project,
     program: &Program,
@@ -704,6 +776,7 @@ fn report(
     args: &ExportArgs,
     switched: Option<&Switched>,
     estimates: &Estimates,
+    generated: &[EmitOp],
 ) -> Result<(), Failure> {
     outln!(
         "Wrote {} ({} lines, post-processor {}).",
@@ -711,7 +784,7 @@ fn report(
         program.text.lines().count(),
         project.post_processor.id
     )?;
-    report_post_and_operations(project, args, switched)?;
+    report_post_and_operations(project, args, switched, generated)?;
     for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
         outln!("{line}")?;
     }
@@ -763,6 +836,10 @@ fn limits_note(project: &Project) -> String {
 /// in the order to run them, with what to do before each, then one line
 /// per exported operation, then each program's extents (#62), estimated
 /// run time and pauses, then the total run time (capability 30).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "what was written, for what, and what generated it, each needed"
+)]
 fn report_runs(
     project: &Project,
     programs: &[Program],
@@ -770,6 +847,7 @@ fn report_runs(
     args: &ExportArgs,
     switched: Option<&Switched>,
     estimates: &Estimates,
+    generated: &[EmitOp],
 ) -> Result<(), Failure> {
     outln!("Wrote {} programs; run them in this order:", programs.len())?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
@@ -798,7 +876,7 @@ fn report_runs(
     report_tool_length_offset(project)?;
     report_scaling(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
-    report_post_and_operations(project, args, switched)?;
+    report_post_and_operations(project, args, switched, generated)?;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
         outln!(
             "{} ({} lines):",
@@ -834,6 +912,7 @@ fn report_post_and_operations(
     project: &Project,
     args: &ExportArgs,
     switched: Option<&Switched>,
+    generated: &[EmitOp],
 ) -> Result<(), Failure> {
     if let Some(Switched { old, resets }) = switched {
         let new = &project.post_processor;
@@ -872,12 +951,20 @@ fn report_post_and_operations(
             .iter()
             .find(|t| &t.id == op.tool())
             .map_or("?", |t| t.name.as_str());
-        // Validation refuses an unset depth, so an exported one is set.
-        let depth = op
-            .depth_mm()
-            .map_or_else(|| "? mm".to_owned(), |d| describe_length(project, d));
+        // Validation refuses an unset depth, so an exported one is set; a
+        // carve's depth follows its shapes, so its deepest cut is stated.
+        let depth = match op {
+            Operation::VCarve(_) => deepest_cut_mm(project, generated, op.id()).map_or_else(
+                || "? mm deep".to_owned(),
+                |d| format!("cut {} deep at most", describe_length(project, d)),
+            ),
+            _ => op.depth_mm().map_or_else(
+                || "? mm deep".to_owned(),
+                |d| format!("{} deep", describe_length(project, d)),
+            ),
+        };
         outln!(
-            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth} deep",
+            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth}",
             op.id(),
             op.name(),
             op.tool(),

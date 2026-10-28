@@ -60,6 +60,11 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     for warning in &findings.warnings {
         outln!("{}", file.describe("warning", warning))?;
     }
+    // Phase 3: a carve's depth follows its shapes, so its deepest cut is
+    // stated.
+    for line in export::describe_carves(&project, generated.as_deref().unwrap_or_default()) {
+        outln!("{line}")?;
+    }
     // #62: where the program would take the tool, and capability 30: how
     // long it would run, as `export` prints them; for each program when
     // there is one per tool run (#95), then the total.

@@ -169,6 +169,17 @@ pub enum WarningCode {
     /// (`docs/specs/phase-2/design.md`, "Algorithms → Pocket", step 3), so
     /// it emits no toolpath.
     RestOfClearsNothing,
+    /// A V-Carve target is an open path, which has no area to carve; it
+    /// was skipped and the closed targets carved (format 20).
+    VCarveTargetOpen,
+    /// A V-Carve region is so thin that no medial axis survives two
+    /// refinements of its sampling step, so nothing of it was carved
+    /// (upstream `vcarveNoMedialAxis`).
+    VCarveNoMedialAxis,
+    /// A V-Carve region is so long for its width that the sample budget,
+    /// not its shape, set its medial step (upstream
+    /// `vcarveSamplingBudget`). Reported once per operation.
+    VCarveSamplingBudget,
 }
 
 impl WarningCode {
@@ -215,6 +226,9 @@ impl WarningCode {
             Self::BoreLeavesCore => "bore_leaves_core",
             Self::BoreNoHoles => "bore_no_holes",
             Self::RestOfClearsNothing => "rest_of_clears_nothing",
+            Self::VCarveTargetOpen => "vcarve_target_open",
+            Self::VCarveNoMedialAxis => "vcarve_no_medial_axis",
+            Self::VCarveSamplingBudget => "vcarve_sampling_budget",
         }
     }
 }
@@ -756,6 +770,27 @@ pub enum Warning {
         /// This operation's tool id.
         tool_id: ToolId,
     },
+    /// [`WarningCode::VCarveTargetOpen`].
+    VCarveTargetOpen {
+        /// The operation.
+        op: OperationId,
+        /// The open path skipped.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::VCarveNoMedialAxis`].
+    VCarveNoMedialAxis {
+        /// The operation.
+        op: OperationId,
+        /// The region's outline.
+        shape: ShapeRef,
+    },
+    /// [`WarningCode::VCarveSamplingBudget`].
+    VCarveSamplingBudget {
+        /// The operation.
+        op: OperationId,
+        /// The medial step the budget set, mm.
+        resolution_mm: f64,
+    },
 }
 
 impl Warning {
@@ -802,6 +837,9 @@ impl Warning {
             Self::BoreLeavesCore { .. } => WarningCode::BoreLeavesCore,
             Self::BoreNoHoles { .. } => WarningCode::BoreNoHoles,
             Self::RestOfClearsNothing { .. } => WarningCode::RestOfClearsNothing,
+            Self::VCarveTargetOpen { .. } => WarningCode::VCarveTargetOpen,
+            Self::VCarveNoMedialAxis { .. } => WarningCode::VCarveNoMedialAxis,
+            Self::VCarveSamplingBudget { .. } => WarningCode::VCarveSamplingBudget,
         }
     }
 
@@ -839,7 +877,10 @@ impl Warning {
             | Self::BoreNoRoom { op, .. }
             | Self::BoreLeavesCore { op, .. }
             | Self::BoreNoHoles { op }
-            | Self::RestOfClearsNothing { op, .. } => Some(op),
+            | Self::RestOfClearsNothing { op, .. }
+            | Self::VCarveTargetOpen { op, .. }
+            | Self::VCarveNoMedialAxis { op, .. }
+            | Self::VCarveSamplingBudget { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1460,6 +1501,19 @@ impl fmt::Display for Warning {
             Self::RestOfClearsNothing { rest_of, tool, .. } => write!(
                 f,
                 "operation `{rest_of}`, which this one rests on, already reaches everything tool `{tool}` can, so this operation cuts nothing; use a smaller tool, or remove it"
+            ),
+            Self::VCarveTargetOpen { shape, .. } => write!(
+                f,
+                "{shape} is an open path, which has no area to V-carve; it is skipped"
+            ),
+            Self::VCarveNoMedialAxis { shape, .. } => write!(
+                f,
+                "{shape} is too thin for a medial line to be found, so it is not carved"
+            ),
+            Self::VCarveSamplingBudget { resolution_mm, .. } => write!(
+                f,
+                "a carved shape is so long for its width that its medial lines are found every {} mm, coarser than its width alone would give; small details may be smoothed",
+                rounded(*resolution_mm, 3)
             ),
         }
     }
@@ -2092,6 +2146,27 @@ mod tests {
                 },
                 "operation `o1`, which this one rests on, already reaches everything tool `12.7 mm end mill` can, so this operation cuts nothing; use a smaller tool, or remove it",
             ),
+            (
+                Warning::VCarveTargetOpen {
+                    op: op(),
+                    shape: shape(),
+                },
+                "`Shape` (instance `i1`, profile 2) is an open path, which has no area to V-carve; it is skipped",
+            ),
+            (
+                Warning::VCarveNoMedialAxis {
+                    op: op(),
+                    shape: shape(),
+                },
+                "`Shape` (instance `i1`, profile 2) is too thin for a medial line to be found, so it is not carved",
+            ),
+            (
+                Warning::VCarveSamplingBudget {
+                    op: op(),
+                    resolution_mm: 0.125_000_000_1,
+                },
+                "a carved shape is so long for its width that its medial lines are found every 0.125 mm, coarser than its width alone would give; small details may be smoothed",
+            ),
         ]
     }
 
@@ -2145,7 +2220,10 @@ mod tests {
             C::BoreNoRoom => C::BoreLeavesCore,
             C::BoreLeavesCore => C::BoreNoHoles,
             C::BoreNoHoles => C::RestOfClearsNothing,
-            C::RestOfClearsNothing => return None,
+            C::RestOfClearsNothing => C::VCarveTargetOpen,
+            C::VCarveTargetOpen => C::VCarveNoMedialAxis,
+            C::VCarveNoMedialAxis => C::VCarveSamplingBudget,
+            C::VCarveSamplingBudget => return None,
         })
     }
 
@@ -2182,7 +2260,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 39);
+        assert_eq!(count, 42);
     }
 
     #[test]

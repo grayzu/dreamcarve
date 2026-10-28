@@ -71,7 +71,7 @@
 
 use std::f64::consts::{FRAC_PI_2, TAU};
 
-use dc_cam::{CannedKind, DrillHole, DrillToolpath, FeedField, Move, MoveKind, Toolpath};
+use dc_cam::{CannedKind, DrillHole, DrillToolpath, FeedField, Move, MoveKind, RunLabel, Toolpath};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Point, Point3};
 use dc_project::{
     ArcFormat, CannedCycles, DwellUnits, Operation, OperationId, ParkXy, PostProcessor, Project,
@@ -307,6 +307,10 @@ pub struct EmitOp {
     pub toolpath: Toolpath,
     /// A Drill's holes in cut order; `None` writes plain moves.
     pub holes: Option<Vec<DrillHole>>,
+    /// Which of the operation's tool runs this is
+    /// (`docs/specs/phase-3/design.md`, "dc-gcode"): [`RunLabel::Main`]
+    /// for every operation but a carve's clearing pass (#406).
+    pub label: RunLabel,
 }
 
 impl EmitOp {
@@ -318,6 +322,7 @@ impl EmitOp {
             tool,
             toolpath: drilled.toolpath,
             holes: Some(drilled.holes),
+            label: RunLabel::Main,
         }
     }
 }
@@ -330,6 +335,7 @@ impl From<(Operation, Tool, Toolpath)> for EmitOp {
             tool,
             toolpath,
             holes: None,
+            label: RunLabel::Main,
         }
     }
 }

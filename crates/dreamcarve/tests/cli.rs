@@ -1403,46 +1403,90 @@ fn v19_project_exports_the_same_program() {
     assert!(!from_v19.is_empty());
 }
 
-/// Format 20 (#413): a project may hold a V-Carve before its generator
-/// lands (#404). It validates, but `check` and `export` refuse it by
-/// name, and no program is written.
+/// Acceptance 48 through the CLI (#404): the coaster project with its
+/// operations replaced by one V-Carve of a 20 × 5 mm rectangle, 60°
+/// 6.35 mm V-bit, on grblHAL. `check` and `export` succeed, so the program
+/// passed the safety pass (S1–S16, with the V-Carve's partial S9 rule
+/// until #408); the summary states the deepest cut, 4.330 mm; and the
+/// toolpath itself passes `assert_safe`, the cone test included.
 #[test]
-fn v_carve_is_refused_until_it_is_generated() {
-    let dir = work_dir("v_carve_is_refused_until_it_is_generated");
+fn v_carve_exports_and_passes_safety() {
+    let dir = work_dir("v_carve_exports_and_passes_safety");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
+    assert_eq!(project.post_processor.id, "grblhal");
     let mut bit = dc_project::test_support::tool_v_bit_90();
     bit.id = ToolId::new("tv");
+    bit.cutter = ToolKind::VBit {
+        included_angle_deg: 60.0,
+    };
+    bit.feed_mm_min = Some(1500.0);
+    bit.plunge_mm_min = Some(500.0);
+    bit.rpm = Some(18000);
     project.tools.push(bit);
-    let mut carve = dc_project::test_support::sample_v_carve();
-    carve.targets = project.operations[0].targets().to_vec();
-    carve.tool = ToolId::new("tv");
-    carve.flat_depth_mm = Some(1.0);
-    project.operations.insert(0, Operation::VCarve(carve));
+    let rectangle = FeatureDefinition {
+        id: DefinitionId::new("dv"),
+        name: "Rectangle".into(),
+        profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 5.0)],
+    };
+    project.definitions.insert(rectangle.id.clone(), rectangle);
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("iv"),
+        definition: DefinitionId::new("dv"),
+        transform: Transform::translate(45.0, 52.5),
+        name: "Rectangle".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    let carve = dc_project::VCarveOp {
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        ..dc_project::test_support::sample_v_carve()
+    };
+    project.operations = vec![Operation::VCarve(carve.clone())];
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
-    for args in [
-        &["check", "coaster.dcv"][..],
-        &["export", "coaster.dcv", "--date", FIXED_DATE],
-    ] {
-        let command = args[0];
-        let out = run(&dir, args);
-        let report = format!("{}{}", stdout(&out), stderr(&out));
-        assert_ne!(out.status.code(), Some(0), "{command}: {report}");
-        assert!(
-            report.contains("`o6`")
-                && report.contains("v_carve")
-                && report.contains("not supported"),
-            "{command}: {report}"
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "check: {}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("deepest cut 4.330 mm below the stock top"),
+        "{}",
+        stdout(&out)
+    );
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "export: {}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains("cut 4.330 mm deep at most"),
+        "{}",
+        stdout(&out)
+    );
+    let program = std::fs::read_to_string(dir.join("coaster.nc")).expect("coaster.nc written");
+    assert!(program.contains("G1"), "{program}");
+
+    let project = load_file(&dcv).project;
+    let (runs, _) = dc_cam::generate_vcarve(&project, &carve).expect("the carve generates");
+    for run in &runs {
+        dc_cam::test_support::assert_safe(
+            &run.toolpath,
+            &project,
+            &Operation::VCarve(carve.clone()),
         );
     }
-    let programs: Vec<_> = std::fs::read_dir(&dir)
-        .expect("dir readable")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().extension().is_some_and(|x| x == "nc"))
-        .collect();
-    assert!(programs.is_empty(), "{programs:?}");
 }
 
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an

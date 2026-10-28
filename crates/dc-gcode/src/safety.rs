@@ -5099,6 +5099,41 @@ mod tests {
         material::check(&blocks, &post, &transform, tolerances, &span)
     }
 
+    /// S9 for a V-Carve until #408 (the partial S17 of #404,
+    /// `crate::material`'s module docs), on a hand-written program for a
+    /// V-Carve of the sample rectangle (X 10 to 60, Y 10 to 40, stock-top
+    /// origin) with the 90° 6.35 mm V-bit (cone 3.175 mm): a cut 2 mm deep
+    /// well inside passes, after a plunge from above; a cut whose tip
+    /// leaves the rectangle fails, so does one whose 2 mm cone reaches
+    /// past the wall, one deeper than the cone, and one sideways above the
+    /// start plane.
+    #[test]
+    fn hand_written_v_carve_off_its_region_fails_s9() {
+        let mut project = sample_project();
+        project
+            .tools
+            .insert(0, dc_project::test_support::tool_v_bit_90());
+        let op = Operation::VCarve(dc_project::test_support::sample_v_carve());
+        let program = |cuts: &str| format!("G21 G90\nG54\nG0 Z5\nX20 Y25\nG0 Z1\n{cuts}G0 Z5\n");
+        let ok = program("G1 Z-2 F300\nX50 F1000\n");
+        check_material_text(&ok, &project, &op).unwrap();
+        for (what, cuts) in [
+            ("tip off the rectangle", "G1 Z-2 F300\nX61 F1000\n"),
+            ("cone past the wall", "G1 Z-2 F300\nX59 F1000\n"),
+            ("below the cone", "G1 Z-3.5 F300\nX30 F1000\n"),
+            (
+                "sideways above the start plane",
+                "G1 Z0.5 F300\nX30 F1000\n",
+            ),
+        ] {
+            let err = check_material_text(&program(cuts), &project, &op);
+            assert!(
+                matches!(err, Err(ExportError::OffMaterial { .. })),
+                "{what}: {err:?}"
+            );
+        }
+    }
+
     /// S9 on a hand-written program for the sample rectangle's Pocket
     /// (X 10 to 60, Y 10 to 40, stock-top origin): a cut past the wall
     /// fails, so does an arc whose ends are inside but whose bulge takes
