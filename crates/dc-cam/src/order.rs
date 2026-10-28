@@ -45,7 +45,11 @@ use dc_project::{Operation, OperationId, PocketOp, Project, ToolId};
 ///   the same earlier operation freed no outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
 ///   operations, in order, use again after a different tool, by the
-///   tool's first use.
+///   tool's first use;
+/// - [`Warning::StartDepthMismatch`] for every enabled operation cut from
+///   a start plane (a V-Carve) that an earlier Pocket at another depth
+///   contains ([`start_plane`]), in project order. These read the project
+///   only, not `generated`.
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
     let targets: Vec<Vec<(ShapeRef, Target)>> = generated
@@ -118,6 +122,7 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
         }
     }
     warnings.extend(tool_change_hints(project));
+    warnings.extend(start_depth_warnings(project));
     warnings
 }
 
@@ -148,10 +153,86 @@ pub enum StartPlane<'p> {
 
 /// The start plane of `op`; `None` for an operation not cut from one, or
 /// one whose start depth validation rejects (not finite, or below 0).
+///
+/// The containing Pocket is [`dc_project::containing_pocket`], whatever
+/// the start depth: a carve from the stock top inside a Pocket is a
+/// mismatch too. Without one, a start depth above 0 is uncleared unless
+/// the operation vouches for the plane.
 #[must_use]
 pub fn start_plane<'p>(project: &'p Project, op: &Operation) -> Option<StartPlane<'p>> {
-    let _ = (project, op);
-    None
+    let setting = start_setting(op)?;
+    if !(setting.start_depth_mm.is_finite() && setting.start_depth_mm >= 0.0) {
+        return None;
+    }
+    Some(match dc_project::containing_pocket(project, op) {
+        Some(pocket) => {
+            let at_start = pocket
+                .depth_mm
+                .is_some_and(|d| (d - setting.start_depth_mm).abs() <= EPS_MM);
+            if at_start {
+                StartPlane::Cleared(pocket)
+            } else {
+                StartPlane::Mismatch(pocket)
+            }
+        }
+        None if setting.start_depth_mm <= 0.0 => StartPlane::StockTop,
+        None if setting.cleared_externally => StartPlane::ClearedExternally,
+        None => StartPlane::Uncleared,
+    })
+}
+
+/// The start-plane setting of an operation cut from a start plane.
+struct StartSetting {
+    /// How far below the stock top the plane is.
+    start_depth_mm: f64,
+    /// `start_plane_cleared_externally`: the user's word that another
+    /// program cleared the plane.
+    cleared_externally: bool,
+}
+
+/// The start-plane setting of `op`, for the operations cut from a start
+/// plane; `None` for the others. This is the list of start-plane
+/// operations: a countersink Drill (sub-phase 3.2) and a Photo V-Carve
+/// (3.4) join it here, and [`start_plane`] and [`check`] then cover them.
+/// An Inlay is exempt (its start plane is the stock top or the plug's own
+/// design). The match is exhaustive so a new operation must say.
+fn start_setting(op: &Operation) -> Option<StartSetting> {
+    match op {
+        Operation::VCarve(carve) => Some(StartSetting {
+            start_depth_mm: carve.start_depth_mm,
+            cleared_externally: carve.start_plane_cleared_externally,
+        }),
+        Operation::Profile(_)
+        | Operation::Pocket(_)
+        | Operation::Drill(_)
+        | Operation::Bore(_)
+        | Operation::Engrave(_) => None,
+    }
+}
+
+/// [`Warning::StartDepthMismatch`] for every enabled start-plane operation
+/// of `project` whose containing Pocket is at another depth, in project
+/// order. An uncleared plane adds nothing: it is validation's error
+/// `start_depth_uncleared`, reported once, at the start depth, and a
+/// project with an error never reaches the generators.
+fn start_depth_warnings(project: &Project) -> Vec<Warning> {
+    project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .filter_map(|op| match start_plane(project, op)? {
+            StartPlane::Mismatch(pocket) => Some(Warning::StartDepthMismatch {
+                op: op.id().clone(),
+                pocket: pocket.id.clone(),
+                start_depth_mm: start_setting(op)?.start_depth_mm,
+                pocket_depth_mm: pocket.depth_mm,
+            }),
+            StartPlane::StockTop
+            | StartPlane::Cleared(_)
+            | StartPlane::ClearedExternally
+            | StartPlane::Uncleared => None,
+        })
+        .collect()
 }
 
 /// The target outlines an operation leaves loose, or held only by tabs,
@@ -1260,7 +1341,7 @@ mod tests {
     /// counted from the stock top stays within the 3.175 mm cone)
     /// starting `start_depth_mm` below the stock top; before it, when
     /// `pocket_depth_mm` is given, the Pocket `o2` of the rectangle that
-    /// deep.
+    /// deep with the end mill `t1` (which is otherwise left out).
     fn carve_in_pocket(pocket_depth_mm: Option<f64>, start_depth_mm: f64) -> Project {
         let mut project = sample_project();
         project.tools.push(tool_v_bit_90());
@@ -1281,11 +1362,13 @@ mod tests {
             z_bottom_mm: Some(0.0),
         });
         project.operations.clear();
-        if let Some(depth_mm) = pocket_depth_mm {
-            project.operations.push(Operation::Pocket(PocketOp {
+        match pocket_depth_mm {
+            Some(depth_mm) => project.operations.push(Operation::Pocket(PocketOp {
                 depth_mm: Some(depth_mm),
                 ..sample_pocket()
-            }));
+            })),
+            // No operation uses the end mill.
+            None => project.tools.retain(|t| t.id.as_str() != "t1"),
         }
         project.operations.push(Operation::VCarve(VCarveOp {
             targets: vec![InstanceId::new("i2")],

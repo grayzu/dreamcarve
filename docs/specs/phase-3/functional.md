@@ -474,7 +474,10 @@ Numbering continues from phase 2's 47.
  Z is 4 mm lower than in 48, the descent from the entry clearance above
  the stock top to the first cut is at the plunge rate, the program
  passes S1 and S2, and `check` is quiet. With the Pocket 3 mm deep,
- `check` warns `start_depth_mismatch` naming it. With the Pocket
+ `check` warns `start_depth_mismatch` naming it (the rectangle given a
+ 1 mm flat depth: a mismatched plane counts the flank from the stock
+ top, and 4 mm plus the 4.33 mm carve exceeds the 60° bit's 5.5 mm
+ cone; #409). With the Pocket
  disabled, or the rectangle outside it, export is refused with
  `start_depth_uncleared`; with `start_plane_cleared_externally: true` as
  well it exports, and the same project with the 90° bit (cone height

@@ -237,7 +237,10 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             Some(op) => format!("operation `{op}`: {w}"),
             None => w.to_string(),
         };
-        Finding::coded(w.code().as_str(), message)
+        Finding {
+            field: warning_field(&w),
+            ..Finding::coded(w.code().as_str(), message)
+        }
     }));
     if !findings.errors.is_empty() {
         // An operation did not generate.
@@ -269,6 +272,18 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                 generated: Some(ops),
             }
         }
+    }
+}
+
+/// The field, as validation names it, that a project-wide warning is
+/// about, so it is printed at that value's position: the start depth of
+/// a `start_depth_mismatch`, where `start_depth_uncleared` is located too.
+fn warning_field(warning: &dc_cam::Warning) -> Option<String> {
+    match warning {
+        dc_cam::Warning::StartDepthMismatch { op, .. } => {
+            Some(format!("operations[{op}].start_depth_mm"))
+        }
+        _ => None,
     }
 }
 

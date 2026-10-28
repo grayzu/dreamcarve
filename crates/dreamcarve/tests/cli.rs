@@ -1615,7 +1615,7 @@ fn check_warns_start_depth_mismatch() {
         1,
         "{report}"
     );
-    assert!(dir.join("coaster.nc").exists(), "{report}");
+    assert!(dir.join("coaster-2-T2.nc").exists(), "{report}");
 }
 
 /// Acceptance 53 (#409, security review M2): with the Pocket disabled,
