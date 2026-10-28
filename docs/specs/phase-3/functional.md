@@ -216,7 +216,9 @@ is no GUI in this phase.
  (error `countersink_mouth_exceeds_tool`), and a target circle at least
  as wide as the mouth is skipped with
  `countersink_mouth_not_wider_than_hole`, since there is nothing to
- cut. Always plain moves, never a canned cycle, even with
+ cut. Drill's rule that skips a hole narrower than its tool does not
+ apply: a countersink's bit is wider than its hole by design (changed
+ in spec sync 1). Always plain moves, never a canned cycle, even with
  `use_canned_cycles` on: the motion is a simple plunge, but the depth is
  derived, and a controller's cycle cannot say so. `dwell_s` applies as
  for `simple`; `retract_mm` is measured from the stock top, not the
@@ -377,7 +379,8 @@ is no GUI in this phase.
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
  `inlay_male_mirrored`, `photo_lines_overlap`, `image_colour_converted`,
- `start_depth_mismatch`, `start_depth_uncleared`. An error stops export
+ `start_depth_mismatch`, `start_depth_uncleared`,
+ `countersink_ignores_tool_width`. An error stops export
  and names the operation, shape, tool or field; a warning never does.
 49. **Golden parity.** The V-Carve goldens are captured from PureCutCNC's
  `v_carve_medial` and `v_carve` on fixtures the design spec lists
@@ -398,7 +401,7 @@ tip flat: the bit is an ideal point, as PureCutCNC models it, and the glue
 gap absorbs the difference for an inlay (Corbin's fit adjustment does the
 same); tip-width modelling waits for a reason to model it. Clearing with a
 ball-nose or engraving cutter (VCarve allows them; a clearing pass is a
-Pocket inside, so end mills only); a pass's wall pass, allowance, corner
+Pocket inside, so end mills only); a pass's wall pass, stock to leave, corner
 relief or rest-of chain (a pass takes its tool's step-down and
 step-over and nothing else); and VCarve's "Corner Sharpen". Projecting a
 carve onto a 3D model. VCarve's "Use Vector Start Points" and "Use Vector
