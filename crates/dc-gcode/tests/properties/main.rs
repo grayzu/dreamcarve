@@ -32,7 +32,7 @@ mod projects;
 use dc_cam::test_support::assert_safe;
 use dc_cam::{
     CamError, MoveKind, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
-    generate_profile,
+    generate_profile, generate_vcarve,
 };
 use dc_gcode::{EmitOp, emit};
 use dc_project::{MachiningOrder, Operation, Problem, Project, validate};
@@ -105,11 +105,16 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
             let (toolpath, _) = generate_bore(project, b)?;
             EmitOp::from((op, tool, toolpath))
         }
-        Operation::VCarve(_) => {
-            return Err(CamError::NotSupportedYet {
-                op: op.id().clone(),
-                feature: "V-carving (`v_carve`)".into(),
-            });
+        // No property generates a V-Carve yet; its one run (no clearing
+        // passes) is what would be emitted.
+        Operation::VCarve(v) => {
+            let (runs, _) = generate_vcarve(project, v)?;
+            let toolpath = runs
+                .into_iter()
+                .next()
+                .map(|r| r.toolpath)
+                .unwrap_or_default();
+            EmitOp::from((op, tool, toolpath))
         }
     })
 }

@@ -48,16 +48,64 @@ impl Walls {
     /// `tolerance_mm` as the medial axis flattens them, consecutive
     /// duplicates dropped.
     pub(crate) fn new(regions: &[Region], tolerance_mm: f64) -> Self {
-        let _ = (regions, tolerance_mm);
-        Self {
-            segments: Vec::new(),
-            loops: Vec::new(),
-            origin: Point::new(0.0, 0.0),
-            cell_mm: 1.0,
-            columns: 1,
-            rows: 1,
-            buckets: vec![Vec::new()],
+        let mut segments = Vec::new();
+        let mut loops = Vec::new();
+        for region in regions {
+            for contour in std::iter::once(region.outer()).chain(region.holes()) {
+                let flat = contour.polyline().with_arcs_flattened(tolerance_mm);
+                let points = clean_loop(flat.vertices().iter().map(|v| v.point()));
+                if points.len() < 2 {
+                    continue;
+                }
+                let next = points.iter().cycle().skip(1);
+                for (&a, &b) in points.iter().zip(next) {
+                    segments.push((a, b));
+                }
+                loops.push(Polyline::new(
+                    points.iter().map(|p| Vertex::line(p.x, p.y)).collect(),
+                    true,
+                ));
+            }
         }
+        let (mut min, mut max) = (
+            Point::new(f64::INFINITY, f64::INFINITY),
+            Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for &(a, b) in &segments {
+            for p in [a, b] {
+                min = Point::new(min.x.min(p.x), min.y.min(p.y));
+                max = Point::new(max.x.max(p.x), max.y.max(p.y));
+            }
+        }
+        if segments.is_empty() {
+            min = Point::new(0.0, 0.0);
+            max = min;
+        }
+        let extent_mm = (max.x - min.x).max(max.y - min.y);
+        let cell_mm = (extent_mm / MAX_CELLS).max(1e-3);
+        let columns = count_of(((max.x - min.x) / cell_mm).floor()) + 1;
+        let rows = count_of(((max.y - min.y) / cell_mm).floor()) + 1;
+        let mut walls = Self {
+            segments,
+            loops,
+            origin: min,
+            cell_mm,
+            columns,
+            rows,
+            buckets: vec![Vec::new(); columns * rows],
+        };
+        for (index, &(a, b)) in walls.segments.iter().enumerate() {
+            let (c0, r0) = walls.cell_of(Point::new(a.x.min(b.x), a.y.min(b.y)));
+            let (c1, r1) = walls.cell_of(Point::new(a.x.max(b.x), a.y.max(b.y)));
+            for r in r0..=r1 {
+                for c in c0..=c1 {
+                    if let Some(bucket) = walls.buckets.get_mut(r * columns + c) {
+                        bucket.push(index);
+                    }
+                }
+            }
+        }
+        walls
     }
 
     /// The grid cell holding `p`, clamped to the grid.
@@ -89,15 +137,22 @@ impl Walls {
     /// The exact distance, mm, from `p` to the nearest wall; infinite with
     /// no walls.
     pub(crate) fn clearance_mm(&self, p: Point) -> f64 {
-        let _ = p;
-        f64::INFINITY
+        self.segments
+            .iter()
+            .map(|&(a, b)| point_segment(p, a, b))
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Whether `p` lies inside the regions by the even-odd rule, or within
     /// `slack_mm` of a wall.
     pub(crate) fn holds(&self, p: Point, slack_mm: f64) -> bool {
-        let _ = (p, slack_mm);
-        true
+        let loops: Vec<&Polyline> = self.loops.iter().collect();
+        point_in_loops(p, &loops)
+            || self
+                .near(p, p, slack_mm)
+                .into_iter()
+                .filter_map(|i| self.segments.get(i))
+                .any(|&(a, b)| point_segment(p, a, b) <= slack_mm)
     }
 
     /// Whether the straight tip path `a`–`b` stays inside the regions, or
@@ -106,8 +161,42 @@ impl Walls {
     /// passes within `slack_mm` of a wall's end), so a path that leaves
     /// through a vertex is caught as well as one that crosses an edge.
     pub(crate) fn holds_path(&self, a: Point, b: Point, slack_mm: f64) -> bool {
-        let _ = (a, b, slack_mm);
-        true
+        if !(self.holds(a, slack_mm) && self.holds(b, slack_mm)) {
+            return false;
+        }
+        let ab = b - a;
+        let length_sq = ab.dot(ab);
+        if length_sq <= EPS_MM * EPS_MM {
+            return true;
+        }
+        let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
+        let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
+        let mut cuts = vec![0.0, 1.0];
+        for &(c, d) in self
+            .near(lo, hi, slack_mm)
+            .iter()
+            .filter_map(|&i| self.segments.get(i))
+        {
+            let cd = d - c;
+            let denom = ab.cross(cd);
+            if denom.abs() > 1e-12 {
+                let t = (c - a).cross(cd) / denom;
+                let u = (c - a).cross(ab) / denom;
+                if (-1e-9..=1.0 + 1e-9).contains(&u) && (0.0..=1.0).contains(&t) {
+                    cuts.push(t);
+                }
+            }
+            for end in [c, d] {
+                if point_segment(end, a, b) <= slack_mm {
+                    cuts.push(((end - a).dot(ab) / length_sq).clamp(0.0, 1.0));
+                }
+            }
+        }
+        cuts.sort_by(f64::total_cmp);
+        cuts.windows(2).all(|w| match w {
+            [s, t] if t - s > 1e-12 => self.holds(a + ab * ((s + t) / 2.0), slack_mm),
+            _ => true,
+        })
     }
 
     /// The least, along the straight move `a`–`b`, of the tip's distance
@@ -123,8 +212,43 @@ impl Walls {
         start_plane_z_mm: f64,
         slope: f64,
     ) -> (f64, Point3) {
-        let _ = (b, start_plane_z_mm, slope);
-        (f64::INFINITY, a)
+        let radius = |z: f64| (start_plane_z_mm - z) * slope;
+        let (a, b) = if a.xy().distance_to(b.xy()) <= EPS_MM {
+            let low = if a.z <= b.z { a } else { b };
+            (low, low)
+        } else {
+            (a, b)
+        };
+        let reach_mm = radius(a.z).max(radius(b.z)).max(0.0) + 2.0 * EPS_MM;
+        let (pa, pb) = (a.xy(), b.xy());
+        let lo = Point::new(pa.x.min(pb.x), pa.y.min(pb.y));
+        let hi = Point::new(pa.x.max(pb.x), pa.y.max(pb.y));
+        let at = |t: f64| {
+            Point3::new(
+                a.x + (b.x - a.x) * t,
+                a.y + (b.y - a.y) * t,
+                a.z + (b.z - a.z) * t,
+            )
+        };
+        let mut best = (reach_mm - radius(a.z).max(radius(b.z)), a);
+        for &(c, d) in self
+            .near(lo, hi, reach_mm)
+            .iter()
+            .filter_map(|&i| self.segments.get(i))
+        {
+            let room = |t: f64| {
+                let p = at(t);
+                point_segment(p.xy(), c, d) - radius(p.z)
+            };
+            let t = golden_minimum(&room);
+            for t in [0.0, t, 1.0] {
+                let g = room(t);
+                if g < best.0 {
+                    best = (g, at(t));
+                }
+            }
+        }
+        best
     }
 }
 

@@ -197,15 +197,62 @@ pub fn cone_in_material(
     cone_mm: f64,
     tolerance_mm: f64,
 ) -> Result<(), ConeViolation> {
-    let _ = (
-        toolpath,
-        regions,
-        start_plane_z_mm,
-        engaged_from_z_mm,
-        slope,
-        cone_mm,
-        tolerance_mm,
-    );
+    let walls = Walls::new(regions, tolerance_mm);
+    let tol = tolerance_mm.max(0.0) + EPS_MM;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        if !mv.is_cut() {
+            continue;
+        }
+        let b = mv.to;
+        if !matches!(mv.kind, MoveKind::Linear) {
+            return Err(ConeViolation::NotStraight { at: b });
+        }
+        let vertical = a.xy().distance_to(b.xy()) <= EPS_MM;
+        let low = if a.z <= b.z { a } else { b };
+        if vertical && low.z > start_plane_z_mm + tol {
+            continue;
+        }
+        let high = if a.z <= b.z { b } else { a };
+        if !vertical && high.z > start_plane_z_mm + tol {
+            return Err(ConeViolation::Wall {
+                at: high,
+                overlap_mm: high.z - start_plane_z_mm,
+            });
+        }
+        let engaged_mm = engaged_from_z_mm - low.z;
+        if engaged_mm > cone_mm + tol {
+            return Err(ConeViolation::Shank {
+                at: low,
+                engaged_mm,
+            });
+        }
+        let (tip_from, tip_to) = if vertical { (low, low) } else { (a, b) };
+        if !walls.holds_path(tip_from.xy(), tip_to.xy(), tol) {
+            let at = if walls.holds(tip_from.xy(), tol) {
+                tip_to
+            } else {
+                tip_from
+            };
+            return Err(ConeViolation::Wall {
+                at,
+                overlap_mm: walls.clearance_mm(at.xy())
+                    + (start_plane_z_mm - at.z).max(0.0) * slope,
+            });
+        }
+        let (room_mm, at) = walls.least_room(tip_from, tip_to, start_plane_z_mm, slope);
+        if room_mm < -tol {
+            return Err(ConeViolation::Wall {
+                at,
+                overlap_mm: -room_mm,
+            });
+        }
+    }
     Ok(())
 }
 
@@ -231,11 +278,82 @@ pub fn blocks(
     carve: &Carve<'_>,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<CutBlock>, CamError> {
-    let _ = (project, tool, carve, warnings);
-    Err(CamError::NotSupportedYet {
-        op: op.clone(),
-        feature: "V-carving (#404)".into(),
-    })
+    let bit = checked_v_bit(op, tool)?;
+    let rates = rates_of(tool)?;
+    let operation = project
+        .operations
+        .iter()
+        .find(|o| o.id() == op)
+        .ok_or_else(|| CamError::UnknownOperation { op: op.clone() })?;
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let safe_z_mm = thickness_mm + operation.safe_z_mm();
+    let floor_z_mm = -operation.through_cut_allowance_mm();
+    if let VCarveStrategy::Offset { .. } = carve.strategy {
+        return Err(CamError::NotSupportedYet {
+            op: op.clone(),
+            feature: "the offset V-Carve strategy (#407)".into(),
+        });
+    }
+    if !carve.cleared_by.is_empty() {
+        return Err(CamError::NotSupportedYet {
+            op: op.clone(),
+            feature: "V-Carve clearing passes (#406)".into(),
+        });
+    }
+    let depth = Depth {
+        start_plane_z_mm: carve.start_plane_z_mm,
+        flat_depth_mm: carve.flat_depth_mm,
+        slope: bit.slope,
+    };
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let mut budget_warned = false;
+    let mut out = Vec::new();
+    for (region, shape) in carve.regions.iter().zip(&carve.shapes) {
+        let Some((graph, step_mm)) = medial::region_graph(
+            region,
+            tolerance_mm,
+            op,
+            shape,
+            &mut budget_warned,
+            warnings,
+        ) else {
+            continue;
+        };
+        // Step 3: the deepest point, from the widest node, engages the
+        // flank from `engaged_from`; below the cone the shank cuts.
+        let widest_mm = graph
+            .nodes
+            .iter()
+            .map(|n| n.clearance_mm)
+            .fold(0.0, f64::max);
+        let deepest_z_mm = depth.z_mm(widest_mm);
+        let engaged_mm = carve.engaged_from_z_mm - deepest_z_mm;
+        if engaged_mm > bit.cone_mm + EPS_MM {
+            return Err(CamError::VBitConeExceeded {
+                op: op.clone(),
+                shape: Box::new(shape.clone()),
+                depth_mm: engaged_mm,
+                cone_mm: bit.cone_mm,
+            });
+        }
+        if deepest_z_mm < floor_z_mm - EPS_MM {
+            return Err(CamError::BelowMaterialBottom {
+                op: op.clone(),
+                depth_mm: thickness_mm - deepest_z_mm,
+                limit_mm: thickness_mm - floor_z_mm,
+            });
+        }
+        let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
+        let runs = medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls);
+        out.extend(
+            runs.iter()
+                .map(|run| medial::run_block(run, shape, rates, safe_z_mm)),
+        );
+    }
+    Ok(out)
 }
 
 /// Generates the V-Carve toolpath for `op` in `project`: one
@@ -267,11 +385,78 @@ pub fn generate_vcarve(
     project: &Project,
     op: &VCarveOp,
 ) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
-    let _ = project;
-    Err(CamError::NotSupportedYet {
-        op: op.id.clone(),
-        feature: "V-carving (#404)".into(),
-    })
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: op.tool.clone(),
+        })?;
+    checked_v_bit(&op.id, tool)?;
+    rates_of(tool)?;
+    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
+        return Err(CamError::InvalidSafeZ {
+            op: op.id.clone(),
+            safe_z_mm: op.safe_z_mm,
+        });
+    }
+    if let Some(flat_depth_mm) = op.flat_depth_mm
+        && !(flat_depth_mm.is_finite() && flat_depth_mm > 0.0)
+    {
+        return Err(CamError::InvalidDepth {
+            op: op.id.clone(),
+            depth_mm: flat_depth_mm,
+        });
+    }
+    let (start_plane_z_mm, engaged_from_z_mm) = start_plane(project, op)?;
+    let mut warnings = Vec::new();
+    let Targets {
+        regions,
+        shapes,
+        containment,
+    } = carve_regions(project, &op.id, &op.targets, &mut warnings)?;
+    let carve = Carve {
+        regions,
+        shapes,
+        start_plane_z_mm,
+        engaged_from_z_mm,
+        flat_depth_mm: op.flat_depth_mm,
+        strategy: &op.strategy,
+        step_over_fraction: op.step_over_fraction.or(tool.step_over_fraction),
+        cleared_by: op
+            .clearing
+            .iter()
+            .filter_map(|pass| project.tools.iter().find(|t| t.id == pass.tool))
+            .map(|t| Clearing {
+                radius_mm: t.diameter_mm / 2.0,
+            })
+            .collect(),
+    };
+    if !op.clearing.is_empty() {
+        return Err(CamError::NotSupportedYet {
+            op: op.id.clone(),
+            feature: "V-Carve clearing passes (#406)".into(),
+        });
+    }
+    let blocks = blocks(project, &op.id, tool, &carve, &mut warnings)?;
+    let toolpath = finish(
+        project,
+        &op.id,
+        tool,
+        &carve,
+        blocks,
+        &containment,
+        op.machining_order,
+    )?;
+    Ok((
+        vec![ToolRun {
+            label: RunLabel::Main,
+            tool: tool.id.clone(),
+            toolpath,
+        }],
+        warnings,
+    ))
 }
 
 /// Steps 9 and 10: sequences `blocks` of `carve` (operation `op`, `tool`)
@@ -287,11 +472,83 @@ pub(crate) fn finish(
     containment: &[(ShapeRef, ShapeRef)],
     order: dc_project::MachiningOrder,
 ) -> Result<Toolpath, CamError> {
-    let _ = (project, tool, carve, blocks, containment, order);
-    Err(CamError::NotSupportedYet {
-        op: op.clone(),
-        feature: "V-carving (#404)".into(),
-    })
+    let bit = checked_v_bit(op, tool)?;
+    let rates = rates_of(tool)?;
+    let operation = project
+        .operations
+        .iter()
+        .find(|o| o.id() == op)
+        .ok_or_else(|| CamError::UnknownOperation { op: op.clone() })?;
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let safe_z_mm = thickness_mm + operation.safe_z_mm();
+    let input = SequenceInput {
+        blocks,
+        order,
+        containment,
+        safe_z_mm,
+        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
+        stock_top_mm: thickness_mm,
+        tool_diameter_mm: tool.diameter_mm,
+        stepover_mm: 0.0,
+        feed_mm_min: rates.feed_mm_min,
+        plunge_mm_min: rates.plunge_mm_min,
+        cut_before: &[],
+    };
+    let toolpath = sequence(&input)?;
+    // #62: the cutter must stay on the stock.
+    if let Some(overhang) = swept_bounds(&toolpath, tool.diameter_mm / 2.0)
+        .and_then(|swept| stock_overhang(&project.stock, swept))
+    {
+        return Err(CamError::OffStock {
+            op: op.clone(),
+            overhang,
+        });
+    }
+    cone_in_material(
+        &toolpath,
+        &carve.regions,
+        carve.start_plane_z_mm,
+        carve.engaged_from_z_mm,
+        bit.slope,
+        bit.cone_mm,
+        project.flatten_tolerance_mm,
+    )
+    .map_err(|violation| {
+        let at = match violation {
+            ConeViolation::Wall { at, .. }
+            | ConeViolation::Shank { at, .. }
+            | ConeViolation::NotStraight { at } => at,
+        };
+        let shape = Box::new(shape_at(carve, at));
+        match violation {
+            ConeViolation::Shank { engaged_mm, .. } => CamError::VBitConeExceeded {
+                op: op.clone(),
+                shape,
+                depth_mm: engaged_mm,
+                cone_mm: bit.cone_mm,
+            },
+            ConeViolation::Wall { overlap_mm, .. } => CamError::ConeOffMaterial {
+                op: op.clone(),
+                shape,
+                x_mm: at.x,
+                y_mm: at.y,
+                z_mm: at.z,
+                overlap_mm,
+            },
+            ConeViolation::NotStraight { .. } => CamError::ConeOffMaterial {
+                op: op.clone(),
+                shape,
+                x_mm: at.x,
+                y_mm: at.y,
+                z_mm: at.z,
+                overlap_mm: 0.0,
+            },
+        }
+    })?;
+    Ok(toolpath)
 }
 
 /// The shape of the region of `carve` that holds `at`, or else the one
@@ -336,11 +593,37 @@ fn shape_at(carve: &Carve<'_>, at: Point3) -> ShapeRef {
 /// [`CamError::StartDepthUncleared`] for one below the stock top that no
 /// earlier Pocket contains and the operation does not vouch for.
 pub(crate) fn start_plane(project: &Project, op: &VCarveOp) -> Result<(f64, f64), CamError> {
-    let _ = project;
-    Err(CamError::NotSupportedYet {
-        op: op.id.clone(),
-        feature: "V-carving (#404)".into(),
-    })
+    let thickness_mm = project
+        .stock
+        .thickness_mm
+        .ok_or(CamError::MissingThickness)?;
+    let start_depth_mm = op.start_depth_mm;
+    if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0 && start_depth_mm <= thickness_mm) {
+        return Err(CamError::InvalidStartDepth {
+            op: op.id.clone(),
+            start_depth_mm,
+        });
+    }
+    let start_plane_z_mm = thickness_mm - start_depth_mm;
+    if start_depth_mm <= 0.0 {
+        return Ok((start_plane_z_mm, start_plane_z_mm));
+    }
+    let pocket = containing_pocket(project, &Operation::VCarve(op.clone()));
+    if pocket.is_none() && !op.start_plane_cleared_externally {
+        return Err(CamError::StartDepthUncleared {
+            op: op.id.clone(),
+            start_depth_mm,
+        });
+    }
+    let cleared_at_start = pocket
+        .and_then(|p| p.depth_mm)
+        .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
+    let engaged_from_z_mm = if cleared_at_start {
+        start_plane_z_mm
+    } else {
+        thickness_mm
+    };
+    Ok((start_plane_z_mm, engaged_from_z_mm))
 }
 
 /// The regions of `targets` (operation `op`), with the shape each outer
@@ -360,10 +643,87 @@ pub(crate) fn carve_regions(
     targets: &[InstanceId],
     warnings: &mut Vec<Warning>,
 ) -> Result<Targets, CamError> {
-    let _ = (project, targets, warnings);
-    Err(CamError::NotSupportedYet {
-        op: op.clone(),
-        feature: "V-carving (#404)".into(),
+    let mut shapes: Vec<(ShapeRef, Contour)> = Vec::new();
+    for instance_id in targets {
+        let instance = project
+            .instances
+            .iter()
+            .find(|i| &i.id == instance_id)
+            .ok_or_else(|| CamError::UnknownInstance {
+                op: op.clone(),
+                instance: instance_id.clone(),
+            })?;
+        let definition = project
+            .definitions
+            .get(&instance.definition)
+            .ok_or_else(|| CamError::UnknownDefinition {
+                instance: instance.id.clone(),
+                definition: instance.definition.clone(),
+            })?;
+        for (profile, polyline) in definition.profiles.iter().enumerate() {
+            let shape = ShapeRef {
+                instance: instance.id.clone(),
+                instance_name: instance.name.clone(),
+                profile,
+            };
+            if !polyline.is_closed() {
+                warnings.push(Warning::VCarveTargetOpen {
+                    op: op.clone(),
+                    shape,
+                });
+                continue;
+            }
+            let contour = instance
+                .transform
+                .apply_polyline(polyline)
+                .and_then(Contour::new)
+                .map_err(|source| CamError::InvalidTarget {
+                    shape: shape.clone(),
+                    source,
+                })?;
+            shapes.push((shape, contour));
+        }
+    }
+    let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
+    let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
+    for warning in nest_warnings {
+        let GeometryWarning::DuplicateContourDropped {
+            index,
+            duplicate_of,
+        } = warning;
+        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
+        {
+            warnings.push(Warning::DuplicateShapeDropped {
+                shape: dropped.clone(),
+                duplicate_of: kept.clone(),
+            });
+        }
+    }
+    let region_shapes: Vec<ShapeRef> = regions
+        .iter()
+        .filter_map(|r| outer_shape(r, &shapes).cloned())
+        .collect();
+    let mut containment = Vec::new();
+    for (region, inner) in regions.iter().zip(&region_shapes) {
+        let Some(parent_depth) = region.depth().checked_sub(2) else {
+            continue;
+        };
+        let Some(probe) = region.outer().polyline().vertices().first() else {
+            continue;
+        };
+        let around = regions
+            .iter()
+            .zip(&region_shapes)
+            .filter(|(r, _)| r.depth() == parent_depth)
+            .find(|(r, _)| r.holes().iter().any(|h| hole_contains(h, probe.point())));
+        if let Some((_, outer)) = around {
+            containment.push((inner.clone(), outer.clone()));
+        }
+    }
+    Ok(Targets {
+        regions,
+        shapes: region_shapes,
+        containment,
     })
 }
 

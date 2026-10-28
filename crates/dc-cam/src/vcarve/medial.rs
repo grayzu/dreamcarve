@@ -160,17 +160,41 @@ pub(crate) fn region_graph(
     budget_warned: &mut bool,
     warnings: &mut Vec<Warning>,
 ) -> Option<(MedialGraph, f64)> {
-    let _ = (
-        region,
-        tolerance_mm,
-        op,
-        shape,
-        budget_warned,
-        warnings,
-        medial_axis,
-        resolution,
-    );
-    None
+    let no_axis = || Warning::VCarveNoMedialAxis {
+        op: op.clone(),
+        shape: shape.clone(),
+    };
+    let Some(resolved) = resolution(region) else {
+        warnings.push(no_axis());
+        return None;
+    };
+    let mut step_mm = resolved.step_mm;
+    if resolved.budget_limited && !*budget_warned {
+        *budget_warned = true;
+        warnings.push(Warning::VCarveSamplingBudget {
+            op: op.clone(),
+            resolution_mm: step_mm,
+        });
+    }
+    let mut graph = medial_axis(region, step_mm, tolerance_mm);
+    // A region narrower than the step can miss every interior Voronoi
+    // vertex: retry finer before giving up.
+    for _ in 0..MAX_AUTO_REFINEMENTS {
+        if !graph.nodes.is_empty() {
+            break;
+        }
+        let refined_mm = resolved.budget_floor_mm.max(step_mm / 2.0);
+        if refined_mm >= step_mm {
+            break;
+        }
+        step_mm = refined_mm;
+        graph = medial_axis(region, step_mm, tolerance_mm);
+    }
+    if graph.nodes.is_empty() {
+        warnings.push(no_axis());
+        return None;
+    }
+    Some((graph, step_mm))
 }
 
 /// The runs that carve one region from its medial `graph`: chains
@@ -185,8 +209,74 @@ pub(crate) fn runs(
     tolerances: Tolerances,
     walls: &Walls,
 ) -> Vec<Run> {
-    let _ = (graph, depth, tolerances, walls);
-    Vec::new()
+    let chains: Vec<Vec<Point3>> =
+        prune_redundant_leaf_chains(graph, extract_chains(graph), tolerances.redundancy_mm)
+            .iter()
+            .map(|chain| {
+                let points: Vec<Point3> = chain
+                    .iter()
+                    .filter_map(|&i| graph.nodes.get(i))
+                    .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
+                    .collect();
+                let simple = simplify_chain(&points, tolerances.simplify_mm, depth.slope);
+                fit_chain(&simple, walls, depth)
+            })
+            .filter(|points| !points.is_empty())
+            .collect();
+
+    let mut remaining: Vec<usize> = (0..chains.len()).collect();
+    let mut runs: Vec<Run> = Vec::new();
+    let mut current: Option<Run> = None;
+    let mut position: Option<Point3> = None;
+    while !remaining.is_empty() {
+        let picked = match position {
+            None => shallowest_end(&chains, &remaining),
+            Some(p) => nearest_end(&chains, &remaining, p),
+        };
+        let Some((slot, reversed)) = picked else {
+            break;
+        };
+        let index = remaining.remove(slot);
+        let Some(chain) = chains.get(index) else {
+            continue;
+        };
+        let oriented: Vec<Point3> = if reversed {
+            chain.iter().rev().copied().collect()
+        } else {
+            chain.clone()
+        };
+        let Some((&entry, rest)) = oriented.split_first() else {
+            continue;
+        };
+        let from = position.filter(|_| current.is_some());
+        // Continuing through a shared node: the tool is already there.
+        let continues = from.is_some_and(|p| p.xy().distance_to(entry.xy()) <= EPS_MM);
+        let links = !continues && from.is_some_and(|p| links_tool_down(walls, depth, p, entry));
+        if !(continues || links) {
+            runs.extend(current.take());
+            current = Some(Run {
+                start: entry,
+                steps: Vec::new(),
+            });
+        }
+        let Some(run) = current.as_mut() else {
+            continue;
+        };
+        if let Some(p) = from {
+            // At a shared node only a difference in Z is cut.
+            if links || (continues && (p.z - entry.z).abs() > EPS_MM) {
+                run.steps.push(Step {
+                    to: entry,
+                    link: links,
+                });
+            }
+        }
+        run.steps
+            .extend(rest.iter().map(|&to| Step { to, link: false }));
+        position = oriented.last().copied();
+    }
+    runs.extend(current);
+    runs
 }
 
 /// Security review H2: the straight link from `from` to `to`, each at its

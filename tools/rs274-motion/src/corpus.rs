@@ -12,7 +12,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dc_cam::{generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile};
+use dc_cam::{
+    RunLabel, generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile,
+    generate_vcarve,
+};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_project::{
     DrillCycle, DrillOp, Heights, Operation, ParkXy, PostProcessor, PostProcessorRef, Project,
@@ -267,11 +270,24 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             Operation::Pocket(op) => (generate_pocket(project, op).map_err(err)?.0, None),
             Operation::Engrave(op) => (generate_engrave(project, op).map_err(err)?.0, None),
             Operation::Bore(op) => (generate_bore(project, op).map_err(err)?.0, None),
-            Operation::VCarve(_) => {
-                return Err(format!(
-                    "operation {} is a V-Carve, which this build does not generate yet",
-                    operation.id()
-                ));
+            // Format 20: each tool run is written with its own tool.
+            Operation::VCarve(op) => {
+                for run in generate_vcarve(project, op).map_err(err)?.0 {
+                    let tool = project
+                        .tools
+                        .iter()
+                        .find(|t| t.id == run.tool)
+                        .ok_or_else(|| format!("operation {} has no tool", operation.id()))?
+                        .clone();
+                    ops.push(EmitOp {
+                        op: operation.clone(),
+                        tool,
+                        toolpath: run.toolpath,
+                        holes: None,
+                        label: run.label,
+                    });
+                }
+                continue;
             }
             Operation::Drill(op) => {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
@@ -283,6 +299,7 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             tool,
             toolpath,
             holes,
+            label: RunLabel::Main,
         });
     }
     let (programs, _) =

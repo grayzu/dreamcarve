@@ -354,6 +354,7 @@ pub mod vcarve {
     /// it: V-Carve builds one from its targets, Inlay one per side.
     pub struct Carve<'a> {
         pub regions: Vec<Region>,          // carved area, even-odd nested, project space
+        pub shapes: Vec<ShapeRef>,         // each region's outer shape, for its blocks and errors (#404)
         pub start_plane_z_mm: f64,         // thickness − start_depth
         /// Z the flank is engaged from: the stock top, or the start plane
         /// when an enabled earlier Pocket has cleared it (security review
@@ -361,7 +362,7 @@ pub mod vcarve {
         pub engaged_from_z_mm: f64,
         pub flat_depth_mm: Option<f64>,
         pub strategy: &'a VCarveStrategy,
-        pub step_over_fraction: f64,       // V-bit floor
+        pub step_over_fraction: Option<f64>, // V-bit floor; None when neither the op nor the tool sets one (#404; #405 decides whether it is required)
         pub cleared_by: Vec<Clearing>,     // the clearing passes' tools, in order (see "Clearing passes")
     }
     pub struct Clearing { pub radius_mm: f64 }
@@ -668,7 +669,14 @@ orientation; DreamCarve's regions are normalised anyway.
      (the clamped value, never the raw clearance: upstream's gouge fix).
    - **Simplify** (`simplifyChain`, tolerance `0.25 · step`):
      Douglas-Peucker on XYZ with the Z error scaled by `slope`.
-   - **Blocks**: one `CutBlock` per chain, `cuts` the chain's `Linear`
+   - **Fit** (#404, not upstream): a stretch between two kept points
+     whose cone reaches more than 0.1 µm past a wall (a reflex corner or a
+     flattened curve between them; the dropped points) is split at its
+     worst point, set to that point's own depth, at most 16 times.
+   - **Blocks** (changed in #404): one `CutBlock` per run of chains the
+     tool cuts without lifting (chains continued through a shared node or
+     joined by a stay-down link; the link is a cut of the block), else
+     per chain as below: `cuts` the chains' `Linear`
      moves at their own Z (the toolpath is 3D: `Move::to` carries Z; the
      block's `z_mm` is its deepest point and S13 O4 pass monotony is
      read per block as the block's deepest Z, the same reading tabs
@@ -692,8 +700,11 @@ orientation; DreamCarve's regions are normalised anyway.
      lets a link at depth run below the final V surface by up to
      `0.9 · d`; DreamCarve retracts there instead. Links are not golden-
      compared, so parity holds. The link is emitted by the generator as
-     part of the block (`descent` holds it, `descent_from` the previous
-     exit), since `sequence` has no cone test.
+     a cut inside the block (#404: a run of linked chains is one block,
+     so `sequence` needs no new link rule and has no cone test). A
+     region starts at its shallowest chain end (a corner tip where there
+     is one): the sequencer, not the generator, orders regions, so
+     upstream's "nearest the previous region" is not known here.
 6. **Flat floor.** With `F`, where a node's clearance exceeds `F · slope`
    its depth is clamped (step 5), which is PureCutCNC's whole treatment.
    DreamCarve adds the floor (functional 39): `floor = floor_regions`
