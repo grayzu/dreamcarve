@@ -322,7 +322,8 @@ pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId)
 }
 
 /// One line per enabled V-Carve of `generated`, for `check` and `export`:
-/// its deepest cut and whether it has a flat depth (capability 39).
+/// its deepest cut, whether it has a flat depth (capability 39) and, when
+/// the V-bit cuts a floor, the height of the ridges it leaves (design step 6).
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     project
         .operations
@@ -331,10 +332,17 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
         .filter_map(|op| match op {
             Operation::VCarve(carve) => {
                 let deepest = deepest_cut_mm(project, generated, &carve.id)?;
-                let floor = carve.flat_depth_mm.map_or_else(
+                let mut floor = carve.flat_depth_mm.map_or_else(
                     || "no flat depth".to_owned(),
                     |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
                 );
+                // Design step 6: the V-bit's floor is scalloped.
+                if let Some(ridge_mm) = dc_cam::vcarve::floor_ridge_height_mm(project, carve) {
+                    floor.push_str(&format!(
+                        "; V-bit floor ridges {}; a clearing pass or a smaller step_over_fraction flattens them",
+                        describe_length(project, ridge_mm)
+                    ));
+                }
                 Some(format!(
                     "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
                     carve.id,

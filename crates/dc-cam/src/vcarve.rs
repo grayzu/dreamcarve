@@ -13,12 +13,15 @@
 //! toolpath (step 10): a library crate never hands back motion it can
 //! prove wrong.
 //!
-//! This slice (#404) carves with the medial strategy and clamps at the
-//! flat depth only, as PureCutCNC does; the floor trace and the V-bit
-//! floor (#405), clearing passes (#406) and the offset strategy (#407)
-//! are refused with [`CamError::NotSupportedYet`] until they land.
+//! The medial strategy (#404) clamps at the flat depth, as PureCutCNC
+//! does; where a region is wider than the groove there, the `floor`
+//! module traces the floor boundary and clears the floor with the V-bit
+//! (#405), and the chains it covers are dropped. Clearing passes (#406)
+//! and the offset strategy (#407) are refused with
+//! [`CamError::NotSupportedYet`] until they land.
 
 mod cone;
+pub(crate) mod floor;
 pub(crate) mod medial;
 #[cfg(test)]
 mod tests;
@@ -37,6 +40,7 @@ use dc_project::{
     InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp, VCarveStrategy,
     containing_pocket,
 };
+use floor::{Floor, FloorCut};
 use medial::{Depth, Tolerances};
 
 /// What a V-bit carve is, independent of which operation asked for it:
@@ -63,8 +67,9 @@ pub struct Carve<'a> {
     /// Medial lines or offset rings.
     pub strategy: &'a VCarveStrategy,
     /// The V-bit floor's step-over as a fraction of its cut width at the
-    /// flat depth (#405), from the operation or the tool; `None` when
-    /// neither sets one.
+    /// flat depth, from the operation or the tool; `None` when neither
+    /// sets one, which is [`CamError::MissingStepOver`] once there is a
+    /// floor to cut (#405).
     pub step_over_fraction: Option<f64>,
     /// The clearing passes' tools, in order (#406).
     pub cleared_by: Vec<Clearing>,
@@ -111,6 +116,18 @@ pub enum ConeViolation {
 #[must_use]
 pub fn cone_height_mm(tool: &Tool) -> Option<f64> {
     v_bit(tool).map(|bit| bit.cone_mm)
+}
+
+/// The height, mm, of the ridges the V-bit leaves between its floor rings
+/// in `op` (`docs/specs/phase-3/design.md`, "V-Carve generator", step 6):
+/// two grooves `s` apart at the flat depth leave a ridge `s / (2 tan(α/2))`
+/// high, which with `s = step_over_fraction · 2 F tan(α/2)` is
+/// `step_over_fraction · F`. `None` when the carve has no floor for the
+/// V-bit to clear: no flat depth, no usable V-bit or step-over fraction,
+/// or no region wide enough.
+#[must_use]
+pub fn floor_ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
+    floor::ridge_height_mm(project, op)
 }
 
 /// A usable V-bit's slope and cone.
@@ -258,9 +275,12 @@ pub fn cone_in_material(
 
 /// The cut blocks of `carve` for operation `op`, cut with `tool` (a
 /// V-bit), in region order and, within a region, in the generator's cut
-/// order (`docs/specs/phase-3/design.md`, "V-Carve generator", steps 3–5).
+/// order (`docs/specs/phase-3/design.md`, "V-Carve generator", steps 3–6).
 /// Each block is one run of medial chains the bit cuts without lifting,
-/// at pass 0, entered by a straight plunge to its first point's Z.
+/// at pass 0, entered by a straight plunge to its first point's Z; with a
+/// flat depth, a region's runs are followed by its floor's rings and
+/// boundary trace (`floor::blocks`), and the chains wholly on that floor
+/// are not cut.
 ///
 /// # Errors
 ///
@@ -269,7 +289,9 @@ pub fn cone_in_material(
 /// [`CamError::MissingThickness`], [`CamError::VBitConeExceeded`] when a
 /// region's deepest point engages the flank past the cone,
 /// [`CamError::BelowMaterialBottom`] when it is below the stock bottom
-/// less the allowance (S1), and [`CamError::NotSupportedYet`] for the
+/// less the allowance (S1), [`CamError::MissingStepOver`] or
+/// [`CamError::InvalidStepOver`] when a floor is to be cut without a
+/// usable `step_over_fraction`, and [`CamError::NotSupportedYet`] for the
 /// offset strategy and clearing passes.
 pub fn blocks(
     project: &Project,
@@ -308,6 +330,7 @@ pub fn blocks(
         flat_depth_mm: carve.flat_depth_mm,
         slope: bit.slope,
     };
+    let flat = Floor::of(carve, bit.slope);
     let tolerance_mm = project.flatten_tolerance_mm;
     let mut budget_warned = false;
     let mut out = Vec::new();
@@ -346,12 +369,37 @@ pub fn blocks(
                 limit_mm: thickness_mm - floor_z_mm,
             });
         }
+        // Step 6: the floor, where the region is wider than the groove at
+        // the flat depth; the chains it covers are dropped.
+        let floors = flat
+            .map(|f| f.regions(region, tolerance_mm))
+            .unwrap_or_default();
         let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
-        let runs = medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls);
+        let runs = medial::runs(
+            &graph,
+            &depth,
+            Tolerances::at_step(step_mm),
+            &walls,
+            &floors,
+        );
+        let mut anchor = runs
+            .last()
+            .map(|run| run.steps.last().map_or(run.start, |s| s.to).xy());
         out.extend(
             runs.iter()
                 .map(|run| medial::run_block(run, shape, rates, safe_z_mm)),
         );
+        if let Some(flat) = &flat {
+            let cut = FloorCut {
+                op,
+                tool,
+                shape,
+                rates,
+                safe_z_mm,
+                tolerance_mm,
+            };
+            out.extend(floor::blocks(flat, &floors, &cut, &mut anchor)?);
+        }
     }
     Ok(out)
 }
@@ -365,7 +413,9 @@ pub fn blocks(
 /// path warns [`Warning::VCarveTargetOpen`] and is skipped); each region
 /// is carved along its medial lines, every point as deep below the start
 /// plane as the bit's flanks touch both walls, `clearance / tan(α/2)`,
-/// clamped at the flat depth, in one pass whatever the depth. Regions are
+/// clamped at the flat depth, in one pass whatever the depth; where a
+/// region is wider than the groove at the flat depth, its floor is traced
+/// and cleared by the V-bit at that depth (step 6). Regions are
 /// visited nearest-neighbour from the first in drawing order, a region
 /// inside another's hole first; within a region, runs of chains in the
 /// generator's order, each entered by a straight plunge at the plunge

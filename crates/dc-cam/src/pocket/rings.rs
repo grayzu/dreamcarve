@@ -63,7 +63,7 @@ pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Re
 /// 0.0002 mm, three arcs whose ends round to one point, failed S6), and
 /// it cuts nothing the ring around it does not already reach within the
 /// tolerance when the step-over is at most the tool radius.
-fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
+pub(crate) fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
     let perimeter_mm: f64 = std::iter::once(region.outer())
         .chain(region.holes())
         .map(|c| c.polyline().length_mm())

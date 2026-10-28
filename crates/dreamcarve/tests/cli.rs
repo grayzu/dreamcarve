@@ -1682,6 +1682,84 @@ fn check_refuses_an_uncleared_start_depth() {
     assert!(dir.join("coaster.nc").exists(), "{report}");
 }
 
+/// Design step 6 (#405): `check` on a V-Carve with a flat depth states the
+/// height of the ridges the V-bit leaves between its floor rings,
+/// `step_over_fraction · F` (the bit's 0.4 × 2 mm), with the hint; a carve
+/// with no flat depth states none.
+#[test]
+fn v_carve_check_reports_the_floor_ridges() {
+    let dir = work_dir("v_carve_check_reports_the_floor_ridges");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut bit = dc_project::test_support::tool_v_bit_90();
+    bit.id = ToolId::new("tv");
+    bit.feed_mm_min = Some(1500.0);
+    bit.plunge_mm_min = Some(500.0);
+    bit.rpm = Some(18000);
+    bit.step_over_fraction = Some(0.4);
+    project.tools.push(bit);
+    let rectangle = FeatureDefinition {
+        id: DefinitionId::new("dv"),
+        name: "Rectangle".into(),
+        profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
+    };
+    project.definitions.insert(rectangle.id.clone(), rectangle);
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("iv"),
+        definition: DefinitionId::new("dv"),
+        transform: Transform::translate(40.0, 50.0),
+        name: "Rectangle".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    let carve = dc_project::VCarveOp {
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        flat_depth_mm: Some(2.0),
+        ..dc_project::test_support::sample_v_carve()
+    };
+    project.operations = vec![Operation::VCarve(carve)];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "check: {}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stdout(&out).contains(
+            "V-bit floor ridges 0.800 mm; a clearing pass or a smaller step_over_fraction flattens them"
+        ),
+        "{}",
+        stdout(&out)
+    );
+
+    // No flat depth: a 30 x 5 mm bar, 2.5 mm deep, inside the 3.175 mm
+    // cone; no floor, no ridges.
+    project.operations = vec![Operation::VCarve(dc_project::VCarveOp {
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        ..dc_project::test_support::sample_v_carve()
+    })];
+    if let Some(def) = project.definitions.get_mut(&DefinitionId::new("dv")) {
+        def.profiles = vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 5.0)];
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+    assert!(
+        !stdout(&out).contains("V-bit floor ridges"),
+        "{}",
+        stdout(&out)
+    );
+}
+
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an
 /// offset Pocket of the coaster before its cut-out exports one program,
 /// which the emitter's safety pass (S1–S7) accepted; `check` finds no

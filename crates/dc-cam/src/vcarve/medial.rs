@@ -199,7 +199,8 @@ pub(crate) fn region_graph(
 
 /// The runs that carve one region from its medial `graph`: chains
 /// ([`extract_chains`]) less the redundant leaves, each node at its depth,
-/// simplified and fitted to `walls`, then ordered from the shallowest
+/// simplified and fitted to `walls`, less the chains wholly on the cleared
+/// `floors` (step 6, #405; empty without a floor), then ordered from the shallowest
 /// chain end by nearest end, continued through shared nodes, linked
 /// tool-down where the link passes the cone test, and split by a retract
 /// elsewhere.
@@ -208,6 +209,7 @@ pub(crate) fn runs(
     depth: &Depth,
     tolerances: Tolerances,
     walls: &Walls,
+    floors: &[Region],
 ) -> Vec<Run> {
     let chains: Vec<Vec<Point3>> =
         prune_redundant_leaf_chains(graph, extract_chains(graph), tolerances.redundancy_mm)
@@ -221,7 +223,7 @@ pub(crate) fn runs(
                 let simple = simplify_chain(&points, tolerances.simplify_mm, depth.slope);
                 fit_chain(&simple, walls, depth)
             })
-            .filter(|points| !points.is_empty())
+            .filter(|points| !points.is_empty() && !inside_floor(points, depth, floors))
             .collect();
 
     let mut remaining: Vec<usize> = (0..chains.len()).collect();
@@ -277,6 +279,23 @@ pub(crate) fn runs(
     }
     runs.extend(current);
     runs
+}
+
+/// Step 6: true when the fitted chain `points` lies wholly on the cleared
+/// floor, which cuts it: every point at the flat depth (fitting has held
+/// each stretch between them to the cone test there, so the clearance all
+/// along it is at least `F · slope`) and inside one of `floors`. A chain
+/// that reaches a corner or a narrow part rises above the floor there and
+/// is kept, as is every chain when there is no floor.
+fn inside_floor(points: &[Point3], depth: &Depth, floors: &[Region]) -> bool {
+    let Some(flat_depth_mm) = depth.flat_depth_mm else {
+        return false;
+    };
+    let floor_z_mm = depth.start_plane_z_mm - flat_depth_mm;
+    !floors.is_empty()
+        && points.iter().all(|p| {
+            (p.z - floor_z_mm).abs() <= EPS_MM && floors.iter().any(|f| f.contains_point(p.xy()))
+        })
 }
 
 /// Security review H2: the straight link from `from` to `to`, each at its

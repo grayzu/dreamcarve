@@ -666,7 +666,7 @@ fn island_gap_warnings(
 /// residual ring's start, round it (wound by the same rule), and straight
 /// back. A clean-up reached from the start is cut when the lap closes
 /// there, after the ring has cleared round it.
-fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
+pub(crate) fn ring_path(ring: Ring, direction: CutDirection) -> Polyline {
     let side = match ring.kind {
         RingKind::Outer => RingWall::Pocket,
         RingKind::Hole => RingWall::Island,
