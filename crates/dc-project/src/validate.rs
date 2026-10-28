@@ -43,6 +43,17 @@
 //! more, or on a definition that documents no `G53`; a park point beyond
 //! the coordinate limit.
 //!
+//! Format 20 (`docs/specs/phase-3/design.md`, "Validation") adds the
+//! V-Carve. Errors: a V-Carve whose tool is not a V-bit, or whose V-bit's
+//! angle is not in (0, 180); a flat depth (plus the start depth, unless an
+//! enabled earlier Pocket at that depth contains the targets) deeper than
+//! the bit's cone; clearing passes without a flat depth, or naming a
+//! missing tool or one that is not a flat end mill; a negative start
+//! depth; a start depth below the stock top that no earlier Pocket clears
+//! and the user does not vouch for; a flatten tolerance above
+//! [`MAX_FLATTEN_TOLERANCE_MM`]. Warning: a clearing pass wider than the
+//! one before.
+//!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
@@ -50,12 +61,13 @@ use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     BoreOp, ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, LastPass, Lead,
     Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement,
-    Tool, ToolKind,
+    Tool, ToolKind, VCarveOp, VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
 };
-use dc_geometry::{GeometryError, MAX_COORDINATE_MM};
+use crate::project::containing_pocket;
+use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fmt;
@@ -1288,7 +1300,14 @@ struct Validator {
 
 impl Validator {
     fn project(&mut self, p: &Project) {
-        self.positive("flatten_tolerance_mm", p.flatten_tolerance_mm);
+        self.positive(FLATTEN_TOLERANCE, p.flatten_tolerance_mm);
+        // Format 20 (security review L6): the safety checks' slack scales
+        // with the tolerance, so it has a ceiling.
+        if p.flatten_tolerance_mm.is_finite() && p.flatten_tolerance_mm > MAX_FLATTEN_TOLERANCE_MM {
+            self.problems.push(Problem::FlattenToleranceRange {
+                flatten_tolerance_mm: p.flatten_tolerance_mm,
+            });
+        }
         self.stock_side("stock.width_mm", p.stock.width_mm);
         self.stock_side("stock.height_mm", p.stock.height_mm);
         match p.stock.thickness_mm {
@@ -1303,15 +1322,38 @@ impl Validator {
 
         // In the order the file holds them (#76): settings, then geometry.
         // Tools an enabled operation cuts with; only their rates are required.
+        // A V-Carve's clearing passes cut with their own tools (format 20).
+        let clearing_tools = || {
+            p.operations
+                .iter()
+                .filter_map(|op| match op {
+                    Operation::VCarve(carve) if carve.enabled => Some(&carve.clearing),
+                    _ => None,
+                })
+                .flatten()
+                .map(|pass| &pass.tool)
+        };
         let used: BTreeSet<&ToolId> = p
             .operations
             .iter()
             .filter(|op| op.enabled())
             .map(Operation::tool)
+            .chain(clearing_tools())
+            .collect();
+        // V-bits an enabled V-Carve carves with (format 20): their angle
+        // out of range is `v_bit_angle_range`.
+        let v_carve_tools: BTreeSet<&ToolId> = p
+            .operations
+            .iter()
+            .filter_map(|op| match op {
+                Operation::VCarve(carve) if carve.enabled => Some(&carve.tool),
+                _ => None,
+            })
             .collect();
         // Tools an enabled operation takes its step-down from (#98): a
-        // Profile, Pocket or Engrave with no step-down of its own, and a
-        // peck Drill with no peck depth (functional spec, capability 14).
+        // Profile, Pocket or Engrave with no step-down of its own, a peck
+        // Drill with no peck depth (functional spec, capability 14), and a
+        // V-Carve's clearing pass (format 20). The V-bit cuts in one pass.
         let step_down_from_tool: BTreeSet<&ToolId> = p
             .operations
             .iter()
@@ -1331,6 +1373,7 @@ impl Validator {
                 ),
             })
             .map(Operation::tool)
+            .chain(clearing_tools())
             .collect();
         // #117: the `T` number each used tool resolves to, set or
         // positional, and the first tool with it.
@@ -1380,7 +1423,15 @@ impl Validator {
                 if self.finite(&format!("{at}.{field}"), included_angle_deg)
                     && !(included_angle_deg > 0.0 && included_angle_deg < 180.0)
                 {
-                    self.tool_out_of_range(tool, field, included_angle_deg, ANGLE);
+                    if v_carve_tools.contains(&tool.id) {
+                        self.problems.push(Problem::VBitAngleRange {
+                            tool: tool.id.clone(),
+                            name: tool.name.clone(),
+                            included_angle_deg,
+                        });
+                    } else {
+                        self.tool_out_of_range(tool, field, included_angle_deg, ANGLE);
+                    }
                 }
             }
             self.tool_positive(tool, "diameter_mm", tool.diameter_mm);
@@ -1488,7 +1539,10 @@ impl Validator {
             if op.enabled() {
                 self.enabled_operation(op, tool, &at);
             }
+            // A V-Carve has no depth of its own: its flat depth may be
+            // unset, which carves to full depth (format 20).
             match op.depth_mm() {
+                _ if matches!(op, Operation::VCarve(_)) => {}
                 Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
                 None => self.problems.push(Problem::OperationValueUnset {
                     operation: op.id().clone(),
@@ -1504,7 +1558,7 @@ impl Validator {
                 Operation::Drill(op) => self.drill(op, &at),
                 Operation::Bore(op) => self.bore(op, &at),
                 Operation::Engrave(op) => self.engrave(op, &at),
-                Operation::VCarve(_) => {}
+                Operation::VCarve(carve) => self.v_carve(p, op, carve, tool, &at),
             }
         }
 
@@ -1687,7 +1741,10 @@ impl Validator {
                 name: op.name().to_owned(),
             });
         }
-        let Some(tool) = tool else {
+        // A V-Carve's tool rules are its own (format 20,
+        // [`Self::enabled_v_carve`]): it cuts in one pass, so it has no
+        // step-down to check.
+        let Some(tool) = tool.filter(|_| !matches!(op, Operation::VCarve(_))) else {
             return;
         };
         let offsets_by_radius = match op {
@@ -1995,6 +2052,191 @@ impl Validator {
             op.through_cut_allowance_mm,
         );
         self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
+    }
+
+    /// A V-Carve's own fields, in file order, then, when it is enabled,
+    /// its tool, clearing and start-depth rules (format 20;
+    /// `docs/specs/phase-3/design.md`, "Validation"). `op` is `carve` as
+    /// the project holds it.
+    fn v_carve(
+        &mut self,
+        p: &Project,
+        op: &Operation,
+        carve: &VCarveOp,
+        tool: Option<&Tool>,
+        at: &str,
+    ) {
+        if let VCarveStrategy::Offset { step_over_mm, .. } = carve.strategy {
+            self.positive(&format!("{at}.strategy.offset.step_over_mm"), step_over_mm);
+        }
+        for (i, pass) in carve.clearing.iter().enumerate() {
+            let pass_at = format!("{at}.clearing[{i}]");
+            if !p.tools.iter().any(|t| t.id == pass.tool) {
+                self.problems.push(Problem::ClearingDanglingTool {
+                    operation: carve.id.clone(),
+                    pass: i,
+                    tool: pass.tool.clone(),
+                });
+            }
+            if let ClearanceStrategy::Raster { angle_deg } = pass.strategy {
+                let field = format!("{pass_at}.strategy.raster.angle_deg");
+                if self.finite(&field, angle_deg) && !(0.0..180.0).contains(&angle_deg) {
+                    self.out_of_range(field, angle_deg, RASTER_ANGLE);
+                }
+            }
+            self.entry(&pass.entry, &pass_at);
+        }
+        if !carve.clearing.is_empty() && carve.flat_depth_mm.is_none() {
+            self.problems.push(Problem::ClearingNeedsFlatDepth {
+                operation: carve.id.clone(),
+                name: carve.name.clone(),
+            });
+        }
+        if let Some(flat_depth_mm) = carve.flat_depth_mm {
+            self.positive(&format!("{at}.flat_depth_mm"), flat_depth_mm);
+        }
+        let start_depth_ok = self.finite(&format!("{at}.start_depth_mm"), carve.start_depth_mm);
+        if start_depth_ok && carve.start_depth_mm < 0.0 {
+            self.problems.push(Problem::StartDepthNegative {
+                operation: carve.id.clone(),
+                name: carve.name.clone(),
+                start_depth_mm: carve.start_depth_mm,
+            });
+        }
+        if let Some(fraction) = carve.step_over_fraction {
+            let field = format!("{at}.step_over_fraction");
+            if self.finite(&field, fraction) && !(fraction > 0.0 && fraction <= 1.0) {
+                self.out_of_range(field, fraction, FRACTION);
+            }
+        }
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            carve.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), carve.safe_z_mm);
+        if carve.enabled {
+            self.enabled_v_carve(p, op, carve, tool);
+        }
+    }
+
+    /// The rules of an enabled V-Carve that need its tools and the
+    /// project (format 20): it carves with a V-bit; each clearing pass
+    /// cuts with a flat end mill no wider than the pass before (a
+    /// warning); a start depth below the stock top is cleared by an
+    /// earlier Pocket or vouched for; and the bit's flanks engage no deeper
+    /// than its cone.
+    fn enabled_v_carve(
+        &mut self,
+        p: &Project,
+        op: &Operation,
+        carve: &VCarveOp,
+        tool: Option<&Tool>,
+    ) {
+        if let Some(tool) = tool
+            && !matches!(tool.cutter, ToolKind::VBit { .. })
+        {
+            self.problems.push(Problem::VCarveNeedsVBit {
+                operation: carve.id.clone(),
+                name: carve.name.clone(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let mut previous: Option<&Tool> = None;
+        for (i, pass) in carve.clearing.iter().enumerate() {
+            let Some(pass_tool) = p.tools.iter().find(|t| t.id == pass.tool) else {
+                continue;
+            };
+            if !pass_tool.cutter.is_flat() {
+                self.problems.push(Problem::ClearingNeedsEndMill {
+                    operation: carve.id.clone(),
+                    name: carve.name.clone(),
+                    pass: i,
+                    tool: pass_tool.id.clone(),
+                    tool_name: pass_tool.name.clone(),
+                    cutter: pass_tool.cutter.describe(),
+                });
+            }
+            if let Some(before) = previous
+                && pass_tool.diameter_mm.is_finite()
+                && before.diameter_mm.is_finite()
+                && pass_tool.diameter_mm > before.diameter_mm
+            {
+                self.problems.push(Problem::ClearingNotDescending {
+                    operation: carve.id.clone(),
+                    name: carve.name.clone(),
+                    pass: i,
+                    tool_name: pass_tool.name.clone(),
+                    diameter_mm: pass_tool.diameter_mm,
+                    previous_tool_name: before.name.clone(),
+                    previous_diameter_mm: before.diameter_mm,
+                });
+            }
+            previous = Some(pass_tool);
+        }
+
+        // The start plane (capability 41): a containing Pocket clears it;
+        // otherwise, below the stock top, the user must vouch for it.
+        let start_depth_mm = carve.start_depth_mm;
+        if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0) {
+            return;
+        }
+        let below_top = start_depth_mm > 0.0;
+        let pocket = if below_top {
+            containing_pocket(p, op)
+        } else {
+            None
+        };
+        if below_top && pocket.is_none() && !carve.start_plane_cleared_externally {
+            self.problems.push(Problem::StartDepthUncleared {
+                operation: carve.id.clone(),
+                name: carve.name.clone(),
+                start_depth_mm,
+            });
+        }
+        // The flanks engage from the start plane only when a Pocket at
+        // that depth clears it (design spec, "V-Carve generator", step 3;
+        // security review H4); from the stock top otherwise.
+        let cleared_at_start = pocket
+            .and_then(|pocket| pocket.depth_mm)
+            .is_some_and(|depth_mm| (depth_mm - start_depth_mm).abs() <= EPS_MM);
+        let from_stock_top = below_top && !cleared_at_start;
+        let Some(tool) = tool else {
+            return;
+        };
+        let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+            return;
+        };
+        if !(included_angle_deg > 0.0
+            && included_angle_deg < 180.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0)
+        {
+            return;
+        }
+        let flat_depth_mm = carve.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0);
+        // Without a flat depth the carve's depth follows from the shapes,
+        // which only the generator knows; the start depth alone may
+        // already be too much.
+        let engagement_mm =
+            flat_depth_mm.unwrap_or(0.0) + if from_stock_top { start_depth_mm } else { 0.0 };
+        let cone_height_mm = tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
+        if engagement_mm > cone_height_mm + EPS_MM {
+            self.problems.push(Problem::VBitConeExceeded {
+                operation: carve.id.clone(),
+                name: carve.name.clone(),
+                tool_name: tool.name.clone(),
+                engagement_mm,
+                cone_height_mm,
+                from_stock_top,
+                field: if carve.flat_depth_mm.is_some() {
+                    "flat_depth_mm"
+                } else {
+                    "start_depth_mm"
+                },
+            });
+        }
     }
 
     /// An Engrave's own fields, in file order.
@@ -5062,6 +5304,7 @@ mod tests {
         p.operations.pop();
         p.operations.push(Operation::Engrave(EngraveOp {
             tool: ToolId::new("t2"),
+            step_down_mm: Some(1.0),
             ..sample_engrave()
         }));
         p.tools[1].cutter = ToolKind::VBit {
@@ -5182,10 +5425,12 @@ mod tests {
                 Some("operations[o6].clearing[1].tool")
             );
         }
-        let p = carve_project(|carve| {
+        // The carve's own V-bit, given the step-down a pass steps at.
+        let mut p = carve_project(|carve| {
             carve.clearing = vec![pass("t2")];
             carve.flat_depth_mm = Some(1.0);
         });
+        p.tools[1].step_down_mm = Some(1.0);
         assert!(
             matches!(
                 validate(&p).as_slice(),

@@ -7,22 +7,86 @@
 //! validation may not depend on `dc-cam` (`docs/rust-guidelines.md`,
 //! "Crate boundaries"); `dc-cam` calls them.
 
+use crate::ids::InstanceId;
 use crate::model::{Operation, PocketOp, Project};
+use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
+use dc_geometry::{Contour, FLATTEN_TOLERANCE_DEFAULT_MM, Point, area_mm2, difference, nest};
 
 /// The Pocket that clears the start plane of `op` (functional spec,
 /// capability 41): the last enabled Pocket before `op` in the operation
-/// list whose regions contain every footprint outline of `op`, each
-/// outline wholly inside one region and outside its islands. An outline
-/// crossing a region boundary does not count. `None` when there is no
-/// such Pocket, or when `op` is not in `project`.
+/// list whose regions contain every footprint outline of `op`, inside a
+/// region and outside its islands. An outline crossing a region boundary
+/// does not count. `None` when there is no such Pocket, when `op` is not
+/// in `project`, or when its footprint does not resolve (a missing
+/// instance, a degenerate or crossing outline: validation or the
+/// generator reports those).
 ///
 /// The footprint outlines are the closed outlines of `op`'s targets, as
-/// placed. The Pocket's depth is not compared: a Pocket at another depth
-/// still contains the targets, which `start_depth_mismatch` reports.
+/// placed; open paths have no area and are left out. Containment is
+/// checked two ways, both needed: every vertex of every outline is in a
+/// region by [`dc_geometry::Region::contains_point`], and the area the outlines enclose,
+/// nested even-odd as the carve nests them, less the Pocket's regions, is
+/// nothing within the flattening slack (the project's flatten tolerance
+/// times the outlines' length). The second catches an outline whose
+/// vertices are all inside but whose edges cross a gap or an island.
+///
+/// The Pocket's depth is not compared: a Pocket at another depth still
+/// contains the targets, which `start_depth_mismatch` reports.
 #[must_use]
 pub fn containing_pocket<'p>(project: &'p Project, op: &Operation) -> Option<&'p PocketOp> {
-    let _ = (project, op);
-    None
+    let index = project.operations.iter().position(|o| o.id() == op.id())?;
+    let outlines = closed_outlines(project, op.targets())?;
+    if outlines.is_empty() {
+        return None;
+    }
+    let (footprint, _) = nest(outlines.clone()).ok()?;
+    let tolerance_mm =
+        if project.flatten_tolerance_mm.is_finite() && project.flatten_tolerance_mm > 0.0 {
+            project.flatten_tolerance_mm.min(MAX_FLATTEN_TOLERANCE_MM)
+        } else {
+            FLATTEN_TOLERANCE_DEFAULT_MM
+        };
+    let slack_mm2 = tolerance_mm
+        * outlines
+            .iter()
+            .map(|c| c.polyline().length_mm())
+            .sum::<f64>();
+    project
+        .operations
+        .iter()
+        .take(index)
+        .rev()
+        .find_map(|earlier| match earlier {
+            Operation::Pocket(pocket) if pocket.enabled => {
+                let regions = closed_outlines(project, &pocket.targets)
+                    .and_then(|contours| nest(contours).ok())
+                    .map(|(regions, _)| regions)?;
+                let vertices_inside = outlines.iter().all(|outline| {
+                    outline.polyline().vertices().iter().all(|v| {
+                        let p = Point::new(v.x, v.y);
+                        regions.iter().any(|r| r.contains_point(p))
+                    })
+                });
+                let outside_mm2 = area_mm2(&difference(&footprint, &regions, tolerance_mm));
+                (vertices_inside && outside_mm2 <= slack_mm2).then_some(pocket)
+            }
+            _ => None,
+        })
+}
+
+/// The closed outlines of `targets`, placed in project space, in target
+/// then profile order; `None` when one does not resolve.
+fn closed_outlines(project: &Project, targets: &[InstanceId]) -> Option<Vec<Contour>> {
+    let mut outlines = Vec::new();
+    for id in targets {
+        let instance = project.instances.iter().find(|i| &i.id == id)?;
+        let definition = project.definitions.get(&instance.definition)?;
+        for profile in definition.profiles.iter().filter(|p| p.is_closed()) {
+            let placed = instance.transform.apply_polyline(profile).ok()?;
+            outlines.push(Contour::new(placed).ok()?);
+        }
+    }
+    Some(outlines)
 }
 
 #[cfg(test)]
@@ -36,7 +100,7 @@ mod tests {
     /// A `w` × `h` mm rectangle placed with its corner at (`x`, `y`) as
     /// instance `id` of its own definition.
     fn place_rect(project: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64) {
-        let definition = DefinitionId::new(&format!("d_{id}"));
+        let definition = DefinitionId::new(format!("d_{id}"));
         project.definitions.insert(
             definition.clone(),
             FeatureDefinition {

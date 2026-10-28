@@ -110,7 +110,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 19;
+pub const CURRENT_VERSION: u32 = 20;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -2527,7 +2527,7 @@ mod tests {
     /// A version 18 reader refuses a version 19 file as newer (ADR-0002).
     #[test]
     fn version_19_is_newer_than_18() {
-        assert_eq!(CURRENT_VERSION, 19);
+        const { assert!(CURRENT_VERSION > 19) };
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

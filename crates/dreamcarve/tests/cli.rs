@@ -9314,7 +9314,7 @@ fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
         saved.contains(&format!("\"version\": {}", dc_project::CURRENT_VERSION)),
         "{saved}"
     );
-    assert_eq!(dc_project::CURRENT_VERSION, 19);
+    const { assert!(dc_project::CURRENT_VERSION >= 19) };
     assert!(!saved.contains("\"allowance_mm\""), "{saved}");
     assert_eq!(saved.matches("\"stock_to_leave_mm\"").count(), 4, "{saved}");
 

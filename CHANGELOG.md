@@ -7,6 +7,22 @@ phases bump the patch number.
 
 ## [Unreleased]
 
+### Added
+
+- **V-Carve in the project file; format version 20.** A project can hold a
+  `"v_carve"` operation, with its strategy, clearing passes, flat depth and
+  start depth, and `check` validates it: the tool must be a V-bit, the flat
+  depth (plus a start depth no earlier Pocket clears) must fit the bit's
+  cone, clearing passes need a flat depth and flat end mills, and a start
+  depth below the stock top needs a Pocket before it or
+  `start_plane_cleared_externally`. This build does not export a V-Carve
+  yet; `check` and `export` say so. Older files upgrade unchanged.
+
+### Changed
+
+- **`flatten_tolerance_mm` is at most 0.1 mm.** A coarser tolerance is an
+  error, in a file of any version: the safety checks' slack scales with it.
+
 ## [0.2.0] - 2026-10-27
 
 Phase 2: every 2.5D operation except V-Carve, from SVG or DXF, for six
