@@ -34,7 +34,7 @@
 //! own, so the far-apart corner pieces cost no lift.
 
 use dc_geometry::{
-    Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, nest, offset,
+    Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, floor_regions,
     point_segment_distance_mm, segment_distance_mm,
 };
 use std::f64::consts::TAU;
@@ -46,50 +46,13 @@ use crate::sequence::nearest_of;
 /// outward by `inset_mm`, the islands then cut from the outer. An island
 /// can split the result into several regions; nothing left is an empty
 /// `Vec`. Outers come back counter-clockwise and holes clockwise (mm,
-/// Y-up).
-///
-/// When the offset islands lie apart inside the offset outer, the result
-/// is built from the offsets directly and keeps their arcs. When they
-/// touch or cross, the islands are cut with [`dc_geometry::difference`],
-/// which flattens arcs to chords within `tolerance_mm`.
+/// Y-up). The construction is [`dc_geometry::floor_regions`]'s, shared so
+/// a V-Carve floor and the safety pass inset a region the way a Pocket
+/// does: arcs kept when the grown islands lie apart, else flattened within
+/// `tolerance_mm` by the difference.
 #[must_use]
 pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
-    let outers = offset(region.outer(), -inset_mm);
-    if outers.is_empty() {
-        return Vec::new();
-    }
-    // `offset` keeps a hole's clockwise winding and grows it for a
-    // positive delta.
-    let grown: Vec<Contour> = region
-        .holes()
-        .iter()
-        .flat_map(|hole| offset(hole, inset_mm))
-        .collect();
-    if grown.is_empty() {
-        return outers.into_iter().filter_map(single_region).collect();
-    }
-    let mut all = outers.clone();
-    all.extend(grown.iter().cloned());
-    if let Ok((regions, warnings)) = nest(all) {
-        let holes: usize = regions.iter().map(|r| r.holes().len()).sum();
-        // A grown island that encloses the shrunk outer nests as the outer
-        // of an inverted annulus; only the offset outers may be outers.
-        let clean = warnings.is_empty()
-            && regions.len() == outers.len()
-            && holes == grown.len()
-            && regions
-                .iter()
-                .all(|r| r.depth() == 0 && outers.contains(r.outer()));
-        if clean {
-            return regions;
-        }
-    }
-    let subject: Vec<Region> = outers.into_iter().filter_map(single_region).collect();
-    let clip: Vec<Region> = grown
-        .iter()
-        .filter_map(|c| single_region(c.reversed()))
-        .collect();
-    difference(&subject, &clip, tolerance_mm)
+    floor_regions(std::slice::from_ref(region), inset_mm, tolerance_mm)
 }
 
 /// Whether `region` is noise at `tolerance_mm`, not a ring to cut: its
@@ -106,13 +69,6 @@ fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
         .map(|c| c.polyline().length_mm())
         .sum();
     region.area_mm2() <= tolerance_mm * perimeter_mm
-}
-
-/// The region `contour` alone encloses.
-fn single_region(contour: Contour) -> Option<Region> {
-    nest(vec![contour])
-        .ok()
-        .and_then(|(regions, _)| regions.into_iter().next())
 }
 
 /// What the rings of a node of `region` whose children are `children`
@@ -713,7 +669,7 @@ fn way_along(ring: &Polyline, from: Point, to: Point) -> Option<Polyline> {
 mod tests {
     use super::*;
     use crate::pocket::ring_path;
-    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, area_mm2, assert_approx_eq};
+    use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, area_mm2, assert_approx_eq, nest};
     use dc_project::CutDirection;
 
     fn region(polylines: Vec<Polyline>) -> Region {

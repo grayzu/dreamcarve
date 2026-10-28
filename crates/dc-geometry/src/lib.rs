@@ -8,10 +8,12 @@
 //! counter-clockwise and holes clockwise.
 
 mod boolean;
+mod carve;
 mod circle;
 mod contour;
 mod distance;
 mod flatten;
+pub mod medial;
 mod offset;
 mod point;
 mod polyline;
@@ -20,6 +22,7 @@ mod self_band;
 mod transform;
 
 pub use boolean::{BooleanOp, boolean, difference, intersection, union};
+pub use carve::floor_regions;
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
 pub use distance::{

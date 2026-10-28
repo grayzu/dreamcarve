@@ -42,3 +42,21 @@ acceptance test for this tool.
    what the case covers.
 
 A golden file changes only in a commit whose message says why.
+
+## V-Carve text fixtures
+
+`vcarve-fixtures.ts` writes the outline-text regions the ported medial-axis
+tests read (#402): PureCutCNC's resolved polygons for "Rag", "g" and the
+`gA` noise-regression project, in DreamCarve's millimetre, Y-up frame,
+with PureCutCNC's own medial-axis counts on each region, and their
+README with the font notice.
+
+```sh
+cd tools/parity
+npx tsx vcarve-fixtures.ts --purecutcnc ../../../purecutcnc
+```
+
+Writes `tests/fixtures/vcarve/{rag,g,ga-small,ga-large}.json` and
+`README.md`. The output is byte-identical run to run. PureCutCNC's own
+`node_modules/.bin/tsx` runs it too, when this directory has no
+`node_modules`.
