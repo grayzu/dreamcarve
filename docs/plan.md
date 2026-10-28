@@ -192,6 +192,13 @@ RasterCarve as the behaviour and test reference.
 
 **Out:** GUI.
 
+**Sub-phases:** delivered one feature at a time, each a GitHub milestone
+with its own format version and bench check: 3.1 V-Carve (v16), 3.2
+Countersink (v17; the sign, test part 1), 3.3 Inlay (v18; the star pair,
+test part 2), 3.4 Photo V-Carve (v19; the photo, test part 3), 3.5 Release
+(`v0.3.0`). No tag between them; the slice list is in the phase 3 design
+spec, "Sub-phases".
+
 **Exit:** parity with PureCutCNC's V-carve tests; the phase 3 test parts
 cut: a lettered sign imported as SVG outlines, an inlay pair (female and
 male, cut and fitted, following Corbin's Fusion tutorial), and a photo
