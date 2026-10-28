@@ -421,6 +421,7 @@ impl Helix {
             descent_from_z_mm: self.start_z_mm,
             descent,
             entry,
+            entry_z_mm: self.bottom_z_mm,
             cuts,
             exit: self.centre,
             // Nothing comes loose: no core is left.

@@ -454,6 +454,7 @@ pub fn generate_pocket(
                 descent_from_z_mm,
                 descent,
                 entry: start,
+                entry_z_mm: z_mm,
                 cuts: lap.moves,
                 exit,
                 // A pocket never cuts a part free.

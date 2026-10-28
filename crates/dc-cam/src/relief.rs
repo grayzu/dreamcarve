@@ -831,6 +831,7 @@ impl Relief {
                     .unwrap_or(self.safe_z_mm),
                 descent: Vec::new(),
                 entry: p,
+                entry_z_mm: z_mm,
                 cuts: vec![
                     Move::linear(Point3::new(e.x, e.y, z_mm), feed),
                     Move::linear(Point3::new(p.x, p.y, z_mm), feed),
@@ -1066,6 +1067,8 @@ impl Relief {
             descent_from_z_mm: self.safe_z_mm,
             descent: vec![Move::linear(at(p, first), plunge)],
             entry: p,
+            // The descent ends at the first level, where the notch starts.
+            entry_z_mm: first,
             cuts,
             exit: p,
             frees: false,
@@ -3267,6 +3270,7 @@ mod tests {
             descent_from_z_mm: z_mm + 2.0,
             descent: Vec::new(),
             entry: start,
+            entry_z_mm: z_mm,
             cuts: ring[1..]
                 .iter()
                 .map(|&(x, y)| Move::linear(Point3::new(x + O, y + O, z_mm), 800.0))

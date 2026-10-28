@@ -275,6 +275,9 @@ pub fn generate_drill(
                 // (design spec, "Algorithms → Sequence", step 5).
                 descent: vec![Move::rapid(at(retract_z_mm))],
                 entry: *centre,
+                // The descent ends at the retract plane, where the first
+                // feed down begins.
+                entry_z_mm: retract_z_mm,
                 cuts,
                 exit: *centre,
                 frees: false,

@@ -145,6 +145,7 @@ pub fn generate_engrave(
                 descent_from_z_mm,
                 descent: Vec::new(),
                 entry,
+                entry_z_mm: z_mm,
                 cuts,
                 exit,
                 frees: closed && pass + 1 == pass_z.len() && z_mm <= EPS_MM,

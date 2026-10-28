@@ -5,7 +5,7 @@
 //! "Algorithms → Profile contour"). An error means the toolpath cannot be
 //! trusted, so none is produced.
 
-use dc_geometry::GeometryError;
+use dc_geometry::{GeometryError, Point3};
 use dc_project::{DefinitionId, InstanceId, OperationId, ToolId};
 use std::fmt;
 
@@ -70,6 +70,20 @@ pub enum BlockProblem {
     /// The block has no descent moves, so it plunges, but its descent
     /// starts away from its entry.
     PlungeAwayFromEntry,
+    /// The block's entry Z is below its pass Z, its deepest (security
+    /// review H1).
+    EntryBelowPass {
+        /// The block's pass Z, mm.
+        z_mm: f64,
+        /// The block's entry Z, mm.
+        entry_z_mm: f64,
+    },
+    /// The block's first cut does not start at its entry at its entry Z:
+    /// its descent ends elsewhere (security review H1).
+    FirstCutAwayFromEntry {
+        /// Where the descent ends, mm, so where the first cut starts.
+        start: Point3,
+    },
 }
 
 impl fmt::Display for BlockProblem {
@@ -85,6 +99,19 @@ impl fmt::Display for BlockProblem {
                 write!(f, "its passes {passes:?} are not consecutive from 0")
             }
             Self::PlungeAwayFromEntry => f.write_str("a plunge starts away from the entry point"),
+            Self::EntryBelowPass { z_mm, entry_z_mm } => {
+                write!(
+                    f,
+                    "its entry Z {entry_z_mm} mm is below the pass Z {z_mm} mm"
+                )
+            }
+            Self::FirstCutAwayFromEntry { start } => {
+                write!(
+                    f,
+                    "its first cut starts at ({}, {}, {}) mm, not at its entry point and Z",
+                    start.x, start.y, start.z
+                )
+            }
         }
     }
 }

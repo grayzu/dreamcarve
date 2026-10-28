@@ -16,11 +16,11 @@ use dc_geometry::{Point, Region};
 /// are project space: Y-up, Z-up, millimetres, stock bottom at Z = 0.
 ///
 /// A block's motion is `descent` (from `descent_from` at
-/// `descent_from_z_mm` to `entry` at `z_mm`) followed by `cuts`, which
-/// end at `exit`. The sequencer supplies the rapid that reaches
+/// `descent_from_z_mm` to `entry` at `entry_z_mm`) followed by `cuts`,
+/// which end at `exit`. The sequencer supplies the rapid that reaches
 /// `descent_from`, or a stay-down link, and never changes a block's own
-/// moves. A stay-down link reaches `entry` at `z_mm` directly, so the
-/// block's descent is not cut then.
+/// moves. A stay-down link reaches `entry` at `entry_z_mm` directly, so
+/// the block's descent is not cut then.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CutBlock {
     /// The target shape (instance, profile index) this block belongs to.
@@ -45,15 +45,26 @@ pub struct CutBlock {
     /// plunge. Below safe Z, the sequencer reaches it after a lift by a
     /// rapid straight down as far as S2 allows, then a plunge.
     pub descent_from_z_mm: f64,
-    /// Ramp, helix or plunge moves from `descent_from` to `entry` at `z_mm`,
-    /// every one `Linear` or an arc at the plunge or feed rate (a ramp or
-    /// helix move at the feed rate scaled so it descends no faster than the
-    /// plunge rate, S10), except a Drill's single rapid straight down to
-    /// its retract height above the stock. Empty means a straight plunge at the plunge rate, which the
+    /// Ramp, helix or plunge moves from `descent_from` to `entry` at
+    /// `entry_z_mm`, every one `Linear` or an arc at the plunge or feed
+    /// rate (a ramp or helix move at the feed rate scaled so it descends no
+    /// faster than the plunge rate, S10), except a Drill's single rapid
+    /// straight down to its retract height above the stock. Empty means a
+    /// straight plunge at the plunge rate to `entry_z_mm`, which the
     /// sequencer writes.
     pub descent: Vec<Move>,
     /// XY, mm, where the descent ends and cutting begins.
     pub entry: Point,
+    /// Z, mm, project space, where cutting begins at `entry`: where the
+    /// descent ends, or a straight plunge or a stay-down link into this
+    /// block ends, never `z_mm` unless the first cut starts there
+    /// (security review H1, `docs/specs/phase-3/design.md`: a V-Carve
+    /// chain starts at a corner tip at the surface and ends deeper). At or
+    /// above `z_mm`. Phase 1 and 2 blocks whose first cut is at the pass
+    /// Z set it to `z_mm`; a Drill's, whose descent ends at its retract
+    /// height, to that height; a Profile lap's that starts on a tab, to
+    /// the tab's height there.
+    pub entry_z_mm: f64,
     /// The cutting moves at `z_mm`, each with its feed. Tabs may raise
     /// moves above `z_mm` within.
     pub cuts: Vec<Move>,

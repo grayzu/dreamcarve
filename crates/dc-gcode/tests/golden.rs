@@ -447,3 +447,55 @@ fn order_pass_first() {
         Order::InOrder,
     ));
 }
+
+/// Every case this file compares: its directory under `tests/golden/` and
+/// its test.
+const CASES: [(&str, fn()); 18] = [
+    ("profile-outside-rect", profile_outside_rect),
+    ("profile-inside-circle", profile_inside_circle),
+    ("profile-ring", profile_ring),
+    ("profile-tabs-circle", profile_tabs_circle),
+    ("pocket-offset-rect", pocket_offset_rect),
+    ("pocket-offset-island", pocket_offset_island),
+    ("pocket-raster-0deg", pocket_raster_0deg),
+    ("pocket-raster-45deg", pocket_raster_45deg),
+    ("pocket-rough-then-rest", pocket_rough_then_rest),
+    ("drill-simple", drill_simple),
+    ("drill-peck", drill_peck),
+    ("engrave-open-closed", engrave_open_closed),
+    ("profile-ramp", profile_ramp),
+    ("profile-helix-inside", profile_helix_inside),
+    ("profile-lead", profile_lead),
+    ("profile-dogbone", profile_dogbone),
+    ("order-full-depth-first", order_full_depth_first),
+    ("order-pass-first", order_pass_first),
+];
+
+/// Slice 3.1-3 (#403, `docs/specs/phase-3/design.md`, "Data model →
+/// dc-cam"): `CutBlock::entry_z_mm` changes no phase 1 or 2 program. Every
+/// case in `tests/golden/` is compared here, all 18 of them, except
+/// `smoke` (a capture check only, its README says) and the
+/// `post-<id>-coaster` cases, which `dreamcarve`'s CLI tests compare byte
+/// for byte; a case added without a test fails this.
+#[test]
+fn phase_1_and_2_cases_are_unchanged() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
+    let on_disk: std::collections::BTreeSet<String> = std::fs::read_dir(&root)
+        .expect("tests/golden is readable")
+        .map(|entry| entry.expect("a golden directory entry").file_name())
+        .filter_map(|name| name.into_string().ok())
+        .filter(|name| {
+            name != "smoke" && !(name.starts_with("post-") && name.ends_with("-coaster"))
+        })
+        .collect();
+    let compared: std::collections::BTreeSet<String> =
+        CASES.iter().map(|(name, _)| (*name).to_owned()).collect();
+    assert_eq!(compared, on_disk, "every golden case has a test");
+    let mut run = 0;
+    for (name, check) in CASES {
+        check();
+        run += 1;
+        eprintln!("golden case {name} unchanged");
+    }
+    assert_eq!(run, 18, "golden cases run");
+}

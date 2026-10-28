@@ -365,6 +365,7 @@ mod tests {
             descent_from_z_mm: 4.0,
             descent: vec![Move::linear(Point3::new(0.0, 0.0, 6.0), 300.0)],
             entry: Point::new(0.0, 0.0),
+            entry_z_mm: 6.0,
             cuts: vec![
                 level(10.0, 6.0),
                 Move::linear(Point3::new(10.0, 0.0, 0.0), 300.0),

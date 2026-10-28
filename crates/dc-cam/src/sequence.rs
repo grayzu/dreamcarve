@@ -149,9 +149,11 @@ const LINK_SAMPLE_STEP_MM: f64 = 0.5;
 /// drawing order. [`sequence`] emits exactly this order.
 ///
 /// Fails with [`CamError::InvalidBlock`] when a block's cuts go below its
-/// pass Z, a shape's passes are not consecutive from 0, or a plunging block
-/// starts away from its entry, and with [`CamError::ContainmentCycle`]
-/// when the containment pairs leave no shape cuttable.
+/// pass Z, a shape's passes are not consecutive from 0, a plunging block
+/// starts away from its entry, its entry Z is below its pass Z, or its
+/// descent ends away from its entry at its entry Z, and with
+/// [`CamError::ContainmentCycle`] when the containment pairs leave no shape
+/// cuttable.
 pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
     let shapes = Shapes::new(input)?;
     shapes.walk(input.order)
@@ -164,12 +166,12 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// have `cleared` areas at one Z and the link is no longer than the
 /// flatten tolerance (#213), or the straight link lies inside their union
 /// and is at most `tool_diameter_mm + stepover_mm` long, which runs to
-/// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s Z in
-/// cleared material); otherwise a rapid up to safe Z, a rapid in XY, and
-/// the descent, or, between blocks of different instances, the same at
-/// the clearance Z (#283). A block's empty
-/// descent is a straight plunge at the plunge rate; its own descent moves
-/// are written as given, from `descent_from_z_mm`: below safe Z the tool
+/// `b`'s entry and skips `b`'s descent (the tool is already at `b`'s entry
+/// Z in cleared material); otherwise a rapid up to safe Z, a rapid in XY,
+/// and the descent, or, between blocks of different instances, the same at
+/// the clearance Z (#283). A block's empty descent is a straight plunge at
+/// the plunge rate to its entry Z, never its pass Z (security review H1);
+/// its own descent moves are written as given, from `descent_from_z_mm`: below safe Z the tool
 /// gets there by a rapid straight down that stops in the air (S2 as
 /// changed in #214) and a plunge for the rest. Zero-length moves are never
 /// written. The first block is reached by a rapid at safe Z; the last is
@@ -419,7 +421,8 @@ impl Shapes {
 }
 
 /// Spec step 1: cuts and descent at or above the pass Z; a plunging block
-/// starts at its entry.
+/// starts at its entry; the entry Z at or above the pass Z, and the first
+/// cut starting at the entry at the entry Z (security review H1).
 fn validate_block(block: &CutBlock) -> Result<(), CamError> {
     let lowest = block
         .cuts
@@ -442,6 +445,28 @@ fn validate_block(block: &CutBlock) -> Result<(), CamError> {
             shape: block.shape.clone(),
             pass: block.pass,
             problem: BlockProblem::PlungeAwayFromEntry,
+        });
+    }
+    if block.entry_z_mm < block.z_mm - EPS_MM {
+        return Err(CamError::InvalidBlock {
+            shape: block.shape.clone(),
+            pass: block.pass,
+            problem: BlockProblem::EntryBelowPass {
+                z_mm: block.z_mm,
+                entry_z_mm: block.entry_z_mm,
+            },
+        });
+    }
+    // An empty descent is the sequencer's plunge, which ends at the entry
+    // Z by construction; a generator's own descent must end there.
+    if let Some(last) = block.descent.last()
+        && (last.to.xy().distance_to(block.entry) > EPS_MM
+            || (last.to.z - block.entry_z_mm).abs() > EPS_MM)
+    {
+        return Err(CamError::InvalidBlock {
+            shape: block.shape.clone(),
+            pass: block.pass,
+            problem: BlockProblem::FirstCutAwayFromEntry { start: last.to },
         });
     }
     Ok(())
@@ -482,7 +507,7 @@ impl<'a> Emitter<'a, '_> {
                     // Straight up or down at the descent's start, then the
                     // rest of the descent as given.
                     if block.descent.is_empty() {
-                        let entry = Point3::new(block.entry.x, block.entry.y, block.z_mm);
+                        let entry = Point3::new(block.entry.x, block.entry.y, block.entry_z_mm);
                         self.push(Move::linear(entry, self.input.plunge_mm_min));
                     }
                     for mv in &block.descent {
@@ -492,8 +517,8 @@ impl<'a> Emitter<'a, '_> {
                     return;
                 }
                 Link::StayDown => {
-                    // Already at the block's Z in cleared material: straight
-                    // to its entry, and its descent is not cut.
+                    // Already at the block's entry Z in cleared material:
+                    // straight to its entry, and its descent is not cut.
                     let to = Point3::new(block.entry.x, block.entry.y, current.z);
                     self.push(Move::linear(to, self.input.feed_mm_min));
                     self.cut(block);
@@ -546,7 +571,7 @@ impl<'a> Emitter<'a, '_> {
         }
         if let (Some(cleared_a), Some(cleared_b)) = (&a.cleared, &b.cleared)
             && (a.z_mm - b.z_mm).abs() <= EPS_MM
-            && (current.z - b.z_mm).abs() <= EPS_MM
+            && (current.z - b.entry_z_mm).abs() <= EPS_MM
         {
             let length_mm = current.xy().distance_to(b.entry);
             let limit_mm = self.input.tool_diameter_mm + self.input.stepover_mm;
@@ -576,7 +601,8 @@ impl<'a> Emitter<'a, '_> {
     fn descend(&mut self, block: &CutBlock) {
         if block.descent.is_empty() {
             // #227: a straight plunge is reached by the same rapid down.
-            let entry = Point3::new(block.entry.x, block.entry.y, block.z_mm);
+            // H1: it ends where cutting begins, not at the block's deepest.
+            let entry = Point3::new(block.entry.x, block.entry.y, block.entry_z_mm);
             self.rapid_down(entry);
             self.push(Move::linear(entry, self.input.plunge_mm_min));
             return;
@@ -679,7 +705,7 @@ impl<'a> Emitter<'a, '_> {
 /// another shape keep O3's retract.
 fn cut_down_to_plunge(a: &CutBlock, b: &CutBlock) -> bool {
     let plunge_to_z_mm = match b.descent.first() {
-        None => b.z_mm,
+        None => b.entry_z_mm,
         Some(mv)
             if mv.kind == MoveKind::Linear && mv.to.xy().distance_to(b.descent_from) <= EPS_MM =>
         {
@@ -690,7 +716,7 @@ fn cut_down_to_plunge(a: &CutBlock, b: &CutBlock) -> bool {
     let start = a
         .descent
         .last()
-        .map_or(Point3::new(a.entry.x, a.entry.y, a.z_mm), |m| m.to);
+        .map_or(Point3::new(a.entry.x, a.entry.y, a.entry_z_mm), |m| m.to);
     let moves: Vec<Move> = std::iter::once(Move::rapid(start))
         .chain(a.cuts.iter().copied())
         .collect();
@@ -877,6 +903,7 @@ mod tests {
             },
             descent: Vec::new(),
             entry: start,
+            entry_z_mm: z,
             cuts: vec![
                 corner(x + size, y),
                 corner(x + size, y + size),
@@ -1672,6 +1699,7 @@ mod tests {
             descent_from_z_mm: SAFE_Z_MM,
             descent: Vec::new(),
             entry: at,
+            entry_z_mm: z,
             cuts: vec![
                 Move::linear(Point3::new(x - 1.0, y - 1.0, z), FEED_MM_MIN),
                 Move::linear(Point3::new(x, y, z), FEED_MM_MIN),
@@ -1797,6 +1825,7 @@ mod tests {
         let relief_notch = |name: &str, z: f64| {
             let mut block = notch(name, 0.0, 0.0, 0);
             block.z_mm = z;
+            block.entry_z_mm = z;
             block.descent = vec![Move::linear(Point3::new(0.0, 0.0, z), PLUNGE_MM_MIN)];
             for cut in &mut block.cuts {
                 cut.to.z = z;
@@ -1994,6 +2023,92 @@ mod tests {
             ),
             "{err:?}"
         );
+    }
+
+    /// Security review H1 (`docs/specs/phase-3/design.md`): a block whose
+    /// cuts start above its deepest Z, as a V-Carve chain from a corner tip
+    /// at the surface does, is plunged to its entry Z, not to `z_mm`. The
+    /// chain here starts at Z 4 at (0, 0) and sinks to its pass Z 1 at
+    /// (10, 0); a plunge to Z 1 would cut 3 mm below the surface it starts
+    /// on.
+    #[test]
+    fn a_plunge_ends_at_the_blocks_entry_z_not_its_deepest_z() {
+        let at = Point::new(0.0, 0.0);
+        let chain = CutBlock {
+            shape: shape("v"),
+            pass: 0,
+            z_mm: 1.0,
+            descent_from: at,
+            descent_from_z_mm: SAFE_Z_MM,
+            descent: Vec::new(),
+            entry: at,
+            entry_z_mm: 4.0,
+            cuts: vec![
+                Move::linear(Point3::new(10.0, 0.0, 1.0), FEED_MM_MIN),
+                Move::linear(Point3::new(20.0, 0.0, 1.0), FEED_MM_MIN),
+            ],
+            exit: Point::new(20.0, 0.0),
+            frees: false,
+            cleared: None,
+            group: 0,
+        };
+        let first_cut = chain.cuts[0];
+        let tp = run(&input(vec![chain], MachiningOrder::FullDepthFirst, &[]));
+        let cut_at = tp.moves.iter().position(|m| *m == first_cut).unwrap();
+        let before = &tp.moves[..cut_at];
+        assert_eq!(
+            before.last(),
+            Some(&Move::linear(Point3::new(0.0, 0.0, 4.0), PLUNGE_MM_MIN)),
+            "the plunge ends at the entry Z: {:?}",
+            tp.moves
+        );
+        assert!(
+            before.iter().all(|m| m.to.z >= 4.0 - EPS_MM),
+            "nothing goes below the entry Z before the first cut: {:?}",
+            tp.moves
+        );
+    }
+
+    /// Security review H1: `entry_z_mm` is where cutting begins, so it is
+    /// never below the pass Z, the block's deepest.
+    #[test]
+    fn validate_block_rejects_an_entry_below_the_deepest_z() {
+        let mut blocks = squares("s", 0.0, 0.0, 10.0, 1);
+        blocks[0].entry_z_mm = 3.5;
+        let err = sequence(&input(blocks, MachiningOrder::FullDepthFirst, &[])).unwrap_err();
+        assert_eq!(
+            err,
+            CamError::InvalidBlock {
+                shape: shape("s"),
+                pass: 0,
+                problem: BlockProblem::EntryBelowPass {
+                    z_mm: 4.0,
+                    entry_z_mm: 3.5
+                }
+            }
+        );
+    }
+
+    /// Security review H1: the first cut starts at `(entry, entry_z_mm)`,
+    /// so a descent that ends anywhere else, away in XY or at another Z,
+    /// is refused.
+    #[test]
+    fn validate_block_rejects_a_first_cut_away_from_the_entry() {
+        for end in [Point3::new(3.0, 0.0, 4.0), Point3::new(0.0, 0.0, 5.0)] {
+            let mut blocks = squares("s", 0.0, 0.0, 10.0, 1);
+            blocks[0].descent = vec![Move::linear(end, PLUNGE_MM_MIN)];
+            let err = sequence(&input(blocks, MachiningOrder::FullDepthFirst, &[]))
+                .expect_err("a descent ending away from the entry is refused");
+            assert_eq!(
+                err,
+                CamError::InvalidBlock {
+                    shape: shape("s"),
+                    pass: 0,
+                    problem: BlockProblem::FirstCutAwayFromEntry { start: end }
+                },
+                "descent ending at {end:?}"
+            );
+        }
     }
 
     #[test]
