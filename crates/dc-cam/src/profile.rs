@@ -1980,6 +1980,8 @@ fn contour_block(
     } else {
         Vec::new()
     };
+    // The lap starts where the descent ends: on a tab, the tab's height.
+    let entry_z_mm = descent.last().map_or(z_mm, |m| m.to.z);
     let exit = lap.moves.last().map_or(start, |m| m.to.xy());
     // #337: a lap that starts on a tab starts at the tab's height. The
     // pass before left the tab there, and a lap that also started on it
@@ -1998,7 +2000,7 @@ fn contour_block(
         descent_from_z_mm,
         descent,
         entry: start,
-        entry_z_mm: z_mm,
+        entry_z_mm,
         cuts: lap.moves,
         exit,
         frees: pass + 1 == pass_z.len() && z_mm <= EPS_MM,

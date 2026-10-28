@@ -1067,7 +1067,8 @@ impl Relief {
             descent_from_z_mm: self.safe_z_mm,
             descent: vec![Move::linear(at(p, first), plunge)],
             entry: p,
-            entry_z_mm: levels.iter().copied().fold(first, f64::min),
+            // The descent ends at the first level, where the notch starts.
+            entry_z_mm: first,
             cuts,
             exit: p,
             frees: false,
