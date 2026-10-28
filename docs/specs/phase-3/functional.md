@@ -154,17 +154,25 @@ is no GUI in this phase.
  will usually be 0.0"; for a pocket floor, enter the pocket's depth).
  Every depth of the carve is measured from the **start plane**, that far
  below the stock top: the outline is where the bit's flanks meet the
- start plane, and the flat depth and the cone check count from it. The
- user cuts the pocket first with a Pocket of the same depth. `check`
- warns `start_depth_mismatch`, naming the Pocket, when an enabled earlier
+ start plane, and the flat depth counts from it. The user cuts the
+ pocket first with a Pocket of the same depth. `check` warns
+ `start_depth_mismatch`, naming the Pocket, when an enabled earlier
  Pocket's region contains the targets but its depth is not the start
- depth, and when no such Pocket exists and the start depth is above 0;
- it is a warning, not an error, because the pocket may have been cut by
- another program. The bit rapids down
- to the entry clearance above the stock top and plunges from there at
- the plunge rate (S2 unchanged), so a start depth over uncut stock cuts
- a slot instead of crashing. On V-Carve, Inlay, Photo V-Carve and a
- countersink (44) in this phase.
+ depth: the mistake is visible and the cut is in material the project
+ knows. When no such Pocket exists and the start depth is above 0,
+ export is refused with `start_depth_uncleared` unless the operation
+ says `start_plane_cleared_externally: true`, the user's statement that
+ another program cut the pocket; then the bit's **flank engagement**
+ counts from the stock top, not the start plane, so the cone-height
+ check (39) refuses a start depth the bit cannot reach without its
+ shank, whatever the carve's own depth (changed after the security
+ review of 2026-10-28, decided by the maintainer: the draft warned and
+ exported a cut whose material the project could not see, and counted
+ the cone from the start plane). The bit rapids down to the entry
+ clearance above the stock top and plunges from there at the plunge
+ rate (S2 unchanged). On V-Carve, Photo V-Carve and a countersink (44)
+ in this phase; an Inlay has no start depth setting (the male's start
+ plane is the plug's own design, 45).
 42. **One pass.** A carve is cut in one pass whatever its depth, as
  PureCutCNC cuts; VCarve's Z-level passes ("Multiple Depths" in
  Corbin's add-in) are out of scope and may come later. (decided
@@ -201,9 +209,14 @@ is no GUI in this phase.
  `countersink_mouth_not_wider_than_hole`, since there is nothing to
  cut. Always plain moves, never a canned cycle, even with
  `use_canned_cycles` on: the motion is a simple plunge, but the depth is
- derived, and a controller's cycle cannot say so. `dwell_s` and
- `retract_mm` apply as for `simple`; there is no pecking (a countersink
- is one plunge). Usually
+ derived, and a controller's cycle cannot say so. `dwell_s` applies as
+ for `simple`; `retract_mm` is measured from the stock top, not the
+ hole's top, so the rapid down to it never ends in the stock (changed
+ after the security review: measured from a start plane it did); there
+ is no pecking (a countersink is one plunge). With a start depth, the
+ flank engagement for the cone check is `start_depth_mm` plus the
+ countersink's depth unless an earlier Pocket cleared the start plane
+ (41). Usually
  a second Drill on the circles an earlier Drill made; the order is the
  user's, as always.
 
@@ -256,8 +269,15 @@ is no GUI in this phase.
      the female wall's inset at depth `z`, so turned over, the plug's walls
      meet the pocket's walls along their whole height and the plug's top
      stops `glue_gap_mm` short of the floor. The tool is a V-bit, with the
-     same checks as V-Carve; the chapter says both sides must use the same
-     bit angle, which two files cannot check. `safe_z_mm` and
+     same checks as V-Carve, except that the cone-height check counts the
+     flank's whole engagement from the stock top: `depth_mm` on the
+     female, and `depth_mm − glue_gap_mm + plug_depth_mm` on the male,
+     whose stock above its start plane is the plug and stays (changed
+     after the security review: the draft counted the male's
+     `plug_depth_mm` alone, and with the bench's 90° bit, cone height
+     3.175 mm, Corbin's usual 2.5, 0.25 and 1.5 mm engage 3.75 mm). The
+     chapter says both sides must use the same bit angle, which two files
+     cannot check. `safe_z_mm` and
      `machining_order` are as V-Carve's, and each side is one pass (42); a clearing Pocket may name an
      Inlay (40) on either side. The male stock must leave a base under the
      surround's floor: less than 6 mm warns `inlay_plug_base_thin` (Corbin:
@@ -348,8 +368,11 @@ is no GUI in this phase.
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
  `inlay_male_mirrored`, `photo_lines_overlap`, `image_colour_converted`,
- `start_depth_mismatch`. An error stops export and names the operation, shape, tool or field;
- a warning never does.
+ `start_depth_mismatch`, `start_depth_uncleared`, `clear_for_with_relief`
+ (a clearing Pocket may not have corner relief: a notch at a floor
+ corner would cut through the sloped wall above it; added after the
+ security review). An error stops export and names the operation, shape,
+ tool or field; a warning never does.
 49. **Golden parity.** The V-Carve goldens are captured from PureCutCNC's
  `v_carve_medial` and `v_carve` on fixtures the design spec lists
  (rectangle, square, circle, ring, L, outline text, triangle; a square
@@ -436,11 +459,17 @@ Numbering continues from phase 2's 47.
  inside a 60 × 30 mm Pocket 4 mm deep that runs before it: every cutting
  Z is 4 mm lower than in 48, the descent from the entry clearance above
  the stock top to the first cut is at the plunge rate, the program
- passes S1 and S2, and `check` is quiet. With the Pocket 3 mm deep, or
- disabled, or the rectangle outside it, `check` warns
- `start_depth_mismatch` naming the Pocket (or none). The carve is one
- pass whatever its depth: the 20 × 5 mm rectangle plunges once per
- chain and never re-traces a line at a shallower Z.
+ passes S1 and S2, and `check` is quiet. With the Pocket 3 mm deep,
+ `check` warns `start_depth_mismatch` naming it. With the Pocket
+ disabled, or the rectangle outside it, export is refused with
+ `start_depth_uncleared`; with `start_plane_cleared_externally: true` as
+ well it exports, and the same project with the 90° bit (cone height
+ 3.175 mm) is instead refused with `v_bit_cone_exceeded`, since 4 mm of
+ start depth engages the flank past the cone (changed after the security
+ review). The carve is one pass whatever its depth: the 20 × 5 mm
+ rectangle plunges once per chain and never re-traces a line at a
+ shallower Z, and its first plunge ends at the surface at a corner, not
+ at the centreline's depth.
 54. **Offset strategy.** The 6 mm square with `strategy: "offset"`,
  `step_over_mm: 0.5`, 90° bit: rings inset 0.5, 1, … 2.5 mm from the
  outline at Z −0.5, −1, … −2.5, each ring's depth equal to its inset
@@ -456,10 +485,13 @@ Numbering continues from phase 2's 47.
  `countersink_needs_v_bit`; `dwell_s: 0.5` writes a `G4` at the bottom.
  The same four circles inside a 40 × 40 mm Pocket 4 mm deep that runs
  before them, with `start_depth_mm: 4`: each plunge ends at Z −7 (the
- 6 mm mouth opens at the pocket floor), the descent to Z −4 is at the
- plunge rate, and `check` is quiet; with `start_depth_mm: 0` it warns
+ 6 mm mouth opens at the pocket floor), the rapid before it stops at
+ the stock top plus `retract_mm`, the descent from there to Z −7 is at
+ the plunge rate, and `check` is quiet; with `start_depth_mm: 0` it warns
  `start_depth_mismatch` naming the Pocket and the mouth would open 3 mm
- above the floor, so the chapter shows this case.
+ above the floor, so the chapter shows this case; with the Pocket
+ disabled it is refused with `start_depth_uncleared` (changed after the
+ security review).
 56. **Inlay female.** The star fixture (a four-point star 60 mm tip to tip
  with a 12 mm circle at its centre), `side: "female"`, 60° V-bit,
  `depth_mm: 4`: the toolpath equals a V-Carve of the same targets with
@@ -523,17 +555,24 @@ V-Carve or an Inlay, the bit's cone (its included angle about the point,
 up to the cone height) meets the start plane only inside the operation's
 carved region: a V-Carve's targets' area, a male Inlay's surround. A
 point touching a wall is allowed; a point whose flank would pass through
-a wall below the start plane, or whose tip is below the flat depth or
-the cone height, is not. A Photo V-Carve's tip stays inside the picture
-and above its maximum depth (S19); its groove's width may run past the
-picture's edge by up to the full-depth half-width, since the edge is not
-a wall, and S7 keeps that on the stock (changed in the design spec: the
-draft held the whole cone inside the picture, which no edge-to-edge
-carve, RasterCarve's included, satisfies). Checked on the toolpath per
-cutting move, sampled along the move, and again on the parsed program,
+a wall below the start plane, or whose tip is below the flat depth, is
+not. The flank's **engagement**, from the stock top to the tip (or from
+the start plane, where an enabled earlier Pocket has cleared it), never
+exceeds the cone height, so the shank never cuts; a male Inlay's counts
+from the stock top always. The only cutting move allowed above the start
+plane is a vertical descent to where a cut begins. A Photo V-Carve's
+tip stays inside the picture and above its maximum depth (S19); its
+groove's width may run past the picture's edge by up to the full-depth
+half-width, since the edge is not a wall, and S7 keeps that on the stock
+(changed in the design spec: the draft held the whole cone inside the
+picture, which no edge-to-edge carve, RasterCarve's included,
+satisfies). Checked exactly, as S9 is, not by sampling: on the toolpath
+by the generator before it returns, and again on the parsed program,
 where the start plane is the operation's `start_depth_mm` below the
-stock top. S9's footprint test is this test with a cylinder; this one is
-with a cone.
+stock top (changed after the security review: the draft sampled every
+1 mm, which can miss half a millimetre of wall, and counted the cone
+from the start plane). S9's footprint test is this test with a cylinder;
+this one is with a cone.
 - **S18 A countersink's depth is derived, never set.** A countersink
 plunge ends at `diameter_mm / (2 · tan(α/2))` below the hole's top (the
 start plane, `start_depth_mm` below the stock top), and nowhere else; it is written as plain moves on every controller; the
