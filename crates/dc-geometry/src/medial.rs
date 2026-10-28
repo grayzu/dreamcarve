@@ -408,12 +408,12 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64) -> MedialGraph {
     // 3. Circumcentres inside the region become raw nodes, deduplicated.
     let mut raw: Vec<Point> = Vec::new();
     let mut by_key: BTreeMap<(i64, i64), usize> = BTreeMap::new();
-    let mut node_of_triangle: Vec<Option<usize>> = delaunay
-        .triangles
-        .chunks_exact(3)
-        .map(|t| {
-            let corner = |k: usize| t.get(k).and_then(|&i| samples.get(i)).copied();
-            let cc = circumcentre(corner(0)?, corner(1)?, corner(2)?)?;
+    let (triangles, _) = delaunay.triangles.as_chunks::<3>();
+    let mut node_of_triangle: Vec<Option<usize>> = triangles
+        .iter()
+        .map(|&[i, j, k]| {
+            let corner = |s: usize| samples.get(s).copied();
+            let cc = circumcentre(corner(i)?, corner(j)?, corner(k)?)?;
             if !even_odd(cc, &loops) {
                 return None;
             }
