@@ -201,6 +201,11 @@ fn min_z(toolpath: &Toolpath) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
+/// The straight-line distance, mm, between `a` and `b`.
+fn distance_3d(a: Point3, b: Point3) -> f64 {
+    ((b.x - a.x).powi(2) + (b.y - a.y).powi(2) + (b.z - a.z).powi(2)).sqrt()
+}
+
 /// The exact distance, mm, from `p` to the walls of `regions` as drawn
 /// (arcs as arcs): the test's own measure, not the generator's.
 fn wall_distance(regions: &[Region], p: Point) -> f64 {
@@ -887,8 +892,9 @@ fn fixtures() -> Vec<(&'static str, Project, VCarveOp)> {
 }
 
 /// Acceptance 49, S17 on every fixture, measured by the test itself: at
-/// 64 points along every cut, the distance to the nearest wall as drawn
-/// is at least the depth there times tan(α/2), less the 0.01 mm the
+/// points along every cut, 64 or every 0.05 mm, whichever are fewer (the
+/// floor's short ring moves, #405), the distance to the nearest wall as
+/// drawn is at least the depth there times tan(α/2), less the 0.01 mm the
 /// outlines are flattened to.
 #[test]
 fn no_cut_is_nearer_a_wall_than_its_depth_allows() {
@@ -901,8 +907,12 @@ fn no_cut_is_nearer_a_wall_than_its_depth_allows() {
         };
         let slope = slope_of(included_angle_deg);
         for (a, b) in cuts(&toolpath) {
-            for k in 0..=64 {
-                let t = f64::from(k) / 64.0;
+            let length_mm = distance_3d(a, b);
+            let samples = (1..=64)
+                .find(|&n| length_mm / f64::from(n) <= 0.05)
+                .unwrap_or(64);
+            for k in 0..=samples {
+                let t = f64::from(k) / f64::from(samples);
                 let q = Point3::new(
                     a.x + (b.x - a.x) * t,
                     a.y + (b.y - a.y) * t,

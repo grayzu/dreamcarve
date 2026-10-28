@@ -64,7 +64,7 @@ fn distance_to_cuts(cuts: &[(Point, Point)], q: Point) -> f64 {
 }
 
 /// The 3D distance from `q` to the segment `a`–`b`.
-fn distance_3d(a: Point3, b: Point3, q: Point3) -> f64 {
+fn segment_distance_3d(a: Point3, b: Point3, q: Point3) -> f64 {
     let ab = [b.x - a.x, b.y - a.y, b.z - a.z];
     let aq = [q.x - a.x, q.y - a.y, q.z - a.z];
     let length_sq: f64 = ab.iter().map(|v| v * v).sum();
@@ -81,7 +81,7 @@ fn distance_3d(a: Point3, b: Point3, q: Point3) -> f64 {
 fn cut_through(toolpath: &Toolpath, q: Point3, tolerance_mm: f64) -> bool {
     cuts(toolpath)
         .iter()
-        .any(|&(a, b)| distance_3d(a, b, q) <= tolerance_mm)
+        .any(|&(a, b)| segment_distance_3d(a, b, q) <= tolerance_mm)
 }
 
 /// The blocks of `op` in `p` (which gains `op`), from [`blocks`].
