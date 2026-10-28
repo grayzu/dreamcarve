@@ -427,8 +427,9 @@ instance_name, profile)` (a region so thin that no interior node survives
 two refinements; upstream `vcarveNoMedialAxis`), `VCarveSamplingBudget
 (op, resolution_mm)` (once per operation; upstream `vcarveSamplingBudget`),
 `ClearingNoRoom (op, tool, diameter_mm)`, `ClearingNotDescending (op, tool, earlier_tool)`, `StartDepthMismatch
-(op, pocket: Option<OperationId>, start_depth_mm, pocket_depth_mm:
-Option<f64>)`, `CountersinkMouthNotWiderThanHole (op, instance,
+(op, pocket: OperationId, start_depth_mm, pocket_depth_mm:
+Option<f64>)` (`pocket` is not an `Option`: with no containing Pocket
+the case is the error `start_depth_uncleared`, #409), `CountersinkMouthNotWiderThanHole (op, instance,
 instance_name, profile, mouth_mm, hole_mm)`, `InlayMaleMirrored (op,
 axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `PhotoLinesOverlap (op, fraction)`. New
@@ -839,6 +840,17 @@ top instead, "Inlay" step 1):
    material of is now the user's explicit statement, and even then the
    shank check holds.
 5. With none and `s = 0`, or a match: quiet.
+
+`order::start_plane(project, op)` classifies an operation as stock top,
+cleared (a match), mismatch, cleared externally or uncleared, from one
+list of start-plane operations (`start_setting`, an exhaustive match on
+`Operation`: V-Carve in 3.1; the countersink Drill and the Photo V-Carve
+join it in 3.2 and 3.4). `order::check` warns only the mismatch, read
+from the project's enabled operations, not from the generated toolpaths;
+`check` and `export` print it at the operation's `start_depth_mm`. The
+uncleared case is reported once, by validation: `export::build` stops at
+a validation error, so neither the generator's `StartDepthUncleared` nor
+`order::check` runs on such a project (#409).
 
 ### Countersink (dc-cam::drill)
 
