@@ -8,7 +8,7 @@
 //!
 //! [`generate_vcarve`] checks the tool and the start plane, nests the
 //! targets into regions, builds each region's blocks with [`blocks`]
-//! (the medial strategy is [`medial`]), sequences them, and before it
+//! (the medial strategy is the `medial` module), sequences them, and before it
 //! returns runs the exact cone test, [`cone_in_material`], on its own
 //! toolpath (step 10): a library crate never hands back motion it can
 //! prove wrong.
