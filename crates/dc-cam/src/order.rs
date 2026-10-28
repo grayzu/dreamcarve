@@ -249,14 +249,18 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
         Operation::Profile(profile) => profile.side.cuts_open_paths(),
-        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) => false,
+        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) | Operation::VCarve(_) => {
+            false
+        }
     };
     // #207: Left and Right skip closed outlines.
     let cuts_closed = match op {
         Operation::Profile(profile) => !profile.side.is_open_path_side(),
-        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) | Operation::Engrave(_) => {
-            true
-        }
+        Operation::Pocket(_)
+        | Operation::Drill(_)
+        | Operation::Bore(_)
+        | Operation::Engrave(_)
+        | Operation::VCarve(_) => true,
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -430,6 +434,7 @@ mod tests {
                     Operation::Pocket(pocket) => generate_pocket(project, pocket),
                     Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
+                    Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
                 };
                 let (toolpath, _) =
                     generated.unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));

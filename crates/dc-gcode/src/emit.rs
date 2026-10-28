@@ -5847,6 +5847,7 @@ mod tests {
                     Operation::Bore(p) => {
                         (op_owned, tool, dc_cam::generate_bore(project, p).unwrap().0).into()
                     }
+                    Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
                 }
             })
             .collect()

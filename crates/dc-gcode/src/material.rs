@@ -268,7 +268,8 @@ pub(crate) enum Material {
     },
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid
-    /// stock to leave): no cut is in the material, fail-closed.
+    /// stock to leave), or the operation is a V-Carve, which has no rule
+    /// before S17: no cut is in the material, fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
     /// checked.
@@ -712,6 +713,11 @@ impl Material {
                 },
                 None => Self::Unresolved,
             },
+            // Format 20: no V-Carve is generated before S17 lands
+            // (`docs/specs/phase-3/design.md`, sub-phase 3.1), so the safety
+            // pass has no material rule for one and refuses any program
+            // that claims to be one.
+            Operation::VCarve(_) => Self::Unresolved,
         }
     }
 }

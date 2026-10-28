@@ -249,7 +249,9 @@ holding the kinds its version has.
   `countersink_needs_v_bit`). Located at `operations[i].tool`.
 - `v_bit_angle_range`: the V-bit's `included_angle_deg` not in (0, 180),
   on every tool a V operation uses (the library already enforces it on
-  import; a hand-edited project may not).
+  import; a hand-edited project may not). Located at the tool's
+  `cutter.v_bit.included_angle_deg`, and reported instead of the general
+  `tool_out_of_range` for such a tool, so the angle is named once (#413).
 - `operation_value_unset` extended to `flat_depth_mm`'s neighbours that are
   required: Inlay `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, and
   `margin_mm` on a male; Photo `max_depth_mm`.
@@ -257,8 +259,13 @@ holding the kinds its version has.
   flat depth (or, with none, the deepest medial clearance: generator-time
   only, since validation has no geometry; validation checks only the
   flat depth and the Photo `max_depth_mm` and the countersink's derived
-  depth) is deeper than `diameter_mm / (2 · tan(α/2))`. The generator
-  repeats the check on the actual depth (see "V-Carve generator").
+  depth) is deeper than `diameter_mm / (2 · tan(α/2))`. The engagement
+  sum applies: the start depth counts too unless an enabled earlier
+  Pocket at that depth contains the targets, so with no flat depth a start
+  depth alone beyond the cone is already reported (located at
+  `start_depth_mm`; with a flat depth at `flat_depth_mm`; #413). The
+  generator repeats the check on the actual depth (see "V-Carve
+  generator").
 - `clearing_needs_flat_depth` (a non-empty `clearing` on a V-Carve with
   `flat_depth_mm: null`; an Inlay always has a flat depth),
   `clearing_needs_end_mill` (a pass's tool is not `EndMill`, as
@@ -272,9 +279,11 @@ holding the kinds its version has.
   2026-10-28): a V-Carve, Photo V-Carve or countersink Drill with
   `start_depth_mm > 0`, no enabled earlier Pocket whose regions contain its footprint outlines, and
   `start_plane_cleared_externally: false`. Located at `start_depth_mm`.
-  Validation and `order::check` share one containment function
-  (`order::containing_pocket`); validation reports it so `check` names it
-  with a location, and the generator refuses it too.
+  Validation and `order::check` share one containment function,
+  `dc_project::containing_pocket` (in `dc-project`, not `dc-cam::order`,
+  because validation may not depend on `dc-cam`; decided in #413);
+  validation reports it so `check` names it with a location, and the
+  generator refuses it too.
 - `flatten_tolerance_range`: `flatten_tolerance_mm` above
   `MAX_FLATTEN_TOLERANCE_MM` (0.1 mm) is an error (security review L6:
   the S9/S17 slack and the medial axis's hole chords both scale with
@@ -623,7 +632,7 @@ orientation; DreamCarve's regions are normalised anyway.
    at most the thickness, else `CamError::InvalidStartDepth`). The floor
    depth `F = flat_depth_mm`.
 3. **Cone check.** The flank is engaged from `engaged_from_z_mm`: the
-   stock top, unless `order::containing_pocket` finds an enabled earlier
+   stock top, unless `dc_project::containing_pocket` finds an enabled earlier
    Pocket whose regions contain every target
    outline at depth `start_depth_mm` within `EPS_MM`, in which case the
    start plane (security review H4). With no such Pocket and
@@ -800,12 +809,14 @@ top instead, "Inlay" step 1):
 
 1. Its **footprint outlines**: a carve's target outlines, a Photo's
    footprint rectangle, a countersink's target circles.
-2. The **containing Pocket** (`order::containing_pocket`, also used by
-   validation and the generators): the last enabled Pocket earlier in
-   the list whose regions contain every
-   footprint outline (each outline's vertices inside a region, outside
-   its islands, by `Region::contains_point`; an outline crossing a
-   region boundary does not count).
+2. The **containing Pocket** (`dc_project::containing_pocket`, which
+   validation, `order::check` and the generators all call; it is in
+   `dc-project` because validation may not depend on `dc-cam`, #413):
+   the last enabled Pocket earlier in the list whose regions contain
+   every footprint outline (each outline's vertices inside a region,
+   outside its islands, by `Region::contains_point`; an outline crossing
+   a region boundary does not count, which the area the outlines enclose
+   less the Pocket's regions, within the flattening slack, decides).
 3. With a containing Pocket of depth `d ≠ s` (within `EPS_MM`): warn
    `StartDepthMismatch (op, pocket, s, d)`. The user's mistake is visible
    and the cut is in material the project reasons about, so a warning.
@@ -830,7 +841,7 @@ start_depth_mm: s }`:
    when `D <= diameter` (upstream's `maxCutDepth` tolerance note applies:
    compare with `1e-9`). With `s > 0` the flank engagement is `s + depth`
    unless a containing Pocket has cleared the start plane
-   (`order::containing_pocket`, as V-Carve step 3), and `s + depth <=
+   (`dc_project::containing_pocket`, as V-Carve step 3), and `s + depth <=
    cone + EPS` else `VBitConeExceeded`; no Pocket and
    `start_plane_cleared_externally: false` is `StartDepthUncleared`
    (security review H4, M2).
@@ -1005,7 +1016,7 @@ it does for Pocket and Profile, and never from the toolpath.
   `Transform::mirror_x_about` the targets' bounding-box centre, both
   pure geometry, never a generator; a Photo's footprint rectangle), and
   `engaged_from` as the generator derives it: the stock top, or the
-  start plane when `order::containing_pocket` finds an enabled Pocket at
+  start plane when `dc_project::containing_pocket` finds an enabled Pocket at
   that depth (the pass re-runs that derivation from the project; it is
   geometry on the project, not a generator). For every cutting move of
   the operation in the parsed program:
@@ -1117,8 +1128,8 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
-crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ an entry point on resolved regions), pocket/rest.rs (reach shared with clearing), order.rs (+ containing_pocket, start_depth_mismatch, start_depth_uncleared), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), project.rs (containing_pocket), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ an entry point on resolved regions), pocket/rest.rs (reach shared with clearing), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::containing_pocket), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}
@@ -1268,7 +1279,7 @@ Goal: the sign carved on the bench without its countersinks.
 4. **V-Carve, medial strategy.** `dc-cam::vcarve` with `Carve`, `ToolRun`,
    chains, pruning, simplification, blocks, cone-tested links,
    `cone_in_material` and the generator's own S17 check, the start plane
-   with `order::containing_pocket`, `check`/`export` dispatch and summary
+   with `dc_project::containing_pocket`, `check`/`export` dispatch and summary
    (one run per operation). Clamping only, as PureCutCNC. Tests: the
    vcarve (medial) group with its H1, H2 and H4 additions. [1, 2, 3]
 5. **Flat floor and the V-bit floor.** The boundary trace, the ridge

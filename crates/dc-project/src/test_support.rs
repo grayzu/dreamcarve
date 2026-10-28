@@ -10,7 +10,7 @@ use crate::model::{
     BoreOp, ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
     FeatureDefinition, FeatureInstance, Heights, MachineOrigin, MachiningOrder, Operation,
     OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
-    TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
+    TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
@@ -48,10 +48,24 @@ pub fn tool_6_35_upcut() -> Tool {
     }
 }
 
+/// A 90°, 6.35 mm (1/4 in) V-bit, id `t2`, with every value set: its
+/// cone is 3.175 mm tall.
+pub fn tool_v_bit_90() -> Tool {
+    Tool {
+        id: ToolId::new("t2"),
+        name: "90° V-bit".into(),
+        cutter: ToolKind::VBit {
+            included_angle_deg: 90.0,
+        },
+        step_down_mm: None,
+        ..tool_6_35_upcut()
+    }
+}
+
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v19/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v20/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -227,6 +241,28 @@ pub fn sample_engrave() -> EngraveOp {
         depth_mm: Some(1.0),
         step_down_mm: None,
         alternate_direction: false,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
+    }
+}
+
+/// A valid medial V-Carve of the sample rectangle with
+/// [`tool_v_bit_90`] (`t2`, which the caller adds to the project), id
+/// `o6`: no flat depth, no clearing, from the stock top (format 20).
+pub fn sample_v_carve() -> VCarveOp {
+    VCarveOp {
+        id: OperationId::new("o6"),
+        name: "V-Carve".into(),
+        enabled: true,
+        targets: vec![InstanceId::new("i1")],
+        tool: ToolId::new("t2"),
+        strategy: VCarveStrategy::Medial,
+        clearing: Vec::new(),
+        flat_depth_mm: None,
+        start_depth_mm: 0.0,
+        start_plane_cleared_externally: false,
+        step_over_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,

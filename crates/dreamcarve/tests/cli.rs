@@ -1371,6 +1371,80 @@ fn v7_project_exports_the_same_program() {
     assert!(!from_v7.is_empty());
 }
 
+/// Format 20 (sub-phase 3.1): the V-Carve kind changes nothing an earlier
+/// file holds, so the version 19 fixture exports the same program as it
+/// is and once saved at the current version.
+#[test]
+fn v19_project_exports_the_same_program() {
+    let dir = work_dir("v19_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v19/sample.dcv");
+    let v19 = dir.join("v19.dcv");
+    std::fs::copy(&fixture, &v19).expect("fixture copied");
+    let text = std::fs::read_to_string(&v19).expect("dcv readable");
+    assert!(
+        text.contains("\"version\": 19,"),
+        "the fixture is a version 19 file"
+    );
+    let out = run(&dir, &["export", "v19.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v19: {}", stderr(&out));
+    let from_v19 = std::fs::read_to_string(dir.join("v19.nc")).expect("v19.nc written");
+
+    let project = load_file(&v19).project;
+    assert_eq!(project.version, 20);
+    let v20 = dir.join("v20.dcv");
+    std::fs::write(&v20, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v20).expect("dcv readable");
+    assert!(saved.contains("\"version\": 20,"), "{saved}");
+    let out = run(&dir, &["export", "v20.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v20: {}", stderr(&out));
+    let from_v20 = std::fs::read_to_string(dir.join("v20.nc")).expect("v20.nc written");
+    assert!(from_v19 == from_v20, "v19:\n{from_v19}\nv20:\n{from_v20}");
+    assert!(!from_v19.is_empty());
+}
+
+/// Format 20 (#413): a project may hold a V-Carve before its generator
+/// lands (#404). It validates, but `check` and `export` refuse it by
+/// name, and no program is written.
+#[test]
+fn v_carve_is_refused_until_it_is_generated() {
+    let dir = work_dir("v_carve_is_refused_until_it_is_generated");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut bit = dc_project::test_support::tool_v_bit_90();
+    bit.id = ToolId::new("tv");
+    project.tools.push(bit);
+    let mut carve = dc_project::test_support::sample_v_carve();
+    carve.targets = project.operations[0].targets().to_vec();
+    carve.tool = ToolId::new("tv");
+    carve.flat_depth_mm = Some(1.0);
+    project.operations.insert(0, Operation::VCarve(carve));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    for args in [
+        &["check", "coaster.dcv"][..],
+        &["export", "coaster.dcv", "--date", FIXED_DATE],
+    ] {
+        let command = args[0];
+        let out = run(&dir, args);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_ne!(out.status.code(), Some(0), "{command}: {report}");
+        assert!(
+            report.contains("`o6`")
+                && report.contains("v_carve")
+                && report.contains("not supported"),
+            "{command}: {report}"
+        );
+    }
+    let programs: Vec<_> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().extension().is_some_and(|x| x == "nc"))
+        .collect();
+    assert!(programs.is_empty(), "{programs:?}");
+}
+
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an
 /// offset Pocket of the coaster before its cut-out exports one program,
 /// which the emitter's safety pass (S1–S7) accepted; `check` finds no
@@ -9240,7 +9314,7 @@ fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
         saved.contains(&format!("\"version\": {}", dc_project::CURRENT_VERSION)),
         "{saved}"
     );
-    assert_eq!(dc_project::CURRENT_VERSION, 19);
+    const { assert!(dc_project::CURRENT_VERSION >= 19) };
     assert!(!saved.contains("\"allowance_mm\""), "{saved}");
     assert_eq!(saved.matches("\"stock_to_leave_mm\"").count(), 4, "{saved}");
 

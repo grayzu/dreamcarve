@@ -105,6 +105,12 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
             let (toolpath, _) = generate_bore(project, b)?;
             EmitOp::from((op, tool, toolpath))
         }
+        Operation::VCarve(_) => {
+            return Err(CamError::NotSupportedYet {
+                op: op.id().clone(),
+                feature: "V-carving (`v_carve`)".into(),
+            });
+        }
     })
 }
 

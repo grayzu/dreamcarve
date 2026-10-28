@@ -20,7 +20,7 @@
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::migrate;
-use crate::model::{BoreOp, DrillOp, EngraveOp, PocketOp, ProfileOp, Project};
+use crate::model::{BoreOp, DrillOp, EngraveOp, PocketOp, ProfileOp, Project, VCarveOp};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
@@ -301,6 +301,7 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
         "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
         "bore" => serde_path_to_error::deserialize::<_, BoreOp>(&fields).err(),
         "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
+        "v_carve" => serde_path_to_error::deserialize::<_, VCarveOp>(&fields).err(),
         _ => None,
     }
 }
@@ -389,7 +390,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v19/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v20/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1099,6 +1100,195 @@ mod tests {
         let text = save(&p).unwrap().replacen("\"pitch_mm\"", "\"pitch\"", 1);
         let err = load(text.as_bytes()).unwrap_err().to_string();
         assert!(err.contains("pitch"), "{err}");
+    }
+
+    /// Format 20: a V-Carve saves as a flat object tagged `v_carve`, its
+    /// fields in the design spec's order, and loads back the same.
+    #[test]
+    fn v_carve_round_trips() {
+        use crate::model::{MachiningOrder, VCarveStrategy};
+        use crate::test_support::{sample_v_carve, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        let mut carve = sample_v_carve();
+        carve.flat_depth_mm = Some(1.5);
+        carve.start_depth_mm = 0.5;
+        carve.start_plane_cleared_externally = true;
+        carve.step_over_fraction = Some(0.3);
+        carve.machining_order = MachiningOrder::PassFirst;
+        carve.through_cut_allowance_mm = 0.2;
+        carve.strategy = VCarveStrategy::Medial;
+        p.operations.push(Operation::VCarve(carve));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let op = &value["operations"][1];
+        let fields: Vec<&str> = op.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            fields,
+            [
+                "kind",
+                "id",
+                "name",
+                "enabled",
+                "targets",
+                "tool",
+                "strategy",
+                "clearing",
+                "flat_depth_mm",
+                "start_depth_mm",
+                "start_plane_cleared_externally",
+                "step_over_fraction",
+                "machining_order",
+                "through_cut_allowance_mm",
+                "safe_z_mm"
+            ]
+        );
+        assert_eq!(op["kind"], json!("v_carve"));
+        assert_eq!(op["clearing"], json!([]));
+        assert_eq!(op["flat_depth_mm"], json!(1.5));
+        assert_eq!(op["start_plane_cleared_externally"], json!(true));
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+
+        // No flat depth is `null`, which is a value, not an unset one.
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations.push(Operation::VCarve(sample_v_carve()));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["operations"][1]["flat_depth_mm"], json!(null));
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.problems, vec![]);
+
+        // Every field is required, as in every persisted struct, and an
+        // unknown one is named.
+        let missing = text.replacen("\"flat_depth_mm\": null,", "", 1);
+        let err = load(missing.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("flat_depth_mm"), "{err}");
+        let unknown = text.replacen("\"start_depth_mm\"", "\"start_depth\"", 1);
+        let err = load(unknown.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("start_depth"), "{err}");
+    }
+
+    /// Format 20: the V-Carve strategy is externally tagged, like a drill
+    /// cycle: `"medial"`, or `{ "offset": { … } }` with its step-over and
+    /// direction, which a length with its unit may give.
+    #[test]
+    fn v_carve_strategy_is_string_or_object() {
+        use crate::model::{CutDirection, VCarveStrategy};
+        use crate::test_support::{sample_v_carve, tool_v_bit_90};
+        for (strategy, expected) in [
+            (VCarveStrategy::Medial, json!("medial")),
+            (
+                VCarveStrategy::Offset {
+                    step_over_mm: 0.5,
+                    direction: CutDirection::Conventional,
+                },
+                json!({ "offset": { "step_over_mm": 0.5, "direction": "conventional" } }),
+            ),
+        ] {
+            let mut p = sample_project();
+            p.tools.push(tool_v_bit_90());
+            let mut carve = sample_v_carve();
+            carve.strategy = strategy.clone();
+            p.operations.push(Operation::VCarve(carve));
+            let value = serde_json::to_value(&p).unwrap();
+            assert_eq!(value["operations"][1]["strategy"], expected, "{strategy:?}");
+            let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+            assert_eq!(loaded.project, p, "{strategy:?}");
+        }
+        let strategy: VCarveStrategy = serde_json::from_value(
+            json!({ "offset": { "step_over_mm": "0.02 in", "direction": "climb" } }),
+        )
+        .unwrap();
+        let VCarveStrategy::Offset {
+            step_over_mm,
+            direction,
+        } = strategy
+        else {
+            unreachable!("an offset strategy");
+        };
+        assert!((step_over_mm - 0.508).abs() < 1e-9, "{step_over_mm}");
+        assert_eq!(direction, CutDirection::Climb);
+        for bad in [
+            json!("offset"),
+            json!({ "medial": {} }),
+            json!({ "offset": { "step_over_mm": 0.5 } }),
+            json!({ "offset": { "step_over_mm": 0.5, "direction": "climb", "angle_deg": 1.0 } }),
+        ] {
+            assert!(
+                serde_json::from_value::<VCarveStrategy>(bad.clone()).is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    /// Format 20: a carve's clearing passes save in list order, each with
+    /// every field, the strategy and entry as a Pocket's, and load back
+    /// the same.
+    #[test]
+    fn clearing_passes_round_trip() {
+        use crate::model::{ClearingPass, CutDirection};
+        use crate::test_support::{sample_v_carve, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        let mut t3 = crate::test_support::tool_6_35_upcut();
+        t3.id = crate::ids::ToolId::new("t3");
+        t3.name = "3.175 mm upcut".into();
+        t3.diameter_mm = 3.175;
+        p.tools.push(t3);
+        let mut carve = sample_v_carve();
+        carve.flat_depth_mm = Some(2.0);
+        carve.clearing = vec![
+            ClearingPass {
+                tool: crate::ids::ToolId::new("t1"),
+                strategy: ClearanceStrategy::Offset,
+                direction: CutDirection::Climb,
+                entry: Entry::Helix {
+                    diameter_fraction: 0.8,
+                    angle_deg: 5.0,
+                },
+            },
+            ClearingPass {
+                tool: crate::ids::ToolId::new("t3"),
+                strategy: ClearanceStrategy::Raster { angle_deg: 45.0 },
+                direction: CutDirection::Conventional,
+                entry: Entry::Plunge,
+            },
+        ];
+        p.operations.push(Operation::VCarve(carve));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value["operations"][1]["clearing"],
+            json!([
+                {
+                    "tool": "t1",
+                    "strategy": "offset",
+                    "direction": "climb",
+                    "entry": { "helix": { "diameter_fraction": 0.8, "angle_deg": 5.0 } }
+                },
+                {
+                    "tool": "t3",
+                    "strategy": { "raster": { "angle_deg": 45.0 } },
+                    "direction": "conventional",
+                    "entry": "plunge"
+                }
+            ])
+        );
+        let fields: Vec<&str> = value["operations"][1]["clearing"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(fields, ["tool", "strategy", "direction", "entry"]);
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.problems, vec![]);
+        // A pass with a field missing is not a pass.
+        let missing = text.replacen("\"direction\": \"conventional\",", "", 1);
+        assert!(load(missing.as_bytes()).is_err());
     }
 
     #[test]

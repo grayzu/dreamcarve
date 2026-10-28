@@ -14,6 +14,7 @@ mod locate;
 mod migrate;
 mod model;
 mod post_processor;
+mod project;
 mod serialize;
 mod units_input;
 mod validate;
@@ -26,10 +27,11 @@ pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
-    BoreOp, ClearanceStrategy, CornerRelief, CutDirection, DrillCycle, DrillOp, EngraveOp, Entry,
-    FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin, MachiningOrder,
-    Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp, ProfileOp, Project,
-    Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, WallPass,
+    BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle, DrillOp,
+    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin,
+    MachiningOrder, Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp,
+    ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind,
+    Units, VCarveOp, VCarveStrategy, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
@@ -39,6 +41,10 @@ pub use post_processor::{
     bundled_definition, bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition,
     latest_definitions, switch_post,
 };
+pub use project::containing_pocket;
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
-pub use validate::{MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity, validate};
+pub use validate::{
+    MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity,
+    validate,
+};
