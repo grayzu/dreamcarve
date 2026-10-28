@@ -877,6 +877,7 @@ mod tests {
             },
             descent: Vec::new(),
             entry: start,
+            entry_z_mm: z,
             cuts: vec![
                 corner(x + size, y),
                 corner(x + size, y + size),
@@ -1672,6 +1673,7 @@ mod tests {
             descent_from_z_mm: SAFE_Z_MM,
             descent: Vec::new(),
             entry: at,
+            entry_z_mm: z,
             cuts: vec![
                 Move::linear(Point3::new(x - 1.0, y - 1.0, z), FEED_MM_MIN),
                 Move::linear(Point3::new(x, y, z), FEED_MM_MIN),
@@ -1797,6 +1799,7 @@ mod tests {
         let relief_notch = |name: &str, z: f64| {
             let mut block = notch(name, 0.0, 0.0, 0);
             block.z_mm = z;
+            block.entry_z_mm = z;
             block.descent = vec![Move::linear(Point3::new(0.0, 0.0, z), PLUNGE_MM_MIN)];
             for cut in &mut block.cuts {
                 cut.to.z = z;
@@ -1994,6 +1997,92 @@ mod tests {
             ),
             "{err:?}"
         );
+    }
+
+    /// Security review H1 (`docs/specs/phase-3/design.md`): a block whose
+    /// cuts start above its deepest Z, as a V-Carve chain from a corner tip
+    /// at the surface does, is plunged to its entry Z, not to `z_mm`. The
+    /// chain here starts at Z 4 at (0, 0) and sinks to its pass Z 1 at
+    /// (10, 0); a plunge to Z 1 would cut 3 mm below the surface it starts
+    /// on.
+    #[test]
+    fn a_plunge_ends_at_the_blocks_entry_z_not_its_deepest_z() {
+        let at = Point::new(0.0, 0.0);
+        let chain = CutBlock {
+            shape: shape("v"),
+            pass: 0,
+            z_mm: 1.0,
+            descent_from: at,
+            descent_from_z_mm: SAFE_Z_MM,
+            descent: Vec::new(),
+            entry: at,
+            entry_z_mm: 4.0,
+            cuts: vec![
+                Move::linear(Point3::new(10.0, 0.0, 1.0), FEED_MM_MIN),
+                Move::linear(Point3::new(20.0, 0.0, 1.0), FEED_MM_MIN),
+            ],
+            exit: Point::new(20.0, 0.0),
+            frees: false,
+            cleared: None,
+            group: 0,
+        };
+        let first_cut = chain.cuts[0];
+        let tp = run(&input(vec![chain], MachiningOrder::FullDepthFirst, &[]));
+        let cut_at = tp.moves.iter().position(|m| *m == first_cut).unwrap();
+        let before = &tp.moves[..cut_at];
+        assert_eq!(
+            before.last(),
+            Some(&Move::linear(Point3::new(0.0, 0.0, 4.0), PLUNGE_MM_MIN)),
+            "the plunge ends at the entry Z: {:?}",
+            tp.moves
+        );
+        assert!(
+            before.iter().all(|m| m.to.z >= 4.0 - EPS_MM),
+            "nothing goes below the entry Z before the first cut: {:?}",
+            tp.moves
+        );
+    }
+
+    /// Security review H1: `entry_z_mm` is where cutting begins, so it is
+    /// never below the pass Z, the block's deepest.
+    #[test]
+    fn validate_block_rejects_an_entry_below_the_deepest_z() {
+        let mut blocks = squares("s", 0.0, 0.0, 10.0, 1);
+        blocks[0].entry_z_mm = 3.5;
+        let err = sequence(&input(blocks, MachiningOrder::FullDepthFirst, &[])).unwrap_err();
+        assert_eq!(
+            err,
+            CamError::InvalidBlock {
+                shape: shape("s"),
+                pass: 0,
+                problem: BlockProblem::EntryBelowPass {
+                    z_mm: 4.0,
+                    entry_z_mm: 3.5
+                }
+            }
+        );
+    }
+
+    /// Security review H1: the first cut starts at `(entry, entry_z_mm)`,
+    /// so a descent that ends anywhere else, away in XY or at another Z,
+    /// is refused.
+    #[test]
+    fn validate_block_rejects_a_first_cut_away_from_the_entry() {
+        for end in [Point3::new(3.0, 0.0, 4.0), Point3::new(0.0, 0.0, 5.0)] {
+            let mut blocks = squares("s", 0.0, 0.0, 10.0, 1);
+            blocks[0].descent = vec![Move::linear(end, PLUNGE_MM_MIN)];
+            let err = sequence(&input(blocks, MachiningOrder::FullDepthFirst, &[]))
+                .expect_err("a descent ending away from the entry is refused");
+            assert_eq!(
+                err,
+                CamError::InvalidBlock {
+                    shape: shape("s"),
+                    pass: 0,
+                    problem: BlockProblem::FirstCutAwayFromEntry { start: end }
+                },
+                "descent ending at {end:?}"
+            );
+        }
     }
 
     #[test]
