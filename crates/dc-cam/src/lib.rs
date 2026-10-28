@@ -10,7 +10,9 @@
 //! order of operations cuts inside a part an earlier one freed. Phase 2
 //! also adds Pocket ([`generate_pocket`]), Drill ([`generate_drill`]),
 //! Bore ([`generate_bore`], format 18) and Engrave ([`generate_engrave`]),
-//! and entries, leads and corner relief.
+//! and entries, leads and corner relief. Phase 3 adds V-Carve
+//! ([`generate_vcarve`], format 20), whose result is a list of
+//! [`ToolRun`]s.
 //! Tabs are placed on the project's outlines ([`placed_tabs`], #105,
 //! ADR-0005), and every Profile that cuts a tab's outline rises over it.
 //!
@@ -32,10 +34,12 @@ pub mod placed_tabs;
 pub mod pocket;
 mod profile;
 mod relief;
+mod run;
 mod sequence;
 mod stock;
 mod tabs;
 mod toolpath;
+pub mod vcarve;
 mod warning;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -49,10 +53,12 @@ pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, last_pass_step_reach_mm, traversal_is_ccw};
+pub use run::{RunLabel, ToolRun};
 pub use sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 pub use stock::{OVERHANG_TOLERANCE_MM, Overhang, stock_overhang, swept_bounds};
 pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
+pub use vcarve::generate_vcarve;
 pub use warning::{
     IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
     TabOnCornerReason, TabsRangeReason, Warning, WarningCode,

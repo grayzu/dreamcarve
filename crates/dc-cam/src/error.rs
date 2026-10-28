@@ -647,6 +647,99 @@ pub enum CamError {
         /// What is wrong.
         problem: BlockProblem,
     },
+    /// A V-Carve's tool is not a V-bit (format 20, `v_carve_needs_v_bit`):
+    /// its depth follows the bit's angle, which only a V-bit has.
+    /// Validation reports this first.
+    #[error(
+        "operation `{op}` carves with tool `{tool}`, {cutter}; a V-Carve needs a V-bit, whose angle sets the depth"
+    )]
+    VCarveNeedsVBit {
+        /// The operation.
+        op: OperationId,
+        /// The tool's name.
+        tool: String,
+        /// The tool's id: names need not be unique (#71).
+        tool_id: ToolId,
+        /// The cutter in words, such as `an end mill`.
+        cutter: &'static str,
+    },
+    /// A V-bit's included angle is not above 0° and below 180°
+    /// (`v_bit_angle_range`). Validation reports this first.
+    #[error(
+        "tool `{tool}` has an included angle of {angle_deg}°; it must be above 0° and below 180°"
+    )]
+    VBitAngleRange {
+        /// The tool's name.
+        tool: String,
+        /// The tool's id.
+        tool_id: ToolId,
+        /// The angle given, degrees.
+        angle_deg: f64,
+    },
+    /// A V-bit's flanks would be engaged deeper than its cone is tall, so
+    /// its shank would cut (`v_bit_cone_exceeded`; security review H4):
+    /// the engagement counts from the stock top, or from the start plane
+    /// when an enabled earlier Pocket has cleared it, down to the carve's
+    /// deepest point in `shape`.
+    #[error(
+        "operation `{op}` carves {shape} with its V-bit's flanks engaged {depth_mm:.3} mm deep, but the bit's cone is only {cone_mm:.3} mm tall, so its shank would cut; set a flat depth, use a wider V-bit, or clear the start depth with a Pocket first"
+    )]
+    VBitConeExceeded {
+        /// The operation.
+        op: OperationId,
+        /// The region's outline.
+        shape: Box<ShapeRef>,
+        /// The flank engagement, mm.
+        depth_mm: f64,
+        /// The cone height, `diameter / (2 tan(α/2))`, mm.
+        cone_mm: f64,
+    },
+    /// A V-Carve's `start_depth_mm` is not a number from 0 to the stock
+    /// thickness.
+    #[error(
+        "operation `{op}` has start_depth_mm {start_depth_mm}; it must be from 0 to the stock thickness"
+    )]
+    InvalidStartDepth {
+        /// The operation.
+        op: OperationId,
+        /// The start depth given, mm.
+        start_depth_mm: f64,
+    },
+    /// A V-Carve starts below the stock top, no enabled earlier Pocket
+    /// contains its targets, and the operation does not say another
+    /// program cleared it (`start_depth_uncleared`; security review M2).
+    /// Validation reports this first.
+    #[error(
+        "operation `{op}` starts {start_depth_mm} mm below the stock top, but no earlier Pocket clears that; add one, or set start_plane_cleared_externally if another program cuts it"
+    )]
+    StartDepthUncleared {
+        /// The operation.
+        op: OperationId,
+        /// The start depth, mm.
+        start_depth_mm: f64,
+    },
+    /// A V-bit's cone along the generated toolpath crosses a wall of its
+    /// carved region, its tip leaves the region, or it cuts sideways above
+    /// the start plane (generator-side S17, `docs/specs/phase-3/design.md`,
+    /// "V-Carve generator", step 10). A defect in the generator, never in
+    /// the user's project: the toolpath is not returned.
+    #[error(
+        "operation `{op}` would cut {overlap_mm:.4} mm past a wall of {shape} at ({x_mm:.3}, {y_mm:.3}, {z_mm:.3}) mm; no toolpath was produced"
+    )]
+    ConeOffMaterial {
+        /// The operation.
+        op: OperationId,
+        /// The region the point is in or nearest.
+        shape: Box<ShapeRef>,
+        /// Where, mm, project space.
+        x_mm: f64,
+        /// Where, mm.
+        y_mm: f64,
+        /// Where, mm.
+        z_mm: f64,
+        /// How far past the wall, mm.
+        overlap_mm: f64,
+    },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.
     #[error("shape {shape} encloses itself through other shapes; no cut order exists")]
