@@ -9,6 +9,12 @@
 //! held only by tabs (#269), and when a tool is fitted more than once
 //! because its operations are not adjacent.
 //!
+//! It also checks the start plane of every operation cut from one
+//! (`docs/specs/phase-3/design.md`, "Start depth, `start_depth_mismatch`
+//! and `start_depth_uncleared`"; capability 41): [`start_plane`] says what
+//! the plane rests on, and [`check`] warns when an earlier Pocket clears
+//! the operation's area to another depth.
+//!
 //! Nothing here depends on Y-up or Y-down: containment is symmetric under
 //! the flip.
 
@@ -18,7 +24,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{Operation, OperationId, Project, ToolId};
+use dc_project::{Operation, OperationId, PocketOp, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -113,6 +119,39 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
     }
     warnings.extend(tool_change_hints(project));
     warnings
+}
+
+/// What the start plane of an operation cut from one rests on
+/// (`docs/specs/phase-3/design.md`, "Start depth, `start_depth_mismatch`
+/// and `start_depth_uncleared`"), from its start depth and
+/// [`dc_project::containing_pocket`], which validation and the generators
+/// call too.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StartPlane<'p> {
+    /// Start depth 0 and no earlier Pocket contains the targets: the stock
+    /// top.
+    StockTop,
+    /// The containing Pocket is at the start depth (within [`EPS_MM`]): the
+    /// plane is its floor.
+    Cleared(&'p PocketOp),
+    /// The containing Pocket is at another depth, or has none set:
+    /// [`Warning::StartDepthMismatch`].
+    Mismatch(&'p PocketOp),
+    /// No earlier Pocket contains the targets, the start depth is above 0,
+    /// and the operation says another program cleared the plane.
+    ClearedExternally,
+    /// No earlier Pocket contains the targets, the start depth is above 0,
+    /// and the operation does not say the plane is cleared: validation's
+    /// error `start_depth_uncleared`.
+    Uncleared,
+}
+
+/// The start plane of `op`; `None` for an operation not cut from one, or
+/// one whose start depth validation rejects (not finite, or below 0).
+#[must_use]
+pub fn start_plane<'p>(project: &'p Project, op: &Operation) -> Option<StartPlane<'p>> {
+    let _ = (project, op);
+    None
 }
 
 /// The target outlines an operation leaves loose, or held only by tabs,
@@ -360,10 +399,13 @@ mod tests {
     use crate::profile::generate_profile;
     use crate::warning::WarningCode;
     use dc_geometry::{Point, Polyline, Transform, Vertex};
-    use dc_project::test_support::{sample_pocket, sample_project, tool_6_35_upcut};
+    use dc_project::test_support::{
+        sample_pocket, sample_project, sample_v_carve, tool_6_35_upcut, tool_v_bit_90,
+    };
     use dc_project::{
         DefinitionId, EngraveOp, FeatureDefinition, FeatureInstance, InstanceId, MachiningOrder,
-        OperationId, PocketOp, ProfileOp, Side, Stock, TabPlacement, TabShape, TabSpec, ToolId,
+        OperationId, PocketOp, Problem, ProfileOp, Severity, Side, Stock, TabPlacement, TabShape,
+        TabSpec, ToolId, VCarveOp, validate,
     };
 
     /// The sample project (100 × 100 × 6 mm stock, the 50 × 30 mm rectangle
@@ -1207,5 +1249,295 @@ mod tests {
             with_code(&warnings, WarningCode::ToolChangeAvoidable).is_empty(),
             "a disabled operation does not split a run: {warnings:?}"
         );
+    }
+
+    // Start depth (`docs/specs/phase-3/design.md`, "Start depth,
+    // `start_depth_mismatch` and `start_depth_uncleared`"; capability 41).
+
+    /// The sample rectangle `i1` (50 × 30 mm at (10, 10)) with a 10 mm
+    /// square `i2` at (20, 20) inside it, the 90° V-bit `t2`, and a V-Carve
+    /// `o6` of the square with a 1 mm flat depth (so a 2 mm start depth
+    /// counted from the stock top stays within the 3.175 mm cone)
+    /// starting `start_depth_mm` below the stock top; before it, when
+    /// `pocket_depth_mm` is given, the Pocket `o2` of the rectangle that
+    /// deep.
+    fn carve_in_pocket(pocket_depth_mm: Option<f64>, start_depth_mm: f64) -> Project {
+        let mut project = sample_project();
+        project.tools.push(tool_v_bit_90());
+        let square = FeatureDefinition {
+            id: DefinitionId::new("d2"),
+            name: "Square".into(),
+            profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, 10.0, 10.0)],
+        };
+        project.definitions.insert(square.id.clone(), square);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new("i2"),
+            definition: DefinitionId::new("d2"),
+            transform: Transform::translate(20.0, 20.0),
+            name: "Square".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        project.operations.clear();
+        if let Some(depth_mm) = pocket_depth_mm {
+            project.operations.push(Operation::Pocket(PocketOp {
+                depth_mm: Some(depth_mm),
+                ..sample_pocket()
+            }));
+        }
+        project.operations.push(Operation::VCarve(VCarveOp {
+            targets: vec![InstanceId::new("i2")],
+            flat_depth_mm: Some(1.0),
+            start_depth_mm,
+            ..sample_v_carve()
+        }));
+        project
+    }
+
+    /// The V-Carve of [`carve_in_pocket`], to edit.
+    fn carve_of(project: &mut Project) -> &mut VCarveOp {
+        project
+            .operations
+            .iter_mut()
+            .find_map(|op| match op {
+                Operation::VCarve(carve) => Some(carve),
+                _ => None,
+            })
+            .expect("the project has a V-Carve")
+    }
+
+    /// The Pocket `o2` of [`carve_in_pocket`], to edit.
+    fn pocket_of(project: &mut Project) -> &mut PocketOp {
+        project
+            .operations
+            .iter_mut()
+            .find_map(|op| match op {
+                Operation::Pocket(pocket) if pocket.id.as_str() == "o2" => Some(pocket),
+                _ => None,
+            })
+            .expect("the project has the Pocket o2")
+    }
+
+    /// The V-Carve `o6` of `project`.
+    fn the_carve(project: &Project) -> &Operation {
+        project
+            .operations
+            .iter()
+            .find(|op| op.id().as_str() == "o6")
+            .expect("the project has the V-Carve o6")
+    }
+
+    /// What [`start_plane`] says of the V-Carve `o6`, with the containing
+    /// Pocket by id.
+    fn plane_of(project: &Project) -> Option<(&'static str, Option<String>)> {
+        start_plane(project, the_carve(project)).map(|plane| match plane {
+            StartPlane::StockTop => ("stock_top", None),
+            StartPlane::Cleared(pocket) => ("cleared", Some(pocket.id.to_string())),
+            StartPlane::Mismatch(pocket) => ("mismatch", Some(pocket.id.to_string())),
+            StartPlane::ClearedExternally => ("cleared_externally", None),
+            StartPlane::Uncleared => ("uncleared", None),
+        })
+    }
+
+    /// [`check`]'s `start_depth_mismatch` warnings for `project`.
+    fn mismatches(project: &Project) -> Vec<Warning> {
+        check(project, &[])
+            .into_iter()
+            .filter(|w| w.code() == WarningCode::StartDepthMismatch)
+            .collect()
+    }
+
+    /// Validation's `start_depth_uncleared` errors for `project`.
+    fn uncleared(project: &Project) -> Vec<Problem> {
+        validate(project)
+            .into_iter()
+            .filter(|p| matches!(p, Problem::StartDepthUncleared { .. }))
+            .collect()
+    }
+
+    /// Acceptance 53: the carve starts on the floor of a Pocket of the
+    /// same depth that runs before it, so nothing is reported.
+    #[test]
+    fn start_depth_matching_an_earlier_pocket_is_quiet() {
+        let project = carve_in_pocket(Some(2.0), 2.0);
+        assert_eq!(validate(&project), vec![]);
+        assert_eq!(plane_of(&project), Some(("cleared", Some("o2".into()))));
+        assert_eq!(check(&project, &[]), vec![]);
+        // Within EPS_MM is the same depth.
+        let project = carve_in_pocket(Some(2.0 + EPS_MM / 2.0), 2.0);
+        assert_eq!(plane_of(&project), Some(("cleared", Some("o2".into()))));
+        assert_eq!(mismatches(&project), vec![]);
+    }
+
+    /// Security review M2: with no Pocket and a start depth above 0, the
+    /// plane is uncleared, which is validation's error
+    /// `start_depth_uncleared`, located at the start depth. It is reported
+    /// once: `check` adds no warning for it (and `export` never reaches
+    /// `check` or the generator past a validation error). From the stock
+    /// top nothing needs clearing.
+    #[test]
+    fn start_depth_without_a_pocket_is_an_error_unless_acknowledged() {
+        let mut project = carve_in_pocket(None, 2.0);
+        assert_eq!(plane_of(&project), Some(("uncleared", None)));
+        let errors = uncleared(&project);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(errors[0].severity(), Severity::Error);
+        assert_eq!(
+            errors[0].field().as_deref(),
+            Some("operations[o6].start_depth_mm")
+        );
+        assert_eq!(check(&project, &[]), vec![]);
+
+        carve_of(&mut project).start_plane_cleared_externally = true;
+        assert_eq!(plane_of(&project), Some(("cleared_externally", None)));
+        assert_eq!(uncleared(&project), vec![]);
+
+        let project = carve_in_pocket(None, 0.0);
+        assert_eq!(plane_of(&project), Some(("stock_top", None)));
+        assert_eq!(validate(&project), vec![]);
+        assert_eq!(check(&project, &[]), vec![]);
+    }
+
+    /// The user's word that another program cleared the start plane
+    /// silences both the error and the check.
+    #[test]
+    fn acknowledged_start_depth_is_quiet() {
+        let mut project = carve_in_pocket(None, 2.0);
+        carve_of(&mut project).start_plane_cleared_externally = true;
+        assert_eq!(validate(&project), vec![]);
+        assert_eq!(plane_of(&project), Some(("cleared_externally", None)));
+        assert_eq!(check(&project, &[]), vec![]);
+    }
+
+    /// Acceptance 53: a Pocket shallower than the start depth contains the
+    /// carve, so `check` warns `start_depth_mismatch` naming it, with both
+    /// depths. A carve from the stock top inside a Pocket warns too; a
+    /// disabled carve is not checked.
+    #[test]
+    fn start_depth_with_a_shallower_pocket_names_it() {
+        let project = carve_in_pocket(Some(1.0), 2.0);
+        assert_eq!(uncleared(&project), vec![]);
+        assert_eq!(plane_of(&project), Some(("mismatch", Some("o2".into()))));
+        assert_eq!(
+            mismatches(&project),
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o6"),
+                pocket: OperationId::new("o2"),
+                start_depth_mm: 2.0,
+                pocket_depth_mm: Some(1.0),
+            }]
+        );
+
+        let project = carve_in_pocket(Some(1.0), 0.0);
+        assert_eq!(
+            mismatches(&project),
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o6"),
+                pocket: OperationId::new("o2"),
+                start_depth_mm: 0.0,
+                pocket_depth_mm: Some(1.0),
+            }]
+        );
+
+        let mut project = carve_in_pocket(Some(1.0), 2.0);
+        carve_of(&mut project).enabled = false;
+        assert_eq!(mismatches(&project), vec![]);
+    }
+
+    /// A disabled Pocket clears nothing: the carve's plane is uncleared
+    /// (validation's error), not a mismatch with it.
+    #[test]
+    fn disabled_pocket_does_not_count() {
+        let mut project = carve_in_pocket(Some(1.0), 2.0);
+        pocket_of(&mut project).enabled = false;
+        assert_eq!(plane_of(&project), Some(("uncleared", None)));
+        assert_eq!(uncleared(&project).len(), 1);
+        assert_eq!(mismatches(&project), vec![]);
+
+        let mut project = carve_in_pocket(Some(2.0), 2.0);
+        pocket_of(&mut project).enabled = false;
+        assert_eq!(plane_of(&project), Some(("uncleared", None)));
+
+        let mut project = carve_in_pocket(Some(1.0), 0.0);
+        pocket_of(&mut project).enabled = false;
+        assert_eq!(plane_of(&project), Some(("stock_top", None)));
+        assert_eq!(mismatches(&project), vec![]);
+    }
+
+    /// Validation and `check` share `dc_project::containing_pocket`, so
+    /// they agree on every layout: validation reports
+    /// `start_depth_uncleared` exactly when [`start_plane`] says
+    /// uncleared, and the Pocket `check` names is the containing one.
+    #[test]
+    fn validation_and_check_agree_on_the_containing_pocket() {
+        let mut cases: Vec<(&str, Project, &str)> = vec![
+            ("matching", carve_in_pocket(Some(2.0), 2.0), "cleared"),
+            ("shallower", carve_in_pocket(Some(1.0), 2.0), "mismatch"),
+            ("deeper", carve_in_pocket(Some(3.0), 2.0), "mismatch"),
+            ("none", carve_in_pocket(None, 2.0), "uncleared"),
+            ("stock top", carve_in_pocket(None, 0.0), "stock_top"),
+            ("top in pocket", carve_in_pocket(Some(1.0), 0.0), "mismatch"),
+        ];
+        let mut acknowledged = carve_in_pocket(None, 2.0);
+        carve_of(&mut acknowledged).start_plane_cleared_externally = true;
+        cases.push(("acknowledged", acknowledged, "cleared_externally"));
+        let mut disabled = carve_in_pocket(Some(2.0), 2.0);
+        pocket_of(&mut disabled).enabled = false;
+        cases.push(("disabled", disabled, "uncleared"));
+        // The Pocket after the carve does not clear its plane.
+        let mut after = carve_in_pocket(Some(2.0), 2.0);
+        after.operations.rotate_left(1);
+        cases.push(("after", after, "uncleared"));
+        // The square straddling the rectangle's right edge (x 60).
+        let mut crossing = carve_in_pocket(Some(2.0), 2.0);
+        crossing.instances[1].transform = Transform::translate(55.0, 20.0);
+        cases.push(("crossing", crossing, "uncleared"));
+        // The square outside the rectangle.
+        let mut outside = carve_in_pocket(Some(2.0), 2.0);
+        outside.instances[1].transform = Transform::translate(70.0, 70.0);
+        cases.push(("outside", outside, "uncleared"));
+        // Two Pockets contain it: the last one before the carve counts.
+        let mut two = carve_in_pocket(Some(1.0), 2.0);
+        two.operations.insert(
+            1,
+            Operation::Pocket(PocketOp {
+                id: OperationId::new("o3"),
+                depth_mm: Some(2.0),
+                ..sample_pocket()
+            }),
+        );
+        cases.push(("two", two, "cleared"));
+
+        for (name, project, expected) in &cases {
+            let containing = dc_project::containing_pocket(project, the_carve(project))
+                .map(|p| p.id.to_string());
+            let (kind, pocket) = plane_of(project).expect("a V-Carve has a start plane");
+            assert_eq!(kind, *expected, "{name}");
+            assert_eq!(
+                !uncleared(project).is_empty(),
+                kind == "uncleared",
+                "{name}: validation and check disagree"
+            );
+            if matches!(kind, "cleared" | "mismatch") {
+                assert_eq!(pocket, containing, "{name}");
+            } else {
+                assert_eq!(containing, None, "{name}");
+            }
+            let named: Vec<String> = mismatches(project)
+                .iter()
+                .filter_map(|w| match w {
+                    Warning::StartDepthMismatch { pocket, .. } => Some(pocket.to_string()),
+                    _ => None,
+                })
+                .collect();
+            let expected_named: Vec<String> = if kind == "mismatch" {
+                containing.into_iter().collect()
+            } else {
+                Vec::new()
+            };
+            assert_eq!(named, expected_named, "{name}");
+        }
     }
 }

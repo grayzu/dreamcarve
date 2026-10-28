@@ -1489,6 +1489,199 @@ fn v_carve_exports_and_passes_safety() {
     }
 }
 
+/// Acceptance 53's project (#409) in `dir`: the coaster with its
+/// operations replaced by a Pocket `o2` of a 60 × 30 mm rectangle,
+/// `pocket_depth_mm` deep with the coaster's end mill (disabled unless
+/// `pocket_enabled`), and after it a V-Carve `o6` of the 20 × 5 mm
+/// rectangle inside it with the 60° 6.35 mm V-bit, starting 4 mm below
+/// the stock top. The carve has a 1 mm flat depth so that, with its flank
+/// counted from the stock top (a mismatched or vouched-for plane), 4 + 1
+/// mm stays within the bit's 5.5 mm cone. Returns the `.dcv` path.
+fn start_depth_coaster(dir: &Path, pocket_depth_mm: f64, pocket_enabled: bool) -> PathBuf {
+    let dcv = init_coaster(dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let end_mill = project
+        .operations
+        .first()
+        .expect("init writes a Profile")
+        .tool()
+        .clone();
+    let mut bit = dc_project::test_support::tool_v_bit_90();
+    bit.id = ToolId::new("tv");
+    bit.cutter = ToolKind::VBit {
+        included_angle_deg: 60.0,
+    };
+    bit.feed_mm_min = Some(1500.0);
+    bit.plunge_mm_min = Some(500.0);
+    bit.rpm = Some(18000);
+    project.tools.push(bit);
+    for (id, width_mm, height_mm, x_mm, y_mm) in [
+        ("dv", 20.0, 5.0, 45.0, 52.5),
+        ("dp", 60.0, 30.0, 25.0, 40.0),
+    ] {
+        let definition = FeatureDefinition {
+            id: DefinitionId::new(id),
+            name: "Rectangle".into(),
+            profiles: vec![Polyline::rect(Point::new(0.0, 0.0), width_mm, height_mm)],
+        };
+        project
+            .definitions
+            .insert(definition.id.clone(), definition);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new(id.replace('d', "i")),
+            definition: DefinitionId::new(id),
+            transform: Transform::translate(x_mm, y_mm),
+            name: "Rectangle".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: None,
+            z_bottom_mm: None,
+        });
+    }
+    let mut pocket = sample_pocket();
+    pocket.targets = vec![InstanceId::new("ip")];
+    pocket.tool = end_mill;
+    pocket.step_over_fraction = Some(0.4);
+    pocket.depth_mm = Some(pocket_depth_mm);
+    pocket.enabled = pocket_enabled;
+    let carve = dc_project::VCarveOp {
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        flat_depth_mm: Some(1.0),
+        start_depth_mm: 4.0,
+        ..dc_project::test_support::sample_v_carve()
+    };
+    project.operations = vec![Operation::Pocket(pocket), Operation::VCarve(carve)];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    dcv
+}
+
+/// Where `field` (as validation names it) is in the `.dcv` file `dcv`, as
+/// `line:column`.
+fn position_of(dcv: &Path, field: &str) -> String {
+    let text = std::fs::read_to_string(dcv).expect("dcv read");
+    dc_project::SourceMap::parse(&text)
+        .expect("the file scans")
+        .locate(field)
+        .unwrap_or_else(|| panic!("{field} is in the file"))
+        .to_string()
+}
+
+/// Acceptance 53 (#409): in a 4 mm Pocket `check` is quiet; with the
+/// Pocket 3 mm deep it warns `start_depth_mismatch` once, located at the
+/// carve's `start_depth_mm`, naming the Pocket and both depths, and still
+/// exits 0; `export` prints the same warning and writes the program.
+#[test]
+fn check_warns_start_depth_mismatch() {
+    let dir = work_dir("check_warns_start_depth_mismatch_matching");
+    start_depth_coaster(&dir, 4.0, true);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    assert!(!report.contains("start_depth_"), "{report}");
+
+    let dir = work_dir("check_warns_start_depth_mismatch");
+    let dcv = start_depth_coaster(&dir, 3.0, true);
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "a warning exits 0: {report}");
+    let mismatches: Vec<&str> = warning_lines(&report)
+        .into_iter()
+        .filter(|l| warning_code(l) == Some("start_depth_mismatch"))
+        .collect();
+    assert_eq!(mismatches.len(), 1, "{report}");
+    let line = mismatches[0];
+    let at = position_of(&dcv, "operations[o6].start_depth_mm");
+    assert!(
+        line.starts_with(&format!(
+            "coaster.dcv:{at}: warning: start_depth_mismatch: operation `o6`: "
+        )),
+        "located at the start depth: {line}"
+    );
+    assert!(line.contains("starts 4 mm below the stock top"), "{line}");
+    assert!(line.contains("operation `o2`"), "names the Pocket: {line}");
+    assert!(line.contains("is 3 mm deep"), "{line}");
+    assert!(!report.contains("start_depth_uncleared"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+    assert_eq!(
+        warning_lines(&report)
+            .into_iter()
+            .filter(|l| warning_code(l) == Some("start_depth_mismatch"))
+            .count(),
+        1,
+        "{report}"
+    );
+    assert!(dir.join("coaster.nc").exists(), "{report}");
+}
+
+/// Acceptance 53 (#409, security review M2): with the Pocket disabled,
+/// `check` and `export` refuse the carve with `start_depth_uncleared`,
+/// reported once (by validation, located at the carve's
+/// `start_depth_mm`; the generator and the order check never see the
+/// project), and `export` writes nothing. With
+/// `start_plane_cleared_externally: true` it exports.
+#[test]
+fn check_refuses_an_uncleared_start_depth() {
+    let dir = work_dir("check_refuses_an_uncleared_start_depth");
+    let dcv = start_depth_coaster(&dir, 4.0, false);
+    let at = position_of(&dcv, "operations[o6].start_depth_mm");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(1), "{report}");
+    let errors: Vec<&str> = report
+        .lines()
+        .filter(|l| l.contains("starts 4 mm below the stock top"))
+        .collect();
+    assert_eq!(errors.len(), 1, "reported once: {report}");
+    assert!(
+        errors[0].starts_with(&format!(
+            "coaster.dcv:{at}: error: operation `V-Carve` (`o6`)"
+        )),
+        "located at the start depth: {}",
+        errors[0]
+    );
+    assert!(
+        errors[0].contains("start_plane_cleared_externally"),
+        "{}",
+        errors[0]
+    );
+    assert!(report.contains("1 error(s)"), "{report}");
+    assert!(!report.contains("start_depth_mismatch"), "{report}");
+
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_ne!(out.status.code(), Some(0), "{report}");
+    assert_eq!(
+        report
+            .lines()
+            .filter(|l| l.contains("starts 4 mm below the stock top"))
+            .count(),
+        1,
+        "{report}"
+    );
+    assert!(
+        !dir.join("coaster.nc").exists(),
+        "nothing written: {report}"
+    );
+
+    let mut project = load_file(&dcv).project;
+    for op in &mut project.operations {
+        if let Operation::VCarve(carve) = op {
+            carve.start_plane_cleared_externally = true;
+        }
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "vouched for: {report}");
+    assert!(!report.contains("start_depth_"), "{report}");
+    assert!(dir.join("coaster.nc").exists(), "{report}");
+}
+
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an
 /// offset Pocket of the coaster before its cut-out exports one program,
 /// which the emitter's safety pass (S1–S7) accepted; `check` finds no

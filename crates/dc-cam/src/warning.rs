@@ -180,6 +180,12 @@ pub enum WarningCode {
     /// not its shape, set its medial step (upstream
     /// `vcarveSamplingBudget`). Reported once per operation.
     VCarveSamplingBudget,
+    /// An enabled earlier Pocket contains the targets of an operation cut
+    /// from a start plane (a V-Carve), but its depth is not the start
+    /// depth, so the start plane is not its floor
+    /// (`docs/specs/phase-3/design.md`, "Start depth,
+    /// `start_depth_mismatch` and `start_depth_uncleared`"; capability 41).
+    StartDepthMismatch,
 }
 
 impl WarningCode {
@@ -229,6 +235,7 @@ impl WarningCode {
             Self::VCarveTargetOpen => "vcarve_target_open",
             Self::VCarveNoMedialAxis => "vcarve_no_medial_axis",
             Self::VCarveSamplingBudget => "vcarve_sampling_budget",
+            Self::StartDepthMismatch => "start_depth_mismatch",
         }
     }
 }
@@ -791,6 +798,17 @@ pub enum Warning {
         /// The medial step the budget set, mm.
         resolution_mm: f64,
     },
+    /// [`WarningCode::StartDepthMismatch`].
+    StartDepthMismatch {
+        /// The operation cut from the start plane.
+        op: OperationId,
+        /// The containing Pocket.
+        pocket: OperationId,
+        /// The operation's start depth below the stock top.
+        start_depth_mm: f64,
+        /// The Pocket's depth; `None` when it has none set.
+        pocket_depth_mm: Option<f64>,
+    },
 }
 
 impl Warning {
@@ -840,6 +858,7 @@ impl Warning {
             Self::VCarveTargetOpen { .. } => WarningCode::VCarveTargetOpen,
             Self::VCarveNoMedialAxis { .. } => WarningCode::VCarveNoMedialAxis,
             Self::VCarveSamplingBudget { .. } => WarningCode::VCarveSamplingBudget,
+            Self::StartDepthMismatch { .. } => WarningCode::StartDepthMismatch,
         }
     }
 
@@ -880,7 +899,8 @@ impl Warning {
             | Self::RestOfClearsNothing { op, .. }
             | Self::VCarveTargetOpen { op, .. }
             | Self::VCarveNoMedialAxis { op, .. }
-            | Self::VCarveSamplingBudget { op, .. } => Some(op),
+            | Self::VCarveSamplingBudget { op, .. }
+            | Self::StartDepthMismatch { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1515,6 +1535,20 @@ impl fmt::Display for Warning {
                 "a carved shape is so long for its width that its medial lines are found every {} mm, coarser than its width alone would give; small details may be smoothed",
                 rounded(*resolution_mm, 3)
             ),
+            Self::StartDepthMismatch {
+                pocket,
+                start_depth_mm,
+                pocket_depth_mm,
+                ..
+            } => {
+                let depth = pocket_depth_mm
+                    .map_or_else(|| "has no depth set".to_owned(), |d| format!("is {} mm deep", mm(d)));
+                write!(
+                    f,
+                    "it starts {} mm below the stock top, but operation `{pocket}`, the Pocket before it whose area contains its targets, {depth}, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+                    mm(*start_depth_mm)
+                )
+            }
         }
     }
 }
@@ -2167,6 +2201,24 @@ mod tests {
                 },
                 "a carved shape is so long for its width that its medial lines are found every 0.125 mm, coarser than its width alone would give; small details may be smoothed",
             ),
+            (
+                Warning::StartDepthMismatch {
+                    op: op(),
+                    pocket: "o2".into(),
+                    start_depth_mm: 4.000_000_1,
+                    pocket_depth_mm: Some(3.0),
+                },
+                "it starts 4 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, is 3 mm deep, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+            ),
+            (
+                Warning::StartDepthMismatch {
+                    op: op(),
+                    pocket: "o2".into(),
+                    start_depth_mm: 0.0,
+                    pocket_depth_mm: None,
+                },
+                "it starts 0 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, has no depth set, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+            ),
         ]
     }
 
@@ -2223,7 +2275,8 @@ mod tests {
             C::RestOfClearsNothing => C::VCarveTargetOpen,
             C::VCarveTargetOpen => C::VCarveNoMedialAxis,
             C::VCarveNoMedialAxis => C::VCarveSamplingBudget,
-            C::VCarveSamplingBudget => return None,
+            C::VCarveSamplingBudget => C::StartDepthMismatch,
+            C::StartDepthMismatch => return None,
         })
     }
 
@@ -2260,7 +2313,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 42);
+        assert_eq!(count, 43);
     }
 
     #[test]
