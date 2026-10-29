@@ -44,8 +44,10 @@ use dc_project::{Operation, OperationId, PocketOp, Project, ToolId};
 ///   later operation cuts deeper than half the stock (`cuts_deep`) and
 ///   the same earlier operation freed no outline round it (#269);
 /// - [`Warning::ToolChangeAvoidable`] once per tool that the enabled
-///   operations, in order, use again after a different tool, by the
-///   tool's first use;
+///   operations' tool runs, in order, use again after a different tool,
+///   by the tool's first use; a carve's clearing passes are runs of their
+///   own end mills before its V-bit's (#406), whether or not a pass
+///   reaches anything;
 /// - [`Warning::StartDepthMismatch`] for every enabled operation cut from
 ///   a start plane (a V-Carve) that an earlier Pocket at another depth
 ///   contains ([`start_plane`]), in project order. These read the project
@@ -1330,6 +1332,64 @@ mod tests {
             with_code(&warnings, WarningCode::ToolChangeAvoidable).is_empty(),
             "a disabled operation does not split a run: {warnings:?}"
         );
+    }
+
+    /// #406: a carve's clearing passes are tool runs of their own end
+    /// mills, before its V-bit's. A Pocket with T1, then a carve clearing
+    /// with T1 and carving with the V-bit T2: T1's runs are adjacent, so no
+    /// hint. A carve clearing with T3 before a Pocket with T3: the V-bit
+    /// runs between them, so a hint for T3 naming both operations, which
+    /// reading each operation's one tool would miss.
+    #[test]
+    fn clearing_runs_count_for_the_tool_change_hint() {
+        let mut project = part_and_hole();
+        project.tools.push(tool_v_bit_90());
+        let mut t3 = tool_6_35_upcut();
+        t3.id = ToolId::new("t3");
+        t3.name = "3.175 mm end mill".into();
+        t3.diameter_mm = 3.175;
+        project.tools.push(t3);
+        let clearing = |tool: &str| dc_project::ClearingPass {
+            tool: ToolId::new(tool),
+            strategy: dc_project::ClearanceStrategy::Offset,
+            direction: dc_project::CutDirection::Climb,
+            entry: dc_project::Entry::Plunge,
+        };
+        let carve = |passes: Vec<dc_project::ClearingPass>| VCarveOp {
+            id: OperationId::new("o6"),
+            targets: vec![InstanceId::new("i1")],
+            flat_depth_mm: Some(1.0),
+            clearing: passes,
+            ..sample_v_carve()
+        };
+        let pocket_with = |id: &str, tool: &str| PocketOp {
+            id: OperationId::new(id),
+            tool: ToolId::new(tool),
+            ..sample_pocket()
+        };
+
+        project.operations = vec![
+            Operation::Pocket(pocket_with("o2", "t1")),
+            Operation::VCarve(carve(vec![clearing("t1")])),
+        ];
+        let warnings = check(&project, &[]);
+        assert!(
+            with_code(&warnings, WarningCode::ToolChangeAvoidable).is_empty(),
+            "the Pocket and the clearing run share T1: {warnings:?}"
+        );
+
+        project.operations = vec![
+            Operation::VCarve(carve(vec![clearing("t3")])),
+            Operation::Pocket(pocket_with("o7", "t3")),
+        ];
+        let warnings = check(&project, &[]);
+        let hints = with_code(&warnings, WarningCode::ToolChangeAvoidable);
+        assert_eq!(hints.len(), 1, "one hint: {warnings:?}");
+        let Warning::ToolChangeAvoidable { tool_id, ops, .. } = hints[0] else {
+            panic!("{:?}", hints[0]);
+        };
+        assert_eq!(tool_id.as_str(), "t3");
+        assert_eq!(ops, &[OperationId::new("o6"), OperationId::new("o7")]);
     }
 
     // Start depth (`docs/specs/phase-3/design.md`, "Start depth,

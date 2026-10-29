@@ -677,10 +677,14 @@ fn emit_enabled(
     let mut lines = Vec::with_capacity(planned.len());
     let mut router_on = false;
     for (index, &(op, tool, toolpath, rates, number, holes)) in planned.iter().enumerate() {
+        // #406: a carve's clearing run is named after its pass's tool.
+        let name = enabled
+            .get(index)
+            .map_or_else(|| op.name().to_owned(), |e| e.label.naming(op.name()));
         let mut context = common.clone();
         context.extend([
             ("operationIndex", (index + 1).to_string()),
-            ("operationName", comment_text(op.name())),
+            ("operationName", comment_text(&name)),
             ("toolNumber", number.to_string()),
             ("toolName", comment_text(&tool.name)),
         ]);
@@ -689,7 +693,7 @@ fn emit_enabled(
                 "{} Operation {}: {} {}",
                 post.program.comment_prefix,
                 index + 1,
-                comment_text(op.name()),
+                comment_text(&name),
                 post.program.comment_suffix
             );
             w.line(comment.trim_end());
@@ -3912,6 +3916,54 @@ mod tests {
         let (toolpath, _) = generate_profile(project, &second).unwrap();
         ops.push((Operation::Profile(second), second_tool(), toolpath).into());
         ops
+    }
+
+    /// #406 (design "Clearing passes", step 4): a tool run labelled as a
+    /// carve's clearing pass is written with its own tool, as a program of
+    /// its own when each tool run is one, and its operation comment names it
+    /// `… (clearing t1)`, written `… clearing t1` since a comment cannot
+    /// hold parentheses; the operation's own run keeps its plain name. The
+    /// emitter reads only the label: until the safety pass holds a carve's
+    /// clearing run to its floor (#408), the run here is a Profile's
+    /// toolpath, which S9 already holds.
+    #[test]
+    fn clearing_runs_become_programs_of_their_own_tools() {
+        let mut project = project_with("grblhal");
+        let mut ops = two_tool_ops(&mut project);
+        ops[0].label = RunLabel::Clearing(ToolId::new("t1"));
+        project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
+        let (programs, _) =
+            emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
+        assert_eq!(programs.len(), 2, "one program per tool run");
+        let first_name = ops[0].op.name().to_owned();
+        let comment = |text: &str, wanted: &str| {
+            text.lines()
+                .any(|l| l.contains("Operation 1:") && l.contains(wanted))
+        };
+        assert_eq!(programs[0].first_tool.number, 1);
+        assert!(
+            comment(&programs[0].text, &format!("{first_name} clearing t1")),
+            "{}",
+            programs[0].text
+        );
+        assert_eq!(programs[1].first_tool.number, 2);
+        assert!(comment(&programs[1].text, "Second"), "{}", programs[1].text);
+        assert!(
+            !programs[1].text.contains("clearing"),
+            "{}",
+            programs[1].text
+        );
+
+        // In one program with M6, each run is an operation of its own.
+        project.post_processor.tool_change_mode = ToolChangeMode::M6;
+        let (one, _) = emit(&project, &ops, DATE).unwrap();
+        assert!(
+            one.text
+                .lines()
+                .any(|l| l.contains("clearing t1") && l.contains("Operation 1:")),
+            "{}",
+            one.text
+        );
     }
 
     #[test]

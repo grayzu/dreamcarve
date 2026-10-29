@@ -16,6 +16,7 @@
 //! and the comment says so. Depths are below the start plane, the stock
 //! top unless a test sets a start depth; upstream's Z 0 is the top.
 
+mod clearing_passes;
 mod floor;
 
 use super::*;

@@ -13,17 +13,20 @@ use super::*;
 use dc_geometry::{Segment, point_segment_distance_mm};
 
 /// Acceptance 50's flat depth, mm.
-const F_MM: f64 = 2.0;
+pub(super) const F_MM: f64 = 2.0;
 
 /// Acceptance 50: a 30 × 10 mm rectangle, the 90° 6.35 mm bit (whose
 /// `step_over_fraction` is 0.4), `flat_depth_mm: 2`, and the operation's
 /// own `step_over_fraction`.
-fn acceptance_50(step_over_fraction: Option<f64>) -> (Project, VCarveOp) {
+pub(super) fn acceptance_50(step_over_fraction: Option<f64>) -> (Project, VCarveOp) {
     with_90(vec![rect(30.0, 10.0)], step_over_fraction)
 }
 
 /// `profiles` carved with the 90° bit at flat depth [`F_MM`].
-fn with_90(profiles: Vec<Polyline>, step_over_fraction: Option<f64>) -> (Project, VCarveOp) {
+pub(super) fn with_90(
+    profiles: Vec<Polyline>,
+    step_over_fraction: Option<f64>,
+) -> (Project, VCarveOp) {
     let mut p = project(profiles);
     p.tools.retain(|t| t.id != ToolId::new("t2"));
     p.tools.push(v_bit(90.0));
@@ -36,10 +39,10 @@ fn with_90(profiles: Vec<Polyline>, step_over_fraction: Option<f64>) -> (Project
 }
 
 /// The floor Z of a carve from the stock top.
-const FLOOR_Z_MM: f64 = TOP_MM - F_MM;
+pub(super) const FLOOR_Z_MM: f64 = TOP_MM - F_MM;
 
 /// The XY cuts at the floor: both ends at [`FLOOR_Z_MM`].
-fn floor_cuts(toolpath: &Toolpath) -> Vec<(Point, Point)> {
+pub(super) fn floor_cuts(toolpath: &Toolpath) -> Vec<(Point, Point)> {
     xy_cuts(toolpath)
         .into_iter()
         .filter(|(a, b)| (a.z - FLOOR_Z_MM).abs() <= 1e-6 && (b.z - FLOOR_Z_MM).abs() <= 1e-6)
@@ -48,7 +51,7 @@ fn floor_cuts(toolpath: &Toolpath) -> Vec<(Point, Point)> {
 }
 
 /// The XY distance from `q` to the nearest of `cuts`.
-fn distance_to_cuts(cuts: &[(Point, Point)], q: Point) -> f64 {
+pub(super) fn distance_to_cuts(cuts: &[(Point, Point)], q: Point) -> f64 {
     cuts.iter()
         .map(|&(start, end)| {
             point_segment_distance_mm(
@@ -108,7 +111,7 @@ fn blocks_of(p: &Project, op: &VCarveOp) -> Vec<CutBlock> {
 }
 
 /// Each block's moves from its entry, as `(from, to)`.
-fn block_cuts(block: &CutBlock) -> Vec<(Point3, Point3)> {
+pub(super) fn block_cuts(block: &CutBlock) -> Vec<(Point3, Point3)> {
     let mut from = Point3::new(block.entry.x, block.entry.y, block.entry_z_mm);
     block
         .cuts

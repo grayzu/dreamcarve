@@ -33,8 +33,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_cam::{
-    CamError, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
-    generate_profile, generate_vcarve, order, placed_tabs,
+    CamError, RunLabel, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave,
+    generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -44,7 +44,7 @@ use dc_gcode::{
 };
 use dc_project::{
     Operation, OperationId, PostProcessorRef, Project, ResetReason, SettingReset, Severity,
-    SourceMap, Tool, ToolChangeMode, Units, validate,
+    SourceMap, ToolChangeMode, ToolId, Units, validate,
 };
 
 use crate::cli::{
@@ -211,7 +211,12 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         };
         match generated {
             Ok((runs, warnings)) => {
-                findings.warnings.extend(warnings.iter().map(|w| {
+                // Validation reports `clearing_not_descending` (#406), as it
+                // reports `start_depth_uncleared` (#409): once.
+                let warnings = warnings
+                    .iter()
+                    .filter(|w| !matches!(w, dc_cam::Warning::ClearingNotDescending { .. }));
+                findings.warnings.extend(warnings.map(|w| {
                     Finding::coded(
                         w.code().as_str(),
                         format!("operation `{}`: {w}", operation.id()),
@@ -223,9 +228,13 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
         }
     }
     // The order check runs on whatever generated, so `check` reports it
-    // even when another operation failed; it never needs a failed one.
+    // even when another operation failed; it never needs a failed one. It
+    // takes each operation's own run: a carve's clearing runs cut inside
+    // its targets before it, as intended (design "Clearing passes", step
+    // 5), and the tool-change hint counts them from the project.
     let generated: Vec<(&Operation, &Toolpath)> = ops
         .iter()
+        .filter(|entry| entry.label == RunLabel::Main)
         .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
     // #105: a placed tab no enabled Profile cuts round holds nothing.
@@ -312,12 +321,10 @@ fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<Emit
 /// it for a carve, whose depth follows its shapes); `None` when it cuts
 /// nothing or the stock has no thickness.
 pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId) -> Option<f64> {
-    let thickness_mm = project.stock.thickness_mm?;
     generated
         .iter()
         .filter(|e| e.op.id() == op)
-        .flat_map(|e| e.toolpath.moves.iter().filter(|m| m.is_cut()))
-        .map(|m| thickness_mm - m.to.z)
+        .filter_map(|e| deepest_mm(project, &e.toolpath))
         .reduce(f64::max)
 }
 
@@ -336,12 +343,19 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                     || "no flat depth".to_owned(),
                     |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
                 );
-                // Design step 6: the V-bit's floor is scalloped.
+                // Design step 6: the V-bit's floor is scalloped; with
+                // clearing passes, only where none of them reaches (#406).
                 if let Some(ridge_mm) = dc_cam::vcarve::floor_ridge_height_mm(project, carve) {
-                    floor.push_str(&format!(
-                        "; V-bit floor ridges {}; a clearing pass or a smaller step_over_fraction flattens them",
-                        describe_length(project, ridge_mm)
-                    ));
+                    let ridges = describe_length(project, ridge_mm);
+                    if carve.clearing.is_empty() {
+                        floor.push_str(&format!(
+                            "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
+                        ));
+                    } else {
+                        floor.push_str(&format!(
+                            "; V-bit floor ridges {ridges} where no clearing pass reaches"
+                        ));
+                    }
                 }
                 Some(format!(
                     "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
@@ -531,9 +545,14 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
 
 /// The preview SVG of the generated operations (addendum A5).
 pub fn preview_svg(project: &Project, generated: &[EmitOp]) -> String {
-    let ops: Vec<(&Operation, &Tool, &Toolpath)> = generated
+    let ops: Vec<preview::Run<'_>> = generated
         .iter()
-        .map(|entry| (&entry.op, &entry.tool, &entry.toolpath))
+        .map(|entry| preview::Run {
+            op: &entry.op,
+            label: &entry.label,
+            tool: &entry.tool,
+            toolpath: &entry.toolpath,
+        })
         .collect();
     preview::render(project, &ops)
 }
@@ -968,33 +987,82 @@ fn report_post_and_operations(
             )?;
         }
     }
-    for op in project.operations.iter().filter(|op| op.enabled()) {
-        let tool = project
+    for line in describe_operations(project, generated) {
+        outln!("  {line}")?;
+    }
+    Ok(())
+}
+
+/// One line per exported tool run, in cut order: each enabled operation's
+/// id, name, tool, target count and depth, a carve's clearing runs before
+/// it named `o6 (clearing t1)` with their own tools and depths (#406).
+pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<String> {
+    let tool_name = |id: &ToolId| {
+        project
             .tools
             .iter()
-            .find(|t| &t.id == op.tool())
-            .map_or("?", |t| t.name.as_str());
+            .find(|t| &t.id == id)
+            .map_or("?", |t| t.name.as_str())
+    };
+    let mut lines = Vec::new();
+    for op in project.operations.iter().filter(|op| op.enabled()) {
+        // Design "Clearing passes", step 4: a carve's clearing runs are cut
+        // before it, each to the carve's floor.
+        for run in generated
+            .iter()
+            .filter(|e| e.op.id() == op.id() && e.label != RunLabel::Main)
+        {
+            let depth = deepest_mm(project, &run.toolpath).map_or_else(
+                || "? mm deep".to_owned(),
+                |d| format!("{} deep", describe_length(project, d)),
+            );
+            lines.push(format!(
+                "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
+                run.label.naming(op.id().as_str()),
+                op.name(),
+                run.tool.id,
+                tool_name(&run.tool.id),
+                op.targets().len(),
+            ));
+        }
         // Validation refuses an unset depth, so an exported one is set; a
         // carve's depth follows its shapes, so its deepest cut is stated.
         let depth = match op {
-            Operation::VCarve(_) => deepest_cut_mm(project, generated, op.id()).map_or_else(
-                || "? mm deep".to_owned(),
-                |d| format!("cut {} deep at most", describe_length(project, d)),
-            ),
+            Operation::VCarve(_) => generated
+                .iter()
+                .filter(|e| e.op.id() == op.id() && e.label == RunLabel::Main)
+                .find_map(|e| deepest_mm(project, &e.toolpath))
+                .map_or_else(
+                    || "? mm deep".to_owned(),
+                    |d| format!("cut {} deep at most", describe_length(project, d)),
+                ),
             _ => op.depth_mm().map_or_else(
                 || "? mm deep".to_owned(),
                 |d| format!("{} deep", describe_length(project, d)),
             ),
         };
-        outln!(
-            "  {} `{}`: tool `{}` ({tool}), {} target(s), {depth}",
+        lines.push(format!(
+            "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
             op.id(),
             op.name(),
             op.tool(),
+            tool_name(op.tool()),
             op.targets().len(),
-        )?;
+        ));
     }
-    Ok(())
+    lines
+}
+
+/// The deepest cut of `toolpath`, mm below the stock top; `None` when it
+/// cuts nothing or the stock has no thickness.
+fn deepest_mm(project: &Project, toolpath: &Toolpath) -> Option<f64> {
+    let thickness_mm = project.stock.thickness_mm?;
+    toolpath
+        .moves
+        .iter()
+        .filter(|m| m.is_cut())
+        .map(|m| thickness_mm - m.to.z)
+        .reduce(f64::max)
 }
 
 /// `length_mm` as the summary states a length (addendum A6): in the
@@ -1082,11 +1150,12 @@ fn name_suffix(name: &str) -> String {
 
 /// Whether consecutive enabled operations of `project` use different tools.
 fn changes_tools(project: &Project) -> bool {
+    // A carve's clearing passes are tool runs of their own (#406).
     let tools: Vec<_> = project
         .operations
         .iter()
         .filter(|op| op.enabled())
-        .map(Operation::tool)
+        .flat_map(Operation::run_tools)
         .collect();
     tools.windows(2).any(|pair| pair.first() != pair.get(1))
 }
@@ -1099,7 +1168,8 @@ pub fn largest_tool_radius_mm(project: &Project) -> f64 {
         .operations
         .iter()
         .filter(|op| op.enabled())
-        .filter_map(|op| project.tools.iter().find(|t| &t.id == op.tool()))
+        .flat_map(Operation::run_tools)
+        .filter_map(|tool| project.tools.iter().find(|t| &t.id == tool))
         .map(|t| t.diameter_mm / 2.0)
         .fold(0.0, f64::max)
 }
@@ -1210,5 +1280,70 @@ mod tests {
                 .collect();
             assert_eq!(radii, [3.175, 1.5], "{numbers:?}");
         }
+    }
+
+    /// The sample project with a V-Carve `o6` of its 50 x 30 mm rectangle
+    /// with the 90 degree V-bit `t2` at a 2 mm flat depth, clearing with
+    /// `passes` (format 20, #406), and a 3 mm end mill `t3`.
+    fn carve_project(passes: &[&str]) -> Project {
+        let mut project = sample_project();
+        project
+            .tools
+            .push(dc_project::test_support::tool_v_bit_90());
+        let mut small = project.tools[0].clone();
+        small.id = ToolId::new("t3");
+        small.name = "3 mm end mill".into();
+        small.diameter_mm = 3.0;
+        project.tools.push(small);
+        let carve = dc_project::VCarveOp {
+            flat_depth_mm: Some(2.0),
+            clearing: passes
+                .iter()
+                .map(|tool| dc_project::ClearingPass {
+                    tool: ToolId::new(*tool),
+                    strategy: dc_project::ClearanceStrategy::Offset,
+                    direction: dc_project::CutDirection::Climb,
+                    entry: dc_project::Entry::Plunge,
+                })
+                .collect(),
+            ..dc_project::test_support::sample_v_carve()
+        };
+        project.operations = vec![Operation::VCarve(carve)];
+        project
+    }
+
+    /// #406: the summary names a carve's clearing run `o6 (clearing t1)`
+    /// with its own tool and depth, before the carve's own line.
+    #[test]
+    fn summary_names_clearing_runs() {
+        let project = carve_project(&["t1"]);
+        let Built { generated, .. } = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
+        let generated = generated.expect("every operation generated");
+        let lines = describe_operations(&project, &generated);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert!(
+            lines[0].starts_with(
+                "o6 (clearing t1) `V-Carve`: tool `t1` (6.35 mm upcut), 1 target(s), 2."
+            ) && lines[0].ends_with(" mm deep"),
+            "{lines:?}"
+        );
+        assert!(
+            lines[1].starts_with("o6 `V-Carve`: tool `t2` (90° V-bit), 1 target(s), cut 2."),
+            "{lines:?}"
+        );
+    }
+
+    /// #406: a wider clearing pass after a narrower one is reported once,
+    /// by validation, not again by the generator.
+    #[test]
+    fn clearing_not_descending_is_reported_once() {
+        let project = carve_project(&["t3", "t1"]);
+        let Built { findings, .. } = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
+        let count = findings
+            .warnings
+            .iter()
+            .filter(|w| w.code.as_deref() == Some("clearing_not_descending"))
+            .count();
+        assert_eq!(count, 1, "{findings:?}");
     }
 }

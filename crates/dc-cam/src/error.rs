@@ -86,6 +86,35 @@ pub enum BlockProblem {
     },
 }
 
+/// Why a carve's clearing pass cannot run ([`CamError::ClearingInvalid`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClearingProblem {
+    /// The carve has no flat depth, so no floor to clear.
+    NoFlatDepth,
+    /// The tool is not a flat end mill.
+    NotEndMill {
+        /// The cutter in words, such as `a V-bit`.
+        cutter: &'static str,
+    },
+    /// No tool of the project has the id.
+    UnknownTool,
+}
+
+impl fmt::Display for ClearingProblem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoFlatDepth => f.write_str(
+                "the carve has no flat depth, so it has no floor to clear; set flat_depth_mm or remove the clearing passes",
+            ),
+            Self::NotEndMill { cutter } => write!(
+                f,
+                "the tool is {cutter}; a clearing pass needs a flat end mill"
+            ),
+            Self::UnknownTool => f.write_str("the project has no tool with that id"),
+        }
+    }
+}
+
 impl fmt::Display for BlockProblem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -729,6 +758,19 @@ pub enum CamError {
         op: OperationId,
         /// The start depth, mm.
         start_depth_mm: f64,
+    },
+    /// A carve's clearing pass cannot run (format 20, capability 40; the
+    /// validation rules `clearing_needs_flat_depth`,
+    /// `clearing_needs_end_mill` and `clearing_dangling_tool`, re-checked).
+    /// Validation reports these first.
+    #[error("operation `{op}` has a clearing pass with tool `{tool}` that cannot run: {reason}")]
+    ClearingInvalid {
+        /// The carve.
+        op: OperationId,
+        /// The pass's tool.
+        tool: ToolId,
+        /// Why.
+        reason: ClearingProblem,
     },
     /// A V-bit's cone along the generated toolpath crosses a wall of its
     /// carved region, its tip leaves the region, or it cuts sideways above
