@@ -151,6 +151,10 @@ pub enum WarningCode {
     /// Every target of a Drill was skipped (not a circle, or narrower than
     /// the tool), so it drills nothing.
     DrillNoHoles,
+    /// A countersink's target circle is at least as wide as the mouth
+    /// (format 21; capability 44), so there is no seat to cut: the cone's
+    /// rim would sit inside the hole. That hole is skipped.
+    CountersinkMouthNotWiderThanHole,
     /// A Bore target is not a circle (or is an open path), so it was
     /// skipped (format 18; maintainer decision 2026-10-24).
     BoreTargetNotCircle,
@@ -235,6 +239,7 @@ impl WarningCode {
             Self::DrillPeckDeeperThanHole => "drill_peck_deeper_than_hole",
             Self::DrillRetractBelowStockTop => "drill_retract_below_stock_top",
             Self::DrillNoHoles => "drill_no_holes",
+            Self::CountersinkMouthNotWiderThanHole => "countersink_mouth_not_wider_than_hole",
             Self::BoreTargetNotCircle => "bore_target_not_circle",
             Self::BoreNoRoom => "bore_no_room",
             Self::BoreLeavesCore => "bore_leaves_core",
@@ -733,6 +738,17 @@ pub enum Warning {
         /// The operation.
         op: OperationId,
     },
+    /// [`WarningCode::CountersinkMouthNotWiderThanHole`].
+    CountersinkMouthNotWiderThanHole {
+        /// The operation.
+        op: OperationId,
+        /// The hole skipped.
+        shape: ShapeRef,
+        /// The mouth's diameter, mm.
+        mouth_mm: f64,
+        /// The hole's diameter, mm.
+        hole_mm: f64,
+    },
     /// [`WarningCode::BoreTargetNotCircle`].
     BoreTargetNotCircle {
         /// The operation.
@@ -884,6 +900,9 @@ impl Warning {
             Self::DrillPeckDeeperThanHole { .. } => WarningCode::DrillPeckDeeperThanHole,
             Self::DrillRetractBelowStockTop { .. } => WarningCode::DrillRetractBelowStockTop,
             Self::DrillNoHoles { .. } => WarningCode::DrillNoHoles,
+            Self::CountersinkMouthNotWiderThanHole { .. } => {
+                WarningCode::CountersinkMouthNotWiderThanHole
+            }
             Self::BoreTargetNotCircle { .. } => WarningCode::BoreTargetNotCircle,
             Self::BoreNoRoom { .. } => WarningCode::BoreNoRoom,
             Self::BoreLeavesCore { .. } => WarningCode::BoreLeavesCore,
@@ -928,6 +947,7 @@ impl Warning {
             | Self::DrillPeckDeeperThanHole { op, .. }
             | Self::DrillRetractBelowStockTop { op, .. }
             | Self::DrillNoHoles { op }
+            | Self::CountersinkMouthNotWiderThanHole { op, .. }
             | Self::BoreTargetNotCircle { op, .. }
             | Self::BoreNoRoom { op, .. }
             | Self::BoreLeavesCore { op, .. }
@@ -1505,6 +1525,17 @@ impl fmt::Display for Warning {
             Self::DrillNoHoles { .. } => write!(
                 f,
                 "none of its targets is a circle it can drill, so it drills nothing"
+            ),
+            Self::CountersinkMouthNotWiderThanHole {
+                shape,
+                mouth_mm,
+                hole_mm,
+                ..
+            } => write!(
+                f,
+                "the {} mm hole {shape} is at least as wide as the {} mm countersink, so there is no seat to cut and it is not countersunk; use a wider diameter_mm",
+                diameter(*hole_mm),
+                diameter(*mouth_mm)
             ),
             Self::BoreTargetNotCircle { shape, .. } => write!(
                 f,
@@ -2185,6 +2216,15 @@ mod tests {
                 "none of its targets is a circle it can drill, so it drills nothing",
             ),
             (
+                Warning::CountersinkMouthNotWiderThanHole {
+                    op: op(),
+                    shape: shape(),
+                    mouth_mm: 2.999_999_9,
+                    hole_mm: 3.175,
+                },
+                "the 3.175 mm hole `Shape` (instance `i1`, profile 2) is at least as wide as the 3 mm countersink, so there is no seat to cut and it is not countersunk; use a wider diameter_mm",
+            ),
+            (
                 Warning::BoreTargetNotCircle {
                     op: op(),
                     shape: shape(),
@@ -2343,7 +2383,8 @@ mod tests {
             C::DrillToolWiderThanHole => C::DrillPeckDeeperThanHole,
             C::DrillPeckDeeperThanHole => C::DrillRetractBelowStockTop,
             C::DrillRetractBelowStockTop => C::DrillNoHoles,
-            C::DrillNoHoles => C::BoreTargetNotCircle,
+            C::DrillNoHoles => C::CountersinkMouthNotWiderThanHole,
+            C::CountersinkMouthNotWiderThanHole => C::BoreTargetNotCircle,
             C::BoreTargetNotCircle => C::BoreNoRoom,
             C::BoreNoRoom => C::BoreLeavesCore,
             C::BoreLeavesCore => C::BoreNoHoles,
@@ -2391,7 +2432,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 45);
+        assert_eq!(count, 46);
     }
 
     #[test]

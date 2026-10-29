@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `20`. |
+| `version` | Format version. This build writes `21`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve: more than 0 and at most 0.1. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -529,6 +529,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 18 | Adds the `"bore"` operation kind, which cuts circles bigger than the bit to size. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 18 file rather than misread a kind it does not know. See [Bore](bore.md). |
 | 19 | Renames `allowance_mm` to `stock_to_leave_mm` in each Pocket, each Bore and each Profile's `last_pass` (#394): the material they leave on the wall is their stock to leave, and `through_cut_allowance_mm` is the only allowance. The upgrade keeps each value, so the project exports as before; saving writes the new name. |
 | 20 | Adds the `"v_carve"` operation kind, with its `clearing` passes, flat depth and start depth ([V-Carve](v-carve.md)). An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 20 file rather than misread a kind it does not know. This build also refuses a `flatten_tolerance_mm` above 0.1 mm, in a file of any version. |
+| 21 | Adds the `"countersink"` Drill cycle, `{ "countersink": { "diameter_mm": …, "start_depth_mm": …, "start_plane_cleared_externally": … } }`, which opens a mouth with a V-bit at each circle. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 21 file rather than misread a cycle it does not know. This build reads, checks and saves a countersink, but does not export one yet: `check` and `export` say so. |
 
 ## What `check` reports
 

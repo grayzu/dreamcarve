@@ -1692,4 +1692,137 @@ mod tests {
             assert_eq!(named, expected_named, "{name}");
         }
     }
+
+    /// The sample rectangle `i1` with a 3.175 mm hole `i3` at (`x`, 25)
+    /// inside it, the 90° V-bit `t2`, and a 6 mm countersink `o3` of the
+    /// hole starting `start_depth_mm` below the stock top; before it,
+    /// when `pocket_depth_mm` is given, the Pocket `o2` of the rectangle
+    /// that deep with the end mill `t1` (which is otherwise left out).
+    fn countersink_in_pocket(pocket_depth_mm: Option<f64>, start_depth_mm: f64, x: f64) -> Project {
+        let mut project = carve_in_pocket(pocket_depth_mm, 0.0);
+        project
+            .operations
+            .retain(|op| !matches!(op, Operation::VCarve(_)));
+        let hole = FeatureDefinition {
+            id: DefinitionId::new("d3"),
+            name: "Hole".into(),
+            profiles: vec![Polyline::circle(Point { x: 0.0, y: 0.0 }, 3.175 / 2.0)],
+        };
+        project.definitions.insert(hole.id.clone(), hole);
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new("i3"),
+            definition: DefinitionId::new("d3"),
+            transform: Transform::translate(x, 25.0),
+            name: "Hole".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        project
+            .operations
+            .push(Operation::Drill(dc_project::DrillOp {
+                targets: vec![InstanceId::new("i3")],
+                tool: ToolId::new("t2"),
+                depth_mm: None,
+                cycle: dc_project::DrillCycle::Countersink {
+                    diameter_mm: 6.0,
+                    start_depth_mm,
+                    start_plane_cleared_externally: false,
+                },
+                ..dc_project::test_support::sample_drill()
+            }));
+        project
+    }
+
+    /// The design spec, "Start depth": the countersink Drill joins the
+    /// start-plane operations (sub-phase 3.2), so `check` and validation
+    /// treat it as a V-Carve, with the bit's disc at each hole as its
+    /// footprint (#425): a Pocket at the start depth clears the plane, one
+    /// at another depth is `start_depth_mismatch`, and none is
+    /// validation's `start_depth_uncleared`, once, at the countersink's own
+    /// start depth, unless vouched for. A Pocket that holds the hole but
+    /// not the bit round it clears nothing. A simple Drill has no start
+    /// plane.
+    #[test]
+    fn countersink_start_depth_is_checked_too() {
+        let o3 = || OperationId::new("o3");
+        let sink = |project: &Project| -> Operation {
+            project
+                .operations
+                .iter()
+                .find(|op| op.id() == &o3())
+                .cloned()
+                .expect("the project has the countersink o3")
+        };
+        let kind = |project: &Project| {
+            start_plane(project, &sink(project)).map(|plane| match plane {
+                StartPlane::StockTop => "stock_top",
+                StartPlane::Cleared(_) => "cleared",
+                StartPlane::Mismatch(_) => "mismatch",
+                StartPlane::ClearedExternally => "cleared_externally",
+                StartPlane::Uncleared => "uncleared",
+            })
+        };
+
+        let project = countersink_in_pocket(Some(2.0), 2.0, 35.0);
+        assert_eq!(validate(&project), vec![]);
+        assert_eq!(kind(&project), Some("cleared"));
+        assert_eq!(check(&project, &[]), vec![]);
+
+        for (pocket_mm, start_mm) in [(1.0, 2.0), (1.0, 0.0)] {
+            let project = countersink_in_pocket(Some(pocket_mm), start_mm, 35.0);
+            assert_eq!(kind(&project), Some("mismatch"), "{pocket_mm} {start_mm}");
+            assert_eq!(
+                mismatches(&project),
+                vec![Warning::StartDepthMismatch {
+                    op: o3(),
+                    pocket: OperationId::new("o2"),
+                    start_depth_mm: start_mm,
+                    pocket_depth_mm: Some(pocket_mm),
+                }]
+            );
+        }
+
+        let project = countersink_in_pocket(None, 2.0, 35.0);
+        assert_eq!(kind(&project), Some("uncleared"));
+        let errors = uncleared(&project);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(
+            errors[0].field().as_deref(),
+            Some("operations[o3].cycle.countersink.start_depth_mm")
+        );
+        assert_eq!(check(&project, &[]), vec![]);
+
+        let mut vouched = countersink_in_pocket(None, 0.1, 35.0);
+        if let Some(Operation::Drill(drill)) = vouched.operations.last_mut()
+            && let dc_project::DrillCycle::Countersink {
+                start_plane_cleared_externally,
+                ..
+            } = &mut drill.cycle
+        {
+            *start_plane_cleared_externally = true;
+        }
+        assert_eq!(kind(&vouched), Some("cleared_externally"));
+        assert_eq!(validate(&vouched), vec![]);
+
+        assert_eq!(
+            kind(&countersink_in_pocket(None, 0.0, 35.0)),
+            Some("stock_top")
+        );
+
+        // The hole at x 12 is inside the rectangle (x 10..60), but the
+        // 6.35 mm bit round it reaches x 8.8: the Pocket does not hold it.
+        let project = countersink_in_pocket(Some(2.0), 2.0, 12.0);
+        assert_eq!(kind(&project), Some("uncleared"));
+        assert_eq!(uncleared(&project).len(), 1);
+        assert_eq!(mismatches(&project), vec![]);
+
+        let mut simple = countersink_in_pocket(Some(2.0), 2.0, 35.0);
+        if let Some(Operation::Drill(drill)) = simple.operations.last_mut() {
+            drill.cycle = dc_project::DrillCycle::Simple;
+            drill.depth_mm = Some(1.0);
+        }
+        assert_eq!(kind(&simple), None);
+    }
 }

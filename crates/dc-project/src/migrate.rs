@@ -100,6 +100,10 @@
 //!   clearing passes, start depth and flat depth (`docs/specs/phase-3/
 //!   design.md`, sub-phase 3.1). No version 19 file holds one, so the
 //!   migration changes only the version.
+//! - **21**: adds the countersink Drill cycle, `{ "countersink": {
+//!   "diameter_mm", "start_depth_mm", "start_plane_cleared_externally" }
+//!   }` (sub-phase 3.2). No version 20 file holds one, so the migration
+//!   changes only the version.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -110,7 +114,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 20;
+pub const CURRENT_VERSION: u32 = 21;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -139,6 +143,7 @@ fn step(from: u32) -> Option<Step> {
         17 => Some(v17_to_v18),
         18 => Some(v18_to_v19),
         19 => Some(v19_to_v20),
+        20 => Some(v20_to_v21),
         _ => None,
     }
 }
@@ -801,6 +806,15 @@ fn v18_to_v19(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
 /// one. The bump makes a version 19 reader refuse a file with a V-Carve as
 /// newer instead of failing on an unknown kind (ADR-0002).
 fn v19_to_v20(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    Ok(root)
+}
+
+/// Version 20 → 21 (`docs/specs/phase-3/design.md`, sub-phase 3.2): the
+/// countersink Drill cycle, which no version 20 file holds, so a version
+/// 20 file is already a version 21 one. The bump makes a version 20
+/// reader refuse a file with a countersink as newer instead of failing on
+/// an unknown cycle (ADR-0002).
+fn v20_to_v21(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
     Ok(root)
 }
 
@@ -2551,7 +2565,7 @@ mod tests {
     #[test]
     fn v19_to_v20_bumps_the_version_only() {
         use crate::test_support::{sample_bore, sample_engrave, sample_pocket};
-        assert_eq!(CURRENT_VERSION, 20);
+        const { assert!(CURRENT_VERSION >= 20) };
         let root: Value = serde_json::from_slice(V19_FIXTURE).unwrap();
         let stepped = v19_to_v20(root.as_object().unwrap().clone()).unwrap();
         assert_eq!(Value::Object(stepped), root);
@@ -2568,7 +2582,7 @@ mod tests {
             root["operations"].as_array_mut().unwrap().push(op);
         }
         let mut expected = root.clone();
-        expected["version"] = json!(20);
+        expected["version"] = json!(CURRENT_VERSION);
         let migrated = migrate(root, 19).unwrap();
         assert_eq!(migrated, expected);
         assert_eq!(
@@ -2581,7 +2595,71 @@ mod tests {
     /// A version 19 reader refuses a version 20 file as newer (ADR-0002).
     #[test]
     fn version_20_is_newer_than_19() {
-        assert_eq!(CURRENT_VERSION, 20);
+        const { assert!(CURRENT_VERSION > 20) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 20 → 21 (sub-phase 3.2): the countersink Drill cycle.
+
+    const V20_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v20/sample.dcv");
+
+    #[test]
+    fn version_20_fixture_loads() {
+        let loaded = load(V20_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Format 21: the countersink is a new Drill cycle no version 20 file
+    /// holds, so the step changes only the version, whatever operations
+    /// the file has: every field of a Profile, Pocket, simple and peck
+    /// Drill, Bore, Engrave and V-Carve comes through unchanged.
+    #[test]
+    fn v20_to_v21_bumps_the_version_only() {
+        use crate::model::{DrillCycle, PeckRetract};
+        use crate::test_support::{sample_bore, sample_engrave, sample_pocket, sample_v_carve};
+        assert_eq!(CURRENT_VERSION, 21);
+        let root: Value = serde_json::from_slice(V20_FIXTURE).unwrap();
+        let stepped = v20_to_v21(root.as_object().unwrap().clone()).unwrap();
+        assert_eq!(Value::Object(stepped), root);
+
+        let mut root = sample_root_at(20);
+        assert_eq!(root["version"], json!(20));
+        let peck = crate::model::DrillOp {
+            cycle: DrillCycle::Peck {
+                peck_depth_mm: Some(1.0),
+                retract: PeckRetract::ChipBreak { gap_mm: 0.5 },
+            },
+            ..sample_drill()
+        };
+        for op in [
+            Operation::Pocket(sample_pocket()),
+            Operation::Drill(sample_drill()),
+            Operation::Drill(peck),
+            Operation::Bore(sample_bore()),
+            Operation::Engrave(sample_engrave()),
+            Operation::VCarve(sample_v_carve()),
+        ] {
+            let op = serde_json::to_value(op).unwrap();
+            root["operations"].as_array_mut().unwrap().push(op);
+        }
+        let mut expected = root.clone();
+        expected["version"] = json!(21);
+        let migrated = migrate(root, 20).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+    }
+
+    /// A version 20 reader refuses a version 21 file as newer (ADR-0002).
+    #[test]
+    fn version_21_is_newer_than_20() {
+        assert_eq!(CURRENT_VERSION, 21);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

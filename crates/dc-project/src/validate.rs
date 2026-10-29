@@ -606,11 +606,14 @@ pub enum Problem {
         name: String,
         /// The value set, mm.
         start_depth_mm: f64,
+        /// The field, under the operation: `start_depth_mm`, or a
+        /// countersink's `cycle.countersink.start_depth_mm` (format 21).
+        field: &'static str,
     },
-    /// An enabled V-Carve starts below the stock top, no enabled earlier
-    /// Pocket contains its targets, and it does not say another program
-    /// cleared the start plane (format 20; capability 41; phase 3 security
-    /// review M2). An error.
+    /// An enabled V-Carve or countersink Drill starts below the stock top,
+    /// no enabled earlier Pocket contains its footprint, and it does not
+    /// say another program cleared the start plane (format 20; capability
+    /// 41; phase 3 security review M2). An error.
     StartDepthUncleared {
         /// The operation.
         operation: OperationId,
@@ -618,6 +621,58 @@ pub enum Problem {
         name: String,
         /// The start depth, mm.
         start_depth_mm: f64,
+        /// The field, under the operation, as for
+        /// [`Problem::StartDepthNegative`].
+        field: &'static str,
+    },
+    /// An enabled countersink Drill cuts with a tool that is not a V-bit
+    /// (format 21; capability 44): its depth follows the bit's angle. An
+    /// error.
+    CountersinkNeedsVBit {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool.
+        tool: ToolId,
+        /// The tool's display name.
+        tool_name: String,
+        /// The cutter in words, such as `a drill`.
+        cutter: &'static str,
+    },
+    /// A countersink's mouth diameter is not above 0 (format 21). An
+    /// error.
+    CountersinkDiameterPositive {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The value set, mm.
+        diameter_mm: f64,
+    },
+    /// An enabled countersink asks for a mouth wider than its V-bit
+    /// (format 21; capability 44): past its diameter the bit has no
+    /// cutting edge, and the shank would rub. An error.
+    CountersinkMouthExceedsTool {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The tool's display name.
+        tool_name: String,
+        /// The mouth asked for, mm.
+        diameter_mm: f64,
+        /// The tool's diameter, mm.
+        tool_diameter_mm: f64,
+    },
+    /// A countersink Drill sets `allow_tool_wider_than_hole` to `true`
+    /// (format 21): the field has no effect on a countersink, whose bit is
+    /// wider than the hole by design. A warning.
+    CountersinkIgnoresToolWidth {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
     },
 }
 
@@ -692,6 +747,10 @@ impl Problem {
             Self::ClearingNotDescending { .. } => "clearing_not_descending",
             Self::StartDepthNegative { .. } => "start_depth_negative",
             Self::StartDepthUncleared { .. } => "start_depth_uncleared",
+            Self::CountersinkNeedsVBit { .. } => "countersink_needs_v_bit",
+            Self::CountersinkDiameterPositive { .. } => "countersink_diameter_positive",
+            Self::CountersinkMouthExceedsTool { .. } => "countersink_mouth_exceeds_tool",
+            Self::CountersinkIgnoresToolWidth { .. } => "countersink_ignores_tool_width",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -711,7 +770,8 @@ impl Problem {
             | Self::DrillCutterUnusual { .. }
             | Self::ReliefNeedsStepDown { .. }
             | Self::EngraveDeeperThanCone { .. }
-            | Self::ClearingNotDescending { .. } => Severity::Warning,
+            | Self::ClearingNotDescending { .. }
+            | Self::CountersinkIgnoresToolWidth { .. } => Severity::Warning,
             Self::CutterNotFlat { .. }
             | Self::OperationHasNoTargets { .. }
             | Self::DuplicateToolNumber { .. }
@@ -731,6 +791,9 @@ impl Problem {
             | Self::ClearingDanglingTool { .. }
             | Self::StartDepthNegative { .. }
             | Self::StartDepthUncleared { .. }
+            | Self::CountersinkNeedsVBit { .. }
+            | Self::CountersinkDiameterPositive { .. }
+            | Self::CountersinkMouthExceedsTool { .. }
             | Self::ClearanceBelowSafeZ { .. }
             | Self::MachineZNotBelowHome { .. }
             | Self::MachineZNeedsG53 { .. } => Severity::Error,
@@ -875,10 +938,22 @@ impl Problem {
             | Self::ClearingNotDescending {
                 operation, pass, ..
             } => Some(format!("operations[{operation}].clearing[{pass}].tool")),
-            Self::StartDepthNegative { operation, .. }
-            | Self::StartDepthUncleared { operation, .. } => {
-                Some(format!("operations[{operation}].start_depth_mm"))
+            Self::StartDepthNegative {
+                operation, field, ..
             }
+            | Self::StartDepthUncleared {
+                operation, field, ..
+            } => Some(format!("operations[{operation}].{field}")),
+            Self::CountersinkNeedsVBit { operation, .. } => {
+                Some(format!("operations[{operation}].tool"))
+            }
+            Self::CountersinkDiameterPositive { operation, .. }
+            | Self::CountersinkMouthExceedsTool { operation, .. } => {
+                Some(format!("operations[{operation}].{COUNTERSINK_DIAMETER}"))
+            }
+            Self::CountersinkIgnoresToolWidth { operation, .. } => Some(format!(
+                "operations[{operation}].allow_tool_wider_than_hole"
+            )),
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
                 Some(MACHINE_Z.to_owned())
@@ -888,6 +963,10 @@ impl Problem {
 }
 
 const STOCK_THICKNESS: &str = "stock.thickness_mm";
+/// A countersink's mouth, under its operation (format 21).
+pub(crate) const COUNTERSINK_DIAMETER: &str = "cycle.countersink.diameter_mm";
+/// A countersink's start depth, under its operation (format 21).
+pub(crate) const COUNTERSINK_START_DEPTH: &str = "cycle.countersink.start_depth_mm";
 const FLATTEN_TOLERANCE: &str = "flatten_tolerance_mm";
 const CLEARANCE: &str = "heights.clearance_mm";
 const MACHINE_Z: &str = "heights.tool_change_machine_z_mm";
@@ -1131,7 +1210,7 @@ impl fmt::Display for Problem {
                 included_angle_deg,
             } => write!(
                 f,
-                "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve needs a V-bit angle above 0 and below 180 degrees to work out its depth"
+                "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth"
             ),
             Self::VBitConeExceeded {
                 operation,
@@ -1140,16 +1219,21 @@ impl fmt::Display for Problem {
                 engagement_mm,
                 cone_height_mm,
                 from_stock_top,
-                ..
+                field,
             } => {
                 write!(
                     f,
                     "operation `{name}` (`{operation}`) engages tool `{tool_name}` {engagement_mm} mm deep"
                 )?;
                 if *from_stock_top {
+                    let own = if *field == COUNTERSINK_DIAMETER {
+                        "its countersink's depth"
+                    } else {
+                        "its flat depth"
+                    };
                     write!(
                         f,
-                        " from the stock top (its start depth, which no Pocket of the project clears, plus its flat depth)"
+                        " from the stock top (its start depth, which no Pocket of the project clears, plus {own})"
                     )?;
                 }
                 write!(
@@ -1196,6 +1280,7 @@ impl fmt::Display for Problem {
                 operation,
                 name,
                 start_depth_mm,
+                ..
             } => write!(
                 f,
                 "operation `{name}` (`{operation}`) has start_depth_mm {start_depth_mm} mm; the start plane is a depth below the stock top, 0 or more"
@@ -1204,9 +1289,49 @@ impl fmt::Display for Problem {
                 operation,
                 name,
                 start_depth_mm,
+                field,
+            } => {
+                let what = if *field == COUNTERSINK_START_DEPTH {
+                    "the whole of its V-bit at each hole"
+                } else {
+                    "its targets"
+                };
+                write!(
+                    f,
+                    "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket before it contains {what}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true"
+                )
+            }
+            Self::CountersinkNeedsVBit {
+                operation,
+                name,
+                tool,
+                tool_name,
+                cutter,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket before it contains its targets; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true"
+                "operation `{name}` (`{operation}`) countersinks with tool `{tool_name}` (`{tool}`), {cutter}; a countersink's depth follows the angle of a V-bit, so use a V-bit"
+            ),
+            Self::CountersinkDiameterPositive {
+                operation,
+                name,
+                diameter_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has a countersink diameter_mm of {diameter_mm} mm; the mouth must be wider than 0"
+            ),
+            Self::CountersinkMouthExceedsTool {
+                operation,
+                name,
+                tool_name,
+                diameter_mm,
+                tool_diameter_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) asks for a {diameter_mm} mm countersink, wider than the {tool_diameter_mm} mm tool `{tool_name}`; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit"
+            ),
+            Self::CountersinkIgnoresToolWidth { operation, name } => write!(
+                f,
+                "operation `{name}` (`{operation}`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false"
             ),
             Self::HelixNeedsWasteSide { operation, name } => write!(
                 f,
@@ -1793,7 +1918,7 @@ impl Validator {
             Operation::Engrave(op) => op.step_down_mm,
             Operation::Drill(op) => match op.cycle {
                 DrillCycle::Peck { peck_depth_mm, .. } => peck_depth_mm,
-                DrillCycle::Simple => None,
+                DrillCycle::Simple | DrillCycle::Countersink { .. } => None,
             },
         };
         let step = match (own_step_down, tool.step_down_mm) {
@@ -2101,6 +2226,7 @@ impl Validator {
                 operation: carve.id.clone(),
                 name: carve.name.clone(),
                 start_depth_mm: carve.start_depth_mm,
+                field: "start_depth_mm",
             });
         }
         if let Some(fraction) = carve.step_over_fraction {
@@ -2193,6 +2319,7 @@ impl Validator {
                 operation: carve.id.clone(),
                 name: carve.name.clone(),
                 start_depth_mm,
+                field: "start_depth_mm",
             });
         }
         // The flanks engage from the start plane only when a Pocket at
@@ -5556,6 +5683,7 @@ mod tests {
                 operation: OperationId::new("o6"),
                 name: "V-Carve".into(),
                 start_depth_mm: -1.0,
+                field: "start_depth_mm",
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
@@ -5596,6 +5724,7 @@ mod tests {
                 operation: OperationId::new("o6"),
                 name: "V-Carve".into(),
                 start_depth_mm: 1.0,
+                field: "start_depth_mm",
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
@@ -5704,5 +5833,286 @@ mod tests {
                 expected: POSITIVE,
             }]
         );
+    }
+
+    // Format 21: the countersink Drill (functional spec, capability 44).
+
+    /// The sample project with the 90°, 6.35 mm V-bit `t2` (a 3.175 mm
+    /// cone) and a 3.175 mm circle `i3` at (35, 25), inside the sample
+    /// rectangle, countersunk 6 mm wide from the stock top by Drill `o3`
+    /// with no `depth_mm`, edited by `edit`.
+    fn countersink_project(edit: impl FnOnce(&mut crate::model::DrillOp)) -> Project {
+        let mut p = sample_project();
+        p.tools.push(crate::test_support::tool_v_bit_90());
+        let circle = DefinitionId::new("d3");
+        p.definitions.insert(
+            circle.clone(),
+            crate::model::FeatureDefinition {
+                id: circle.clone(),
+                name: "Hole".into(),
+                profiles: vec![Polyline::circle(
+                    dc_geometry::Point { x: 0.0, y: 0.0 },
+                    3.175 / 2.0,
+                )],
+            },
+        );
+        p.instances.push(crate::model::FeatureInstance {
+            id: InstanceId::new("i3"),
+            definition: circle,
+            transform: Transform::translate(35.0, 25.0),
+            name: "Hole 1".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+        let mut drill = sample_drill();
+        drill.targets = vec![InstanceId::new("i3")];
+        drill.tool = ToolId::new("t2");
+        drill.depth_mm = None;
+        drill.cycle = DrillCycle::Countersink {
+            diameter_mm: 6.0,
+            start_depth_mm: 0.0,
+            start_plane_cleared_externally: false,
+        };
+        edit(&mut drill);
+        p.operations.push(Operation::Drill(drill));
+        p
+    }
+
+    /// The countersink's settings of `drill`, to edit.
+    fn countersink_of(drill: &mut crate::model::DrillOp) -> (&mut f64, &mut f64, &mut bool) {
+        match &mut drill.cycle {
+            DrillCycle::Countersink {
+                diameter_mm,
+                start_depth_mm,
+                start_plane_cleared_externally,
+            } => (diameter_mm, start_depth_mm, start_plane_cleared_externally),
+            cycle => panic!("not a countersink: {cycle:?}"),
+        }
+    }
+
+    /// Capability 44: the mouth can be no wider than the V-bit, past
+    /// whose diameter there is no cutting edge; a mouth the bit's own
+    /// diameter is the most it cuts. A mouth that is not above 0 is its
+    /// own error.
+    #[test]
+    fn countersink_mouth_wider_than_tool_is_error() {
+        let p = countersink_project(|drill| *countersink_of(drill).0 = 7.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::CountersinkMouthExceedsTool {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+                tool_name: "90° V-bit".into(),
+                diameter_mm: 7.0,
+                tool_diameter_mm: 6.35,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "countersink_mouth_exceeds_tool");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o3].cycle.countersink.diameter_mm")
+        );
+        let p = countersink_project(|drill| *countersink_of(drill).0 = 6.35);
+        assert_eq!(validate(&p), vec![]);
+
+        for diameter_mm in [0.0, -6.0] {
+            let p = countersink_project(|drill| *countersink_of(drill).0 = diameter_mm);
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::CountersinkDiameterPositive {
+                    operation: OperationId::new("o3"),
+                    name: "Drill".into(),
+                    diameter_mm,
+                }],
+                "{diameter_mm}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+            assert_eq!(problems[0].code(), "countersink_diameter_positive");
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("operations[o3].cycle.countersink.diameter_mm")
+            );
+        }
+        let p = countersink_project(|drill| *countersink_of(drill).0 = f64::NAN);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::NonFinite {
+                field: "operations[o3].cycle.countersink.diameter_mm".into(),
+            }]
+        );
+    }
+
+    /// Capabilities 41 and 44, security review H4: the flanks engage
+    /// from the stock top unless an enabled earlier Pocket at the start
+    /// depth contains the bit at every hole, so a 6 mm mouth (3 mm deep
+    /// with the 90° bit) 2 mm down a start plane only vouched for engages
+    /// 5 mm of a 3.175 mm cone. The same countersink on the floor of a
+    /// 2 mm Pocket engages 3 mm, which fits; so does one from the top.
+    #[test]
+    fn countersink_depth_beyond_cone_is_error() {
+        let vouched = countersink_project(|drill| {
+            let (_, start_depth_mm, cleared_externally) = countersink_of(drill);
+            *start_depth_mm = 2.0;
+            *cleared_externally = true;
+        });
+        let problems = validate(&vouched);
+        let (engagement_mm, cone_height_mm, from_stock_top, field) = cone_exceeded(&problems);
+        assert!(approx_eq(engagement_mm, 5.0, 1e-9), "{engagement_mm}");
+        assert!(approx_eq(cone_height_mm, 3.175, 1e-9), "{cone_height_mm}");
+        assert!(from_stock_top);
+        assert_eq!(
+            field.as_deref(),
+            Some("operations[o3].cycle.countersink.diameter_mm")
+        );
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("from the stock top") && message.contains("countersink's depth"),
+            "{message}"
+        );
+
+        let mut pocketed = countersink_project(|drill| *countersink_of(drill).1 = 2.0);
+        pocketed.operations.insert(1, rectangle_pocket(2.0));
+        assert_eq!(validate(&pocketed), vec![]);
+
+        // A Pocket at another depth does not clear the start plane: the
+        // flanks engage from the stock top again.
+        let mut shallower = countersink_project(|drill| *countersink_of(drill).1 = 2.0);
+        shallower.operations.insert(1, rectangle_pocket(1.0));
+        let (engagement_mm, _, from_stock_top, _) = cone_exceeded(&validate(&shallower));
+        assert!(approx_eq(engagement_mm, 5.0, 1e-9), "{engagement_mm}");
+        assert!(from_stock_top);
+
+        assert_eq!(validate(&countersink_project(|_| {})), vec![]);
+    }
+
+    /// Capability 44, security review M2: a countersink below the stock
+    /// top needs an earlier Pocket that holds its whole bit at every
+    /// hole, or the user's word, as a V-Carve does; located at its own
+    /// start depth. A negative start depth is an error there too.
+    #[test]
+    fn uncleared_countersink_start_depth_is_an_error() {
+        let p = countersink_project(|drill| *countersink_of(drill).1 = 1.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::StartDepthUncleared {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+                start_depth_mm: 1.0,
+                field: "cycle.countersink.start_depth_mm",
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o3].cycle.countersink.start_depth_mm")
+        );
+        let mut pocketed = p.clone();
+        pocketed.operations.insert(1, rectangle_pocket(1.0));
+        assert_eq!(validate(&pocketed), vec![]);
+        let vouched = countersink_project(|drill| {
+            let (_, start_depth_mm, cleared_externally) = countersink_of(drill);
+            *start_depth_mm = 0.1;
+            *cleared_externally = true;
+        });
+        assert_eq!(validate(&vouched), vec![]);
+
+        let p = countersink_project(|drill| *countersink_of(drill).1 = -1.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::StartDepthNegative {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+                start_depth_mm: -1.0,
+                field: "cycle.countersink.start_depth_mm",
+            }]
+        );
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o3].cycle.countersink.start_depth_mm")
+        );
+    }
+
+    /// The design spec, "Validation": a countersink's V-bit is no
+    /// `drill_cutter_unusual`, and its unset `depth_mm` is not an unset
+    /// value (the depth is derived). Any cutter but a V-bit is
+    /// `countersink_needs_v_bit` at the tool, and a V-bit angle out of
+    /// range is `v_bit_angle_range`, as for a V-Carve.
+    #[test]
+    fn countersink_drill_with_v_bit_is_not_unusual() {
+        let p = countersink_project(|_| {});
+        assert_eq!(validate(&p), vec![]);
+        let p = countersink_project(|drill| drill.depth_mm = Some(3.0));
+        assert_eq!(validate(&p), vec![]);
+
+        for cutter in [ToolKind::Drill, ToolKind::EndMill, ToolKind::BallNose] {
+            let mut p = countersink_project(|_| {});
+            p.tools[1].cutter = cutter.clone();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::CountersinkNeedsVBit {
+                    operation: OperationId::new("o3"),
+                    name: "Drill".into(),
+                    tool: ToolId::new("t2"),
+                    tool_name: "90° V-bit".into(),
+                    cutter: cutter.describe(),
+                }],
+                "{cutter:?}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+            assert_eq!(problems[0].code(), "countersink_needs_v_bit");
+            assert_eq!(problems[0].field().as_deref(), Some("operations[o3].tool"));
+        }
+
+        for angle in [0.0, 180.0] {
+            let mut p = countersink_project(|_| {});
+            p.tools[1].cutter = ToolKind::VBit {
+                included_angle_deg: angle,
+            };
+            assert_eq!(
+                validate(&p),
+                vec![Problem::VBitAngleRange {
+                    tool: ToolId::new("t2"),
+                    name: "90° V-bit".into(),
+                    included_angle_deg: angle,
+                }],
+                "{angle}"
+            );
+        }
+    }
+
+    /// Design spec, "Countersink" step 2: Drill's narrower-hole rule does
+    /// not apply to a countersink, so `allow_tool_wider_than_hole: true`
+    /// does nothing, and validation says so at the field. A warning.
+    #[test]
+    fn countersink_ignores_tool_width_warns() {
+        let p = countersink_project(|drill| drill.allow_tool_wider_than_hole = true);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::CountersinkIgnoresToolWidth {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(problems[0].code(), "countersink_ignores_tool_width");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o3].allow_tool_wider_than_hole")
+        );
+        // A simple Drill uses the field.
+        let mut p = with_ops(vec![Operation::Drill(sample_drill())]);
+        if let Some(Operation::Drill(drill)) = p.operations.get_mut(1) {
+            drill.allow_tool_wider_than_hole = true;
+        }
+        assert_eq!(validate(&p), vec![]);
     }
 }

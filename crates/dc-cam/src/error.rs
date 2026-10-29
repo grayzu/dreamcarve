@@ -735,6 +735,61 @@ pub enum CamError {
         /// The cone height, `diameter / (2 tan(α/2))`, mm.
         cone_mm: f64,
     },
+    /// A countersink Drill's tool is not a V-bit (format 21,
+    /// `countersink_needs_v_bit`): its depth follows the bit's angle.
+    /// Validation reports this first.
+    #[error(
+        "operation `{op}` countersinks with tool `{tool}`, {cutter}; a countersink needs a V-bit, whose angle sets the depth"
+    )]
+    CountersinkNeedsVBit {
+        /// The operation.
+        op: OperationId,
+        /// The tool's name.
+        tool: String,
+        /// The tool's id.
+        tool_id: ToolId,
+        /// The cutter in words, such as `a drill`.
+        cutter: &'static str,
+    },
+    /// A countersink's mouth is not a positive number (format 21,
+    /// `countersink_diameter_positive`). Validation reports this first.
+    #[error("operation `{op}` has a countersink diameter_mm of {diameter_mm}; it must be above 0")]
+    CountersinkDiameterPositive {
+        /// The operation.
+        op: OperationId,
+        /// The mouth's diameter as set, mm.
+        diameter_mm: f64,
+    },
+    /// A countersink's mouth is wider than its V-bit (format 21,
+    /// `countersink_mouth_exceeds_tool`): past its diameter the bit has
+    /// no cutting edge. Validation reports this first.
+    #[error(
+        "operation `{op}` asks for a {mouth_mm} mm countersink, wider than its {tool_mm} mm V-bit"
+    )]
+    CountersinkMouthExceedsTool {
+        /// The operation.
+        op: OperationId,
+        /// The mouth's diameter, mm.
+        mouth_mm: f64,
+        /// The tool's diameter, mm.
+        tool_mm: f64,
+    },
+    /// A countersink would engage its V-bit's flanks deeper than the
+    /// cone is tall, so the shank would cut (format 21,
+    /// `v_bit_cone_exceeded`; security review H4): its depth plus, unless
+    /// an enabled earlier Pocket at the start depth holds the bit, the
+    /// start depth. Validation reports this first.
+    #[error(
+        "operation `{op}` countersinks with its V-bit's flanks engaged {engaged_mm:.3} mm deep, but the bit's cone is only {cone_mm:.3} mm tall, so its shank would cut; clear the start depth with a Pocket first, or use a smaller mouth or a wider V-bit"
+    )]
+    CountersinkConeExceeded {
+        /// The operation.
+        op: OperationId,
+        /// The flank engagement, mm.
+        engaged_mm: f64,
+        /// The cone height, `diameter / (2 tan(α/2))`, mm.
+        cone_mm: f64,
+    },
     /// A V-Carve's `start_depth_mm` is not a number from 0 to the stock
     /// thickness.
     #[error(

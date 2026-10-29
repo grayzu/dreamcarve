@@ -1357,7 +1357,7 @@ mod tests {
 
     /// A current-version project whose `post_processor` is the GRBL
     /// reference with the default settings.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v20/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v21/sample.dcv");
 
     /// The reference block as the project writes it, keys in order.
     const REFERENCE_BLOCK: &str = r#"{
