@@ -565,3 +565,31 @@ fn clearing_pass_is_cut_by_the_pocket_code() {
         assert_eq!(clearing_run(&runs, "t4"), &rest_path, "{first:?}");
     }
 }
+
+/// The offset strategy (#407) shares the floor: with the pass its V-bit
+/// floor shrinks to what the end mill cannot reach too, and every run is
+/// safe, the cone test included.
+#[test]
+fn offset_carve_clears_with_the_pass_too() {
+    let (p, op) = with_passes(None, Some(0.1), vec![pass("t3")]);
+    let offset = VCarveOp {
+        strategy: VCarveStrategy::Offset {
+            step_over_mm: 0.5,
+            direction: CutDirection::Climb,
+        },
+        ..op
+    };
+    let (runs, _) = runs_of(&p, &offset);
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    let alone = VCarveOp {
+        clearing: Vec::new(),
+        ..offset.clone()
+    };
+    let (runs_alone, _) = runs_of(&p, &alone);
+    let with_mm = length_mm(&floor_cuts(main_run(&runs)));
+    let without_mm = length_mm(&floor_cuts(main_run(&runs_alone)));
+    assert!(
+        with_mm < without_mm / 2.0,
+        "{with_mm} mm with the pass, {without_mm} mm without"
+    );
+}

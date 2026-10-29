@@ -38,9 +38,10 @@ impl RunLabel {
     /// 4).
     #[must_use]
     pub fn naming(&self, name: &str) -> String {
-        // #406: not named yet.
-        let _ = self;
-        name.to_owned()
+        match self {
+            Self::Main => name.to_owned(),
+            Self::Clearing(tool) => format!("{name} (clearing {tool})"),
+        }
     }
 }
 

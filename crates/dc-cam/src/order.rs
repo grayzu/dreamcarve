@@ -434,30 +434,39 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
 /// are never reordered (D7); the hint lists the tool's operations so the
 /// user can put them together.
 fn tool_change_hints(project: &Project) -> Vec<Warning> {
-    let enabled: Vec<&Operation> = project
+    // Every tool run in cut order (#406): a carve's clearing passes cut
+    // with their own end mills before its V-bit.
+    let uses: Vec<(&ToolId, &OperationId)> = project
         .operations
         .iter()
         .filter(|op| op.enabled())
+        .flat_map(|op| op.run_tools().into_iter().map(move |tool| (tool, op.id())))
         .collect();
-    let mut by_first_use: Vec<(&ToolId, Vec<&OperationId>)> = Vec::new();
-    for op in &enabled {
-        match by_first_use.iter_mut().find(|(tool, _)| *tool == op.tool()) {
-            Some((_, ops)) => ops.push(op.id()),
-            None => by_first_use.push((op.tool(), vec![op.id()])),
+    let mut by_first_use: Vec<(&ToolId, Vec<&OperationId>, usize)> = Vec::new();
+    for &(tool, op) in &uses {
+        match by_first_use.iter_mut().find(|(t, ..)| *t == tool) {
+            Some((_, ops, count)) => {
+                *count += 1;
+                if ops.last() != Some(&op) {
+                    ops.push(op);
+                }
+            }
+            None => by_first_use.push((tool, vec![op], 1)),
         }
     }
     by_first_use
         .into_iter()
-        .filter(|(tool, ops)| {
-            // The tool's uses are one run when no other tool's operation
-            // sits between its first and last.
-            let run_len = enabled
+        .filter(|(tool, _, count)| {
+            // The tool's uses are one run when no other tool's run sits
+            // between its first and last.
+            let run_len = uses
                 .iter()
-                .skip_while(|op| op.tool() != *tool)
-                .take_while(|op| op.tool() == *tool)
+                .skip_while(|(t, _)| t != tool)
+                .take_while(|(t, _)| t == tool)
                 .count();
-            run_len < ops.len()
+            run_len < *count
         })
+        .map(|(tool, ops, _)| (tool, ops))
         .map(|(tool, ops)| {
             let name = project
                 .tools

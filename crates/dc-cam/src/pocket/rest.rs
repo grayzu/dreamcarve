@@ -89,14 +89,18 @@ pub fn reachable(region: &Region, reference: Reference, tolerance_mm: f64) -> Ve
     grow_all(&centre, reference.radius_mm, tolerance_mm)
 }
 
-/// The material of `region` the reference left that this operation, at
-/// `stock_to_leave_mm`, should remove: the region less the stock to leave, minus
-/// [`reachable`], noise dropped. Empty when the reference left nothing.
+/// The material of `region` the references left that this operation, at
+/// `stock_to_leave_mm`, should remove: the region less the stock to leave,
+/// minus what any of them reached ([`reachable`]), noise dropped. Empty when
+/// they left nothing. A `rest_of` Pocket has one reference; a carve's
+/// clearing pass has every pass before it (#406), and each reached what
+/// it reached whether or not the passes between cut there, so the
+/// leftover is the same as cutting them in turn.
 #[must_use]
 pub fn left_by(
     region: &Region,
     stock_to_leave_mm: f64,
-    reference: Reference,
+    references: &[Reference],
     tolerance_mm: f64,
 ) -> Vec<Region> {
     let material = if stock_to_leave_mm > 0.0 {
@@ -104,7 +108,10 @@ pub fn left_by(
     } else {
         vec![region.clone()]
     };
-    let reached = reachable(region, reference, tolerance_mm);
+    let reached: Vec<Region> = references
+        .iter()
+        .flat_map(|&reference| reachable(region, reference, tolerance_mm))
+        .collect();
     without_noise(difference(&material, &reached, tolerance_mm), tolerance_mm)
 }
 
@@ -225,7 +232,7 @@ mod tests {
             radius_mm: 5.0,
             stock_to_leave_mm: 0.0,
         };
-        let left = left_by(&region, 0.0, reference, TOL);
+        let left = left_by(&region, 0.0, &[reference], TOL);
         assert_eq!(left.len(), 4, "{left:?}");
         // Flattening each quarter arc (7.85 mm) to chords within the
         // tolerance adds up to that much area per mm of arc.
@@ -264,14 +271,14 @@ mod tests {
             radius_mm: 5.0,
             stock_to_leave_mm: 0.5,
         };
-        let left = left_by(&region, 0.0, reference, TOL);
+        let left = left_by(&region, 0.0, &[reference], TOL);
         assert_eq!(left.len(), 1, "{left:?}");
         assert_eq!(left[0].holes().len(), 1);
         // The band plus the corners beyond it.
         let band = 5000.0 - 99.0 * 49.0;
         assert!(area_mm2(&left) > band, "{}", area_mm2(&left));
         // At the same stock to leave as the reference only the corners are left.
-        let left = left_by(&region, 0.5, reference, TOL);
+        let left = left_by(&region, 0.5, &[reference], TOL);
         assert_eq!(left.len(), 4, "{left:?}");
     }
 }

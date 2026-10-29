@@ -426,7 +426,7 @@ instance, instance_name, profile)`, `VCarveNoMedialAxis (op, instance,
 instance_name, profile)` (a region so thin that no interior node survives
 two refinements; upstream `vcarveNoMedialAxis`), `VCarveSamplingBudget
 (op, resolution_mm)` (once per operation; upstream `vcarveSamplingBudget`),
-`ClearingNoRoom (op, tool, diameter_mm)`, `ClearingNotDescending (op, tool, earlier_tool)`, `StartDepthMismatch
+`ClearingNoRoom (op, tool, tool_id, diameter_mm)`, `ClearingNotDescending (op, tool, diameter_mm, earlier_tool, earlier_diameter_mm)` (export drops it: validation's `clearing_not_descending` says it once, #406), `StartDepthMismatch
 (op, pocket: OperationId, start_depth_mm, pocket_depth_mm:
 Option<f64>)` (`pocket` is not an `Option`: with no containing Pocket
 the case is the error `start_depth_uncleared`, #409), `CountersinkMouthNotWiderThanHole (op, instance,
@@ -435,7 +435,7 @@ axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `PhotoLinesOverlap (op, fraction)`. New
 `CamError`s: `VCarveNeedsVBit { op, tool, tool_id, cutter }`,
 `VBitAngleRange { tool, tool_id, angle_deg }`, `VBitConeExceeded { op,
-instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason }` (the validation reasons, re-checked), `CountersinkMouthExceedsTool
+instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason: ClearingProblem }` (the validation reasons, re-checked: `NoFlatDepth`, `NotEndMill { cutter }`, `UnknownTool`), `CountersinkMouthExceedsTool
 { op, mouth_mm, tool_mm }`, `InlayGlueGap { op, glue_gap_mm, depth_mm }`,
 `InlayMargin { op, margin_mm }`, `PhotoBitmapUnknown { op, bitmap }`,
 `PhotoSetting { op, field, value }`, `BitmapDecode { bitmap, reason }`,
@@ -756,10 +756,21 @@ orientation; DreamCarve's regions are normalised anyway.
      rise above `F` there and stay whole.
 7. **Clearing passes.** `cleared_by` is the operation's `clearing` list
    in order, each with its tool's radius. The V-bit floor region is
-   `floor − ⋃ reach_i` where `reach_i` is what pass `i` can reach: its
-   own region (see "Clearing passes") grown back by its radius, the same
-   computation `pocket::rest` makes for `rest_of`. Never from a toolpath
-   (S14).
+   `floor − ⋃ reach_i` where `reach_i` is what pass `i` can reach: the
+   floor region inset by its radius and grown back by it, the same
+   computation `pocket::rest` makes for `rest_of` (`rest::left_by`, which
+   takes the list of references). Never from a toolpath (S14). Per floor
+   region (#406): only the passes whose end mill fits that region count, so
+   a region no end mill fits is cut exactly as with no passes; each piece
+   left is cleared as step 6 clears a floor region, its own outline
+   included (`WallRings::Last`, since part of it is the edge against the
+   reach, a whole step-over from the first ring otherwise) and its centre
+   rings; then the boundary trace, the whole floor region's outline and
+   islands as closed blocks, is cut last, `cleared` the floor region. When
+   the passes reach everything only the trace is cut, and no step-over is
+   needed. Medial chains are still dropped against the whole floor (step
+   6); a corner's chain keeps its stretch at `F` from the floor corner to
+   the junction, inside the reach.
 8. **Offset strategy** (`vcarve.ts`): `step_over_mm` in (0, ∞), else
    `CamError::InvalidVCarveStepOver` (#407: `InvalidStepOver` is a
    fraction in (0, 1]). Ring `k` is each region inset by
@@ -813,18 +824,31 @@ orientation; DreamCarve's regions are normalised anyway.
 ### Clearing passes (dc-cam::vcarve::clearing)
 
 A carve with `clearing` passes produces one `ToolRun` per pass, then its
-own. `vcarve::clearing::runs(project, op, carve, half_angle_rad, &mut
-warnings) -> Result<Vec<ToolRun>, CamError>`:
+own. `vcarve::clearing::checked_tools(project, op)` checks the passes, and
+`vcarve::clearing::runs(project, op, carve, tools, slope, &mut warnings)
+-> Result<Vec<ToolRun>, CamError>` cuts them (#406: the tools checked once,
+`slope = tan(α/2)` rather than the half angle):
 
-1. Each pass's tool must be a flat end mill with its rates set
-   (`ClearingInvalid`, the validation reasons re-checked); the carve must
-   have a flat depth. A tool wider than the previous pass's warns
-   `ClearingNotDescending` and still runs.
+1. Each pass's tool must be a flat end mill with a usable diameter
+   (`ClearingInvalid`, the validation reasons re-checked;
+   `InvalidToolDiameter`); the carve must have a flat depth. Its rates are
+   the Pocket code's to check. A tool wider than the previous pass's warns
+   `ClearingNotDescending` and is not refused; it reaches nothing a
+   narrower end mill before it left (a disc reaches nothing a narrower
+   disc cannot), so it also warns `ClearingNoRoom` and has no run (#406).
 2. Pass `i`'s regions are the carve's **floor regions**
-   (`dc_geometry::floor_regions` with the carve's V-bit angle) minus the
-   reach of passes `0..i` (`pocket::rest`'s computation on their tools'
-   radii, as `rest_of`); nothing reachable warns `ClearingNoRoom` and
-   the pass emits no run. Its depth is `start_depth + F`, its `pass_z`
+   (`dc_geometry::floor_regions` with the carve's V-bit angle, less
+   noise, as `Floor::regions`), and it rests on passes `0..i` as a
+   `rest_of` Pocket rests on its reference (#406, corrected from "minus
+   the reach of passes `0..i`"): from their tools' radii it works out what
+   they left (`rest::left_by`) and keeps only its tool centres within its
+   radius of that (`rest::rest_centre`), so its footprint may run into
+   what they cleared but every centre touches material they left. A
+   Pocket of `floor − reach` itself would stand the smaller end mill a
+   radius off the reach's edge and leave the corners it is there for. A
+   pass that reaches nothing of any floor region (no room for its end
+   mill, or nothing left that it touches) warns `ClearingNoRoom` and
+   emits no run. Its depth is `start_depth + F`, its `pass_z`
    levels from its tool's step-down (the end mill steps down; the V-bit
    does not), its `stock_to_leave_mm` 0 (the floor boundary already stands the
    V-bit's inset off the outline: Corbin's `pocket_stock_to_leave` is
@@ -836,7 +860,13 @@ warnings) -> Result<Vec<ToolRun>, CamError>`:
    of step 2 as resolved targets, to the same ring, raster, entry and
    sequence code a user's Pocket goes through. The only change in
    `pocket.rs` is an entry point that takes resolved regions instead of
-   instance ids.
+   instance ids: `pocket::pocket_regions(project, op, regions, shapes,
+   reached_by, &mut warnings)`, where `shapes` names the regions'
+   contours by index (the floor's outers by their carved region's shape;
+   its grown islands by none, so no `pocket_island_too_close` is warned
+   for them) and `reached_by` are the earlier passes as rest references.
+   `generate_pocket` is that entry point after resolving and nesting its
+   targets, so phase 2's programs are unchanged.
 4. The runs come back in list order followed by the V-bit run, each
    with its own tool. `export`'s `build` turns each run into an `EmitOp`
    (tool = the run's tool, `holes` `None`, `label` the run's);
@@ -845,8 +875,15 @@ warnings) -> Result<Vec<ToolRun>, CamError>`:
    sign's `op2` with `clearing: [t1]` after a T2 Drill gives the
    programs T2, T1, T3, T1. `order::check`, the `tool_change_avoidable`
    hint, `check`'s summary and the preview legend take runs and name
-   them by label. The safety pass holds a clearing run to the floor
-   regions it re-derives (S9 bullet).
+   them by label (`RunLabel::naming`: `op2 (clearing t1)`; a program
+   comment cannot hold parentheses, so it reads `Operation 1: Sign
+   clearing t1`). `order::check` is given each operation's own run (step
+   5), and the hint counts every run from the project
+   (`Operation::run_tools`: the clearing passes' tools, then the
+   operation's), a pass with no run included. The safety pass holds a
+   clearing run to the floor regions it re-derives (S9 bullet); until
+   #408 it fails closed on a carve with clearing passes, so `check` and
+   the preview show the runs and `export` refuses them.
 5. `order::check` sees the clearing runs as part of their operation: they
    cut inside the carve's targets before the carve, which is the
    intended order, and warn nothing. The carve's `cleared_by` and the
@@ -1113,9 +1150,12 @@ it does for Pocket and Profile, and never from the toolpath.
   (an `EmitOp` labelled `Clearing(tool)`) is held to the carve's floor
   regions, re-derived in the pass from the carve's targets (or the
   male's surround), the carve's V-bit angle and its flat depth through
-  `dc_geometry::floor_regions`, less the reach of the passes before it
-  in the carve's `clearing` list (their tools' radii, as `rest_of` is
-  re-derived); S14's rule unchanged.
+  `dc_geometry::floor_regions` (less noise), and to the floor's depth
+  below the start plane. The reach of the passes before it in the
+  carve's `clearing` list (their tools' radii, as `rest_of` is
+  re-derived) is what its tool centres must touch, not a bound on its
+  footprint: a rest pass's footprint runs into what they cleared (#406).
+  S14's rule unchanged.
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
   cut (`G1` with Z motion) in its span is vertical, at a target circle's
   centre, from at most the retract plane to exactly `start_plane − D /
@@ -1194,7 +1234,7 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround), transform.rs (+ mirror_x_about)}
 crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), project.rs (containing_pocket), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
-crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ an entry point on resolved regions), pocket/rest.rs (reach shared with clearing), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::containing_pocket), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
+crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::containing_pocket), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}

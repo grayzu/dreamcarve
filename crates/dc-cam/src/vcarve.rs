@@ -19,9 +19,12 @@
 //! does; the offset strategy's rings (#407) step in until the next would
 //! reach it. Where a region is wider than the groove there, the `floor`
 //! module traces the floor boundary and clears the floor with the V-bit
-//! (#405), and the medial chains it covers are dropped. Clearing passes
-//! (#406) are refused with [`CamError::NotSupportedYet`] until they land.
+//! (#405), and the medial chains it covers are dropped. With clearing
+//! passes (#406) the `clearing` module cuts the floor with each pass's end
+//! mill first, one tool run per pass, and the V-bit clears only what they
+//! cannot reach, whichever the strategy.
 
+pub(crate) mod clearing;
 mod cone;
 pub(crate) mod floor;
 pub(crate) mod medial;
@@ -31,6 +34,7 @@ mod tests;
 
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
+use crate::pocket::rest::Reference;
 use crate::profile::{crossing_error, outer_shape, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
@@ -295,10 +299,13 @@ pub fn cone_in_material(
 /// [`CamError::BelowMaterialBottom`] when it is below the stock bottom
 /// less the allowance (S1), [`CamError::MissingStepOver`] or
 /// [`CamError::InvalidStepOver`] when a floor is to be cut without a
-/// usable `step_over_fraction`, [`CamError::InvalidVCarveStepOver`] for an
-/// offset step-over that is not positive or would need more than
-/// [`crate::pocket::MAX_RINGS`] rings in a region, and
-/// [`CamError::NotSupportedYet`] for clearing passes.
+/// usable `step_over_fraction`, and [`CamError::InvalidVCarveStepOver`]
+/// for an offset step-over that is not positive or would need more than
+/// [`crate::pocket::MAX_RINGS`] rings in a region.
+///
+/// With `carve.cleared_by` the V-bit's floor is what no clearing pass
+/// reaches (design step 7): the boundary trace is the whole floor's, and the
+/// rings clear each floor region less the passes' reach, from their radii.
 pub fn blocks(
     project: &Project,
     op: &OperationId,
@@ -327,12 +334,11 @@ pub fn blocks(
             step_over_mm,
         });
     }
-    if !carve.cleared_by.is_empty() {
-        return Err(CamError::NotSupportedYet {
-            op: op.clone(),
-            feature: "V-Carve clearing passes (#406)".into(),
-        });
-    }
+    let reached_by: Vec<Reference> = carve
+        .cleared_by
+        .iter()
+        .map(|pass| clearing::reference(pass.radius_mm))
+        .collect();
     let depth = Depth {
         start_plane_z_mm: carve.start_plane_z_mm,
         flat_depth_mm: carve.flat_depth_mm,
@@ -401,7 +407,13 @@ pub fn blocks(
                     safe_z_mm,
                     tolerance_mm,
                 };
-                out.extend(floor::blocks(flat, &floors, &cut, &mut anchor)?);
+                out.extend(floor::blocks(
+                    flat,
+                    &floors,
+                    &reached_by,
+                    &cut,
+                    &mut anchor,
+                )?);
             }
             continue;
         }
@@ -452,7 +464,13 @@ pub fn blocks(
                 safe_z_mm,
                 tolerance_mm,
             };
-            out.extend(floor::blocks(flat, &floors, &cut, &mut anchor)?);
+            out.extend(floor::blocks(
+                flat,
+                &floors,
+                &reached_by,
+                &cut,
+                &mut anchor,
+            )?);
         }
     }
     Ok(out)
@@ -491,10 +509,12 @@ fn deepest_is_cut(
     Ok(())
 }
 
-/// Generates the V-Carve toolpath for `op` in `project`: one
-/// [`ToolRun`], [`RunLabel::Main`], with the operation's V-bit, in project
-/// space (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness +
-/// op.safe_z_mm`).
+/// Generates the V-Carve toolpaths for `op` in `project`, in project space
+/// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness +
+/// op.safe_z_mm`): one [`ToolRun`] per clearing pass that reaches some of
+/// the floor, [`RunLabel::Clearing`] with the pass's end mill, in list
+/// order (the `clearing` module), then [`RunLabel::Main`] with the
+/// operation's V-bit.
 ///
 /// The targets' closed outlines are nested even-odd into regions (an open
 /// path warns [`Warning::VCarveTargetOpen`] and is skipped); each region
@@ -516,6 +536,8 @@ fn deepest_is_cut(
 ///
 /// As [`blocks`], and: an unknown tool or instance, a missing rate or
 /// thickness, a safe Z or flat depth that is not positive,
+/// [`CamError::ClearingInvalid`] for a clearing pass that cannot run, what
+/// the Pocket code refuses for a pass,
 /// [`CamError::InvalidStartDepth`], [`CamError::StartDepthUncleared`]
 /// (security review M2), crossing targets, [`CamError::OffStock`], and
 /// [`CamError::ConeOffMaterial`] when the generator's own toolpath fails
@@ -549,6 +571,7 @@ pub fn generate_vcarve(
             depth_mm: flat_depth_mm,
         });
     }
+    let clearing_tools = clearing::checked_tools(project, op)?;
     let (start_plane_z_mm, engaged_from_z_mm) = start_plane(project, op)?;
     let mut warnings = Vec::new();
     let Targets {
@@ -564,21 +587,22 @@ pub fn generate_vcarve(
         flat_depth_mm: op.flat_depth_mm,
         strategy: &op.strategy,
         step_over_fraction: op.step_over_fraction.or(tool.step_over_fraction),
-        cleared_by: op
-            .clearing
+        cleared_by: clearing_tools
             .iter()
-            .filter_map(|pass| project.tools.iter().find(|t| t.id == pass.tool))
             .map(|t| Clearing {
                 radius_mm: t.diameter_mm / 2.0,
             })
             .collect(),
     };
-    if !op.clearing.is_empty() {
-        return Err(CamError::NotSupportedYet {
-            op: op.id.clone(),
-            feature: "V-Carve clearing passes (#406)".into(),
-        });
-    }
+    let bit = checked_v_bit(&op.id, tool)?;
+    let mut runs = clearing::runs(
+        project,
+        op,
+        &carve,
+        &clearing_tools,
+        bit.slope,
+        &mut warnings,
+    )?;
     let blocks = blocks(project, &op.id, tool, &carve, &mut warnings)?;
     let toolpath = finish(
         project,
@@ -589,14 +613,12 @@ pub fn generate_vcarve(
         &containment,
         op.machining_order,
     )?;
-    Ok((
-        vec![ToolRun {
-            label: RunLabel::Main,
-            tool: tool.id.clone(),
-            toolpath,
-        }],
-        warnings,
-    ))
+    runs.push(ToolRun {
+        label: RunLabel::Main,
+        tool: tool.id.clone(),
+        toolpath,
+    });
+    Ok((runs, warnings))
 }
 
 /// Steps 9 and 10: sequences `blocks` of `carve` (operation `op`, `tool`)
