@@ -152,10 +152,18 @@
 //!   closed targets that are circles ([`dc_geometry::as_circle`], as
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
 //!   the hole's radius of its centre. A Drill only plunges, so that is the
-//!   hole it drills. A countersink Drill (format 21) is unresolved, so
-//!   every cut of one is refused, until S18 (#427) checks its derived
-//!   depth: this rule alone would pass a plunge at a hole's centre to any
-//!   depth.
+//!   hole it drills.
+//! - **Countersink Drill, S18** (format 21, #427; [`countersink`] has the
+//!   rule): every line of its span, not only its cuts. No canned cycle;
+//!   every cut a `G1` straight down at the centre of one of its holes
+//!   (the target circles less those the mouth rule skips), from no higher
+//!   than the retract plane to exactly the start plane less the depth its
+//!   mouth and its V-bit's angle derive, within rounding; every rapid at
+//!   or above the retract plane; and the flank engaged no deeper than the
+//!   cone, from the start plane when the stock top is it or an enabled
+//!   earlier Pocket at the start depth cleared it
+//!   ([`dc_project::containing_pocket`]), else from the stock top. The
+//!   tool must be the operation's, a V-bit; anything else is unresolved.
 //! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
 //!   in one of the Bore's holes, the closed targets that are circles, as
 //!   for a Drill: its ends and middle lie within `ρ − r − stock to leave` of the
@@ -234,8 +242,10 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 mod cone;
+mod countersink;
 
 use cone::{Cone, Fault};
+use countersink::Sink;
 use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
@@ -328,6 +338,9 @@ pub(crate) enum Material {
     /// The V-bit's run of a V-Carve (format 20): S17 (module docs,
     /// [`cone`]).
     VBit(Cone),
+    /// A countersink Drill (format 21): S18 (module docs,
+    /// [`countersink`]).
+    Countersink(Sink),
     /// A clearing run of a V-Carve (#406, security review M3): the end
     /// mill's centre stays inside the carve's floor regions, at least its
     /// radius from their outlines, and no lower than the floor.
@@ -697,6 +710,12 @@ impl Material {
                 floor_material(project, carve, pass)
             }
             (Operation::VCarve(_), _) | (_, RunLabel::Clearing(_)) => Self::Unresolved,
+            // S18 holds a countersink to its own V-bit's angle and cone.
+            (Operation::Drill(drill), RunLabel::Main)
+                if drill.cycle.is_countersink() && tool.id != drill.tool =>
+            {
+                Self::Unresolved
+            }
             (_, RunLabel::Main) => Self::of(project, op),
         }
     }
@@ -773,11 +792,11 @@ impl Material {
                     None => Self::Unresolved,
                 }
             }
-            // Format 21 (#425): nothing here can hold a countersink's
-            // program to its derived depth, its mouth or its bit's
-            // engagement, which S18 (#427) will check; until then every
-            // countersink cut is refused, fail-closed.
-            Operation::Drill(drill) if drill.cycle.is_countersink() => Self::Unresolved,
+            // Format 21: S18 (#427), the plunge at each hole's centre to
+            // the derived depth.
+            Operation::Drill(drill) if drill.cycle.is_countersink() => {
+                Sink::of(project, drill).map_or(Self::Unresolved, Self::Countersink)
+            }
             Operation::Drill(drill) => match placed(project, &drill.targets) {
                 Some(paths) => Self::Drill {
                     holes: paths
@@ -1823,13 +1842,15 @@ fn slack_mm(post: &PostProcessor, units: Units, tolerances: Tolerances) -> f64 {
     quantum_mm(post, units) + departure_mm(tolerances)
 }
 
-/// S9 and S17 for `span`: every cutting move in its lines stays in its
-/// material.
+/// S9, S17 and S18 for `span`: every cutting move in its lines stays in
+/// its material.
 ///
 /// # Errors
 ///
 /// At the first move that leaves it: [`ExportError::ConeOffMaterial`] or
-/// [`ExportError::ConeHeightExceeded`] for a V-bit's run (S17), else
+/// [`ExportError::ConeHeightExceeded`] for a V-bit's run (S17),
+/// [`ExportError::CountersinkDepth`] or [`ExportError::ConeHeightExceeded`]
+/// for a countersink (S18), else
 /// [`ExportError::OffMaterial`], which is also the error for a move whose
 /// position is not known or whose material is unresolved.
 pub(crate) fn check(
@@ -1842,6 +1863,10 @@ pub(crate) fn check(
     #[cfg(test)]
     if matches!(span.material, Material::Unchecked) {
         return Ok(());
+    }
+    // S18 holds every line of a countersink's span, not only its cuts.
+    if let Material::Countersink(sink) = span.material {
+        return sink.check(blocks, post, transform, span);
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
     // #221: each On line loop and held open path, measured against itself.
@@ -2005,6 +2030,8 @@ pub(crate) fn check(
             }
             // Its Z or XY is not known: S17 cannot hold it.
             Material::VBit(_) => false,
+            // Checked above, line by line.
+            Material::Countersink(_) => false,
             Material::Floor {
                 areas,
                 floor_z_mm,

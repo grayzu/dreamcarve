@@ -1154,7 +1154,8 @@ fn dwell_value(post: &PostProcessor, seconds: f64) -> Result<String, ExportError
 /// How a Drill is written ([`canned_plan`]).
 #[derive(Debug)]
 enum CannedPlan {
-    /// The project does not ask for canned cycles, or this is not a Drill.
+    /// The project does not ask for canned cycles, or this is not a Drill,
+    /// or it is a countersink, which no canned cycle describes.
     NotAsked,
     /// Canned cycles were asked for, but the Drill is written as moves.
     Expand(CannedExpansion),
@@ -1234,7 +1235,7 @@ fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
 }
 
 /// How `op` is written (`docs/specs/phase-2/design.md`, "Canned cycles"):
-/// as canned cycles when it is a Drill, the project's `use_canned_cycles`
+/// as canned cycles when it is a Drill but no countersink, the project's `use_canned_cycles`
 /// is on, the definition has canned cycles with a command for every hole's
 /// cycle, and the motion the controller makes for those lines
 /// ([`crate::canned`]) is the toolpath's, move for move, within the
@@ -1265,7 +1266,11 @@ fn canned_plan(
 ) -> Result<CannedPlan, ExportError> {
     use CannedExpansion as Why;
     let post = w.post;
-    if !(post.use_canned_cycles && matches!(op, Operation::Drill(_))) {
+    // A countersink (format 21) is never a canned cycle: no `G8x` can say
+    // its depth is derived, and S18 refuses one. It is plain moves by
+    // design, as a Pocket is, so there is nothing to warn about (#427).
+    let drill = matches!(op, Operation::Drill(d) if !d.cycle.is_countersink());
+    if !(post.use_canned_cycles && drill) {
         return Ok(CannedPlan::NotAsked);
     }
     let expand = |why| Ok(CannedPlan::Expand(why));

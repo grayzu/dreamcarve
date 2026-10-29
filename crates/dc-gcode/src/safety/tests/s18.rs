@@ -245,14 +245,23 @@ fn countersink_written_as_g81_fails_s18() {
     project.post_processor = PostProcessorRef::latest("linuxcnc").unwrap();
     project.post_processor.use_canned_cycles = true;
     check_sink(&program_at(20.0, 20.0, "G1 Z-3 F300\n"), &project, &op).unwrap();
-    let cycle =
-        |line: &str| format!("G21 G90\nG54\nG0 Z5\nX20 Y20\nG98\n{line}\nX50 Y20\nG80\nG0 Z5\n");
+    let cycle = |first: &str, next: &str| {
+        format!("G21 G90\nG54\nG0 Z5\nX20 Y20\nG98\n{first}\n{next}\nG80\nG0 Z5\n")
+    };
     assert_refused(
-        check_sink(&cycle("G81 X20 Y20 Z-3 R1 F300"), &project, &op),
+        check_sink(
+            &cycle("G81 X20 Y20 Z-3 R1 F300", "X50 Y20 Z-3 R1"),
+            &project,
+            &op,
+        ),
         6,
     );
     assert_refused(
-        check_sink(&cycle("G82 X20 Y20 Z-3 R1 P0.5 F300"), &project, &op),
+        check_sink(
+            &cycle("G82 X20 Y20 Z-3 R1 P0.5 F300", "X50 Y20 Z-3 R1 P0.5"),
+            &project,
+            &op,
+        ),
         6,
     );
 }
