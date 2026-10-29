@@ -180,6 +180,14 @@ pub enum Difference {
     /// with PureCutCNC's (it has none); each must run at the tool's plunge
     /// rate.
     NotchRisesFromLapEnd,
+    /// A V-Carve cut that descends while it moves in XY is held to the
+    /// plunge rate in DreamCarve (S10); PureCutCNC runs it at the cutting
+    /// feed. Not checked yet (#410).
+    DescentsHeldToPlunge,
+    /// Where the two programs' medial chains differ in depth at one XY,
+    /// each is checked against the walls instead (#404, decision 2). Not
+    /// checked yet (#410).
+    ChainDepthFitted,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.

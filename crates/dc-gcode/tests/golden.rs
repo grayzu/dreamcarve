@@ -448,6 +448,128 @@ fn order_pass_first() {
     ));
 }
 
+/// Medial V-Carve of a 40 × 10 mm rectangle at (20, 20) Y-up ((20, 10)
+/// Y-down in the 80 × 40 mm stock), 60° V-bit, clamped at 5 mm
+/// (`docs/specs/phase-3/design.md`, "Golden corpus"; functional 49): the
+/// corner arms are compared region by region as sets; the 8.66 mm spine,
+/// clamped, is upstream's at the flat depth and DreamCarve's floor, which
+/// must reach every point of upstream's
+/// ([`harness::check`] → `vcarve::compare`).
+#[test]
+fn vcarve_medial_rect() {
+    harness::check(&case(
+        "vcarve-medial-rect",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of a 20 × 20 mm square at (15, 12) Y-up, 90° V-bit,
+/// clamped at 3 mm: the four diagonals, each rising above the floor at
+/// its corner, so DreamCarve keeps them whole.
+#[test]
+fn vcarve_medial_square() {
+    harness::check(&case(
+        "vcarve-medial-square",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of `testCircleCollapsesToCenter`'s 64-gon, radius 8 mm,
+/// centred at (30, 25) Y-up, 60° V-bit, clamped at 5 mm: upstream plunges
+/// once at the centre, which DreamCarve's floor must reach.
+#[test]
+fn vcarve_medial_circle() {
+    harness::check(&case(
+        "vcarve-medial-circle",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of a 40 mm square at (20, 10) round a 20 mm square
+/// island at (30, 20), 90° V-bit, clamped at 3 mm: the cycle round the
+/// island and the outer corner arms. In the `.camj` the island is an
+/// `add` feature; in DreamCarve both squares are targets, nested.
+#[test]
+fn vcarve_medial_ring() {
+    harness::check(&case(
+        "vcarve-medial-ring",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of `testLShapeJunctionAndReflexCorner`'s L, 60° V-bit,
+/// clamped at 5 mm: the junction, and no surface tip at the reflex
+/// corner. The L is mirrored by the Y flip, so the twin draws it mirrored.
+#[test]
+fn vcarve_medial_l() {
+    harness::check(&case(
+        "vcarve-medial-l",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of the outline text "Rag", 10 mm, the regions of
+/// `tests/fixtures/vcarve/rag.json` placed at (10, 25) Y-up, 60° V-bit,
+/// clamped at 5 mm (no stroke reaches it). R, a and g are compared in
+/// that order. Where upstream's simplified chords take the cone past a
+/// wall, DreamCarve's depth fitting raises the carve
+/// ([`Difference::ChainDepthFitted`]).
+#[test]
+fn vcarve_medial_text_rag() {
+    harness::check(&case(
+        "vcarve-medial-text-rag",
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainDepthFitted,
+        ],
+        Order::InOrder,
+    ));
+}
+
+/// Medial V-Carve of `testGeneratorTriangle`'s triangle at (15, 12) Y-up,
+/// 60° V-bit: three arms meeting at the incentre, whose 11.1 mm depth is
+/// clamped at 5 mm.
+#[test]
+fn vcarve_medial_triangle() {
+    harness::check(&case(
+        "vcarve-medial-triangle",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// Offset V-Carve of a 20 × 20 mm square at (15, 12) Y-up, 60° V-bit,
+/// step-over 1 mm, climb, clamped at 4 mm: the rings at 1.732 and
+/// 3.464 mm, level by level as sets, the same way round. DreamCarve's
+/// ring at the flat depth is its floor trace, and the links between
+/// levels follow each ring's start (#407); neither is compared.
+#[test]
+fn vcarve_offset_square() {
+    harness::check(&case(
+        "vcarve-offset-square",
+        vec![Difference::DescentsHeldToPlunge],
+        Order::InOrder,
+    ));
+}
+
+/// The V-Carve cases (phase 3, slice 10, #410), which their own tests
+/// compare.
+const VCARVE_CASES: [&str; 8] = [
+    "vcarve-medial-rect",
+    "vcarve-medial-square",
+    "vcarve-medial-circle",
+    "vcarve-medial-ring",
+    "vcarve-medial-l",
+    "vcarve-medial-text-rag",
+    "vcarve-medial-triangle",
+    "vcarve-offset-square",
+];
+
 /// Every case this file compares: its directory under `tests/golden/` and
 /// its test.
 const CASES: [(&str, fn()); 18] = [
@@ -473,10 +595,11 @@ const CASES: [(&str, fn()); 18] = [
 
 /// Slice 3.1-3 (#403, `docs/specs/phase-3/design.md`, "Data model →
 /// dc-cam"): `CutBlock::entry_z_mm` changes no phase 1 or 2 program. Every
-/// case in `tests/golden/` is compared here, all 18 of them, except
-/// `smoke` (a capture check only, its README says) and the
+/// phase 1 and 2 case in `tests/golden/` is compared here, all 18 of them,
+/// except `smoke` (a capture check only, its README says) and the
 /// `post-<id>-coaster` cases, which `dreamcarve`'s CLI tests compare byte
-/// for byte; a case added without a test fails this.
+/// for byte. The [`VCARVE_CASES`] have their own tests. A case added
+/// without a test fails this.
 #[test]
 fn phase_1_and_2_cases_are_unchanged() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
@@ -488,8 +611,12 @@ fn phase_1_and_2_cases_are_unchanged() {
             name != "smoke" && !(name.starts_with("post-") && name.ends_with("-coaster"))
         })
         .collect();
-    let compared: std::collections::BTreeSet<String> =
-        CASES.iter().map(|(name, _)| (*name).to_owned()).collect();
+    let compared: std::collections::BTreeSet<String> = CASES
+        .iter()
+        .map(|(name, _)| *name)
+        .chain(VCARVE_CASES)
+        .map(str::to_owned)
+        .collect();
     assert_eq!(compared, on_disk, "every golden case has a test");
     let mut run = 0;
     for (name, check) in CASES {
