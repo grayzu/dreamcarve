@@ -95,7 +95,7 @@ tool's `cutter` to `{ "v_bit": { "included_angle_deg": 60 } }` for this
 check to apply.
 
 An engraving that should get wider where the shape is wider, as carved
-lettering does, is a V-Carve, not an Engrave.
+lettering does, is a [V-Carve](v-carve.md), not an Engrave.
 
 ## Warnings
 

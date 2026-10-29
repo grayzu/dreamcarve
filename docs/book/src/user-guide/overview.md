@@ -249,6 +249,8 @@ output: …`.
   cycles.
 - [Bore operation](bore.md): holes bigger than the bit, cut to size along
   a helix.
+- [V-Carve operation](v-carve.md): lettering and signs carved with a V-bit,
+  flat depths, clearing passes, and choosing a bit angle.
 - [Machining order and operation order](machining-order.md): the order
   shapes and operations are cut in.
 - [Post-processors](post-processors.md): the six controllers, more than

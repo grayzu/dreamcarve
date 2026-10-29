@@ -5882,7 +5882,20 @@ fn sign_exports_in_tool_run_order() {
     for id in ["op2", "op3"] {
         let carve = v_carve_op(&project, id);
         let (runs, _) = dc_cam::generate_vcarve(&project, carve).expect("the carve generates");
-        for run in &runs {
+        let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
+        let expected = if id == "op2" {
+            vec![
+                dc_cam::RunLabel::Clearing(ToolId::new("t2")),
+                dc_cam::RunLabel::Main,
+            ]
+        } else {
+            vec![dc_cam::RunLabel::Main]
+        };
+        assert_eq!(labels, expected.iter().collect::<Vec<_>>(), "{id}");
+        // `assert_safe` holds a run to the carve's own tool, the V-bit; a
+        // clearing run is the end mill's, held as a Pocket by the safety
+        // pass that `export` ran.
+        for run in runs.iter().filter(|r| r.label == dc_cam::RunLabel::Main) {
             dc_cam::test_support::assert_safe(
                 &run.toolpath,
                 &project,
@@ -5936,23 +5949,24 @@ fn sign_lettering_is_within_the_cone() {
             .iter()
             .find(|i| &i.id == target)
             .expect("the letter's instance");
-        let profile = project.definitions[&instance.definition]
-            .profiles
-            .first()
-            .expect("the letter's outline");
-        let bounds = instance
-            .transform
-            .apply_polyline(profile)
-            .expect("the outline transforms")
-            .bounds()
-            .expect("the outline has bounds");
+        // The letter's extent: its outline and counters together.
+        let (mut min, mut max) = (
+            Point::new(f64::INFINITY, f64::INFINITY),
+            Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for profile in &project.definitions[&instance.definition].profiles {
+            let bounds = instance
+                .transform
+                .apply_polyline(profile)
+                .expect("the outline transforms")
+                .bounds()
+                .expect("the outline has bounds");
+            min = Point::new(min.x.min(bounds.min.x), min.y.min(bounds.min.y));
+            max = Point::new(max.x.max(bounds.max.x), max.y.max(bounds.max.y));
+        }
         let carved = cuts.iter().any(|m| {
             let (x, y) = (m.to.x, m.to.y);
-            x > bounds.min.x
-                && x < bounds.max.x
-                && y > bounds.min.y
-                && y < bounds.max.y
-                && top_mm - m.to.z > 0.5
+            x > min.x && x < max.x && y > min.y && y < max.y && top_mm - m.to.z > 0.5
         });
         assert!(carved, "letter {} (`{target}`) is carved", instance.name);
     }
