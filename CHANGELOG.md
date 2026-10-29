@@ -15,8 +15,14 @@ phases bump the patch number.
   depth (plus a start depth no earlier Pocket clears) must fit the bit's
   cone, clearing passes need a flat depth and flat end mills, and a start
   depth below the stock top needs a Pocket before it or
-  `start_plane_cleared_externally`. This build does not export a V-Carve
-  yet; `check` and `export` say so. Older files upgrade unchanged.
+  `start_plane_cleared_externally`. Older files upgrade unchanged.
+- **V-Carve export.** A V-Carve carves along its shapes' medial lines, or in
+  offset rings, to the depth the V-bit's angle gives, with a flat depth
+  whose floor the V-bit or one or more end-mill clearing passes clear; each
+  clearing pass is a tool run, and a program, of its own. Every program
+  holds the V-bit's whole cone to the carved shapes (safety rule 14, S17).
+  User guide chapter "V-Carve operation", and a third quick start, "A
+  V-carved sign from SVG outlines", on the new `tests/fixtures/sign.svg`.
 
 ### Changed
 

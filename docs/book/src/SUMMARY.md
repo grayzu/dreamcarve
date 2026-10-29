@@ -9,6 +9,7 @@
 - [Installing](quick-start/installing.md)
 - [Your first cut from an SVG](quick-start/first-cut.md)
 - [A pocketed plaque from DXF](quick-start/plaque.md)
+- [A V-carved sign from SVG outlines](quick-start/sign.md)
 
 # User guide
 
@@ -22,6 +23,7 @@
 - [Engrave operation](user-guide/engrave.md)
 - [Drill operation](user-guide/drill.md)
 - [Bore operation](user-guide/bore.md)
+- [V-Carve operation](user-guide/v-carve.md)
 - [Machining order and cut order](user-guide/machining-order.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)

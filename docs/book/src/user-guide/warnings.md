@@ -75,7 +75,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `vcarve_target_open` | "… is an open path, which has no area to V-carve; it is skipped" | A V-Carve carves the area inside closed outlines. The closed targets are carved; close the path in the drawing, or cut it with an [Engrave](engrave.md). |
 | `vcarve_no_medial_axis` | "… is too thin for a medial line to be found, so it is not carved" | The shape is so thin that no line between its walls survives even a finer sampling, so nothing of it is carved. Widen it, or Engrave it instead. |
 | `vcarve_sampling_budget` | "a carved shape is so long for its width that its medial lines are found every … mm, coarser than its width alone would give; small details may be smoothed" | A shape's outline is long for its size (a long, thin line of text drawn as one outline), so its medial lines are found at the step shown, which can round off fine details. Carve the parts separately if a detail is lost. Reported once per operation. |
-| `clearing_no_room` | "its clearing pass with tool … (… mm) can reach none of the floor the passes before it left, so it cuts nothing" | A V-Carve's clearing pass is too wide for the carve's floor, or comes after a pass with a narrower end mill, which already reached everything it can. The pass has no program of its own; remove it, or list the passes largest end mill first. |
+| `clearing_no_room` | "its clearing pass with tool … (… mm) can reach none of the floor the passes before it left, so it cuts nothing" | A V-Carve's clearing pass is too wide for the carve's floor, or comes after a pass with a narrower end mill, which already reached everything it can. The pass has no program of its own; remove it, or list the passes largest end mill first ([V-Carve: clearing passes](v-carve.md#clearing-passes)). |
 
 ## Export
 
@@ -107,6 +107,30 @@ file](project-file.md).
 | `relief_needs_step_down` | "… asks for corner relief, but tool … has no step_down_mm" | Set the tool's `step_down_mm`; until then the relief is skipped. |
 | `engrave_deeper_than_cone` | "… engraves … mm deep with tool …, whose cone is only … mm tall" | Use a shallower depth or a wider V-bit; below the cone the shank cuts ([Engrave: V-bits](engrave.md#v-bits)). |
 | `clearing_not_descending` | "clearing pass … of operation … uses tool … (… mm), wider than the pass before it" | A V-Carve's clearing passes run in list order, each clearing only what the passes before could not reach, so list the largest end mill first. The pass still runs, but a wider end mill reaches nothing a narrower one before it left, so it also warns `clearing_no_room`. |
+
+## V-Carve errors
+
+Not warnings, but listed here so every V-Carve code is in one place.
+These stop `check` and `export`; [V-Carve: errors](v-carve.md#errors)
+gives each message and what to do.
+
+| Code | When |
+| --- | --- |
+| `v_carve_needs_v_bit` | A V-Carve's tool is not a V-bit. |
+| `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
+| `v_bit_cone_exceeded` | A carve would engage the V-bit deeper than its cone is tall: the flat depth, a start depth no Pocket clears, or with no flat depth the widest part of a shape. |
+| `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
+| `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
+| `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
+| `start_depth_negative` | A `start_depth_mm` is below 0. |
+| `start_depth_uncleared` | A carve starts below the stock top, no enabled Pocket before it contains its targets, and `start_plane_cleared_externally` is `false`. |
+| `flatten_tolerance_range` | `flatten_tolerance_mm` is above 0.1 mm, which the safety checks' slack cannot allow. |
+
+The safety pass adds two errors of its own for a V-Carve's program,
+"emitted line … takes operation …'s V-bit … mm past the material it may
+cut, at X … Y … Z … (project space)" and "emitted line … engages operation
+…'s V-bit … mm deep, past its … mm cone, so its shank would cut". See
+[Safety](safety.md), rule 14.
 
 ## Import
 

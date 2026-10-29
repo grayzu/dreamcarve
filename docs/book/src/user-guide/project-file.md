@@ -333,14 +333,14 @@ To move a shape on the stock, change `e` and `f`.
 | `vendor` | Who makes the tool, such as `"IDC Woodcraft"`, or `null`. [Fusion import](tool-library.md#fusion-360-tool-libraries) fills it in; `init` writes `null`. No program uses it. |
 | `product_id` | The vendor's part number for it, such as `"DC-14"`, or `null`. Fusion import fills it in; `init` writes `null`. No program uses it. |
 | `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, and a Pocket, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. On line, Drill and Engrave allow any cutter. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, a Pocket, and a V-Carve's clearing pass, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. A V-Carve cuts only with a `v_bit`, whose `included_angle_deg` (above 0, below 180) sets its depth and its cone height, `diameter_mm / (2 × tan(angle / 2))`. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used yet. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
 | `plunge_mm_min` | Feed rate straight down, and onto and off square tabs. **Required.** At most 20 000; above `feed_mm_min` is a warning. |
 | `rpm` | Spindle speed. **Required**, except with [manual spindle control](post-processors.md#manual-spindle-control), where it is only shown in the pause message. Above 60 000 is a warning. |
 | `step_down_mm` | Depth per pass, used when the operation sets none. **Required** when an enabled operation that uses the tool sets none (a Profile, Pocket or Engrave without its own `step_down_mm`, or a peck Drill without `peck_depth_mm`); `init` leaves it `null`. Corner relief also steps down at this value: with it unset the relief is skipped, with a warning. |
-| `step_over_fraction` | Step-over of a Pocket as a fraction of the diameter, greater than 0 and at most 1, used when the Pocket sets none. `init` leaves it `null`. |
+| `step_over_fraction` | Greater than 0 and at most 1, used when the operation sets none. For an end mill, the step-over of a Pocket, or of a V-Carve's clearing pass, as a fraction of the diameter. For a V-bit, the step-over of a V-Carve's floor rings, as a fraction of the bit's cut width at the flat depth: the ridges it leaves are this times the flat depth high, so 0.1 suits a V-bit better than an end mill's 0.4 ([V-Carve: the V-bit floor](v-carve.md#the-v-bit-floor)). `init` leaves it `null`. |
 
 DreamCarve has no default feeds. A tool that an enabled operation uses and
 that has an unset feed rate, plunge rate or (with automatic spindle control)
@@ -356,8 +356,7 @@ uses; see [Values that look wrong](profile.md#values-that-look-wrong).
 
 A list of operations, cut in order. `kind` says which: `"profile"`,
 `"pocket"`, `"drill"`, `"bore"` (from format version 18), `"engrave"` or
-`"v_carve"` (from format version 20; this build reads, checks and saves a
-V-Carve, but does not export one yet). `init` writes one Profile:
+`"v_carve"` (from format version 20). `init` writes one Profile:
 
 ```json
 {
@@ -433,9 +432,10 @@ same meaning, plus its own fields:
 | `"drill"` | `cycle`: `"simple"` or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, where `peck_depth_mm` may be `null` for the tool's `step_down_mm` and `retract` is `"full"` or `{ "chip_break": { "gap_mm": 0.5 } }` (greater than 0); `dwell_s` (0 or more; 0 is none); `retract_mm` (0 or more, above the hole top); `allow_tool_wider_than_hole` (`false` skips a circle smaller than the bit, with a warning; `true` drills it at the bit's size; from format version 17, `false` on upgrade). A cutter other than `"drill"` or `"end_mill"` is a warning. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
 | `"bore"` | `pitch_mm` (how far the helix goes down a turn; `null` for the tool's `step_down_mm`, and no more than it); `direction`; `stock_to_leave_mm` (0 or more, material left on the wall). The tool must be an `"end_mill"`. From format version 18. See [Bore](bore.md). |
 | `"engrave"` | `step_down_mm` (`null` for the tool's); `alternate_direction` (`true` or `false`); `machining_order`. Any cutter; a V-bit deeper than its cone is tall is a warning. |
+| `"v_carve"` | No `depth_mm`: the depth follows the shape and the bit's angle. `strategy`: `"medial"` or `{ "offset": { "step_over_mm": 0.5, "direction": "climb" } }` (step-over greater than 0); `clearing`: a list of clearing passes, each `{ "tool": "t2", "strategy": "offset", "direction": "climb", "entry": "plunge" }` with a Pocket's `strategy`, `direction` and `entry`, `[]` for none; `flat_depth_mm` (`null`, or greater than 0, within the bit's cone height); `start_depth_mm` (0 or more); `start_plane_cleared_externally` (`true` or `false`); `step_over_fraction` (`null` for the tool's; greater than 0 and at most 1); `machining_order`. The tool must be a V-bit; each clearing pass's tool an `"end_mill"`. From format version 20. See [V-Carve](v-carve.md). |
 
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md),
-[Bore](bore.md) and [Engrave](engrave.md).
+[Bore](bore.md), [Engrave](engrave.md) and [V-Carve](v-carve.md).
 
 ## `tabs`
 
@@ -528,7 +528,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 17 | Adds `allow_tool_wider_than_hole` to each Drill, `false` on upgrade. A Drill now skips a circle smaller than its bit, with the warning `drill_hole_too_small`, where an older build drilled it at the bit's size: an upgraded project with such holes gives a different program. Set it to `true` to drill them as before. See [Drill: holes smaller than the bit](drill.md#holes-smaller-than-the-bit). |
 | 18 | Adds the `"bore"` operation kind, which cuts circles bigger than the bit to size. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 18 file rather than misread a kind it does not know. See [Bore](bore.md). |
 | 19 | Renames `allowance_mm` to `stock_to_leave_mm` in each Pocket, each Bore and each Profile's `last_pass` (#394): the material they leave on the wall is their stock to leave, and `through_cut_allowance_mm` is the only allowance. The upgrade keeps each value, so the project exports as before; saving writes the new name. |
-| 20 | Adds the `"v_carve"` operation kind, with its clearing passes, flat depth and start depth. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 20 file rather than misread a kind it does not know. This build also refuses a `flatten_tolerance_mm` above 0.1 mm, in a file of any version. |
+| 20 | Adds the `"v_carve"` operation kind, with its `clearing` passes, flat depth and start depth ([V-Carve](v-carve.md)). An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 20 file rather than misread a kind it does not know. This build also refuses a `flatten_tolerance_mm` above 0.1 mm, in a file of any version. |
 
 ## What `check` reports
 
@@ -558,6 +558,11 @@ Errors stop export. Warnings do not.
 | A `last_pass` on an On line Profile; a `last_pass.thickness_mm` that is 0 or less, deeper than `depth_mm` or (for an enabled Profile) thicker than its step-down; a `last_pass.stock_to_leave_mm` that is 0 or less or more than a third of the tool's diameter | |
 | A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the stock to leave on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or a stock pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, a stock pass that would come within the bit's radius plus the stock to leave of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
+| A `flatten_tolerance_mm` above 0.1 | A V-Carve's clearing pass with an end mill wider than the pass before it (`clearing_not_descending`) |
+| A V-Carve whose tool is not a V-bit, or a V-bit angle not above 0 and below 180 | An earlier Pocket containing a V-Carve's targets at a depth other than its start depth (`start_depth_mismatch`) |
+| A V-Carve whose flat depth, plus a start depth no earlier Pocket clears, is deeper than the bit's cone height (`v_bit_cone_exceeded`) | |
+| A V-Carve with clearing passes and no flat depth, or a pass whose tool is not an `"end_mill"` or does not exist | |
+| A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket containing the targets and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
 enabled operations and the tools they use. See [Values that look

@@ -21,7 +21,8 @@ written. There are no safety warnings, only errors.
    The first move of the program is a rapid straight up to safe Z. There
    are two exceptions, both straight down and only into air. Above a ramp
    or helix [entry](pocket.md#entry), and above every straight plunge (a
-   `plunge` entry, an [Engrave](engrave.md) pass, a corner-relief notch),
+   `plunge` entry, an [Engrave](engrave.md) pass, a corner-relief notch,
+   the start of a [V-Carve](v-carve.md) line, whatever its start depth),
    a rapid straight down from safe Z stops 1 mm above the stock top, or
    1 mm above the floor the same operation has already cut at that point;
    the ramp, helix or plunge at the plunge rate starts there, not at safe
@@ -184,6 +185,13 @@ written. There are no safety warnings, only errors.
       into stock that stands full height,
       stops the export. A ramp or helix that starts at or above the stock
       top clears its own way, and so passes.
+    - a [V-Carve](v-carve.md): the V-bit's cone, by rule 14. A clearing
+      pass is held as a Pocket of the carve's floor: the whole width of its
+      end mill stays inside the carved shapes inset by `F × tan(α / 2)`
+      (the floor, for flat depth `F` and bit angle `α`), and never below
+      the flat depth. A later, smaller pass may run through what an
+      earlier one cleared. Each pass is checked only with its own end
+      mill, in its own run.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
@@ -203,6 +211,54 @@ written. There are no safety warnings, only errors.
     stop (rule 5), so a move across the work needs a lift to safe Z in
     work coordinates first; a program that moves before the stop or the
     end it lifted for is refused.
+14. **A V-bit cuts only its own material.** A V-bit cuts with its whole
+    cone, not just its tip, so for a [V-Carve](v-carve.md) the check holds
+    the cone. It works out from the project, never from the toolpath: the
+    carved shapes (the targets, nested as for a Pocket); the **start
+    plane**, `start_depth_mm` below the stock top; the flat depth below
+    it; the bit's angle `α` and its **cone height**, `diameter / (2 ×
+    tan(α / 2))`; and where the bit's flank is engaged from, which is the
+    stock top unless an enabled Pocket earlier in the list, at the start
+    depth, contains the targets. Then every cutting move of the V-bit:
+
+    - **keeps its tip in the shapes:** the move's ends and middle are
+      inside a carved shape, and it crosses no outline;
+    - **cuts nothing above the start plane but a straight descent.** A
+      move straight down that ends at or above the start plane runs
+      through air, or through the pocket a Pocket cleared over the carve,
+      to where a cut begins, so only the rule above holds it. Any other
+      move that goes down is held, as a cut, at its lowest point: a
+      cone at one point contains every cone above it, so that point is
+      all it cuts. Any other cut above the start plane would cut material
+      the carve does not own, and is refused. This is stricter than the
+      phase 3 spec, which exempted a descent from the check altogether;
+      DreamCarve's own programs, which re-enter a floor with a short
+      descent, pass it;
+    - **stays at or above the flat depth**;
+    - **keeps the shank out:** the depth from where the flank is engaged
+      to the tip is at most the cone height. A start depth that no Pocket
+      of the project clears counts in full;
+    - **keeps the cone off every wall:** at every point of the move, the
+      tip is at least `(start plane − Z) × tan(α / 2)` from every outline
+      of the carved shapes, the cone's radius where it meets the start
+      plane. Touching a wall is allowed. This is worked out exactly, not
+      by sampling: arcs as arcs, and for a move that goes down while it
+      moves, the closest point found in closed form, so half a
+      millimetre of wall between two samples cannot be missed.
+
+    The slack is as for rule 12: one unit in the last decimal place, plus
+    `flatten_tolerance_mm`, plus `arc_fit_tolerance_mm` when arc fitting
+    is on (the toolpath is made against curves flattened to straight
+    lines). A cut that fails stops the export with an error that names
+    the line, the operation, how far past it goes and the worst point, in
+    project coordinates (Y up, Z from the stock bottom): ``emitted line
+    … takes operation `op3`'s V-bit … mm past the material it may cut,
+    at X … Y … Z … (project space)``, or, for the shank, ``emitted line …
+    engages operation `op2`'s V-bit … mm deep, past its 3.175 mm cone, so
+    its shank would cut``. DreamCarve's own carves never fail it; a
+    failure is a bug to report.
+    DreamCarve also checks each carve's toolpath the same way before it
+    writes a program.
 
 It also checks that:
 
@@ -235,6 +291,14 @@ It also checks that:
   12 mm deeper than intended.
 - **The tool.** It trusts that the bit in the spindle is the one in the
   project, with that diameter, and that you set Z zero with that bit.
+  For a V-bit it also trusts the angle, and models the bit as a sharp
+  point: a real tip has a small flat, so a carve comes out a little
+  wider than drawn. A V-bit's tip is easy to touch
+  off too low; set Z zero with it gently.
+- **Material another program cleared.** With
+  `start_plane_cleared_externally`, a V-Carve trusts that something else
+  cleared its start plane. It counts the bit's flank from the stock top,
+  so the shank stays out either way, but it cannot see that pocket.
 - **Whether the feeds suit the job.** It uses your values exactly. It cannot
   tell whether they suit your machine, bit, and material.
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
@@ -285,8 +349,9 @@ It also checks that:
 8. **Stay at the machine** with the emergency stop or feed hold in reach.
    Wear eye and hearing protection, and keep dust extraction running.
 
-Neither test part, the coaster in the
-[first quick start](../quick-start/first-cut.md) nor the plaque in the
-[second](../quick-start/plaque.md), has yet been cut on a real machine by
+None of the test parts, the coaster in the
+[first quick start](../quick-start/first-cut.md), the plaque in the
+[second](../quick-start/plaque.md) and the sign in the
+[third](../quick-start/sign.md), has yet been cut on a real machine by
 the project. Until they have, treat every program as untested and watch
 the air cut closely.

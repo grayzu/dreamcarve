@@ -60,3 +60,21 @@ Writes `tests/fixtures/vcarve/{rag,g,ga-small,ga-large}.json` and
 `README.md`. The output is byte-identical run to run. PureCutCNC's own
 `node_modules/.bin/tsx` runs it too, when this directory has no
 `node_modules`.
+
+## The sign fixture
+
+`sign-fixture.ts` writes `tests/fixtures/sign.svg`, the phase 3 sign test
+part (#411): the outline, background, oval and hanging holes, and the word
+"DreamCarve" as outlines of Droid Serif Bold, read from the three.js typeface
+file a PureCutCNC checkout installs. It reads no PureCutCNC code.
+
+```sh
+cd tools/parity
+npx tsx sign-fixture.ts --purecutcnc ../../../purecutcnc
+```
+
+`--font <file>` reads another `typeface.json` instead. The output is
+byte-identical run to run. Node 23.6 or newer also runs it directly, as
+`node sign-fixture.ts`. After changing it, rebuild
+`tests/fixtures/sign.dcv`: the quick start test
+(`quick_start::v_carved_sign_chapter_runs`) says how when it differs.

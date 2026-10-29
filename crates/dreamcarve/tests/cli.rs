@@ -5798,6 +5798,180 @@ fn runs_apart(a: &[[f64; 3]], b: &[[f64; 3]]) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// The `( Operation … )` comment lines of `program`, in order.
+fn operation_comments(program: &str) -> Vec<String> {
+    program
+        .lines()
+        .filter(|l| l.starts_with("( Operation "))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The sign test part as the V-Carve quick start builds it
+/// (`tests/fixtures/sign.dcv`, from `tests/fixtures/sign.svg`), loaded.
+fn sign_project() -> Project {
+    load_file(&tests_fixture("sign.dcv")).project
+}
+
+/// The V-Carve operation `id` of `project`.
+fn v_carve_op<'a>(project: &'a Project, id: &str) -> &'a dc_project::VCarveOp {
+    project
+        .operations
+        .iter()
+        .find_map(|op| match op {
+            Operation::VCarve(carve) if carve.id.as_str() == id => Some(carve),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the sign has V-Carve `{id}`"))
+}
+
+/// #411, acceptance 61 for sub-phase 3.1 (the sign without its
+/// countersinks): the finished sign project exports, on grblHAL with one
+/// program per tool run, four programs in tool-run order: the 3.175 mm end
+/// mill's Drill (T2), the 6.35 mm end mill's clearing pass of the
+/// background carve (T1), the V-bit's two carves (T3), and the 6.35 mm end
+/// mill's cut-out (T1). `export` writes nothing unless every program passes
+/// the safety pass, S1 to S17 (S17 exact, #408), so its success is that
+/// check; each carve's own runs also pass the generator-side cone test
+/// (`assert_safe`).
+#[test]
+fn sign_exports_in_tool_run_order() {
+    let dir = work_dir("sign_exports_in_tool_run_order");
+    copy_fixture(&dir, "sign.dcv", "sign.dcv");
+    let out = run(&dir, &["export", "sign.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+
+    let names = [
+        "sign-1-T2.nc",
+        "sign-2-T1.nc",
+        "sign-3-T3.nc",
+        "sign-4-T1.nc",
+    ];
+    let mut written: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    written.sort();
+    assert_eq!(written, names, "{report}");
+    let listed: Vec<usize> = names
+        .iter()
+        .enumerate()
+        .map(|(k, name)| {
+            report
+                .find(&format!("{}. {name}", k + 1))
+                .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
+        })
+        .collect();
+    assert!(listed.is_sorted(), "listed in run order: {report}");
+
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+    let expected: [&[&str]; 4] = [
+        &["( Operation 1: Hanging holes )"],
+        &["( Operation 1: Background clearing t2 )"],
+        &["( Operation 1: Background )", "( Operation 2: Lettering )"],
+        &["( Operation 1: Cut out )"],
+    ];
+    for (name, operations) in names.iter().zip(expected) {
+        assert_eq!(operation_comments(&read(name)), operations, "{name}");
+    }
+
+    let project = sign_project();
+    for id in ["op2", "op3"] {
+        let carve = v_carve_op(&project, id);
+        let (runs, _) = dc_cam::generate_vcarve(&project, carve).expect("the carve generates");
+        let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
+        let expected = if id == "op2" {
+            vec![
+                dc_cam::RunLabel::Clearing(ToolId::new("t2")),
+                dc_cam::RunLabel::Main,
+            ]
+        } else {
+            vec![dc_cam::RunLabel::Main]
+        };
+        assert_eq!(labels, expected.iter().collect::<Vec<_>>(), "{id}");
+        // `assert_safe` holds a run to the carve's own tool, the V-bit; a
+        // clearing run is the end mill's, held as a Pocket by the safety
+        // pass that `export` ran.
+        for run in runs.iter().filter(|r| r.label == dc_cam::RunLabel::Main) {
+            dc_cam::test_support::assert_safe(
+                &run.toolpath,
+                &project,
+                &Operation::VCarve(carve.clone()),
+            );
+        }
+    }
+}
+
+/// #411: every letter of the sign's lettering carves within the 90°
+/// 6.35 mm V-bit's 3.175 mm cone with no flat depth. The deepest cut is at
+/// most 3 mm, so no stroke or junction of the Droid Serif Bold lettering is
+/// wider than 6 mm, and every letter is carved.
+#[test]
+fn sign_lettering_is_within_the_cone() {
+    let project = sign_project();
+    let carve = v_carve_op(&project, "op3");
+    assert_eq!(carve.flat_depth_mm, None, "the lettering has no flat depth");
+    assert_eq!(
+        carve.targets.len(),
+        "DreamCarve".len(),
+        "one target a letter"
+    );
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == carve.tool)
+        .expect("the carve's tool");
+    let cone_mm = dc_cam::vcarve::cone_height_mm(tool).expect("a V-bit");
+    assert_approx_eq!(cone_mm, 3.175, 1e-9);
+
+    let (runs, warnings) =
+        dc_cam::generate_vcarve(&project, carve).expect("the lettering generates");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let top_mm = project.stock.thickness_mm.expect("the thickness is set");
+    let cuts: Vec<&dc_cam::Move> = runs
+        .iter()
+        .flat_map(|r| &r.toolpath.moves)
+        .filter(|m| m.kind != dc_cam::MoveKind::Rapid)
+        .collect();
+    let deepest_mm = cuts.iter().map(|m| top_mm - m.to.z).fold(0.0, f64::max);
+    assert!(
+        deepest_mm <= 3.0,
+        "the deepest cut is {deepest_mm} mm, past 3 mm: a stroke wider than 6 mm"
+    );
+    assert!(deepest_mm > 1.0, "the lettering is carved: {deepest_mm} mm");
+
+    for target in &carve.targets {
+        let instance = project
+            .instances
+            .iter()
+            .find(|i| &i.id == target)
+            .expect("the letter's instance");
+        // The letter's extent: its outline and counters together.
+        let (mut min, mut max) = (
+            Point::new(f64::INFINITY, f64::INFINITY),
+            Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
+        );
+        for profile in &project.definitions[&instance.definition].profiles {
+            let bounds = instance
+                .transform
+                .apply_polyline(profile)
+                .expect("the outline transforms")
+                .bounds()
+                .expect("the outline has bounds");
+            min = Point::new(min.x.min(bounds.min.x), min.y.min(bounds.min.y));
+            max = Point::new(max.x.max(bounds.max.x), max.y.max(bounds.max.y));
+        }
+        let carved = cuts.iter().any(|m| {
+            let (x, y) = (m.to.x, m.to.y);
+            x > min.x && x < max.x && y > min.y && y < max.y && top_mm - m.to.z > 0.5
+        });
+        assert!(carved, "letter {} (`{target}`) is carved", instance.name);
+    }
+}
+
 /// #125, acceptance test 34's export half: the finished plaque project
 /// built from `plaque.dxf` (`tests/fixtures/plaque.dcv`, the quick start's
 /// result) and from `plaque.svg` (`tests/fixtures/plaque-svg.dcv`, the

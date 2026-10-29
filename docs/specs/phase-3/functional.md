@@ -628,7 +628,16 @@ by the 6.35 mm end mill as a clearing pass, so the oval stands raised with a 45Â
 "DreamCarve" set on a curve inside the oval (a bold serif, 14 mm cap
 height, converted to paths in Inkscape) V-carved inset with no flat depth;
 two 3.175 mm hanging holes, countersunk 6 mm. All V-bits are the bench's
-1/4 in (6.35 mm) set. Drawn as `fixtures/sign.svg`.
+1/4 in (6.35 mm) set. Drawn as `tests/fixtures/sign.svg` by
+`tools/parity/sign-fixture.ts` (#411): the lettering is Droid Serif Bold
+(Apache-2.0, from three.js's typeface file), 14 mm cap height, on an arc
+of radius 500 mm; its widest stroke is about 3.3 mm, so it carves at most
+1.658 mm deep with the 90Â° bit, no scaling needed; the hanging holes are
+in the background's top corners, at (15, 15) and (185, 15) mm from the
+drawing's top-left, since the 5 mm border is too narrow for a 6 mm
+countersink and the lettering fills the oval. `tests/fixtures/sign.dcv`
+is the quick start's project; op2 sets `step_over_fraction: 0.1` for the
+V-bit's floor corners (0.25 mm ridges, where the tool's 0.4 leaves 1 mm).
 
 
 | Item             | Value                                                                                                                                      |

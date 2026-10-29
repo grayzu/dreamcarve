@@ -55,6 +55,9 @@ const FIRST_CUT: &str = "docs/book/src/quick-start/first-cut.md";
 /// The phase 2 quick start, relative to the repository root.
 const PLAQUE: &str = "docs/book/src/quick-start/plaque.md";
 
+/// The phase 3 quick start, relative to the repository root.
+const SIGN: &str = "docs/book/src/quick-start/sign.md";
+
 /// The marker that opens every step comment.
 const MARKER: &str = "<!-- doc-test:";
 
@@ -724,11 +727,11 @@ fn tokens(line: &str) -> Vec<&str> {
 /// 1e-6. Imported coordinates differ in their last bits between platforms'
 /// maths libraries (a DXF spline, an SVG arc), so the text cannot be
 /// compared byte for byte.
-fn assert_same_project(built: &str, committed: &str, fixture: &str, dir: &Path) {
+fn assert_same_project(built: &str, committed: &str, fixture: &str, built_path: &Path) {
     let (a, b): (Vec<&str>, Vec<&str>) = (built.lines().collect(), committed.lines().collect());
     let hint = format!(
         "if the chapter changed on purpose, copy {} over {fixture}",
-        dir.join("plaque.dcv").display()
+        built_path.display()
     );
     assert_eq!(
         a.len(),
@@ -797,7 +800,12 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
     let built = std::fs::read_to_string(dir.join("plaque.dcv")).expect("plaque.dcv written");
     let committed = std::fs::read_to_string(repo_root().join("tests/fixtures/plaque.dcv"))
         .expect("tests/fixtures/plaque.dcv readable");
-    assert_same_project(&built, &committed, "tests/fixtures/plaque.dcv", &dir);
+    assert_same_project(
+        &built,
+        &committed,
+        "tests/fixtures/plaque.dcv",
+        &dir.join("plaque.dcv"),
+    );
 
     let mut programs: Vec<String> = std::fs::read_dir(&dir)
         .expect("work dir readable")
@@ -878,5 +886,111 @@ fn plaque_chapter_on_the_svg_twin_builds_the_svg_fixture() {
     let built = std::fs::read_to_string(dir.join("plaque.dcv")).expect("plaque.dcv written");
     let committed = std::fs::read_to_string(repo_root().join("tests/fixtures/plaque-svg.dcv"))
         .expect("tests/fixtures/plaque-svg.dcv readable");
-    assert_same_project(&built, &committed, "tests/fixtures/plaque-svg.dcv", &dir);
+    assert_same_project(
+        &built,
+        &committed,
+        "tests/fixtures/plaque-svg.dcv",
+        &dir.join("plaque.dcv"),
+    );
+}
+
+/// The phase 3 quick start (`docs/book/src/quick-start/sign.md`, issue
+/// #411) run as written on `tests/fixtures/sign.svg`: every command exits
+/// as the chapter says, the tool library file, the hand edit and the pasted
+/// operations apply, every excerpt is in the program it names, and the
+/// finished project is the committed `tests/fixtures/sign.dcv`, which
+/// `cli::sign_exports_in_tool_run_order` exports. Export writes four
+/// programs, one per tool run, listed in run order: the Drill with the
+/// 3.175 mm end mill, the background's clearing pass with the 6.35 mm end
+/// mill, both V-Carves with the 90° V-bit, and the cut-out with the
+/// 6.35 mm end mill. Each passes the rules a user can check on the program
+/// alone; `export` has already held it to S1–S17.
+#[test]
+fn v_carved_sign_chapter_runs() {
+    let run = Run {
+        chapter: SIGN,
+        drawing: ("tests/fixtures/sign.svg", "sign.svg"),
+        swap: None,
+    };
+    let text = std::fs::read_to_string(repo_root().join(SIGN)).expect("chapter readable");
+    let steps = steps(SIGN, &text);
+    for (what, has) in [
+        (
+            "write",
+            steps.iter().any(|s| matches!(s, Step::Write { .. })),
+        ),
+        (
+            "paste",
+            steps.iter().any(|s| matches!(s, Step::Paste { .. })),
+        ),
+        (
+            "excerpt",
+            steps.iter().any(|s| matches!(s, Step::Excerpt { .. })),
+        ),
+    ] {
+        assert!(has, "{SIGN} has no `{what}` step");
+    }
+    let dir = run_chapter("v_carved_sign_chapter_runs", &run);
+
+    let built = std::fs::read_to_string(dir.join("sign.dcv")).expect("sign.dcv written");
+    let committed = std::fs::read_to_string(repo_root().join("tests/fixtures/sign.dcv"))
+        .expect("tests/fixtures/sign.dcv readable");
+    assert_same_project(
+        &built,
+        &committed,
+        "tests/fixtures/sign.dcv",
+        &dir.join("sign.dcv"),
+    );
+
+    let names = [
+        "sign-1-T2.nc",
+        "sign-2-T1.nc",
+        "sign-3-T3.nc",
+        "sign-4-T1.nc",
+    ];
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(programs, names);
+
+    let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
+        .current_dir(&dir)
+        .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
+        .args(["export", "sign.dcv"])
+        .output()
+        .expect("binary runs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let at: Vec<usize> = names
+        .iter()
+        .enumerate()
+        .map(|(k, name)| {
+            stdout
+                .find(&format!("{}. {name}", k + 1))
+                .unwrap_or_else(|| panic!("{name} listed as program {}: {stdout}", k + 1))
+        })
+        .collect();
+    assert!(at.is_sorted(), "{stdout}");
+
+    let stock = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
+        safe_z_mm: 15.0,
+        floor_mm: 11.8 + 0.2,
+        stock_mm: (220.0, 100.0),
+        radius_mm,
+        feed_mm_min,
+        plunge_mm_min,
+        spindle: "M3 S18000",
+    };
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+    for (name, limits) in names.iter().zip([
+        stock(300.0, 1000.0, 1.5875),
+        stock(500.0, 1500.0, 3.175),
+        stock(400.0, 1200.0, 3.175),
+        stock(500.0, 1500.0, 3.175),
+    ]) {
+        assert_program_safe(name, &read(name), &limits);
+    }
 }
