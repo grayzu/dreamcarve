@@ -42,10 +42,10 @@ use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
-use dc_geometry::{EPS_MM, Point, Point3, as_circle};
+use dc_geometry::{Point, Point3, as_circle};
 use dc_project::{
     COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, InstanceId, MachiningOrder, Operation,
-    OperationId, PeckRetract, Project, Tool, ToolKind, containing_pocket, countersink_depth_mm,
+    OperationId, PeckRetract, Project, Tool, ToolKind, cleared_start_plane, countersink_depth_mm,
 };
 
 /// How far above the depth already drilled a full-retract peck re-enters
@@ -151,7 +151,8 @@ pub struct DrillToolpath {
 /// not a V-bit with an angle in (0°, 180°), the mouth is not above 0 or
 /// is wider than the bit, the start depth is not from 0 to the stock
 /// thickness, the start plane below the stock top is neither cleared by
-/// an earlier Pocket ([`dc_project::containing_pocket`]) nor vouched for,
+/// an earlier Pocket or V-Carve floor ([`dc_project::cleared_start_plane`])
+/// nor vouched for,
 /// or the flanks would engage past the cone.
 ///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
@@ -403,11 +404,12 @@ impl Countersink {
     /// angle in (0°, 180°); the mouth is above 0 and no wider than the
     /// bit (within [`COUNTERSINK_TOLERANCE_MM`]); the depth is
     /// [`countersink_depth_mm`]; the start depth is from 0 to the stock
-    /// thickness, and below the stock top an enabled earlier Pocket holds
-    /// the bit at every hole ([`containing_pocket`]) or the operation
-    /// vouches for the plane (security review M2); and the flanks engage
-    /// no deeper than the cone, counting the start depth unless that
-    /// Pocket is at it (H4). Upstream's tool `maxCutDepth` check is this
+    /// thickness, and below the stock top an earlier floor holds the bit
+    /// at every hole, an enabled Pocket's or an enabled V-Carve's flat
+    /// floor (#426; [`cleared_start_plane`]), or the operation vouches for
+    /// the plane (security review M2); and the flanks engage no deeper
+    /// than the cone, counting the start depth unless that floor is at it
+    /// (H4). Upstream's tool `maxCutDepth` check is this
     /// cone check: DreamCarve tools have none. Every check fails the
     /// whole operation, so nothing is cut at a guessed depth.
     fn of(
@@ -458,17 +460,14 @@ impl Countersink {
         }
         let mut engaged_mm = depth_mm;
         if start_depth_mm > 0.0 {
-            let pocket = containing_pocket(project, &Operation::Drill(op.clone()));
-            if pocket.is_none() && !cleared_externally {
+            let cleared = cleared_start_plane(project, &Operation::Drill(op.clone()));
+            if cleared.is_none() && !cleared_externally {
                 return Err(CamError::StartDepthUncleared {
                     op: op.id.clone(),
                     start_depth_mm,
                 });
             }
-            let cleared_at_start = pocket
-                .and_then(|p| p.depth_mm)
-                .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
-            if !cleared_at_start {
+            if !cleared.is_some_and(|plane| plane.is_at(start_depth_mm)) {
                 engaged_mm += start_depth_mm;
             }
         }
@@ -2268,6 +2267,58 @@ mod tests {
         let mut disabled = with_pocket(p, 2.0);
         if let Some(dc_project::Operation::Pocket(pocket)) = disabled.operations.first_mut() {
             pocket.enabled = false;
+        }
+        let err = refused(&disabled, &op);
+        assert!(
+            matches!(err, CamError::StartDepthUncleared { .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Issue #426: the countersink's hole at (50, 50) lies on the floor of
+    /// a V-Carve `v0` of the 40 × 40 square from (30, 30), cut before it
+    /// with the countersink's own 90° 6.35 mm V-bit `t1` and a 2 mm flat
+    /// depth: the floor is the square inset 2 mm, x and y 32..68. A
+    /// countersink 2 mm down starts on that floor, so its flanks engage
+    /// only its own 3 mm depth, which fits the 3.175 mm cone, and its tip
+    /// reaches 5 mm below the stock top. At 1.5 mm the floor is not its
+    /// plane, so the flanks engage from the stock top, 4.5 mm, and it is
+    /// refused; a disabled V-Carve clears nothing.
+    #[test]
+    fn countersink_on_a_v_carve_floor_engages_only_its_own_depth() {
+        let p = with_pocket(holes(&[(50.0, 50.0)], HOLE_MM, v_bit(90.0, 6.35)), 1.0);
+        let mut floored = p.clone();
+        floored.operations[0] = dc_project::Operation::VCarve(dc_project::VCarveOp {
+            id: OperationId::new("v0"),
+            targets: vec![InstanceId::new("sq")],
+            tool: ToolId::new("t1"),
+            flat_depth_mm: Some(2.0),
+            ..dc_project::test_support::sample_v_carve()
+        });
+        floored.tools.retain(|t| t.id.as_str() != "t9");
+        let mut op = countersink_op(&p, 6.0);
+        op.targets = vec![InstanceId::new("h1")];
+        *start_of(&mut op).0 = 2.0;
+
+        let (drilled, warnings) = countersink(&floored, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let cut = plunges(&drilled.toolpath);
+        assert_eq!(cut.len(), 1, "{cut:?}");
+        assert_approx_eq!(cut[0].to.z, THICKNESS_MM - 5.0, TOL);
+        assert_approx_eq!(drilled.holes[0].top_z_mm, THICKNESS_MM - 2.0, TOL);
+
+        *start_of(&mut op).0 = 1.5;
+        let err = refused(&floored, &op);
+        assert!(
+            matches!(err, CamError::CountersinkConeExceeded { engaged_mm, .. }
+                if (engaged_mm - 4.5).abs() < 1e-9),
+            "{err:?}"
+        );
+
+        *start_of(&mut op).0 = 2.0;
+        let mut disabled = floored.clone();
+        if let Some(dc_project::Operation::VCarve(carve)) = disabled.operations.first_mut() {
+            carve.enabled = false;
         }
         let err = refused(&disabled, &op);
         assert!(

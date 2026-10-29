@@ -560,10 +560,10 @@ Errors stop export. Warnings do not.
 | A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the stock to leave on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or a stock pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, a stock pass that would come within the bit's radius plus the stock to leave of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 | A `flatten_tolerance_mm` above 0.1 | A V-Carve's clearing pass with an end mill wider than the pass before it (`clearing_not_descending`) |
-| A V-Carve whose tool is not a V-bit, or a V-bit angle not above 0 and below 180 | An earlier Pocket containing a V-Carve's targets at a depth other than its start depth (`start_depth_mismatch`) |
+| A V-Carve whose tool is not a V-bit, or a V-bit angle not above 0 and below 180 | An earlier Pocket, or an earlier V-Carve's flat floor, containing a V-Carve's targets at a depth other than its start depth (`start_depth_mismatch`) |
 | A V-Carve whose flat depth, plus a start depth no earlier Pocket clears, is deeper than the bit's cone height (`v_bit_cone_exceeded`) | |
 | A V-Carve with clearing passes and no flat depth, or a pass whose tool is not an `"end_mill"` or does not exist | |
-| A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket containing the targets and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
+| A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket or V-Carve flat floor containing the targets and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
 enabled operations and the tools they use. See [Values that look

@@ -43,7 +43,7 @@ pub use post_processor::{
     bundled_definition, bundled_definitions, is_m6_line, is_safe_file_extension, latest_definition,
     latest_definitions, switch_post,
 };
-pub use project::containing_pocket;
+pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{

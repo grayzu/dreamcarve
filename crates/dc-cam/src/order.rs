@@ -22,9 +22,9 @@ use crate::error::ShapeRef;
 use crate::overlap::region_holds_path;
 use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
-use crate::warning::Warning;
+use crate::warning::{FloorKind, Warning};
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{DrillCycle, Operation, OperationId, PocketOp, Project, ToolId};
+use dc_project::{ClearedPlane, DrillCycle, Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -49,8 +49,9 @@ use dc_project::{DrillCycle, Operation, OperationId, PocketOp, Project, ToolId};
 ///   own end mills before its V-bit's (#406), whether or not a pass
 ///   reaches anything;
 /// - [`Warning::StartDepthMismatch`] for every enabled operation cut from
-///   a start plane (a V-Carve) that an earlier Pocket at another depth
-///   contains ([`start_plane`]), in project order. These read the project
+///   a start plane (a V-Carve, a countersink Drill) whose footprint an
+///   earlier floor at another depth holds, a Pocket's or a V-Carve's flat
+///   floor ([`start_plane`]), in project order. These read the project
 ///   only, not `generated`.
 #[must_use]
 pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Warning> {
@@ -131,23 +132,24 @@ pub fn check(project: &Project, generated: &[(&Operation, &Toolpath)]) -> Vec<Wa
 /// What the start plane of an operation cut from one rests on
 /// (`docs/specs/phase-3/design.md`, "Start depth, `start_depth_mismatch`
 /// and `start_depth_uncleared`"), from its start depth and
-/// [`dc_project::containing_pocket`], which validation and the generators
-/// call too.
+/// [`dc_project::cleared_start_plane`], which validation, the generators
+/// and the safety pass call too.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum StartPlane<'p> {
-    /// Start depth 0 and no earlier Pocket contains the targets: the stock
-    /// top.
+    /// Start depth 0 and no earlier Pocket or V-Carve floor holds the
+    /// footprint: the stock top.
     StockTop,
-    /// The containing Pocket is at the start depth (within [`EPS_MM`]): the
-    /// plane is its floor.
-    Cleared(&'p PocketOp),
-    /// The containing Pocket is at another depth, or has none set:
+    /// The earlier floor that holds the footprint, a Pocket's or a
+    /// V-Carve's flat floor (#426), is at the start depth (within
+    /// [`EPS_MM`]): the plane is that floor.
+    Cleared(ClearedPlane<'p>),
+    /// That floor is at another depth, or a Pocket with none set:
     /// [`Warning::StartDepthMismatch`].
-    Mismatch(&'p PocketOp),
-    /// No earlier Pocket contains the targets, the start depth is above 0,
+    Mismatch(ClearedPlane<'p>),
+    /// No earlier floor holds the footprint, the start depth is above 0,
     /// and the operation says another program cleared the plane.
     ClearedExternally,
-    /// No earlier Pocket contains the targets, the start depth is above 0,
+    /// No earlier floor holds the footprint, the start depth is above 0,
     /// and the operation does not say the plane is cleared: validation's
     /// error `start_depth_uncleared`.
     Uncleared,
@@ -156,27 +158,19 @@ pub enum StartPlane<'p> {
 /// The start plane of `op`; `None` for an operation not cut from one, or
 /// one whose start depth validation rejects (not finite, or below 0).
 ///
-/// The containing Pocket is [`dc_project::containing_pocket`], whatever
-/// the start depth: a carve from the stock top inside a Pocket is a
-/// mismatch too. Without one, a start depth above 0 is uncleared unless
-/// the operation vouches for the plane.
+/// The floor is [`dc_project::cleared_start_plane`]'s, whatever the
+/// start depth: a carve from the stock top inside a Pocket is a mismatch
+/// too. Without one, a start depth above 0 is uncleared unless the
+/// operation vouches for the plane.
 #[must_use]
 pub fn start_plane<'p>(project: &'p Project, op: &Operation) -> Option<StartPlane<'p>> {
     let setting = start_setting(op)?;
     if !(setting.start_depth_mm.is_finite() && setting.start_depth_mm >= 0.0) {
         return None;
     }
-    Some(match dc_project::containing_pocket(project, op) {
-        Some(pocket) => {
-            let at_start = pocket
-                .depth_mm
-                .is_some_and(|d| (d - setting.start_depth_mm).abs() <= EPS_MM);
-            if at_start {
-                StartPlane::Cleared(pocket)
-            } else {
-                StartPlane::Mismatch(pocket)
-            }
-        }
+    Some(match dc_project::cleared_start_plane(project, op) {
+        Some(plane) if plane.is_at(setting.start_depth_mm) => StartPlane::Cleared(plane),
+        Some(plane) => StartPlane::Mismatch(plane),
         None if setting.start_depth_mm <= 0.0 => StartPlane::StockTop,
         None if setting.cleared_externally => StartPlane::ClearedExternally,
         None => StartPlane::Uncleared,
@@ -224,8 +218,8 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
 }
 
 /// [`Warning::StartDepthMismatch`] for every enabled start-plane operation
-/// of `project` whose containing Pocket is at another depth, in project
-/// order. An uncleared plane adds nothing: it is validation's error
+/// of `project` whose footprint an earlier floor (a Pocket's, or a
+/// V-Carve's flat floor) holds at another depth, in project order. An uncleared plane adds nothing: it is validation's error
 /// `start_depth_uncleared`, reported once, at the start depth, and a
 /// project with an error never reaches the generators.
 fn start_depth_warnings(project: &Project) -> Vec<Warning> {
@@ -234,11 +228,15 @@ fn start_depth_warnings(project: &Project) -> Vec<Warning> {
         .iter()
         .filter(|op| op.enabled())
         .filter_map(|op| match start_plane(project, op)? {
-            StartPlane::Mismatch(pocket) => Some(Warning::StartDepthMismatch {
+            StartPlane::Mismatch(plane) => Some(Warning::StartDepthMismatch {
                 op: op.id().clone(),
-                pocket: pocket.id.clone(),
+                cleared_by: plane.by.id().clone(),
+                floor: match plane.by {
+                    Operation::VCarve(_) => FloorKind::VCarve,
+                    _ => FloorKind::Pocket,
+                },
                 start_depth_mm: start_setting(op)?.start_depth_mm,
-                pocket_depth_mm: pocket.depth_mm,
+                floor_depth_mm: plane.depth_mm(),
             }),
             StartPlane::StockTop
             | StartPlane::Cleared(_)
@@ -1497,8 +1495,8 @@ mod tests {
     fn plane_of(project: &Project) -> Option<(&'static str, Option<String>)> {
         start_plane(project, the_carve(project)).map(|plane| match plane {
             StartPlane::StockTop => ("stock_top", None),
-            StartPlane::Cleared(pocket) => ("cleared", Some(pocket.id.to_string())),
-            StartPlane::Mismatch(pocket) => ("mismatch", Some(pocket.id.to_string())),
+            StartPlane::Cleared(plane) => ("cleared", Some(plane.by.id().to_string())),
+            StartPlane::Mismatch(plane) => ("mismatch", Some(plane.by.id().to_string())),
             StartPlane::ClearedExternally => ("cleared_externally", None),
             StartPlane::Uncleared => ("uncleared", None),
         })
@@ -1587,9 +1585,10 @@ mod tests {
             mismatches(&project),
             vec![Warning::StartDepthMismatch {
                 op: OperationId::new("o6"),
-                pocket: OperationId::new("o2"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
                 start_depth_mm: 2.0,
-                pocket_depth_mm: Some(1.0),
+                floor_depth_mm: Some(1.0),
             }]
         );
 
@@ -1598,9 +1597,10 @@ mod tests {
             mismatches(&project),
             vec![Warning::StartDepthMismatch {
                 op: OperationId::new("o6"),
-                pocket: OperationId::new("o2"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
                 start_depth_mm: 0.0,
-                pocket_depth_mm: Some(1.0),
+                floor_depth_mm: Some(1.0),
             }]
         );
 
@@ -1629,10 +1629,11 @@ mod tests {
         assert_eq!(mismatches(&project), vec![]);
     }
 
-    /// Validation and `check` share `dc_project::containing_pocket`, so
+    /// Validation and `check` share `dc_project::cleared_start_plane`, so
     /// they agree on every layout: validation reports
     /// `start_depth_uncleared` exactly when [`start_plane`] says
-    /// uncleared, and the Pocket `check` names is the containing one.
+    /// uncleared, and the floor `check` names is the one it finds, a
+    /// Pocket's or an earlier V-Carve's flat floor (#426).
     #[test]
     fn validation_and_check_agree_on_the_containing_pocket() {
         let mut cases: Vec<(&str, Project, &str)> = vec![
@@ -1672,10 +1673,27 @@ mod tests {
             }),
         );
         cases.push(("two", two, "cleared"));
+        // An earlier V-Carve `o7` of the rectangle with the same V-bit: its
+        // floor (the rectangle inset by its flat depth) holds the square.
+        for (name, flat_mm, kind) in [
+            ("v-carve floor", 2.0, "cleared"),
+            ("shallower v-carve floor", 1.0, "mismatch"),
+        ] {
+            let mut floored = carve_in_pocket(None, 2.0);
+            floored.operations.insert(
+                0,
+                Operation::VCarve(VCarveOp {
+                    id: OperationId::new("o7"),
+                    flat_depth_mm: Some(flat_mm),
+                    ..sample_v_carve()
+                }),
+            );
+            cases.push((name, floored, kind));
+        }
 
         for (name, project, expected) in &cases {
-            let containing = dc_project::containing_pocket(project, the_carve(project))
-                .map(|p| p.id.to_string());
+            let containing = dc_project::cleared_start_plane(project, the_carve(project))
+                .map(|c| c.by.id().to_string());
             let (kind, pocket) = plane_of(project).expect("a V-Carve has a start plane");
             assert_eq!(kind, *expected, "{name}");
             assert_eq!(
@@ -1691,7 +1709,7 @@ mod tests {
             let named: Vec<String> = mismatches(project)
                 .iter()
                 .filter_map(|w| match w {
-                    Warning::StartDepthMismatch { pocket, .. } => Some(pocket.to_string()),
+                    Warning::StartDepthMismatch { cleared_by, .. } => Some(cleared_by.to_string()),
                     _ => None,
                 })
                 .collect();
@@ -1788,9 +1806,10 @@ mod tests {
                 mismatches(&project),
                 vec![Warning::StartDepthMismatch {
                     op: o3(),
-                    pocket: OperationId::new("o2"),
+                    cleared_by: OperationId::new("o2"),
+                    floor: FloorKind::Pocket,
                     start_depth_mm: start_mm,
-                    pocket_depth_mm: Some(pocket_mm),
+                    floor_depth_mm: Some(pocket_mm),
                 }]
             );
         }
@@ -1835,5 +1854,67 @@ mod tests {
             drill.depth_mm = Some(1.0);
         }
         assert_eq!(kind(&simple), None);
+    }
+
+    /// Issue #426: the countersink of [`countersink_in_pocket`] with no
+    /// Pocket, `start_depth_mm` down, after a V-Carve `o6` of the sample
+    /// rectangle with the same 90° V-bit and a 2.5 mm flat depth from the
+    /// stock top, whose floor (the rectangle inset 2.5 mm) holds the
+    /// 6.35 mm bit at the hole.
+    fn countersink_on_v_carve_floor(start_depth_mm: f64) -> Project {
+        let mut project = countersink_in_pocket(None, start_depth_mm, 35.0);
+        project.operations.insert(
+            0,
+            Operation::VCarve(VCarveOp {
+                flat_depth_mm: Some(2.5),
+                ..sample_v_carve()
+            }),
+        );
+        project
+    }
+
+    /// Issue #426: a V-Carve's flat floor that holds a countersink's bit
+    /// at every hole clears its start plane at the floor's depth, the
+    /// V-Carve's start depth plus its flat depth. At that depth nothing
+    /// is reported; at another, `check` warns `start_depth_mismatch`
+    /// naming the V-Carve and both depths, and validation reports no
+    /// uncleared plane.
+    #[test]
+    fn countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch() {
+        let kind = |project: &Project| {
+            let sink = project.operations.last().expect("the countersink");
+            start_plane(project, sink).map(|plane| match plane {
+                StartPlane::StockTop => "stock_top",
+                StartPlane::Cleared(_) => "cleared",
+                StartPlane::Mismatch(_) => "mismatch",
+                StartPlane::ClearedExternally => "cleared_externally",
+                StartPlane::Uncleared => "uncleared",
+            })
+        };
+
+        let project = countersink_on_v_carve_floor(2.5);
+        assert_eq!(kind(&project), Some("cleared"));
+        assert_eq!(uncleared(&project), vec![]);
+        assert_eq!(check(&project, &[]), vec![]);
+
+        let project = countersink_on_v_carve_floor(2.0);
+        assert_eq!(kind(&project), Some("mismatch"));
+        assert_eq!(uncleared(&project), vec![]);
+        let warnings = mismatches(&project);
+        assert_eq!(
+            warnings,
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o3"),
+                cleared_by: OperationId::new("o6"),
+                floor: FloorKind::VCarve,
+                start_depth_mm: 2.0,
+                floor_depth_mm: Some(2.5),
+            }]
+        );
+        let message = warnings[0].to_string();
+        assert!(
+            message.contains("`o6`, the V-Carve before it whose flat floor contains"),
+            "{message}"
+        );
     }
 }

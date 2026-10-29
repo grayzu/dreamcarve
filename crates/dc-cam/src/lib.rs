@@ -60,6 +60,6 @@ pub use tabs::{TAB_CORNER_TURN_DEG, tab_centres_mm};
 pub use toolpath::{Move, MoveKind, Toolpath};
 pub use vcarve::generate_vcarve;
 pub use warning::{
-    IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason, ReliefSkippedReason,
-    TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
+    FloorKind, IslandNeighbour, LeadDroppedReason, OpenPathReason, ReliefCornerReason,
+    ReliefSkippedReason, TabOnCornerReason, TabsRangeReason, Warning, WarningCode,
 };

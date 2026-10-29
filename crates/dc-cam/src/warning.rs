@@ -261,6 +261,17 @@ impl fmt::Display for WarningCode {
     }
 }
 
+/// What kind of cut left the floor that holds an operation's footprint
+/// at another depth than its start plane ([`Warning::StartDepthMismatch`],
+/// [`dc_project::cleared_start_plane`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FloorKind {
+    /// A Pocket's floor, its depth.
+    Pocket,
+    /// A V-Carve's flat floor, its start depth plus its flat depth (#426).
+    VCarve,
+}
+
 /// Why an open path was skipped ([`Warning::OpenPathSkipped`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OpenPathReason {
@@ -828,12 +839,17 @@ pub enum Warning {
     StartDepthMismatch {
         /// The operation cut from the start plane.
         op: OperationId,
-        /// The containing Pocket.
-        pocket: OperationId,
+        /// The earlier operation whose floor holds the footprint: the
+        /// containing Pocket, or a V-Carve with a flat depth.
+        cleared_by: OperationId,
+        /// Which of the two it is.
+        floor: FloorKind,
         /// The operation's start depth below the stock top.
         start_depth_mm: f64,
-        /// The Pocket's depth; `None` when it has none set.
-        pocket_depth_mm: Option<f64>,
+        /// The floor's depth below the stock top: the Pocket's depth
+        /// (`None` when it has none set), or the V-Carve's start depth
+        /// plus its flat depth.
+        floor_depth_mm: Option<f64>,
     },
     /// [`WarningCode::ClearingNoRoom`].
     ClearingNoRoom {
@@ -1605,16 +1621,21 @@ impl fmt::Display for Warning {
                 rounded(*resolution_mm, 3)
             ),
             Self::StartDepthMismatch {
-                pocket,
+                cleared_by,
+                floor,
                 start_depth_mm,
-                pocket_depth_mm,
+                floor_depth_mm,
                 ..
             } => {
-                let depth = pocket_depth_mm
+                let depth = floor_depth_mm
                     .map_or_else(|| "has no depth set".to_owned(), |d| format!("is {} mm deep", mm(d)));
+                let (what, holding, floor, its_depth) = match floor {
+                    FloorKind::Pocket => ("Pocket", "area", "that Pocket's floor", "the Pocket's depth"),
+                    FloorKind::VCarve => ("V-Carve", "flat floor", "that floor", "the floor's depth"),
+                };
                 write!(
                     f,
-                    "it starts {} mm below the stock top, but operation `{pocket}`, the Pocket before it whose area contains its targets, {depth}, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+                    "it starts {} mm below the stock top, but operation `{cleared_by}`, the {what} before it whose {holding} contains its targets, {depth}, so the start plane is not {floor}; set start_depth_mm to {its_depth}",
                     mm(*start_depth_mm)
                 )
             }
@@ -2301,20 +2322,32 @@ mod tests {
             (
                 Warning::StartDepthMismatch {
                     op: op(),
-                    pocket: "o2".into(),
+                    cleared_by: "o2".into(),
+                    floor: FloorKind::Pocket,
                     start_depth_mm: 4.000_000_1,
-                    pocket_depth_mm: Some(3.0),
+                    floor_depth_mm: Some(3.0),
                 },
                 "it starts 4 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, is 3 mm deep, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
             ),
             (
                 Warning::StartDepthMismatch {
                     op: op(),
-                    pocket: "o2".into(),
+                    cleared_by: "o2".into(),
+                    floor: FloorKind::Pocket,
                     start_depth_mm: 0.0,
-                    pocket_depth_mm: None,
+                    floor_depth_mm: None,
                 },
                 "it starts 0 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, has no depth set, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+            ),
+            (
+                Warning::StartDepthMismatch {
+                    op: op(),
+                    cleared_by: "o6".into(),
+                    floor: FloorKind::VCarve,
+                    start_depth_mm: 2.0,
+                    floor_depth_mm: Some(2.5),
+                },
+                "it starts 2 mm below the stock top, but operation `o6`, the V-Carve before it whose flat floor contains its targets, is 2.5 mm deep, so the start plane is not that floor; set start_depth_mm to the floor's depth",
             ),
             (
                 Warning::ClearingNoRoom {

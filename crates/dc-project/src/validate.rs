@@ -49,8 +49,9 @@
 //! enabled earlier Pocket at that depth contains the targets) deeper than
 //! the bit's cone; clearing passes without a flat depth, or naming a
 //! missing tool or one that is not a flat end mill; a negative start
-//! depth; a start depth below the stock top that no earlier Pocket clears
-//! and the user does not vouch for; a flatten tolerance above
+//! depth; a start depth below the stock top that no earlier Pocket (nor,
+//! since #426, an earlier V-Carve's flat floor) clears and the user does
+//! not vouch for; a flatten tolerance above
 //! [`MAX_FLATTEN_TOLERANCE_MM`]. Warning: a clearing pass wider than the
 //! one before.
 //!
@@ -67,7 +68,7 @@ use crate::model::{
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
 };
-use crate::project::containing_pocket;
+use crate::project::cleared_start_plane;
 use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -524,8 +525,9 @@ pub enum Problem {
     /// An enabled V-Carve engages its V-bit deeper than the bit's cone is
     /// tall (format 20; capabilities 39 and 41), so the shank would cut.
     /// The engagement is the flat depth, plus the start depth unless an
-    /// enabled earlier Pocket at the start depth contains the targets. An
-    /// error.
+    /// earlier floor at the start depth holds the targets, an enabled
+    /// Pocket's or an enabled V-Carve's flat floor
+    /// ([`crate::cleared_start_plane`]). An error.
     VBitConeExceeded {
         /// The operation.
         operation: OperationId,
@@ -539,7 +541,8 @@ pub enum Problem {
         /// half the included angle.
         cone_height_mm: f64,
         /// Whether the engagement counts the start depth, the start
-        /// plane not being cleared by a Pocket of the project.
+        /// plane not being cleared by a Pocket or a V-Carve floor of the
+        /// project.
         from_stock_top: bool,
         /// The field at fault: `flat_depth_mm`, or `start_depth_mm` for a
         /// carve with no flat depth.
@@ -612,7 +615,8 @@ pub enum Problem {
         field: &'static str,
     },
     /// An enabled V-Carve or countersink Drill starts below the stock top,
-    /// no enabled earlier Pocket contains its footprint, and it does not
+    /// no enabled earlier Pocket, nor the flat floor of an enabled earlier
+    /// V-Carve (#426), holds its footprint, and it does not
     /// say another program cleared the start plane (format 20; capability
     /// 41; phase 3 security review M2). An error.
     StartDepthUncleared {
@@ -1234,7 +1238,7 @@ impl fmt::Display for Problem {
                     };
                     write!(
                         f,
-                        " from the stock top (its start depth, which no Pocket of the project clears, plus {own})"
+                        " from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus {own})"
                     )?;
                 }
                 write!(
@@ -1299,7 +1303,7 @@ impl fmt::Display for Problem {
                 };
                 write!(
                     f,
-                    "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket before it contains {what}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true"
+                    "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains {what}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true"
                 )
             }
             Self::CountersinkNeedsVBit {
@@ -2226,10 +2230,11 @@ impl Validator {
     /// the project (format 21; `docs/specs/phase-3/design.md`,
     /// "Validation"): it cuts with a V-bit; its mouth is no wider than the
     /// bit; a start depth below the stock top is cleared by an earlier
-    /// Pocket that holds the bit at every hole, or vouched for; and the
+    /// floor that holds the bit at every hole, a Pocket's or a V-Carve's
+    /// flat floor (#426; [`cleared_start_plane`]), or vouched for; and the
     /// bit's flanks engage no deeper than its cone, counting the start
-    /// depth unless such a Pocket at that depth clears the plane
-    /// (security review H4). `op` is `drill` as the project holds it. A
+    /// depth unless such a floor at that depth clears the plane (security
+    /// review H4). `op` is `drill` as the project holds it. A
     /// Drill of another cycle has none of these.
     fn enabled_countersink(
         &mut self,
@@ -2285,12 +2290,12 @@ impl Validator {
             return;
         }
         let below_top = start_depth_mm > 0.0;
-        let pocket = if below_top {
-            containing_pocket(p, op)
+        let cleared = if below_top {
+            cleared_start_plane(p, op)
         } else {
             None
         };
-        if below_top && pocket.is_none() && !start_plane_cleared_externally {
+        if below_top && cleared.is_none() && !start_plane_cleared_externally {
             self.problems.push(Problem::StartDepthUncleared {
                 operation: drill.id.clone(),
                 name: drill.name.clone(),
@@ -2298,9 +2303,7 @@ impl Validator {
                 field: COUNTERSINK_START_DEPTH,
             });
         }
-        let cleared_at_start = pocket
-            .and_then(|pocket| pocket.depth_mm)
-            .is_some_and(|depth_mm| (depth_mm - start_depth_mm).abs() <= EPS_MM);
+        let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
         let from_stock_top = below_top && !cleared_at_start;
         let (Some(tool), Some(angle_deg), true) = (tool, angle_deg, fits_tool) else {
             return;
@@ -2465,19 +2468,20 @@ impl Validator {
             previous = Some(pass_tool);
         }
 
-        // The start plane (capability 41): a containing Pocket clears it;
+        // The start plane (capability 41): an earlier floor that holds the
+        // targets clears it, a Pocket's or a V-Carve's flat floor (#426);
         // otherwise, below the stock top, the user must vouch for it.
         let start_depth_mm = carve.start_depth_mm;
         if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0) {
             return;
         }
         let below_top = start_depth_mm > 0.0;
-        let pocket = if below_top {
-            containing_pocket(p, op)
+        let cleared = if below_top {
+            cleared_start_plane(p, op)
         } else {
             None
         };
-        if below_top && pocket.is_none() && !carve.start_plane_cleared_externally {
+        if below_top && cleared.is_none() && !carve.start_plane_cleared_externally {
             self.problems.push(Problem::StartDepthUncleared {
                 operation: carve.id.clone(),
                 name: carve.name.clone(),
@@ -2485,12 +2489,10 @@ impl Validator {
                 field: "start_depth_mm",
             });
         }
-        // The flanks engage from the start plane only when a Pocket at
+        // The flanks engage from the start plane only when a floor at
         // that depth clears it (design spec, "V-Carve generator", step 3;
         // security review H4); from the stock top otherwise.
-        let cleared_at_start = pocket
-            .and_then(|pocket| pocket.depth_mm)
-            .is_some_and(|depth_mm| (depth_mm - start_depth_mm).abs() <= EPS_MM);
+        let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
         let from_stock_top = below_top && !cleared_at_start;
         let Some(tool) = tool else {
             return;
@@ -6213,6 +6215,41 @@ mod tests {
             problems[0].field().as_deref(),
             Some("operations[o3].cycle.countersink.start_depth_mm")
         );
+    }
+
+    /// An enabled V-Carve `o6` of the sample rectangle with the 90° V-bit
+    /// `t2` and a 2.5 mm flat depth from the stock top: its floor is the
+    /// rectangle inset 2.5 mm, x 12.5..57.5, y 12.5..37.5.
+    fn rectangle_v_carve() -> Operation {
+        let mut carve = crate::test_support::sample_v_carve();
+        carve.flat_depth_mm = Some(2.5);
+        Operation::VCarve(carve)
+    }
+
+    /// Issue #426: the countersink's hole at (35, 25) sits on the 2.5 mm
+    /// floor of a V-Carve before it, which holds the whole 6.35 mm bit,
+    /// so a countersink 2.5 mm down is neither uncleared nor past its
+    /// cone: the flanks engage its own 3 mm depth from the floor. At
+    /// 2 mm the floor is not its plane (the order check's mismatch), so
+    /// the flanks engage from the stock top, 5 mm of a 3.175 mm cone. A
+    /// hole on the carve's slope, outside the floor, is uncleared.
+    #[test]
+    fn countersink_on_a_v_carve_floor_is_not_uncleared() {
+        let mut floored = countersink_project(|drill| *countersink_of(drill).1 = 2.5);
+        floored.operations.insert(1, rectangle_v_carve());
+        assert_eq!(validate(&floored), vec![]);
+
+        let mut mismatched = countersink_project(|drill| *countersink_of(drill).1 = 2.0);
+        mismatched.operations.insert(1, rectangle_v_carve());
+        let (engagement_mm, _, from_stock_top, _) = cone_exceeded(&validate(&mismatched));
+        assert!(approx_eq(engagement_mm, 5.0, 1e-9), "{engagement_mm}");
+        assert!(from_stock_top);
+
+        let mut on_the_slope = countersink_project(|drill| *countersink_of(drill).1 = 0.1);
+        on_the_slope.operations.insert(1, rectangle_v_carve());
+        on_the_slope.instances[1].transform = Transform::translate(11.5, 25.0);
+        let codes: Vec<&str> = validate(&on_the_slope).iter().map(Problem::code).collect();
+        assert_eq!(codes, ["start_depth_uncleared"]);
     }
 
     /// The design spec, "Validation": a countersink's V-bit is no
