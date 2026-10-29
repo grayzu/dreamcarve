@@ -443,6 +443,26 @@ pub enum ExportError {
         /// The cone's height, mm: `diameter / (2 · tan(α/2))`.
         cone_mm: f64,
     },
+    /// S18 (`docs/specs/phase-3/design.md`, "Safety pass"): a countersink
+    /// cut is not a vertical plunge at one of its holes' centres from at
+    /// most the retract plane to exactly the derived depth, a rapid in its
+    /// span ends below the retract plane, or the span writes a canned
+    /// cycle. `expected_mm` is the Z the line had to reach (the derived
+    /// bottom, or the retract plane for a rapid) and `found_mm` the Z it
+    /// reaches, both project space, mm above the stock bottom.
+    #[error(
+        "emitted line {line} is not operation `{op}`'s countersink plunge: a countersink is a straight plunge at a hole's centre, written as plain moves, to Z {expected_mm:.3}, but this line reaches Z {found_mm:.3} (project space)"
+    )]
+    CountersinkDepth {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+        /// The Z the line had to reach, project space, mm.
+        expected_mm: f64,
+        /// The Z it reaches, project space, mm.
+        found_mm: f64,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.

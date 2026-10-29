@@ -9976,13 +9976,14 @@ fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
     }
 }
 
-/// Format 21 (#425): a project may hold a countersink, and `check`
-/// generates it, but until the safety pass can hold its program to the
-/// derived depth (S18, #427) `check` and `export` refuse it by name, and
-/// no program is written.
+/// Acceptance 55 (the safety half, #427): four 1/8 in circles in the
+/// coaster countersunk with a 90° 6.35 mm V-bit to a 6 mm mouth, on
+/// LinuxCNC with canned cycles on, export as plain moves: one plunge per
+/// hole to Z −3 at the plunge rate, no cycle word, no
+/// `canned_cycle_expanded` warning, and `check` is quiet about it.
 #[test]
-fn countersink_export_is_refused_until_s18() {
-    let dir = work_dir("countersink_export_is_refused_until_s18");
+fn countersink_exports_as_plain_moves_with_canned_cycles() {
+    let dir = work_dir("countersink_exports_as_plain_moves_with_canned_cycles");
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
@@ -10024,32 +10025,44 @@ fn countersink_export_is_refused_until_s18() {
         start_plane_cleared_externally: false,
     };
     project.operations.insert(0, Operation::Drill(sink));
+    project.post_processor = dc_project::PostProcessorRef::latest("linuxcnc").expect("bundled");
+    project.post_processor.use_canned_cycles = true;
     std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
 
-    for args in [
-        &["check", "coaster.dcv"][..],
-        &["export", "coaster.dcv", "--date", FIXED_DATE],
-    ] {
-        let command = args[0];
-        let out = run(&dir, args);
-        let report = format!("{}{}", stdout(&out), stderr(&out));
-        assert_ne!(out.status.code(), Some(0), "{command}: {report}");
+    let out = run(&dir, &["check", "coaster.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "check: {report}");
+    assert!(!report.contains("`o2`"), "check: {report}");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+    assert!(!report.contains("canned_cycle_expanded"), "{report}");
+    let mut programs: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").path())
+        .filter(|p| p.extension().is_some_and(|x| x == "ngc"))
+        .collect();
+    programs.sort();
+    assert!(!programs.is_empty(), "{report}");
+    let text: String = programs
+        .iter()
+        .map(|p| std::fs::read_to_string(p).expect("program readable"))
+        .collect();
+    for line in text.lines() {
+        let words = code_words(line);
         assert!(
-            report.contains("`o2`")
-                && report.contains("countersink")
-                && report.contains("not supported"),
-            "{command}: {report}"
+            !words
+                .iter()
+                .any(|w| ["G73", "G81", "G82", "G83", "G98", "G99"].contains(&w.as_str())),
+            "a cycle word: {line}\n{text}"
         );
     }
-    let programs: Vec<_> = std::fs::read_dir(&dir)
-        .expect("dir readable")
-        .filter_map(Result::ok)
-        .filter(|e| e.path().is_file())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|x| x != "dcv" && x != "svg")
+    let plunges = text
+        .lines()
+        .map(code_words)
+        .filter(|w| {
+            w.first().is_some_and(|g| g == "G1") && w.get(1).is_some_and(|z| z == "Z-3.000")
         })
-        .collect();
-    assert!(programs.is_empty(), "{programs:?}");
+        .count();
+    assert_eq!(plunges, 4, "{text}");
 }
