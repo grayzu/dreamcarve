@@ -181,8 +181,10 @@
 //!   last test is exact for a level cut and a lower bound for a sloping
 //!   one, whose deeper end needs more room: #408 replaces it with the
 //!   exact cone. The operation's tool must be a V-bit with an angle in
-//!   (0°, 180°), with the medial strategy and no clearing passes; anything
-//!   else is unresolved, and every cut of it fails.
+//!   (0°, 180°), with no clearing passes; the rule is the same for the
+//!   medial and the offset strategy (#407: a ring is a level cut whose cone
+//!   touches the wall, a link between rings a sloping one). Anything else
+//!   is unresolved, and every cut of it fails.
 //!
 //! A move is allowed to depart from where the toolpath put it by what the
 //! program may already differ by: one unit in the last written place (the
@@ -207,7 +209,7 @@ use dc_geometry::{
 };
 use dc_project::{
     CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape,
-    ToolKind, Units, VCarveOp, VCarveStrategy, containing_pocket,
+    ToolKind, Units, VCarveOp, containing_pocket,
 };
 
 use crate::ExportError;
@@ -307,7 +309,7 @@ pub(crate) enum Material {
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid
     /// stock to leave), or a V-Carve this build does not generate (no
-    /// V-bit, the offset strategy, clearing passes): no cut is in the
+    /// V-bit, clearing passes): no cut is in the
     /// material, fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
@@ -759,10 +761,10 @@ impl Material {
 
 /// The material of V-Carve `carve` (module docs): its regions, start
 /// plane, V-bit slope and the lowest Z it may reach, all from the project;
-/// [`Material::Unresolved`] for anything #404 does not generate.
+/// [`Material::Unresolved`] for anything this build does not generate
+/// (clearing passes, #406).
 fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
-    let unresolved =
-        !matches!(carve.strategy, VCarveStrategy::Medial) || !carve.clearing.is_empty();
+    let unresolved = !carve.clearing.is_empty();
     let tool = project.tools.iter().find(|t| t.id == carve.tool);
     let (Some(thickness_mm), Some(tool), false) = (project.stock.thickness_mm, tool, unresolved)
     else {

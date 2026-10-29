@@ -1411,7 +1411,36 @@ fn v19_project_exports_the_same_program() {
 /// toolpath itself passes `assert_safe`, the cone test included.
 #[test]
 fn v_carve_exports_and_passes_safety() {
-    let dir = work_dir("v_carve_exports_and_passes_safety");
+    v_carve_exports(
+        "v_carve_exports_and_passes_safety",
+        dc_project::VCarveStrategy::Medial,
+        "4.330",
+    );
+}
+
+/// Functional 43 through the CLI (#407): the same rectangle carved with
+/// the offset strategy, `step_over_mm: 0.5`. The rings step in to 2 mm
+/// (at 2.5 mm the 5 mm wide rectangle is gone), 2 / tan 30° = 3.464 mm
+/// deep, and the program passes the safety pass's V-Carve rule as the
+/// medial carve's does.
+#[test]
+fn offset_v_carve_exports_and_passes_safety() {
+    v_carve_exports(
+        "offset_v_carve_exports_and_passes_safety",
+        dc_project::VCarveStrategy::Offset {
+            step_over_mm: 0.5,
+            direction: dc_project::CutDirection::Climb,
+        },
+        "3.464",
+    );
+}
+
+/// The coaster project in a work directory `name` with its operations
+/// replaced by one V-Carve of a 20 × 5 mm rectangle, 60° 6.35 mm V-bit,
+/// with `strategy`, on grblHAL: `check` and `export` succeed, both stating
+/// the deepest cut `deepest` (mm), and the toolpath passes `assert_safe`.
+fn v_carve_exports(name: &str, strategy: dc_project::VCarveStrategy, deepest: &str) {
+    let dir = work_dir(name);
     let dcv = init_coaster(&dir);
     fill_in(&dcv, 1500.0, 500.0, 18000);
     let mut project = load_file(&dcv).project;
@@ -1444,6 +1473,7 @@ fn v_carve_exports_and_passes_safety() {
     let carve = dc_project::VCarveOp {
         targets: vec![InstanceId::new("iv")],
         tool: ToolId::new("tv"),
+        strategy,
         ..dc_project::test_support::sample_v_carve()
     };
     project.operations = vec![Operation::VCarve(carve.clone())];
@@ -1458,7 +1488,7 @@ fn v_carve_exports_and_passes_safety() {
         stderr(&out)
     );
     assert!(
-        stdout(&out).contains("deepest cut 4.330 mm below the stock top"),
+        stdout(&out).contains(&format!("deepest cut {deepest} mm below the stock top")),
         "{}",
         stdout(&out)
     );
@@ -1471,7 +1501,7 @@ fn v_carve_exports_and_passes_safety() {
         stderr(&out)
     );
     assert!(
-        stdout(&out).contains("cut 4.330 mm deep at most"),
+        stdout(&out).contains(&format!("cut {deepest} mm deep at most")),
         "{}",
         stdout(&out)
     );

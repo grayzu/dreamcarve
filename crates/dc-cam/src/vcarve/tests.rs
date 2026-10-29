@@ -36,6 +36,8 @@ use dc_project::{
 };
 use std::collections::BTreeMap;
 
+mod offset;
+
 const THICKNESS_MM: f64 = 12.0;
 /// Where every fixture's drawing is placed, mm.
 const AT: (f64, f64) = (20.0, 20.0);

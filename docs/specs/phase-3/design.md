@@ -761,21 +761,40 @@ orientation; DreamCarve's regions are normalised anyway.
    computation `pocket::rest` makes for `rest_of`. Never from a toolpath
    (S14).
 8. **Offset strategy** (`vcarve.ts`): `step_over_mm` in (0, ∞), else
-   `CamError::InvalidStepOver`. Ring `k` is each region inset by
-   `k · step_over_mm` (`offset`, round joins), at `d_k = min(k ·
-   step_over_mm / slope, F)`, `z = start_plane − d_k`, until the inset is
-   empty (`inset_is_empty`) or `d_k` reaches `F` (the last ring at `F`
-   is the floor trace, then the V-bit floor as step 6 if `F`). Each
-   ring is a closed `CutBlock` oriented by `ring_is_ccw(wall,
-   direction)` as Pocket's rings (re-derived for Y-up there), started at
-   its point nearest the previous ring's end (`rings::nearest`),
-   `cleared` `None`. Links between rings of one region stay down only
-   when they pass the same cone test as a medial link (step 5: ring `k`
-   to ring `k + 1` are at different depths, so the link descends through
-   the band ring `k` has already opened; upstream bridges within
-   8 × stepover on the surface disc, which DreamCarve does not trust),
-   else retract. No corner tips: the rings are round. `MAX_RINGS` as
-   Pocket's.
+   `CamError::InvalidVCarveStepOver` (#407: `InvalidStepOver` is a
+   fraction in (0, 1]). Ring `k` is each region inset by
+   `k · step_over_mm` (`floor_regions`, round joins, from the region
+   itself at every level so no error adds up; a level that is noise at
+   the flatten tolerance, Pocket's rule, is no ring), at `d_k = k ·
+   step_over_mm / slope`, `z = start_plane − d_k`, until the inset is
+   empty or would reach `F · slope` (within `EPS_MM`). The ring at
+   `F · slope`, `z = start_plane − F` exactly, is the floor's boundary
+   trace, cut by `floor::blocks` after the V-bit floor inside it (step 6,
+   #405), from the last ring's end. The deepest ring, or the floor when
+   there is one, is step 3's deepest point. Each
+   ring is oriented by `ring_is_ccw(wall, direction)` as Pocket's rings
+   (re-derived for Y-up there; an outer's ring is a `Pocket` wall ring, a
+   hole's an `Island` ring) and started at its point nearest the
+   previous ring's end, level by level as upstream; the region's first
+   ring at its first point. Arcs become lines within the flatten
+   tolerance on the side away from their wall (`floor::flatten_inside`:
+   chords when the arc turns toward the inside, tangents when its centre
+   is on the wall's side), so no tip comes nearer a wall than its ring. A run of
+   rings joined tool-down is one `CutBlock` (as a run of medial chains),
+   `cleared` `None`, `entry_z_mm` its first ring's Z. A link between
+   rings of one region stays down only when it passes the cone test at
+   its own depth (`Walls::least_room` along the straight move from the
+   previous ring's end to this ring's start, each at its Z), else
+   retract; upstream bridges within 8 × stepover on the surface disc,
+   which DreamCarve does not trust. Every point of a ring is on the final
+   V surface (its cone touches the wall), so a medial link's `EPS_MM` to
+   spare would retract every ring: a ring link is held to the surface
+   the rings cut, no point below it by more than `EPS_MM` (#407). On a
+   straight wall the link from a ring's corner to the next ring's corner
+   runs down the corner's bisector, which is that surface, and stays
+   down; elsewhere it retracts. No corner tips: the rings are round.
+   More than `MAX_RINGS` (Pocket's) rings in a region is
+   `InvalidVCarveStepOver`.
 9. **Sequence.** `SequenceInput` with `stepover_mm` 0 and every medial
    and offset block's `cleared` `None`, so `sequence` itself never links
    two of them tool-down (the floor's rings carry `cleared`, step 6); containment pairs from `nest`; the operation's
@@ -1258,7 +1277,7 @@ for V operations.
 - `vcarve::clearing_pass_takes_the_floor_region_and_depth` (acceptance 51: the run's footprint inside 26 × 6, depth 2), `vcarve::clearing_runs_come_before_the_v_bit_run_with_their_own_tools`, `vcarve::floor_cutting_shrinks_to_what_the_end_mill_cannot_reach` (within 1.5875 of the boundary; under a third of the no-clearing length), `vcarve::floor_coverage_with_the_pass_still_reaches_the_floor`, `vcarve::second_pass_clears_only_what_the_first_left`, `vcarve::wider_second_pass_warns_not_descending_and_still_runs`, `vcarve::clearing_without_a_flat_depth_is_an_error`, `vcarve::clearing_pass_with_a_v_bit_is_an_error`, `vcarve::removing_the_list_gives_the_v_bit_the_whole_floor`, `vcarve::pass_that_reaches_nothing_warns_and_emits_no_run`, `vcarve::clearing_run_footprint_stays_inside_the_floor` (S9/S14), `vcarve::clearing_pass_is_cut_by_the_pocket_code` (the run equals a user Pocket of the floor region move for move), `emit::clearing_runs_become_programs_of_their_own_tools` (`op2 (clearing t1)` in the program comment and the summary), `order::clearing_runs_count_for_the_tool_change_hint`, `cli::preview_legend_names_clearing_runs`.
 
 **dc-cam — vcarve (offset)**
-- `vcarve::offset_rings_are_inset_by_their_depth` (acceptance 54: 6 mm square, 0.5 mm steps, 90°: insets 0.5…2.5 at Z −0.5…−2.5 ± 0.01), `vcarve::offset_climb_and_conventional_reverse_every_ring`, `vcarve::offset_stops_at_the_flat_depth_and_clears_the_floor`, `vcarve::offset_rings_link_tool_down_only_inside_the_carved_band`, `vcarve::offset_ring_direction_matches_pocket_rings` (Y-up re-derivation note).
+- `vcarve::offset_rings_are_inset_by_their_depth` (acceptance 54: 6 mm square, 0.5 mm steps, 90°: insets 0.5…2.5 at Z −0.5…−2.5 ± 0.01), `vcarve::offset_climb_and_conventional_reverse_every_ring`, `vcarve::offset_stops_at_the_flat_depth_and_clears_the_floor`, `vcarve::offset_ring_links_pass_the_cone_test_or_retract` (H2), `vcarve::offset_ring_direction_matches_pocket_rings` (Y-up re-derivation note).
 
 **dc-cam — drill (countersink)**
 - `drill::countersink_depth_is_mouth_over_two_tan_half_angle` (port: "90° V-bit: a 6 mm mouth plunges 3 mm" and "82° V-bit: depth follows D / (2·tan(θ/2))": −3 and −3.451), `drill::countersink_depth_is_measured_from_the_start_plane` (port: "depth is measured from each target's own top face", restated: start depth 4 → Z −7), `drill::countersink_is_a_centre_plunge_and_retract` (port: "motion is centre-plunge and retract"), `drill::countersink_needs_a_v_bit` (port), `drill::countersink_rejects_an_unusable_angle` (port), `drill::countersink_rejects_a_missing_or_zero_diameter` (port), `drill::countersink_mouth_wider_than_the_cutter_is_refused` (port), `drill::full_diameter_countersink_is_cut_within_one_ulp` (port: "a tool limited to exactly its cone height still cuts"), `drill::mouth_no_wider_than_the_hole_skips_that_target` (port), `drill::non_circular_targets_are_skipped` (port), `drill::countersink_records_no_canned_cycle` (port: "countersink posts as linear motion even on a canned-cycle machine", the generator half), `drill::other_cycles_are_unchanged_by_the_new_variant` (port: "legacy drilling operations are untouched"), `drill::countersink_dwell_is_at_the_bottom`, `drill::countersink_rapid_stops_above_the_stock_top_whatever_the_start_depth` (H3: `start_depth_mm: 4`, `retract_mm: 1` rapids to the stock top + 1 and plunges from there), `drill::uncleared_countersink_start_depth_is_refused` (M2, H4).

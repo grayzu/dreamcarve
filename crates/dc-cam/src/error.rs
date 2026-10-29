@@ -203,6 +203,18 @@ pub enum CamError {
         /// The fraction in effect.
         step_over_fraction: f64,
     },
+    /// An offset V-Carve's `step_over_mm` is not more than 0, or is so
+    /// small that a region would need more than
+    /// [`crate::pocket::MAX_RINGS`] rings.
+    #[error(
+        "operation `{op}` has an offset step-over of {step_over_mm} mm; it must be more than 0 and leave at most 10000 rings in a shape"
+    )]
+    InvalidVCarveStepOver {
+        /// The operation.
+        op: OperationId,
+        /// The step-over, mm.
+        step_over_mm: f64,
+    },
     /// The operation's entry has an angle outside (0, 45] degrees or a
     /// helix diameter fraction outside (0, 1]. Validation rejects both; the
     /// generator does not trust its callers.
