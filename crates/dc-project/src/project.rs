@@ -11,8 +11,8 @@ use crate::ids::InstanceId;
 use crate::model::{Operation, PocketOp, Project};
 use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
 use dc_geometry::{
-    Contour, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Region, area_mm2, as_circle, difference, nest,
-    point_segment_distance_mm,
+    Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Region, area_mm2, as_circle, difference,
+    nest, point_segment_distance_mm,
 };
 
 /// The Pocket that clears the start plane of `op` (functional spec,
@@ -73,6 +73,43 @@ pub fn containing_pocket<'p>(project: &'p Project, op: &Operation) -> Option<&'p
             }
             _ => None,
         })
+}
+
+/// The plane an earlier operation cleared under another operation's
+/// footprint ([`cleared_start_plane`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ClearedPlane<'p> {
+    /// The operation whose cut left the plane: an enabled Pocket, or an
+    /// enabled V-Carve with a flat depth (its floor).
+    pub by: &'p Operation,
+}
+
+impl ClearedPlane<'_> {
+    /// How far below the stock top the plane is, mm: the Pocket's depth
+    /// (`None` when it has none set), or the V-Carve's start depth plus
+    /// its flat depth ([`Operation::depth_mm`]).
+    #[must_use]
+    pub fn depth_mm(&self) -> Option<f64> {
+        self.by.depth_mm()
+    }
+
+    /// Whether the plane is `start_depth_mm` below the stock top, within
+    /// [`EPS_MM`]: then it is the start plane of the operation it holds,
+    /// and that operation's flank is engaged from it.
+    #[must_use]
+    pub fn is_at(&self, start_depth_mm: f64) -> bool {
+        self.depth_mm()
+            .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM)
+    }
+}
+
+/// The plane that clears the start plane of `op`: until #426 lands, only
+/// [`containing_pocket`]'s Pocket.
+#[must_use]
+pub fn cleared_start_plane<'p>(project: &'p Project, op: &Operation) -> Option<ClearedPlane<'p>> {
+    let pocket = containing_pocket(project, op)?;
+    let by = project.operations.iter().find(|o| o.id() == &pocket.id)?;
+    Some(ClearedPlane { by })
 }
 
 /// What an operation cut from a start plane occupies at that plane, which
@@ -442,5 +479,152 @@ mod tests {
         }
         p.operations = vec![pocket("p1", &["i1"]), simple];
         assert_eq!(found(&p), None, "a simple Drill");
+    }
+
+    // #426: a V-Carve's flat floor clears a start plane.
+
+    /// A V-Carve `v1` of `targets` with the 90° V-bit `t2` (slope 1),
+    /// `flat_mm` flat depth and `start_mm` start depth.
+    fn floored(targets: &[&str], flat_mm: Option<f64>, start_mm: f64) -> Operation {
+        let mut op = sample_v_carve();
+        op.id = OperationId::new("v1");
+        op.targets = targets.iter().map(|t| InstanceId::new(*t)).collect();
+        op.flat_depth_mm = flat_mm;
+        op.start_depth_mm = start_mm;
+        Operation::VCarve(op)
+    }
+
+    /// The id and depth of the plane cleared under the last operation.
+    fn plane(project: &Project) -> Option<(&str, Option<f64>)> {
+        let op = project.operations.last()?;
+        cleared_start_plane(project, op).map(|c| (c.by.id().as_str(), c.depth_mm()))
+    }
+
+    /// `shapes()` with a 3.175 mm hole `hole` at (`x`, `y`).
+    fn with_hole(x: f64, y: f64) -> Project {
+        let mut p = shapes();
+        place_circle(&mut p, "hole", x, y, 3.175);
+        p
+    }
+
+    /// Issue #426: an enabled earlier V-Carve with a flat depth `F`
+    /// clears the plane `s0 + F` down for a footprint inside its floor
+    /// regions, the targets inset by `F · tan(α/2)` with its own V-bit.
+    /// The sample rectangle `i1` (x 10..60, y 10..40) carved 2.5 mm flat
+    /// with the 90° bit has its floor at x 12.5..57.5, y 12.5..37.5. A
+    /// countersink's 6.35 mm bit in the middle is held; a hole inside
+    /// the targets but outside the floor, on the slope, is not, nor is a
+    /// hole on the floor whose bit reaches the slope. An island of the
+    /// carve grows by the inset on its floor. A V-Carve's outline on the
+    /// floor counts the same way.
+    #[test]
+    fn v_carve_floor_clears_its_start_plane() {
+        let radius_mm = tool_v_bit_90().diameter_mm / 2.0;
+        let cases: &[(&str, f64, f64, Option<(&str, Option<f64>)>)] = &[
+            ("middle", 35.0, 25.0, Some(("v1", Some(2.5)))),
+            ("on the slope", 11.5, 25.0, None),
+            ("bit over the slope", 14.0, 25.0, None),
+            (
+                "bit touching the floor's edge",
+                12.5 + radius_mm,
+                25.0,
+                Some(("v1", Some(2.5))),
+            ),
+            ("outside", 80.0, 80.0, None),
+        ];
+        for (name, x, y, expected) in cases {
+            let mut p = with_hole(*x, *y);
+            p.operations = vec![floored(&["i1"], Some(2.5), 0.0), countersink(&["hole"])];
+            assert_eq!(plane(&p), *expected, "{name}");
+        }
+
+        // The plane is the V-Carve's start depth plus its flat depth.
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![floored(&["i1"], Some(2.5), 1.0), countersink(&["hole"])];
+        assert_eq!(plane(&p), Some(("v1", Some(3.5))));
+        let sink = p.operations.last().cloned().unwrap();
+        let cleared = cleared_start_plane(&p, &sink).unwrap();
+        assert!(cleared.is_at(3.5) && !cleared.is_at(2.0));
+
+        // The island `isle` (x 40..45, y 20..25) grows to x 37.5..47.5 on
+        // the floor: a bit at x 35 reaches it, one at x 25 does not.
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![
+            floored(&["i1", "isle"], Some(2.5), 0.0),
+            countersink(&["hole"]),
+        ];
+        assert_eq!(plane(&p), None, "bit over the grown island");
+        let mut p = with_hole(25.0, 25.0);
+        p.operations = vec![
+            floored(&["i1", "isle"], Some(2.5), 0.0),
+            countersink(&["hole"]),
+        ];
+        assert_eq!(plane(&p), Some(("v1", Some(2.5))), "beside the island");
+
+        // A V-Carve carved into the floor: `in1` (x 20..30) is on it, a
+        // 5 mm square from x 11 crosses its edge at 12.5.
+        let mut p = shapes();
+        place_rect(&mut p, "edge", 11.0, 15.0, 5.0, 5.0);
+        p.operations = vec![floored(&["i1"], Some(2.5), 0.0), carve(&["in1"])];
+        assert_eq!(
+            plane(&p),
+            Some(("v1", Some(2.5))),
+            "an outline on the floor"
+        );
+        p.operations = vec![floored(&["i1"], Some(2.5), 0.0), carve(&["edge"])];
+        assert_eq!(plane(&p), None, "an outline over the slope");
+    }
+
+    /// Issue #426: like a Pocket, a disabled V-Carve and one after the
+    /// operation clear nothing; of an earlier Pocket and V-Carve that
+    /// both hold the footprint, the later one is the plane.
+    #[test]
+    fn disabled_or_later_v_carve_does_not_clear() {
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![floored(&["i1"], Some(2.5), 0.0), countersink(&["hole"])];
+        assert_eq!(plane(&p), Some(("v1", Some(2.5))), "enabled, before");
+
+        if let Some(Operation::VCarve(v1)) = p.operations.first_mut() {
+            v1.enabled = false;
+        }
+        assert_eq!(plane(&p), None, "disabled");
+
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![countersink(&["hole"]), floored(&["i1"], Some(2.5), 0.0)];
+        let sink = p.operations.first().cloned().unwrap();
+        assert_eq!(
+            cleared_start_plane(&p, &sink).map(|c| c.by.id().as_str()),
+            None,
+            "after"
+        );
+
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![
+            pocket("p1", &["i1"]),
+            floored(&["i1"], Some(2.5), 0.0),
+            countersink(&["hole"]),
+        ];
+        assert_eq!(plane(&p), Some(("v1", Some(2.5))), "the V-Carve is later");
+        p.operations.swap(0, 1);
+        assert_eq!(plane(&p), Some(("p1", Some(2.0))), "the Pocket is later");
+    }
+
+    /// Issue #426: a V-Carve with no flat depth has no floor, so it
+    /// clears no plane; nor does one whose floor does not resolve (no
+    /// V-bit to give its slope).
+    #[test]
+    fn v_carve_without_a_flat_depth_does_not_clear() {
+        let mut p = with_hole(35.0, 25.0);
+        p.operations = vec![floored(&["i1"], Some(2.5), 0.0), countersink(&["hole"])];
+        assert_eq!(plane(&p), Some(("v1", Some(2.5))), "with one");
+
+        p.operations = vec![floored(&["i1"], None, 0.0), countersink(&["hole"])];
+        assert_eq!(plane(&p), None, "without one");
+
+        p.operations = vec![floored(&["i1"], Some(2.5), 0.0), countersink(&["hole"])];
+        if let Some(Operation::VCarve(v1)) = p.operations.first_mut() {
+            v1.tool = crate::ids::ToolId::new("t1");
+        }
+        assert_eq!(plane(&p), None, "an end mill has no slope");
     }
 }

@@ -2276,6 +2276,58 @@ mod tests {
         );
     }
 
+    /// Issue #426: the countersink's hole at (50, 50) lies on the floor of
+    /// a V-Carve `v0` of the 40 × 40 square from (30, 30), cut before it
+    /// with the countersink's own 90° 6.35 mm V-bit `t1` and a 2 mm flat
+    /// depth: the floor is the square inset 2 mm, x and y 32..68. A
+    /// countersink 2 mm down starts on that floor, so its flanks engage
+    /// only its own 3 mm depth, which fits the 3.175 mm cone, and its tip
+    /// reaches 5 mm below the stock top. At 1.5 mm the floor is not its
+    /// plane, so the flanks engage from the stock top, 4.5 mm, and it is
+    /// refused; a disabled V-Carve clears nothing.
+    #[test]
+    fn countersink_on_a_v_carve_floor_engages_only_its_own_depth() {
+        let p = with_pocket(holes(&[(50.0, 50.0)], HOLE_MM, v_bit(90.0, 6.35)), 1.0);
+        let mut floored = p.clone();
+        floored.operations[0] = dc_project::Operation::VCarve(dc_project::VCarveOp {
+            id: OperationId::new("v0"),
+            targets: vec![InstanceId::new("sq")],
+            tool: ToolId::new("t1"),
+            flat_depth_mm: Some(2.0),
+            ..dc_project::test_support::sample_v_carve()
+        });
+        floored.tools.retain(|t| t.id.as_str() != "t9");
+        let mut op = countersink_op(&p, 6.0);
+        op.targets = vec![InstanceId::new("h1")];
+        *start_of(&mut op).0 = 2.0;
+
+        let (drilled, warnings) = countersink(&floored, &op);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let cut = plunges(&drilled.toolpath);
+        assert_eq!(cut.len(), 1, "{cut:?}");
+        assert_approx_eq!(cut[0].to.z, THICKNESS_MM - 5.0, TOL);
+        assert_approx_eq!(drilled.holes[0].top_z_mm, THICKNESS_MM - 2.0, TOL);
+
+        *start_of(&mut op).0 = 1.5;
+        let err = refused(&floored, &op);
+        assert!(
+            matches!(err, CamError::CountersinkConeExceeded { engaged_mm, .. }
+                if (engaged_mm - 4.5).abs() < 1e-9),
+            "{err:?}"
+        );
+
+        *start_of(&mut op).0 = 2.0;
+        let mut disabled = floored.clone();
+        if let Some(dc_project::Operation::VCarve(carve)) = disabled.operations.first_mut() {
+            carve.enabled = false;
+        }
+        let err = refused(&disabled, &op);
+        assert!(
+            matches!(err, CamError::StartDepthUncleared { .. }),
+            "{err:?}"
+        );
+    }
+
     /// S1: the derived depth below the start plane may pass the stock
     /// bottom only by the through-cut allowance.
     #[test]

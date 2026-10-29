@@ -6215,6 +6215,41 @@ mod tests {
         );
     }
 
+    /// An enabled V-Carve `o6` of the sample rectangle with the 90° V-bit
+    /// `t2` and a 2.5 mm flat depth from the stock top: its floor is the
+    /// rectangle inset 2.5 mm, x 12.5..57.5, y 12.5..37.5.
+    fn rectangle_v_carve() -> Operation {
+        let mut carve = crate::test_support::sample_v_carve();
+        carve.flat_depth_mm = Some(2.5);
+        Operation::VCarve(carve)
+    }
+
+    /// Issue #426: the countersink's hole at (35, 25) sits on the 2.5 mm
+    /// floor of a V-Carve before it, which holds the whole 6.35 mm bit,
+    /// so a countersink 2.5 mm down is neither uncleared nor past its
+    /// cone: the flanks engage its own 3 mm depth from the floor. At
+    /// 2 mm the floor is not its plane (the order check's mismatch), so
+    /// the flanks engage from the stock top, 5 mm of a 3.175 mm cone. A
+    /// hole on the carve's slope, outside the floor, is uncleared.
+    #[test]
+    fn countersink_on_a_v_carve_floor_is_not_uncleared() {
+        let mut floored = countersink_project(|drill| *countersink_of(drill).1 = 2.5);
+        floored.operations.insert(1, rectangle_v_carve());
+        assert_eq!(validate(&floored), vec![]);
+
+        let mut mismatched = countersink_project(|drill| *countersink_of(drill).1 = 2.0);
+        mismatched.operations.insert(1, rectangle_v_carve());
+        let (engagement_mm, _, from_stock_top, _) = cone_exceeded(&validate(&mismatched));
+        assert!(approx_eq(engagement_mm, 5.0, 1e-9), "{engagement_mm}");
+        assert!(from_stock_top);
+
+        let mut on_the_slope = countersink_project(|drill| *countersink_of(drill).1 = 0.1);
+        on_the_slope.operations.insert(1, rectangle_v_carve());
+        on_the_slope.instances[1].transform = Transform::translate(11.5, 25.0);
+        let codes: Vec<&str> = validate(&on_the_slope).iter().map(Problem::code).collect();
+        assert_eq!(codes, ["start_depth_uncleared"]);
+    }
+
     /// The design spec, "Validation": a countersink's V-bit is no
     /// `drill_cutter_unusual`, and its unset `depth_mm` is not an unset
     /// value (the depth is derived). Any cutter but a V-bit is

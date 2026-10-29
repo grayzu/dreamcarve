@@ -236,9 +236,10 @@ fn start_depth_warnings(project: &Project) -> Vec<Warning> {
         .filter_map(|op| match start_plane(project, op)? {
             StartPlane::Mismatch(pocket) => Some(Warning::StartDepthMismatch {
                 op: op.id().clone(),
-                pocket: pocket.id.clone(),
+                cleared_by: pocket.id.clone(),
+                floor: crate::warning::FloorKind::Pocket,
                 start_depth_mm: start_setting(op)?.start_depth_mm,
-                pocket_depth_mm: pocket.depth_mm,
+                floor_depth_mm: pocket.depth_mm,
             }),
             StartPlane::StockTop
             | StartPlane::Cleared(_)
@@ -500,7 +501,7 @@ mod tests {
     use crate::error::ShapeRef;
     use crate::pocket::generate_pocket;
     use crate::profile::generate_profile;
-    use crate::warning::WarningCode;
+    use crate::warning::{FloorKind, WarningCode};
     use dc_geometry::{Point, Polyline, Transform, Vertex};
     use dc_project::test_support::{
         sample_pocket, sample_project, sample_v_carve, tool_6_35_upcut, tool_v_bit_90,
@@ -1587,9 +1588,10 @@ mod tests {
             mismatches(&project),
             vec![Warning::StartDepthMismatch {
                 op: OperationId::new("o6"),
-                pocket: OperationId::new("o2"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
                 start_depth_mm: 2.0,
-                pocket_depth_mm: Some(1.0),
+                floor_depth_mm: Some(1.0),
             }]
         );
 
@@ -1598,9 +1600,10 @@ mod tests {
             mismatches(&project),
             vec![Warning::StartDepthMismatch {
                 op: OperationId::new("o6"),
-                pocket: OperationId::new("o2"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
                 start_depth_mm: 0.0,
-                pocket_depth_mm: Some(1.0),
+                floor_depth_mm: Some(1.0),
             }]
         );
 
@@ -1691,7 +1694,7 @@ mod tests {
             let named: Vec<String> = mismatches(project)
                 .iter()
                 .filter_map(|w| match w {
-                    Warning::StartDepthMismatch { pocket, .. } => Some(pocket.to_string()),
+                    Warning::StartDepthMismatch { cleared_by, .. } => Some(cleared_by.to_string()),
                     _ => None,
                 })
                 .collect();
@@ -1788,9 +1791,10 @@ mod tests {
                 mismatches(&project),
                 vec![Warning::StartDepthMismatch {
                     op: o3(),
-                    pocket: OperationId::new("o2"),
+                    cleared_by: OperationId::new("o2"),
+                    floor: FloorKind::Pocket,
                     start_depth_mm: start_mm,
-                    pocket_depth_mm: Some(pocket_mm),
+                    floor_depth_mm: Some(pocket_mm),
                 }]
             );
         }
@@ -1835,5 +1839,67 @@ mod tests {
             drill.depth_mm = Some(1.0);
         }
         assert_eq!(kind(&simple), None);
+    }
+
+    /// Issue #426: the countersink of [`countersink_in_pocket`] with no
+    /// Pocket, `start_depth_mm` down, after a V-Carve `o6` of the sample
+    /// rectangle with the same 90° V-bit and a 2.5 mm flat depth from the
+    /// stock top, whose floor (the rectangle inset 2.5 mm) holds the
+    /// 6.35 mm bit at the hole.
+    fn countersink_on_v_carve_floor(start_depth_mm: f64) -> Project {
+        let mut project = countersink_in_pocket(None, start_depth_mm, 35.0);
+        project.operations.insert(
+            0,
+            Operation::VCarve(VCarveOp {
+                flat_depth_mm: Some(2.5),
+                ..sample_v_carve()
+            }),
+        );
+        project
+    }
+
+    /// Issue #426: a V-Carve's flat floor that holds a countersink's bit
+    /// at every hole clears its start plane at the floor's depth, the
+    /// V-Carve's start depth plus its flat depth. At that depth nothing
+    /// is reported; at another, `check` warns `start_depth_mismatch`
+    /// naming the V-Carve and both depths, and validation reports no
+    /// uncleared plane.
+    #[test]
+    fn countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch() {
+        let kind = |project: &Project| {
+            let sink = project.operations.last().expect("the countersink");
+            start_plane(project, sink).map(|plane| match plane {
+                StartPlane::StockTop => "stock_top",
+                StartPlane::Cleared(_) => "cleared",
+                StartPlane::Mismatch(_) => "mismatch",
+                StartPlane::ClearedExternally => "cleared_externally",
+                StartPlane::Uncleared => "uncleared",
+            })
+        };
+
+        let project = countersink_on_v_carve_floor(2.5);
+        assert_eq!(kind(&project), Some("cleared"));
+        assert_eq!(uncleared(&project), vec![]);
+        assert_eq!(check(&project, &[]), vec![]);
+
+        let project = countersink_on_v_carve_floor(2.0);
+        assert_eq!(kind(&project), Some("mismatch"));
+        assert_eq!(uncleared(&project), vec![]);
+        let warnings = mismatches(&project);
+        assert_eq!(
+            warnings,
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o3"),
+                cleared_by: OperationId::new("o6"),
+                floor: FloorKind::VCarve,
+                start_depth_mm: 2.0,
+                floor_depth_mm: Some(2.5),
+            }]
+        );
+        let message = warnings[0].to_string();
+        assert!(
+            message.contains("`o6`, the V-Carve before it whose flat floor contains"),
+            "{message}"
+        );
     }
 }

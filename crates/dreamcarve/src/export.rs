@@ -1382,9 +1382,10 @@ mod tests {
         project.operations.push(Operation::Drill(sink));
         let mismatch = |op: &str| dc_cam::Warning::StartDepthMismatch {
             op: OperationId::new(op),
-            pocket: OperationId::new("o2"),
+            cleared_by: OperationId::new("o2"),
+            floor: dc_cam::FloorKind::Pocket,
             start_depth_mm: 2.0,
-            pocket_depth_mm: Some(1.0),
+            floor_depth_mm: Some(1.0),
         };
         assert_eq!(
             warning_field(&project, &mismatch("o3")).as_deref(),
