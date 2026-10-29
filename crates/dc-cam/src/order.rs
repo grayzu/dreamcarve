@@ -24,7 +24,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{Operation, OperationId, PocketOp, Project, ToolId};
+use dc_project::{DrillCycle, Operation, OperationId, PocketOp, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -194,19 +194,30 @@ struct StartSetting {
 
 /// The start-plane setting of `op`, for the operations cut from a start
 /// plane; `None` for the others. This is the list of start-plane
-/// operations: a countersink Drill (sub-phase 3.2) and a Photo V-Carve
-/// (3.4) join it here, and [`start_plane`] and [`check`] then cover them.
-/// An Inlay is exempt (its start plane is the stock top or the plug's own
-/// design). The match is exhaustive so a new operation must say.
+/// operations: a V-Carve and a countersink Drill (format 21); a Photo
+/// V-Carve (3.4) joins it here, and [`start_plane`] and [`check`] then
+/// cover it. An Inlay is exempt (its start plane is the stock top or the
+/// plug's own design). The matches are exhaustive so a new operation or
+/// Drill cycle must say.
 fn start_setting(op: &Operation) -> Option<StartSetting> {
     match op {
         Operation::VCarve(carve) => Some(StartSetting {
             start_depth_mm: carve.start_depth_mm,
             cleared_externally: carve.start_plane_cleared_externally,
         }),
+        Operation::Drill(drill) => match drill.cycle {
+            DrillCycle::Countersink {
+                start_depth_mm,
+                start_plane_cleared_externally,
+                ..
+            } => Some(StartSetting {
+                start_depth_mm,
+                cleared_externally: start_plane_cleared_externally,
+            }),
+            DrillCycle::Simple | DrillCycle::Peck { .. } => None,
+        },
         Operation::Profile(_)
         | Operation::Pocket(_)
-        | Operation::Drill(_)
         | Operation::Bore(_)
         | Operation::Engrave(_) => None,
     }

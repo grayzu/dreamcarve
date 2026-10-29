@@ -23,6 +23,20 @@ phases bump the patch number.
   holds the V-bit's whole cone to the carved shapes (safety rule 14, S17).
   User guide chapter "V-Carve operation", and a third quick start, "A
   V-carved sign from SVG outlines", on the new `tests/fixtures/sign.svg`.
+- **Countersink in the project file; format version 21.** A Drill can hold
+  the `{ "countersink": { "diameter_mm", "start_depth_mm",
+  "start_plane_cleared_externally" } }` cycle, and `check` validates and
+  generates it: the tool must be a V-bit, the mouth above 0 and no wider
+  than the bit, the depth `diameter_mm / (2·tan(α/2))` below the start
+  plane plus a start depth no earlier Pocket clears must fit the bit's
+  cone, and a start depth below the stock top needs a Pocket before it
+  that holds the whole bit at every hole, or
+  `start_plane_cleared_externally`. A circle at least as wide as the mouth
+  is skipped (`countersink_mouth_not_wider_than_hole`), and
+  `allow_tool_wider_than_hole` has no effect on a countersink
+  (`countersink_ignores_tool_width`). This build does not export a
+  countersink yet; `check` and `export` say so. Older files upgrade
+  unchanged.
 
 ### Changed
 

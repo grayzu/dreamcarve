@@ -11,6 +11,14 @@
 //! the safety pass all need it, and validation may not depend on
 //! `dc-cam`, so it lives here.
 
+/// How far, mm, a countersink's mouth may pass its bit's diameter, and
+/// its flank engagement the bit's cone height, and still be cut: upstream's
+/// `1e-9`. Not rounding slack but floating point's: a 90° 12 mm bit's
+/// full 12 mm mouth derives a depth one ulp above its 6 mm cone, the most
+/// ordinary countersink there is. Validation and the generator compare
+/// with the same value, so they agree.
+pub const COUNTERSINK_TOLERANCE_MM: f64 = 1e-9;
+
 /// How far below its start plane a V-bit of included angle
 /// `included_angle_deg` must plunge to open a mouth `mouth_mm` wide: a
 /// cone opens to radius `d · tan(α/2)` at depth `d`, so `d = mouth /

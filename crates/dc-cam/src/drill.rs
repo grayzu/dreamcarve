@@ -21,8 +21,17 @@
 //! retract plane, as a controller's `G83`/`G73` counts them from `R`,
 //! not from the stock top (#153); holes are visited nearest
 //! neighbour from the first circle in drawing order (D5), not from the
-//! origin, by [`crate::sequence`](fn@crate::sequence); there is no countersink or
-//! clamp check, and helical boring is its own operation ([`crate::bore`]).
+//! origin, by [`crate::sequence`](fn@crate::sequence); there is no clamp
+//! check, and helical boring is its own operation ([`crate::bore`]).
+//!
+//! The countersink cycle (format 21; `docs/specs/phase-3/design.md`,
+//! "Algorithms → Countersink"; upstream `countersinkTipDepth`,
+//! `resolveCountersinkDepth`, `emitCountersinkPlunge` and the
+//! mouth-versus-hole skip) is a simple plunge whose depth is derived from
+//! the V-bit's angle, measured from a start plane `start_depth_mm` below
+//! the stock top rather than from a feature's own top face; upstream's
+//! tool `maxCutDepth` check is the cone-height check, from the start
+//! plane only where an earlier Pocket at that depth has cleared it.
 //! Nothing here depends on Y-up or Y-down: a drill moves only
 //! in Z at each centre, and distances are symmetric under the flip.
 
@@ -33,9 +42,10 @@ use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
-use dc_geometry::{Point, Point3, as_circle};
+use dc_geometry::{EPS_MM, Point, Point3, as_circle};
 use dc_project::{
-    DrillCycle, DrillOp, InstanceId, MachiningOrder, OperationId, PeckRetract, Project, Tool,
+    COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, InstanceId, MachiningOrder, Operation,
+    OperationId, PeckRetract, Project, Tool, ToolKind, containing_pocket, countersink_depth_mm,
 };
 
 /// How far above the depth already drilled a full-retract peck re-enters
@@ -66,13 +76,14 @@ pub enum CannedKind {
 pub struct DrillHole {
     /// The hole centre, mm, project space.
     pub centre: Point,
-    /// The hole top: the stock top.
+    /// The hole top: the stock top, or a countersink's start plane.
     pub top_z_mm: f64,
     /// The hole bottom.
     pub bottom_z_mm: f64,
-    /// The retract plane (`R`): `min(safe Z, top + retract_mm)`.
+    /// The retract plane (`R`): `min(safe Z, stock top + retract_mm)`.
     pub retract_z_mm: f64,
-    /// The equivalent canned cycle.
+    /// The equivalent canned cycle; always [`CannedKind::Expanded`] for a
+    /// countersink, which no canned cycle describes.
     pub cycle: CannedKind,
     /// The peck depth, mm, for a peck cycle.
     pub peck_mm: Option<f64>,
@@ -130,6 +141,19 @@ pub struct DrillToolpath {
 /// A peck that reaches the bottom from the retract plane drills the hole
 /// in one plunge, with [`Warning::DrillPeckDeeperThanHole`].
 ///
+/// A countersink (format 21) plunges once at each circle's centre, from
+/// the same retract plane above the stock top, to `diameter_mm / (2 ·
+/// tan(α/2))` below its start plane, `start_depth_mm` below the stock top;
+/// `depth_mm` is not used. A circle at least as wide as the mouth is
+/// skipped with [`Warning::CountersinkMouthNotWiderThanHole`], and the
+/// narrower-hole rule above does not apply. Its holes are recorded as
+/// [`CannedKind::Expanded`]. It fails without a toolpath when the tool is
+/// not a V-bit with an angle in (0°, 180°), the mouth is not above 0 or
+/// is wider than the bit, the start depth is not from 0 to the stock
+/// thickness, the start plane below the stock top is neither cleared by
+/// an earlier Pocket ([`dc_project::containing_pocket`]) nor vouched for,
+/// or the flanks would engage past the cone.
+///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
 /// depth, or a peck's step-down is missing; when the depth passes the
 /// stock bottom plus allowance; when the chip-break gap is not positive or
@@ -181,23 +205,30 @@ pub fn generate_drill(
         .stock
         .thickness_mm
         .ok_or(CamError::MissingThickness)?;
-    let depth_mm = op
-        .depth_mm
-        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
-    let cycle = Cycle::of(op, tool)?;
+    let cycle = Cycle::of(project, op, tool, thickness_mm)?;
+    // The hole's top and its depth below it: the stock top and the
+    // operation's depth, or a countersink's start plane and derived depth.
+    let (top_z_mm, depth_mm) = match &cycle.countersink {
+        Some(sink) => (thickness_mm - sink.start_depth_mm, sink.depth_mm),
+        None => (
+            thickness_mm,
+            op.depth_mm
+                .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?,
+        ),
+    };
     // The hole bottom, with the depth checked against the stock bottom
     // plus the allowance (S1) as for every generator.
+    let below_stock_top_mm = thickness_mm - top_z_mm + depth_mm;
     let bottom_z_mm = pass_z_mm(
         &op.id,
         thickness_mm,
-        depth_mm,
-        depth_mm,
+        below_stock_top_mm,
+        below_stock_top_mm,
         op.through_cut_allowance_mm,
     )?
     .last()
     .copied()
-    .unwrap_or(thickness_mm - depth_mm);
-    let top_z_mm = thickness_mm;
+    .unwrap_or(top_z_mm - depth_mm);
     let safe_z_mm = thickness_mm + op.safe_z_mm;
     let mut warnings = Vec::new();
     if op.retract_mm < 0.0 {
@@ -207,7 +238,11 @@ pub fn generate_drill(
             used_mm: 0.0,
         });
     }
-    let retract_z_mm = (top_z_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
+    // Measured from the stock top whatever the hole's top, so the rapid
+    // down to it never ends in the stock: a countersink on a Pocket's
+    // floor plunges through the Pocket's air at the plunge rate (security
+    // review H3).
+    let retract_z_mm = (thickness_mm + op.retract_mm.max(0.0)).min(safe_z_mm);
     // Plunge levels, shallowest first; a simple cycle is one level. Pecks
     // count from the retract plane, as a controller's `G83`/`G73` counts
     // them from `R` (#153), so a canned cycle and these moves are the
@@ -238,7 +273,11 @@ pub fn generate_drill(
     }
     let dwell_s = (op.dwell_s > 0.0).then_some(op.dwell_s);
 
-    let holes = resolve_holes(project, op, tool.diameter_mm, &mut warnings)?;
+    let fits = match &cycle.countersink {
+        Some(sink) => Fits::Mouth(sink.mouth_mm),
+        None => Fits::Tool(tool.diameter_mm),
+    };
+    let holes = resolve_holes(project, op, fits, &mut warnings)?;
     let blocks: Vec<CutBlock> = holes
         .iter()
         .map(|(shape, centre)| {
@@ -334,26 +373,151 @@ pub fn generate_drill(
     ))
 }
 
-/// The operation's cycle, resolved: the peck depth in effect and how the
-/// tool retracts between pecks.
+/// The operation's cycle, resolved: the peck depth in effect, how the
+/// tool retracts between pecks, and a countersink's settings.
 #[derive(Debug, Clone)]
 struct Cycle {
-    /// `None` for a simple cycle.
+    /// `None` for a simple cycle or a countersink.
     peck_mm: Option<f64>,
-    /// How a peck retracts; unused for a simple cycle.
+    /// How a peck retracts; unused for a simple cycle or a countersink.
     retract: PeckRetract,
+    /// A countersink's mouth and derived depth (format 21).
+    countersink: Option<Countersink>,
+}
+
+/// A countersink, resolved and checked (`docs/specs/phase-3/design.md`,
+/// "Algorithms → Countersink", step 1).
+#[derive(Debug, Clone, Copy)]
+struct Countersink {
+    /// The mouth's diameter at the start plane, mm.
+    mouth_mm: f64,
+    /// The start plane's depth below the stock top, mm.
+    start_depth_mm: f64,
+    /// The tip's depth below the start plane, mm.
+    depth_mm: f64,
+}
+
+impl Countersink {
+    /// Port of upstream `resolveCountersinkDepth`, with the start plane
+    /// and the cone check of DreamCarve: the tool is a V-bit with an
+    /// angle in (0°, 180°); the mouth is above 0 and no wider than the
+    /// bit (within [`COUNTERSINK_TOLERANCE_MM`]); the depth is
+    /// [`countersink_depth_mm`]; the start depth is from 0 to the stock
+    /// thickness, and below the stock top an enabled earlier Pocket holds
+    /// the bit at every hole ([`containing_pocket`]) or the operation
+    /// vouches for the plane (security review M2); and the flanks engage
+    /// no deeper than the cone, counting the start depth unless that
+    /// Pocket is at it (H4). Upstream's tool `maxCutDepth` check is this
+    /// cone check: DreamCarve tools have none. Every check fails the
+    /// whole operation, so nothing is cut at a guessed depth.
+    fn of(
+        project: &Project,
+        op: &DrillOp,
+        tool: &Tool,
+        thickness_mm: f64,
+        (mouth_mm, start_depth_mm, cleared_externally): (f64, f64, bool),
+    ) -> Result<Self, CamError> {
+        let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+            return Err(CamError::CountersinkNeedsVBit {
+                op: op.id.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        };
+        let angle_range = || CamError::VBitAngleRange {
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+            angle_deg: included_angle_deg,
+        };
+        if !(included_angle_deg > 0.0 && included_angle_deg < 180.0) {
+            return Err(angle_range());
+        }
+        if !(mouth_mm.is_finite() && mouth_mm > 0.0) {
+            return Err(CamError::CountersinkDiameterPositive {
+                op: op.id.clone(),
+                diameter_mm: mouth_mm,
+            });
+        }
+        if mouth_mm - tool.diameter_mm > COUNTERSINK_TOLERANCE_MM {
+            return Err(CamError::CountersinkMouthExceedsTool {
+                op: op.id.clone(),
+                mouth_mm,
+                tool_mm: tool.diameter_mm,
+            });
+        }
+        let depth_mm =
+            countersink_depth_mm(mouth_mm, included_angle_deg).ok_or_else(angle_range)?;
+        let cone_mm =
+            countersink_depth_mm(tool.diameter_mm, included_angle_deg).ok_or_else(angle_range)?;
+        if !(start_depth_mm.is_finite() && (0.0..=thickness_mm).contains(&start_depth_mm)) {
+            return Err(CamError::InvalidStartDepth {
+                op: op.id.clone(),
+                start_depth_mm,
+            });
+        }
+        let mut engaged_mm = depth_mm;
+        if start_depth_mm > 0.0 {
+            let pocket = containing_pocket(project, &Operation::Drill(op.clone()));
+            if pocket.is_none() && !cleared_externally {
+                return Err(CamError::StartDepthUncleared {
+                    op: op.id.clone(),
+                    start_depth_mm,
+                });
+            }
+            let cleared_at_start = pocket
+                .and_then(|p| p.depth_mm)
+                .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
+            if !cleared_at_start {
+                engaged_mm += start_depth_mm;
+            }
+        }
+        if engaged_mm - cone_mm > COUNTERSINK_TOLERANCE_MM {
+            return Err(CamError::CountersinkConeExceeded {
+                op: op.id.clone(),
+                engaged_mm,
+                cone_mm,
+            });
+        }
+        Ok(Self {
+            mouth_mm,
+            start_depth_mm,
+            depth_mm,
+        })
+    }
 }
 
 impl Cycle {
-    fn of(op: &DrillOp, tool: &Tool) -> Result<Self, CamError> {
+    fn of(
+        project: &Project,
+        op: &DrillOp,
+        tool: &Tool,
+        thickness_mm: f64,
+    ) -> Result<Self, CamError> {
         match &op.cycle {
             DrillCycle::Simple => Ok(Self {
                 peck_mm: None,
                 retract: PeckRetract::Full,
+                countersink: None,
             }),
-            DrillCycle::Countersink { .. } => Err(CamError::NotSupportedYet {
-                op: op.id.clone(),
-                feature: "a countersink cycle".into(),
+            DrillCycle::Countersink {
+                diameter_mm,
+                start_depth_mm,
+                start_plane_cleared_externally,
+            } => Ok(Self {
+                peck_mm: None,
+                retract: PeckRetract::Full,
+                countersink: Some(Countersink::of(
+                    project,
+                    op,
+                    tool,
+                    thickness_mm,
+                    (
+                        *diameter_mm,
+                        *start_depth_mm,
+                        *start_plane_cleared_externally,
+                    ),
+                )?),
             }),
             DrillCycle::Peck {
                 peck_depth_mm,
@@ -378,14 +542,20 @@ impl Cycle {
                 Ok(Self {
                     peck_mm: Some(peck_mm),
                     retract: retract.clone(),
+                    countersink: None,
                 })
             }
         }
     }
 
     /// The canned cycle these moves are equivalent to (design spec,
-    /// "Algorithms → Drill", step 6).
+    /// "Algorithms → Drill", step 6). A countersink has none, so it is
+    /// always written as its moves (format 21, S18): no `G8x` cycle can
+    /// say its depth is derived.
     fn canned(&self, dwells: bool) -> CannedKind {
+        if self.countersink.is_some() {
+            return CannedKind::Expanded;
+        }
         match (self.peck_mm, &self.retract, dwells) {
             (None, _, false) => CannedKind::G81,
             (None, _, true) => CannedKind::G82,
@@ -450,16 +620,30 @@ pub(crate) fn circles_of(
     Ok(out)
 }
 
+/// Which circles a Drill cuts, by their size.
+#[derive(Debug, Clone, Copy)]
+enum Fits {
+    /// A simple or peck Drill with a tool this wide, mm: a narrower hole
+    /// is skipped unless the operation allows it.
+    Tool(f64),
+    /// A countersink with a mouth this wide, mm: a hole at least as wide
+    /// is skipped (upstream's mouth-versus-hole rule). Its bit is wider
+    /// than the hole by design, so the tool's width is no rule.
+    Mouth(f64),
+}
+
 /// The holes of `op`, in drawing order (target order, then profile order):
 /// each circular closed profile, placed by its instance's transform, with
 /// its centre. Other profiles warn and are skipped. A hole narrower than
 /// the tool by more than the flatten tolerance warns and is skipped
 /// (maintainer decision 2026-10-24), unless the operation allows it, when
-/// it is drilled at the tool's size and warns. No hole left warns once.
+/// it is drilled at the tool's size and warns. For a countersink, a hole
+/// at least as wide as the mouth, less upstream's `1e-9`, warns and is
+/// skipped instead. No hole left warns once.
 fn resolve_holes(
     project: &Project,
     op: &DrillOp,
-    tool_diameter_mm: f64,
+    fits: Fits,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<(ShapeRef, Point)>, CamError> {
     let mut holes = Vec::new();
@@ -472,6 +656,24 @@ fn resolve_holes(
             continue;
         };
         let hole_mm = 2.0 * radius_mm;
+        let tool_diameter_mm = match fits {
+            Fits::Tool(tool_diameter_mm) => tool_diameter_mm,
+            Fits::Mouth(mouth_mm) => {
+                // Port of upstream's skip: the cone's rim would sit inside
+                // the bore, with no seat to cut.
+                if mouth_mm - hole_mm <= COUNTERSINK_TOLERANCE_MM {
+                    warnings.push(Warning::CountersinkMouthNotWiderThanHole {
+                        op: op.id.clone(),
+                        shape,
+                        mouth_mm,
+                        hole_mm,
+                    });
+                } else {
+                    holes.push((shape, centre));
+                }
+                continue;
+            }
+        };
         // The outline was taken for a circle within the flatten
         // tolerance, so its diameter is known no closer than that: a
         // hole drawn at the tool's size is drilled.
@@ -1762,7 +1964,7 @@ mod tests {
         let err = refused(&p, &countersink_op(&p, 12.0));
         assert!(
             matches!(err, CamError::CountersinkMouthExceedsTool { mouth_mm, tool_mm, .. }
-                if mouth_mm == 12.0 && tool_mm == 10.0),
+                if (mouth_mm - 12.0).abs() < TOL && (tool_mm - 10.0).abs() < TOL),
             "{err:?}"
         );
         let (drilled, _) = countersink(&p, &countersink_op(&p, 10.0));
@@ -1998,15 +2200,16 @@ mod tests {
         ] {
             op.retract_mm = retract_mm;
             let (drilled, warnings) = countersink(&p, &op);
-            assert_profile(
-                &profile_of(&drilled.toolpath),
-                &[
-                    ('R', SAFE_Z_MM),
-                    ('R', retract_z_mm),
-                    ('L', THICKNESS_MM - 7.0),
-                    ('R', SAFE_Z_MM),
-                ],
-            );
+            // A retract plane at safe Z needs no rapid down to it.
+            let mut expected = vec![
+                ('R', SAFE_Z_MM),
+                ('L', THICKNESS_MM - 7.0),
+                ('R', SAFE_Z_MM),
+            ];
+            if retract_z_mm < SAFE_Z_MM {
+                expected.insert(1, ('R', retract_z_mm));
+            }
+            assert_profile(&profile_of(&drilled.toolpath), &expected);
             assert_approx_eq!(drilled.holes[0].retract_z_mm, retract_z_mm, TOL);
             assert_eq!(
                 codes(&warnings),
@@ -2034,7 +2237,7 @@ mod tests {
         let err = refused(&p, &op);
         assert!(
             matches!(&err, CamError::StartDepthUncleared { op, start_depth_mm }
-                if op.as_str() == "o1" && *start_depth_mm == 2.0),
+                if op.as_str() == "o1" && (*start_depth_mm - 2.0).abs() < TOL),
             "{err:?}"
         );
 

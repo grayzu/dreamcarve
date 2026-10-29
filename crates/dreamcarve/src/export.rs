@@ -193,11 +193,23 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             // The hole records go to the emitter, which writes them as
             // canned cycles when the project asks and the controller's
             // motion for them is the toolpath.
-            Operation::Drill(op) => generate_drill(project, op).map(|(drilled, w)| {
-                (
+            Operation::Drill(op) => generate_drill(project, op).and_then(|(drilled, w)| {
+                // Format 21 (#425): a countersink generates, so `check`
+                // finds its errors, but the safety pass cannot yet hold
+                // its program to the derived depth (S18, #427), so it is
+                // refused here by name rather than as a cut off its
+                // material.
+                if op.cycle.is_countersink() {
+                    return Err(CamError::NotSupportedYet {
+                        op: op.id.clone(),
+                        feature: "a countersink cycle, whose program the safety pass cannot check yet (S18),"
+                            .to_owned(),
+                    });
+                }
+                Ok((
                     vec![EmitOp::drill(operation.clone(), tool.clone(), drilled)],
                     w,
-                )
+                ))
             }),
             // Format 20: one tool run per clearing pass, then the V-bit's
             // (`docs/specs/phase-3/design.md`, "Clearing passes", step 4);
@@ -247,7 +259,7 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             None => w.to_string(),
         };
         Finding {
-            field: warning_field(&w),
+            field: warning_field(project, &w),
             ..Finding::coded(w.code().as_str(), message)
         }
     }));
@@ -286,11 +298,20 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
 
 /// The field, as validation names it, that a project-wide warning is
 /// about, so it is printed at that value's position: the start depth of
-/// a `start_depth_mismatch`, where `start_depth_uncleared` is located too.
-fn warning_field(warning: &dc_cam::Warning) -> Option<String> {
+/// a `start_depth_mismatch`, where `start_depth_uncleared` is located too
+/// (a countersink's is in its cycle, format 21).
+fn warning_field(project: &Project, warning: &dc_cam::Warning) -> Option<String> {
     match warning {
         dc_cam::Warning::StartDepthMismatch { op, .. } => {
-            Some(format!("operations[{op}].start_depth_mm"))
+            let countersink = project.operations.iter().any(|o| {
+                matches!(o, Operation::Drill(drill) if &drill.id == op && drill.cycle.is_countersink())
+            });
+            let field = if countersink {
+                "cycle.countersink.start_depth_mm"
+            } else {
+                "start_depth_mm"
+            };
+            Some(format!("operations[{op}].{field}"))
         }
         _ => None,
     }
@@ -1345,5 +1366,33 @@ mod tests {
             .filter(|w| w.code.as_deref() == Some("clearing_not_descending"))
             .count();
         assert_eq!(count, 1, "{findings:?}");
+    }
+
+    /// Format 21: `start_depth_mismatch` is printed at the start depth,
+    /// which for a countersink is in its cycle.
+    #[test]
+    fn start_depth_mismatch_is_located_at_the_operations_start_depth() {
+        let mut project = sample_project();
+        let mut sink = dc_project::test_support::sample_drill();
+        sink.cycle = dc_project::DrillCycle::Countersink {
+            diameter_mm: 6.0,
+            start_depth_mm: 2.0,
+            start_plane_cleared_externally: false,
+        };
+        project.operations.push(Operation::Drill(sink));
+        let mismatch = |op: &str| dc_cam::Warning::StartDepthMismatch {
+            op: OperationId::new(op),
+            pocket: OperationId::new("o2"),
+            start_depth_mm: 2.0,
+            pocket_depth_mm: Some(1.0),
+        };
+        assert_eq!(
+            warning_field(&project, &mismatch("o3")).as_deref(),
+            Some("operations[o3].cycle.countersink.start_depth_mm")
+        );
+        assert_eq!(
+            warning_field(&project, &mismatch("o6")).as_deref(),
+            Some("operations[o6].start_depth_mm")
+        );
     }
 }
