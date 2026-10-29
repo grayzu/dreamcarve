@@ -133,7 +133,8 @@ percentage of tool diameter.
 _Avoid_: Step-over distance, overlap, pass width
 
 **Drill**:
-An operation that plunges a tool at one or more points, optionally pecking.
+An operation that plunges a tool at one or more points, optionally pecking,
+or countersinks them.
 It skips a circle smaller than the tool, unless its
 `allow_tool_wider_than_hole` is set, since the hole is always the tool's size.
 A hole bigger than the bit is a Bore's.
@@ -149,6 +150,16 @@ wider than twice the bit, which would leave a core standing (a Pocket
 clears that). Fusion's "2D Bore". (changed: maintainer decision 2026-10-24)
 _Avoid_: Helical drill, helix (a helix is also an Entry), counterbore, ream
 _PureCutCNC_: Drilling, `helical` drill type
+
+**Countersink**:
+A Drill cycle (format 21) that opens a conical seat with a V-bit at each
+circle: one plunge at the centre to the depth that makes the cone
+`diameter_mm` wide at the hole's top, `start_depth_mm` below the stock
+top. The depth is derived from the bit's angle, never set, and it is
+always written as plain moves. A circle at least as wide as the mouth is
+skipped.
+_Avoid_: Chamfer, counterbore (a flat-bottomed step, a Bore or Pocket)
+_PureCutCNC_: Drilling, `countersink` drill type
 
 **V-Carve**:
 An operation that drives a V-bit along the medial lines of a shape so the cut
