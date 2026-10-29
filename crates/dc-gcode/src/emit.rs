@@ -900,10 +900,13 @@ fn emit_enabled(
     let text = w.finish();
 
     // Step 7: the safety pass, on the text. The material each operation
-    // may cut (S9) comes from the project, not from the generator.
+    // may cut (S9, S17) comes from the project, not from the generator,
+    // and per tool run: a carve's clearing run is held to its floor
+    // (#406, #408).
     let materials: Vec<Material> = planned
         .iter()
-        .map(|&(op, ..)| Material::of(project, op))
+        .zip(enabled)
+        .map(|(&(op, tool, ..), entry)| Material::of_run(project, op, &entry.label, tool))
         .collect();
     // #337: and the tabs each must leave standing.
     let tabs: Vec<Vec<TabSpine>> = planned
@@ -3923,14 +3926,45 @@ mod tests {
     /// its own when each tool run is one, and its operation comment names it
     /// `… (clearing t1)`, written `… clearing t1` since a comment cannot
     /// hold parentheses; the operation's own run keeps its plain name. The
-    /// emitter reads only the label: until the safety pass holds a carve's
-    /// clearing run to its floor (#408), the run here is a Profile's
-    /// toolpath, which S9 already holds.
+    /// carve is the sample rectangle's V-Carve with the 90° V-bit `t2`, a
+    /// 2 mm flat depth and one clearing pass with the sample's end mill
+    /// `t1`; both runs pass the safety pass (S17, and S9 holding the
+    /// clearing run to the floor, #408).
     #[test]
     fn clearing_runs_become_programs_of_their_own_tools() {
         let mut project = project_with("grblhal");
-        let mut ops = two_tool_ops(&mut project);
-        ops[0].label = RunLabel::Clearing(ToolId::new("t1"));
+        project
+            .tools
+            .push(dc_project::test_support::tool_v_bit_90());
+        let carve = dc_project::VCarveOp {
+            flat_depth_mm: Some(2.0),
+            step_over_fraction: Some(0.4),
+            clearing: vec![dc_project::ClearingPass {
+                tool: ToolId::new("t1"),
+                strategy: dc_project::ClearanceStrategy::Offset,
+                direction: dc_project::CutDirection::Climb,
+                entry: dc_project::Entry::Plunge,
+            }],
+            ..dc_project::test_support::sample_v_carve()
+        };
+        project.operations = vec![Operation::VCarve(carve.clone())];
+        let (runs, _) = dc_cam::generate_vcarve(&project, &carve).unwrap();
+        let ops: Vec<EmitOp> = runs
+            .into_iter()
+            .map(|run| EmitOp {
+                op: Operation::VCarve(carve.clone()),
+                tool: project
+                    .tools
+                    .iter()
+                    .find(|t| t.id == run.tool)
+                    .unwrap()
+                    .clone(),
+                toolpath: run.toolpath,
+                holes: None,
+                label: run.label,
+            })
+            .collect();
+        assert_eq!(ops[0].label, RunLabel::Clearing(ToolId::new("t1")));
         project.post_processor.tool_change_mode = ToolChangeMode::SeparatePrograms;
         let (programs, _) =
             emit_programs(&project, &ops, ProgramSplit::ProjectDefault, DATE).unwrap();
@@ -3947,7 +3981,11 @@ mod tests {
             programs[0].text
         );
         assert_eq!(programs[1].first_tool.number, 2);
-        assert!(comment(&programs[1].text, "Second"), "{}", programs[1].text);
+        assert!(
+            comment(&programs[1].text, &first_name),
+            "{}",
+            programs[1].text
+        );
         assert!(
             !programs[1].text.contains("clearing"),
             "{}",

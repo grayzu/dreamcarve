@@ -5099,14 +5099,14 @@ mod tests {
         material::check(&blocks, &post, &transform, tolerances, &span)
     }
 
-    /// S9 for a V-Carve until #408 (the partial S17 of #404,
-    /// `crate::material`'s module docs), on a hand-written program for a
-    /// V-Carve of the sample rectangle (X 10 to 60, Y 10 to 40, stock-top
-    /// origin) with the 90° 6.35 mm V-bit (cone 3.175 mm): a cut 2 mm deep
-    /// well inside passes, after a plunge from above; a cut whose tip
-    /// leaves the rectangle fails, so does one whose 2 mm cone reaches
-    /// past the wall, one deeper than the cone, and one sideways above the
-    /// start plane.
+    /// S17 for a V-Carve (#404, exact since #408; `crate::material`'s
+    /// module docs), on a hand-written program for a V-Carve of the sample
+    /// rectangle (X 10 to 60, Y 10 to 40, stock-top origin) with the 90°
+    /// 6.35 mm V-bit (cone 3.175 mm): a cut 2 mm deep well inside passes,
+    /// after a plunge from above; a cut whose tip leaves the rectangle
+    /// fails, so does one whose 2 mm cone reaches past the wall and one
+    /// sideways above the start plane (`ConeOffMaterial`), and one deeper
+    /// than the cone (`ConeHeightExceeded`).
     #[test]
     fn hand_written_v_carve_off_its_region_fails_s9() {
         let mut project = sample_project();
@@ -5120,7 +5120,6 @@ mod tests {
         for (what, cuts) in [
             ("tip off the rectangle", "G1 Z-2 F300\nX61 F1000\n"),
             ("cone past the wall", "G1 Z-2 F300\nX59 F1000\n"),
-            ("below the cone", "G1 Z-3.5 F300\nX30 F1000\n"),
             (
                 "sideways above the start plane",
                 "G1 Z0.5 F300\nX30 F1000\n",
@@ -5128,10 +5127,15 @@ mod tests {
         ] {
             let err = check_material_text(&program(cuts), &project, &op);
             assert!(
-                matches!(err, Err(ExportError::OffMaterial { .. })),
+                matches!(err, Err(ExportError::ConeOffMaterial { line: 7, .. })),
                 "{what}: {err:?}"
             );
         }
+        let err = check_material_text(&program("G1 Z-3.5 F300\nX30 F1000\n"), &project, &op);
+        assert!(
+            matches!(err, Err(ExportError::ConeHeightExceeded { line: 6, .. })),
+            "below the cone: {err:?}"
+        );
     }
 
     /// S9 on a hand-written program for the sample rectangle's Pocket

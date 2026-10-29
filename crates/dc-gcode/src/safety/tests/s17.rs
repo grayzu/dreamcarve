@@ -1059,3 +1059,36 @@ fn s17_check_is_fast_on_the_sign() {
         "S17 took {elapsed:?} for {moves} moves"
     );
 }
+
+/// #410's "Rag" golden: PureCutCNC's depth-aware Douglas-Peucker runs the
+/// R's stem-to-bowl chain straight from (14.799, 19.404) 1.518 mm deep to
+/// (12.464, 19.404) 4.268 mm deep, and its cone reaches 0.256 mm past the
+/// R's wall on the way (`tests/golden/vcarve-medial-text-rag/README.md`,
+/// `ChainDepthFitted`). Neither end of that chord is past the V surface by
+/// more than the slack; only the exact test between them finds the
+/// gouge, and S17 refuses the upstream program's cut. DreamCarve's own
+/// carve of the twin passes.
+#[test]
+fn upstream_rag_chord_through_the_r_fails_s17() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/golden/vcarve-medial-text-rag/dreamcarve.dcv");
+    let project = dc_project::load(&std::fs::read(path).unwrap())
+        .unwrap()
+        .project;
+    let Some(Operation::VCarve(op)) = project.operations.first().cloned() else {
+        panic!("the Rag twin is one V-Carve");
+    };
+    let upstream = program_at(
+        16.693,
+        19.409,
+        "G1 Z-1.525 F300\nX14.799 Y19.404 Z-1.518 F1000\nX12.464 Y19.404 Z-4.268\n",
+    );
+    assert_cone_off(check_carve(&upstream, &project, &op), 8, Some(0.256));
+    let before = program_at(
+        16.693,
+        19.409,
+        "G1 Z-1.525 F300\nX14.799 Y19.404 Z-1.518 F1000\n",
+    );
+    check_carve(&before, &project, &op).unwrap();
+    export_carve(&project, &op).unwrap();
+}
