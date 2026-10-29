@@ -5523,6 +5523,48 @@ mod tests {
     /// origin, `R` the retract plane 1 mm above it), `F` once, then `G80`,
     /// and nothing else: no `G1`. The program passes the safety pass, which
     /// expands each line (S11).
+    /// Format 21 (#425): until S18 (#427) checks a countersink's derived
+    /// depth on the program, the safety pass cannot hold one to anything
+    /// countersink-specific, so it refuses every countersink cut (S9's
+    /// material is unresolved): no program is written, canned cycles on
+    /// or off. The generator records the holes as plain moves.
+    #[test]
+    fn countersink_is_refused_until_s18() {
+        let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
+        project.tools[0] = dc_project::Tool {
+            cutter: dc_project::ToolKind::VBit {
+                included_angle_deg: 90.0,
+            },
+            diameter_mm: 12.7,
+            ..project.tools[0].clone()
+        };
+        let op = dc_project::DrillOp {
+            cycle: dc_project::DrillCycle::Countersink {
+                diameter_mm: 10.0,
+                start_depth_mm: 0.0,
+                start_plane_cleared_externally: false,
+            },
+            depth_mm: None,
+            ..op
+        };
+        project.operations = vec![Operation::Drill(op.clone())];
+        let ops = drill_entry(&project, &op);
+        let holes = ops[0].holes.as_deref().unwrap_or_default();
+        assert_eq!(holes.len(), HOLES.len());
+        assert!(
+            holes
+                .iter()
+                .all(|h| h.cycle == dc_cam::CannedKind::Expanded)
+        );
+        for post in [post_of(&project), canned_post(&project)] {
+            let err = emit_with(&project, &post, &ops, DATE).unwrap_err();
+            assert!(
+                matches!(&err, ExportError::OffMaterial { op, .. } if op.as_str() == "o3"),
+                "{err:?}"
+            );
+        }
+    }
+
     #[test]
     fn drill_simple_writes_g81_per_hole_after_g98_and_ends_g80() {
         let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);

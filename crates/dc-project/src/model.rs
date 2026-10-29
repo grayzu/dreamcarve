@@ -463,10 +463,14 @@ impl Operation {
     /// V-Carve has no depth of its own: with a flat depth it is the start
     /// depth plus the flat depth, the deepest it cuts; without one, its
     /// depth follows from the shapes, so `None`, which is not an unset value.
+    /// A countersink Drill's depth follows from its tool's angle, so it is
+    /// `None` too, whatever its `depth_mm` holds (format 21; see
+    /// [`crate::countersink_depth_mm`]).
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
             Self::Profile(op) => op.depth_mm,
             Self::Pocket(op) => op.depth_mm,
+            Self::Drill(op) if op.cycle.is_countersink() => None,
             Self::Drill(op) => op.depth_mm,
             Self::Bore(op) => op.depth_mm,
             Self::Engrave(op) => op.depth_mm,
@@ -780,7 +784,9 @@ pub enum PeckRetract {
 }
 
 /// A drill cycle (functional spec, capability 14). Saved as `"simple"`,
-/// or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`.
+/// or `{ "peck": { "peck_depth_mm": 2.0, "retract": "full" } }`, or
+/// (format 21) `{ "countersink": { "diameter_mm": 6.0, "start_depth_mm":
+/// 0.0, "start_plane_cleared_externally": false } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum DrillCycle {
@@ -795,6 +801,34 @@ pub enum DrillCycle {
         /// How far to retract between pecks.
         retract: PeckRetract,
     },
+    /// A V-bit opens a mouth of `diameter_mm` at the start plane, one
+    /// plunge at each circle's centre (format 21; functional spec,
+    /// capability 44). The depth is derived, `diameter_mm / (2 ·
+    /// tan(α/2))` below the start plane, so the Drill's `depth_mm` is not
+    /// used, nor is `allow_tool_wider_than_hole`: the bit is wider than
+    /// the hole by design.
+    Countersink {
+        /// The mouth's diameter at the start plane, millimetres, above 0
+        /// and at most the V-bit's diameter.
+        #[serde(deserialize_with = "units_input::mm")]
+        diameter_mm: f64,
+        /// How far below the stock top the hole's top (the start plane)
+        /// is, millimetres, 0 or more: a Pocket's depth for a hole in its
+        /// floor (capability 41).
+        #[serde(deserialize_with = "units_input::mm")]
+        start_depth_mm: f64,
+        /// The user's word that another program cleared the start plane
+        /// (capability 41), as a V-Carve's.
+        start_plane_cleared_externally: bool,
+    },
+}
+
+impl DrillCycle {
+    /// True for a countersink (format 21).
+    #[must_use]
+    pub const fn is_countersink(&self) -> bool {
+        matches!(self, Self::Countersink { .. })
+    }
 }
 
 /// A drill operation: plunges at the centre of each circular target.
@@ -810,18 +844,22 @@ pub struct DrillOp {
     /// Instances to drill at the centre of. A target that is not a circle
     /// is skipped with a warning at export.
     pub targets: Vec<InstanceId>,
-    /// The tool to drill with. Any cutter; a drill or end mill is usual.
+    /// The tool to drill with. Any cutter; a drill or end mill is usual,
+    /// and a countersink needs a V-bit.
     pub tool: ToolId,
-    /// Simple or peck.
+    /// Simple, peck or countersink.
     pub cycle: DrillCycle,
     /// Seconds to wait at the bottom of every plunge, 0 or more; 0 is no
     /// dwell. Combinable with any cycle.
     pub dwell_s: f64,
     /// Final depth below the stock top, millimetres. `None` until set.
+    /// Not used by a countersink, whose depth is derived.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Height above the hole top to return to between pecks and between
-    /// holes, millimetres, 0 or more. `init` writes 1.
+    /// holes, millimetres, 0 or more. `init` writes 1. A countersink
+    /// measures it from the stock top, not from its start plane, so the
+    /// rapid down to it never ends in the stock (security review H3).
     #[serde(deserialize_with = "units_input::mm")]
     pub retract_mm: f64,
     /// How far below the stock bottom the cut may go, millimetres.

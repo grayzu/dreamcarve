@@ -152,7 +152,10 @@
 //!   closed targets that are circles ([`dc_geometry::as_circle`], as
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
 //!   the hole's radius of its centre. A Drill only plunges, so that is the
-//!   hole it drills.
+//!   hole it drills. A countersink Drill (format 21) is unresolved, so
+//!   every cut of one is refused, until S18 (#427) checks its derived
+//!   depth: this rule alone would pass a plunge at a hole's centre to any
+//!   depth.
 //! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
 //!   in one of the Bore's holes, the closed targets that are circles, as
 //!   for a Drill: its ends and middle lie within `ρ − r − stock to leave` of the
@@ -769,6 +772,11 @@ impl Material {
                     None => Self::Unresolved,
                 }
             }
+            // Format 21 (#425): nothing here can hold a countersink's
+            // program to its derived depth, its mouth or its bit's
+            // engagement, which S18 (#427) will check; until then every
+            // countersink cut is refused, fail-closed.
+            Operation::Drill(drill) if drill.cycle.is_countersink() => Self::Unresolved,
             Operation::Drill(drill) => match placed(project, &drill.targets) {
                 Some(paths) => Self::Drill {
                     holes: paths

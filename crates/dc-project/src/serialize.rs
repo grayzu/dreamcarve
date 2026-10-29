@@ -380,17 +380,18 @@ fn first_non_finite(problems: &[Problem]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ids::ToolId;
     use crate::model::{
         ClearanceStrategy, DrillCycle, Entry, Operation, OriginXy, PeckRetract, ToolKind,
     };
     use crate::test_support::{
-        profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project,
+        profile_mut, sample_drill, sample_engrave, sample_pocket, sample_project, tool_v_bit_90,
     };
     use crate::validate::validate;
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v20/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v21/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1418,6 +1419,73 @@ mod tests {
                 };
                 assert_eq!(path, "operations[0]");
             }
+        }
+    }
+
+    /// Format 21 (functional spec, capability 44): the countersink cycle
+    /// is a one-key object with every field written; it round-trips, an
+    /// inch value reads in millimetres, and a missing or unknown field
+    /// fails to load rather than default.
+    #[test]
+    fn countersink_cycle_round_trips() {
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        let mut drill = sample_drill();
+        drill.tool = ToolId::new("t2");
+        drill.depth_mm = None;
+        drill.cycle = DrillCycle::Countersink {
+            diameter_mm: 6.0,
+            start_depth_mm: 4.0,
+            start_plane_cleared_externally: true,
+        };
+        p.operations.push(Operation::Drill(drill));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value["operations"][1]["cycle"],
+            json!({ "countersink": {
+                "diameter_mm": 6.0,
+                "start_depth_mm": 4.0,
+                "start_plane_cleared_externally": true
+            } })
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+
+        let inch = text.replacen(
+            "\"diameter_mm\": 6.0,\n          \"start_depth_mm\"",
+            "\"diameter_mm\": \"0.25 in\",\n          \"start_depth_mm\"",
+            1,
+        );
+        assert_ne!(inch, text, "fixture layout changed:\n{text}");
+        let Some(Operation::Drill(drill)) = load(inch.as_bytes())
+            .unwrap()
+            .project
+            .operations
+            .get(1)
+            .cloned()
+        else {
+            panic!("a drill");
+        };
+        let DrillCycle::Countersink { diameter_mm, .. } = drill.cycle else {
+            panic!("{drill:?}");
+        };
+        dc_geometry::assert_approx_eq!(diameter_mm, 6.35, 1e-9);
+
+        for broken in [
+            text.replacen(
+                "\"start_plane_cleared_externally\": true",
+                "\"start_plane_cleared_externally\": true,\n          \"depth_mm\": 3.0",
+                1,
+            ),
+            text.replacen(
+                ",\n          \"start_plane_cleared_externally\": true",
+                "",
+                1,
+            ),
+        ] {
+            assert_ne!(broken, text, "fixture layout changed:\n{text}");
+            assert!(load(broken.as_bytes()).is_err(), "{broken}");
         }
     }
 }

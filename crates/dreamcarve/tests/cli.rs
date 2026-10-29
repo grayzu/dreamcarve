@@ -1391,16 +1391,51 @@ fn v19_project_exports_the_same_program() {
     let from_v19 = std::fs::read_to_string(dir.join("v19.nc")).expect("v19.nc written");
 
     let project = load_file(&v19).project;
-    assert_eq!(project.version, 20);
+    assert_eq!(project.version, dc_project::CURRENT_VERSION);
     let v20 = dir.join("v20.dcv");
     std::fs::write(&v20, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v20).expect("dcv readable");
-    assert!(saved.contains("\"version\": 20,"), "{saved}");
+    assert!(
+        saved.contains(&format!("\"version\": {},", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
     let out = run(&dir, &["export", "v20.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v20: {}", stderr(&out));
     let from_v20 = std::fs::read_to_string(dir.join("v20.nc")).expect("v20.nc written");
     assert!(from_v19 == from_v20, "v19:\n{from_v19}\nv20:\n{from_v20}");
     assert!(!from_v19.is_empty());
+}
+
+/// Format 21 (sub-phase 3.2): the countersink cycle changes nothing an
+/// earlier file holds, so the version 20 fixture exports the same program
+/// as it is and once saved at version 21.
+#[test]
+fn v20_project_exports_the_same_program() {
+    let dir = work_dir("v20_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v20/sample.dcv");
+    let v20 = dir.join("v20.dcv");
+    std::fs::copy(&fixture, &v20).expect("fixture copied");
+    let text = std::fs::read_to_string(&v20).expect("dcv readable");
+    assert!(
+        text.contains("\"version\": 20,"),
+        "the fixture is a version 20 file"
+    );
+    let out = run(&dir, &["export", "v20.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v20: {}", stderr(&out));
+    let from_v20 = std::fs::read_to_string(dir.join("v20.nc")).expect("v20.nc written");
+
+    let project = load_file(&v20).project;
+    assert_eq!(project.version, 21);
+    let v21 = dir.join("v21.dcv");
+    std::fs::write(&v21, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v21).expect("dcv readable");
+    assert!(saved.contains("\"version\": 21,"), "{saved}");
+    let out = run(&dir, &["export", "v21.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v21: {}", stderr(&out));
+    let from_v21 = std::fs::read_to_string(dir.join("v21.nc")).expect("v21.nc written");
+    assert!(from_v20 == from_v21, "v20:\n{from_v20}\nv21:\n{from_v21}");
+    assert!(!from_v20.is_empty());
 }
 
 /// Acceptance 48 through the CLI (#404): the coaster project with its
@@ -9939,4 +9974,82 @@ fn version_18_stock_to_leave_project_exports_byte_identical_programs() {
             assert_eq!(stderr(&out), warnings, "{step}: export's warnings");
         }
     }
+}
+
+/// Format 21 (#425): a project may hold a countersink, and `check`
+/// generates it, but until the safety pass can hold its program to the
+/// derived depth (S18, #427) `check` and `export` refuse it by name, and
+/// no program is written.
+#[test]
+fn countersink_export_is_refused_until_s18() {
+    let dir = work_dir("countersink_export_is_refused_until_s18");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut bit = dc_project::test_support::tool_v_bit_90();
+    bit.id = ToolId::new("tv");
+    project.tools.push(bit);
+    let hole = FeatureDefinition {
+        id: DefinitionId::new("hole"),
+        name: "Hole".into(),
+        profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 3.175 / 2.0)],
+    };
+    let mut targets = Vec::new();
+    for (k, (x, y)) in [(35.0, 35.0), (65.0, 35.0), (65.0, 65.0), (35.0, 65.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let id = InstanceId::new(format!("hole{}", k + 1));
+        project.instances.push(FeatureInstance {
+            id: id.clone(),
+            definition: hole.id.clone(),
+            transform: Transform::translate(x, y),
+            name: format!("Hole {}", k + 1),
+            visible: true,
+            locked: false,
+            z_top_mm: None,
+            z_bottom_mm: None,
+        });
+        targets.push(id);
+    }
+    project.definitions.insert(hole.id.clone(), hole);
+    let mut sink = sample_drill();
+    sink.id = OperationId::new("o2");
+    sink.targets = targets;
+    sink.tool = ToolId::new("tv");
+    sink.depth_mm = None;
+    sink.cycle = DrillCycle::Countersink {
+        diameter_mm: 6.0,
+        start_depth_mm: 0.0,
+        start_plane_cleared_externally: false,
+    };
+    project.operations.insert(0, Operation::Drill(sink));
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    for args in [
+        &["check", "coaster.dcv"][..],
+        &["export", "coaster.dcv", "--date", FIXED_DATE],
+    ] {
+        let command = args[0];
+        let out = run(&dir, args);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_ne!(out.status.code(), Some(0), "{command}: {report}");
+        assert!(
+            report.contains("`o2`")
+                && report.contains("countersink")
+                && report.contains("not supported"),
+            "{command}: {report}"
+        );
+    }
+    let programs: Vec<_> = std::fs::read_dir(&dir)
+        .expect("dir readable")
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_file())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x != "dcv" && x != "svg")
+        })
+        .collect();
+    assert!(programs.is_empty(), "{programs:?}");
 }

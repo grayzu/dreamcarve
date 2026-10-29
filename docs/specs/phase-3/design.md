@@ -288,9 +288,16 @@ holding the kinds its version has.
   `MAX_FLATTEN_TOLERANCE_MM` (0.1 mm) is an error (security review L6:
   the S9/S17 slack and the medial axis's hole chords both scale with
   it).
-- `countersink_mouth_exceeds_tool` (`diameter_mm > tool.diameter_mm`),
-  `countersink_diameter_positive`, `start_depth_negative` (any
-  `start_depth_mm` below 0, located at the field).
+- `countersink_mouth_exceeds_tool` (`diameter_mm > tool.diameter_mm`
+  by more than `COUNTERSINK_TOLERANCE_MM`, upstream's `1e-9`, the
+  generator's comparison), `countersink_diameter_positive`,
+  `start_depth_negative` (any `start_depth_mm` below 0, located at the
+  field: a countersink's is `cycle.countersink.start_depth_mm`, where its
+  `start_depth_uncleared` is located too, #425). A countersink's
+  `v_bit_cone_exceeded` is located at `cycle.countersink.diameter_mm`;
+  its depth is derived, so the Drill's `depth_mm` is not used, not
+  required (`Operation::depth_mm()` is `None` for it) and not checked
+  (#425).
 - `inlay_glue_gap_not_below_depth` (`glue_gap_mm >= depth_mm`),
   `inlay_plug_base_thin` (warning: male with `thickness − (depth − gap +
   plug) < 6`), `inlay_margin_positive` (male with `margin_mm <= 0`).
@@ -434,6 +441,11 @@ instance_name, profile, mouth_mm, hole_mm)`, `InlayMaleMirrored (op,
 axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `PhotoLinesOverlap (op, fraction)`. New
 `CamError`s: `VCarveNeedsVBit { op, tool, tool_id, cutter }`,
+`CountersinkNeedsVBit { op, tool, tool_id, cutter }`,
+`CountersinkDiameterPositive { op, diameter_mm }`,
+`CountersinkConeExceeded { op, engaged_mm, cone_mm }` (a countersink's
+form of `VBitConeExceeded`, which names a carved shape and advises a flat
+depth; #425),
 `VBitAngleRange { tool, tool_id, angle_deg }`, `VBitConeExceeded { op,
 instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason: ClearingProblem }` (the validation reasons, re-checked: `NoFlatDepth`, `NotEndMill { cutter }`, `UnknownTool`), `CountersinkMouthExceedsTool
 { op, mouth_mm, tool_mm }`, `InlayGlueGap { op, glue_gap_mm, depth_mm }`,
@@ -899,7 +911,18 @@ above it kept on purpose; its flank engagement is counted from the stock
 top instead, "Inlay" step 1):
 
 1. Its **footprint outlines**: a carve's target outlines, a Photo's
-   footprint rectangle, a countersink's target circles.
+   footprint rectangle; for a countersink, the disc of its **tool's
+   radius** at the centre of each target circle (#425), not the hole
+   circle: the bit's widest section above the start plane, in the
+   Pocket's air, so a Pocket that holds the hole but not the bit round it
+   would let the bit cut its wall. Every circle the Drill finds counts,
+   one it skips for `countersink_mouth_not_wider_than_hole` included;
+   a target that is no circle is not cut and is left out. A disc is held
+   when its centre is in a region and at least the radius, less the
+   flatten tolerance, from the region's outline and islands, arcs as arcs.
+   The footprint is one enum in `dc_project::containing_pocket`, so a
+   new kind of cleared floor (a V-Carve's flat floor, #426) adds an arm
+   for the clearing operation without touching the footprints.
 2. The **containing Pocket** (`dc_project::containing_pocket`, which
    validation, `order::check` and the generators all call; it is in
    `dc-project` because validation may not depend on `dc-cam`, #413):
@@ -937,14 +960,14 @@ In `generate_drill`, `DrillCycle::Countersink { diameter_mm: D,
 start_depth_mm: s }`:
 
 1. Tool a V-bit with α in (0, 180), else `CountersinkNeedsVBit` /
-   `VBitAngleRange`. `D > 0`, `D <= diameter + EPS` else
-   `CountersinkMouthExceedsTool`. `depth = D / (2 · tan(α/2))`
+   `VBitAngleRange`. `D > 0` else `CountersinkDiameterPositive`, `D <=
+   diameter + 1e-9` else `CountersinkMouthExceedsTool`. `depth = D / (2 · tan(α/2))`
    (`countersinkTipDepth`); `depth <= cone + EPS` holds by construction
    when `D <= diameter` (upstream's `maxCutDepth` tolerance note applies:
    compare with `1e-9`). With `s > 0` the flank engagement is `s + depth`
    unless a containing Pocket has cleared the start plane
    (`dc_project::containing_pocket`, as V-Carve step 3), and `s + depth <=
-   cone + EPS` else `VBitConeExceeded`; no Pocket and
+   cone + 1e-9` else `CountersinkConeExceeded` (#425); no Pocket and
    `start_plane_cleared_externally: false` is `StartDepthUncleared`
    (security review H4, M2).
 2. Targets as Drill (circle test); a circle whose diameter is at least
@@ -1455,7 +1478,9 @@ Goal: the sign complete, the phase's first real cut.
     `v20_to_v21`, validation; the generator with the retract from the
     stock top and the engagement check; `start_depth_uncleared` for a
     countersink. Tests: the drill (countersink) group with its H3 and M2
-    additions, the order group's countersink cases. [3.1]
+    additions, the order group's countersink cases. [3.1] Until S18,
+    `check` and `export` refuse a countersink (`CamError::NotSupportedYet`)
+    and S9 holds its cuts to the fail-closed `Unresolved` (#425).
 14. **S18.** `material.rs`. Tests: the safety S18 tests. [13]
 15. **Countersink docs and the sign.** Drill chapter update, the quick
     start's countersink step, `fixtures/sign.svg` final,

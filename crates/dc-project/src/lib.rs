@@ -7,6 +7,7 @@
 //! A [`Project`] is saved with [`save`] and read back with [`load`], which
 //! migrates older files to [`CURRENT_VERSION`] and runs [`validate`](fn@validate).
 
+mod countersink;
 mod history;
 mod ids;
 mod layout;
@@ -22,6 +23,7 @@ mod validate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use locate::{PathSegment, SourceMap, TextPosition};

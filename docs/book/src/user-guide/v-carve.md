@@ -308,7 +308,7 @@ shape or tool concerned.
 | Code | Message says | What to do |
 | --- | --- | --- |
 | `v_carve_needs_v_bit` | "operation … carves with tool …, an end mill; a V-Carve's depth follows the angle of a V-bit, so use a V-bit" | Give the operation a V-bit. |
-| `v_bit_angle_range` | "tool … has an included angle of … degrees; a V-Carve needs a V-bit angle above 0 and below 180 degrees …" | Fix the tool's `included_angle_deg`. |
+| `v_bit_angle_range` | "tool … has an included angle of … degrees; a V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees …" | Fix the tool's `included_angle_deg`. |
 | `v_bit_cone_exceeded` | "operation … engages tool … … mm deep, but the bit's cone is only … mm tall; below that the shank cuts …", or at export "operation … carves … with its V-bit's flanks engaged … mm deep …" | The flat depth (plus a start depth no Pocket clears), or with no flat depth the widest part of a shape, needs more than the cone. Set or lower `flat_depth_mm`, use a wider bit or a larger angle, or clear the start depth with a Pocket. |
 | `clearing_needs_flat_depth` | "operation … has clearing passes but no flat_depth_mm …" | Set a flat depth, or remove the passes. |
 | `clearing_needs_end_mill` | "clearing pass … of operation … cuts with tool …, …; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size …" | Use an end mill for the pass. |
