@@ -162,29 +162,56 @@
 //!   size; a hole narrower than the tool allows no cut at all.
 //! - **Engrave:** the tool centre stays on the line: every cut's ends and
 //!   middle lie on one of the Engrave's target paths.
-//! - **V-Carve** (format 20, #404; the partial rule until the exact S17 of
-//!   `docs/specs/phase-3/design.md`, "Safety pass", lands in #408): the
-//!   regions are the targets' closed profiles nested as for a Pocket, the
-//!   start plane is `start_depth_mm` below the stock top, and the flank is
-//!   engaged from the stock top unless an enabled earlier Pocket at the
-//!   start depth contains the targets ([`dc_project::containing_pocket`],
-//!   as the generator and validation decide it). A straight move with no
-//!   XY motion that stays above the start plane is a descent through the
-//!   air and is not held here (S1, S2 and S10 hold it). Every other cut:
-//!   its tip (the tool-centre path) stays in the regions (its ends and
-//!   middle inside or within the slack of an outline, and it meets no
-//!   outline away from its ends); it does not move sideways above the
-//!   start plane; it reaches no lower than the flat depth below the start
-//!   plane nor than the cone height below the Z the flank is engaged from
-//!   (the shank); and its whole path keeps from every outline the cone's
-//!   radius at its shallower end, `(start_plane − z) · tan(α/2)`. That
-//!   last test is exact for a level cut and a lower bound for a sloping
-//!   one, whose deeper end needs more room: #408 replaces it with the
-//!   exact cone. The operation's tool must be a V-bit with an angle in
-//!   (0°, 180°), with no clearing passes; the rule is the same for the
-//!   medial and the offset strategy (#407: a ring is a level cut whose cone
-//!   touches the wall, a link between rings a sloping one). Anything else
-//!   is unresolved, and every cut of it fails.
+//! - **V-Carve, the V-bit's run: S17** (format 20, #404, exact since #408;
+//!   `docs/specs/phase-3/design.md`, "Safety pass"; [`cone`] has the
+//!   geometry). The regions are the targets' closed profiles nested as for
+//!   a Pocket, the start plane is `start_depth_mm` below the stock top, and
+//!   the flank is engaged from the stock top unless an enabled earlier
+//!   Pocket at the start depth contains the targets
+//!   ([`dc_project::containing_pocket`], as the generator and validation
+//!   decide it; security review H4). Every cutting move:
+//!   - its tip (the tool-centre path) stays in the regions: its ends and
+//!     middle inside or within the slack of an outline, and it meets no
+//!     outline away from its ends;
+//!   - a straight descent (no XY motion beyond the slack) that stays above
+//!     the start plane runs through the air over the carve and is held
+//!     only to that; any other descent is held at its lowest point, where
+//!     its cone is widest, as a cut (H3, see below);
+//!   - any other cut runs no higher than the start plane;
+//!   - nothing reaches below the flat depth (`ConeOffMaterial`), nor
+//!     engages the flank deeper than the cone is tall
+//!     (`ConeHeightExceeded`; a tip below the cone height is this too);
+//!   - the cone's disc at the start plane stays inside the regions all
+//!     along the move, measured exactly ([`cone`]): segment against
+//!     segment, arcs as arcs, at constant Z; in closed form for a straight
+//!     move whose Z varies. No sampling.
+//!
+//!   **H3.** The design's exemption skips S17 for a straight descent from
+//!   the stock top plus the entry clearance that ends no lower than a
+//!   later cut through its XY, relying on that later cut. This pass skips
+//!   nothing below the start plane: every descent's lowest point is held
+//!   to the tip, depth, shank and cone tests directly. A cone at one XY
+//!   contains every cone above it there, so that point is the whole of
+//!   what the descent cuts, and the rule is the stricter of the two. It
+//!   also accepts a descent that starts lower, where S2 lets the rapid
+//!   stop above an earlier cut (#214), which the design's literal form
+//!   would refuse in generated programs: with a 0.5 mm flat depth the
+//!   floor rings are re-entered from 0.5 mm above the start plane.
+//!
+//!   The tool must be the operation's, a V-bit with an angle in (0°,
+//!   180°); the rule is the same for the medial and the offset strategy,
+//!   floors and links included. Anything else is unresolved.
+//! - **V-Carve, a clearing run** (#406, security review M3): the run
+//!   labelled with one of the carve's passes and cut with that pass's flat
+//!   end mill is held as a Pocket of the carve's floor regions with no
+//!   stock to leave: the end mill's centre stays inside one, at least its
+//!   radius from its outline and islands, and no lower than the floor. The
+//!   floor regions are re-derived from the project: the targets' regions
+//!   inset by `F · tan(α/2)` ([`dc_geometry::floor_regions`]), less those
+//!   too thin to cut (area at most the flatten tolerance times the
+//!   perimeter), as the generator's floor drops them. The earlier passes'
+//!   reach does not bound the run: a rest pass's footprint runs into what
+//!   they cleared, and only its centres must touch what they left.
 //!
 //! A move is allowed to depart from where the toolpath put it by what the
 //! program may already differ by: one unit in the last written place (the
@@ -202,14 +229,18 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+mod cone;
+
+use cone::{Cone, Fault};
+use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
-    as_circle, closest_points, inset_is_empty, meeting_points, nearest_point, nest, offset,
-    offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
+    as_circle, closest_points, floor_regions, inset_is_empty, meeting_points, nearest_point, nest,
+    offset, offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
 };
 use dc_project::{
-    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape,
-    ToolKind, Units, VCarveOp, containing_pocket,
+    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape, Tool,
+    ToolId, ToolKind, Units, VCarveOp, containing_pocket,
 };
 
 use crate::ExportError;
@@ -290,26 +321,24 @@ pub(crate) enum Material {
         /// Every segment of every path.
         edges: Vec<Edge>,
     },
-    /// A V-Carve's regions (format 20): the tip stays in them, and its
-    /// cone's radius at a cut's shallower end keeps clear of their
-    /// outlines; the partial S17 of #404 (module docs).
-    VBit {
-        /// The regions, outer and holes, from the targets' closed
-        /// profiles.
+    /// The V-bit's run of a V-Carve (format 20): S17 (module docs,
+    /// [`cone`]).
+    VBit(Cone),
+    /// A clearing run of a V-Carve (#406, security review M3): the end
+    /// mill's centre stays inside the carve's floor regions, at least its
+    /// radius from their outlines, and no lower than the floor.
+    Floor {
+        /// The floor regions, outer and islands.
         areas: Vec<Area>,
-        /// The start plane, mm above the stock bottom.
-        start_plane_z_mm: f64,
-        /// `tan(α/2)`: the cone's radius per mm of depth.
-        slope: f64,
-        /// The lowest Z a cut may reach, mm: the flat depth below the
-        /// start plane, or the cone height below the Z the flank is
-        /// engaged from, whichever is higher.
-        lowest_z_mm: f64,
+        /// The floor, mm, project space.
+        floor_z_mm: f64,
+        /// The pass's end mill's radius, mm.
+        radius_mm: f64,
     },
     /// The targets do not resolve to anything an operation of this kind
-    /// cuts (an unknown instance, crossing outlines, an invalid
-    /// stock to leave), or a V-Carve this build does not generate (no
-    /// V-bit, clearing passes): no cut is in the
+    /// cuts (an unknown instance, crossing outlines, an invalid stock to
+    /// leave), a V-Carve whose tool or settings are unusable, or a run
+    /// whose label or tool the operation does not have: no cut is in the
     /// material, fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
@@ -649,6 +678,25 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
 }
 
 impl Material {
+    /// The material the run `label` of `op`, cut with `tool`, may cut in
+    /// `project` (#406): a V-Carve's own run is held to S17 and only when
+    /// cut with the carve's tool; its clearing run with end mill `t` to
+    /// its floor, and only when `t` is one of its passes and the run's
+    /// tool. Every other operation has only its own run, which is held as
+    /// [`Material::of`] says; a clearing run of one is unresolved.
+    pub(crate) fn of_run(project: &Project, op: &Operation, label: &RunLabel, tool: &Tool) -> Self {
+        match (op, label) {
+            (Operation::VCarve(carve), RunLabel::Main) if tool.id == carve.tool => {
+                v_bit_material(project, carve)
+            }
+            (Operation::VCarve(carve), RunLabel::Clearing(pass)) if tool.id == *pass => {
+                floor_material(project, carve, pass)
+            }
+            (Operation::VCarve(_), _) | (_, RunLabel::Clearing(_)) => Self::Unresolved,
+            (_, RunLabel::Main) => Self::of(project, op),
+        }
+    }
+
     /// The material `op` may cut in `project`.
     pub(crate) fn of(project: &Project, op: &Operation) -> Self {
         match op {
@@ -759,108 +807,109 @@ impl Material {
     }
 }
 
-/// The material of V-Carve `carve` (module docs): its regions, start
-/// plane, V-bit slope and the lowest Z it may reach, all from the project;
-/// [`Material::Unresolved`] for anything this build does not generate
-/// (clearing passes, #406).
+/// The V-bit material of V-Carve `carve` (module docs, [`cone`]): its
+/// regions, start plane, slope, flat-depth floor, engagement and cone
+/// height, all from the project; [`Material::Unresolved`] when its tool
+/// is not a usable V-bit, its start or flat depth is not usable, or its
+/// targets do not resolve.
 fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
-    let unresolved = !carve.clearing.is_empty();
-    let tool = project.tools.iter().find(|t| t.id == carve.tool);
-    let (Some(thickness_mm), Some(tool), false) = (project.stock.thickness_mm, tool, unresolved)
-    else {
-        return Material::Unresolved;
-    };
+    match cone_of(project, carve) {
+        Some(cone) => Material::VBit(cone),
+        None => Material::Unresolved,
+    }
+}
+
+/// [`v_bit_material`]'s cone, `None` when it is unresolved.
+fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
+    let thickness_mm = project.stock.thickness_mm?;
+    let tool = project.tools.iter().find(|t| t.id == carve.tool)?;
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return Material::Unresolved;
+        return None;
     };
     let slope = (included_angle_deg.to_radians() / 2.0).tan();
     let start_depth_mm = carve.start_depth_mm;
+    let flat_usable = carve.flat_depth_mm.is_none_or(|f| f.is_finite() && f > 0.0);
     let usable = included_angle_deg > 0.0
         && included_angle_deg < 180.0
         && slope.is_finite()
         && slope > 0.0
         && tool.diameter_mm.is_finite()
         && tool.diameter_mm > 0.0
+        && thickness_mm.is_finite()
         && start_depth_mm.is_finite()
         && start_depth_mm >= 0.0
-        && start_depth_mm <= thickness_mm;
-    let Some(regions) = regions_of(project, &carve.targets).filter(|_| usable) else {
-        return Material::Unresolved;
-    };
+        && start_depth_mm <= thickness_mm
+        && flat_usable;
+    if !usable {
+        return None;
+    }
+    let regions = regions_of(project, &carve.targets)?;
     let start_plane_z_mm = thickness_mm - start_depth_mm;
+    // H4: the flank is engaged from the stock top unless an enabled
+    // earlier Pocket at the start depth contains the targets, as the
+    // generator and validation decide it.
     let cleared_at_start = start_depth_mm <= 0.0
         || containing_pocket(project, &Operation::VCarve(carve.clone()))
             .and_then(|pocket| pocket.depth_mm)
             .is_some_and(|depth_mm| (depth_mm - start_depth_mm).abs() <= EPS_MM);
-    let engaged_from_z_mm = if cleared_at_start {
-        start_plane_z_mm
-    } else {
-        thickness_mm
-    };
-    let cone_mm = tool.diameter_mm / (2.0 * slope);
-    let flat_floor_mm = carve
-        .flat_depth_mm
-        .map_or(f64::NEG_INFINITY, |f| start_plane_z_mm - f);
-    Material::VBit {
+    Some(Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,
         slope,
-        lowest_z_mm: flat_floor_mm.max(engaged_from_z_mm - cone_mm),
-    }
+        floor_z_mm: carve.flat_depth_mm.map(|f| start_plane_z_mm - f),
+        engaged_from_z_mm: if cleared_at_start {
+            start_plane_z_mm
+        } else {
+            thickness_mm
+        },
+        cone_mm: tool.diameter_mm / (2.0 * slope),
+    })
 }
 
-/// The partial S17 of #404 for one cut (module docs): `path` is its tip
-/// path in XY, `from_z_mm` and `to_z_mm` its ends' Z, mm.
-fn v_bit_allows(
-    areas: &[Area],
-    path: Segment,
-    (from_z_mm, to_z_mm): (f64, f64),
-    (start_plane_z_mm, slope, lowest_z_mm): (f64, f64, f64),
-    slack_mm: f64,
-) -> bool {
-    let low_mm = from_z_mm.min(to_z_mm);
-    let high_mm = from_z_mm.max(to_z_mm);
-    let vertical = path.start.distance_to(path.end) <= slack_mm;
-    if vertical && low_mm > start_plane_z_mm + slack_mm {
-        // A descent through the air above the start plane.
-        return true;
-    }
-    if low_mm < lowest_z_mm - slack_mm || (!vertical && high_mm > start_plane_z_mm + slack_mm) {
-        return false;
-    }
-    let bounds = bounds_of(path);
-    let near_areas = || {
-        areas
-            .iter()
-            .filter(move |a| near(bounds, a.bounds, slack_mm))
+/// The material of carve `carve`'s clearing run with end mill `pass`
+/// (#406, security review M3; module docs): the floor regions re-derived
+/// from the targets, the V-bit's angle and the flat depth
+/// ([`floor_regions`], less noise as the generator drops it), at the
+/// floor's Z. [`Material::Unresolved`] when `pass` is none of the carve's
+/// passes or not a flat end mill, or the carve has no usable V-bit or
+/// flat depth.
+fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Material {
+    let resolved = || {
+        if !carve.clearing.iter().any(|p| &p.tool == pass) {
+            return None;
+        }
+        let end_mill = project.tools.iter().find(|t| &t.id == pass)?;
+        let radius_mm = end_mill.diameter_mm / 2.0;
+        if !(end_mill.cutter.is_flat() && radius_mm.is_finite() && radius_mm > 0.0) {
+            return None;
+        }
+        let cone = cone_of(project, carve)?;
+        let floor_z_mm = cone.floor_z_mm?;
+        let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
+        let tolerance_mm = project.flatten_tolerance_mm;
+        let regions: Vec<Region> = cone.areas.into_iter().map(|a| a.region).collect();
+        let floors = floor_regions(&regions, inset_mm, tolerance_mm)
+            .into_iter()
+            .filter(|f| !is_noise(f, tolerance_mm))
+            .collect();
+        Some(Material::Floor {
+            areas: areas_of(floors, true),
+            floor_z_mm,
+            radius_mm,
+        })
     };
-    // The tip: ends and middle in a region or on an outline, and no
-    // outline met away from the ends.
-    let held = points_of(path).iter().all(|&p| {
-        areas.iter().any(|a| a.region.contains_point(p))
-            || near_areas().any(|a| on_line(&a.edges, p, slack_mm))
-    });
-    let crosses = near_areas().any(|a| {
-        a.edges
-            .iter()
-            .filter(|e| near(bounds, e.bounds, slack_mm))
-            .any(|e| {
-                let (p, q) = closest_points(path, e.segment);
-                p.distance_to(q) <= EPS_MM
-                    && p.distance_to(path.start) > slack_mm
-                    && p.distance_to(path.end) > slack_mm
-            })
-    });
-    if !held || crosses {
-        return false;
-    }
-    let radius_mm = (start_plane_z_mm - high_mm).max(0.0) * slope;
-    let clearance_mm = radius_mm - slack_mm;
-    clearance_mm <= 0.0
-        || areas
-            .iter()
-            .filter(|a| near(bounds, a.bounds, clearance_mm))
-            .all(|a| walls_allow(a, &(0..a.edges.len()), path, clearance_mm, None))
+    resolved().unwrap_or(Material::Unresolved)
+}
+
+/// Whether floor region `region` is too thin to cut at `tolerance_mm`:
+/// its area is at most the tolerance times its perimeter, the generator's
+/// noise rule for a Pocket's rings and a carve's floor.
+fn is_noise(region: &Region, tolerance_mm: f64) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    region.area_mm2() <= tolerance_mm * perimeter_mm
 }
 
 /// The material of a Left or Right Profile of `paths` (#207): the open
@@ -1766,12 +1815,15 @@ fn slack_mm(post: &PostProcessor, units: Units, tolerances: Tolerances) -> f64 {
     quantum_mm(post, units) + departure_mm(tolerances)
 }
 
-/// S9 for `span`: every cutting move in its lines stays in its material.
+/// S9 and S17 for `span`: every cutting move in its lines stays in its
+/// material.
 ///
 /// # Errors
 ///
-/// [`ExportError::OffMaterial`] at the first move that leaves it, or whose
-/// position in XY is not known.
+/// At the first move that leaves it: [`ExportError::ConeOffMaterial`] or
+/// [`ExportError::ConeHeightExceeded`] for a V-bit's run (S17), else
+/// [`ExportError::OffMaterial`], which is also the error for a move whose
+/// position is not known or whose material is unresolved.
 pub(crate) fn check(
     blocks: &[Block],
     post: &PostProcessor,
@@ -1834,6 +1886,35 @@ pub(crate) fn check(
             });
         }
         let path = project_path(mv, transform);
+        let z_mm = mv.from.z.zip(mv.to.z).map(|(from_z, to_z)| {
+            (
+                transform.project_z(from_z, mv.units),
+                transform.project_z(to_z, mv.units),
+            )
+        });
+        if let (Material::VBit(cone), Some(path), Some(z_mm)) = (span.material, path, z_mm) {
+            match cone.check(path, z_mm, slack_mm) {
+                Ok(()) => continue,
+                Err(Fault::Off { at, overlap_mm }) => {
+                    return Err(ExportError::ConeOffMaterial {
+                        op: span.op.id().clone(),
+                        line: mv.line,
+                        x_mm: at.x,
+                        y_mm: at.y,
+                        z_mm: at.z,
+                        overlap_mm,
+                    });
+                }
+                Err(Fault::Shank { engaged_mm }) => {
+                    return Err(ExportError::ConeHeightExceeded {
+                        op: span.op.id().clone(),
+                        line: mv.line,
+                        engaged_mm,
+                        cone_mm: cone.cone_mm,
+                    });
+                }
+            }
+        }
         let inside = path.is_some_and(|path| match span.material {
             #[cfg(test)]
             Material::Unchecked => true,
@@ -1914,22 +1995,15 @@ pub(crate) fn check(
             Material::OnLine { edges } => {
                 points_of(path).iter().all(|&p| on_line(edges, p, slack_mm))
             }
-            Material::VBit {
+            // Its Z or XY is not known: S17 cannot hold it.
+            Material::VBit(_) => false,
+            Material::Floor {
                 areas,
-                start_plane_z_mm,
-                slope,
-                lowest_z_mm,
-            } => mv.from.z.zip(mv.to.z).is_some_and(|(from_z, to_z)| {
-                v_bit_allows(
-                    areas,
-                    path,
-                    (
-                        transform.project_z(from_z, mv.units),
-                        transform.project_z(to_z, mv.units),
-                    ),
-                    (*start_plane_z_mm, *slope, *lowest_z_mm),
-                    slack_mm,
-                )
+                floor_z_mm,
+                radius_mm,
+            } => z_mm.is_some_and(|(from_z, to_z)| {
+                from_z.min(to_z) >= floor_z_mm - slack_mm
+                    && in_regions(areas, path, radius_mm - slack_mm, None, &mut last)
             }),
         });
         if !inside {

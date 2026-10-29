@@ -452,9 +452,9 @@ crate never hands back a toolpath it has proven wrong).
 pub enum ExportError {
     // phase 2 variants, plus:
     /// S17: a V-bit's cone crosses a wall of its carved region below the
-    /// start plane, or its tip is below the flat depth, the maximum depth
-    /// or the cone height, or a cut above the start plane is not a
-    /// vertical descent to a block's entry.
+    /// start plane, its tip leaves the region or is below the flat depth,
+    /// or a cut above the start plane is not a vertical descent over the
+    /// carve. The point is the worst one, project space (#408).
     ConeOffMaterial { op: OperationId, line: usize, x_mm: f64, y_mm: f64, z_mm: f64, overlap_mm: f64 },
     /// S17: the flank is engaged deeper than the cone is tall, measured
     /// from the stock top (or from a start plane an enabled Pocket has
@@ -1122,30 +1122,52 @@ it does for Pocket and Profile, and never from the toolpath.
   that depth (the pass re-runs that derivation from the project; it is
   geometry on the project, not a generator). For every cutting move of
   the operation in the parsed program:
-  - **Descent exemption** (security review H3): a `G1` with no XY
-    motion (within `tol`) that starts at or above the stock top plus the
-    entry clearance and ends at a Z at or above the lowest Z any later
-    cut of the same block reaches through that XY is a descent and is
-    checked only for S1, S2 and S10. Everything else is a cut.
-  - **Depth range**: `d = start_plane − z` in `[−tol, F_or_max + tol]`.
+  - **Tip**: the move's tool-centre path stays in a region: its ends and
+    middle inside one or within `tol` of an outline, and it crosses no
+    outline segment or arc away from its ends.
+  - **Descents** (security review H3; decided in #408): a `G1` with no
+    XY motion (within `tol`) that stays above the start plane runs
+    through the air over the carve (the start plane is the stock top, or
+    cleared) and is held only to the tip rule and S1, S2 and S10. Any
+    other descent is held, as a cut, at its lowest point: a cone at one
+    XY contains every cone above it there, so that point is all the
+    descent cuts. This is stricter than the draft's exemption (a descent
+    from the stock top plus the entry clearance that ends no lower than a
+    later cut through its XY, checked only for S1, S2 and S10), which
+    left the descent's bottom to the later cut; and it accepts a descent
+    that starts lower, where S2 lets the rapid stop over an earlier cut
+    (#214), as the generator's floor rings under a 0.5 mm flat depth do.
+    Every other cutting move is a cut and runs no higher than
+    `start_plane + tol`.
+  - **Depth range**: `d = start_plane − z ≤ F + tol` with a flat depth;
+    with none, the shank bounds it.
   - **Cone**: the disc of radius `d · slope` lies inside a region. The
-    test is exact, as S9's (security review M1): the move's tool-centre
-    path crosses no outline segment or arc; for a move at constant Z the
-    distance from the path to every outline segment near it, measured
+    test is exact, as S9's (security review M1): for a move at constant Z
+    the distance from the path to every outline segment near it, measured
     segment against segment with arcs as arcs
     (`dc_geometry::segment_distance_mm`), is at least `d · slope − tol`;
-    for a straight move whose Z varies, `g(t) = dist(p(t), wall) − r(t)`
-    with `r(t) = (start_plane − z(t)) · slope` is convex in `t` for each
-    wall segment, so its minimum is found in closed form (or by a
-    fixed-count ternary search to below `EPS_MM`) and must be at least
-    `−tol`. No sampling step: `MATERIAL_SAMPLE_MM` is gone. For a Photo
-    the disc test is replaced by S19's footprint test (a groove's width
-    may cross the picture's edge; S7 bounds it).
+    for a straight move whose Z varies, the least of `g(t) = dist(p(t),
+    wall) − r(t)` with `r(t) = (start_plane − z(t)) · slope` over the
+    move is found in closed form for each wall segment and must be at
+    least `−tol` (the distance to a line or arc wall splits into the
+    distances to its ends and, where the tip is abreast or within the
+    sweep, to its line or circle; each less `r` is convex, with a closed
+    stationary point, or concave inside a circle, least at an end). An
+    arc move whose Z varies (no V toolpath has one) is held to its deeper
+    end's radius all along. No sampling step: `MATERIAL_SAMPLE_MM` is
+    gone. For a Photo the disc test is replaced by S19's footprint test
+    (a groove's width may cross the picture's edge; S7 bounds it).
   - **Shank** (security review H4): `engaged_from − z <= cone + tol`
-    for every cut, else `ConeHeightExceeded`; for a male Inlay
-    `engaged_from` is always the stock top.
-  A failure is `ConeOffMaterial` with the overlap, or
-  `ConeHeightExceeded`. `tol` is the program's rounding plus `EPS_MM`.
+    for every cut, else `ConeHeightExceeded` (a tip below the cone height
+    is this too); for a male Inlay `engaged_from` is always the stock top.
+  A failure is `ConeOffMaterial` with the overlap and the worst point in
+  project space, or `ConeHeightExceeded`. `tol` is S9's slack (#408):
+  the program's rounding, plus the flatten tolerance (the generator
+  measures its chains and ring links against chords, which near a
+  concave arc lie up to that far beyond the true wall, #407; the floor's
+  chords where grown islands touch are within it, #405), plus the
+  arc-fit tolerance when arcs are fitted (S12), plus `EPS_MM` (the floor
+  trace runs exactly at `F · slope` from the walls).
 - **S9, clearing runs** (security review M3): a carve's clearing run
   (an `EmitOp` labelled `Clearing(tool)`) is held to the carve's floor
   regions, re-derived in the pass from the carve's targets (or the

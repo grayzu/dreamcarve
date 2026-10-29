@@ -402,6 +402,47 @@ pub enum ExportError {
         /// 1-based line number in the program.
         line: usize,
     },
+    /// S17 (`docs/specs/phase-3/design.md`, "Safety pass"): a V-bit's cone
+    /// crosses a wall of its carved region below the start plane, its tip
+    /// leaves the region or is below the flat depth, or a cut above the
+    /// start plane is not a vertical descent over the carve. The point is
+    /// where the overlap is worst, project space, mm.
+    #[error(
+        "emitted line {line} takes operation `{op}`'s V-bit {overlap_mm:.3} mm past the material it may cut, at X {x_mm:.3} Y {y_mm:.3} Z {z_mm:.3} (project space)"
+    )]
+    ConeOffMaterial {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+        /// X of the worst point, project space, mm.
+        x_mm: f64,
+        /// Y of the worst point, project space, mm.
+        y_mm: f64,
+        /// Z of the worst point, project space, mm.
+        z_mm: f64,
+        /// How far past the material the cone, the tip or the cut reaches
+        /// there, mm.
+        overlap_mm: f64,
+    },
+    /// S17, the shank (security review H4): the V-bit's flank is engaged
+    /// deeper than its cone is tall, measured from the stock top (or from
+    /// a start plane an enabled earlier Pocket has cleared), so the shank
+    /// would cut. A tip below the cone height is this too.
+    #[error(
+        "emitted line {line} engages operation `{op}`'s V-bit {engaged_mm:.3} mm deep, past its {cone_mm:.3} mm cone, so its shank would cut"
+    )]
+    ConeHeightExceeded {
+        /// The operation.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+        /// The engagement, mm: from the stock top (or the cleared start
+        /// plane) down to the tip.
+        engaged_mm: f64,
+        /// The cone's height, mm: `diameter / (2 · tan(α/2))`.
+        cone_mm: f64,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.

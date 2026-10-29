@@ -1406,8 +1406,8 @@ fn v19_project_exports_the_same_program() {
 /// Acceptance 48 through the CLI (#404): the coaster project with its
 /// operations replaced by one V-Carve of a 20 × 5 mm rectangle, 60°
 /// 6.35 mm V-bit, on grblHAL. `check` and `export` succeed, so the program
-/// passed the safety pass (S1–S16, with the V-Carve's partial S9 rule
-/// until #408); the summary states the deepest cut, 4.330 mm; and the
+/// passed the safety pass (S1–S17; S17 exact since #408); the summary
+/// states the deepest cut, 4.330 mm; and the
 /// toolpath itself passes `assert_safe`, the cone test included.
 #[test]
 fn v_carve_exports_and_passes_safety() {
@@ -1793,9 +1793,8 @@ fn v_carve_check_reports_the_floor_ridges() {
 /// #406 (design "Clearing passes", step 4): `check --preview` on a V-Carve
 /// with a clearing pass draws the pass's run and the V-bit's, each in its
 /// own colour, and the legend names them `o6 (clearing te) …` and `o6 …`,
-/// in cut order. The preview is written whatever else `check` finds: until
-/// the safety pass holds a clearing run to its floor (#408) the programs
-/// are refused there.
+/// in cut order. Since the safety pass holds a clearing run to the carve's
+/// floor (#408), `export` writes both programs.
 #[test]
 fn preview_legend_names_clearing_runs() {
     let dir = work_dir("preview_legend_names_clearing_runs");
@@ -1863,6 +1862,14 @@ fn preview_legend_names_clearing_runs() {
     assert_eq!(legend.len(), 2, "{svg}");
     assert!(legend[0].contains(">o6 (clearing te) Sign<"), "{legend:?}");
     assert!(legend[1].contains(">o6 Sign<"), "{legend:?}");
+    let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "export: {}{}",
+        stdout(&out),
+        stderr(&out)
+    );
 }
 
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an
