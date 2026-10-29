@@ -7310,4 +7310,6 @@ mod tests {
         );
         check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
     }
+
+    mod s17;
 }

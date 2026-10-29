@@ -202,13 +202,14 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
+use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
     as_circle, closest_points, inset_is_empty, meeting_points, nearest_point, nest, offset,
     offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
 };
 use dc_project::{
-    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape,
+    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape, Tool,
     ToolKind, Units, VCarveOp, containing_pocket,
 };
 
@@ -649,6 +650,13 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
 }
 
 impl Material {
+    /// The material the run `label` of `op`, cut with `tool`, may cut in
+    /// `project`.
+    pub(crate) fn of_run(project: &Project, op: &Operation, label: &RunLabel, tool: &Tool) -> Self {
+        let _ = (label, tool);
+        Self::of(project, op)
+    }
+
     /// The material `op` may cut in `project`.
     pub(crate) fn of(project: &Project, op: &Operation) -> Self {
         match op {
