@@ -35,8 +35,9 @@
 use super::{Carve, VBit, carve_regions, v_bit};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
+use crate::pocket::rest::{self, Reference};
 use crate::pocket::rings::{
-    Ring, RingKind, RingTree, WallRings, is_noise, nearest, residual_regions,
+    Ring, RingKind, RingTree, WallRings, inset_region, is_noise, nearest, residual_regions,
 };
 use crate::pocket::{MAX_RINGS, ring_path};
 use crate::tabs::LapRates;
@@ -136,54 +137,100 @@ pub(crate) struct FloorCut<'a> {
 /// `sequence` may link two of them at the floor inside the floor. Nothing
 /// when `floors` is empty.
 ///
+/// After the clearing passes `reached_by` (#406; design step 7; empty
+/// without them) the boundary trace is still the whole floor's outline and
+/// islands, cut last, but the rings clear only what no pass reached: each
+/// floor region less every pass's reach ([`rest::left_by`], from the
+/// passes' radii, never from their toolpaths: S14). Each piece left is
+/// cleared as a floor region is, its own outline included
+/// (`WallRings::Last`): that outline runs along the edge the end mills left
+/// as well as along the trace, and without it the groove next to that edge
+/// would stand a whole step-over off it. A piece's rings carry the piece as
+/// `cleared`, and the trace the floor region, which the passes and the
+/// V-bit's rings have cleared by then. When the passes reach everything,
+/// the trace alone is cut, and it needs no step-over.
+///
 /// # Errors
 ///
 /// [`CamError::MissingStepOver`] or [`CamError::InvalidStepOver`] as
-/// [`Floor`]'s step-over, and `InvalidStepOver` when a floor would need
-/// more than [`MAX_RINGS`] rings.
+/// [`Floor`]'s step-over, when there are rings to cut, and
+/// `InvalidStepOver` when a floor would need more than [`MAX_RINGS`] rings.
 pub(crate) fn blocks(
     floor: &Floor,
     floors: &[Region],
+    reached_by: &[Reference],
     cut: &FloorCut<'_>,
     anchor: &mut Option<Point>,
 ) -> Result<Vec<CutBlock>, CamError> {
     if floors.is_empty() {
         return Ok(Vec::new());
     }
+    let mut out = Vec::new();
+    for region in floors {
+        // A pass whose end mill does not fit this floor region reaches none
+        // of it; with none that fits, the region is cut as with no passes.
+        let reaching: Vec<Reference> = reached_by
+            .iter()
+            .copied()
+            .filter(|r| !inset_region(region, r.radius_mm, cut.tolerance_mm).is_empty())
+            .collect();
+        if reaching.is_empty() {
+            out.extend(rings_clearing(region, floor, cut, anchor)?);
+            continue;
+        }
+        for piece in rest::left_by(region, 0.0, &reaching, cut.tolerance_mm) {
+            out.extend(rings_clearing(&piece, floor, cut, anchor)?);
+        }
+        for ring in rings_of(region, 0, anchor) {
+            out.push(ring_block(ring, region, floor, cut));
+        }
+    }
+    if let Some(last) = out.last() {
+        *anchor = Some(last.exit);
+    }
+    Ok(out)
+}
+
+/// The rings that clear `region` (a floor region, or a piece of one) at
+/// the floor: a Pocket ring tree, innermost first, each innermost ring
+/// after its centre ring, the region's own outline and islands last; each
+/// ring with its node's region as `cleared`.
+fn rings_clearing(
+    region: &Region,
+    floor: &Floor,
+    cut: &FloorCut<'_>,
+    anchor: &mut Option<Point>,
+) -> Result<Vec<CutBlock>, CamError> {
     let stepover_mm = floor.stepover_mm(cut.op, cut.tool)?;
     let too_many = || CamError::InvalidStepOver {
         op: cut.op.clone(),
         step_over_fraction: floor.step_over_fraction.unwrap_or(0.0),
     };
+    let tree = RingTree::build(
+        region.clone(),
+        stepover_mm,
+        floor.inset_mm,
+        cut.tolerance_mm,
+        MAX_RINGS,
+    )
+    .ok_or_else(too_many)?;
     let mut out = Vec::new();
-    for region in floors {
-        let tree = RingTree::build(
-            region.clone(),
-            stepover_mm,
-            floor.inset_mm,
-            cut.tolerance_mm,
-            MAX_RINGS,
-        )
-        .ok_or_else(too_many)?;
-        let mut centred: Vec<usize> = Vec::new();
-        for ring in tree.walk(WallRings::Last, anchor) {
-            let Some(node) = tree.nodes.get(ring.node) else {
-                continue;
-            };
-            if node.children.is_empty() && !node.residual && !centred.contains(&ring.node) {
-                centred.push(ring.node);
-                let mut from = Some(ring.start);
-                for centre in
-                    residual_regions(&node.region, &[], stepover_mm / 2.0, cut.tolerance_mm)
-                {
-                    for centre_ring in rings_of(&centre, ring.node, &mut from) {
-                        out.push(ring_block(centre_ring, &centre, floor, cut));
-                    }
+    let mut centred: Vec<usize> = Vec::new();
+    for ring in tree.walk(WallRings::Last, anchor) {
+        let Some(node) = tree.nodes.get(ring.node) else {
+            continue;
+        };
+        if node.children.is_empty() && !node.residual && !centred.contains(&ring.node) {
+            centred.push(ring.node);
+            let mut from = Some(ring.start);
+            for centre in residual_regions(&node.region, &[], stepover_mm / 2.0, cut.tolerance_mm) {
+                for centre_ring in rings_of(&centre, ring.node, &mut from) {
+                    out.push(ring_block(centre_ring, &centre, floor, cut));
                 }
             }
-            let cleared = node.region.clone();
-            out.push(ring_block(ring, &cleared, floor, cut));
         }
+        let cleared = node.region.clone();
+        out.push(ring_block(ring, &cleared, floor, cut));
     }
     if let Some(last) = out.last() {
         *anchor = Some(last.exit);

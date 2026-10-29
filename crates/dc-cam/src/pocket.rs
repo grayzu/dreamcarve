@@ -36,7 +36,7 @@ use crate::profile::{
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
-use crate::tabs::lap_cuts;
+use crate::tabs::{LapRates, lap_cuts};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{IslandNeighbour, Warning};
 use dc_geometry::{
@@ -158,116 +158,8 @@ pub fn generate_pocket(
     project: &Project,
     op: &PocketOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
-    // The tool-centre region is the pocket inset by half the diameter,
-    // right only for a flat end mill (#67).
-    if !tool.cutter.is_flat() {
-        return Err(CamError::CutterNotFlat {
-            op: op.id.clone(),
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            cutter: tool.cutter.describe(),
-        });
-    }
-    let rates = rates_of(tool)?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
-    if let ClearanceStrategy::Raster { angle_deg } = op.strategy
-        && !(angle_deg.is_finite() && (0.0..180.0).contains(&angle_deg))
-    {
-        return Err(CamError::InvalidRasterAngle {
-            op: op.id.clone(),
-            angle_deg,
-        });
-    }
-    check_stock_to_leave(&op.id, op.stock_to_leave_mm)?;
-    let reference = reference_of(project, op)?;
-    entry::check(&op.id, &op.entry)?;
-    let step_down_mm =
-        op.step_down_mm
-            .or(tool.step_down_mm)
-            .ok_or_else(|| CamError::MissingStepDown {
-                op: op.id.clone(),
-                tool: tool.name.clone(),
-                tool_id: tool.id.clone(),
-            })?;
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
-    let depth_mm = op
-        .depth_mm
-        .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
-    let pass_z = pass_z_mm(
-        &op.id,
-        thickness_mm,
-        depth_mm,
-        step_down_mm,
-        op.through_cut_allowance_mm,
-    )?;
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
-    let step_over_fraction = op
-        .step_over_fraction
-        .or(tool.step_over_fraction)
-        .ok_or_else(|| CamError::MissingStepOver {
-            op: op.id.clone(),
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-        })?;
-    let invalid_step_over = || CamError::InvalidStepOver {
-        op: op.id.clone(),
-        step_over_fraction,
-    };
-    if !(step_over_fraction.is_finite() && step_over_fraction > 0.0 && step_over_fraction <= 1.0) {
-        return Err(invalid_step_over());
-    }
-    let stepover_mm = tool.diameter_mm * step_over_fraction;
-    let radius_mm = tool.diameter_mm / 2.0;
-    let tolerance_mm = project.flatten_tolerance_mm;
-
     let mut warnings = Vec::new();
-    let relief = relief::Setup {
-        op: &op.id,
-        relief: op.corner_relief,
-        tool,
-        thickness_mm,
-        depth_mm,
-        through_cut_allowance_mm: op.through_cut_allowance_mm,
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        rates,
-        tolerance_mm,
-    }
-    .plan(&mut warnings)?;
-    let entry_tool = EntryTool {
-        diameter_mm: tool.diameter_mm,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        direction: op.direction,
-        side: CutSide::Internal,
-        quantum_mm: project
-            .post_processor
-            .decimal_places
-            .quantum_mm(project.display_units),
-    };
+    let setup = Setup::of(project, op, &mut warnings)?;
     let shapes = resolve_targets(project, &op.id, &op.targets, &mut warnings)?;
     let contours: Vec<Contour> = shapes.iter().map(|(_, c)| c.clone()).collect();
     let (regions, nest_warnings) = nest(contours).map_err(|e| crossing_error(e, &shapes))?;
@@ -284,251 +176,472 @@ pub fn generate_pocket(
             });
         }
     }
+    let toolpath = setup.cut(project, op, &regions, &shapes, &mut warnings)?;
+    Ok((toolpath, warnings))
+}
 
-    let wall = match op.wall_pass {
-        WallPass::Last => WallRings::Last,
-        WallPass::First => WallRings::First,
-        WallPass::None => WallRings::Omitted,
-    };
-    // Every ring and raster line in cut order: its shape, its path (a ring
-    // oriented and starting at its entry, a line from start to end), the
-    // tool-centre area it has cleared, and its placed entry.
-    let mut rings: Vec<(ShapeRef, Polyline, Option<Region>, Option<EntryPlan>)> = Vec::new();
-    let mut anchor: Option<Point> = None;
-    let mut root_index = 0;
-    // Every tool-centre region, for the S9 check on descents.
-    let mut centre_regions: Vec<Region> = Vec::new();
-    // The material the operation may cut, for S9: each region less the
-    // stock to leave.
-    let mut allowed: Vec<Region> = Vec::new();
-    // Whether a rest operation found anything to clear.
-    let mut rest_found = false;
-    let mut rest_had_room = false;
-    // Each region's cleared loops and tool-centre rings, for the relief.
-    let mut sites: Vec<Site> = Vec::new();
-    for region in &regions {
-        let Some(shape) = outer_shape(region, &shapes) else {
-            continue;
-        };
-        warnings.extend(island_gap_warnings(op, tool, region, &shapes, shape));
-        let cleared_from = allowed.len();
-        if op.stock_to_leave_mm > 0.0 {
-            allowed.extend(inset_region(region, op.stock_to_leave_mm, tolerance_mm));
-        } else {
-            allowed.push(region.clone());
-        }
-        // Design step 2: the tool centre stays `r + stock to leave` off every
-        // wall and island.
-        let tool_centre = inset_region(region, radius_mm + op.stock_to_leave_mm, tolerance_mm);
-        if tool_centre.is_empty() {
-            warnings.push(Warning::PocketNoRoom {
+/// The Pocket toolpath of `op` on `regions`, already resolved, rather than
+/// on its target instances (`docs/specs/phase-3/design.md`, "Clearing
+/// passes", step 3): the same checks, rings, raster lines, entries,
+/// sequencing and S9 check as [`generate_pocket`], so a carve's clearing
+/// pass is cut by exactly the code a user's Pocket is. `op.targets` is not
+/// read. `shapes` names the contours `regions` were nested from, by the
+/// regions' indices (`Region::outer_index`, `Region::hole_indices`); a
+/// hole with no entry there is an island no shape names, and is not
+/// warned about. With `reached_by` the operation is rest machining on
+/// those references, as a `rest_of` Pocket is on its one (#406: a carve's
+/// earlier clearing passes), read from their tools and never from a
+/// toolpath (S14); `op.rest_of` is then `None`.
+///
+/// # Errors
+///
+/// As [`generate_pocket`], but for resolving and nesting targets.
+pub(crate) fn pocket_regions(
+    project: &Project,
+    op: &PocketOp,
+    regions: &[Region],
+    shapes: &[(ShapeRef, Contour)],
+    reached_by: &[rest::Reference],
+    warnings: &mut Vec<Warning>,
+) -> Result<Toolpath, CamError> {
+    let mut setup = Setup::of(project, op, warnings)?;
+    setup.references.extend_from_slice(reached_by);
+    setup.cut(project, op, regions, shapes, warnings)
+}
+
+/// What every region of a Pocket is cut with, checked before its targets
+/// are resolved: the tool, its rates, the pass levels, the step-over, the
+/// relief plan, the entry tool and the references of a rest operation.
+struct Setup<'p> {
+    tool: &'p Tool,
+    rates: LapRates,
+    thickness_mm: f64,
+    pass_z: Vec<f64>,
+    safe_z_mm: f64,
+    step_over_fraction: f64,
+    stepover_mm: f64,
+    radius_mm: f64,
+    tolerance_mm: f64,
+    relief: Option<relief::Relief>,
+    entry_tool: EntryTool,
+    /// What the operation rests on: its `rest_of`, or a carve's earlier
+    /// clearing passes. Empty for a plain Pocket.
+    references: Vec<rest::Reference>,
+}
+
+impl<'p> Setup<'p> {
+    /// Checks `op` in `project` and plans its relief, reporting problems
+    /// in the order [`generate_pocket`] always has.
+    fn of(
+        project: &'p Project,
+        op: &PocketOp,
+        warnings: &mut Vec<Warning>,
+    ) -> Result<Self, CamError> {
+        let tool = project
+            .tools
+            .iter()
+            .find(|t| t.id == op.tool)
+            .ok_or_else(|| CamError::UnknownTool {
                 op: op.id.clone(),
-                shape: shape.clone(),
+                tool: op.tool.clone(),
+            })?;
+        // The tool-centre region is the pocket inset by half the diameter,
+        // right only for a flat end mill (#67).
+        if !tool.cutter.is_flat() {
+            return Err(CamError::CutterNotFlat {
+                op: op.id.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let rates = rates_of(tool)?;
+        if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+            return Err(CamError::InvalidToolDiameter {
                 tool: tool.name.clone(),
                 tool_id: tool.id.clone(),
                 diameter_mm: tool.diameter_mm,
             });
-            continue;
         }
-        // Design step 3: a rest operation keeps only the tool centres that
-        // touch what its reference left.
-        let (tool_centre, left) = match reference {
-            Some(reference) => {
+        if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
+            return Err(CamError::InvalidSafeZ {
+                op: op.id.clone(),
+                safe_z_mm: op.safe_z_mm,
+            });
+        }
+        if let ClearanceStrategy::Raster { angle_deg } = op.strategy
+            && !(angle_deg.is_finite() && (0.0..180.0).contains(&angle_deg))
+        {
+            return Err(CamError::InvalidRasterAngle {
+                op: op.id.clone(),
+                angle_deg,
+            });
+        }
+        check_stock_to_leave(&op.id, op.stock_to_leave_mm)?;
+        let reference = reference_of(project, op)?;
+        entry::check(&op.id, &op.entry)?;
+        let step_down_mm =
+            op.step_down_mm
+                .or(tool.step_down_mm)
+                .ok_or_else(|| CamError::MissingStepDown {
+                    op: op.id.clone(),
+                    tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
+                })?;
+        let thickness_mm = project
+            .stock
+            .thickness_mm
+            .ok_or(CamError::MissingThickness)?;
+        let depth_mm = op
+            .depth_mm
+            .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+        let pass_z = pass_z_mm(
+            &op.id,
+            thickness_mm,
+            depth_mm,
+            step_down_mm,
+            op.through_cut_allowance_mm,
+        )?;
+        let safe_z_mm = thickness_mm + op.safe_z_mm;
+        let step_over_fraction = op
+            .step_over_fraction
+            .or(tool.step_over_fraction)
+            .ok_or_else(|| CamError::MissingStepOver {
+                op: op.id.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+            })?;
+        if !(step_over_fraction.is_finite()
+            && step_over_fraction > 0.0
+            && step_over_fraction <= 1.0)
+        {
+            return Err(CamError::InvalidStepOver {
+                op: op.id.clone(),
+                step_over_fraction,
+            });
+        }
+        let tolerance_mm = project.flatten_tolerance_mm;
+        let relief = relief::Setup {
+            op: &op.id,
+            relief: op.corner_relief,
+            tool,
+            thickness_mm,
+            depth_mm,
+            through_cut_allowance_mm: op.through_cut_allowance_mm,
+            safe_z_mm,
+            clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
+            rates,
+            tolerance_mm,
+        }
+        .plan(warnings)?;
+        let entry_tool = EntryTool {
+            diameter_mm: tool.diameter_mm,
+            feed_mm_min: rates.feed_mm_min,
+            plunge_mm_min: rates.plunge_mm_min,
+            direction: op.direction,
+            side: CutSide::Internal,
+            quantum_mm: project
+                .post_processor
+                .decimal_places
+                .quantum_mm(project.display_units),
+        };
+        Ok(Self {
+            tool,
+            rates,
+            thickness_mm,
+            pass_z,
+            safe_z_mm,
+            step_over_fraction,
+            stepover_mm: tool.diameter_mm * step_over_fraction,
+            radius_mm: tool.diameter_mm / 2.0,
+            tolerance_mm,
+            relief,
+            entry_tool,
+            references: reference.into_iter().collect(),
+        })
+    }
+
+    /// The toolpath of `op` on `regions`, nested from the contours of
+    /// `shapes`: design steps 2 to 12.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "steps 2 to 12 of the Pocket generator, kept in one place"
+    )]
+    fn cut(
+        &self,
+        project: &Project,
+        op: &PocketOp,
+        regions: &[Region],
+        shapes: &[(ShapeRef, Contour)],
+        warnings: &mut Vec<Warning>,
+    ) -> Result<Toolpath, CamError> {
+        let Self {
+            tool,
+            rates,
+            thickness_mm,
+            ref pass_z,
+            safe_z_mm,
+            step_over_fraction,
+            stepover_mm,
+            radius_mm,
+            tolerance_mm,
+            ref relief,
+            entry_tool,
+            ref references,
+        } = *self;
+        let invalid_step_over = || CamError::InvalidStepOver {
+            op: op.id.clone(),
+            step_over_fraction,
+        };
+        let wall = match op.wall_pass {
+            WallPass::Last => WallRings::Last,
+            WallPass::First => WallRings::First,
+            WallPass::None => WallRings::Omitted,
+        };
+        // Every ring and raster line in cut order: its shape, its path (a ring
+        // oriented and starting at its entry, a line from start to end), the
+        // tool-centre area it has cleared, and its placed entry.
+        let mut rings: Vec<(ShapeRef, Polyline, Option<Region>, Option<EntryPlan>)> = Vec::new();
+        let mut anchor: Option<Point> = None;
+        let mut root_index = 0;
+        // Every tool-centre region, for the S9 check on descents.
+        let mut centre_regions: Vec<Region> = Vec::new();
+        // The material the operation may cut, for S9: each region less the
+        // stock to leave.
+        let mut allowed: Vec<Region> = Vec::new();
+        // Whether a rest operation found anything to clear.
+        let mut rest_found = false;
+        let mut rest_had_room = false;
+        // Each region's cleared loops and tool-centre rings, for the relief.
+        let mut sites: Vec<Site> = Vec::new();
+        for region in regions {
+            let Some(shape) = outer_shape(region, shapes) else {
+                continue;
+            };
+            warnings.extend(island_gap_warnings(op, tool, region, shapes, shape));
+            let cleared_from = allowed.len();
+            if op.stock_to_leave_mm > 0.0 {
+                allowed.extend(inset_region(region, op.stock_to_leave_mm, tolerance_mm));
+            } else {
+                allowed.push(region.clone());
+            }
+            // Design step 2: the tool centre stays `r + stock to leave` off every
+            // wall and island.
+            let tool_centre = inset_region(region, radius_mm + op.stock_to_leave_mm, tolerance_mm);
+            if tool_centre.is_empty() {
+                warnings.push(Warning::PocketNoRoom {
+                    op: op.id.clone(),
+                    shape: shape.clone(),
+                    tool: tool.name.clone(),
+                    tool_id: tool.id.clone(),
+                    diameter_mm: tool.diameter_mm,
+                });
+                continue;
+            }
+            // Design step 3: a rest operation keeps only the tool centres that
+            // touch what its references left.
+            let (tool_centre, left) = if references.is_empty() {
+                (tool_centre, None)
+            } else {
                 rest_had_room = true;
-                let left = rest::left_by(region, op.stock_to_leave_mm, reference, tolerance_mm);
+                let left = rest::left_by(region, op.stock_to_leave_mm, references, tolerance_mm);
                 let centre = rest::rest_centre(&tool_centre, &left, radius_mm, tolerance_mm);
                 if centre.is_empty() {
                     continue;
                 }
                 rest_found = true;
                 (centre, Some(left))
+            };
+            // #167: a rest operation skips the root rings that run along the
+            // leftover's edge against the cleared area, cutting only air. The
+            // tool-centre region itself is unchanged, as are the entry domain
+            // and every ring's cleared area.
+            let keep = |ring: &Ring| match &left {
+                Some(left) => {
+                    ring.node != 0 || !rest::in_air(&ring.contour, left, radius_mm, tolerance_mm)
+                }
+                None => true,
+            };
+            centre_regions.extend(tool_centre.iter().cloned());
+            if relief.is_some() {
+                let cleared = allowed.get(cleared_from..).unwrap_or(&[]);
+                sites.push(relief::pocket_site(cleared, &tool_centre, shape));
             }
-            None => (tool_centre, None),
-        };
-        // #167: a rest operation skips the root rings that run along the
-        // leftover's edge against the cleared area, cutting only air. The
-        // tool-centre region itself is unchanged, as are the entry domain
-        // and every ring's cleared area.
-        let keep = |ring: &Ring| match &left {
-            Some(left) => {
-                ring.node != 0 || !rest::in_air(&ring.contour, left, radius_mm, tolerance_mm)
-            }
-            None => true,
-        };
-        centre_regions.extend(tool_centre.iter().cloned());
-        if relief.is_some() {
-            let cleared = allowed.get(cleared_from..).unwrap_or(&[]);
-            sites.push(relief::pocket_site(cleared, &tool_centre, shape));
-        }
-        for root in tool_centre {
-            if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
-                let settings = RasterSettings {
-                    stepover_mm,
-                    radius_mm,
-                    angle_deg,
-                    tolerance_mm,
-                    wall,
-                    direction: op.direction,
-                };
-                let paths = raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)
+            for root in tool_centre {
+                if let ClearanceStrategy::Raster { angle_deg } = op.strategy {
+                    let settings = RasterSettings {
+                        stepover_mm,
+                        radius_mm,
+                        angle_deg,
+                        tolerance_mm,
+                        wall,
+                        direction: op.direction,
+                    };
+                    let paths =
+                        raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)
+                            .ok_or_else(invalid_step_over)?;
+                    // Raster lines reach the tool-centre region's edge at every
+                    // wall pass, so the whole root is cleared each pass.
+                    let domain = (op.entry != Entry::Plunge).then(|| {
+                        EntryDomain::new(
+                            std::slice::from_ref(&root),
+                            tool.diameter_mm,
+                            tolerance_mm,
+                        )
+                    });
+                    rings.extend(paths.into_iter().map(|(path, cleared)| {
+                        let plan = domain
+                            .as_ref()
+                            .zip(path.vertices().first())
+                            .map(|(d, v)| entry::plan(d, &op.entry, v.point(), &entry_tool));
+                        (shape.clone(), path, cleared, plan)
+                    }));
+                    root_index += 1;
+                    continue;
+                }
+                let tree = RingTree::build(root, stepover_mm, radius_mm, tolerance_mm, MAX_RINGS)
                     .ok_or_else(invalid_step_over)?;
-                // Raster lines reach the tool-centre region's edge at every
-                // wall pass, so the whole root is cleared each pass.
                 let domain = (op.entry != Entry::Plunge).then(|| {
-                    EntryDomain::new(std::slice::from_ref(&root), tool.diameter_mm, tolerance_mm)
+                    EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
                 });
-                rings.extend(paths.into_iter().map(|(path, cleared)| {
+                for ring in tree.walk_keeping(wall, &mut anchor, &keep) {
+                    let Some(node) = tree.nodes.get(ring.node) else {
+                        continue;
+                    };
                     let plan = domain
                         .as_ref()
-                        .zip(path.vertices().first())
-                        .map(|(d, v)| entry::plan(d, &op.entry, v.point(), &entry_tool));
-                    (shape.clone(), path, cleared, plan)
-                }));
-                root_index += 1;
-                continue;
+                        .map(|d| entry::plan(d, &op.entry, ring.start, &entry_tool));
+                    let cleared = Some(node.region.clone());
+                    rings.push((shape.clone(), ring_path(ring, op.direction), cleared, plan));
+                }
             }
-            let tree = RingTree::build(root, stepover_mm, radius_mm, tolerance_mm, MAX_RINGS)
-                .ok_or_else(invalid_step_over)?;
-            let domain = (op.entry != Entry::Plunge).then(|| {
-                EntryDomain::new(&entry_regions(&tree, wall), tool.diameter_mm, tolerance_mm)
+        }
+
+        if let Some(rest_of) = op.rest_of.as_ref().filter(|_| rest_had_room && !rest_found) {
+            warnings.push(Warning::RestOfClearsNothing {
+                op: op.id.clone(),
+                rest_of: rest_of.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
             });
-            for ring in tree.walk_keeping(wall, &mut anchor, &keep) {
-                let Some(node) = tree.nodes.get(ring.node) else {
+        }
+
+        let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
+        let mut entry_warnings = EntryWarnings::default();
+        for (pass, &z_mm) in pass_z.iter().enumerate() {
+            // #214: a ramp or helix starts the entry clearance above the stock
+            // top, and on a later pass above the floor the pass before cleared
+            // (the whole tool-centre region, every pass), not at safe Z.
+            let above_mm = pass
+                .checked_sub(1)
+                .and_then(|k| pass_z.get(k).copied())
+                .unwrap_or(thickness_mm);
+            let descent_from_z_mm = entry::descent_start_z_mm(above_mm, safe_z_mm);
+            for (shape, path, cleared, plan) in &rings {
+                let Some(start) = path.vertices().first().map(|v| v.point()) else {
                     continue;
                 };
-                let plan = domain
-                    .as_ref()
-                    .map(|d| entry::plan(d, &op.entry, ring.start, &entry_tool));
-                let cleared = Some(node.region.clone());
-                rings.push((shape.clone(), ring_path(ring, op.direction), cleared, plan));
+                // A ring ends where it starts; a raster line at its far end.
+                let exit = if path.is_closed() {
+                    start
+                } else {
+                    path.vertices().last().map_or(start, |v| v.point())
+                };
+                let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
+                    continue;
+                };
+                let (descent_from, descent) = match plan {
+                    Some(plan) => {
+                        let descent = plan.descend(descent_from_z_mm, z_mm);
+                        entry_warnings.record(shape, &descent);
+                        (descent.from, descent.moves)
+                    }
+                    None => (start, Vec::new()),
+                };
+                blocks.push(CutBlock {
+                    shape: shape.clone(),
+                    pass,
+                    z_mm,
+                    descent_from,
+                    descent_from_z_mm,
+                    descent,
+                    entry: start,
+                    entry_z_mm: z_mm,
+                    cuts: lap.moves,
+                    exit,
+                    // A pocket never cuts a part free.
+                    frees: false,
+                    cleared: cleared.clone(),
+                    group: pass,
+                });
             }
         }
-    }
+        warnings.extend(entry_warnings.into_warnings(&op.id));
+        // Design step 10 (maintainer decision 2026-10-24): each corner's
+        // notch is cut from the wall or island ring of every pass that turns
+        // it; stock to leave means no final wall, and a corner some pass has
+        // no ring for is left for the separate pass after the main passes.
+        let (inline, fallback) = match relief {
+            Some(relief) => relief.inline_pocket(
+                &sites,
+                pass_z,
+                op.stock_to_leave_mm <= 0.0,
+                &mut blocks,
+                warnings,
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        let containment = nested_pockets(regions, shapes);
+        let input = SequenceInput {
+            blocks,
+            order: op.machining_order,
+            containment: &containment,
+            safe_z_mm,
+            clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
+            stock_top_mm: thickness_mm,
+            tool_diameter_mm: tool.diameter_mm,
+            stepover_mm,
+            feed_mm_min: rates.feed_mm_min,
+            plunge_mm_min: rates.plunge_mm_min,
+            cut_before: &[],
+        };
+        let mut toolpath = sequence(&input)?;
+        // Design step 10: the separate relief pass after all the passes, for
+        // the corners not cut inline; S9 allows each notch the lobe its corner
+        // may lose.
+        if let Some(relief) = relief {
+            let mut cut = inline;
+            cut.extend(relief.cut(fallback, &mut toolpath, warnings)?);
+            let lobes: Vec<Region> = cut
+                .iter()
+                .flat_map(|c| relief::lobe(c, radius_mm, tolerance_mm))
+                .collect();
+            if !lobes.is_empty() {
+                allowed = union(&allowed, &lobes, tolerance_mm);
+            }
+        }
 
-    if let Some(rest_of) = op.rest_of.as_ref().filter(|_| rest_had_room && !rest_found) {
-        warnings.push(Warning::RestOfClearsNothing {
-            op: op.id.clone(),
-            rest_of: rest_of.clone(),
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-        });
-    }
-
-    let mut blocks = Vec::with_capacity(rings.len() * pass_z.len());
-    let mut entry_warnings = EntryWarnings::default();
-    for (pass, &z_mm) in pass_z.iter().enumerate() {
-        // #214: a ramp or helix starts the entry clearance above the stock
-        // top, and on a later pass above the floor the pass before cleared
-        // (the whole tool-centre region, every pass), not at safe Z.
-        let above_mm = pass
-            .checked_sub(1)
-            .and_then(|k| pass_z.get(k).copied())
-            .unwrap_or(thickness_mm);
-        let descent_from_z_mm = entry::descent_start_z_mm(above_mm, safe_z_mm);
-        for (shape, path, cleared, plan) in &rings {
-            let Some(start) = path.vertices().first().map(|v| v.point()) else {
-                continue;
-            };
-            // A ring ends where it starts; a raster line at its far end.
-            let exit = if path.is_closed() {
-                start
-            } else {
-                path.vertices().last().map_or(start, |v| v.point())
-            };
-            let Some(lap) = lap_cuts(path, z_mm, None, rates) else {
-                continue;
-            };
-            let (descent_from, descent) = match plan {
-                Some(plan) => {
-                    let descent = plan.descend(descent_from_z_mm, z_mm);
-                    entry_warnings.record(shape, &descent);
-                    (descent.from, descent.moves)
-                }
-                None => (start, Vec::new()),
-            };
-            blocks.push(CutBlock {
-                shape: shape.clone(),
-                pass,
-                z_mm,
-                descent_from,
-                descent_from_z_mm,
-                descent,
-                entry: start,
-                entry_z_mm: z_mm,
-                cuts: lap.moves,
-                exit,
-                // A pocket never cuts a part free.
-                frees: false,
-                cleared: cleared.clone(),
-                group: pass,
+        // #62: the cutter must stay on the stock.
+        if let Some(overhang) = swept_bounds(&toolpath, radius_mm)
+            .and_then(|swept| stock_overhang(&project.stock, swept))
+        {
+            return Err(CamError::OffStock {
+                op: op.id.clone(),
+                overhang,
             });
         }
+        check_in_material(
+            op,
+            &toolpath,
+            radius_mm,
+            tolerance_mm,
+            regions,
+            &allowed,
+            &centre_regions,
+            shapes,
+        )?;
+        Ok(toolpath)
     }
-    warnings.extend(entry_warnings.into_warnings(&op.id));
-    // Design step 10 (maintainer decision 2026-10-24): each corner's
-    // notch is cut from the wall or island ring of every pass that turns
-    // it; stock to leave means no final wall, and a corner some pass has
-    // no ring for is left for the separate pass after the main passes.
-    let (inline, fallback) = match &relief {
-        Some(relief) => relief.inline_pocket(
-            &sites,
-            &pass_z,
-            op.stock_to_leave_mm <= 0.0,
-            &mut blocks,
-            &mut warnings,
-        ),
-        None => (Vec::new(), Vec::new()),
-    };
-    let containment = nested_pockets(&regions, &shapes);
-    let input = SequenceInput {
-        blocks,
-        order: op.machining_order,
-        containment: &containment,
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm,
-        feed_mm_min: rates.feed_mm_min,
-        plunge_mm_min: rates.plunge_mm_min,
-        cut_before: &[],
-    };
-    let mut toolpath = sequence(&input)?;
-    // Design step 10: the separate relief pass after all the passes, for
-    // the corners not cut inline; S9 allows each notch the lobe its corner
-    // may lose.
-    if let Some(relief) = &relief {
-        let mut cut = inline;
-        cut.extend(relief.cut(fallback, &mut toolpath, &mut warnings)?);
-        let lobes: Vec<Region> = cut
-            .iter()
-            .flat_map(|c| relief::lobe(c, radius_mm, tolerance_mm))
-            .collect();
-        if !lobes.is_empty() {
-            allowed = union(&allowed, &lobes, tolerance_mm);
-        }
-    }
-
-    // #62: the cutter must stay on the stock.
-    if let Some(overhang) =
-        swept_bounds(&toolpath, radius_mm).and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
-    check_in_material(
-        op,
-        &toolpath,
-        radius_mm,
-        tolerance_mm,
-        &regions,
-        &allowed,
-        &centre_regions,
-        &shapes,
-    )?;
-    Ok((toolpath, warnings))
 }
 
 /// The stock to leave validation requires, 0 or more, checked again: a
@@ -2358,7 +2471,7 @@ mod tests {
             radius_mm: ROUGH_MM / 2.0,
             stock_to_leave_mm: ROUGH_STOCK_TO_LEAVE_MM,
         };
-        let left = rest::left_by(&notched_region(), 0.0, reference, FLAT_TOL);
+        let left = rest::left_by(&notched_region(), 0.0, &[reference], FLAT_TOL);
         for z in PASS_Z_MM {
             let rings = rings_at(&tp, z);
             assert!(!rings.is_empty(), "rings at Z {z}");

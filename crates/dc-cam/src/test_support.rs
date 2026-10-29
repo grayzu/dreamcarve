@@ -13,6 +13,7 @@
 )]
 
 use crate::entry::CLEARED_POINT_TOLERANCE_MM;
+use crate::run::{RunLabel, ToolRun};
 use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::vcarve::{carve_regions, cone_height_mm, cone_in_material, start_plane};
@@ -87,6 +88,38 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     if let Operation::VCarve(carve) = op {
         assert_cone_in_material(toolpath, project, carve, tool);
     }
+}
+
+/// [`assert_safe`] for one tool run of `op` (#406): its own run with the
+/// operation's tool, the cone test included; a carve's clearing run with
+/// its pass's end mill, whose rates it is held to, and no cone test.
+pub fn assert_run_safe(run: &ToolRun, project: &Project, op: &Operation) {
+    let RunLabel::Clearing(tool_id) = &run.label else {
+        assert_safe(&run.toolpath, project, op);
+        return;
+    };
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| &t.id == tool_id)
+        .expect("the clearing pass's tool is in the project");
+    assert_eq!(
+        &run.tool, tool_id,
+        "a clearing run cuts with its pass's tool"
+    );
+    let thickness_mm = project.stock.thickness_mm.expect("stock has a thickness");
+    let feed_mm_min = tool.feed_mm_min.expect("tool has a feed");
+    assert_safe_within(
+        &run.toolpath,
+        &Limits {
+            safe_z_mm: thickness_mm + op.safe_z_mm(),
+            stock_top_mm: thickness_mm,
+            floor_z_mm: -op.through_cut_allowance_mm(),
+            feed_mm_min,
+            plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
+            level_floor_mm_min: feed_mm_min,
+        },
+    );
 }
 
 /// S17 on the toolpath (`docs/specs/phase-3/design.md`, "Test plan":

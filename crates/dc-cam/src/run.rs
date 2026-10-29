@@ -29,3 +29,32 @@ pub enum RunLabel {
     /// A clearing pass of a carve, with that pass's end mill.
     Clearing(ToolId),
 }
+
+impl RunLabel {
+    /// How programs, summaries and the preview name the run of the
+    /// operation called `name` (an id or a name): `name` itself for the
+    /// operation's own run, `op2 (clearing t1)` for a clearing pass with
+    /// tool `t1` (`docs/specs/phase-3/design.md`, "Clearing passes", step
+    /// 4).
+    #[must_use]
+    pub fn naming(&self, name: &str) -> String {
+        match self {
+            Self::Main => name.to_owned(),
+            Self::Clearing(tool) => format!("{name} (clearing {tool})"),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_clearing_run_is_named_after_its_tool() {
+        assert_eq!(RunLabel::Main.naming("op2"), "op2");
+        assert_eq!(
+            RunLabel::Clearing(ToolId::new("t1")).naming("op2"),
+            "op2 (clearing t1)"
+        );
+    }
+}

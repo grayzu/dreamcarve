@@ -147,8 +147,10 @@ is no GUI in this phase.
  carve with no flat depth may not have clearing passes (error
  `clearing_needs_flat_depth`); a pass whose tool is not a flat end
  mill is `clearing_needs_end_mill`; a pass whose tool is wider than the
- one before warns `clearing_not_descending` (it still runs, and clears
- what it can); a pass that can reach nothing warns `clearing_no_room`.
+ one before warns `clearing_not_descending` (it is not refused, but a
+ wider end mill reaches nothing a narrower one before it left, so it also
+ warns `clearing_no_room`; #406); a pass that can reach nothing warns
+ `clearing_no_room` and has no run of its own.
  An empty list is the default: the V-bit clears the whole floor itself.
  The carve never trusts a clearing run's toolpath: it subtracts what
  each pass's tool can reach, so removing a pass simply gives the V-bit
@@ -453,12 +455,16 @@ Numbering continues from phase 2's 47.
  "t2", … } ]`, a 3.175 mm end mill: export writes two runs, `op1
  (clearing t2)` then `op1`; the clearing run's footprint stays inside
  the 26 × 6 mm floor region and its depth is 2 mm; the V-Carve run's
- floor cutting at Z −2 lies only where the end mill could not reach
- (within 1.5875 mm of the floor boundary) and is under a third of the
- length it had in 50; the union of both runs' footprints at Z −2 still
- covers the floor within 0.05 mm. A second pass with a 1.5 mm end mill
- after the first clears only the band and corners the first left; the
- two passes the other way round warn `clearing_not_descending`. A pass
+ floor cutting at Z −2 (its floor rings and boundary trace; the corners'
+ medial lines keep their stretch at Z −2 to the junction) lies only where
+ the end mill could not reach (within 1.5875 mm of the floor boundary)
+ and, at the recommended `step_over_fraction` 0.1, is under a third of
+ the length it had in 50 (at 0.4 the trace alone is 40 % of it); the
+ union of both runs' footprints at Z −2 still covers the floor within
+ 0.05 mm. A second pass with a 1.5 mm end mill after the first clears
+ only the corners the first left; the two passes the other way round
+ warn `clearing_not_descending`, and the 3.175 mm pass, which then
+ reaches nothing, `clearing_no_room` (amended in #406). A pass
  on a V-Carve with `flat_depth_mm: null` is `clearing_needs_flat_depth`;
  a pass naming the V-bit is `clearing_needs_end_mill`. Removing the
  list gives the V-Carve the whole floor again, as in 50. (changed

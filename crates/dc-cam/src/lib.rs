@@ -49,7 +49,7 @@ pub use block::CutBlock;
 pub use bore::{BORE_MIN_HELIX_RADIUS_MM, generate_bore};
 pub use drill::{CannedKind, DrillHole, DrillToolpath, PECK_REENTRY_MM, generate_drill};
 pub use engrave::generate_engrave;
-pub use error::{BlockProblem, CamError, FeedField, ShapeRef};
+pub use error::{BlockProblem, CamError, ClearingProblem, FeedField, ShapeRef};
 pub use footprint::footprint;
 pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, last_pass_step_reach_mm, traversal_is_ccw};

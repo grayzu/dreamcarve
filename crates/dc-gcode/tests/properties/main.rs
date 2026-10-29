@@ -105,13 +105,13 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
             let (toolpath, _) = generate_bore(project, b)?;
             EmitOp::from((op, tool, toolpath))
         }
-        // No property generates a V-Carve yet; its one run (no clearing
-        // passes) is what would be emitted.
+        // No property generates a V-Carve yet; its V-bit's run is what
+        // would be emitted (no property gives it clearing passes either).
         Operation::VCarve(v) => {
             let (runs, _) = generate_vcarve(project, v)?;
             let toolpath = runs
                 .into_iter()
-                .next()
+                .find(|r| r.label == dc_cam::RunLabel::Main)
                 .map(|r| r.toolpath)
                 .unwrap_or_default();
             EmitOp::from((op, tool, toolpath))

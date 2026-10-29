@@ -1790,6 +1790,81 @@ fn v_carve_check_reports_the_floor_ridges() {
     );
 }
 
+/// #406 (design "Clearing passes", step 4): `check --preview` on a V-Carve
+/// with a clearing pass draws the pass's run and the V-bit's, each in its
+/// own colour, and the legend names them `o6 (clearing te) …` and `o6 …`,
+/// in cut order. The preview is written whatever else `check` finds: until
+/// the safety pass holds a clearing run to its floor (#408) the programs
+/// are refused there.
+#[test]
+fn preview_legend_names_clearing_runs() {
+    let dir = work_dir("preview_legend_names_clearing_runs");
+    let dcv = init_coaster(&dir);
+    fill_in(&dcv, 1500.0, 500.0, 18000);
+    let mut project = load_file(&dcv).project;
+    let mut bit = dc_project::test_support::tool_v_bit_90();
+    bit.id = ToolId::new("tv");
+    bit.feed_mm_min = Some(1500.0);
+    bit.plunge_mm_min = Some(500.0);
+    bit.rpm = Some(18000);
+    bit.step_over_fraction = Some(0.4);
+    project.tools.push(bit);
+    let mut end_mill = dc_project::test_support::tool_6_35_upcut();
+    end_mill.id = ToolId::new("te");
+    end_mill.name = "3.175 mm end mill".into();
+    end_mill.diameter_mm = 3.175;
+    end_mill.step_down_mm = Some(1.0);
+    project.tools.push(end_mill);
+    let rectangle = FeatureDefinition {
+        id: DefinitionId::new("dv"),
+        name: "Rectangle".into(),
+        profiles: vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
+    };
+    project.definitions.insert(rectangle.id.clone(), rectangle);
+    project.instances.push(FeatureInstance {
+        id: InstanceId::new("iv"),
+        definition: DefinitionId::new("dv"),
+        transform: Transform::translate(40.0, 50.0),
+        name: "Rectangle".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    let carve = dc_project::VCarveOp {
+        name: "Sign".into(),
+        targets: vec![InstanceId::new("iv")],
+        tool: ToolId::new("tv"),
+        flat_depth_mm: Some(2.0),
+        clearing: vec![dc_project::ClearingPass {
+            tool: ToolId::new("te"),
+            strategy: dc_project::ClearanceStrategy::Offset,
+            direction: dc_project::CutDirection::Climb,
+            entry: dc_project::Entry::Plunge,
+        }],
+        ..dc_project::test_support::sample_v_carve()
+    };
+    project.operations = vec![Operation::VCarve(carve)];
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+    let out = run(&dir, &["check", "coaster.dcv", "--preview", "preview.svg"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert!(report.contains("Wrote preview"), "{report}");
+    // The V-bit's floor ridges stand only where the pass does not reach.
+    assert!(
+        report.contains("V-bit floor ridges 0.800 mm where no clearing pass reaches."),
+        "{report}"
+    );
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    let legend: Vec<&str> = svg
+        .lines()
+        .filter(|l| l.contains("class=\"legend-entry\""))
+        .collect();
+    assert_eq!(legend.len(), 2, "{svg}");
+    assert!(legend[0].contains(">o6 (clearing te) Sign<"), "{legend:?}");
+    assert!(legend[1].contains(">o6 Sign<"), "{legend:?}");
+}
+
 /// Functional spec capability 12, S9 (slice 4, #137): a project with an
 /// offset Pocket of the coaster before its cut-out exports one program,
 /// which the emitter's safety pass (S1–S7) accepted; `check` finds no

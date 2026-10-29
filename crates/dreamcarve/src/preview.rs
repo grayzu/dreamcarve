@@ -42,7 +42,7 @@
 use std::f64::consts::PI;
 use std::fmt::Write as _;
 
-use dc_cam::{Move, MoveKind, Toolpath};
+use dc_cam::{Move, MoveKind, RunLabel, Toolpath};
 use dc_geometry::{Arc, Point, Point3, Polyline, Vec2};
 use dc_project::{Operation, Project, Tool};
 
@@ -77,9 +77,24 @@ const XY_EPS_MM: f64 = 1e-9;
 /// mistyped path never replaces the user's drawing.
 pub const MARKER: &str = "<!-- Toolpath preview written by DreamCarve -->";
 
+/// One tool run to draw: an operation's toolpath with one tool, and which
+/// of the operation's runs it is (a carve's clearing pass, #406).
+#[derive(Debug, Clone, Copy)]
+pub struct Run<'a> {
+    /// The operation.
+    pub op: &'a Operation,
+    /// Which of its runs.
+    pub label: &'a RunLabel,
+    /// The run's tool.
+    pub tool: &'a Tool,
+    /// The run's toolpath, project space.
+    pub toolpath: &'a Toolpath,
+}
+
 /// A deterministic SVG of the project's stock, shapes and each enabled
-/// operation's toolpath, in mm, Y flipped for display.
-pub fn render(project: &Project, ops: &[(&Operation, &Tool, &Toolpath)]) -> String {
+/// operation's tool runs, in mm, Y flipped for display, each run in a
+/// colour of its own.
+pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
     let width = project.stock.width_mm;
     let height = project.stock.height_mm;
     let frame = Frame { height_mm: height };
@@ -105,7 +120,13 @@ pub fn render(project: &Project, ops: &[(&Operation, &Tool, &Toolpath)]) -> Stri
         fmt(STOCK_STROKE_MM),
     );
     write_shapes(&mut svg, project, &frame);
-    for (k, (op, tool, toolpath)) in ops.iter().enumerate() {
+    for (
+        k,
+        &Run {
+            op, tool, toolpath, ..
+        },
+    ) in ops.iter().enumerate()
+    {
         let colour = colour(k);
         let drawing = Drawing::of(toolpath, matches!(op, Operation::Drill(_)), &frame);
         write_operation(&mut svg, &frame, op, tool, colour, &drawing);
@@ -550,14 +571,10 @@ fn write_operation(
     svg.push_str("</g>\n");
 }
 
-/// The legend in the stock's top-left corner: a swatch of each
-/// operation's colour, its id and its name.
-fn write_legend(
-    svg: &mut String,
-    width_mm: f64,
-    height_mm: f64,
-    ops: &[(&Operation, &Tool, &Toolpath)],
-) {
+/// The legend in the stock's top-left corner: a swatch of each run's
+/// colour, its operation's id and name; a carve's clearing run as
+/// `o6 (clearing t1) Name` (#406).
+fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>]) {
     if ops.is_empty() {
         return;
     }
@@ -566,7 +583,13 @@ fn write_legend(
     let line = font * 1.5;
     let labels: Vec<String> = ops
         .iter()
-        .map(|(op, _, _)| format!("{} {}", op.id(), op.name()))
+        .map(|run| {
+            format!(
+                "{} {}",
+                run.label.naming(run.op.id().as_str()),
+                run.op.name()
+            )
+        })
         .collect();
     let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     #[allow(
@@ -643,14 +666,22 @@ mod tests {
         }
     }
 
+    /// `toolpath` as the main run of the sample project's one operation,
+    /// with its 6.35 mm tool.
+    fn main_run<'a>(project: &'a Project, toolpath: &'a Toolpath) -> Run<'a> {
+        Run {
+            op: &project.operations[0],
+            label: &RunLabel::Main,
+            tool: &project.tools[0],
+            toolpath,
+        }
+    }
+
     /// `toolpath` rendered as the sample project's one operation, with
     /// its 6.35 mm tool. The stock is 100 mm high, so `y_svg = 100 − y`.
     fn render_one(toolpath: &Toolpath) -> String {
         let project = sample_project();
-        render(
-            &project,
-            &[(&project.operations[0], &project.tools[0], toolpath)],
-        )
+        render(&project, &[main_run(&project, toolpath)])
     }
 
     /// The text of every element whose `class` is `class`, from its name
@@ -847,10 +878,7 @@ mod tests {
             op.name = "<a & \"b\">".into();
         }
         let toolpath = one_cut();
-        let svg = render(
-            &project,
-            &[(&project.operations[0], &project.tools[0], &toolpath)],
-        );
+        let svg = render(&project, &[main_run(&project, &toolpath)]);
         assert!(svg.contains("&lt;a &amp; &quot;b&quot;&gt;"), "{svg}");
         assert!(!svg.contains("<a &"), "{svg}");
         // The legend names the operation by id and name, in its colour.
@@ -871,7 +899,7 @@ mod tests {
             panic!("the sample cuts a Profile");
         };
         let (toolpath, _) = dc_cam::generate_profile(&project, op).unwrap();
-        let ops = [(&project.operations[0], &project.tools[0], &toolpath)];
+        let ops = [main_run(&project, &toolpath)];
         assert_eq!(render(&project, &ops), render(&project, &ops));
     }
 }

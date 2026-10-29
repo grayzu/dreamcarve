@@ -416,6 +416,25 @@ impl Operation {
         }
     }
 
+    /// The tools the operation cuts with, in the order it cuts with them
+    /// (format 20, capability 40): a V-Carve's clearing passes' tools, in
+    /// list order, then its own; every other operation's one tool.
+    pub fn run_tools(&self) -> Vec<&ToolId> {
+        let clearing = match self {
+            Self::VCarve(op) => op.clearing.as_slice(),
+            Self::Profile(_)
+            | Self::Pocket(_)
+            | Self::Drill(_)
+            | Self::Bore(_)
+            | Self::Engrave(_) => &[],
+        };
+        clearing
+            .iter()
+            .map(|pass| &pass.tool)
+            .chain(std::iter::once(self.tool()))
+            .collect()
+    }
+
     /// The instances the operation machines.
     pub fn targets(&self) -> &[InstanceId] {
         match self {

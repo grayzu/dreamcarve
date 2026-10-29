@@ -186,6 +186,14 @@ pub enum WarningCode {
     /// (`docs/specs/phase-3/design.md`, "Start depth,
     /// `start_depth_mismatch` and `start_depth_uncleared`"; capability 41).
     StartDepthMismatch,
+    /// A carve's clearing pass reaches none of the floor the passes before
+    /// it left (format 20, capability 40): its end mill is too wide for
+    /// the floor, or no narrower than one before it, so it has no run.
+    ClearingNoRoom,
+    /// A carve's clearing pass cuts with a wider end mill than the pass
+    /// before it (format 20, capability 40); validation reports it too. It
+    /// still runs on what it can reach.
+    ClearingNotDescending,
 }
 
 impl WarningCode {
@@ -236,6 +244,8 @@ impl WarningCode {
             Self::VCarveNoMedialAxis => "vcarve_no_medial_axis",
             Self::VCarveSamplingBudget => "vcarve_sampling_budget",
             Self::StartDepthMismatch => "start_depth_mismatch",
+            Self::ClearingNoRoom => "clearing_no_room",
+            Self::ClearingNotDescending => "clearing_not_descending",
         }
     }
 }
@@ -809,6 +819,30 @@ pub enum Warning {
         /// The Pocket's depth; `None` when it has none set.
         pocket_depth_mm: Option<f64>,
     },
+    /// [`WarningCode::ClearingNoRoom`].
+    ClearingNoRoom {
+        /// The carve.
+        op: OperationId,
+        /// The pass's end mill's name.
+        tool: String,
+        /// Its id.
+        tool_id: ToolId,
+        /// Its diameter, mm.
+        diameter_mm: f64,
+    },
+    /// [`WarningCode::ClearingNotDescending`].
+    ClearingNotDescending {
+        /// The carve.
+        op: OperationId,
+        /// The pass's end mill.
+        tool: ToolId,
+        /// Its diameter, mm.
+        diameter_mm: f64,
+        /// The end mill of the pass before it.
+        earlier_tool: ToolId,
+        /// That one's diameter, mm.
+        earlier_diameter_mm: f64,
+    },
 }
 
 impl Warning {
@@ -859,6 +893,8 @@ impl Warning {
             Self::VCarveNoMedialAxis { .. } => WarningCode::VCarveNoMedialAxis,
             Self::VCarveSamplingBudget { .. } => WarningCode::VCarveSamplingBudget,
             Self::StartDepthMismatch { .. } => WarningCode::StartDepthMismatch,
+            Self::ClearingNoRoom { .. } => WarningCode::ClearingNoRoom,
+            Self::ClearingNotDescending { .. } => WarningCode::ClearingNotDescending,
         }
     }
 
@@ -900,7 +936,9 @@ impl Warning {
             | Self::VCarveTargetOpen { op, .. }
             | Self::VCarveNoMedialAxis { op, .. }
             | Self::VCarveSamplingBudget { op, .. }
-            | Self::StartDepthMismatch { op, .. } => Some(op),
+            | Self::StartDepthMismatch { op, .. }
+            | Self::ClearingNoRoom { op, .. }
+            | Self::ClearingNotDescending { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1549,6 +1587,25 @@ impl fmt::Display for Warning {
                     mm(*start_depth_mm)
                 )
             }
+            Self::ClearingNoRoom {
+                tool, diameter_mm, ..
+            } => write!(
+                f,
+                "its clearing pass with tool `{tool}` ({} mm) can reach none of the floor the passes before it left, so it cuts nothing; remove it, or use a narrower end mill than the pass before",
+                diameter(*diameter_mm)
+            ),
+            Self::ClearingNotDescending {
+                tool,
+                diameter_mm,
+                earlier_tool,
+                earlier_diameter_mm,
+                ..
+            } => write!(
+                f,
+                "its clearing pass with tool `{tool}` ({} mm) is wider than the pass before it (`{earlier_tool}`, {} mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach",
+                diameter(*diameter_mm),
+                diameter(*earlier_diameter_mm)
+            ),
         }
     }
 }
@@ -2219,6 +2276,25 @@ mod tests {
                 },
                 "it starts 0 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, has no depth set, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
             ),
+            (
+                Warning::ClearingNoRoom {
+                    op: op(),
+                    tool: "6.35 mm end mill".to_owned(),
+                    tool_id: "t1".into(),
+                    diameter_mm: 6.35,
+                },
+                "its clearing pass with tool `6.35 mm end mill` (6.35 mm) can reach none of the floor the passes before it left, so it cuts nothing; remove it, or use a narrower end mill than the pass before",
+            ),
+            (
+                Warning::ClearingNotDescending {
+                    op: op(),
+                    tool: "t3".into(),
+                    diameter_mm: 3.175,
+                    earlier_tool: "t4".into(),
+                    earlier_diameter_mm: 1.5,
+                },
+                "its clearing pass with tool `t3` (3.175 mm) is wider than the pass before it (`t4`, 1.5 mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach",
+            ),
         ]
     }
 
@@ -2276,7 +2352,9 @@ mod tests {
             C::VCarveTargetOpen => C::VCarveNoMedialAxis,
             C::VCarveNoMedialAxis => C::VCarveSamplingBudget,
             C::VCarveSamplingBudget => C::StartDepthMismatch,
-            C::StartDepthMismatch => return None,
+            C::StartDepthMismatch => C::ClearingNoRoom,
+            C::ClearingNoRoom => C::ClearingNotDescending,
+            C::ClearingNotDescending => return None,
         })
     }
 
@@ -2313,7 +2391,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 43);
+        assert_eq!(count, 45);
     }
 
     #[test]
