@@ -59,7 +59,7 @@ shape and the bit's angle.
 | `clearing` | The clearing passes, in the order they cut: a list of `{ "tool", "strategy", "direction", "entry" }`, largest end mill first. `[]` for none. Needs a flat depth. See [Clearing passes](#clearing-passes). |
 | `flat_depth_mm` | `null` to carve every part of the shape to its full depth, or the depth of a flat floor below the start plane, more than 0. See [Flat depth](#flat-depth). |
 | `start_depth_mm` | How far below the stock top the carve starts, 0 or more. 0 carves the stock top. See [Start depth](#start-depth). |
-| `start_plane_cleared_externally` | `true` says another program cleared the start plane, when no Pocket in this project does. `false` otherwise. See [Start depth](#start-depth). |
+| `start_plane_cleared_externally` | `true` says another program cleared the start plane, when no Pocket or V-Carve floor in this project does. `false` otherwise. See [Start depth](#start-depth). |
 | `step_over_fraction` | How far apart the V-bit's rings on the flat floor are, as a fraction of the bit's cut width at the flat depth, more than 0 and at most 1. `null` uses the tool's `step_over_fraction`. Needed only with a flat depth. See [The V-bit floor](#the-v-bit-floor). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`, as for a Pocket. A V-Carve is cut in one pass, so both give the same program. |
 | `through_cut_allowance_mm` | How far below the stock bottom the cut may go, as every operation has. 0 for a carve. |
@@ -242,11 +242,26 @@ pocket, cut the pocket first with a Pocket of the same depth, earlier in
 the list, and set `start_depth_mm` to that depth: the carve's outline is
 then where the bit's sides meet the pocket's floor.
 
-- An enabled Pocket before the carve whose area contains the carve's
-  targets, at another depth, warns `start_depth_mismatch`, naming the
-  Pocket and both depths. The carve still exports, but its outline is not
-  where you drew it: set the start depth to the Pocket's depth.
-- A start depth above 0 with no such Pocket is the error
+The flat floor of an earlier V-Carve clears a start plane the same way:
+a V-Carve with a flat depth `F` and start depth `s0` leaves a flat floor
+`s0 + F` below the stock top, its shapes inset by `F × tan(α / 2)` with
+its own V-bit (see [Flat depth](#flat-depth)). A carve, or a countersink,
+whose shapes lie wholly on that floor may start at `s0 + F`. A shape that
+reaches the sloping walls round the floor does not count, and neither
+does a disabled V-Carve, a later one, or one without a flat depth. Of an
+earlier Pocket and an earlier V-Carve that both hold the shapes, the one
+later in the list counts. Where the V-bit alone cuts the floor it leaves
+low ridges (see [The V-bit floor](#the-v-bit-floor)), which the check
+does not count as material: a countersink or carve started on the floor
+cuts through them, so keep `step_over_fraction` small (0.1) or add a
+clearing pass.
+
+- An enabled Pocket or V-Carve floor before the carve whose area
+  contains the carve's targets, at another depth, warns
+  `start_depth_mismatch`, naming that operation and both depths. The
+  carve still exports, but its outline is not where you drew it: set the
+  start depth to the floor's depth.
+- A start depth above 0 with no such floor is the error
   `start_depth_uncleared`: the project cannot see the material the carve
   would cut into.
 - If another program cleared the start plane (a separate project, or
@@ -314,7 +329,7 @@ shape or tool concerned.
 | `clearing_needs_end_mill` | "clearing pass … of operation … cuts with tool …, …; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size …" | Use an end mill for the pass. |
 | `clearing_dangling_tool` | "clearing pass … of operation … uses tool …, which does not exist" | Fix the pass's `tool`. |
 | `start_depth_negative` | "operation … has start_depth_mm … mm; the start plane is a depth below the stock top, 0 or more" | Set 0 or more. |
-| `start_depth_uncleared` | "operation … starts … mm below the stock top, but no enabled Pocket before it contains its targets; …" | Add a Pocket of that depth before the carve, or set `start_plane_cleared_externally` to `true` if another program clears it. |
+| `start_depth_uncleared` | "operation … starts … mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains its targets; …" | Add a Pocket of that depth before the carve (or carve on the flat floor of an earlier V-Carve at that depth), or set `start_plane_cleared_externally` to `true` if another program clears it. |
 
 Export also stops when a carve with a floor to cut has no step-over
 ("operation … has no step_over_fraction and tool … sets none"), and when
@@ -329,7 +344,7 @@ an offset carve's `step_over_mm` is unusable.
 | `vcarve_sampling_budget` | A shape is so long for its width that its medial lines are found coarsely; fine details may be smoothed. |
 | `clearing_no_room` | A clearing pass can reach nothing the passes before it left; it has no program. |
 | `clearing_not_descending` | A clearing pass's end mill is wider than the one before it. |
-| `start_depth_mismatch` | An earlier Pocket contains the targets, at a depth other than the start depth. |
+| `start_depth_mismatch` | An earlier Pocket, or an earlier V-Carve's flat floor, contains the targets, at a depth other than the start depth. |
 
 [Warnings](warnings.md) says what to do about each.
 

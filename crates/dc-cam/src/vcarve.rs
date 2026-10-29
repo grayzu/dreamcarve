@@ -45,7 +45,7 @@ use cone::Walls;
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Point3, Region, nest};
 use dc_project::{
     InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp, VCarveStrategy,
-    containing_pocket,
+    cleared_start_plane,
 };
 use floor::{Floor, FloorCut};
 use medial::{Depth, Tolerances};
@@ -744,9 +744,10 @@ fn shape_at(carve: &Carve<'_>, at: Point3) -> ShapeRef {
 /// The start plane of `op` and the Z its flank is engaged from, mm
 /// (`docs/specs/phase-3/design.md`, "V-Carve generator", steps 2 and 3;
 /// security review H4, M2): `thickness − start_depth`, engaged from the
-/// stock top unless an enabled earlier Pocket at the start depth
-/// ([`containing_pocket`], depth within [`EPS_MM`]) contains the targets,
-/// as validation decides it.
+/// stock top unless an earlier floor at the start depth holds the
+/// targets, an enabled Pocket's or an enabled V-Carve's flat floor
+/// ([`cleared_start_plane`], depth within [`EPS_MM`]), as validation
+/// decides it.
 ///
 /// # Errors
 ///
@@ -770,17 +771,14 @@ pub(crate) fn start_plane(project: &Project, op: &VCarveOp) -> Result<(f64, f64)
     if start_depth_mm <= 0.0 {
         return Ok((start_plane_z_mm, start_plane_z_mm));
     }
-    let pocket = containing_pocket(project, &Operation::VCarve(op.clone()));
-    if pocket.is_none() && !op.start_plane_cleared_externally {
+    let cleared = cleared_start_plane(project, &Operation::VCarve(op.clone()));
+    if cleared.is_none() && !op.start_plane_cleared_externally {
         return Err(CamError::StartDepthUncleared {
             op: op.id.clone(),
             start_depth_mm,
         });
     }
-    let cleared_at_start = pocket
-        .and_then(|p| p.depth_mm)
-        .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
-    let engaged_from_z_mm = if cleared_at_start {
+    let engaged_from_z_mm = if cleared.is_some_and(|plane| plane.is_at(start_depth_mm)) {
         start_plane_z_mm
     } else {
         thickness_mm

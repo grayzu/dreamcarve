@@ -169,10 +169,11 @@
 //!   `docs/specs/phase-3/design.md`, "Safety pass"; [`cone`] has the
 //!   geometry). The regions are the targets' closed profiles nested as for
 //!   a Pocket, the start plane is `start_depth_mm` below the stock top, and
-//!   the flank is engaged from the stock top unless an enabled earlier
-//!   Pocket at the start depth contains the targets
-//!   ([`dc_project::containing_pocket`], as the generator and validation
-//!   decide it; security review H4). Every cutting move:
+//!   the flank is engaged from the stock top unless an earlier floor at
+//!   the start depth holds the targets, an enabled Pocket's or an enabled
+//!   V-Carve's flat floor ([`dc_project::cleared_start_plane`], #426, as
+//!   the generator and validation decide it; security review H4). Every
+//!   cutting move:
 //!   - its tip (the tool-centre path) stays in the regions: its ends and
 //!     middle inside or within the slack of an outline, and it meets no
 //!     outline away from its ends;
@@ -243,7 +244,7 @@ use dc_geometry::{
 };
 use dc_project::{
     CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape, Tool,
-    ToolId, ToolKind, Units, VCarveOp, containing_pocket,
+    ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
 };
 
 use crate::ExportError;
@@ -853,13 +854,12 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     }
     let regions = regions_of(project, &carve.targets)?;
     let start_plane_z_mm = thickness_mm - start_depth_mm;
-    // H4: the flank is engaged from the stock top unless an enabled
-    // earlier Pocket at the start depth contains the targets, as the
-    // generator and validation decide it.
+    // H4: the flank is engaged from the stock top unless an earlier
+    // floor at the start depth (a Pocket's, or a V-Carve's flat floor,
+    // #426) holds the targets, as the generator and validation decide it.
     let cleared_at_start = start_depth_mm <= 0.0
-        || containing_pocket(project, &Operation::VCarve(carve.clone()))
-            .and_then(|pocket| pocket.depth_mm)
-            .is_some_and(|depth_mm| (depth_mm - start_depth_mm).abs() <= EPS_MM);
+        || cleared_start_plane(project, &Operation::VCarve(carve.clone()))
+            .is_some_and(|plane| plane.is_at(start_depth_mm));
     Some(Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,

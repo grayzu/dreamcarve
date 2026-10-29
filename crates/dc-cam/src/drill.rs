@@ -42,10 +42,10 @@ use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
-use dc_geometry::{EPS_MM, Point, Point3, as_circle};
+use dc_geometry::{Point, Point3, as_circle};
 use dc_project::{
     COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, InstanceId, MachiningOrder, Operation,
-    OperationId, PeckRetract, Project, Tool, ToolKind, containing_pocket, countersink_depth_mm,
+    OperationId, PeckRetract, Project, Tool, ToolKind, cleared_start_plane, countersink_depth_mm,
 };
 
 /// How far above the depth already drilled a full-retract peck re-enters
@@ -151,7 +151,8 @@ pub struct DrillToolpath {
 /// not a V-bit with an angle in (0°, 180°), the mouth is not above 0 or
 /// is wider than the bit, the start depth is not from 0 to the stock
 /// thickness, the start plane below the stock top is neither cleared by
-/// an earlier Pocket ([`dc_project::containing_pocket`]) nor vouched for,
+/// an earlier Pocket or V-Carve floor ([`dc_project::cleared_start_plane`])
+/// nor vouched for,
 /// or the flanks would engage past the cone.
 ///
 /// Fails without a toolpath when the plunge rate, the stock thickness, the
@@ -403,11 +404,12 @@ impl Countersink {
     /// angle in (0°, 180°); the mouth is above 0 and no wider than the
     /// bit (within [`COUNTERSINK_TOLERANCE_MM`]); the depth is
     /// [`countersink_depth_mm`]; the start depth is from 0 to the stock
-    /// thickness, and below the stock top an enabled earlier Pocket holds
-    /// the bit at every hole ([`containing_pocket`]) or the operation
-    /// vouches for the plane (security review M2); and the flanks engage
-    /// no deeper than the cone, counting the start depth unless that
-    /// Pocket is at it (H4). Upstream's tool `maxCutDepth` check is this
+    /// thickness, and below the stock top an earlier floor holds the bit
+    /// at every hole, an enabled Pocket's or an enabled V-Carve's flat
+    /// floor (#426; [`cleared_start_plane`]), or the operation vouches for
+    /// the plane (security review M2); and the flanks engage no deeper
+    /// than the cone, counting the start depth unless that floor is at it
+    /// (H4). Upstream's tool `maxCutDepth` check is this
     /// cone check: DreamCarve tools have none. Every check fails the
     /// whole operation, so nothing is cut at a guessed depth.
     fn of(
@@ -458,17 +460,14 @@ impl Countersink {
         }
         let mut engaged_mm = depth_mm;
         if start_depth_mm > 0.0 {
-            let pocket = containing_pocket(project, &Operation::Drill(op.clone()));
-            if pocket.is_none() && !cleared_externally {
+            let cleared = cleared_start_plane(project, &Operation::Drill(op.clone()));
+            if cleared.is_none() && !cleared_externally {
                 return Err(CamError::StartDepthUncleared {
                     op: op.id.clone(),
                     start_depth_mm,
                 });
             }
-            let cleared_at_start = pocket
-                .and_then(|p| p.depth_mm)
-                .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
-            if !cleared_at_start {
+            if !cleared.is_some_and(|plane| plane.is_at(start_depth_mm)) {
                 engaged_mm += start_depth_mm;
             }
         }

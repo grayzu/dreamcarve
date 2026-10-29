@@ -277,11 +277,13 @@ holding the kinds its version has.
   construction.
 - `start_depth_uncleared` (error; security review M2, decided
   2026-10-28): a V-Carve, Photo V-Carve or countersink Drill with
-  `start_depth_mm > 0`, no enabled earlier Pocket whose regions contain its footprint outlines, and
+  `start_depth_mm > 0`, no enabled earlier Pocket whose regions contain its footprint outlines
+  (nor, #426, an enabled earlier V-Carve whose flat floor does), and
   `start_plane_cleared_externally: false`. Located at `start_depth_mm`.
   Validation and `order::check` share one containment function,
-  `dc_project::containing_pocket` (in `dc-project`, not `dc-cam::order`,
-  because validation may not depend on `dc-cam`; decided in #413);
+  `dc_project::cleared_start_plane` (in `dc-project`, not `dc-cam::order`,
+  because validation may not depend on `dc-cam`; decided in #413; named
+  `containing_pocket` until #426);
   validation reports it so `check` names it with a location, and the
   generator refuses it too.
 - `flatten_tolerance_range`: `flatten_tolerance_mm` above
@@ -434,9 +436,11 @@ instance_name, profile)` (a region so thin that no interior node survives
 two refinements; upstream `vcarveNoMedialAxis`), `VCarveSamplingBudget
 (op, resolution_mm)` (once per operation; upstream `vcarveSamplingBudget`),
 `ClearingNoRoom (op, tool, tool_id, diameter_mm)`, `ClearingNotDescending (op, tool, diameter_mm, earlier_tool, earlier_diameter_mm)` (export drops it: validation's `clearing_not_descending` says it once, #406), `StartDepthMismatch
-(op, pocket: OperationId, start_depth_mm, pocket_depth_mm:
-Option<f64>)` (`pocket` is not an `Option`: with no containing Pocket
-the case is the error `start_depth_uncleared`, #409), `CountersinkMouthNotWiderThanHole (op, instance,
+(op, cleared_by: OperationId, floor: FloorKind, start_depth_mm,
+floor_depth_mm: Option<f64>)` (`FloorKind` is `Pocket` or `VCarve`, a
+V-Carve's flat floor, #426; `cleared_by` is not an `Option`: with no
+floor holding the footprint the case is the error
+`start_depth_uncleared`, #409), `CountersinkMouthNotWiderThanHole (op, instance,
 instance_name, profile, mouth_mm, hole_mm)`, `InlayMaleMirrored (op,
 axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `PhotoLinesOverlap (op, fraction)`. New
@@ -646,10 +650,11 @@ orientation; DreamCarve's regions are normalised anyway.
    at most the thickness, else `CamError::InvalidStartDepth`). The floor
    depth `F = flat_depth_mm`.
 3. **Cone check.** The flank is engaged from `engaged_from_z_mm`: the
-   stock top, unless `dc_project::containing_pocket` finds an enabled earlier
-   Pocket whose regions contain every target
-   outline at depth `start_depth_mm` within `EPS_MM`, in which case the
-   start plane (security review H4). With no such Pocket and
+   stock top, unless `dc_project::cleared_start_plane` finds an enabled earlier
+   Pocket whose regions contain every target outline, or an enabled
+   earlier V-Carve whose flat floor does (#426), at depth
+   `start_depth_mm` within `EPS_MM`, in which case the
+   start plane (security review H4). With no such floor and
    `start_depth_mm > 0`, `start_plane_cleared_externally` must be `true`,
    else `StartDepthUncleared` (M2, decided 2026-10-28). The engagement
    `e = engaged_from_z_mm − deepest_z` must satisfy `e <= cone + EPS`:
@@ -920,20 +925,49 @@ top instead, "Inlay" step 1):
    a target that is no circle is not cut and is left out. A disc is held
    when its centre is in a region and at least the radius, less the
    flatten tolerance, from the region's outline and islands, arcs as arcs.
-   The footprint is one enum in `dc_project::containing_pocket`, so a
-   new kind of cleared floor (a V-Carve's flat floor, #426) adds an arm
-   for the clearing operation without touching the footprints.
-2. The **containing Pocket** (`dc_project::containing_pocket`, which
-   validation, `order::check` and the generators all call; it is in
-   `dc-project` because validation may not depend on `dc-cam`, #413):
-   the last enabled Pocket earlier in the list whose regions contain
-   every footprint outline (each outline's vertices inside a region,
-   outside its islands, by `Region::contains_point`; an outline crossing
-   a region boundary does not count, which the area the outlines enclose
-   less the Pocket's regions, within the flattening slack, decides).
-3. With a containing Pocket of depth `d ≠ s` (within `EPS_MM`): warn
-   `StartDepthMismatch (op, pocket, s, d)`. The user's mistake is visible
-   and the cut is in material the project reasons about, so a warning.
+   The footprint is one enum in `dc_project::cleared_start_plane`, so a
+   new kind of cleared floor adds an arm for the clearing operation
+   without touching the footprints.
+2. The **cleared start plane** (`dc_project::cleared_start_plane`,
+   which validation, `order::check`, the generators and the safety pass
+   all call; it is in `dc-project` because validation may not depend on
+   `dc-cam`, #413; it was `containing_pocket` until #426). It returns a
+   `ClearedPlane { by: &Operation }` with `depth_mm()` and
+   `is_at(s)` (within `EPS_MM`): the last operation earlier in the list
+   that is either
+   - an **enabled Pocket** whose regions contain every footprint outline;
+     its plane is its `depth_mm`; or
+   - an **enabled V-Carve with a flat depth `F`** (#426, decided
+     2026-10-29) whose **floor regions** contain it: its targets' regions
+     inset by `F · tan(α/2)` with its own V-bit (`dc_geometry::
+     floor_regions`, less the pieces whose area is at most the flatten
+     tolerance times their perimeter, as the generator's floor and the
+     safety pass's clearing-run check derive them). Its plane is
+     `s0 + F`, its start depth plus the flat depth (`Operation::
+     depth_mm`). The V-bit's floor rings and any clearing passes cut the
+     whole floor (#405, #406), and above it the carve's walls slope
+     outward, so a footprint inside the floor at floor level is in air
+     all the way up. A disabled V-Carve, a later one, one without a
+     flat depth, or one whose floor does not resolve (no V-bit with an
+     angle in (0°, 180°), a start depth below 0) does not count. Known
+     limit: where the V-bit alone cuts the floor, its rings leave ridges
+     up to `step_over_fraction · F` high (#405), which this rule does not
+     count as material; an operation started on the floor engages them
+     with its flank up to that much above its plane. The V-Carve chapter
+     recommends `step_over_fraction` 0.1 (0.25 mm ridges at `F` 2.5 mm)
+     or a clearing pass.
+
+   Contain means each outline's vertices inside a region, outside its
+   islands, by `Region::contains_point`; an outline crossing a region
+   boundary does not count, which the area the outlines enclose less the
+   clearing regions, within the flattening slack, decides. The rule
+   applies to every start-plane operation: a countersink on a V-Carve's
+   floor (the sign's hanging holes) and a V-Carve carved into another's
+   floor alike.
+3. With a cleared plane of depth `d ≠ s` (within `EPS_MM`): warn
+   `StartDepthMismatch (op, cleared_by, floor, s, d)`, naming the Pocket
+   or the V-Carve. The user's mistake is visible and the cut is in
+   material the project reasons about, so a warning.
 4. With none and `s > 0`: the error `start_depth_uncleared`, unless the
    operation says `start_plane_cleared_externally: true`, in which case
    it is quiet and the flank engagement counts from the stock top
@@ -965,8 +999,8 @@ start_depth_mm: s }`:
    (`countersinkTipDepth`); `depth <= cone + EPS` holds by construction
    when `D <= diameter` (upstream's `maxCutDepth` tolerance note applies:
    compare with `1e-9`). With `s > 0` the flank engagement is `s + depth`
-   unless a containing Pocket has cleared the start plane
-   (`dc_project::containing_pocket`, as V-Carve step 3), and `s + depth <=
+   unless an earlier Pocket or V-Carve floor at `s` has cleared the start
+   plane (`dc_project::cleared_start_plane`, as V-Carve step 3), and `s + depth <=
    cone + 1e-9` else `CountersinkConeExceeded` (#425); no Pocket and
    `start_plane_cleared_externally: false` is `StartDepthUncleared`
    (security review H4, M2).
@@ -1141,8 +1175,8 @@ it does for Pocket and Profile, and never from the toolpath.
   `Transform::mirror_x_about` the targets' bounding-box centre, both
   pure geometry, never a generator; a Photo's footprint rectangle), and
   `engaged_from` as the generator derives it: the stock top, or the
-  start plane when `dc_project::containing_pocket` finds an enabled Pocket at
-  that depth (the pass re-runs that derivation from the project; it is
+  start plane when `dc_project::cleared_start_plane` finds an enabled Pocket,
+  or an enabled V-Carve's flat floor (#426), at that depth (the pass re-runs that derivation from the project; it is
   geometry on the project, not a generator). For every cutting move of
   the operation in the parsed program:
   - **Tip**: the move's tool-centre path stays in a region: its ends and
@@ -1289,8 +1323,8 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), project.rs (containing_pocket), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
-crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::containing_pocket), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), project.rs (cleared_start_plane, ClearedPlane), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}
@@ -1384,7 +1418,8 @@ for V operations.
 - `inlay::male_mirrors_about_the_targets_centre_line` (acceptance 57: the mirrored outlines; the note's X), `inlay::male_carves_the_surround_and_the_holes` (every cutting point in the band or the circle), `inlay::male_floor_is_at_depth_minus_gap_plus_plug` (nothing below −5), `inlay::male_flank_passes_through_the_outline_at_the_start_plane` (within 0.02), `inlay::female_and_male_walls_mate` (the fit property, `z` 0..3, within 0.02), `inlay::glue_gap_at_or_above_depth_is_an_error`, `inlay::thin_plug_base_warns_on_10_mm_stock_and_not_on_12`, `inlay::clearing_pass_clears_the_male_floor`, `inlay::surround_of_a_star_with_a_hole_has_the_hole_as_a_region`, `inlay::mirror_negates_bulges_and_keeps_areas` (arcs survive the mirror).
 
 **dc-cam — order**
-- `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`.
+- `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
+- A V-Carve floor as the start plane (#426): `project::v_carve_floor_clears_its_start_plane` (a hole inside the floor region at `s0 + F` is cleared; one inside the targets but on the slope is not), `project::disabled_or_later_v_carve_does_not_clear`, `project::v_carve_without_a_flat_depth_does_not_clear`, `drill::countersink_on_a_v_carve_floor_engages_only_its_own_depth`, `validate::countersink_on_a_v_carve_floor_is_not_uncleared`.
 
 **dc-import — bitmap**
 - `bitmap::png_gray_8_reads_as_is`, `bitmap::png_rgb_converts_by_luminance_and_warns`, `bitmap::png_rgba_flattens_on_white`, `bitmap::png_16_bit_takes_the_high_byte`, `bitmap::png_palette_expands`, `bitmap::jpeg_reads_and_converts`, `bitmap::extension_and_magic_must_agree`, `bitmap::too_large_is_refused`, `bitmap::encode_is_deterministic`, `bitmap::encode_then_decode_round_trips`.
@@ -1440,7 +1475,7 @@ Goal: the sign carved on the bench without its countersinks.
 4. **V-Carve, medial strategy.** `dc-cam::vcarve` with `Carve`, `ToolRun`,
    chains, pruning, simplification, blocks, cone-tested links,
    `cone_in_material` and the generator's own S17 check, the start plane
-   with `dc_project::containing_pocket`, `check`/`export` dispatch and summary
+   with `dc_project::containing_pocket` (now `cleared_start_plane`), `check`/`export` dispatch and summary
    (one run per operation). Clamping only, as PureCutCNC. Tests: the
    vcarve (medial) group with its H1, H2 and H4 additions. [1, 2, 3]
 5. **Flat floor and the V-bit floor.** The boundary trace, the ridge
@@ -1481,6 +1516,10 @@ Goal: the sign complete, the phase's first real cut.
     additions, the order group's countersink cases. [3.1] Until S18,
     `check` and `export` refuse a countersink (`CamError::NotSupportedYet`)
     and S9 holds its cuts to the fail-closed `Unresolved` (#425).
+13a. **A V-Carve floor clears a start plane** (#426). The shared query
+    becomes `dc_project::cleared_start_plane`, with the V-Carve flat-floor
+    arm ("Start depth", step 2); `start_depth_mismatch` names the V-Carve.
+    [13]
 14. **S18.** `material.rs`. Tests: the safety S18 tests. [13]
 15. **Countersink docs and the sign.** Drill chapter update, the quick
     start's countersink step, `fixtures/sign.svg` final,
