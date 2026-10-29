@@ -1,0 +1,228 @@
+{
+  "version": "3.2",
+  "meta": {
+    "name": "vcarve-medial-text-rag",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z",
+    "units": "mm",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 50,
+    "operationClearanceZ": 5,
+    "clampClearanceXY": 2,
+    "clampClearanceZ": 5,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 200,
+    "majorSpacing": 10,
+    "minorSpacing": 2,
+    "snapEnabled": true,
+    "snapIncrement": 1,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 80,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 80,
+            "y": 35
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 35
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 12,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 35,
+    "z": 12,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "p1": {
+      "id": "p1",
+      "kind": "text",
+      "profile": {
+        "start": {
+          "x": 0,
+          "y": 0
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 60,
+              "y": 0
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 60,
+              "y": 14
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0,
+              "y": 14
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 0,
+              "y": 0
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": {
+        "text": "Rag",
+        "style": "outline",
+        "fontId": "droid_sans_bold",
+        "size": 10
+      },
+      "stl": null,
+      "operation": "subtract"
+    }
+  },
+  "features": [
+    {
+      "id": "p1",
+      "name": "p1",
+      "definitionId": "p1",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 10,
+        "f": 10
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 6,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "p1"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t1",
+      "name": "60° V-bit",
+      "units": "mm",
+      "type": "v_bit",
+      "diameter": 6,
+      "vBitAngle": 60,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 1000,
+      "defaultPlungeFeed": 300,
+      "defaultStepdown": 1,
+      "defaultStepover": 0.4,
+      "maxCutDepth": 0
+    }
+  ],
+  "operations": [
+    {
+      "id": "op1",
+      "name": "V-Carve medial",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "kind": "v_carve_medial",
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "p1"
+        ]
+      },
+      "toolRef": "t1",
+      "stepdown": 1,
+      "stepover": 0.4,
+      "feed": 1000,
+      "plungeFeed": 300,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 5,
+      "maxCarveDepth": 5,
+      "cutDirection": "climb",
+      "machiningOrder": "level_first",
+      "entryStrategy": "plunge",
+      "cornerRelief": "none",
+      "roundOutsideCorners": false,
+      "roundLinkCorners": false,
+      "cleanWallCorners": false,
+      "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
+      "arcFittingEnabled": false
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}

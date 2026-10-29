@@ -42,6 +42,9 @@
 //!    in program order, so the order of shapes and passes must agree as
 //!    well.
 //!
+//! A V-Carve case is compared by [`vcarve::compare`] instead of steps 2 to
+//! 7: its cuts move in X, Y and Z together.
+//!
 //! A [`Difference`] replaces a comparison with a check of each program
 //! against its own rule. On failure the message names the check and prints
 //! a unified diff of the two programs, normalised as
@@ -53,11 +56,16 @@ use std::path::PathBuf;
 
 use dc_cam::entry::ENTRY_CLEARANCE_MM;
 use dc_cam::test_support::assert_safe;
-use dc_cam::{generate_drill, generate_engrave, generate_pocket, generate_profile};
+use dc_cam::{
+    generate_drill, generate_engrave, generate_pocket, generate_profile, generate_vcarve,
+};
 use dc_gcode::parse::{Block, MotionKind, parse_program};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_geometry::{Point, Vec2, approx_eq};
 use dc_project::{ClearanceStrategy, DrillCycle, Entry, Operation, Project, Tool};
+
+#[path = "vcarve.rs"]
+mod vcarve;
 
 /// How far apart two programs' moves may be, mm (acceptance test 14).
 pub const TOLERANCE_MM: f64 = 0.01;
@@ -108,7 +116,9 @@ pub enum Order {
     Sets,
     /// The runs of horizontal cuts are compared one by one in program
     /// order, so the shapes and passes must be visited in the same order
-    /// (`docs/specs/phase-2/functional.md`, acceptance test 38).
+    /// (`docs/specs/phase-2/functional.md`, acceptance test 38). A
+    /// V-Carve's regions are visited in the same order, each compared as
+    /// a set ([`vcarve::compare`]).
     InOrder,
 }
 
@@ -180,6 +190,25 @@ pub enum Difference {
     /// with PureCutCNC's (it has none); each must run at the tool's plunge
     /// rate.
     NotchRisesFromLapEnd,
+    /// A V-Carve cut that descends while it moves in XY is held to the
+    /// plunge rate in DreamCarve (S10): it runs no faster than the cutting
+    /// feed and falls no faster than the plunge rate. PureCutCNC runs it at
+    /// the cutting feed, so a steep corner arm falls faster than the
+    /// plunge rate. Such cuts' feeds are not compared; DreamCarve's are
+    /// checked against S10, PureCutCNC's must be the cutting feed.
+    DescentsHeldToPlunge,
+    /// Where the two programs' medial chains differ in depth at one XY
+    /// (within the tolerance in XY, not in Z), each is checked against the
+    /// walls instead (#404, decision 2; #410). PureCutCNC runs straight
+    /// between the points its depth-aware simplification keeps, which near
+    /// a reflex corner or a curved wall takes the cone past the wall;
+    /// DreamCarve's depth fitting splits such a stretch until its cone
+    /// stays inside, which only raises the carve. DreamCarve's point must
+    /// lie on the V surface (its cone touching a wall, within the
+    /// tolerance), higher or deeper; a golden point deeper than
+    /// DreamCarve's must reach past a wall; a golden point higher than it
+    /// stops short of the surface DreamCarve's reaches.
+    ChainDepthFitted,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.
@@ -222,6 +251,35 @@ pub fn check(case: &Case) {
         if let Err(e) = limits.check_safety(moves) {
             fail(&format!("{who} program is unsafe"), e);
         }
+    }
+
+    if project
+        .operations
+        .iter()
+        .any(|op| op.enabled() && matches!(op, Operation::VCarve(_)))
+    {
+        match vcarve::compare(
+            project,
+            &golden_moves,
+            &ours_moves,
+            &case.differences,
+            case.order,
+        ) {
+            Ok((golden, ours)) => eprintln!(
+                "{}: sampled points (golden, DreamCarve): matched ({}, {}), at the flat depth ({}, {}), on links ({}, {}), depth-fitted ({}, {})",
+                case.name,
+                golden.matched,
+                ours.matched,
+                golden.floor,
+                ours.floor,
+                golden.link,
+                ours.link,
+                golden.fitted,
+                ours.fitted
+            ),
+            Err(e) => fail("V-Carve cuts differ", e),
+        }
+        return;
     }
 
     let rules = Rules::of(project, &case.differences);
@@ -366,7 +424,33 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                 let (t, w) = dc_cam::generate_bore(project, p).expect("the bore generates");
                 (EmitOp::from((op.clone(), tool, t)), w)
             }
-            Operation::VCarve(_) => panic!("{name}: no V-Carve is generated before #404"),
+            Operation::VCarve(p) => {
+                // One tool run per clearing pass, then the V-bit's, each
+                // written with its own tool (as `export` does).
+                let (runs, w) = generate_vcarve(project, p).expect("the V-Carve generates");
+                assert!(
+                    w.is_empty(),
+                    "{name}: operation `{}` generates without warnings: {w:?}",
+                    op.id()
+                );
+                for run in runs {
+                    let tool = project
+                        .tools
+                        .iter()
+                        .find(|t| t.id == run.tool)
+                        .expect("the run's tool is in the project")
+                        .clone();
+                    assert_safe(&run.toolpath, project, op);
+                    ops.push(EmitOp {
+                        op: op.clone(),
+                        tool,
+                        toolpath: run.toolpath,
+                        holes: None,
+                        label: run.label,
+                    });
+                }
+                continue;
+            }
         };
         assert!(
             warnings.is_empty(),
@@ -688,6 +772,10 @@ struct Limits {
     /// The feed and plunge rate of each enabled operation's tool, in
     /// operation order.
     rates: Vec<f64>,
+    /// The plunge rate and feed of a V-Carve's tool, if the case has one:
+    /// a cut that descends while it moves in XY may run between them (S3
+    /// with S10's scaling, as `dc_gcode`'s safety pass reads it).
+    held_descents: Option<(f64, f64)>,
 }
 
 impl Limits {
@@ -708,11 +796,19 @@ impl Limits {
             rates.extend(tool.feed_mm_min);
             rates.push(tool.plunge_mm_min.expect("the tool has a plunge rate"));
         }
+        let held_descents = ops.iter().find_map(|op| match op {
+            Operation::VCarve(_) => {
+                let tool = tool_of(project, op);
+                Some((tool.plunge_mm_min?, tool.feed_mm_min?))
+            }
+            _ => None,
+        });
         Self {
             floor_z: -thickness(project) - allowance,
             safe_z,
             drills: ops.iter().any(|o| matches!(o, Operation::Drill(_))),
             rates,
+            held_descents,
         }
     }
 
@@ -783,7 +879,13 @@ impl Limits {
                 let Some(feed) = mv.feed.filter(|f| *f > 0.0) else {
                     return Err(format!("line {line}: cut without a feed"));
                 };
-                if !self.rates.iter().any(|r| approx_eq(feed, *r, SAME_MM)) {
+                let descends = mv.moves_xy
+                    && matches!((mv.from_z, mv.to_z), (Some(a), Some(b)) if b < a - SAME_MM);
+                let held = descends
+                    && self.held_descents.is_some_and(|(plunge, top)| {
+                        (plunge - SAME_MM..=top + SAME_MM).contains(&feed)
+                    });
+                if !held && !self.rates.iter().any(|r| approx_eq(feed, *r, SAME_MM)) {
                     return Err(format!(
                         "line {line}: feed {feed} is none of the tools' rates {:?}",
                         self.rates

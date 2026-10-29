@@ -1195,7 +1195,18 @@ within a region (a chain's direction is the nearest-end choice, which
 agrees, but junction continuation order can differ by a tie), cutting
 moves within 0.02 mm in XYZ after Y mapping; the floor trace and V-bit
 floor are DreamCarve-only and excluded per the README. The `.camj` V-bit
-has `diameter` 6; the DreamCarve tool 6.35 mm.
+has `diameter` 6; the DreamCarve tool 6.35 mm. As built (#410): cuts at
+the flat depth are compared by reach (every golden cut there within
+`F · tan(α/2)` of a DreamCarve cut at that depth); a cut off the other
+program's path passes only as a link between two points where the other
+program lifts and plunges; chain direction is not compared (#404,
+decision 3); the offset case compares its rings level by level as sets
+and not its links; the `.camj` files turn off PureCutCNC's export arc
+fitting, which turns a square ring into a circle past the wall. Two
+`Difference`s: `DescentsHeldToPlunge` (S10) on every case, and
+`ChainDepthFitted` on `vcarve-medial-text-rag`, where upstream's
+simplified chords reach up to 0.256 mm past a wall and DreamCarve's depth
+fitting (#404, decision 2) raises them.
 
 **RasterCarve cases** (`tools/parity/photo/`): `capture.py`, run as
 `python3 -I capture.py --rastercarve ../../../rastercarve --case

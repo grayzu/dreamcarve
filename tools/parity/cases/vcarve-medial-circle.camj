@@ -1,0 +1,643 @@
+{
+  "version": "3.2",
+  "meta": {
+    "name": "vcarve-medial-circle",
+    "created": "2026-01-01T00:00:00.000Z",
+    "modified": "2026-01-01T00:00:00.000Z",
+    "units": "mm",
+    "showFeatureInfo": true,
+    "showDimensions": true,
+    "copyMode": "reference",
+    "maxTravelZ": 50,
+    "operationClearanceZ": 5,
+    "clampClearanceXY": 2,
+    "clampClearanceZ": 5,
+    "machineDefinitions": [],
+    "selectedMachineId": null
+  },
+  "grid": {
+    "extent": 200,
+    "majorSpacing": 10,
+    "minorSpacing": 2,
+    "snapEnabled": true,
+    "snapIncrement": 1,
+    "visible": true
+  },
+  "stock": {
+    "profile": {
+      "start": {
+        "x": 0,
+        "y": 0
+      },
+      "segments": [
+        {
+          "type": "line",
+          "to": {
+            "x": 60,
+            "y": 0
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 60,
+            "y": 40
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 40
+          }
+        },
+        {
+          "type": "line",
+          "to": {
+            "x": 0,
+            "y": 0
+          }
+        }
+      ],
+      "closed": true
+    },
+    "thickness": 12,
+    "material": "aluminum_6061",
+    "color": "#b9a83c",
+    "visible": true,
+    "origin": {
+      "x": 0,
+      "y": 0
+    }
+  },
+  "origin": {
+    "name": "Origin",
+    "x": 0,
+    "y": 40,
+    "z": 12,
+    "visible": true
+  },
+  "backdrop": null,
+  "dimensions": {},
+  "annotations": [],
+  "modelAssets": {},
+  "featureDefinitions": {
+    "p1": {
+      "id": "p1",
+      "kind": "polygon",
+      "profile": {
+        "start": {
+          "x": 38.0,
+          "y": 15.0
+        },
+        "segments": [
+          {
+            "type": "line",
+            "to": {
+              "x": 37.961478,
+              "y": 15.784137
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.846282,
+              "y": 16.560723
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.655523,
+              "y": 17.322277
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.391036,
+              "y": 18.061467
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.05537,
+              "y": 18.771174
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 36.651757,
+              "y": 19.444562
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 36.184084,
+              "y": 20.075146
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 35.656854,
+              "y": 20.656854
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 35.075146,
+              "y": 21.184084
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 34.444562,
+              "y": 21.651757
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 33.771174,
+              "y": 22.05537
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 33.061467,
+              "y": 22.391036
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 32.322277,
+              "y": 22.655523
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 31.560723,
+              "y": 22.846282
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 30.784137,
+              "y": 22.961478
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 30.0,
+              "y": 23.0
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 29.215863,
+              "y": 22.961478
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 28.439277,
+              "y": 22.846282
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 27.677723,
+              "y": 22.655523
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 26.938533,
+              "y": 22.391036
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 26.228826,
+              "y": 22.05537
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 25.555438,
+              "y": 21.651757
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 24.924854,
+              "y": 21.184084
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 24.343146,
+              "y": 20.656854
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 23.815916,
+              "y": 20.075146
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 23.348243,
+              "y": 19.444562
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.94463,
+              "y": 18.771174
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.608964,
+              "y": 18.061467
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.344477,
+              "y": 17.322277
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.153718,
+              "y": 16.560723
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.038522,
+              "y": 15.784137
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.0,
+              "y": 15.0
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.038522,
+              "y": 14.215863
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.153718,
+              "y": 13.439277
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.344477,
+              "y": 12.677723
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.608964,
+              "y": 11.938533
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 22.94463,
+              "y": 11.228826
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 23.348243,
+              "y": 10.555438
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 23.815916,
+              "y": 9.924854
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 24.343146,
+              "y": 9.343146
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 24.924854,
+              "y": 8.815916
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 25.555438,
+              "y": 8.348243
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 26.228826,
+              "y": 7.94463
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 26.938533,
+              "y": 7.608964
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 27.677723,
+              "y": 7.344477
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 28.439277,
+              "y": 7.153718
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 29.215863,
+              "y": 7.038522
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 30.0,
+              "y": 7.0
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 30.784137,
+              "y": 7.038522
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 31.560723,
+              "y": 7.153718
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 32.322277,
+              "y": 7.344477
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 33.061467,
+              "y": 7.608964
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 33.771174,
+              "y": 7.94463
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 34.444562,
+              "y": 8.348243
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 35.075146,
+              "y": 8.815916
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 35.656854,
+              "y": 9.343146
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 36.184084,
+              "y": 9.924854
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 36.651757,
+              "y": 10.555438
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.05537,
+              "y": 11.228826
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.391036,
+              "y": 11.938533
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.655523,
+              "y": 12.677723
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.846282,
+              "y": 13.439277
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 37.961478,
+              "y": 14.215863
+            }
+          },
+          {
+            "type": "line",
+            "to": {
+              "x": 38.0,
+              "y": 15.0
+            }
+          }
+        ],
+        "closed": true
+      },
+      "dimensions": [],
+      "text": null,
+      "stl": null,
+      "operation": "subtract"
+    }
+  },
+  "features": [
+    {
+      "id": "p1",
+      "name": "p1",
+      "definitionId": "p1",
+      "transform": {
+        "a": 1,
+        "b": 0,
+        "c": 0,
+        "d": 1,
+        "e": 0,
+        "f": 0
+      },
+      "textLayout": null,
+      "constraints": [],
+      "z_top": 12,
+      "z_bottom": 6,
+      "folderId": null,
+      "visible": true,
+      "locked": false
+    }
+  ],
+  "featureFolders": [],
+  "featureTree": [
+    {
+      "type": "feature",
+      "featureId": "p1"
+    }
+  ],
+  "global_constraints": [],
+  "tools": [
+    {
+      "id": "t1",
+      "name": "60° V-bit",
+      "units": "mm",
+      "type": "v_bit",
+      "diameter": 6,
+      "vBitAngle": 60,
+      "flutes": 2,
+      "material": "carbide",
+      "defaultRpm": 18000,
+      "defaultFeed": 1000,
+      "defaultPlungeFeed": 300,
+      "defaultStepdown": 1,
+      "defaultStepover": 0.4,
+      "maxCutDepth": 0
+    }
+  ],
+  "operations": [
+    {
+      "id": "op1",
+      "name": "V-Carve medial",
+      "pass": "rough",
+      "enabled": true,
+      "showToolpath": true,
+      "debugToolpath": false,
+      "kind": "v_carve_medial",
+      "target": {
+        "source": "features",
+        "featureIds": [
+          "p1"
+        ]
+      },
+      "toolRef": "t1",
+      "stepdown": 1,
+      "stepover": 0.4,
+      "feed": 1000,
+      "plungeFeed": 300,
+      "rpm": 18000,
+      "pocketPattern": "offset",
+      "pocketAngle": 0,
+      "stockToLeaveRadial": 0,
+      "stockToLeaveAxial": 0,
+      "finishWalls": true,
+      "finishFloor": true,
+      "carveDepth": 5,
+      "maxCarveDepth": 5,
+      "cutDirection": "climb",
+      "machiningOrder": "level_first",
+      "entryStrategy": "plunge",
+      "cornerRelief": "none",
+      "roundOutsideCorners": false,
+      "roundLinkCorners": false,
+      "cleanWallCorners": false,
+      "pocketSlotFeedPercent": 100,
+      "pocketFeedReduction": "slots_only",
+      "arcFittingEnabled": false
+    }
+  ],
+  "tabs": [],
+  "clamps": [],
+  "ai_history": []
+}
