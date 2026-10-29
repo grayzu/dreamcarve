@@ -45,7 +45,7 @@
 //!   of the arc from its wall (`floor::flatten_inside`, as the floor's
 //!   rings): the tip never comes nearer a wall than its ring.
 //! - **Blocks.** A run of rings the tool cuts without lifting is one
-//!   [`CutBlock`] (as a run of medial chains, #404), entered by a plunge
+//!   [`CutBlock`](crate::CutBlock) (as a run of medial chains, #404), entered by a plunge
 //!   to its first ring's Z; `sequence` retracts between blocks.
 
 use crate::pocket::rings::is_noise;
