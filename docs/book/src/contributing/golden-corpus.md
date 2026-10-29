@@ -38,6 +38,9 @@ alone.
 | `profile-lead` | Lead-in and lead-out arcs on an outside Profile. |
 | `profile-dogbone` | Dogbone relief on an inside Profile. |
 | `order-full-depth-first`, `order-pass-first` | Three parts with holes, in two operations, compared in order. |
+| `vcarve-medial-rect`, `vcarve-medial-square`, `vcarve-medial-circle`, `vcarve-medial-ring`, `vcarve-medial-l`, `vcarve-medial-triangle` | Medial V-Carve of simple shapes: spine and corner tips, diagonals, a circle that collapses to one plunge, an island, a junction with a reflex corner, three arms. Each is clamped within the bench bit's cone. |
+| `vcarve-medial-text-rag` | Medial V-Carve of the outline text "Rag", the polygons of `tests/fixtures/vcarve/rag.json`. |
+| `vcarve-offset-square` | Offset V-Carve of a square: rings 1 mm apart. |
 | `smoke` | The phase 0 check that capture runs and is repeatable. No test compares it. |
 
 The `post-*-coaster` cases are different: DreamCarve captured them itself,
@@ -88,6 +91,39 @@ controller would and compares them in the machine frame they share:
 
 Header, tool-change and spindle lines are not compared: they differ by
 design.
+
+## V-Carve cases
+
+A V-Carve's cuts move in X, Y and Z together, so the `vcarve-*` cases are
+compared in three dimensions instead of level by level
+(`crates/dc-gcode/tests/golden/vcarve.rs`):
+
+1. **Safety**, as above. A cut that descends while it moves in XY may
+   run between the plunge rate and the feed (S10).
+2. **Regions in order.** Each cut lies in one region of the carve (an
+   outline less its holes), and both programs visit the regions in the
+   same order.
+3. **Chains as sets.** Within each region, every point of every medial
+   cut, sampled every 0.05 mm, lies within 0.02 mm in XYZ (plus
+   rounding) of the other program's cuts, both ways. Direction is not
+   compared: DreamCarve may start a chain from its other end. An offset
+   carve's rings are compared level by level, the same way round.
+4. **Depth.** Neither program cuts below the flat depth, and the deepest
+   cut above it is the same.
+5. **The flat depth.** PureCutCNC clamps at `maxCarveDepth` but has no
+   floor; DreamCarve traces and clears the floor with the V-bit. Cuts at
+   the flat depth are not compared point for point. Instead every golden
+   cut there must lie within the V-bit's radius at that depth of a
+   DreamCarve cut there.
+6. **Links.** PureCutCNC bridges chain ends that DreamCarve retracts
+   between (security review H2), so links are not compared. A cut off the
+   other program's path passes only as a link: one straight move between
+   two points where the other program lifts and plunges. An offset
+   carve's links between levels are not compared.
+
+The `.camj` cases turn off PureCutCNC's export arc fitting
+(`arcFittingEnabled: false`): it turns a square ring into a circle
+through its corners.
 
 On failure, the message names the check and prints a unified diff of the
 two programs, with the dated header line normalised.
@@ -167,6 +203,8 @@ difference is:
 | `RasterLineOrder` | #146, decision 5; #150 | Raster lines are compared without direction; links between lines are not. PureCutCNC orders the pieces nearest-first outright; DreamCarve prefers pieces a link inside the region reaches, and keeps scan order where that lifts less (#150). |
 | `LeadArcsAtCuttingFeed` | #185 | Lead arcs at the tool's feed in DreamCarve, below it in PureCutCNC. |
 | `PassOrderWithinLayer` | Design, "Sequence", D5 | The passes are compared in order, each as a set. DreamCarve's walk within a pass is checked against D5. |
+| `DescentsHeldToPlunge` | S10 | A V-Carve cut that descends while it moves in XY falls no faster than the plunge rate in DreamCarve; PureCutCNC's runs at the cutting feed. |
+| `ChainDepthFitted` | #404, decision 2; #410 | Where medial chains differ in depth at one XY, DreamCarve's point lies on the V surface, and a deeper golden point reaches past a wall: PureCutCNC's simplified chords gouge, DreamCarve's depth fitting raises them. |
 
 A difference needs a reason in a spec, a recorded decision or a safety
 rule. "Our output is different" is not one: fix the port instead. When a
