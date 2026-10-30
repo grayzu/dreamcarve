@@ -32,10 +32,35 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
         .collect()
 }
 
-/// A male inlay's surround (stub).
+/// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay" step 4): the area within `margin_mm` outside the design that the
+/// male carve removes around its plug. Every region's outer is offset
+/// outward by `margin_mm` with round joins, the offsets are united, and
+/// `regions` themselves are subtracted. Subtracting a region removes its
+/// outer and gives back its holes, so a hole in the design (a circle
+/// inside a star) comes back as a surround region of its own; holes are
+/// never offset. Overlapping margins merge into one region.
+///
+/// The subtraction is [`crate::difference`], so the result is polygonal:
+/// arcs are flattened to chords within `tolerance_mm`, and the area is off
+/// the exact one by at most `tolerance_mm` times the arc length flattened.
+/// Outers come back counter-clockwise and holes clockwise (mm, Y-up,
+/// ADR-0001), in [`crate::boolean`]'s canonical order, so the same input
+/// gives the same regions. Empty when `regions` is empty or `margin_mm`
+/// is not a positive finite number (the caller validates the margin).
 #[must_use]
-pub fn surround(_regions: &[Region], _margin_mm: f64, _tolerance_mm: f64) -> Vec<Region> {
-    Vec::new()
+pub fn surround(regions: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    if !(margin_mm.is_finite() && margin_mm > 0.0) {
+        return Vec::new();
+    }
+    let grown: Vec<Region> = regions
+        .iter()
+        .flat_map(|r| offset(r.outer(), margin_mm))
+        .filter_map(single_region)
+        .collect();
+    // The subject's regions overlap where margins meet; `difference` fills
+    // non-zero, so they count as their union.
+    difference(&grown, regions, tolerance_mm)
 }
 
 /// [`floor_regions`] of one region.

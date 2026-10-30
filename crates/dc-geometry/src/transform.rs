@@ -62,10 +62,18 @@ impl Transform {
         Self(kurbo::Affine::scale_non_uniform(sx, sy))
     }
 
-    /// A mirror across the line x = `x_mm` (stub).
+    /// A mirror across the vertical line x = `x_mm`: (x, y) maps to
+    /// (2·`x_mm` − x, y), coefficients `[−1, 0, 0, 1, 2·x_mm, 0]`. A male
+    /// inlay's outlines are its targets mirrored about their bounding
+    /// box's centre line. Applied to a polyline, the mirror reverses its
+    /// winding and negates every bulge ([`Transform::apply_polyline`]);
+    /// [`crate::Contour::new`] makes an outer counter-clockwise again
+    /// (ADR-0001). Mirroring twice is the identity. A non-finite `x_mm`
+    /// gives a transform whose results [`Transform::apply_polyline`]
+    /// rejects.
     #[must_use]
-    pub fn mirror_x_about(_x_mm: f64) -> Self {
-        Self::IDENTITY
+    pub fn mirror_x_about(x_mm: f64) -> Self {
+        Self(kurbo::Affine::new([-1.0, 0.0, 0.0, 1.0, 2.0 * x_mm, 0.0]))
     }
 
     /// `self` applied first, then `next`.
@@ -253,7 +261,9 @@ mod tests {
     #[test]
     fn mirror_x_about_negates_bulges_and_keeps_areas() {
         let m = Transform::mirror_x_about(3.0);
-        assert_eq!(m.coeffs(), [-1.0, 0.0, 0.0, 1.0, 6.0, 0.0]);
+        for (a, b) in m.coeffs().iter().zip([-1.0, 0.0, 0.0, 1.0, 6.0, 0.0]) {
+            assert_approx_eq!(*a, b, 0.0);
+        }
 
         let c = Polyline::circle(Point::new(10.0, 5.0), 4.0);
         let mirrored = m.apply_polyline(&c).unwrap();
