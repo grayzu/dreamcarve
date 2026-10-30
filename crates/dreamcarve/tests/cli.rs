@@ -1426,16 +1426,105 @@ fn v20_project_exports_the_same_program() {
     let from_v20 = std::fs::read_to_string(dir.join("v20.nc")).expect("v20.nc written");
 
     let project = load_file(&v20).project;
-    assert_eq!(project.version, 21);
+    assert_eq!(project.version, dc_project::CURRENT_VERSION);
     let v21 = dir.join("v21.dcv");
     std::fs::write(&v21, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v21).expect("dcv readable");
-    assert!(saved.contains("\"version\": 21,"), "{saved}");
+    assert!(
+        saved.contains(&format!("\"version\": {},", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
     let out = run(&dir, &["export", "v21.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v21: {}", stderr(&out));
     let from_v21 = std::fs::read_to_string(dir.join("v21.nc")).expect("v21.nc written");
     assert!(from_v20 == from_v21, "v20:\n{from_v20}\nv21:\n{from_v21}");
     assert!(!from_v20.is_empty());
+}
+
+/// Format 22 (sub-phase 3.3): the Inlay kind changes nothing an earlier
+/// file holds, so the version 21 fixture exports the same program as it
+/// is and once saved at version 22.
+#[test]
+fn v21_project_exports_the_same_program() {
+    let dir = work_dir("v21_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v21/sample.dcv");
+    let v21 = dir.join("v21.dcv");
+    std::fs::copy(&fixture, &v21).expect("fixture copied");
+    let text = std::fs::read_to_string(&v21).expect("dcv readable");
+    assert!(
+        text.contains("\"version\": 21,"),
+        "the fixture is a version 21 file"
+    );
+    let out = run(&dir, &["export", "v21.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v21: {}", stderr(&out));
+    let from_v21 = std::fs::read_to_string(dir.join("v21.nc")).expect("v21.nc written");
+
+    let project = load_file(&v21).project;
+    assert_eq!(project.version, 22);
+    let v22 = dir.join("v22.dcv");
+    std::fs::write(&v22, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v22).expect("dcv readable");
+    assert!(saved.contains("\"version\": 22,"), "{saved}");
+    let out = run(&dir, &["export", "v22.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v22: {}", stderr(&out));
+    let from_v22 = std::fs::read_to_string(dir.join("v22.nc")).expect("v22.nc written");
+    assert!(from_v21 == from_v22, "v21:\n{from_v21}\nv22:\n{from_v22}");
+    assert!(!from_v21.is_empty());
+}
+
+/// Format 22 (#434): a project may hold an Inlay, either side, before its
+/// generator lands (#436). It validates, but `check` and `export` refuse
+/// it by name, and no program is written, not even for the operations
+/// that do generate.
+#[test]
+fn inlay_is_refused_until_it_is_generated() {
+    for side in [dc_project::InlaySide::Female, dc_project::InlaySide::Male] {
+        let dir = work_dir(&format!("inlay_is_refused_until_it_is_generated_{side:?}"));
+        let dcv = init_coaster(&dir);
+        fill_in(&dcv, 1500.0, 500.0, 18000);
+        let mut project = load_file(&dcv).project;
+        let mut bit = dc_project::test_support::tool_v_bit_90();
+        bit.id = ToolId::new("tv");
+        bit.cutter = dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0,
+        };
+        project.tools.push(bit);
+        project.stock.thickness_mm = Some(19.0);
+        let mut inlay = dc_project::test_support::sample_inlay();
+        inlay.targets = project.operations[0].targets().to_vec();
+        inlay.tool = ToolId::new("tv");
+        inlay.side = side;
+        project.operations.insert(0, Operation::Inlay(inlay));
+        assert!(
+            dc_project::validate(&project).iter().all(|p| !p.is_error()),
+            "{:?}",
+            dc_project::validate(&project)
+        );
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+
+        for args in [
+            &["check", "coaster.dcv"][..],
+            &["export", "coaster.dcv", "--date", FIXED_DATE],
+        ] {
+            let command = args[0];
+            let out = run(&dir, args);
+            let report = format!("{}{}", stdout(&out), stderr(&out));
+            assert_ne!(out.status.code(), Some(0), "{side:?} {command}: {report}");
+            assert!(
+                report.contains("`o7`")
+                    && report.contains("`inlay`")
+                    && report.contains("not supported"),
+                "{side:?} {command}: {report}"
+            );
+        }
+        let programs: Vec<_> = std::fs::read_dir(&dir)
+            .expect("dir readable")
+            .filter_map(Result::ok)
+            .filter(|e| e.path().extension().is_some_and(|x| x == "nc"))
+            .collect();
+        assert!(programs.is_empty(), "{side:?}: {programs:?}");
+    }
 }
 
 /// Acceptance 48 through the CLI (#404): the coaster project with its

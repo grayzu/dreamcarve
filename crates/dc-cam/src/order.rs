@@ -210,10 +210,12 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
             }),
             DrillCycle::Simple | DrillCycle::Peck { .. } => None,
         },
+        // Format 22: exempt, so no `start_depth_*` check covers it.
         Operation::Profile(_)
         | Operation::Pocket(_)
         | Operation::Bore(_)
-        | Operation::Engrave(_) => None,
+        | Operation::Engrave(_)
+        | Operation::Inlay(_) => None,
     }
 }
 
@@ -380,9 +382,11 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
         Operation::Profile(profile) => profile.side.cuts_open_paths(),
-        Operation::Pocket(_) | Operation::Drill(_) | Operation::Bore(_) | Operation::VCarve(_) => {
-            false
-        }
+        Operation::Pocket(_)
+        | Operation::Drill(_)
+        | Operation::Bore(_)
+        | Operation::VCarve(_)
+        | Operation::Inlay(_) => false,
     };
     // #207: Left and Right skip closed outlines.
     let cuts_closed = match op {
@@ -391,7 +395,8 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         | Operation::Drill(_)
         | Operation::Bore(_)
         | Operation::Engrave(_)
-        | Operation::VCarve(_) => true,
+        | Operation::VCarve(_)
+        | Operation::Inlay(_) => true,
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -578,6 +583,7 @@ mod tests {
                     Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
+                    Operation::Inlay(_) => panic!("these tests use no Inlay operations"),
                 };
                 let (toolpath, _) =
                     generated.unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));

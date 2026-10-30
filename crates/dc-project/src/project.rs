@@ -236,11 +236,15 @@ impl Footprint {
                     tolerance_mm,
                 })
             }
+            // An Inlay has no start depth (format 22; design spec, "Start
+            // depth"): the female starts at the stock top, and the male's
+            // stock above its start plane is the plug, kept on purpose.
             Operation::Profile(_)
             | Operation::Pocket(_)
             | Operation::Drill(_)
             | Operation::Bore(_)
-            | Operation::Engrave(_) => None,
+            | Operation::Engrave(_)
+            | Operation::Inlay(_) => None,
         }
     }
 

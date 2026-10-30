@@ -5,7 +5,7 @@
 //! dc-project"; `docs/specs/phase-2/design.md`, "Data model → dc-project"
 //! for the Pocket, Drill and Engrave operations, entries, leads, corner
 //! relief and tool numbers; `docs/specs/phase-3/design.md`, "Data model →
-//! dc-project" for the V-Carve). Every type here is persisted in a `.dcv` file, so each one
+//! dc-project" for the V-Carve and the Inlay). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
 //! required on load (`deserialize_with = "Option::deserialize"` turns off
@@ -345,8 +345,8 @@ impl ToolKind {
     }
 }
 
-/// A machining operation: Profile, Pocket, Drill, Bore, Engrave or
-/// V-Carve. Tagged by `kind` in the file, so each one reads as a flat
+/// A machining operation: Profile, Pocket, Drill, Bore, Engrave, V-Carve
+/// or Inlay. Tagged by `kind` in the file, so each one reads as a flat
 /// object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -365,6 +365,9 @@ pub enum Operation {
     /// Carve closed outlines along their medial lines with a V-bit
     /// (format 20).
     VCarve(VCarveOp),
+    /// Cut one side of a V-bit inlay of closed outlines, the female pocket
+    /// or the male plug (format 22).
+    Inlay(InlayOp),
 }
 
 impl Operation {
@@ -377,6 +380,7 @@ impl Operation {
             Self::Bore(op) => &op.id,
             Self::Engrave(op) => &op.id,
             Self::VCarve(op) => &op.id,
+            Self::Inlay(op) => &op.id,
         }
     }
 
@@ -389,6 +393,7 @@ impl Operation {
             Self::Bore(op) => &op.name,
             Self::Engrave(op) => &op.name,
             Self::VCarve(op) => &op.name,
+            Self::Inlay(op) => &op.name,
         }
     }
 
@@ -401,6 +406,7 @@ impl Operation {
             Self::Bore(op) => op.enabled,
             Self::Engrave(op) => op.enabled,
             Self::VCarve(op) => op.enabled,
+            Self::Inlay(op) => op.enabled,
         }
     }
 
@@ -413,15 +419,18 @@ impl Operation {
             Self::Bore(op) => &op.tool,
             Self::Engrave(op) => &op.tool,
             Self::VCarve(op) => &op.tool,
+            Self::Inlay(op) => &op.tool,
         }
     }
 
     /// The tools the operation cuts with, in the order it cuts with them
-    /// (format 20, capability 40): a V-Carve's clearing passes' tools, in
-    /// list order, then its own; every other operation's one tool.
+    /// (format 20, capability 40): a V-Carve's or an Inlay's clearing
+    /// passes' tools, in list order, then its own; every other operation's
+    /// one tool.
     pub fn run_tools(&self) -> Vec<&ToolId> {
         let clearing = match self {
             Self::VCarve(op) => op.clearing.as_slice(),
+            Self::Inlay(op) => op.clearing.as_slice(),
             Self::Profile(_)
             | Self::Pocket(_)
             | Self::Drill(_)
@@ -444,6 +453,7 @@ impl Operation {
             Self::Bore(op) => &op.targets,
             Self::Engrave(op) => &op.targets,
             Self::VCarve(op) => &op.targets,
+            Self::Inlay(op) => &op.targets,
         }
     }
 
@@ -456,6 +466,7 @@ impl Operation {
             Self::Bore(op) => op.safe_z_mm,
             Self::Engrave(op) => op.safe_z_mm,
             Self::VCarve(op) => op.safe_z_mm,
+            Self::Inlay(op) => op.safe_z_mm,
         }
     }
 
@@ -465,7 +476,10 @@ impl Operation {
     /// depth follows from the shapes, so `None`, which is not an unset value.
     /// A countersink Drill's depth follows from its tool's angle, so it is
     /// `None` too, whatever its `depth_mm` holds (format 21; see
-    /// [`crate::countersink_depth_mm`]).
+    /// [`crate::countersink_depth_mm`]). An Inlay's is the deepest it cuts
+    /// below the stock top, `None` until the values it needs are set: the
+    /// female's `depth_mm`, the male's `depth_mm − glue_gap_mm +
+    /// plug_depth_mm` (format 22; [`InlayOp::engagement_mm`]).
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
             Self::Profile(op) => op.depth_mm,
@@ -475,6 +489,7 @@ impl Operation {
             Self::Bore(op) => op.depth_mm,
             Self::Engrave(op) => op.depth_mm,
             Self::VCarve(op) => op.flat_depth_mm.map(|f| op.start_depth_mm + f),
+            Self::Inlay(op) => op.engagement_mm(),
         }
     }
 
@@ -487,11 +502,12 @@ impl Operation {
             Self::Bore(op) => op.through_cut_allowance_mm,
             Self::Engrave(op) => op.through_cut_allowance_mm,
             Self::VCarve(op) => op.through_cut_allowance_mm,
+            Self::Inlay(op) => op.through_cut_allowance_mm,
         }
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,
-    /// `drill`, `bore`, `engrave` or `v_carve`.
+    /// `drill`, `bore`, `engrave`, `v_carve` or `inlay`.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
@@ -501,6 +517,7 @@ impl Operation {
             Self::Bore(_) => "bore",
             Self::Engrave(_) => "engrave",
             Self::VCarve(_) => "v_carve",
+            Self::Inlay(_) => "inlay",
         }
     }
 }
@@ -999,6 +1016,99 @@ pub struct ClearingPass {
     pub direction: CutDirection,
     /// How each pass depth is reached, as a Pocket's.
     pub entry: Entry,
+}
+
+/// One side of a V-bit inlay (format 22; `docs/specs/phase-3/
+/// functional.md`, capability 45, after Corbin's Workshop's method). The
+/// **female** V-carves the design into one board to `depth_mm` with a flat
+/// floor; the **male** carves the band round the mirrored design out of
+/// another, leaving a plug whose V-sloped walls seat in the female's. The
+/// same four values describe both sides, so a pair is one design with
+/// `side` changed. An Inlay has no start depth: the female starts at the
+/// stock top, and the male at `depth_mm − glue_gap_mm` below it, with the
+/// plug above kept on purpose.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InlayOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// Instances whose closed outlines are the design, nested even-odd as
+    /// a V-Carve's.
+    pub targets: Vec<InstanceId>,
+    /// The tool to carve with: a V-bit.
+    pub tool: ToolId,
+    /// Which side this operation cuts.
+    pub side: InlaySide,
+    /// How deep the female pocket is, millimetres below the stock top
+    /// (Corbin "Inlay Depth"; VCarve's female flat depth). `None` until
+    /// set.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub depth_mm: Option<f64>,
+    /// The gap left under the seated plug, millimetres, 0 or more and
+    /// below `depth_mm` (Corbin "Inlay Fit Adjustment"). The male's start
+    /// plane is `depth_mm − glue_gap_mm` below the stock top. `None` until
+    /// set.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub glue_gap_mm: Option<f64>,
+    /// How far below the male's start plane its surround is cut flat,
+    /// millimetres (Corbin `plug_depth`; VCarve's male flat depth). `None`
+    /// until set.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub plug_depth_mm: Option<f64>,
+    /// How far beyond the design's outer outlines the male's surround is
+    /// carved, millimetres, above 0 (Corbin "Plug Stock Offset"). Used by
+    /// the male only; required there.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub margin_mm: Option<f64>,
+    /// Clearing passes in cut order, largest tool first (capability 40),
+    /// on either side. Empty by default: the V-bit clears its floor
+    /// itself.
+    pub clearing: Vec<ClearingPass>,
+    /// Step-over of the V-bit's floor passes as a fraction of the cut
+    /// width at the flat depth, in (0, 1]; overrides
+    /// [`Tool::step_over_fraction`].
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub step_over_fraction: Option<f64>,
+    /// The order shapes are visited.
+    pub machining_order: MachiningOrder,
+    /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub safe_z_mm: f64,
+}
+
+impl InlayOp {
+    /// How deep the V-bit's flank engages, millimetres below the stock
+    /// top, which is also the deepest the side cuts (design spec,
+    /// "Algorithms → Inlay", step 1; security review H4): `depth_mm` for
+    /// the female, and `(depth_mm − glue_gap_mm) + plug_depth_mm` for the
+    /// male, whose stock above its start plane is the plug and is never
+    /// cleared. `None` until the values it needs are set.
+    #[must_use]
+    pub fn engagement_mm(&self) -> Option<f64> {
+        let depth_mm = self.depth_mm?;
+        match self.side {
+            InlaySide::Female => Some(depth_mm),
+            InlaySide::Male => Some(depth_mm - self.glue_gap_mm? + self.plug_depth_mm?),
+        }
+    }
+}
+
+/// Which side of an inlay an [`InlayOp`] cuts (capability 45). Saved as
+/// `"female"` or `"male"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InlaySide {
+    /// The pocket the plug seats in: a flat-depth V-Carve of the design.
+    Female,
+    /// The plug: the mirrored design standing in a carved surround.
+    Male,
 }
 
 /// An engrave operation: follows each target path, open or closed, with

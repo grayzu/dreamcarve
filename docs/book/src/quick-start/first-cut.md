@@ -110,7 +110,7 @@ set is near the top, before the shapes. The file starts like this:
 <!-- doc-test: excerpt coaster.dcv -->
 ```json
 {
-  "version": 21,
+  "version": 22,
   "name": "coaster",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,

@@ -209,6 +209,13 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                     .collect::<Result<Vec<_>, _>>()
                     .map(|runs| (runs, w))
             }),
+            // Format 22 adds the Inlay to the project; its generator lands
+            // in #436. Until then it is refused, so no program is ever
+            // written for one.
+            Operation::Inlay(op) => Err(CamError::NotSupportedYet {
+                op: op.id.clone(),
+                feature: "a V-bit inlay (`inlay`)".into(),
+            }),
         };
         match generated {
             Ok((runs, warnings)) => {

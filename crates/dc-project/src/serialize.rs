@@ -391,7 +391,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v21/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v22/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1169,6 +1169,137 @@ mod tests {
         let unknown = text.replacen("\"start_depth_mm\"", "\"start_depth\"", 1);
         let err = load(unknown.as_bytes()).unwrap_err().to_string();
         assert!(err.contains("start_depth"), "{err}");
+    }
+
+    /// Format 22 (capability 45): an Inlay saves as a flat object tagged
+    /// `inlay`, its fields in the design spec's order and its side a plain
+    /// string; it loads back the same, a length may carry its unit, and
+    /// every field is required, `null` included.
+    #[test]
+    fn inlay_round_trips() {
+        use crate::model::{InlaySide, MachiningOrder};
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        let female = sample_inlay();
+        let male = crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            side: InlaySide::Male,
+            depth_mm: Some(2.0),
+            glue_gap_mm: Some(0.5),
+            plug_depth_mm: Some(1.0),
+            margin_mm: Some(7.5),
+            clearing: vec![crate::model::ClearingPass {
+                tool: crate::ids::ToolId::new("t1"),
+                strategy: ClearanceStrategy::Raster { angle_deg: 30.0 },
+                direction: crate::model::CutDirection::Conventional,
+                entry: Entry::Ramp { angle_deg: 5.0 },
+            }],
+            step_over_fraction: Some(0.3),
+            machining_order: MachiningOrder::PassFirst,
+            through_cut_allowance_mm: 0.2,
+            ..sample_inlay()
+        };
+        p.operations.push(Operation::Inlay(female));
+        p.operations.push(Operation::Inlay(male));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let op = &value["operations"][1];
+        let fields: Vec<&str> = op.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            fields,
+            [
+                "kind",
+                "id",
+                "name",
+                "enabled",
+                "targets",
+                "tool",
+                "side",
+                "depth_mm",
+                "glue_gap_mm",
+                "plug_depth_mm",
+                "margin_mm",
+                "clearing",
+                "step_over_fraction",
+                "machining_order",
+                "through_cut_allowance_mm",
+                "safe_z_mm"
+            ]
+        );
+        assert_eq!(op["kind"], json!("inlay"));
+        assert_eq!(op["side"], json!("female"));
+        assert_eq!(op["clearing"], json!([]));
+        assert_eq!(op["step_over_fraction"], json!(null));
+        let male = &value["operations"][2];
+        assert_eq!(male["side"], json!("male"));
+        assert_eq!(male["glue_gap_mm"], json!(0.5));
+        assert_eq!(male["margin_mm"], json!(7.5));
+        assert_eq!(
+            male["clearing"],
+            json!([{
+                "tool": "t1",
+                "strategy": { "raster": { "angle_deg": 30.0 } },
+                "direction": "conventional",
+                "entry": { "ramp": { "angle_deg": 5.0 } }
+            }])
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+
+        // Unset values are `null`, and a length may carry its unit.
+        let mut unset = p.clone();
+        if let Some(Operation::Inlay(inlay)) = unset.operations.get_mut(1) {
+            inlay.depth_mm = None;
+            inlay.glue_gap_mm = None;
+            inlay.plug_depth_mm = None;
+            inlay.margin_mm = None;
+        }
+        let text = save(&unset).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        for field in ["depth_mm", "glue_gap_mm", "plug_depth_mm", "margin_mm"] {
+            assert_eq!(value["operations"][1][field], json!(null), "{field}");
+        }
+        assert_eq!(load(text.as_bytes()).unwrap().project, unset);
+        let inch = text.replacen("\"margin_mm\": null", "\"margin_mm\": \"0.25 in\"", 1);
+        assert_ne!(inch, text, "fixture layout changed:\n{text}");
+        let Some(Operation::Inlay(inlay)) = load(inch.as_bytes())
+            .unwrap()
+            .project
+            .operations
+            .get(1)
+            .cloned()
+        else {
+            panic!("an inlay");
+        };
+        dc_geometry::assert_approx_eq!(inlay.margin_mm.unwrap(), 6.35, 1e-9);
+
+        // Every field is required, and an unknown field or side is named.
+        let text = save(&p).unwrap();
+        for (broken, named) in [
+            (
+                text.replacen("\"glue_gap_mm\": 0.25,", "", 1),
+                "glue_gap_mm",
+            ),
+            (text.replacen("\"margin_mm\": 6.0,", "", 1), "margin_mm"),
+            (
+                text.replacen("\"plug_depth_mm\"", "\"plug_depth\"", 1),
+                "plug_depth",
+            ),
+            (text.replacen("\"female\"", "\"both\"", 1), "both"),
+            (
+                text.replacen("\"start_depth_mm\": 0.0,", "", 1).replacen(
+                    "\"side\": \"female\",",
+                    "\"side\": \"female\",\n      \"start_depth_mm\": 0.0,",
+                    1,
+                ),
+                "start_depth_mm",
+            ),
+        ] {
+            assert_ne!(broken, text, "fixture layout changed:\n{text}");
+            let err = load(broken.as_bytes()).unwrap_err().to_string();
+            assert!(err.contains(named), "{named}: {err}");
+        }
     }
 
     /// Format 20: the V-Carve strategy is externally tagged, like a drill

@@ -116,6 +116,13 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
                 .unwrap_or_default();
             EmitOp::from((op, tool, toolpath))
         }
+        // Format 22: the Inlay's generator lands in #436.
+        Operation::Inlay(_) => {
+            return Err(CamError::NotSupportedYet {
+                op: op.id().clone(),
+                feature: "a V-bit inlay (`inlay`)".into(),
+            });
+        }
     })
 }
 

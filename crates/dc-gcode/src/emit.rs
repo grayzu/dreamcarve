@@ -5994,6 +5994,7 @@ mod tests {
                         (op_owned, tool, dc_cam::generate_bore(project, p).unwrap().0).into()
                     }
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
+                    Operation::Inlay(_) => panic!("these tests use no Inlay operations"),
                 }
             })
             .collect()
