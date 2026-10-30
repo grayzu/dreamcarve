@@ -199,7 +199,14 @@ written. There are no safety warnings, only errors.
     - an [Inlay](inlay.md): the V-bit's cone, by rule 14, against its
       side's own material: the design on the female, the surround on the
       male. A clearing pass is held as a V-Carve's is, as a Pocket of the
-      side's floor.
+      side's floor. A male's [cut-out](inlay.md#cutting-the-plug-free) is
+      held to the band's flat floor ring round the mirrored design (the
+      surround's floor less the floors of the design's holes): the whole
+      width of its end mill stays inside the ring at every depth, since
+      the carve has cleared the ring to the top and below the floor it
+      cuts the board's base, which rule 1 bounds with the cut-out's own
+      `through_cut_allowance_mm`. Its tabs are held as a Profile's: no
+      plunge below a tab's top on the tab.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus

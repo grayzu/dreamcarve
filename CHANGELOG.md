@@ -68,6 +68,19 @@ phases bump the patch number.
   operation", with the method, the four values, choosing the bit, the fit
   procedure and gluing, and a fourth quick start, "An inlay pair", on the
   new `tests/fixtures/star.svg`.
+- **Inlay cut-out; format version 23.** A male Inlay can hold a
+  `cut_out`, `{ "tool", "tabs", "through_cut_allowance_mm" }`, which frees
+  the plug from its board with a flat end mill instead of a saw, as the
+  operation's last tool run (`op1 (cut-out t2)`): an On line Profile half
+  `margin_mm` out from the mirrored design's outer outlines, in the
+  middle of the band's flat floor, from the floor down through the board,
+  with a Profile's tabs. `check` refuses it on a female
+  (`inlay_cut_out_needs_male`), with a tool that is not a flat end mill
+  (`cutter_not_flat`), and where the floor is narrower than the tool
+  (`inlay_cut_out_no_room`, naming the margin needed). The safety pass
+  holds it to the floor ring, worked out again from the project, and
+  round its tabs. Older files upgrade with `"cut_out": null` and export
+  the same. The inlay quick start's male now cuts its plug out.
 
 ### Changed
 

@@ -1,7 +1,7 @@
 # An inlay pair
 
 This chapter takes one drawing, a four-point star with a circle at its
-centre, to two projects and four G-code programs, and then to a maple
+centre, to two projects and five G-code programs, and then to a maple
 star inlaid in a walnut board, with a walnut dot at its centre. It is the
 V-bit inlay method Corbin's Workshop documents for cutting boards
 ([Inlay](../user-guide/inlay.md) says more), done with two boards:
@@ -11,7 +11,8 @@ V-bit inlay method Corbin's Workshop documents for cutting boards
   island: it stays standing in the pocket;
 - the **male** board, maple, gets a **plug**: the star, mirrored, standing
   5 mm proud of a flat band carved round it, with walls sloping the other
-  way, and a hole where the circle is. Turned over, the plug fits the
+  way, and a hole where the circle is; the end mill then cuts it free of
+  the board, on a rim of the band. Turned over, the plug fits the
   pocket: its walls meet the pocket's walls, and its face stops 1 mm short
   of the pocket's floor, which leaves room for glue.
 
@@ -234,7 +235,8 @@ In both files, replace the whole `"operations"` block, from
     "step_over_fraction": 0.1,
     "machining_order": "full_depth_first",
     "through_cut_allowance_mm": 0.0,
-    "safe_z_mm": 10.0
+    "safe_z_mm": 10.0,
+    "cut_out": null
   }
 ],
 ```
@@ -253,21 +255,33 @@ One **Inlay** operation describes both sides with the same four values;
 | `clearing` | `t2` | The end mill clears the flat floor first, on either side; the V-bit then cuts the walls and the corners the end mill cannot reach. |
 | `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |
+| `cut_out` | `null` | No cut-out here; the male gets one in the next step. |
 
 See [Inlay](../user-guide/inlay.md) for every setting.
 
 ## 6. Make the second project the male
 
-In `star-male.dcv`, change the operation's `side` line to:
+In `star-male.dcv`, change the operation's `side` and `cut_out` lines
+to:
 
 <!-- doc-test: edit star-male.dcv -->
 ```json
 "side": "male",
+"cut_out": { "tool": "t2", "tabs": { "placement": { "kind": "count", "count": 4 }, "width_mm": 6.0, "height_mm": 3.0, "shape": "rect", "on_holes": false, "avoid_corners": true }, "through_cut_allowance_mm": 0.2 }
 ```
 
-That is the only difference between the two projects. Everything else,
-the drawing and the four values, must stay the same in both: change a
-value in one, change it in the other.
+`side` is the only difference that changes what is carved. Everything
+else, the drawing and the four values, must stay the same in both:
+change a value in one, change it in the other.
+
+The **cut-out** is the male's last pass: the end mill (`t2`) cuts the
+plug free of its board, so you need not saw it out. It runs in the
+middle of the band's flat floor, half the margin (4 mm) out from the
+mirrored star, from the floor 5 mm down through the board and 0.2 mm
+into the spoilboard (`through_cut_allowance_mm`). Four **tabs**, 6 mm
+long and 3 mm tall from the bottom of the board, hold the plug in place
+until you cut them. Only the male has a cut-out; on the female it is an
+error.
 
 ## 7. Check the projects
 
@@ -292,7 +306,8 @@ Estimated total time: 1 min 29 s (cutting 1 min 23 s, dwells 6 s); 1.0 m of rapi
 star-female.dcv: 0 error(s), 1 warning(s)
 star-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 50 mm, the middle of its targets, to seat face down in the female
-Inlay op1 `Star` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches.
+warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
+Inlay op1 `Star` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; the cut-out frees the plug 4.000 mm out from the design, in the floor, through the board to 0.200 mm below it.
 Program 1 (T2):
   Extents (machine coordinates, mm, tool centre): X 14.745..85.255, Y 14.745..85.255, Z -5.000..10.000
     The cutter's edge reaches X 13.158..86.842, Y 13.158..86.842; keep clamps outside that.
@@ -301,8 +316,12 @@ Program 2 (T1):
   Extents (machine coordinates, mm, tool centre): X 13.155..86.845, Y 13.156..86.845, Z -5.000..10.000
     The cutter's edge reaches X 9.980..90.020, Y 9.981..90.020; keep clamps outside that.
   Estimated time: 33 s (cutting 30 s, dwells 3 s); 74 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 2 min 21 s (cutting 2 min 15 s, dwells 6 s); 722 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-star-male.dcv: 0 error(s), 2 warning(s)
+Program 3 (T2):
+  Extents (machine coordinates, mm, tool centre): X 16.000..84.000, Y 16.000..84.000, Z -12.200..10.000
+    The cutter's edge reaches X 14.412..85.588, Y 14.412..85.588; keep clamps outside that.
+  Estimated time: 1 min 4 s (cutting 1 min 1 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 25 s (cutting 3 min 16 s, dwells 9 s); 753 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+star-male.dcv: 0 error(s), 3 warning(s)
 ```
 
 No errors. The warnings:
@@ -314,6 +333,10 @@ No errors. The warnings:
   about the vertical line X = 50 mm through the middle of the star. Draw
   the design as it should read in the finished board; never mirror it
   yourself.
+- `tool_change_avoidable`, in the male: the end mill clears the floor
+  first and cuts the plug out last, with the V-bit between, so you fit it
+  twice. That order is required: the plug must stay in its board until
+  it is carved. Ignore it here.
 
 The Inlay lines give each side's depths:
 
@@ -358,14 +381,17 @@ Estimated total time: 1 min 29 s (cutting 1 min 23 s, dwells 6 s); 1.0 m of rapi
 Inlay op1 `Star` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
 star-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 50 mm, the middle of its targets, to seat face down in the female
-Wrote 2 programs; run them in this order:
+warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
+Wrote 3 programs; run them in this order:
   1. star-male-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
   2. star-male-2-T1.nc  Before you start: fit T1 1/4 60 degree V-bit and set Z zero with it. Keep X and Y zero.
+  3. star-male-3-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 Post-processor grblhal.
   op1 (clearing t2) `Star`: tool `t2` (1/8 end mill), 2 target(s), 5.000 mm deep
   op1 `Star`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 5.000 mm deep
+  op1 (cut-out t2) `Star`: tool `t2` (1/8 end mill), 2 target(s), 12.200 mm deep
 star-male-1-T2.nc (296 lines):
   Extents (machine coordinates, mm, tool centre): X 14.745..85.255, Y 14.745..85.255, Z -5.000..10.000
     The cutter's edge reaches X 13.158..86.842, Y 13.158..86.842; keep clamps outside that.
@@ -374,12 +400,16 @@ star-male-2-T1.nc (66 lines):
   Extents (machine coordinates, mm, tool centre): X 13.155..86.845, Y 13.156..86.845, Z -5.000..10.000
     The cutter's edge reaches X 9.980..90.020, Y 9.981..90.020; keep clamps outside that.
   Estimated time: 33 s (cutting 30 s, dwells 3 s); 74 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 2 min 21 s (cutting 2 min 15 s, dwells 6 s); 722 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `Star` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches.
+star-male-3-T2.nc (104 lines):
+  Extents (machine coordinates, mm, tool centre): X 16.000..84.000, Y 16.000..84.000, Z -12.200..10.000
+    The cutter's edge reaches X 14.412..85.588, Y 14.412..85.588; keep clamps outside that.
+  Estimated time: 1 min 4 s (cutting 1 min 1 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 3 min 25 s (cutting 3 min 16 s, dwells 9 s); 753 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Inlay op1 `Star` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; the cut-out frees the plug 4.000 mm out from the design, in the floor, through the board to 0.200 mm below it.
 ```
 
-Each side is two **tool runs**, so two programs: the end mill's clearing
-pass first, then the V-bit.
+Each **tool run** is a program: on either side the end mill's clearing
+pass first, then the V-bit, and on the male the end mill's cut-out last.
 
 | Program | Bit | What it cuts |
 | --- | --- | --- |
@@ -387,11 +417,14 @@ pass first, then the V-bit.
 | `star-female-2-T1.nc` | 60° V-bit | The pocket's walls, from the surface down to the floor, and the floor's corners, up into each of the star's points |
 | `star-male-1-T2.nc` | 3.175 mm end mill | The band's flat floor round the plug, 5 mm deep, and the floor of the hole where the circle is |
 | `star-male-2-T1.nc` | 60° V-bit | The plug's walls, the band's outer wall, and the floor's corners |
+| `star-male-3-T2.nc` | 3.175 mm end mill | The cut-out: round the plug in the band's floor, 4 mm out from the star, from the floor through the board, leaving four tabs 3 mm tall |
 
 Each program passed the safety checks before it was written, including
 the one that holds the V-bit's whole cone, not just its tip, to the
 material its side may cut: the star for the female, the band round the
 mirrored star for the male ([Safety](../user-guide/safety.md), rule 14).
+The cut-out is held to the band's flat floor, its whole cutter at least
+clear of the plug's wall and the band's outer wall, and round its tabs.
 
 ## 9. Read the programs
 
@@ -439,6 +472,28 @@ its side cuts the band's outer wall at 30° from the vertical. The program then 
 plug's foot round the star and the circle, and clears the floor's
 corners.
 
+The cut-out comes down onto the floor beside the star's left tip and
+cuts its first lap 2 mm below the floor, Z −7:
+
+<!-- doc-test: contains star-male-3-T2.nc -->
+```text
+( Operation 1: Star cut-out t2 )
+( Tool 2: 1/8 end mill )
+G0 Z10.000
+M3 S18000
+G4 P3.000
+X18.532 Y46.279
+Z1.000
+G1 Z-7.000 F300.000
+G2 X18.532 Y53.721 I1.468 J3.721 F1000.000
+```
+
+It runs 4 mm out from the star all the way round: round each tip on an
+arc of 4 mm radius, and into each inner corner to a point 4 mm from both
+edges. It never runs round the circle: the circle's hole stays in the
+plug. On its last two passes, at Z −11 and Z −12.2, it rises to Z −9,
+3 mm above the bottom of the board, over each of the four tabs.
+
 ## 10. Before you cut
 
 Read [Safety](../user-guide/safety.md) once before your first cut. For
@@ -455,9 +510,11 @@ this inlay:
    lines. Along the diagonals the band reaches only about 23 mm from the
    centre, so clamp at the board's four corners, with low clamps, or
    hold the whole underside with double-sided tape. Keep everything off
-   the middle of each edge.
-3. **Use a spoilboard**, and do an air cut of each program with Z zero
-   20 mm above the board.
+   the middle of each edge. The male's cut-out runs inside the band, so
+   clamps that clear the V-bit clear it too; the plug it frees is held
+   by its four tabs, not by the clamps.
+3. **Use a spoilboard**: the cut-out goes 0.2 mm into it. Do an air cut
+   of each program with Z zero 20 mm above the board.
 
 ## 11. Cut the female
 
@@ -486,12 +543,28 @@ in its middle. The board outside the band is still at full thickness.
 ## 13. Cut the plug free
 
 Outside the band the maple is still at full height, and turned over it
-would rest on the walnut before the plug could enter. Saw round the
-plug, through the board, inside the band: anywhere between the plug's
-foot and the band's outer wall. The band's flat floor is at least 5.7 mm
-wide; you need not follow the plug closely, only stay off both walls.
+would rest on the walnut before the plug could enter, so the plug must
+come out of its board. The third program does that.
+
+1. Fit the end mill again and set Z zero with it on the top of the
+   board, outside the band. Keep X and Y zero. Run `star-male-3-T2.nc`:
+   the end mill comes down onto the band's floor 4 mm out from the
+   star and cuts round it, 2 mm a pass, through the board and 0.2 mm
+   into the spoilboard. Below 3 mm from the bottom it lifts over four
+   tabs, each 6 mm long, which hold the piece in the board.
+2. Cut the four tabs with a knife or a fine saw, and lift the piece out.
+   Pare or sand what is left of each tab off its edge.
+
 What you keep is the plug on a backing 7 mm thick (12 mm less the 5 mm
-band).
+band), with a rim of the band's floor 4 mm wide round it. The rim is the
+band's flat floor, 2 mm below the plug's start plane, so it clears the
+walnut's surface when the plug is seated.
+
+Without a cut-out (`"cut_out": null`), saw the plug free instead: round
+the plug, through the board, inside the band, anywhere between the
+plug's foot and the band's outer wall. The band's flat floor is at
+least 5.7 mm wide; you need not follow the plug closely, only stay off
+both walls.
 
 ## 14. Test the fit
 

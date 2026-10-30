@@ -72,6 +72,7 @@ The male is the same with `"side": "male"`.
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. An Inlay is cut in one pass, so both give the same program. |
 | `through_cut_allowance_mm` | As every operation has. 0 for an inlay. |
 | `safe_z_mm` | The height above the stock top the bit travels at between cuts. |
+| `cut_out` | Male only: `null`, or an end-mill pass that frees the plug from its board, run last: `{ "tool": …, "tabs": …, "through_cut_allowance_mm": … }`. See [Cutting the plug free](#cutting-the-plug-free). `null` on a female. |
 
 The depth, glue gap and plug depth are needed on either side, and the
 margin on a male, so that one operation, copied, describes both: `null`
@@ -137,7 +138,9 @@ dreamcarve init star.svg -o star-male.dcv
 ```
 
 Then add the same tools to both, paste the same Inlay into both, and
-change `side` to `"male"` in the second. Set each project's
+change `side` to `"male"` in the second, and give it a
+[`cut_out`](#cutting-the-plug-free) if the machine is to cut the plug
+free; the female's stays `null`. Set each project's
 `thickness_mm` to its own board's measured thickness. Each exports its
 own programs, named after its file: `star-female-1-T2.nc` and so on.
 
@@ -200,11 +203,66 @@ edge before you cut it.
 ### Cutting the plug free
 
 Outside the band the male board is still at full thickness, and it would
-rest on the female's surface before the plug could enter. Before the test
-fit, saw round the plug, through the board, inside the band, between the
-plug's foot and the band's outer wall: a bandsaw or scroll saw, or a
-Profile of your own on an outline drawn inside the band, as Corbin cuts
-the plug's silhouette out with a contour toolpath.
+rest on the female's surface before the plug could enter. The plug must
+come out of its board before the test fit. The male's `cut_out` does
+that with an end mill, as Corbin's add-in's optional "Plug Cutout"
+contour does:
+
+```json
+"cut_out": {
+  "tool": "t2",
+  "tabs": { "placement": { "kind": "count", "count": 4 }, "width_mm": 6.0, "height_mm": 3.0, "shape": "rect", "on_holes": false, "avoid_corners": true },
+  "through_cut_allowance_mm": 0.2
+}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `tool` | A flat end mill. Its feed, plunge rate, speed and `step_down_mm` are used; each pass goes one step-down deeper. |
+| `tabs` | Holding tabs, as a [Profile's tab request](tabs.md): how many or where, their width along the cut, their top above the bottom of the board, and their shape. `null` cuts the plug free on the last pass: hold it down another way, with double-sided tape under it. |
+| `through_cut_allowance_mm` | How far below the board the last pass goes, into the spoilboard: 0.2 mm is usual. |
+
+The cut-out is the operation's last tool run, after the V-bit, so the
+plug is freed only once it is carved; with the same end mill as the
+clearing pass the tool is fitted twice, and `check` says
+`tool_change_avoidable`, which you can ignore: the order is required.
+Its program is named `… cut-out t2`.
+
+**Where it cuts.** The band's floor is flat between the plug's foot and
+the band's outer wall: at the floor, the V-bit's flank stands
+`plug_depth_mm × tan(α/2)` off the design on the plug's side, and as far
+inside the band's outer edge on the other. The end mill's centre runs
+in the middle, half `margin_mm` out from the mirrored design's outer
+outlines, round each convex corner on an arc and into each concave one
+to a point. It never runs at the band's outer edge: the V wall there
+would leave a sharp edge, the full height of the board, standing round
+the freed piece, and it would land on the female's surface. The piece
+it frees is the plug on its backing, with a rim of the band's floor
+round it, `plug_depth_mm` below the plug's start plane, which clears the
+female's surface by that much when the plug is seated. A hole in the
+design (the circle in the star) is never cut round: it stays in the
+plug.
+
+**Room.** The floor ring is `margin_mm − 2 × plug_depth_mm × tan(α/2)`
+wide, and it must be at least the end mill's diameter wide; else `check`
+refuses it, `inlay_cut_out_no_room`, and names the margin needed. With
+the 60° bit and a 2 mm plug depth, a 3.175 mm end mill needs a margin of
+at least 5.48 mm.
+
+**Depth.** The passes start at the band's floor, `depth_mm −
+glue_gap_mm + plug_depth_mm` below the top, so none cuts the air the
+carve has removed: the first lap is one step-down below the floor, and
+each goes a step-down deeper, through the board to
+`through_cut_allowance_mm` below it. The end mill gets there from the
+stock top plus 1 mm at its plunge rate. The tabs' heights count from the
+bottom of the board, as a Profile's do, so they must be below the floor:
+on a 12 mm board with a 5 mm deep floor, below 7 mm. Each pass below a
+tab's top lifts over it.
+
+After the cut-out, cut the tabs with a knife or a fine saw and lift the
+plug out. Without a cut-out (`"cut_out": null`), saw round the plug,
+through the board, inside the band, between the plug's foot and the
+band's outer wall: a bandsaw or scroll saw.
 
 ## Clearing passes
 
@@ -285,7 +343,11 @@ Every Inlay program passes the [safety](safety.md) rules, including rule
 design for the female; the surround (the band and the design's holes) for
 the male, with the start plane `depth_mm − glue_gap_mm` below the top and
 the flank engaged from the stock top. A clearing pass is held as a Pocket
-of its floor.
+of its floor. A male's cut-out is held to the band's flat floor ring,
+worked out again from the project: the end mill's whole cutter stays
+clear of both its edges at every depth, it goes no deeper than its own
+`through_cut_allowance_mm` below the board, and it never plunges into one
+of its tabs.
 
 ## Errors
 
@@ -300,6 +362,9 @@ These stop `check` and `export`.
 | `v_carve_needs_v_bit` | "operation … carves with tool …, an end mill; a carve's depth follows the angle of a V-bit, so use a V-bit" | Give the Inlay a V-bit. |
 | `v_bit_angle_range` | "tool … has an included angle of … degrees; …" | Fix the tool's `included_angle_deg`. |
 | `v_bit_cone_exceeded` | "operation … engages tool … … mm deep …"; on a male "… from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared)" | See [Choosing the bit](#choosing-the-bit). On a female it is at `depth_mm`, on a male at `plug_depth_mm`. |
+| `inlay_cut_out_needs_male` | "… is a female inlay with a cut_out; only the male's plug is cut out of its board …" | Set the female's `cut_out` to `null`. |
+| `inlay_cut_out_no_room` | "… cuts its plug out with tool …, … mm across, half its margin_mm … mm out, in the band's flat floor; that floor is narrower than the tool … Raise margin_mm to at least … mm in both projects, or use a narrower end mill" | Raise `margin_mm` in both projects, or use a narrower end mill. |
+| `cutter_not_flat` | "… cuts its plug's cut-out with tool …, a V-bit; …" at `cut_out.tool` | Give the cut-out a flat end mill. |
 
 The clearing errors (`clearing_needs_end_mill`, `clearing_dangling_tool`)
 are as a [V-Carve's](v-carve.md#errors). An Inlay has no start depth, so
@@ -323,7 +388,9 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 - 2D inlays on flat boards only; no inlays on curved surfaces.
 - Two projects, not one: DreamCarve cannot check that both use the same
   drawing, values and bit angle. Change them together.
-- The plug is not cut out of its board, and the backing is not removed:
-  that is a saw, or a Profile you draw.
+- The cut-out frees the plug on its backing; the backing is not removed:
+  that is a saw and a plane, after the glue-up.
+- The cut-out has no entry ramp or lead: it plunges at the plunge rate,
+  a step-down at a time.
 - The bit is an ideal point; a real tip has a small flat. The fit
   procedure absorbs it, as it absorbs a bit whose angle is a little off.

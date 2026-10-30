@@ -190,6 +190,12 @@ mate. The male's flank engages `depth_mm − glue_gap_mm + plug_depth_mm` from
 the stock top, which must fit the V-bit's cone.
 _Avoid_: Plug height
 
+**Cut-out**:
+A male Inlay's last tool run (format 23), `cut_out`: a flat end mill that
+frees the plug from its board, On line half `margin_mm` out from the mirrored
+design, in the band's flat floor, from the floor through the board, with tabs.
+_Avoid_: Plug cutout, profile (it is part of the Inlay, not an operation)
+
 **Engrave**:
 An operation that follows an open or closed path with the tool centre on the
 line at a fixed depth. Engraving whose width follows the shape with a V-bit is

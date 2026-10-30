@@ -194,8 +194,8 @@ RasterCarve as the behaviour and test reference.
 
 **Sub-phases:** delivered one feature at a time, each a GitHub milestone
 with its own format version and bench check: 3.1 V-Carve (v20), 3.2
-Countersink (v21; the sign, test part 1), 3.3 Inlay (v22; the star pair,
-test part 2), 3.4 Photo V-Carve (v23; the photo, test part 3), 3.5 Release
+Countersink (v21; the sign, test part 1), 3.3 Inlay (v22, and v23 for the male's cut-out; the star pair,
+test part 2), 3.4 Photo V-Carve (v24; the photo, test part 3), 3.5 Release
 (`v0.3.0`). No tag between them; the slice list is in the phase 3 design
 spec, "Sub-phases".
 

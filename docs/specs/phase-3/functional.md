@@ -295,9 +295,26 @@ is no GUI in this phase.
      `clearing` passes (40). The male stock must leave a base under the
      surround's floor: less than 6 mm warns `inlay_plug_base_thin` (Corbin:
      "Plug Base Thickness" at least 6 mm, the backing that holds the plug
-     together until the glue dries). Cutting the plug stock out of a larger
-     board, and cutting the backing off after gluing, are the user's: a
-     Profile on an outline they draw, and a saw.
+     together until the glue dries). The male may **cut its plug out**
+     (`cut_out`, format 23, added 2026-10-30 in #443; Corbin's optional
+     "Plug Cutout", a contour toolpath "with or without tabs"): a flat end
+     mill (`tool`; `cutter_not_flat` otherwise) runs On line round the
+     mirrored design's outer outlines grown by `margin_mm / 2`, in the
+     middle of the band's flat floor, which lies between the design grown
+     by `plug_depth_mm · tan(α/2)` and by `margin_mm − plug_depth_mm ·
+     tan(α/2)`; never at the band's outer edge, where the V wall would
+     leave a knife edge the board's full height round the freed piece. Its
+     passes start at the floor and go through the board to its own
+     `through_cut_allowance_mm`, with `tabs` as a Profile's tab request
+     (heights from the stock bottom; `null` for none). It is the
+     operation's last tool run, after the V-bit's. Design holes are not
+     cut out. A floor narrower than the tool is `inlay_cut_out_no_room`,
+     naming the margin needed; a cut-out on a female is
+     `inlay_cut_out_needs_male`. Freed, the piece is the plug on its
+     backing with a rim of floor round it, `plug_depth_mm` below the start
+     plane, which clears the female's surface. With `cut_out: null` the
+     plug is sawn free inside the band. Cutting the backing off after
+     gluing stays the user's: a saw.
 
 ### Photo V-Carve
 
@@ -533,7 +550,14 @@ Numbering continues from phase 2's 47.
  the male warns `inlay_plug_base_thin` (5 mm left) and on 12 mm it does
  not. With `clearing: [t2]` (a 3.175 mm end mill) the male's first run
  clears the surround's floor at Z −5 and its V-bit floor cutting shrinks
- as in 51.
+ as in 51. With a `cut_out` by the 3.175 mm end mill (4 tabs, #443) the
+ male's last run is the cut-out, `op1 (cut-out t2)`: every point of its
+ tool-centre path is 4 mm from the mirrored star within 0.01 mm (the
+ floor ring runs from 1.155 to 6.845 mm out, so its cutter stays at
+ least its radius inside both edges); no lap runs above Z −5, and its
+ last pass reaches Z −12 less the allowance; it never runs round the
+ circle; and its passes below the tabs' top rise over all four. With
+ `margin_mm: 4` the floor is 1.69 mm wide: `inlay_cut_out_no_room`.
 58. **Bitmap and placement.** `init fixtures/photo/gradient.png --width  100` (a 64 × 32 pixel picture) writes a project with one bitmap, 100 ×
  50 mm at the origin, and one Photo V-Carve naming it; `--height 50`
  gives the same; both flags, or neither, is an error. `image add  plaque.dcv gradient.png --width 60 --at 20,30` adds a bitmap whose
@@ -701,7 +725,7 @@ with each board's measurement.
 | T2           | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
 | Inlay        | targets the star and the circle; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
 | star-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `star-female-1-T2.nc` to Z −4, then `star-female-2-T1.nc`) |
-| star-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]` (two runs: `star-male-1-T2.nc` to Z −5, then `star-male-2-T1.nc`); prints `inlay_male_mirrored` at X = 50 mm |
+| star-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (#443) (three runs: `star-male-1-T2.nc` to Z −5, `star-male-2-T1.nc`, then the cut-out `star-male-3-T2.nc` from the floor to Z −12.2); prints `inlay_male_mirrored` at X = 50 mm and `tool_change_avoidable` (the order is required) |
 | Safe Z       | 10 mm                                                                                                |
 | Controller   | grblHAL, one program per tool run                                                                    |
 
@@ -710,11 +734,14 @@ with each board's measurement.
 male. Test fit dry: the plug should seat with no gap at the top and stop
 before its base touches the female surface. If a gap shows at the top, the
 plug bottoms out: raise `glue_gap_mm` and recut the male. If the plug will
-not enter, lower it. Before the test fit, saw the plug free inside the
-carved band, since the male board outside the band is at full thickness
-and would rest on the female (changed in #437: the draft clamped the
-male's whole board face down). Turn the plug over left to right, glue,
-clamp, let it dry, saw off the plug's backing, plane flush.
+not enter, lower it. Before the test fit, the plug comes out of its
+board, since the male board outside the band is at full thickness and
+would rest on the female (changed in #437: the draft clamped the male's
+whole board face down): the male's third program cuts it out in the
+band's floor, leaving four tabs, which are cut by hand (#443; with
+`cut_out: null`, saw it free inside the band instead). Turn the plug
+over left to right, glue, clamp, let it dry, saw off the plug's backing,
+plane flush.
 
 **Success:** after planing, no visible gap round the star or the circle
 (a 0.1 mm feeler gauge does not enter), the star's points are sharp, and
