@@ -192,24 +192,13 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             Operation::Bore(op) => generate_bore(project, op).map(|(t, w)| (plain(t), w)),
             // The hole records go to the emitter, which writes them as
             // canned cycles when the project asks and the controller's
-            // motion for them is the toolpath.
-            Operation::Drill(op) => generate_drill(project, op).and_then(|(drilled, w)| {
-                // Format 21 (#425): a countersink generates, so `check`
-                // finds its errors, but the safety pass cannot yet hold
-                // its program to the derived depth (S18, #427), so it is
-                // refused here by name rather than as a cut off its
-                // material.
-                if op.cycle.is_countersink() {
-                    return Err(CamError::NotSupportedYet {
-                        op: op.id.clone(),
-                        feature: "a countersink cycle, whose program the safety pass cannot check yet (S18),"
-                            .to_owned(),
-                    });
-                }
-                Ok((
+            // motion for them is the toolpath; a countersink's always as
+            // plain moves, which S18 holds to its derived depth (#427).
+            Operation::Drill(op) => generate_drill(project, op).map(|(drilled, w)| {
+                (
                     vec![EmitOp::drill(operation.clone(), tool.clone(), drilled)],
                     w,
-                ))
+                )
             }),
             // Format 20: one tool run per clearing pass, then the V-bit's
             // (`docs/specs/phase-3/design.md`, "Clearing passes", step 4);

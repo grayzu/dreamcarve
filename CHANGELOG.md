@@ -34,9 +34,10 @@ phases bump the patch number.
   `start_plane_cleared_externally`. A circle at least as wide as the mouth
   is skipped (`countersink_mouth_not_wider_than_hole`), and
   `allow_tool_wider_than_hole` has no effect on a countersink
-  (`countersink_ignores_tool_width`). This build does not export a
-  countersink yet; `check` and `export` say so. Older files upgrade
-  unchanged.
+  (`countersink_ignores_tool_width`). `export` writes a countersink as
+  plain moves on every controller, canned cycles on or off, and the safety
+  pass holds each plunge to the derived depth at a hole's centre and the
+  bit's flank to its cone (S18). Older files upgrade unchanged.
 
 ### Changed
 

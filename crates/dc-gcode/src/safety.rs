@@ -167,7 +167,8 @@ pub(crate) fn check_parsed(
     }
     // S7: every cut stays on the stock.
     check_on_stock(&blocks, post, transform, stock, stock_thickness_mm, spans)?;
-    // S9: every cut stays in its operation's own material.
+    // S9: every cut stays in its operation's own material; S17 and S18
+    // hold a V-bit's run and a countersink there too.
     for span in spans {
         material::check(&blocks, post, transform, tolerances, span)?;
     }
@@ -1162,7 +1163,7 @@ fn dwell_seconds(post: &PostProcessor, p: f64) -> f64 {
 }
 
 /// True unless both are known and equal.
-fn differs(a: Option<f64>, b: Option<f64>) -> bool {
+pub(crate) fn differs(a: Option<f64>, b: Option<f64>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => !approx_eq(a, b, EPS_MM),
         (None, None) => false,
@@ -7316,4 +7317,5 @@ mod tests {
     }
 
     mod s17;
+    mod s18;
 }

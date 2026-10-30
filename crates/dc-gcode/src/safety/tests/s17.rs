@@ -770,7 +770,8 @@ fn generated_v_carves_pass_s17() {
 /// entry constants, and no other path into `dc_cam` appears there but
 /// phase 2's two documented rules (`last_pass_step_reach_mm`, the
 /// last-pass step's length, and `placed_tabs::place`, the tab layout
-/// rule). A V-Carve's regions, floor and engagement come from
+/// rule). A V-Carve's regions, floor and engagement, and a countersink's
+/// holes, depth and engagement (S18, #427), come from
 /// `dc_geometry` and `dc_project`.
 #[test]
 fn s17_uses_no_generator() {
@@ -791,14 +792,26 @@ fn s17_uses_no_generator() {
         "dc_cam::placed_tabs::place",
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
-        .collect();
+    // Every source file, in submodules too (`material/cone.rs`,
+    // `material/countersink.rs`, #427), but the `tests` directories,
+    // which hold test-only modules.
+    let mut files = Vec::new();
+    let mut dirs = vec![dir.clone()];
+    while let Some(at) = dirs.pop() {
+        for path in std::fs::read_dir(&at).unwrap().map(|e| e.unwrap().path()) {
+            if path.is_dir() {
+                if !path.ends_with("tests") {
+                    dirs.push(path);
+                }
+            } else if path.extension().is_some_and(|x| x == "rs") {
+                files.push(path);
+            }
+        }
+    }
     files.sort();
     assert!(
-        files.iter().any(|f| f.ends_with("material.rs")),
+        files.iter().any(|f| f.ends_with("material.rs"))
+            && files.iter().any(|f| f.ends_with("material/cone.rs")),
         "{files:?}"
     );
     // Modules `lib.rs` declares for tests only (`post`) are test code.

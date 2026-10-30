@@ -1154,7 +1154,8 @@ fn dwell_value(post: &PostProcessor, seconds: f64) -> Result<String, ExportError
 /// How a Drill is written ([`canned_plan`]).
 #[derive(Debug)]
 enum CannedPlan {
-    /// The project does not ask for canned cycles, or this is not a Drill.
+    /// The project does not ask for canned cycles, or this is not a Drill,
+    /// or it is a countersink, which no canned cycle describes.
     NotAsked,
     /// Canned cycles were asked for, but the Drill is written as moves.
     Expand(CannedExpansion),
@@ -1234,7 +1235,7 @@ fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
 }
 
 /// How `op` is written (`docs/specs/phase-2/design.md`, "Canned cycles"):
-/// as canned cycles when it is a Drill, the project's `use_canned_cycles`
+/// as canned cycles when it is a Drill but no countersink, the project's `use_canned_cycles`
 /// is on, the definition has canned cycles with a command for every hole's
 /// cycle, and the motion the controller makes for those lines
 /// ([`crate::canned`]) is the toolpath's, move for move, within the
@@ -1265,7 +1266,11 @@ fn canned_plan(
 ) -> Result<CannedPlan, ExportError> {
     use CannedExpansion as Why;
     let post = w.post;
-    if !(post.use_canned_cycles && matches!(op, Operation::Drill(_))) {
+    // A countersink (format 21) is never a canned cycle: no `G8x` can say
+    // its depth is derived, and S18 refuses one. It is plain moves by
+    // design, as a Pocket is, so there is nothing to warn about (#427).
+    let drill = matches!(op, Operation::Drill(d) if !d.cycle.is_countersink());
+    if !(post.use_canned_cycles && drill) {
         return Ok(CannedPlan::NotAsked);
     }
     let expand = |why| Ok(CannedPlan::Expand(why));
@@ -5517,19 +5522,13 @@ mod tests {
             .collect()
     }
 
-    /// Port of `testCannedSimpleG81`: with canned cycles on, a simple Drill
-    /// is a rapid over the first hole at safe Z, `G98` once, one `G81` line
-    /// per hole with its `X Y Z R` (`Z` the bottom 5 mm below the stock-top
-    /// origin, `R` the retract plane 1 mm above it), `F` once, then `G80`,
-    /// and nothing else: no `G1`. The program passes the safety pass, which
-    /// expands each line (S11).
-    /// Format 21 (#425): until S18 (#427) checks a countersink's derived
-    /// depth on the program, the safety pass cannot hold one to anything
-    /// countersink-specific, so it refuses every countersink cut (S9's
-    /// material is unresolved): no program is written, canned cycles on
-    /// or off. The generator records the holes as plain moves.
+    /// Format 21 (#425, #427): a countersink is never a canned cycle, so
+    /// it is written as its plain moves whether or not the project asks
+    /// for cycles, with no `canned_cycle_expanded` warning (nothing was
+    /// expanded that could have been a cycle), and S18 passes it: one
+    /// plunge per hole to the derived depth, 10 / (2 · tan 45°) = 5 mm.
     #[test]
-    fn countersink_is_refused_until_s18() {
+    fn countersink_is_written_as_moves_without_a_warning() {
         let (mut project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);
         project.tools[0] = dc_project::Tool {
             cutter: dc_project::ToolKind::VBit {
@@ -5557,14 +5556,23 @@ mod tests {
                 .all(|h| h.cycle == dc_cam::CannedKind::Expanded)
         );
         for post in [post_of(&project), canned_post(&project)] {
-            let err = emit_with(&project, &post, &ops, DATE).unwrap_err();
-            assert!(
-                matches!(&err, ExportError::OffMaterial { op, .. } if op.as_str() == "o3"),
-                "{err:?}"
-            );
+            let (program, warnings) = emit_with(&project, &post, &ops, DATE).unwrap();
+            assert!(warnings.is_empty(), "{warnings:?}");
+            assert!(!has_cycle_word(&program.text), "{}", program.text);
+            let plunges = codes(&program.text)
+                .iter()
+                .filter(|c| c.starts_with("G1 Z-5.000"))
+                .count();
+            assert_eq!(plunges, HOLES.len(), "{}", program.text);
         }
     }
 
+    /// Port of `testCannedSimpleG81`: with canned cycles on, a simple Drill
+    /// is a rapid over the first hole at safe Z, `G98` once, one `G81` line
+    /// per hole with its `X Y Z R` (`Z` the bottom 5 mm below the stock-top
+    /// origin, `R` the retract plane 1 mm above it), `F` once, then `G80`,
+    /// and nothing else: no `G1`. The program passes the safety pass, which
+    /// expands each line (S11).
     #[test]
     fn drill_simple_writes_g81_per_hole_after_g98_and_ends_g80() {
         let (project, op) = drill_project(dc_project::DrillCycle::Simple, 0.0, 1.0);

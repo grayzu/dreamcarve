@@ -478,6 +478,8 @@ pub enum ExportError {
     ConeHeightExceeded { op: OperationId, line: usize, engaged_mm: f64, cone_mm: f64 },
     /// S18: a countersink plunge ends somewhere other than the derived
     /// depth at a target's centre, or the program writes it as a cycle.
+    /// `expected_mm` is the derived bottom, `found_mm` where the line
+    /// ends, project space (#427).
     CountersinkDepth { op: OperationId, line: usize, expected_mm: f64, found_mm: f64 },
     /// S19: a groove sample outside the picture, or below the maximum
     /// depth, or a between-groove move written as a rapid.
@@ -1240,7 +1242,34 @@ it does for Pocket and Profile, and never from the toolpath.
   centre, from at most the retract plane to exactly `start_plane − D /
   (2 · tan(α/2))` (within rounding); no `G73`/`G81`–`G83` word appears in
   the span; no other motion but rapids at or above the retract plane
-  (S15) and `G4`. Else `CountersinkDepth`.
+  (S15) and `G4`. Else `CountersinkDepth`. As built (#427,
+  `material/countersink.rs`), all re-derived from the project:
+  - The target circles are the closed profiles a Drill finds, less those
+    the mouth rule skips (`D − hole ≤ 1e-9`); the retract plane is
+    `min(safe Z, stock top + max(retract_mm, 0))`, as the generator's.
+  - "Every cut" is every `G1`, `G2` and `G3`: an arc, or a `G1` whose
+    start or end is off a centre, fails. "Within rounding" is one unit
+    in the last written place plus `EPS_MM`, in XY and Z alike: the
+    centres and the depth are computed from the same values with the
+    same functions as the generator's, and a plunge is never flattened
+    or fitted.
+  - A rapid ends at or above the retract plane; one that starts below it
+    (the retract from the bottom) moves in Z alone.
+  - The cycle rule refuses a `G73`/`G81`–`G83` word and also any move a
+    cycle makes (a modal cycle line has no word), before the motion
+    rules: a `G81` to the right depth makes exactly the plain moves.
+  - The flank's engagement is held to the cone as S17's shank is
+    (`ConeHeightExceeded`): `engaged_from − z ≤ cone + rounding`, with
+    `engaged_from` the start plane when it is the stock top or an
+    enabled earlier Pocket or V-Carve floor at the start depth holds the
+    bit (`dc_project::cleared_start_plane`), else the stock top, and the cone
+    `countersink_depth_mm` of the tool's diameter. A mouth wider than the
+    bit fails here wherever it starts.
+  - `CountersinkDepth`'s `expected_mm` is always the derived bottom and
+    `found_mm` where the line ends, project space.
+  - The emitter treats a countersink as no Drill when it plans canned
+    cycles: it is plain moves by design, so `canned_cycle_expanded` is
+    not warned for it.
 - **S19, grooves.** For a Photo: every cutting endpoint inside the
   footprint (within `tol`), `z` within the depth range; every XY move
   below safe Z that is not inside a groove (i.e. between a groove's last
