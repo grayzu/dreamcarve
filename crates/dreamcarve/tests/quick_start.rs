@@ -894,17 +894,18 @@ fn plaque_chapter_on_the_svg_twin_builds_the_svg_fixture() {
     );
 }
 
-/// The phase 3 quick start (`docs/book/src/quick-start/sign.md`, issue
-/// #411) run as written on `tests/fixtures/sign.svg`: every command exits
-/// as the chapter says, the tool library file, the hand edit and the pasted
-/// operations apply, every excerpt is in the program it names, and the
-/// finished project is the committed `tests/fixtures/sign.dcv`, which
-/// `cli::sign_exports_in_tool_run_order` exports. Export writes four
-/// programs, one per tool run, listed in run order: the Drill with the
-/// 3.175 mm end mill, the background's clearing pass with the 6.35 mm end
-/// mill, both V-Carves with the 90° V-bit, and the cut-out with the
-/// 6.35 mm end mill. Each passes the rules a user can check on the program
-/// alone; `export` has already held it to S1–S17.
+/// The phase 3 quick start (`docs/book/src/quick-start/sign.md`, issues
+/// #411 and #428) run as written on `tests/fixtures/sign.svg`: every
+/// command exits as the chapter says, the tool library file, the hand edit
+/// and the pasted operations apply, every excerpt is in the program it
+/// names, and the finished project is the committed
+/// `tests/fixtures/sign.dcv`, which `cli::sign_exports_in_tool_run_order`
+/// exports. Export writes four programs, one per tool run, listed in run
+/// order: the Drill with the 3.175 mm end mill, the background's clearing
+/// pass with the 6.35 mm end mill, both V-Carves and the countersinks with
+/// the 90° V-bit, and the cut-out with the 6.35 mm end mill. Each passes
+/// the rules a user can check on the program alone; `export` has already
+/// held it to S1–S18. The chapter no longer says countersinks come later.
 #[test]
 fn v_carved_sign_chapter_runs() {
     let run = Run {
@@ -913,6 +914,10 @@ fn v_carved_sign_chapter_runs() {
         swap: None,
     };
     let text = std::fs::read_to_string(repo_root().join(SIGN)).expect("chapter readable");
+    assert!(
+        !text.contains("later release"),
+        "{SIGN} still says the countersinks come later"
+    );
     let steps = steps(SIGN, &text);
     for (what, has) in [
         (
@@ -993,4 +998,20 @@ fn v_carved_sign_chapter_runs() {
     ]) {
         assert_program_safe(name, &read(name), &limits);
     }
+
+    // The V-bit's program ends with the countersinks: a plunge to 3 mm
+    // below the background's 2.5 mm floor at each hanging hole.
+    let v_bit = read("sign-3-T3.nc");
+    let sinks = v_bit
+        .find("( Operation 3: Countersinks )")
+        .map(|at| &v_bit[at..])
+        .unwrap_or_else(|| panic!("sign-3-T3.nc has no countersinks"));
+    for hole in ["X25.000 Y75.000", "X195.000 Y75.000"] {
+        assert!(sinks.contains(hole), "a countersink at {hole}: {sinks}");
+    }
+    assert_eq!(
+        sinks.lines().filter(|l| l.contains("Z-5.500")).count(),
+        2,
+        "{sinks}"
+    );
 }
