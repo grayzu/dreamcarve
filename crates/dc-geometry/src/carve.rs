@@ -45,7 +45,7 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
 /// arcs are flattened to chords within `tolerance_mm`, and the area is off
 /// the exact one by at most `tolerance_mm` times the arc length flattened.
 /// Outers come back counter-clockwise and holes clockwise (mm, Y-up,
-/// ADR-0001), in [`crate::boolean`]'s canonical order, so the same input
+/// ADR-0001), in [`crate::boolean()`]'s canonical order, so the same input
 /// gives the same regions. Empty when `regions` is empty or `margin_mm`
 /// is not a positive finite number (the caller validates the margin).
 #[must_use]
