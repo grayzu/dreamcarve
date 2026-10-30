@@ -737,9 +737,8 @@ impl Material {
                     inlay_cone(project, inlay)
                 })
             }
-            (Operation::VCarve(_) | Operation::Inlay(_), _) | (_, RunLabel::Clearing(_)) => {
-                Self::Unresolved
-            }
+            (Operation::VCarve(_) | Operation::Inlay(_), _)
+            | (_, RunLabel::Clearing(_) | RunLabel::CutOut(_)) => Self::Unresolved,
             // S18 holds a countersink to its own V-bit's angle and cone.
             (Operation::Drill(drill), RunLabel::Main)
                 if drill.cycle.is_countersink() && tool.id != drill.tool =>
@@ -1417,6 +1416,14 @@ const TAB_SEARCH_CELLS: usize = 200_000;
 /// request places (`dc_cam::placed_tabs::place`, the documented layout
 /// rule, not the toolpath). Empty for another kind of operation, or when
 /// the tool, an instance, a definition or a profile is missing.
+pub(crate) fn run_tab_spines(project: &Project, op: &Operation, label: &RunLabel) -> Vec<TabSpine> {
+    match label {
+        RunLabel::Main => tab_spines(project, op),
+        RunLabel::Clearing(_) | RunLabel::CutOut(_) => Vec::new(),
+    }
+}
+
+/// The tabs Profile `op` must leave standing.
 pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
     let Operation::Profile(profile) = op else {
         return Vec::new();

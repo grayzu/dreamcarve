@@ -1461,11 +1461,14 @@ fn v21_project_exports_the_same_program() {
     let from_v21 = std::fs::read_to_string(dir.join("v21.nc")).expect("v21.nc written");
 
     let project = load_file(&v21).project;
-    assert_eq!(project.version, 22);
+    assert_eq!(project.version, dc_project::CURRENT_VERSION);
     let v22 = dir.join("v22.dcv");
     std::fs::write(&v22, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v22).expect("dcv readable");
-    assert!(saved.contains("\"version\": 22,"), "{saved}");
+    assert!(
+        saved.contains(&format!("\"version\": {},", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
     let out = run(&dir, &["export", "v22.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v22: {}", stderr(&out));
     let from_v22 = std::fs::read_to_string(dir.join("v22.nc")).expect("v22.nc written");
@@ -6357,6 +6360,194 @@ fn sign_lettering_is_within_the_cone() {
     }
 }
 
+/// Sets the `cut_out` of the one Inlay of the project at `path` to `null`
+/// (#443), on its own line as the inlay quick start writes it.
+fn without_cut_out(path: &Path) {
+    let text = std::fs::read_to_string(path).expect("dcv readable");
+    let lines: Vec<String> = text
+        .lines()
+        .map(|l| {
+            let body = l.trim_start();
+            if body.starts_with("\"cut_out\":") {
+                let indent = &l[..l.len() - body.len()];
+                let comma = if body.trim_end().ends_with(',') {
+                    ","
+                } else {
+                    ""
+                };
+                format!("{indent}\"cut_out\": null{comma}")
+            } else {
+                l.to_owned()
+            }
+        })
+        .collect();
+    std::fs::write(path, lines.join("\n") + "\n").expect("dcv written");
+}
+
+/// #443, the male of the functional spec's "Inlay pair" with its
+/// cut-out: `tests/fixtures/star-male.dcv` cuts the plug free with the
+/// 3.175 mm end mill (T2), four tabs, last. It exports three programs,
+/// listed in this order: `star-male-1-T2.nc`, the clearing pass, to Z −5;
+/// `star-male-2-T1.nc`, the V-bit, to Z −5; `star-male-3-T2.nc`, the
+/// cut-out, named `Star cut-out t2`, whose cuts start at the floor (no
+/// lap above Z −5) and go through the board to the allowance. `export`
+/// writes nothing unless every program passes the safety pass, S1 to S18,
+/// so its success is that check; every run also passes `assert_run_safe`.
+/// The order is required, so the `tool_change_avoidable` hint is expected.
+#[test]
+fn star_male_exports_three_programs_with_the_cut_out() {
+    let dir = work_dir("star_male_exports_three_programs_with_the_cut_out");
+    let dcv = "star-male.dcv";
+    copy_fixture(&dir, dcv, dcv);
+    let project = load_file(&dir.join(dcv)).project;
+    let [Operation::Inlay(inlay)] = &project.operations[..] else {
+        panic!("the male has one operation, an Inlay");
+    };
+    assert_eq!(inlay.side, dc_project::InlaySide::Male);
+    let cut_out = inlay.cut_out.as_ref().expect("the male has a cut-out");
+    assert_eq!(cut_out.tool.as_str(), "t2");
+    let tabs = cut_out.tabs.as_ref().expect("the cut-out has tabs");
+    assert_eq!(tabs.placement, dc_project::TabPlacement::Count { count: 4 });
+    let allowance_mm = cut_out.through_cut_allowance_mm;
+    assert!(allowance_mm > 0.0, "{allowance_mm}");
+
+    let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+    let programs = [
+        "star-male-1-T2.nc",
+        "star-male-2-T1.nc",
+        "star-male-3-T2.nc",
+    ];
+    let mut written: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    written.sort();
+    assert_eq!(written, programs, "{report}");
+    let listed: Vec<usize> = programs
+        .iter()
+        .enumerate()
+        .map(|(k, name)| {
+            report
+                .find(&format!("{}. {name}", k + 1))
+                .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
+        })
+        .collect();
+    assert!(listed.is_sorted(), "listed in run order: {report}");
+    assert!(report.contains("op1 (cut-out t2) `Star`"), "{report}");
+    assert!(report.contains("tool_change_avoidable"), "{report}");
+
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+    let cut = read(programs[2]);
+    assert_eq!(
+        operation_comments(&cut),
+        ["( Operation 1: Star cut-out t2 )"]
+    );
+    assert_approx_eq!(lowest_z(&cut), -12.0 - allowance_mm, 1e-9);
+    assert_approx_eq!(lowest_z(&read(programs[1])), -5.0, 1e-9);
+    // No lap of the cut-out runs above the floor, 5 mm down.
+    let mut z = f64::NAN;
+    for line in cut.lines().filter(|l| !l.starts_with('(')) {
+        let words: Vec<&str> = line.split_whitespace().collect();
+        let moves_xy = words
+            .iter()
+            .any(|w| w.starts_with('X') || w.starts_with('Y'));
+        if let Some(new_z) = words
+            .iter()
+            .find_map(|w| w.strip_prefix('Z').and_then(|v| v.parse::<f64>().ok()))
+        {
+            z = new_z;
+        }
+        let cutting = words.iter().any(|w| matches!(*w, "G1" | "G2" | "G3"))
+            || (!words.iter().any(|w| *w == "G0") && moves_xy && z < 0.0);
+        if cutting && moves_xy {
+            assert!(z <= -5.0 + 1e-9, "a lap above the floor: {line}");
+        }
+    }
+
+    let (runs, _) = dc_cam::generate_inlay(&project, inlay).expect("the inlay generates");
+    let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
+    assert_eq!(
+        labels,
+        [
+            &dc_cam::RunLabel::Clearing(ToolId::new("t2")),
+            &dc_cam::RunLabel::Main,
+            &dc_cam::RunLabel::CutOut(ToolId::new("t2")),
+        ]
+    );
+    for run in &runs {
+        dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
+    }
+}
+
+/// Format 23 (#443): the cut-out changes nothing an earlier file holds,
+/// so the version 22 fixture exports the same program as it is and once
+/// saved at version 23, and so does the inlay pair's male as #437 wrote
+/// it, at version 22 with no cut-out, which migrates to `"cut_out": null`
+/// and is still sawn free: two programs, the same bytes.
+#[test]
+fn v22_project_exports_the_same_program() {
+    let dir = work_dir("v22_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v22/sample.dcv");
+    let v22 = dir.join("v22.dcv");
+    std::fs::copy(&fixture, &v22).expect("fixture copied");
+    let text = std::fs::read_to_string(&v22).expect("dcv readable");
+    assert!(
+        text.contains("\"version\": 22,"),
+        "the fixture is a version 22 file"
+    );
+    let out = run(&dir, &["export", "v22.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v22: {}", stderr(&out));
+    let from_v22 = std::fs::read_to_string(dir.join("v22.nc")).expect("v22.nc written");
+
+    let project = load_file(&v22).project;
+    assert_eq!(project.version, 23);
+    let v23 = dir.join("v23.dcv");
+    std::fs::write(&v23, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v23).expect("dcv readable");
+    assert!(saved.contains("\"version\": 23,"), "{saved}");
+    let out = run(&dir, &["export", "v23.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v23: {}", stderr(&out));
+    let from_v23 = std::fs::read_to_string(dir.join("v23.nc")).expect("v23.nc written");
+    assert!(from_v22 == from_v23, "v22:\n{from_v22}\nv23:\n{from_v23}");
+    assert!(!from_v22.is_empty());
+
+    // The star's male as a version 22 file: no `cut_out` line at all.
+    let male = std::fs::read_to_string(tests_fixture("star-male.dcv")).expect("fixture readable");
+    let old: Vec<&str> = male
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"cut_out\":"))
+        .collect();
+    let mut old = old.join("\n") + "\n";
+    old = old
+        .replacen("\"version\": 23,", "\"version\": 22,", 1)
+        .replacen("\"safe_z_mm\": 10.0,\n", "\"safe_z_mm\": 10.0\n", 1);
+    assert!(!old.contains("cut_out"), "{old}");
+    let sub = dir.join("star");
+    std::fs::create_dir_all(&sub).expect("folder created");
+    std::fs::write(sub.join("old.dcv"), &old).expect("dcv written");
+    let out = run(&sub, &["export", "old.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export old: {}", stderr(&out));
+    let project = load_file(&sub.join("old.dcv")).project;
+    let [Operation::Inlay(inlay)] = &project.operations[..] else {
+        panic!("one Inlay");
+    };
+    assert_eq!(inlay.cut_out, None);
+    std::fs::write(sub.join("new.dcv"), save(&project).expect("saves")).expect("dcv written");
+    let out = run(&sub, &["export", "new.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export new: {}", stderr(&out));
+    for k in ["1-T2", "2-T1"] {
+        let a = std::fs::read_to_string(sub.join(format!("old-{k}.nc"))).expect("old written");
+        let b = std::fs::read_to_string(sub.join(format!("new-{k}.nc"))).expect("new written");
+        assert!(a == b, "{k}:\n{a}\n{b}");
+    }
+    assert!(!sub.join("old-3-T2.nc").exists());
+}
+
 /// The lowest Z any line of `program` moves to, mm.
 fn lowest_z(program: &str) -> f64 {
     program
@@ -6394,6 +6585,8 @@ fn star_female_and_male_export() {
         let dir = work_dir(&format!("star_female_and_male_export_{stem}"));
         let dcv = format!("{stem}.dcv");
         copy_fixture(&dir, &dcv, &dcv);
+        // #443: without its cut-out the male is sawn free, as before.
+        without_cut_out(&dir.join(&dcv));
 
         let project = load_file(&dir.join(&dcv)).project;
         assert_eq!(

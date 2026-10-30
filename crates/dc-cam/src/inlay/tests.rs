@@ -157,6 +157,7 @@ fn inlay(side: InlaySide) -> InlayOp {
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 10.0,
+        cut_out: None,
     }
 }
 
@@ -827,4 +828,312 @@ fn clearing_pass_clears_the_male_floor() {
     let without = floor_length(main_run(alone));
     println!("V-bit floor {with:.1} mm with clearing, {without:.1} mm without");
     assert!(with < 0.5 * without, "{with} {without}");
+}
+
+// Format 23 (#443): the male's cut-out.
+
+/// The cut-out's through-cut allowance, mm.
+const CUT_OUT_ALLOWANCE_MM: f64 = 0.2;
+/// Its tabs' top above the stock bottom, mm.
+const TAB_TOP_MM: f64 = 3.0;
+/// Its tabs' width, mm.
+const TAB_WIDTH_MM: f64 = 6.0;
+
+/// The star part's male with a cut-out by the end mill `t2`: four rect
+/// tabs 6 mm wide and 3 mm tall, 0.2 mm through.
+fn cut_out_male() -> InlayOp {
+    InlayOp {
+        cut_out: Some(dc_project::InlayCutOut {
+            tool: ToolId::new("t2"),
+            tabs: Some(dc_project::TabSpec {
+                placement: dc_project::TabPlacement::Count { count: 4 },
+                width_mm: TAB_WIDTH_MM,
+                height_mm: TAB_TOP_MM,
+                shape: dc_project::TabShape::Rect,
+                on_holes: false,
+                avoid_corners: true,
+            }),
+            through_cut_allowance_mm: CUT_OUT_ALLOWANCE_MM,
+        }),
+        ..inlay(InlaySide::Male)
+    }
+}
+
+/// The cut-out run of [`cut_out_male`] on the star, generated once.
+fn cut_out_run() -> &'static ToolRun {
+    static RUNS: OnceLock<(Vec<ToolRun>, Vec<Warning>)> = OnceLock::new();
+    let (runs, _) = RUNS.get_or_init(|| inlay_runs(&star_project(THICKNESS_MM), &cut_out_male()));
+    runs.iter()
+        .find(|r| matches!(r.label, RunLabel::CutOut(_)))
+        .expect("a cut-out run")
+}
+
+/// Points along every cutting move of `toolpath`: its ends and three
+/// between, round the arc for an arc.
+fn cut_samples(toolpath: &Toolpath) -> Vec<Point3> {
+    let mut out = Vec::new();
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        if !mv.is_cut() {
+            continue;
+        }
+        let b = mv.to;
+        out.push(a);
+        for k in 1..4 {
+            let t = f64::from(k) / 4.0;
+            let z = a.z + (b.z - a.z) * t;
+            let xy = match mv.kind {
+                MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                    let ccw = matches!(mv.kind, MoveKind::ArcCcw { .. });
+                    let a0 = (a.y - centre.y).atan2(a.x - centre.x);
+                    let a1 = (b.y - centre.y).atan2(b.x - centre.x);
+                    let tau = std::f64::consts::TAU;
+                    let mut sweep = a1 - a0;
+                    if ccw && sweep <= 0.0 {
+                        sweep += tau;
+                    } else if !ccw && sweep >= 0.0 {
+                        sweep -= tau;
+                    }
+                    let r = a.xy().distance_to(centre);
+                    let angle = a0 + sweep * t;
+                    Point::new(centre.x + r * angle.cos(), centre.y + r * angle.sin())
+                }
+                _ => Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t),
+            };
+            out.push(Point3::new(xy.x, xy.y, z));
+        }
+        out.push(b);
+    }
+    out
+}
+
+/// The design of the star project mirrored as the male mirrors it,
+/// nested.
+fn mirrored_design(project: &Project) -> Vec<Region> {
+    let mirror = male_mirror(project, &[InstanceId::new("i1")]).expect("a mirror");
+    let design: Vec<Contour> = [
+        star_placed(),
+        Polyline::circle(Point::new(CENTRE.0, CENTRE.1), CIRCLE_MM),
+    ]
+    .into_iter()
+    .map(|p| Contour::new(mirror.apply_polyline(&p).expect("mirrored")).expect("a contour"))
+    .collect();
+    nest(design).expect("nests").0
+}
+
+/// #443: the cut-out is the male's last run, after the V-bit's, with its
+/// own end mill; with a clearing pass the runs are T2 clearing, T1 V-bit,
+/// T2 cut-out.
+#[test]
+fn cut_out_runs_last_with_its_own_tool() {
+    let project = star_project(THICKNESS_MM);
+    let (runs, _) = inlay_runs(&project, &cut_out_male());
+    let labels: Vec<(&RunLabel, &ToolId)> = runs.iter().map(|r| (&r.label, &r.tool)).collect();
+    assert_eq!(
+        labels,
+        [
+            (&RunLabel::Main, &ToolId::new("t1")),
+            (&RunLabel::CutOut(ToolId::new("t2")), &ToolId::new("t2")),
+        ]
+    );
+
+    let op = InlayOp {
+        clearing: vec![clearing_pass()],
+        ..cut_out_male()
+    };
+    let (runs, _) = inlay_runs(&project, &op);
+    let labels: Vec<(&RunLabel, &ToolId)> = runs.iter().map(|r| (&r.label, &r.tool)).collect();
+    assert_eq!(
+        labels,
+        [
+            (&RunLabel::Clearing(ToolId::new("t2")), &ToolId::new("t2")),
+            (&RunLabel::Main, &ToolId::new("t1")),
+            (&RunLabel::CutOut(ToolId::new("t2")), &ToolId::new("t2")),
+        ]
+    );
+    // Without a cut-out the male is as before.
+    let (runs, _) = star_side(InlaySide::Male);
+    assert!(runs.iter().all(|r| !matches!(r.label, RunLabel::CutOut(_))));
+}
+
+/// #443: the tool centre runs on the mirrored star's outline grown by
+/// half the margin, 4 mm: every point of every cut within 0.01 mm of it.
+#[test]
+fn cut_out_path_is_half_the_margin_out_from_the_mirrored_outline() {
+    let project = star_project(THICKNESS_MM);
+    let design = mirrored_design(&project);
+    let star: Vec<Polyline> = design
+        .iter()
+        .map(|r| r.outer().polyline().clone())
+        .collect();
+    let samples = cut_samples(&cut_out_run().toolpath);
+    assert!(samples.len() > 100, "{}", samples.len());
+    for p in &samples {
+        let gap_mm = distance_to(&star, p.xy());
+        assert!(
+            (gap_mm - MARGIN_MM / 2.0).abs() <= 0.01,
+            "{p:?} is {gap_mm} mm from the mirrored star"
+        );
+    }
+}
+
+/// #443: the band's flat floor lies between the mirrored design grown by
+/// `P·tan 30°` = 1.155 mm and by `M − P·tan 30°` = 6.845 mm; the end
+/// mill's footprint stays at least its radius inside both edges of that
+/// ring, as `dc_geometry` derives it (the V-bit's floor).
+#[test]
+fn cut_out_stays_inside_the_floor_ring() {
+    let project = star_project(THICKNESS_MM);
+    let design = mirrored_design(&project);
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let floors = floor_regions(
+        &surround(&design, MARGIN_MM, tolerance_mm),
+        PLUG_DEPTH_MM * slope(),
+        tolerance_mm,
+    );
+    // The ring is the floor round the star, not the circle's.
+    let ring: Vec<Region> = floors
+        .into_iter()
+        .filter(|r| !r.contains_point(Point::new(CENTRE.0, CENTRE.1)) && !r.holes().is_empty())
+        .collect();
+    assert_eq!(ring.len(), 1, "one floor ring round the star");
+    let radius_mm = 3.175 / 2.0;
+    let mut least_mm = f64::INFINITY;
+    for p in cut_samples(&cut_out_run().toolpath) {
+        assert!(
+            ring[0].contains_point(p.xy()),
+            "{p:?} is off the floor ring"
+        );
+        let gap_mm = distance_to(&outlines(&ring), p.xy());
+        least_mm = least_mm.min(gap_mm);
+        assert!(
+            gap_mm >= radius_mm - 1e-6,
+            "{p:?}: the end mill reaches {:.4} mm past the floor ring",
+            radius_mm - gap_mm
+        );
+    }
+    println!(
+        "the end mill stays {:.3} mm inside the ring",
+        least_mm - radius_mm
+    );
+}
+
+/// #443: no pass cuts the air the carve removed: the highest lap runs no
+/// higher than the floor, `D − G + P` = 5 mm below the top, and within a
+/// step-down of it; the last goes through the board to the allowance.
+#[test]
+fn cut_out_starts_at_the_floor_and_goes_through() {
+    let floor_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM + PLUG_DEPTH_MM);
+    let toolpath = &cut_out_run().toolpath;
+    let mut highest_lap = f64::NEG_INFINITY;
+    let mut lowest = f64::INFINITY;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        if !mv.is_cut() {
+            continue;
+        }
+        lowest = lowest.min(mv.to.z);
+        if a.xy().distance_to(mv.to.xy()) > 1e-9 {
+            highest_lap = highest_lap.max(a.z.max(mv.to.z));
+        }
+    }
+    assert!(highest_lap <= floor_z_mm + 1e-9, "{highest_lap}");
+    assert!(highest_lap >= floor_z_mm - 2.0 - 1e-9, "{highest_lap}");
+    assert!((lowest + CUT_OUT_ALLOWANCE_MM).abs() < 1e-9, "{lowest}");
+}
+
+/// #443: only the outer outline is cut out: nothing of the cut-out runs
+/// inside the star, so the circle's hole stays in the plug.
+#[test]
+fn cut_out_skips_design_holes() {
+    let project = star_project(THICKNESS_MM);
+    let design = mirrored_design(&project);
+    for p in cut_samples(&cut_out_run().toolpath) {
+        assert!(
+            design.iter().all(|r| !r.contains_point(p.xy())),
+            "{p:?} is inside the design"
+        );
+        assert!(
+            p.xy().distance_to(Point::new(CENTRE.0, CENTRE.1)) > 12.0 + 4.0,
+            "{p:?} is near the circle"
+        );
+    }
+}
+
+/// #443: the four tabs stand: every pass below their top, at Z 1 and Z
+/// −0.2, rises over each of them, so the laps run at the tab top in
+/// eight stretches, each at least a tab wide.
+#[test]
+fn cut_out_leaves_the_tabs() {
+    let toolpath = &cut_out_run().toolpath;
+    let mut stretches: Vec<f64> = Vec::new();
+    let mut on_top = false;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        let level_on_top = mv.is_cut()
+            && (a.z - TAB_TOP_MM).abs() < 1e-9
+            && (mv.to.z - TAB_TOP_MM).abs() < 1e-9
+            && a.xy().distance_to(mv.to.xy()) > 1e-9;
+        if level_on_top {
+            let length = a.xy().distance_to(mv.to.xy());
+            match stretches.last_mut() {
+                Some(last) if on_top => *last += length,
+                _ => stretches.push(length),
+            }
+        }
+        on_top = level_on_top;
+    }
+    // The pass at the tab top itself is one long level lap.
+    let tabs: Vec<f64> = stretches.iter().copied().filter(|&l| l < 50.0).collect();
+    assert_eq!(tabs.len(), 8, "{stretches:?}");
+    for l in &tabs {
+        assert!(*l >= TAB_WIDTH_MM - 1e-6, "{tabs:?}");
+    }
+}
+
+/// #443: the generator refuses what validation refuses: a cut-out on a
+/// female, and one whose end mill does not fit the floor ring (the star
+/// with a 4 mm margin: 4 − 2.309 < 3.175).
+#[test]
+fn cut_out_refuses_a_female_and_a_narrow_floor() {
+    let project = star_project(THICKNESS_MM);
+    let female = InlayOp {
+        side: InlaySide::Female,
+        ..cut_out_male()
+    };
+    let result = try_inlay(&project, &female);
+    assert!(
+        matches!(result, Err(CamError::InlayCutOutNeedsMale { .. })),
+        "{result:?}"
+    );
+    let narrow = InlayOp {
+        margin_mm: Some(4.0),
+        ..cut_out_male()
+    };
+    match try_inlay(&project, &narrow) {
+        Err(CamError::InlayCutOutNoRoom {
+            diameter_mm,
+            needed_mm,
+            ..
+        }) => {
+            assert!((diameter_mm - 3.175).abs() < 1e-12);
+            assert!((needed_mm - (2.0 * PLUG_DEPTH_MM * slope() + 3.175)).abs() < 1e-9);
+        }
+        other => panic!("{other:?}"),
+    }
 }

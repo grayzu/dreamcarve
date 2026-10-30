@@ -108,6 +108,10 @@
 //!   (`"female"` or `"male"`), `depth_mm`, `glue_gap_mm`, `plug_depth_mm`,
 //!   `margin_mm` and clearing passes (sub-phase 3.3). No version 21 file
 //!   holds one, so the migration changes only the version.
+//! - **23**: adds a male Inlay's cut-out (#443), `"cut_out"`, after
+//!   `safe_z_mm`: `null`, or `{ "tool", "tabs", "through_cut_allowance_mm"
+//!   }`. The migration writes `"cut_out": null` in every Inlay, so a
+//!   version 22 file cuts the same.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -118,7 +122,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 22;
+pub const CURRENT_VERSION: u32 = 23;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -149,6 +153,7 @@ fn step(from: u32) -> Option<Step> {
         19 => Some(v19_to_v20),
         20 => Some(v20_to_v21),
         21 => Some(v21_to_v22),
+        22 => Some(v22_to_v23),
         _ => None,
     }
 }
@@ -829,6 +834,47 @@ fn v20_to_v21(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
 /// refuse a file with an Inlay as newer instead of failing on an unknown
 /// kind (ADR-0002).
 fn v21_to_v22(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    Ok(root)
+}
+
+/// Version 22 → 23 (#443): a male Inlay's cut-out. Inserts `"cut_out":
+/// null` after `safe_z_mm` (at the end when it is missing) in every
+/// Inlay, so a version 22 file cuts the same, with the plug sawn free.
+/// Other operations are unchanged. Fails if an Inlay already has
+/// `cut_out`: that is not a version 22 file.
+fn v22_to_v23(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("version") {
+        return Ok(root);
+    }
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("inlay") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("cut_out") {
+            return Err(format!(
+                "a version 22 file has no `operations[{i}].cut_out`, but this one does"
+            ));
+        }
+        let at_end = !fields.contains_key("safe_z_mm");
+        let mut out = Map::new();
+        for (k, v) in fields {
+            let after = k == "safe_z_mm";
+            out.insert(k, v);
+            if after {
+                out.insert("cut_out".into(), Value::Null);
+            }
+        }
+        if at_end {
+            out.insert("cut_out".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
     Ok(root)
 }
 
@@ -2705,7 +2751,7 @@ mod tests {
             VCarveOp,
         };
         use crate::test_support::{sample_bore, sample_engrave, sample_pocket, sample_v_carve};
-        assert_eq!(CURRENT_VERSION, 22);
+        const { assert!(CURRENT_VERSION >= 22) };
         let root: Value = serde_json::from_slice(V21_FIXTURE).unwrap();
         let stepped = v21_to_v22(root.as_object().unwrap().clone()).unwrap();
         assert_eq!(Value::Object(stepped), root);
@@ -2753,7 +2799,7 @@ mod tests {
             root["operations"].as_array_mut().unwrap().push(op);
         }
         let mut expected = root.clone();
-        expected["version"] = json!(22);
+        expected["version"] = json!(CURRENT_VERSION);
         let migrated = migrate(root, 21).unwrap();
         assert_eq!(migrated, expected);
         assert_eq!(
@@ -2766,7 +2812,102 @@ mod tests {
     /// A version 21 reader refuses a version 22 file as newer (ADR-0002).
     #[test]
     fn version_22_is_newer_than_21() {
-        assert_eq!(CURRENT_VERSION, 22);
+        const { assert!(CURRENT_VERSION > 22) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 22 → 23 (#443): a male Inlay's cut-out.
+
+    const V22_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v22/sample.dcv");
+
+    #[test]
+    fn version_22_fixture_loads() {
+        let text = std::str::from_utf8(V22_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 22,"), "a version 22 file");
+        let loaded = load(V22_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Format 23: every Inlay gains `"cut_out": null` right after its
+    /// `safe_z_mm`, whatever its side and clearing; no other operation
+    /// changes, and the keys keep their order.
+    #[test]
+    fn v22_to_v23_adds_a_null_cut_out() {
+        use crate::ids::ToolId;
+        use crate::model::{
+            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayOp, InlaySide,
+        };
+        use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
+        assert_eq!(CURRENT_VERSION, 23);
+        let fixture: Value = serde_json::from_slice(V22_FIXTURE).unwrap();
+        let stepped = v22_to_v23(fixture.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            Value::Object(stepped),
+            serde_json::from_slice::<Value>(V22_FIXTURE).unwrap(),
+            "a file with no Inlay is unchanged"
+        );
+
+        let male = InlayOp {
+            side: InlaySide::Male,
+            clearing: vec![ClearingPass {
+                tool: ToolId::new("t1"),
+                strategy: ClearanceStrategy::Offset,
+                direction: CutDirection::Climb,
+                entry: Entry::Plunge,
+            }],
+            ..sample_inlay()
+        };
+        let mut root = sample_root_at(22);
+        let mut expected = sample_root_at(CURRENT_VERSION);
+        for op in [
+            Operation::Pocket(sample_pocket()),
+            Operation::Inlay(sample_inlay()),
+            Operation::VCarve(sample_v_carve()),
+            Operation::Inlay(male),
+        ] {
+            let current = serde_json::to_value(op).unwrap();
+            let mut old = current.clone();
+            if let Some(fields) = old.as_object_mut() {
+                fields.shift_remove("cut_out");
+            }
+            root["operations"].as_array_mut().unwrap().push(old);
+            expected["operations"].as_array_mut().unwrap().push(current);
+        }
+        for op in expected["operations"].as_array().unwrap() {
+            if op["kind"] == json!("inlay") {
+                let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
+                assert_eq!(keys.last().map(|k| k.as_str()), Some("cut_out"));
+                assert_eq!(op["cut_out"], Value::Null);
+            }
+        }
+        let migrated = migrate(root, 22).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+
+        // A version 22 Inlay that already has a cut-out is not one.
+        let mut bad = sample_root_at(22);
+        bad["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(sample_inlay())).unwrap());
+        let err = migrate(bad, 22).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 22, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// A version 22 reader refuses a version 23 file as newer (ADR-0002).
+    #[test]
+    fn version_23_is_newer_than_22() {
+        assert_eq!(CURRENT_VERSION, 23);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

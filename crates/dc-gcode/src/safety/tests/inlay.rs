@@ -110,6 +110,7 @@ fn inlay(side: InlaySide, tool: &str, plug_mm: f64, margin_mm: f64) -> InlayOp {
         machining_order: MachiningOrder::FullDepthFirst,
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
+        cut_out: None,
     }
 }
 
@@ -306,4 +307,170 @@ fn male_cut_inside_the_plug_fails_s17() {
         ),
         7,
     );
+}
+
+// Format 23 (#443): a male's cut-out run is held to the floor ring.
+
+/// A cut-out with the 3.175 mm end mill `t3` and `tabs`, 0.2 mm
+/// through.
+fn cut_out(tabs: Option<dc_project::TabSpec>) -> dc_project::InlayCutOut {
+    dc_project::InlayCutOut {
+        tool: ToolId::new("t3"),
+        tabs,
+        through_cut_allowance_mm: 0.2,
+    }
+}
+
+/// Four rect tabs 4 mm wide and 2 mm tall.
+fn four_tabs() -> dc_project::TabSpec {
+    dc_project::TabSpec {
+        placement: dc_project::TabPlacement::Count { count: 4 },
+        width_mm: 4.0,
+        height_mm: 2.0,
+        shape: dc_project::TabShape::Rect,
+        on_holes: false,
+        avoid_corners: true,
+    }
+}
+
+/// S9 alone on hand-written `text`, as run `label` of `op` cut with
+/// `tool` in `project` (which gains `op`).
+fn check_run(
+    text: &str,
+    project: &Project,
+    op: &InlayOp,
+    label: &RunLabel,
+    tool: &str,
+) -> Result<(), ExportError> {
+    let mut project = project.clone();
+    project.operations = vec![Operation::Inlay(op.clone())];
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == tool)
+        .cloned()
+        .expect("the tool");
+    let op = Operation::Inlay(op.clone());
+    let post = project.post_processor.resolve().unwrap();
+    let transform = MachineTransform::new(&project, &post).unwrap();
+    let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
+    let material = Material::of_run(&project, &op, label, &tool);
+    let tabs = material::run_tab_spines(&project, &op, label);
+    let toolpath = Toolpath::default();
+    let span = OpSpan {
+        op: &op,
+        tool: &tool,
+        toolpath: &toolpath,
+        material: &material,
+        tabs: &tabs,
+        lines: 1..text.lines().count() + 1,
+    };
+    let tolerances = Tolerances {
+        flatten_mm: project.flatten_tolerance_mm,
+        arc_fit_mm: project.arc_fit_tolerance_mm,
+    };
+    material::check(&blocks, &post, &transform, tolerances, &span)
+}
+
+#[track_caller]
+fn assert_off(result: Result<(), ExportError>, line: usize) {
+    assert!(
+        matches!(result, Err(ExportError::OffMaterial { line: l, .. }) if l == line),
+        "expected OffMaterial at line {line}: {result:?}"
+    );
+}
+
+/// #443: the two shapes' male with the 90° bit, `P` 1 and a 6 mm
+/// margin: its floor ring runs from 1 mm to 5 mm off the mirrored
+/// rectangle (X 46 to 76, Y 20 to 30), so the 3.175 mm end mill's centre
+/// may run from 2.59 to 3.41 mm off it. A cut-out 3 mm below it, through
+/// the board, passes; 1.5 mm or 4.5 mm below it, its footprint crosses
+/// the plug's wall or the band's outer wall, and below the rectangle as
+/// drawn (X 20) it is off the ring: each fails S9 at the cut. A cut-out
+/// run with another tool than the cut-out's, or of an Inlay with no
+/// cut-out, is unresolved.
+#[test]
+fn cut_out_off_the_floor_ring_fails() {
+    let project = two_shapes();
+    let op = InlayOp {
+        cut_out: Some(cut_out(None)),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    let label = RunLabel::CutOut(ToolId::new("t3"));
+    let at = |x: f64, y: f64| program_at(x, y, &format!("G1 Z-12.2 F300\nX{} F1000\n", x + 5.0));
+    check_run(&at(55.0, 17.0), &project, &op, &label, "t3").unwrap();
+    check_run(&at(55.0, 17.4), &project, &op, &label, "t3").unwrap();
+    for (x, y) in [(55.0, 18.5), (55.0, 15.5), (20.0, 17.0)] {
+        assert_off(check_run(&at(x, y), &project, &op, &label, "t3"), 6);
+    }
+    // Below the ring the cut is held by S1, not S9: one deeper is still in
+    // the ring.
+    let deeper = program_at(55.0, 17.0, "G1 Z-13 F300\nX60 F1000\n");
+    check_run(&deeper, &project, &op, &label, "t3").unwrap();
+    // The wrong tool, or no cut-out.
+    assert_off(check_run(&at(55.0, 17.0), &project, &op, &label, "t2"), 6);
+    let without = inlay(InlaySide::Male, "t2", 1.0, 6.0);
+    assert_off(
+        check_run(&at(55.0, 17.0), &project, &without, &label, "t3"),
+        6,
+    );
+    let female = InlayOp {
+        side: InlaySide::Female,
+        ..op.clone()
+    };
+    assert_off(
+        check_run(&at(55.0, 17.0), &project, &female, &label, "t3"),
+        6,
+    );
+}
+
+/// #443: a cut-out's S1 floor is its own through-cut allowance, not the
+/// Inlay's: 0.2 mm below the stock bottom passes, 0.3 mm fails.
+#[test]
+fn cut_out_is_held_to_its_own_allowance() {
+    let project = two_shapes();
+    let op = InlayOp {
+        cut_out: Some(cut_out(Some(four_tabs()))),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    let mut programs = export_inlay(&project, &op).expect("the male exports");
+    let cut_out = programs.pop().expect("a cut-out program");
+    assert!(cut_out.contains("Z-12.200"), "{cut_out}");
+    assert!(!cut_out.contains("Z-12.201"), "{cut_out}");
+}
+
+/// #443: every generated cut-out passes the whole safety pass, S1 to
+/// S18 with S9's floor ring and tab rules: the small star's male with the
+/// 60° bit and a 6 mm margin, with and without tabs and a clearing pass,
+/// and the two shapes' male, whose mirror moves them, with the 90° bit.
+/// The cut-out is the last program, with its own tool.
+#[test]
+fn generated_cut_outs_pass() {
+    let star = small_star();
+    let pass = ClearingPass {
+        tool: ToolId::new("t3"),
+        strategy: ClearanceStrategy::Offset,
+        direction: CutDirection::Climb,
+        entry: Entry::Plunge,
+    };
+    for clearing in [Vec::new(), vec![pass.clone()]] {
+        for tabs in [None, Some(four_tabs())] {
+            let op = InlayOp {
+                clearing: clearing.clone(),
+                cut_out: Some(cut_out(tabs.clone())),
+                ..inlay(InlaySide::Male, "t5", 1.0, 6.0)
+            };
+            let programs =
+                export_inlay(&star, &op).unwrap_or_else(|e| panic!("{clearing:?} {tabs:?}: {e}"));
+            assert_eq!(programs.len(), 2 + clearing.len());
+            let last = programs.last().expect("a cut-out program");
+            assert!(last.contains("cut-out t3"), "{last}");
+            assert!(last.contains("Z-12.200"), "{last}");
+        }
+    }
+    let male = InlayOp {
+        cut_out: Some(cut_out(Some(four_tabs()))),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
 }

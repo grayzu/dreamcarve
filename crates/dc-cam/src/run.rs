@@ -28,6 +28,9 @@ pub enum RunLabel {
     Main,
     /// A clearing pass of a carve, with that pass's end mill.
     Clearing(ToolId),
+    /// A male Inlay's cut-out (format 23, #443), with its end mill: the
+    /// operation's last run, after the V-bit's.
+    CutOut(ToolId),
 }
 
 impl RunLabel {
@@ -41,6 +44,7 @@ impl RunLabel {
         match self {
             Self::Main => name.to_owned(),
             Self::Clearing(tool) => format!("{name} (clearing {tool})"),
+            Self::CutOut(tool) => format!("{name} (cut-out {tool})"),
         }
     }
 }
@@ -55,6 +59,10 @@ mod tests {
         assert_eq!(
             RunLabel::Clearing(ToolId::new("t1")).naming("op2"),
             "op2 (clearing t1)"
+        );
+        assert_eq!(
+            RunLabel::CutOut(ToolId::new("t2")).naming("op1"),
+            "op1 (cut-out t2)"
         );
     }
 }
