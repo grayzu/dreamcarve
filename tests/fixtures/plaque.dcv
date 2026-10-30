@@ -1,5 +1,5 @@
 {
-  "version": 21,
+  "version": 22,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,

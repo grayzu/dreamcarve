@@ -167,6 +167,29 @@ width follows the shape width.
 _Avoid_: Carve, vcarve, chamfer
 _PureCutCNC_: V-Carve
 
+**Inlay**:
+An operation (format 22) that cuts one **side** of a V-bit inlay of a design:
+the **female**, a flat-bottomed V-carved pocket `depth_mm` deep, or the
+**male**, a plug of the design mirrored in place, left standing by carving
+the band round it. The plug is turned over and glued into the pocket, its
+V-sloped walls seating in the pocket's, and the excess planed off. One design
+and the same values make both sides; only `side` changes.
+_Avoid_: Insert, female/male V-Carve
+_PureCutCNC_: none (Corbin's Workshop's method)
+
+**Glue Gap**:
+The gap an Inlay leaves under its seated plug, `glue_gap_mm`, 0 or more and
+below `depth_mm` (Corbin's "Inlay Fit Adjustment"). The male's start plane is
+`depth_mm − glue_gap_mm` below the stock top.
+_Avoid_: Fit adjustment, clearance
+
+**Plug Depth**:
+How far below the male's start plane its surround is cut flat,
+`plug_depth_mm`, so the plug's base clears the pocket's surface when the walls
+mate. The male's flank engages `depth_mm − glue_gap_mm + plug_depth_mm` from
+the stock top, which must fit the V-bit's cone.
+_Avoid_: Plug height
+
 **Engrave**:
 An operation that follows an open or closed path with the tool centre on the
 line at a fixed depth. Engraving whose width follows the shape with a V-bit is

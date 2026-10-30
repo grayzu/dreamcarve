@@ -30,10 +30,10 @@ pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle, DrillOp,
-    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, LastPass, Lead, MachineOrigin,
-    MachiningOrder, Operation, OriginXy, OriginZ, ParkXy, PeckRetract, PlacedTab, PocketOp,
-    ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind,
-    Units, VCarveOp, VCarveStrategy, WallPass,
+    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, InlaySide, LastPass,
+    Lead, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, ParkXy, PeckRetract,
+    PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
+    Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,
@@ -47,6 +47,6 @@ pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{
-    MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM, MAX_TOOL_DIAMETER_MM, Problem, Severity,
-    validate,
+    INLAY_MIN_PLUG_BASE_MM, MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM,
+    MAX_TOOL_DIAMETER_MM, Problem, Severity, validate,
 };

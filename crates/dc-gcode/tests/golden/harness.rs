@@ -451,6 +451,7 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                 }
                 continue;
             }
+            Operation::Inlay(_) => panic!("{name}: no Inlay is generated before #436"),
         };
         assert!(
             warnings.is_empty(),

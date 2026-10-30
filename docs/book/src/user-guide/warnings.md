@@ -108,6 +108,7 @@ file](project-file.md).
 | `countersink_ignores_tool_width` | "… countersinks, so allow_tool_wider_than_hole has no effect" | A countersink's V-bit is wider than its hole by design, so the Drill's `allow_tool_wider_than_hole` does nothing; a hole at least as wide as the mouth is skipped instead. Set it to `false`. |
 | `relief_needs_step_down` | "… asks for corner relief, but tool … has no step_down_mm" | Set the tool's `step_down_mm`; until then the relief is skipped. |
 | `engrave_deeper_than_cone` | "… engraves … mm deep with tool …, whose cone is only … mm tall" | Use a shallower depth or a wider V-bit; below the cone the shank cuts ([Engrave: V-bits](engrave.md#v-bits)). |
+| `inlay_plug_base_thin` | "… cuts its plug's surround … mm below the stock top, leaving … mm of the … mm board under it, less than 6 mm" | A male Inlay's surround is cut `depth_mm − glue_gap_mm + plug_depth_mm` deep; under 6 mm of board left below it may flex or crack when the plug is pressed into the glue. Use thicker stock for the plug, or a smaller `depth_mm` or `plug_depth_mm`. The program is still cut. |
 | `clearing_not_descending` | "clearing pass … of operation … uses tool … (… mm), wider than the pass before it" | A V-Carve's clearing passes run in list order, each clearing only what the passes before could not reach, so list the largest end mill first. The pass still runs, but a wider end mill reaches nothing a narrower one before it left, so it also warns `clearing_no_room`. |
 
 ## V-Carve errors
@@ -118,9 +119,9 @@ gives each message and what to do.
 
 | Code | When |
 | --- | --- |
-| `v_carve_needs_v_bit` | A V-Carve's tool is not a V-bit. |
+| `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is not a V-bit. |
 | `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
-| `v_bit_cone_exceeded` | A carve or a countersink would engage the V-bit deeper than its cone is tall: the flat depth or the countersink's depth, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
+| `v_bit_cone_exceeded` | A carve, an Inlay or a countersink would engage the V-bit deeper than its cone is tall: the flat depth, the Inlay's depth from the stock top or the countersink's depth, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
 | `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
@@ -133,6 +134,29 @@ The safety pass adds two errors of its own for a V-Carve's program,
 cut, at X … Y … Z … (project space)" and "emitted line … engages operation
 …'s V-bit … mm deep, past its … mm cone, so its shank would cut". See
 [Safety](safety.md), rule 14.
+
+## Inlay errors
+
+Not warnings, but listed here with the V-Carve errors an Inlay shares
+(`v_carve_needs_v_bit`, `v_bit_angle_range`, `v_bit_cone_exceeded` and
+the clearing errors). These stop `check` and `export`. An Inlay has no
+start depth, so the start depth errors never name one, and it always
+has a flat depth, so `clearing_needs_flat_depth` never does either.
+Its `depth_mm`, `glue_gap_mm` and `plug_depth_mm` are needed on either
+side, and its `margin_mm` on a male: unset, each is
+`operation_value_unset`. Its `v_bit_cone_exceeded` is at `depth_mm` for
+a female, whose flank engages that deep, and at `plug_depth_mm` for a
+male, whose flank engages `depth_mm − glue_gap_mm + plug_depth_mm` from
+the stock top, since the plug above its start plane is never cleared.
+
+| Code | When |
+| --- | --- |
+| `inlay_glue_gap_not_below_depth` | An Inlay's `glue_gap_mm` is at least its `depth_mm`: "… has glue_gap_mm … mm, not below its depth_mm … mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat". |
+| `inlay_margin_positive` | A male Inlay's `margin_mm` is 0 or less: "… is a male inlay with margin_mm … mm; its surround is carved that far beyond the design, so it must be above 0". |
+
+This build checks an Inlay but does not export one yet: `check` and
+`export` stop with "operation … uses a V-bit inlay (`inlay`), which is
+not supported by this build yet", and write no program.
 
 ## Countersink errors
 

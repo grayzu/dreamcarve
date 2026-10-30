@@ -293,6 +293,13 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
                 (drilled.toolpath, Some(drilled.holes))
             }
+            // Format 22: the Inlay's generator lands in #436.
+            Operation::Inlay(_) => {
+                return Err(format!(
+                    "operation {} is an Inlay, which this build does not generate yet",
+                    operation.id()
+                ));
+            }
         };
         ops.push(EmitOp {
             op: operation.clone(),

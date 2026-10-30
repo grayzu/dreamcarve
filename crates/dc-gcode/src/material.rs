@@ -354,9 +354,10 @@ pub(crate) enum Material {
     },
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid stock to
-    /// leave), a V-Carve whose tool or settings are unusable, or a run
-    /// whose label or tool the operation does not have: no cut is in the
-    /// material, fail-closed.
+    /// leave), a V-Carve whose tool or settings are unusable, a run whose
+    /// label or tool the operation does not have, or an Inlay, which has
+    /// no rule before its S17 surround (#436): no cut is in the material,
+    /// fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
     /// checked.
@@ -831,6 +832,11 @@ impl Material {
                 None => Self::Unresolved,
             },
             Operation::VCarve(carve) => v_bit_material(project, carve),
+            // Format 22: no Inlay is generated before #436, which adds
+            // S17 for both sides (the male's surround), so the safety pass
+            // has no material rule for one and refuses any program that
+            // claims to be one.
+            Operation::Inlay(_) => Self::Unresolved,
         }
     }
 }
