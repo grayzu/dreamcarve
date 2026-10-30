@@ -843,9 +843,6 @@ fn v21_to_v22(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
 /// Other operations are unchanged. Fails if an Inlay already has
 /// `cut_out`: that is not a version 22 file.
 fn v22_to_v23(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
-    if root.contains_key("version") {
-        return Ok(root);
-    }
     let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
         return Ok(root);
     };

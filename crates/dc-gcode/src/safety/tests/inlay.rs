@@ -355,7 +355,7 @@ fn check_run(
     let transform = MachineTransform::new(&project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
     let material = Material::of_run(&project, &op, label, &tool);
-    let tabs = material::run_tab_spines(&project, &op, label);
+    let tabs = material::run_tab_spines(&project, &op, label, &tool);
     let toolpath = Toolpath::default();
     let span = OpSpan {
         op: &op,
@@ -422,6 +422,72 @@ fn cut_out_off_the_floor_ring_fails() {
         check_run(&at(55.0, 17.0), &project, &female, &label, "t3"),
         6,
     );
+}
+
+/// #443: the cut-out leaves its tabs as a Profile does: a plunge on its
+/// path at a tab's centre (where its request places it on the path this
+/// pass derives) below the tab's top fails S9; one beside the tab, and
+/// one at the tab that stops on its top, pass.
+#[test]
+fn cut_out_plunge_into_a_tab_fails() {
+    let mut project = two_shapes();
+    let op = InlayOp {
+        cut_out: Some(cut_out(Some(four_tabs()))),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    project.operations = vec![Operation::Inlay(op.clone())];
+    let label = RunLabel::CutOut(ToolId::new("t3"));
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == "t3")
+        .cloned()
+        .expect("the end mill");
+    let operation = Operation::Inlay(op.clone());
+    assert_eq!(
+        material::run_tab_spines(&project, &operation, &label, &tool).len(),
+        6,
+        "four round the rectangle; two round the square, whose path is too short for four"
+    );
+    // The tabs as placing the cut-out's request finds them.
+    let design: Vec<dc_geometry::Contour> = [
+        Polyline::rect(Point::new(46.0, 20.0), 30.0, 10.0),
+        Polyline::rect(Point::new(10.0, 20.0), 6.0, 6.0),
+    ]
+    .into_iter()
+    .map(|p| dc_geometry::Contour::new(p).expect("a contour"))
+    .collect();
+    let (design, _) = dc_geometry::nest(design).expect("nests");
+    let paths: Vec<Polyline> =
+        dc_geometry::outer_offset(&design, 3.0, project.flatten_tolerance_mm)
+            .into_iter()
+            .map(dc_geometry::Contour::into_polyline)
+            .collect();
+    let (copy, profile) = dc_cam::inlay::cut_out_profile(
+        &project,
+        &op,
+        op.cut_out.as_ref().expect("a cut-out"),
+        &paths,
+        12.0,
+    );
+    let placed = dc_cam::placed_tabs::place(&copy, &profile.id, &four_tabs()).expect("placed");
+    let tab = placed
+        .tabs
+        .iter()
+        .find(|t| t.y_mm < 20.0 && t.x_mm > 46.0)
+        .expect("a tab under the rectangle");
+    let plunge = |x: f64, z: f64| program_at(x, tab.y_mm, &format!("G1 Z{z} F300\n"));
+    assert_off(
+        check_run(&plunge(tab.x_mm, -11.0), &project, &op, &label, "t3"),
+        6,
+    );
+    check_run(&plunge(tab.x_mm, -10.0), &project, &op, &label, "t3").unwrap();
+    let beside = if tab.x_mm > 61.0 {
+        tab.x_mm - 8.0
+    } else {
+        tab.x_mm + 8.0
+    };
+    check_run(&plunge(beside, -11.0), &project, &op, &label, "t3").unwrap();
 }
 
 /// #443: a cut-out's S1 floor is its own through-cut allowance, not the

@@ -62,8 +62,9 @@ use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry,
-    InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
-    ProfileOp, Project, Side, TabPlacement, Tool, ToolKind, VCarveOp, VCarveStrategy,
+    InlayCutOut, InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab,
+    PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp,
+    VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -1637,6 +1638,14 @@ impl Validator {
                 })
                 .flatten()
                 .map(|pass| &pass.tool)
+                // A male Inlay's cut-out (format 23) too: it steps down
+                // by its tool's step-down.
+                .chain(p.operations.iter().filter_map(|op| match op {
+                    Operation::Inlay(inlay) if inlay.enabled => {
+                        inlay.cut_out.as_ref().map(|c| &c.tool)
+                    }
+                    _ => None,
+                }))
         };
         let used: BTreeSet<&ToolId> = p
             .operations
@@ -2235,6 +2244,25 @@ impl Validator {
         }
     }
 
+    /// A tab request's fields at `at`, in file order: a Profile's, or a
+    /// male Inlay's cut-out's (format 23).
+    fn tab_spec(&mut self, tabs: &TabSpec, at: &str) {
+        match &tabs.placement {
+            TabPlacement::Count { count } => {
+                if *count == 0 {
+                    self.out_of_range(format!("{at}.placement.count"), 0.0, POSITIVE);
+                }
+            }
+            TabPlacement::AtDistances { distances_mm } => {
+                for (i, d) in distances_mm.iter().enumerate() {
+                    self.non_negative(&format!("{at}.placement.distances_mm[{i}]"), *d);
+                }
+            }
+        }
+        self.positive(&format!("{at}.width_mm"), tabs.width_mm);
+        self.positive(&format!("{at}.height_mm"), tabs.height_mm);
+    }
+
     /// A Profile's own fields after `depth_mm`, in file order.
     fn profile(&mut self, op: &ProfileOp, at: &str) {
         if let Some(step) = op.step_down_mm {
@@ -2246,20 +2274,7 @@ impl Validator {
         );
         self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
         if let Some(tabs) = &op.tabs {
-            match &tabs.placement {
-                TabPlacement::Count { count } => {
-                    if *count == 0 {
-                        self.out_of_range(format!("{at}.tabs.placement.count"), 0.0, POSITIVE);
-                    }
-                }
-                TabPlacement::AtDistances { distances_mm } => {
-                    for (i, d) in distances_mm.iter().enumerate() {
-                        self.non_negative(&format!("{at}.tabs.placement.distances_mm[{i}]"), *d);
-                    }
-                }
-            }
-            self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
-            self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
+            self.tab_spec(tabs, &format!("{at}.tabs"));
         }
         self.entry(&op.entry, at);
         // #117: a helix needs removed material to sit in (functional spec,
@@ -2831,8 +2846,87 @@ impl Validator {
             inlay.safe_z_mm,
             at,
         );
+        // Format 23 (#443): the cut-out's own fields.
+        if let Some(cut_out) = &inlay.cut_out {
+            if !p.tools.iter().any(|t| t.id == cut_out.tool) {
+                self.problems.push(Problem::DanglingTool {
+                    operation: inlay.id.clone(),
+                    tool: cut_out.tool.clone(),
+                });
+            }
+            if let Some(tabs) = &cut_out.tabs {
+                self.tab_spec(tabs, &format!("{at}.cut_out.tabs"));
+            }
+            self.non_negative(
+                &format!("{at}.cut_out.through_cut_allowance_mm"),
+                cut_out.through_cut_allowance_mm,
+            );
+        }
         if inlay.enabled {
             self.enabled_inlay(p, inlay, tool);
+            self.enabled_cut_out(p, inlay, tool);
+        }
+    }
+
+    /// The rules of an enabled Inlay's cut-out that need its tools
+    /// (format 23, #443): only a male has one; its tool is a flat end
+    /// mill; and the band's flat floor ring, `M − 2·P·tan(α/2)` wide, holds
+    /// the tool's diameter. The ring is compared only when the values it
+    /// uses passed their own checks.
+    fn enabled_cut_out(&mut self, p: &Project, inlay: &InlayOp, v_bit: Option<&Tool>) {
+        let Some(cut_out) = &inlay.cut_out else {
+            return;
+        };
+        if inlay.side != InlaySide::Male {
+            self.problems.push(Problem::InlayCutOutNeedsMale {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+            });
+            return;
+        }
+        let Some(tool) = p.tools.iter().find(|t| t.id == cut_out.tool) else {
+            return;
+        };
+        if !tool.cutter.is_flat() {
+            self.problems.push(Problem::CutterNotFlat {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+                field: "cut_out.tool",
+            });
+            return;
+        }
+        let Some(ToolKind::VBit { included_angle_deg }) = v_bit.map(|t| &t.cutter) else {
+            return;
+        };
+        let (Some(plug_depth_mm), Some(margin_mm)) = (inlay.plug_depth_mm, inlay.margin_mm) else {
+            return;
+        };
+        let usable = included_angle_deg.is_finite()
+            && *included_angle_deg > 0.0
+            && *included_angle_deg < 180.0
+            && plug_depth_mm.is_finite()
+            && plug_depth_mm > 0.0
+            && margin_mm.is_finite()
+            && margin_mm > 0.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0;
+        if !usable {
+            return;
+        }
+        let needed_mm =
+            InlayCutOut::margin_needed_mm(plug_depth_mm, *included_angle_deg, tool.diameter_mm);
+        if margin_mm + EPS_MM < needed_mm {
+            self.problems.push(Problem::InlayCutOutNoRoom {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                tool_name: tool.name.clone(),
+                diameter_mm: tool.diameter_mm,
+                margin_mm,
+                needed_mm,
+            });
         }
     }
 
@@ -7198,8 +7292,8 @@ mod tests {
             panic!("{problems:?}");
         };
         assert_eq!(operation, &OperationId::new("o7"));
-        assert_eq!(*margin_mm, 4.0);
-        assert_eq!(*diameter_mm, 3.175);
+        dc_geometry::assert_approx_eq!(*margin_mm, 4.0, 1e-12);
+        dc_geometry::assert_approx_eq!(*diameter_mm, 3.175, 1e-12);
         dc_geometry::assert_approx_eq!(
             *needed_mm,
             4.0 * (30.0_f64).to_radians().tan() + 3.175,

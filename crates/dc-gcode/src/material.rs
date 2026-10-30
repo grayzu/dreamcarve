@@ -239,6 +239,20 @@
 //!   the stock top (security review H4): the plug above the male's start
 //!   plane is never cleared. A cut inside the plug, or sideways above the
 //!   male's start plane, fails as it would for a V-Carve.
+//! - **Inlay cut-out** (format 23, #443): a male's run labelled with its
+//!   cut-out's flat end mill, and cut with it, is held to the band's flat
+//!   floor rings: the floor regions of its surround (the surround inset
+//!   by `P·tan(α/2)`, less noise, as its clearing runs are held), less
+//!   those inside a design outline (the floors of the design's holes,
+//!   which stay in the plug). The tool centre stays inside a ring, at
+//!   least its radius from both its edges, at every depth: above the
+//!   floor the carve has cleared the ring to the top, and below it the
+//!   cut-out cuts the board's base, which S1 bounds with the cut-out's own
+//!   through-cut allowance ([`Material::floor_mm`]). Its tabs are held as
+//!   an On line Profile's: the Profile the cut-out is, built here on the
+//!   mirrored design's outermost outlines grown by half the margin
+//!   ([`dc_geometry::outer_offset`]), and its tab request placed by the
+//!   documented layout rule. Nothing comes from the generator.
 //!
 //! A move is allowed to depart from where the toolpath put it by what the
 //! program may already differ by: one unit in the last written place (the
@@ -265,13 +279,13 @@ use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
     Vec2, as_circle, closest_points, floor_regions, inset_is_empty, meeting_points, nearest_point,
-    nest, offset, offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
-    surround,
+    nest, offset, offset_open, outer_offset, point_segment_distance_mm, segment_distance_mm,
+    strip_ends, surround,
 };
 use dc_project::{
-    ClearingPass, CornerRelief, InlayOp, InlaySide, InstanceId, Operation, PostProcessor,
-    ProfileOp, Project, Side, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
-    cleared_start_plane,
+    ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, InlayOp, InlaySide, InstanceId, Operation, PostProcessor, ProfileOp, Project,
+    Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
 };
 
 use crate::ExportError;
@@ -369,6 +383,20 @@ pub(crate) enum Material {
         floor_z_mm: f64,
         /// The pass's end mill's radius, mm.
         radius_mm: f64,
+    },
+    /// A male Inlay's cut-out run (format 23, #443): the end mill's
+    /// centre stays inside the band's floor rings, at least its radius
+    /// from their outlines, at any depth: above the floor the carve has
+    /// cleared the ring to the top, below it the cut-out cuts the board's
+    /// base, which S1 bounds with the cut-out's own allowance.
+    CutOut {
+        /// The floor rings, outer and holes.
+        areas: Vec<Area>,
+        /// The cut-out's end mill's radius, mm.
+        radius_mm: f64,
+        /// The lowest Z it may reach, mm: its through-cut allowance below
+        /// the stock bottom.
+        floor_mm: f64,
     },
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid stock to
@@ -737,6 +765,10 @@ impl Material {
                     inlay_cone(project, inlay)
                 })
             }
+            // Format 23 (#443): a male's cut-out, with its own end mill.
+            (Operation::Inlay(inlay), RunLabel::CutOut(cut)) if tool.id == *cut => {
+                cut_out_material(project, inlay, tool)
+            }
             (Operation::VCarve(_) | Operation::Inlay(_), _)
             | (_, RunLabel::Clearing(_) | RunLabel::CutOut(_)) => Self::Unresolved,
             // S18 holds a countersink to its own V-bit's angle and cone.
@@ -746,6 +778,16 @@ impl Material {
                 Self::Unresolved
             }
             (_, RunLabel::Main) => Self::of(project, op),
+        }
+    }
+
+    /// The lowest Z, mm, a run of `op` held to this material may reach
+    /// (S1): a male Inlay's cut-out's own through-cut allowance below the
+    /// stock bottom (#443), else the operation's.
+    pub(crate) fn floor_mm(&self, op: &Operation) -> f64 {
+        match self {
+            Self::CutOut { floor_mm, .. } => *floor_mm,
+            _ => -op.through_cut_allowance_mm(),
         }
     }
 
@@ -991,6 +1033,15 @@ fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<Cone> {
 /// geometry on the project, as the generator derives it, never the
 /// generator. `None` when a target does not resolve or outlines cross.
 fn male_surround(project: &Project, targets: &[InstanceId], margin_mm: f64) -> Option<Vec<Region>> {
+    let design = male_design(project, targets)?;
+    Some(surround(&design, margin_mm, project.flatten_tolerance_mm))
+}
+
+/// A male Inlay's design: the closed outlines of `targets`, placed,
+/// mirrored about X = the centre of their joint bounding box (arc extremes
+/// included, [`Transform::mirror_x_about`]), nested. `None` when a target
+/// does not resolve or outlines cross.
+fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>> {
     let closed: Vec<Polyline> = placed(project, targets)?
         .into_iter()
         .filter(Polyline::is_closed)
@@ -1018,7 +1069,87 @@ fn male_surround(project: &Project, targets: &[InstanceId], margin_mm: f64) -> O
         None => Vec::new(),
     };
     let (design, _) = nest(contours).ok()?;
-    Some(surround(&design, margin_mm, project.flatten_tolerance_mm))
+    Some(design)
+}
+
+/// What a male Inlay's cut-out run is held to (#443; module docs): the
+/// rings of the band's flat floor round the outer outlines of the
+/// mirrored design, re-derived from the project with `dc_geometry` alone,
+/// and the cut-out's paths, for its tabs.
+struct CutOutGeometry {
+    /// The floor rings: the floor regions of the male's surround
+    /// ([`floor_regions`] of [`surround`], less noise, as its clearing
+    /// runs are held), except those inside a design outline, the floors
+    /// of the design's holes, which stay in the plug.
+    rings: Vec<Region>,
+    /// The tool-centre paths: the mirrored design's outermost outlines
+    /// grown by half the margin ([`dc_geometry::outer_offset`]).
+    paths: Vec<Polyline>,
+}
+
+/// [`CutOutGeometry`] of Inlay `inlay`'s cut-out run with `tool`; `None`
+/// when it has no cut-out, is not a male, `tool` is not the cut-out's
+/// flat end mill, its V-bit or values are unusable, or its targets do
+/// not resolve.
+fn cut_out_geometry(project: &Project, inlay: &InlayOp, tool: &Tool) -> Option<CutOutGeometry> {
+    let cut_out = inlay.cut_out.as_ref()?;
+    let radius_mm = tool.diameter_mm / 2.0;
+    let usable_tool = tool.id == cut_out.tool
+        && tool.cutter.is_flat()
+        && radius_mm.is_finite()
+        && radius_mm > 0.0;
+    if inlay.side != InlaySide::Male || !usable_tool {
+        return None;
+    }
+    let cone = inlay_cone(project, inlay)?;
+    let margin_mm = inlay.margin_mm?;
+    let floor_z_mm = cone.floor_z_mm?;
+    let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let design = male_design(project, &inlay.targets)?;
+    let outers: Vec<Region> = design
+        .iter()
+        .filter_map(|r| nest(vec![r.outer().clone()]).ok())
+        .filter_map(|(r, _)| r.into_iter().next())
+        .collect();
+    let surround: Vec<Region> = cone.areas.into_iter().map(|a| a.region).collect();
+    let rings = floor_regions(&surround, inset_mm, tolerance_mm)
+        .into_iter()
+        .filter(|f| !is_noise(f, tolerance_mm))
+        .filter(|f| {
+            f.outer()
+                .polyline()
+                .vertices()
+                .first()
+                .is_some_and(|v| !outers.iter().any(|o| o.contains_point(v.point())))
+        })
+        .collect();
+    let paths = outer_offset(&design, margin_mm / 2.0, tolerance_mm)
+        .into_iter()
+        .map(Contour::into_polyline)
+        .collect();
+    Some(CutOutGeometry { rings, paths })
+}
+
+/// The material of Inlay `inlay`'s cut-out run with `tool` (#443): its
+/// floor rings, the tool's radius and the cut-out's own through-cut
+/// allowance; [`Material::Unresolved`] when [`cut_out_geometry`] is
+/// `None`.
+fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool) -> Material {
+    let Some((geometry, cut_out)) =
+        cut_out_geometry(project, inlay, tool).zip(inlay.cut_out.as_ref())
+    else {
+        return Material::Unresolved;
+    };
+    let allowance_mm = cut_out.through_cut_allowance_mm;
+    if !(allowance_mm.is_finite() && allowance_mm >= 0.0) {
+        return Material::Unresolved;
+    }
+    Material::CutOut {
+        areas: areas_of(geometry.rings, true),
+        radius_mm: tool.diameter_mm / 2.0,
+        floor_mm: -allowance_mm,
+    }
 }
 
 /// The material of carve `carve`'s clearing run with end mill `pass`
@@ -1411,19 +1542,110 @@ const TAB_SPAN_MARGIN: f64 = 0.1;
 /// hundred.
 const TAB_SEARCH_CELLS: usize = 200_000;
 
+/// The tabs run `label` of `op`, cut with `tool`, must leave standing in
+/// `project` (S9): a Profile's ([`tab_spines`]), and a male Inlay's
+/// cut-out's (#443). The cut-out is held as the On line Profile it is
+/// ([`dc_cam::inlay::cut_out_profile`]) on the paths this pass derives
+/// itself ([`cut_out_geometry`]), so its tabs are those its tab request
+/// places there, by the documented layout rule. Empty for every other
+/// run, or when the cut-out does not resolve.
+pub(crate) fn run_tab_spines(
+    project: &Project,
+    op: &Operation,
+    label: &RunLabel,
+    tool: &Tool,
+) -> Vec<TabSpine> {
+    match (op, label) {
+        (_, RunLabel::Main) => tab_spines(project, op),
+        (Operation::Inlay(inlay), RunLabel::CutOut(_)) => {
+            let (Some(geometry), Some(cut_out), Some(thickness_mm)) = (
+                cut_out_geometry(project, inlay, tool),
+                inlay.cut_out.as_ref(),
+                project.stock.thickness_mm,
+            ) else {
+                return Vec::new();
+            };
+            let copy = cut_out_profile(project, inlay, cut_out, &geometry.paths, thickness_mm);
+            copy.operations
+                .first()
+                .map(|op| tab_spines(&copy, op))
+                .unwrap_or_default()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// `project` holding the On line Profile a male Inlay's cut-out is
+/// (#443), as its only operation: `paths` (closed, project space) as the
+/// profiles of one definition placed in place, which the Profile targets
+/// with the cut-out's tool, tabs and through-cut allowance, through the
+/// stock `thickness_mm` thick, climb, plunging, its start where the
+/// paths start, with the Inlay's id. So the tabs its request places are
+/// placed by the documented layout rule ([`dc_cam::placed_tabs::place`])
+/// on the paths S9 derives itself, as `docs/book`'s Inlay chapter
+/// documents the cut-out.
+fn cut_out_profile(
+    project: &Project,
+    inlay: &InlayOp,
+    cut_out: &dc_project::InlayCutOut,
+    paths: &[Polyline],
+    thickness_mm: f64,
+) -> Project {
+    let mut copy = project.clone();
+    let mut stem = format!("{}-cut-out", inlay.id);
+    while copy.instances.iter().any(|i| i.id.as_str() == stem)
+        || copy.definitions.keys().any(|d| d.as_str() == stem)
+    {
+        stem.push('_');
+    }
+    let definition = DefinitionId::new(stem.clone());
+    let instance = InstanceId::new(stem);
+    copy.definitions.insert(
+        definition.clone(),
+        FeatureDefinition {
+            id: definition.clone(),
+            name: format!("{} cut-out", inlay.name),
+            profiles: paths.to_vec(),
+        },
+    );
+    copy.instances.push(FeatureInstance {
+        id: instance.clone(),
+        definition,
+        transform: Transform::IDENTITY,
+        name: format!("{} cut-out", inlay.name),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    copy.operations = vec![Operation::Profile(ProfileOp {
+        id: inlay.id.clone(),
+        name: inlay.name.clone(),
+        enabled: true,
+        targets: vec![instance],
+        tool: cut_out.tool.clone(),
+        side: Side::OnLine,
+        depth_mm: Some(thickness_mm + cut_out.through_cut_allowance_mm),
+        step_down_mm: None,
+        direction: CutDirection::Climb,
+        through_cut_allowance_mm: cut_out.through_cut_allowance_mm,
+        safe_z_mm: inlay.safe_z_mm,
+        tabs: cut_out.tabs.clone(),
+        machining_order: inlay.machining_order,
+        entry: Entry::Plunge,
+        lead: None,
+        corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::Auto,
+    })];
+    copy
+}
+
 /// The tabs Profile `op` must leave standing in `project` (S9, #337): its
 /// placed tabs on closed outlines of its targets, and those its tab
 /// request places (`dc_cam::placed_tabs::place`, the documented layout
 /// rule, not the toolpath). Empty for another kind of operation, or when
 /// the tool, an instance, a definition or a profile is missing.
-pub(crate) fn run_tab_spines(project: &Project, op: &Operation, label: &RunLabel) -> Vec<TabSpine> {
-    match label {
-        RunLabel::Main => tab_spines(project, op),
-        RunLabel::Clearing(_) | RunLabel::CutOut(_) => Vec::new(),
-    }
-}
-
-/// The tabs Profile `op` must leave standing.
 pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Vec<TabSpine> {
     let Operation::Profile(profile) = op else {
         return Vec::new();
@@ -2188,6 +2410,9 @@ pub(crate) fn check(
                 from_z.min(to_z) >= floor_z_mm - slack_mm
                     && in_regions(areas, path, radius_mm - slack_mm, None, &mut last)
             }),
+            Material::CutOut {
+                areas, radius_mm, ..
+            } => in_regions(areas, path, radius_mm - slack_mm, None, &mut last),
         });
         if !inside {
             return Err(ExportError::OffMaterial {

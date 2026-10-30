@@ -1,5 +1,5 @@
 {
-  "version": 22,
+  "version": 23,
   "name": "star",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -88,7 +88,8 @@
       "step_over_fraction": 0.1,
       "machining_order": "full_depth_first",
       "through_cut_allowance_mm": 0.0,
-      "safe_z_mm": 10.0
+      "safe_z_mm": 10.0,
+      "cut_out": { "tool": "t2", "tabs": { "placement": { "kind": "count", "count": 4 }, "width_mm": 6.0, "height_mm": 3.0, "shape": "rect", "on_holes": false, "avoid_corners": true }, "through_cut_allowance_mm": 0.2 }
     }
   ],
   "tabs": [],

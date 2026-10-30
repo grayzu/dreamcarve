@@ -6,7 +6,7 @@
 //! constructions; security review M3): they live here so `dc-gcode`
 //! re-derives material without calling a generator.
 
-use crate::boolean::difference;
+use crate::boolean::{difference, union};
 use crate::contour::Contour;
 use crate::offset::offset;
 use crate::region::{Region, nest};
@@ -61,6 +61,43 @@ pub fn surround(regions: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Re
     // The subject's regions overlap where margins meet; `difference` fills
     // non-zero, so they count as their union.
     difference(&grown, regions, tolerance_mm)
+}
+
+/// The outermost outlines of `regions` grown by `distance_mm`: a male
+/// inlay's cut-out path (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay", step 6; #443), which the generator cuts and the safety pass
+/// holds it to. Every region's outer is offset outward by `distance_mm`
+/// with round joins; holes are never offset. Of the offsets, only those
+/// inside no other come back, counter-clockwise (mm, Y-up), in the order
+/// of `regions`: an island in a design hole, whose offset lies inside its
+/// part's, is not cut round. When the offsets lie apart they come back as
+/// they are and keep their arcs; when they touch or cross they are united
+/// with [`crate::union`], which flattens arcs within `tolerance_mm`, and
+/// the union's outers come back in its canonical order. Empty when
+/// `regions` is empty or `distance_mm` is not a positive finite number.
+#[must_use]
+pub fn outer_offset(regions: &[Region], distance_mm: f64, tolerance_mm: f64) -> Vec<Contour> {
+    if !(distance_mm.is_finite() && distance_mm > 0.0) {
+        return Vec::new();
+    }
+    let grown: Vec<Contour> = regions
+        .iter()
+        .flat_map(|r| offset(r.outer(), distance_mm))
+        .collect();
+    if let Ok((nested, warnings)) = nest(grown.clone())
+        && warnings.is_empty()
+    {
+        return nested
+            .into_iter()
+            .filter(|r| r.depth() == 0)
+            .map(|r| r.outer().clone())
+            .collect();
+    }
+    let subject: Vec<Region> = grown.into_iter().filter_map(single_region).collect();
+    union(&subject, &[], tolerance_mm)
+        .into_iter()
+        .map(|r| r.outer().clone())
+        .collect()
 }
 
 /// [`floor_regions`] of one region.
@@ -290,6 +327,57 @@ mod tests {
             s,
             "the same input gives the same regions"
         );
+    }
+
+    /// #443: the star with its circle grown by 4 mm is one outline, the
+    /// star's offset, arcs kept round its tips; the circle, a hole, is not
+    /// grown. Two squares 6 mm apart grown by 4 mm cross, so they are
+    /// united into one outline; a square inside another's hole (an
+    /// island) is inside its part's offset and not returned.
+    #[test]
+    fn outer_offset_grows_only_the_outermost_outlines() {
+        let (design, _) =
+            nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
+        let grown = outer_offset(&design, 4.0, TOL);
+        assert_eq!(grown.len(), 1, "{grown:?}");
+        assert!(grown[0].is_ccw());
+        assert!(
+            grown[0]
+                .polyline()
+                .vertices()
+                .iter()
+                .any(|v| v.bulge != 0.0),
+            "the tips stay arcs"
+        );
+        let b = grown[0].polyline().bounds().expect("bounds");
+        for v in [b.max.x, b.max.y, -b.min.x, -b.min.y] {
+            assert!((v - 34.0).abs() < 1e-9, "tips grow by 4 mm: {b:?}");
+        }
+
+        let (pair, _) = nest(vec![
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(16.0, 0.0, 10.0, 10.0),
+        ])
+        .expect("squares nest");
+        let grown = outer_offset(&pair, 4.0, TOL);
+        assert_eq!(grown.len(), 1, "united: {grown:?}");
+        let b = grown[0].polyline().bounds().expect("bounds");
+        assert!((b.min.x + 4.0).abs() < TOL && (b.max.x - 30.0).abs() < TOL);
+
+        let (island, _) = nest(vec![
+            rect(0.0, 0.0, 40.0, 40.0),
+            rect(5.0, 5.0, 30.0, 30.0),
+            rect(15.0, 15.0, 10.0, 10.0),
+        ])
+        .expect("nests");
+        assert_eq!(island.len(), 2, "a ring and an island");
+        let grown = outer_offset(&island, 2.0, TOL);
+        assert_eq!(grown.len(), 1, "{grown:?}");
+        let b = grown[0].polyline().bounds().expect("bounds");
+        assert!((b.min.x + 2.0).abs() < 1e-9 && (b.max.x - 42.0).abs() < 1e-9);
+
+        assert!(outer_offset(&design, 0.0, TOL).is_empty());
+        assert!(outer_offset(&design, f64::NAN, TOL).is_empty());
     }
 
     /// The surround's area is the margin offset's area minus the design's:

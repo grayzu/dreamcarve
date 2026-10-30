@@ -1113,6 +1113,19 @@ pub struct InlayCutOut {
     pub through_cut_allowance_mm: f64,
 }
 
+impl InlayCutOut {
+    /// The least `margin_mm` that leaves a cut-out of a tool `diameter_mm`
+    /// wide room in the band's flat floor, mm (#443): the floor ring lies
+    /// between the design grown by `P·tan(α/2)` and by `M − P·tan(α/2)`,
+    /// and the tool centre runs `M / 2` out, so the ring must hold the
+    /// diameter: `M ≥ 2·P·tan(α/2) + diameter`. `plug_depth_mm` is `P`,
+    /// `included_angle_deg` the V-bit's `α`.
+    #[must_use]
+    pub fn margin_needed_mm(plug_depth_mm: f64, included_angle_deg: f64, diameter_mm: f64) -> f64 {
+        2.0 * plug_depth_mm * (included_angle_deg.to_radians() / 2.0).tan() + diameter_mm
+    }
+}
+
 impl InlayOp {
     /// How deep the V-bit's flank engages, millimetres below the stock
     /// top, which is also the deepest the side cuts (design spec,

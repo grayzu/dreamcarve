@@ -6450,8 +6450,15 @@ fn star_male_exports_three_programs_with_the_cut_out() {
     assert_approx_eq!(lowest_z(&read(programs[1])), -5.0, 1e-9);
     // No lap of the cut-out runs above the floor, 5 mm down.
     let mut z = f64::NAN;
+    let mut motion = "G0";
     for line in cut.lines().filter(|l| !l.starts_with('(')) {
         let words: Vec<&str> = line.split_whitespace().collect();
+        if let Some(word) = words
+            .iter()
+            .find(|w| matches!(**w, "G0" | "G1" | "G2" | "G3"))
+        {
+            motion = word;
+        }
         let moves_xy = words
             .iter()
             .any(|w| w.starts_with('X') || w.starts_with('Y'));
@@ -6461,9 +6468,7 @@ fn star_male_exports_three_programs_with_the_cut_out() {
         {
             z = new_z;
         }
-        let cutting = words.iter().any(|w| matches!(*w, "G1" | "G2" | "G3"))
-            || (!words.iter().any(|w| *w == "G0") && moves_xy && z < 0.0);
-        if cutting && moves_xy {
+        if motion != "G0" && moves_xy {
             assert!(z <= -5.0 + 1e-9, "a lap above the floor: {line}");
         }
     }

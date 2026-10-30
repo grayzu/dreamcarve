@@ -902,16 +902,17 @@ fn emit_enabled(
     // Step 7: the safety pass, on the text. The material each operation
     // may cut (S9, S17) comes from the project, not from the generator,
     // and per tool run: a carve's clearing run is held to its floor
-    // (#406, #408).
+    // (#406, #408), a male Inlay's cut-out to its floor ring (#443).
     let materials: Vec<Material> = planned
         .iter()
         .zip(enabled)
         .map(|(&(op, tool, ..), entry)| Material::of_run(project, op, &entry.label, tool))
         .collect();
-    // #337: and the tabs each must leave standing.
+    // #337: and the tabs each must leave standing, a cut-out's too.
     let tabs: Vec<Vec<TabSpine>> = planned
         .iter()
-        .map(|&(op, ..)| material::tab_spines(project, op))
+        .zip(enabled)
+        .map(|(&(op, tool, ..), entry)| material::run_tab_spines(project, op, &entry.label, tool))
         .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()

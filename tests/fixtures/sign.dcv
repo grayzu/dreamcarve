@@ -1,5 +1,5 @@
 {
-  "version": 22,
+  "version": 23,
   "name": "sign",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
