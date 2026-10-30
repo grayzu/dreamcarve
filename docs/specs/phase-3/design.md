@@ -300,9 +300,17 @@ holding the kinds its version has.
   its depth is derived, so the Drill's `depth_mm` is not used, not
   required (`Operation::depth_mm()` is `None` for it) and not checked
   (#425).
-- `inlay_glue_gap_not_below_depth` (`glue_gap_mm >= depth_mm`),
-  `inlay_plug_base_thin` (warning: male with `thickness − (depth − gap +
-  plug) < 6`), `inlay_margin_positive` (male with `margin_mm <= 0`).
+- `inlay_glue_gap_not_below_depth` (`glue_gap_mm >= depth_mm`, either
+  side; at `glue_gap_mm`), `inlay_plug_base_thin` (warning: male with
+  `thickness − (depth − gap + plug) < 6`,
+  `dc_project::INLAY_MIN_PLUG_BASE_MM`; at `plug_depth_mm`),
+  `inlay_margin_positive` (male with `margin_mm <= 0`; at `margin_mm`).
+  An Inlay's `v_bit_cone_exceeded` is on `InlayOp::engagement_mm()` (`D`
+  female, `D − G + P` male), located at `depth_mm` for a female and at
+  `plug_depth_mm`, with `from_stock_top`, for a male; it and the plug
+  base are compared only when the values they use passed their own
+  checks. `Operation::depth_mm()` of an Inlay is the same engagement, the
+  deepest it cuts below the stock top (#434).
 - `photo_line_angle_range` ([0, 180)), `photo_line_spacing_positive`,
   `photo_lines_overlap` (warning: `line_spacing_fraction < 1`),
   `photo_sample_positive`, `photo_retract_positive`,

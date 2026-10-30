@@ -45,6 +45,18 @@ phases bump the patch number.
   Older files upgrade unchanged. The Drill chapter has a "Countersink"
   section, and the sign quick start now countersinks its hanging holes on
   the background's floor.
+- **Inlay in the project file; format version 22.** A project can hold an
+  `"inlay"` operation, one side of a V-bit inlay: `side` (`"female"` or
+  `"male"`), `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm` and
+  clearing passes. `check` validates it: the depth, glue gap and plug depth
+  are needed on either side and the margin on a male, the glue gap must be
+  below the depth and the margin above 0, the tool must be a V-bit, and the
+  flank's depth from the stock top (`depth_mm` for the female, `depth_mm −
+  glue_gap_mm + plug_depth_mm` for the male) must fit the bit's cone; a
+  male leaving less than 6 mm of board under its surround warns
+  (`inlay_plug_base_thin`). Clearing passes follow the V-Carve's rules. This
+  build does not export an Inlay yet; `check` and `export` say so. Older
+  files upgrade unchanged.
 
 ### Changed
 

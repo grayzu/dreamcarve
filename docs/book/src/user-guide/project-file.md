@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `21`. |
+| `version` | Format version. This build writes `22`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve: more than 0 and at most 0.1. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -355,8 +355,9 @@ uses; see [Values that look wrong](profile.md#values-that-look-wrong).
 ## `operations`
 
 A list of operations, cut in order. `kind` says which: `"profile"`,
-`"pocket"`, `"drill"`, `"bore"` (from format version 18), `"engrave"` or
-`"v_carve"` (from format version 20). `init` writes one Profile:
+`"pocket"`, `"drill"`, `"bore"` (from format version 18), `"engrave"`,
+`"v_carve"` (from format version 20) or `"inlay"` (from format version
+22). `init` writes one Profile:
 
 ```json
 {
@@ -433,6 +434,7 @@ same meaning, plus its own fields:
 | `"bore"` | `pitch_mm` (how far the helix goes down a turn; `null` for the tool's `step_down_mm`, and no more than it); `direction`; `stock_to_leave_mm` (0 or more, material left on the wall). The tool must be an `"end_mill"`. From format version 18. See [Bore](bore.md). |
 | `"engrave"` | `step_down_mm` (`null` for the tool's); `alternate_direction` (`true` or `false`); `machining_order`. Any cutter; a V-bit deeper than its cone is tall is a warning. |
 | `"v_carve"` | No `depth_mm`: the depth follows the shape and the bit's angle. `strategy`: `"medial"` or `{ "offset": { "step_over_mm": 0.5, "direction": "climb" } }` (step-over greater than 0); `clearing`: a list of clearing passes, each `{ "tool": "t2", "strategy": "offset", "direction": "climb", "entry": "plunge" }` with a Pocket's `strategy`, `direction` and `entry`, `[]` for none; `flat_depth_mm` (`null`, or greater than 0, within the bit's cone height); `start_depth_mm` (0 or more); `start_plane_cleared_externally` (`true` or `false`); `step_over_fraction` (`null` for the tool's; greater than 0 and at most 1); `machining_order`. The tool must be a V-bit; each clearing pass's tool an `"end_mill"`. From format version 20. See [V-Carve](v-carve.md). |
+| `"inlay"` | One side of a V-bit inlay. `side`: `"female"` (the pocket) or `"male"` (the plug); `depth_mm`, the female pocket's depth (greater than 0); `glue_gap_mm`, the gap left under the seated plug (0 or more, below `depth_mm`; the male starts `depth_mm − glue_gap_mm` below the stock top); `plug_depth_mm`, how far below that the male's surround is cut flat (greater than 0); `margin_mm`, how far beyond the design the male's surround reaches (greater than 0; the female ignores it and it may be `null` there); `clearing`, as a V-Carve's; `step_over_fraction`; `machining_order`. The first three are needed on either side, so one design makes both projects by changing `side`; `null` until set. The tool must be a V-bit, and the flank's depth from the stock top, `depth_mm` for the female and `depth_mm − glue_gap_mm + plug_depth_mm` for the male, must fit its cone. A male leaving less than 6 mm of board under its surround warns. No start depth. From format version 22; this build checks an Inlay but does not export one yet. |
 
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md),
 [Bore](bore.md), [Engrave](engrave.md) and [V-Carve](v-carve.md).
@@ -530,6 +532,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 19 | Renames `allowance_mm` to `stock_to_leave_mm` in each Pocket, each Bore and each Profile's `last_pass` (#394): the material they leave on the wall is their stock to leave, and `through_cut_allowance_mm` is the only allowance. The upgrade keeps each value, so the project exports as before; saving writes the new name. |
 | 20 | Adds the `"v_carve"` operation kind, with its `clearing` passes, flat depth and start depth ([V-Carve](v-carve.md)). An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 20 file rather than misread a kind it does not know. This build also refuses a `flatten_tolerance_mm` above 0.1 mm, in a file of any version. |
 | 21 | Adds the `"countersink"` Drill cycle, `{ "countersink": { "diameter_mm": …, "start_depth_mm": …, "start_plane_cleared_externally": … } }`, which opens a mouth with a V-bit at each circle. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 21 file rather than misread a cycle it does not know. |
+| 22 | Adds the `"inlay"` operation kind, one side of a V-bit inlay, with its `side`, `depth_mm`, `glue_gap_mm`, `plug_depth_mm` and `margin_mm`. An older file holds none, so the upgrade changes nothing else; an older DreamCarve refuses a version 22 file rather than misread a kind it does not know. This build reads, checks and saves an Inlay, but does not export one yet: `check` and `export` say so. |
 
 ## What `check` reports
 
