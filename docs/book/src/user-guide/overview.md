@@ -251,6 +251,8 @@ output: …`.
   a helix.
 - [V-Carve operation](v-carve.md): lettering and signs carved with a V-bit,
   flat depths, clearing passes, and choosing a bit angle.
+- [Inlay operation](inlay.md): a design in one wood set into another,
+  from a female pocket and a mirrored male plug cut with one V-bit.
 - [Machining order and operation order](machining-order.md): the order
   shapes and operations are cut in.
 - [Post-processors](post-processors.md): the six controllers, more than

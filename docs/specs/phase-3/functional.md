@@ -681,20 +681,27 @@ cut.
 ### Inlay pair
 
 **Star inlay.** Corbin's Workshop's cutting-board method, 2D: a four-point
-star 60 mm tip to tip with a 12 mm circle at its centre, drawn as
-`fixtures/star.svg`; the female in one board, the male in another, from
-the same file with `side` changed.
+star 60 mm tip to tip (tips 30 mm out on the axes, inner vertices 12 mm
+out on the diagonals) with a 12 mm circle at its centre, drawn as
+`tests/fixtures/star.svg` by `tools/parity/star-fixture.ts` (#437), with an
+80 × 80 mm `frame` round it that nothing cuts, so that `init` makes the
+100 × 100 mm stock with the star at its centre; the female in one board,
+the male in another, from the same file with `side` changed.
+`tests/fixtures/star-female.dcv` and `star-male.dcv` are the quick start
+"An inlay pair"'s projects: `t1` is `init`'s unused "Set me", `t2` the end
+mill, `t3` the V-bit; both set `thickness_mm: 12`, which the user replaces
+with each board's measurement.
 
 
 | Item         | Value                                                                                                |
 | ------------ | ---------------------------------------------------------------------------------------------------- |
 | Female board | walnut (or any hardwood), nominal 12 mm, 100 × 100 mm stock                                          |
 | Male board   | maple (contrasting), nominal 12 mm, 100 × 100 mm stock                                               |
-| T1           | 60° V-bit, 6.35 mm diameter (cone height 5.5 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm |
-| T2           | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % |
-| Inlay        | `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`                                  |
-| female.dcv   | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: T2, then T1)                                    |
-| male.dcv     | op1 Inlay (T1) `side: male`, `clearing: [t2]` (two runs: T2, then T1)                                      |
+| T1           | 60° V-bit, 6.35 mm diameter (cone height 5.5 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t3`) |
+| T2           | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
+| Inlay        | targets the star and the circle; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
+| star-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `star-female-1-T2.nc` to Z −4, then `star-female-2-T1.nc`) |
+| star-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]` (two runs: `star-male-1-T2.nc` to Z −5, then `star-male-2-T1.nc`); prints `inlay_male_mirrored` at X = 50 mm |
 | Safe Z       | 10 mm                                                                                                |
 | Controller   | grblHAL, one program per tool run                                                                    |
 
@@ -703,8 +710,11 @@ the same file with `side` changed.
 male. Test fit dry: the plug should seat with no gap at the top and stop
 before its base touches the female surface. If a gap shows at the top, the
 plug bottoms out: raise `glue_gap_mm` and recut the male. If the plug will
-not enter, lower it. Glue, clamp the male's board face down on the female,
-let it dry, saw off the plug's backing, plane flush.
+not enter, lower it. Before the test fit, saw the plug free inside the
+carved band, since the male board outside the band is at full thickness
+and would rest on the female (changed in #437: the draft clamped the
+male's whole board face down). Turn the plug over left to right, glue,
+clamp, let it dry, saw off the plug's backing, plane flush.
 
 **Success:** after planing, no visible gap round the star or the circle
 (a 0.1 mm feeler gauge does not enter), the star's points are sharp, and

@@ -78,3 +78,20 @@ byte-identical run to run. Node 23.6 or newer also runs it directly, as
 `node sign-fixture.ts`. After changing it, rebuild
 `tests/fixtures/sign.dcv`: the quick start test
 (`quick_start::v_carved_sign_chapter_runs`) says how when it differs.
+
+## The star fixture
+
+`star-fixture.ts` writes `tests/fixtures/star.svg`, the phase 3 inlay test
+part (#437): a four-point star 60 mm tip to tip with a 12 mm circle at its
+centre, and the 80 × 80 mm frame that makes `init`'s stock 100 × 100 mm. It
+reads nothing.
+
+```sh
+cd tools/parity
+npx tsx star-fixture.ts
+```
+
+The output is byte-identical run to run; `node star-fixture.ts` runs it
+too, on Node 23.6 or newer. After changing it, rebuild
+`tests/fixtures/star-female.dcv` and `star-male.dcv`: the quick start test
+(`quick_start::inlay_pair_chapter_runs`) says how when they differ.

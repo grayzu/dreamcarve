@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- DreamCarve phase 3 test part (docs/specs/phase-3/functional.md, "Inlay
+     pair"): a four-point star 60 mm tip to tip with a 12 mm circle at its
+     centre. Written by tools/parity/star-fixture.ts; do not edit by hand,
+     re-run the tool. The tips are 30 mm out on the axes, the inner
+     vertices 12 mm out on the diagonals. The 80 × 80 mm square "frame" is not
+     cut: it makes init's stock 100 × 100 mm with the star at its centre.
+     SVG is Y-down. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="80mm" height="80mm" viewBox="0 0 80 80">
+  <g fill="none" stroke="#000000" stroke-width="0.2">
+    <path id="star" d="M 70,40 L 48.485281,31.514719 L 40,10 L 31.514719,31.514719 L 10,40 L 31.514719,48.485281 L 40,70 L 48.485281,48.485281 Z"/>
+    <circle id="circle" cx="40" cy="40" r="6"/>
+    <rect id="frame" x="0" y="0" width="80" height="80"/>
+  </g>
+</svg>

@@ -40,6 +40,27 @@ needed. `cli::sign_lettering_is_within_the_cone` holds it to 3 mm.
 not in the 5 mm border (too narrow for a hole and the 6 mm countersink
 the finished sign has) or the oval (the lettering fills it).
 
+## `star.svg`, `star-female.dcv` and `star-male.dcv`
+
+The phase 3 inlay test part (`docs/specs/phase-3/functional.md`, "Inlay
+pair"; #437), drawn by `tools/parity/star-fixture.ts`. Do not edit it by
+hand; re-run the tool. `star-female.dcv` and `star-male.dcv` are the two
+projects the quick start "An inlay pair" builds from it; they differ only
+in the Inlay's `side`.
+
+| Shape | Size, mm | Where (SVG, Y-down) |
+| --- | --- | --- |
+| `star` | four points, 60 tip to tip; tips 30 out on the axes, inner vertices 12 out on the diagonals | centred at (40, 40) |
+| `circle` | 12 across | centred at (40, 40) |
+| `frame` | 80 × 80 square | the page; not cut |
+
+It is the star `cli::inlay_exports_and_passes_safety` and the
+`dc-cam::inlay` tests build in code. The frame is there only so that
+`init`, which makes the stock the drawing plus 10 mm all round, makes the
+test part's 100 × 100 mm stock with the star at its centre, (50, 50) in
+project space. Each project sets `thickness_mm` to 12; a user measures
+each board and sets its own.
+
 ## Font notice
 
 The lettering is converted outline data of Droid Serif Bold, from

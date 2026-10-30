@@ -85,7 +85,10 @@ written. There are no safety warnings, only errors.
    and again after every pause and tool change, where you may have changed
    them.
 8. **No mirroring, and nothing else.** The program's coordinates are the
-   project's, moved to your work zero. Nothing is flipped. Read back, each
+   project's, moved to your work zero. Nothing is flipped: a male
+   [Inlay](inlay.md#the-mirror-and-which-way-to-flip-the-plug) cuts its
+   design mirrored, and says so, but that mirror is in its toolpath,
+   which the program then writes as it is. Read back, each
    operation's moves are its toolpath, move for move: every straight move
    ends where the toolpath's does, every arc turns the same way about the
    same centre, and there are no moves in between except a rapid split
@@ -193,6 +196,10 @@ written. There are no safety warnings, only errors.
       the flat depth. A later, smaller pass may run through what an
       earlier one cleared. Each pass is checked only with its own end
       mill, in its own run.
+    - an [Inlay](inlay.md): the V-bit's cone, by rule 14, against its
+      side's own material: the design on the female, the surround on the
+      male. A clearing pass is held as a V-Carve's is, as a Pocket of the
+      side's floor.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
@@ -213,15 +220,31 @@ written. There are no safety warnings, only errors.
     work coordinates first; a program that moves before the stop or the
     end it lifted for is refused.
 14. **A V-bit cuts only its own material.** A V-bit cuts with its whole
-    cone, not just its tip, so for a [V-Carve](v-carve.md) the check holds
-    the cone. It works out from the project, never from the toolpath: the
+    cone, not just its tip, so for a [V-Carve](v-carve.md) or an
+    [Inlay](inlay.md) the check holds the cone. It works out from the project, never from the toolpath: the
     carved shapes (the targets, nested as for a Pocket); the **start
     plane**, `start_depth_mm` below the stock top; the flat depth below
     it; the bit's angle `α` and its **cone height**, `diameter / (2 ×
     tan(α / 2))`; and where the bit's flank is engaged from, which is the
     stock top unless an enabled Pocket, or the flat floor of an enabled
     V-Carve, earlier in the list, at the start depth, contains the
-    targets. Then every cutting move of the V-bit:
+    targets. An Inlay is held the same way, with its side's carved
+    shapes, start plane and flat depth, and its flank always engaged from
+    the stock top:
+
+    - the **female**: the design (its targets, nested as for a Pocket),
+      a start plane at the stock top, and a flat depth of `depth_mm`;
+    - the **male**: the **surround**, worked out again from the project
+      with the geometry library alone, never from the generator: the
+      targets mirrored about the middle of their bounding box, offset
+      outward by `margin_mm`, less the mirrored design. Its start plane
+      is `depth_mm − glue_gap_mm` below the stock top and its flat depth
+      `plug_depth_mm` below that. The plug's wood above the start plane
+      is never cleared, so the shank check counts the flank from the
+      stock top: `depth_mm − glue_gap_mm + plug_depth_mm` must fit the
+      cone.
+
+    Then every cutting move of the V-bit:
 
     - **keeps its tip in the shapes:** the move's ends and middle are
       inside a carved shape, and it crosses no outline;
@@ -346,6 +369,10 @@ It also checks that:
   that something else cleared its start plane. It counts the bit's flank
   from the stock top, so the shank stays out either way, but it cannot
   see that pocket.
+- **The other side of an inlay.** An [Inlay](inlay.md)'s female and male
+  are two projects. Each is checked on its own; DreamCarve cannot tell
+  that both use the same drawing, the same four values and a bit of the
+  same angle, which the fit depends on.
 - **Ridges on a V-Carve floor.** A V-Carve's flat floor counts as cleared
   for a carve or countersink started on it, and is treated as flat. Where
   the V-bit alone cut it, it has ridges up to `step_over_fraction` times

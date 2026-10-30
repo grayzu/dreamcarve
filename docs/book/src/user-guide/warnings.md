@@ -77,7 +77,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `vcarve_no_medial_axis` | "… is too thin for a medial line to be found, so it is not carved" | The shape is so thin that no line between its walls survives even a finer sampling, so nothing of it is carved. Widen it, or Engrave it instead. |
 | `vcarve_sampling_budget` | "a carved shape is so long for its width that its medial lines are found every … mm, coarser than its width alone would give; small details may be smoothed" | A shape's outline is long for its size (a long, thin line of text drawn as one outline), so its medial lines are found at the step shown, which can round off fine details. Carve the parts separately if a detail is lost. Reported once per operation. |
 | `clearing_no_room` | "its clearing pass with tool … (… mm) can reach none of the floor the passes before it left, so it cuts nothing" | A V-Carve's clearing pass is too wide for the carve's floor, or comes after a pass with a narrower end mill, which already reached everything it can. The pass has no program of its own; remove it, or list the passes largest end mill first ([V-Carve: clearing passes](v-carve.md#clearing-passes)). |
-| `inlay_male_mirrored` | "it is a male inlay, so its design is cut mirrored about X = … mm, the middle of its targets, to seat face down in the female" | A note, once per male Inlay: the plug is glued face down into the female, so the male cuts the design mirrored left to right about the vertical line through the middle of its targets' bounding box. Draw the design as it should read in the female; do not mirror it yourself. |
+| `inlay_male_mirrored` | "it is a male inlay, so its design is cut mirrored about X = … mm, the middle of its targets, to seat face down in the female" | A note, once per male Inlay: the plug is glued face down into the female, so the male cuts the design mirrored left to right about the vertical line through the middle of its targets' bounding box. Draw the design as it should read in the female; do not mirror it yourself. Turn the plug over left to right to fit it ([Inlay: the mirror](inlay.md#the-mirror-and-which-way-to-flip-the-plug)). |
 
 ## Export
 
@@ -109,7 +109,7 @@ file](project-file.md).
 | `countersink_ignores_tool_width` | "… countersinks, so allow_tool_wider_than_hole has no effect" | A countersink's V-bit is wider than its hole by design, so the Drill's `allow_tool_wider_than_hole` does nothing; a hole at least as wide as the mouth is skipped instead. Set it to `false`. |
 | `relief_needs_step_down` | "… asks for corner relief, but tool … has no step_down_mm" | Set the tool's `step_down_mm`; until then the relief is skipped. |
 | `engrave_deeper_than_cone` | "… engraves … mm deep with tool …, whose cone is only … mm tall" | Use a shallower depth or a wider V-bit; below the cone the shank cuts ([Engrave: V-bits](engrave.md#v-bits)). |
-| `inlay_plug_base_thin` | "… cuts its plug's surround … mm below the stock top, leaving … mm of the … mm board under it, less than 6 mm" | A male Inlay's surround is cut `depth_mm − glue_gap_mm + plug_depth_mm` deep; under 6 mm of board left below it may flex or crack when the plug is pressed into the glue. Use thicker stock for the plug, or a smaller `depth_mm` or `plug_depth_mm`. The program is still cut. |
+| `inlay_plug_base_thin` | "… cuts its plug's surround … mm below the stock top, leaving … mm of the … mm board under it, less than 6 mm" | A male Inlay's surround is cut `depth_mm − glue_gap_mm + plug_depth_mm` deep; under 6 mm of board left below it may flex or crack when the plug is pressed into the glue. Use thicker stock for the plug, or a smaller `depth_mm` or `plug_depth_mm` in both projects ([Inlay: the male](inlay.md#the-male)). The program is still cut. |
 | `clearing_not_descending` | "clearing pass … of operation … uses tool … (… mm), wider than the pass before it" | A V-Carve's clearing passes run in list order, each clearing only what the passes before could not reach, so list the largest end mill first. The pass still runs, but a wider end mill reaches nothing a narrower one before it left, so it also warns `clearing_no_room`. |
 
 ## V-Carve errors
@@ -155,9 +155,9 @@ the stock top, since the plug above its start plane is never cleared.
 | `inlay_glue_gap_not_below_depth` | An Inlay's `glue_gap_mm` is at least its `depth_mm`: "… has glue_gap_mm … mm, not below its depth_mm … mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat". |
 | `inlay_margin_positive` | A male Inlay's `margin_mm` is 0 or less: "… is a male inlay with margin_mm … mm; its surround is carved that far beyond the design, so it must be above 0". |
 
-This build checks an Inlay but does not export one yet: `check` and
-`export` stop with "operation … uses a V-bit inlay (`inlay`), which is
-not supported by this build yet", and write no program.
+[Inlay: errors](inlay.md#errors) gives each message and what to do, and
+[Inlay: choosing the bit](inlay.md#choosing-the-bit) what to change when
+the male's engagement is past the cone.
 
 ## Countersink errors
 
