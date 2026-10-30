@@ -32,6 +32,37 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
         .collect()
 }
 
+/// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay" step 4): the area within `margin_mm` outside the design that the
+/// male carve removes around its plug. Every region's outer is offset
+/// outward by `margin_mm` with round joins, the offsets are united, and
+/// `regions` themselves are subtracted. Subtracting a region removes its
+/// outer and gives back its holes, so a hole in the design (a circle
+/// inside a star) comes back as a surround region of its own; holes are
+/// never offset. Overlapping margins merge into one region.
+///
+/// The subtraction is [`crate::difference`], so the result is polygonal:
+/// arcs are flattened to chords within `tolerance_mm`, and the area is off
+/// the exact one by at most `tolerance_mm` times the arc length flattened.
+/// Outers come back counter-clockwise and holes clockwise (mm, Y-up,
+/// ADR-0001), in [`crate::boolean()`]'s canonical order, so the same input
+/// gives the same regions. Empty when `regions` is empty or `margin_mm`
+/// is not a positive finite number (the caller validates the margin).
+#[must_use]
+pub fn surround(regions: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    if !(margin_mm.is_finite() && margin_mm > 0.0) {
+        return Vec::new();
+    }
+    let grown: Vec<Region> = regions
+        .iter()
+        .flat_map(|r| offset(r.outer(), margin_mm))
+        .filter_map(single_region)
+        .collect();
+    // The subject's regions overlap where margins meet; `difference` fills
+    // non-zero, so they count as their union.
+    difference(&grown, regions, tolerance_mm)
+}
+
 /// [`floor_regions`] of one region.
 fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
     let outers = offset(region.outer(), -inset_mm);
@@ -84,7 +115,7 @@ mod tests {
     use super::*;
     use crate::contour::Contour;
     use crate::point::Point;
-    use crate::polyline::Polyline;
+    use crate::polyline::{Polyline, Vertex};
     use crate::region::{area_mm2, nest};
     use std::f64::consts::PI;
 
@@ -159,6 +190,137 @@ mod tests {
         assert!(
             floor_regions(&ring, 2.0, TOL).is_empty(),
             "3 mm walls inset 2 mm from both sides"
+        );
+    }
+
+    /// A four-point star, 60 mm tip to tip, centred at the origin: tips on
+    /// the axes 30 mm out, inner vertices on the diagonals 12 mm out.
+    fn star() -> Contour {
+        let inner = 12.0 * std::f64::consts::FRAC_1_SQRT_2;
+        let points = [
+            (30.0, 0.0),
+            (inner, inner),
+            (0.0, 30.0),
+            (-inner, inner),
+            (-30.0, 0.0),
+            (-inner, -inner),
+            (0.0, -30.0),
+            (inner, -inner),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        Contour::new(Polyline::new(vertices, true)).expect("a star")
+    }
+
+    fn circle(centre: Point, radius_mm: f64) -> Contour {
+        Contour::new(Polyline::circle(centre, radius_mm)).expect("a circle")
+    }
+
+    /// The star of the inlay test part with a 12 mm circle in its middle,
+    /// margin 8 mm: the surround is the 8 mm band round the star (one
+    /// region whose hole is the star) and the circle (a region of its own,
+    /// carved on the male so the female's island has a socket).
+    #[test]
+    fn surround_of_a_star_with_a_hole_has_the_hole_as_a_region() {
+        let (design, _) =
+            nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
+        assert_eq!(design.len(), 1, "a star with a hole");
+
+        let s = surround(&design, 8.0, TOL);
+        assert_eq!(s.len(), 2, "the band and the circle: {s:?}");
+        let band = s
+            .iter()
+            .find(|r| r.holes().len() == 1)
+            .expect("the band keeps the star as its hole");
+        let disc = s
+            .iter()
+            .find(|r| r.holes().is_empty())
+            .expect("the circle is a region of its own");
+
+        let outer = band.outer().polyline().bounds().expect("band bounds");
+        for v in [outer.max.x, outer.max.y, -outer.min.x, -outer.min.y] {
+            assert!((v - 38.0).abs() < TOL, "tips grow by the margin: {outer:?}");
+        }
+        let hole = band.holes()[0].polyline().bounds().expect("hole bounds");
+        for v in [hole.max.x, hole.max.y, -hole.min.x, -hole.min.y] {
+            assert!((v - 30.0).abs() < 1e-9, "the hole is the star: {hole:?}");
+        }
+        let d = disc.outer().polyline().bounds().expect("disc bounds");
+        for v in [d.max.x, d.max.y, -d.min.x, -d.min.y] {
+            assert!((v - 6.0).abs() < TOL, "the circle, 6 mm radius: {d:?}");
+        }
+        assert!(
+            (disc.area_mm2() - 36.0 * PI).abs() < TOL * 12.0 * PI,
+            "{}",
+            disc.area_mm2()
+        );
+        assert!(
+            s.iter()
+                .all(|r| r.outer().is_ccw() && r.holes().iter().all(|h| !h.is_ccw())),
+            "outers counter-clockwise, holes clockwise"
+        );
+    }
+
+    /// Two 10 mm squares 6 mm apart with a 4 mm margin: their margins
+    /// overlap and merge into one surround with two holes. A third square
+    /// far off gets a surround of its own.
+    #[test]
+    fn surround_of_disjoint_shapes_merges_overlapping_margins() {
+        let (design, _) = nest(vec![
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(16.0, 0.0, 10.0, 10.0),
+            rect(100.0, 0.0, 10.0, 10.0),
+        ])
+        .expect("squares nest");
+        assert_eq!(design.len(), 3);
+
+        let s = surround(&design, 4.0, TOL);
+        assert_eq!(s.len(), 2, "the merged pair and the lone square: {s:?}");
+        let mut holes: Vec<usize> = s.iter().map(|r| r.holes().len()).collect();
+        holes.sort_unstable();
+        assert_eq!(holes, [1, 2]);
+        let pair = s
+            .iter()
+            .find(|r| r.holes().len() == 2)
+            .expect("the merged pair");
+        let b = pair.outer().polyline().bounds().expect("bounds");
+        assert!((b.min.x + 4.0).abs() < TOL && (b.max.x - 30.0).abs() < TOL);
+        assert!((b.min.y + 4.0).abs() < TOL && (b.max.y - 14.0).abs() < TOL);
+        assert_eq!(
+            surround(&design, 4.0, TOL),
+            s,
+            "the same input gives the same regions"
+        );
+    }
+
+    /// The surround's area is the margin offset's area minus the design's:
+    /// a 40 × 20 mm plate with a 10 × 5 mm hole and a separate 5 mm circle,
+    /// margin 3 mm. The plate's offset covers 800 + 2·3·(40 + 20) + 9π mm²
+    /// and the circle's 64π; the design covers 750 + 25π, so its hole is
+    /// back in the surround. Flattening moves the area by at most the
+    /// tolerance times the length of arc flattened.
+    #[test]
+    fn surround_area_is_the_offset_minus_the_design() {
+        let (design, _) = nest(vec![
+            rect(0.0, 0.0, 40.0, 20.0),
+            rect(15.0, 7.5, 10.0, 5.0),
+            circle(Point::new(80.0, 10.0), 5.0),
+        ])
+        .expect("design nests");
+        let margin = 3.0;
+
+        let s = surround(&design, margin, TOL);
+        let offset_area = 800.0 + 2.0 * margin * 60.0 + PI * margin * margin + PI * 64.0;
+        let design_area = 750.0 + PI * 25.0;
+        let arcs_mm = 2.0 * PI * (margin + 8.0 + 5.0);
+        let got = area_mm2(&s);
+        assert!(
+            (got - (offset_area - design_area)).abs() <= TOL * arcs_mm,
+            "{got} vs {}",
+            offset_area - design_area
+        );
+        assert!(
+            surround(&design, 0.0, TOL).is_empty(),
+            "no margin, no surround"
         );
     }
 }

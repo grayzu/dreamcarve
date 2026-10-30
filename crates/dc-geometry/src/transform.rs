@@ -62,6 +62,20 @@ impl Transform {
         Self(kurbo::Affine::scale_non_uniform(sx, sy))
     }
 
+    /// A mirror across the vertical line x = `x_mm`: (x, y) maps to
+    /// (2·`x_mm` − x, y), coefficients `[−1, 0, 0, 1, 2·x_mm, 0]`. A male
+    /// inlay's outlines are its targets mirrored about their bounding
+    /// box's centre line. Applied to a polyline, the mirror reverses its
+    /// winding and negates every bulge ([`Transform::apply_polyline`]);
+    /// [`crate::Contour::new`] makes an outer counter-clockwise again
+    /// (ADR-0001). Mirroring twice is the identity. A non-finite `x_mm`
+    /// gives a transform whose results [`Transform::apply_polyline`]
+    /// rejects.
+    #[must_use]
+    pub fn mirror_x_about(x_mm: f64) -> Self {
+        Self(kurbo::Affine::new([-1.0, 0.0, 0.0, 1.0, 2.0 * x_mm, 0.0]))
+    }
+
     /// `self` applied first, then `next`.
     #[must_use]
     pub fn then(self, next: Transform) -> Self {
@@ -142,6 +156,8 @@ impl Transform {
 mod tests {
     use super::*;
     use crate::assert_approx_eq;
+    use crate::circle::as_circle;
+    use crate::contour::Contour;
 
     use std::f64::consts::PI;
 
@@ -236,5 +252,67 @@ mod tests {
         let json = serde_json::to_string(&t).unwrap();
         assert_eq!(json, "[1.0,0.0,0.0,1.0,3.0,4.0]");
         assert_eq!(serde_json::from_str::<Transform>(&json).unwrap(), t);
+    }
+
+    /// The male inlay's mirror: a circle with arcs stays a circle of the
+    /// same radius, its centre reflected across x = 3, its bulges negated
+    /// and its area kept once `Contour::new` restores the winding. A
+    /// rounded slot (lines and arcs) keeps its area too.
+    #[test]
+    fn mirror_x_about_negates_bulges_and_keeps_areas() {
+        let m = Transform::mirror_x_about(3.0);
+        for (a, b) in m.coeffs().iter().zip([-1.0, 0.0, 0.0, 1.0, 6.0, 0.0]) {
+            assert_approx_eq!(*a, b, 0.0);
+        }
+
+        let c = Polyline::circle(Point::new(10.0, 5.0), 4.0);
+        let mirrored = m.apply_polyline(&c).unwrap();
+        for (a, b) in c.vertices().iter().zip(mirrored.vertices()) {
+            assert_approx_eq!(b.bulge, -a.bulge, 1e-12);
+        }
+        let contour = Contour::new(mirrored).unwrap();
+        assert!(contour.is_ccw());
+        assert_approx_eq!(contour.signed_area_mm2(), c.signed_area_mm2(), 1e-9);
+        let (centre, radius_mm) = as_circle(contour.polyline(), 1e-9).expect("still a circle");
+        assert_approx_eq!(centre.x, -4.0, 1e-9);
+        assert_approx_eq!(centre.y, 5.0, 1e-9);
+        assert_approx_eq!(radius_mm, 4.0, 1e-9);
+
+        // A 20 × 6 mm slot with semicircular ends, x from 7 to 33 mm.
+        let slot = Polyline::new(
+            vec![
+                Vertex::new(10.0, 0.0, 0.0),
+                Vertex::new(30.0, 0.0, 1.0),
+                Vertex::new(30.0, 6.0, 0.0),
+                Vertex::new(10.0, 6.0, 1.0),
+            ],
+            true,
+        );
+        let original = Contour::new(slot).unwrap();
+        assert_approx_eq!(original.signed_area_mm2(), 120.0 + 9.0 * PI, 1e-9);
+        let back = Contour::new(m.apply_polyline(original.polyline()).unwrap()).unwrap();
+        assert!(back.is_ccw());
+        assert_approx_eq!(back.signed_area_mm2(), original.signed_area_mm2(), 1e-9);
+        let b = back.polyline().bounds().unwrap();
+        assert_approx_eq!(b.min.x, 6.0 - 33.0, 1e-9);
+        assert_approx_eq!(b.max.x, 6.0 - 7.0, 1e-9);
+    }
+
+    /// Mirroring twice about the same line gives every point back, and one
+    /// mirror puts a point as far past the line as it was before it.
+    #[test]
+    fn mirror_x_about_twice_is_identity() {
+        let m = Transform::mirror_x_about(-12.5);
+        let p = Point::new(4.0, 7.25);
+        let once = m.apply(p);
+        assert_approx_eq!(once.x, -29.0, 1e-12);
+        assert_approx_eq!(once.y, 7.25, 1e-12);
+        let twice = m.then(m);
+        for (a, b) in twice.coeffs().iter().zip(Transform::IDENTITY.coeffs()) {
+            assert_approx_eq!(*a, b, 1e-12);
+        }
+        let back = twice.apply(p);
+        assert_approx_eq!(back.x, p.x, 1e-12);
+        assert_approx_eq!(back.y, p.y, 1e-12);
     }
 }
