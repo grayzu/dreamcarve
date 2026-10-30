@@ -1,0 +1,210 @@
+{
+  "version": 22,
+  "name": "star",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 100.0,
+    "height_mm": 100.0,
+    "thickness_mm": 12.0
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "Set me",
+      "vendor": null,
+      "product_id": null,
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": null,
+      "plunge_mm_min": null,
+      "rpm": null,
+      "step_down_mm": null,
+      "step_over_fraction": null
+    },
+    {
+      "id": "t2",
+      "name": "1/8 end mill",
+      "vendor": null,
+      "product_id": null,
+      "number": 2,
+      "cutter": "end_mill",
+      "diameter_mm": 3.175,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    },
+    {
+      "id": "t3",
+      "name": "1/4 60 degree V-bit",
+      "vendor": null,
+      "product_id": null,
+      "number": 1,
+      "cutter": {
+        "v_bit": {
+          "included_angle_deg": 60.0
+        }
+      },
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "kind": "inlay",
+      "id": "op1",
+      "name": "Star",
+      "enabled": true,
+      "targets": [ "i1", "i2" ],
+      "tool": "t3",
+      "side": "male",
+      "depth_mm": 4.0,
+      "glue_gap_mm": 1.0,
+      "plug_depth_mm": 2.0,
+      "margin_mm": 8.0,
+      "clearing": [
+        { "tool": "t2", "strategy": "offset", "direction": "climb", "entry": { "ramp": { "angle_deg": 15.0 } } }
+      ],
+      "step_over_fraction": 0.1,
+      "machining_order": "full_depth_first",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 10.0
+    }
+  ],
+  "tabs": [],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "star",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i2",
+      "definition": "d2",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "circle",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i3",
+      "definition": "d3",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "frame",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 4,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "star",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 70.000002, "y": 40.000001, "bulge": 0.0 },
+            { "x": 48.485284, "y": 48.485282, "bulge": 0.0 },
+            { "x": 40.000001, "y": 70.000002, "bulge": 0.0 },
+            { "x": 31.51472, "y": 48.485282, "bulge": 0.0 },
+            { "x": 10.0, "y": 40.000001, "bulge": 0.0 },
+            { "x": 31.51472, "y": 31.514718, "bulge": 0.0 },
+            { "x": 40.000001, "y": 10.0, "bulge": 0.0 },
+            { "x": 48.485284, "y": 31.514718, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d2": {
+      "id": "d2",
+      "name": "circle",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 46.000001, "y": 40.000001, "bulge": -1.0 },
+            { "x": 34.000001, "y": 40.000001, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d3": {
+      "id": "d3",
+      "name": "frame",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 0.0, "y": 80.000002, "bulge": 0.0 },
+            { "x": 80.000002, "y": 80.000002, "bulge": 0.0 },
+            { "x": 80.000002, "y": 0.0, "bulge": 0.0 },
+            { "x": 0.0, "y": 0.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}
