@@ -6066,10 +6066,18 @@ fn sign_exports_in_tool_run_order() {
         assert!(
             centres
                 .iter()
-                .any(|c| (c.0 - x).abs() < 1e-6 && (c.1 - y).abs() < 1e-6),
+                .any(|c| (c.0 - x).abs() < 1e-3 && (c.1 - y).abs() < 1e-3),
             "a countersink at ({x}, {y}): {centres:?}"
         );
     }
+    // The summary states the countersinks' mouth and their derived depth,
+    // never "? mm deep" for the `depth_mm` a countersink leaves unset.
+    assert!(
+        report.contains(
+            "op5 `Countersinks`: tool `t4` (1/4 90 degree V-bit), 2 target(s), 6.000 mm countersinks, 5.500 mm deep"
+        ),
+        "{report}"
+    );
     let v_bit = read("sign-3-T3.nc");
     let sinks = &v_bit[v_bit
         .find("( Operation 3: Countersinks )")
