@@ -30,10 +30,10 @@ pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
     BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle, DrillOp,
-    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, InlaySide, LastPass,
-    Lead, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, ParkXy, PeckRetract,
-    PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
-    Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
+    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayCutOut, InlayOp, InlaySide,
+    LastPass, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, ParkXy,
+    PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
+    TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

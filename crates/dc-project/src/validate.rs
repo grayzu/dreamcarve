@@ -62,8 +62,9 @@ use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry,
-    InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
-    ProfileOp, Project, Side, TabPlacement, Tool, ToolKind, VCarveOp, VCarveStrategy,
+    InlayCutOut, InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab,
+    PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp,
+    VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -263,7 +264,8 @@ pub enum Problem {
     /// that is not a flat end mill (#67, #207). Those sides offset by half
     /// the diameter, so any
     /// other cutter makes the part the wrong size: an error. On the line the
-    /// tool centre follows the line, so any cutter is allowed.
+    /// tool centre follows the line, so any cutter is allowed. So is a male
+    /// Inlay's cut-out (format 23, #443), at `cut_out.tool`.
     CutterNotFlat {
         /// The operation.
         operation: OperationId,
@@ -275,6 +277,9 @@ pub enum Problem {
         tool_name: String,
         /// The cutter in words, such as `a V-bit`.
         cutter: &'static str,
+        /// Where the tool is named under the operation: `tool`, or an
+        /// Inlay's `cut_out.tool`.
+        field: &'static str,
     },
     /// An enabled operation targets nothing, so its program would start
     /// and stop the spindle without moving (#67). An error.
@@ -727,6 +732,34 @@ pub enum Problem {
         /// What is left under the floor, mm.
         base_mm: f64,
     },
+    /// A female Inlay has a cut-out (format 23, #443): only the male has a
+    /// band to cut its plug out of. An error.
+    InlayCutOutNeedsMale {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+    },
+    /// A male Inlay's cut-out tool does not fit the band's flat floor
+    /// (format 23, #443): the floor ring, between the mirrored design
+    /// grown by `P·tan(α/2)` and by `M − P·tan(α/2)`, is narrower than the
+    /// tool, so a cut-out half the margin out would cut into the plug's
+    /// wall or the band's outer wall. An error.
+    InlayCutOutNoRoom {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The cut-out tool's display name.
+        tool_name: String,
+        /// Its diameter, mm.
+        diameter_mm: f64,
+        /// The margin set, mm.
+        margin_mm: f64,
+        /// The least margin with room, mm: `2·P·tan(α/2)` plus the
+        /// diameter.
+        needed_mm: f64,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -812,6 +845,8 @@ impl Problem {
             Self::InlayGlueGapNotBelowDepth { .. } => "inlay_glue_gap_not_below_depth",
             Self::InlayMarginPositive { .. } => "inlay_margin_positive",
             Self::InlayPlugBaseThin { .. } => "inlay_plug_base_thin",
+            Self::InlayCutOutNeedsMale { .. } => "inlay_cut_out_needs_male",
+            Self::InlayCutOutNoRoom { .. } => "inlay_cut_out_no_room",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -835,6 +870,8 @@ impl Problem {
             | Self::CountersinkIgnoresToolWidth { .. }
             | Self::InlayPlugBaseThin { .. } => Severity::Warning,
             Self::CutterNotFlat { .. }
+            | Self::InlayCutOutNeedsMale { .. }
+            | Self::InlayCutOutNoRoom { .. }
             | Self::OperationHasNoTargets { .. }
             | Self::DuplicateToolNumber { .. }
             | Self::RestOfInvalid { .. }
@@ -942,7 +979,9 @@ impl Problem {
                 Some("post_processor.tool_change_mode".to_owned())
             }
             Self::StepDownAboveDiameter { field, .. } => Some(field.clone()),
-            Self::CutterNotFlat { operation, .. } => Some(format!("operations[{operation}].tool")),
+            Self::CutterNotFlat {
+                operation, field, ..
+            } => Some(format!("operations[{operation}].{field}")),
             Self::OperationHasNoTargets { operation, .. } => {
                 Some(format!("operations[{operation}].targets"))
             }
@@ -1026,6 +1065,12 @@ impl Problem {
             }
             Self::InlayPlugBaseThin { operation, .. } => {
                 Some(format!("operations[{operation}].{INLAY_PLUG_DEPTH}"))
+            }
+            Self::InlayCutOutNeedsMale { operation, .. } => {
+                Some(format!("operations[{operation}].cut_out"))
+            }
+            Self::InlayCutOutNoRoom { operation, .. } => {
+                Some(format!("operations[{operation}].margin_mm"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -1173,6 +1218,18 @@ impl fmt::Display for Problem {
                 tool,
                 tool_name,
                 cutter,
+                field,
+            } if *field != "tool" => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts its plug's cut-out with tool `{tool_name}` (`{tool}`), {cutter}; the cut-out runs through the board in the band's flat floor, which only a flat end mill cuts with a straight wall at every depth. Use an end mill"
+            ),
+            Self::CutterNotFlat {
+                operation,
+                name,
+                tool,
+                tool_name,
+                cutter,
+                ..
             } => write!(
                 f,
                 "operation `{name}` (`{operation}`) cuts with tool `{tool_name}` (`{tool}`), {cutter}; an Inside, Outside, Left or Right Profile and a Pocket offset the path by half the diameter, which only a flat end mill cuts at every depth, so the part would come out the wrong size. Use an end mill"
@@ -1437,6 +1494,21 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the stock top, leaving {base_mm} mm of the {thickness_mm} mm board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use thicker stock, or a smaller depth_mm or plug_depth_mm"
             ),
+            Self::InlayCutOutNeedsMale { operation, name } => write!(
+                f,
+                "operation `{name}` (`{operation}`) is a female inlay with a cut_out; only the male's plug is cut out of its board, the female's pocket stays in it. Set cut_out to null, or side to \"male\""
+            ),
+            Self::InlayCutOutNoRoom {
+                operation,
+                name,
+                tool_name,
+                diameter_mm,
+                margin_mm,
+                needed_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, half its margin_mm {margin_mm} mm out, in the band's flat floor; that floor is narrower than the tool, so the cut-out would cut into the plug's wall or the band's outer wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
+            ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
                 "operation `{name}` (`{operation}`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false"
@@ -1566,6 +1638,14 @@ impl Validator {
                 })
                 .flatten()
                 .map(|pass| &pass.tool)
+                // A male Inlay's cut-out (format 23) too: it steps down
+                // by its tool's step-down.
+                .chain(p.operations.iter().filter_map(|op| match op {
+                    Operation::Inlay(inlay) if inlay.enabled => {
+                        inlay.cut_out.as_ref().map(|c| &c.tool)
+                    }
+                    _ => None,
+                }))
         };
         let used: BTreeSet<&ToolId> = p
             .operations
@@ -2022,6 +2102,7 @@ impl Validator {
                 tool: tool.id.clone(),
                 tool_name: tool.name.clone(),
                 cutter: tool.cutter.describe(),
+                field: "tool",
             });
         }
         if let Operation::Drill(_) = op
@@ -2163,6 +2244,25 @@ impl Validator {
         }
     }
 
+    /// A tab request's fields at `at`, in file order: a Profile's, or a
+    /// male Inlay's cut-out's (format 23).
+    fn tab_spec(&mut self, tabs: &TabSpec, at: &str) {
+        match &tabs.placement {
+            TabPlacement::Count { count } => {
+                if *count == 0 {
+                    self.out_of_range(format!("{at}.placement.count"), 0.0, POSITIVE);
+                }
+            }
+            TabPlacement::AtDistances { distances_mm } => {
+                for (i, d) in distances_mm.iter().enumerate() {
+                    self.non_negative(&format!("{at}.placement.distances_mm[{i}]"), *d);
+                }
+            }
+        }
+        self.positive(&format!("{at}.width_mm"), tabs.width_mm);
+        self.positive(&format!("{at}.height_mm"), tabs.height_mm);
+    }
+
     /// A Profile's own fields after `depth_mm`, in file order.
     fn profile(&mut self, op: &ProfileOp, at: &str) {
         if let Some(step) = op.step_down_mm {
@@ -2174,20 +2274,7 @@ impl Validator {
         );
         self.positive(&format!("{at}.safe_z_mm"), op.safe_z_mm);
         if let Some(tabs) = &op.tabs {
-            match &tabs.placement {
-                TabPlacement::Count { count } => {
-                    if *count == 0 {
-                        self.out_of_range(format!("{at}.tabs.placement.count"), 0.0, POSITIVE);
-                    }
-                }
-                TabPlacement::AtDistances { distances_mm } => {
-                    for (i, d) in distances_mm.iter().enumerate() {
-                        self.non_negative(&format!("{at}.tabs.placement.distances_mm[{i}]"), *d);
-                    }
-                }
-            }
-            self.positive(&format!("{at}.tabs.width_mm"), tabs.width_mm);
-            self.positive(&format!("{at}.tabs.height_mm"), tabs.height_mm);
+            self.tab_spec(tabs, &format!("{at}.tabs"));
         }
         self.entry(&op.entry, at);
         // #117: a helix needs removed material to sit in (functional spec,
@@ -2759,8 +2846,87 @@ impl Validator {
             inlay.safe_z_mm,
             at,
         );
+        // Format 23 (#443): the cut-out's own fields.
+        if let Some(cut_out) = &inlay.cut_out {
+            if !p.tools.iter().any(|t| t.id == cut_out.tool) {
+                self.problems.push(Problem::DanglingTool {
+                    operation: inlay.id.clone(),
+                    tool: cut_out.tool.clone(),
+                });
+            }
+            if let Some(tabs) = &cut_out.tabs {
+                self.tab_spec(tabs, &format!("{at}.cut_out.tabs"));
+            }
+            self.non_negative(
+                &format!("{at}.cut_out.through_cut_allowance_mm"),
+                cut_out.through_cut_allowance_mm,
+            );
+        }
         if inlay.enabled {
             self.enabled_inlay(p, inlay, tool);
+            self.enabled_cut_out(p, inlay, tool);
+        }
+    }
+
+    /// The rules of an enabled Inlay's cut-out that need its tools
+    /// (format 23, #443): only a male has one; its tool is a flat end
+    /// mill; and the band's flat floor ring, `M − 2·P·tan(α/2)` wide, holds
+    /// the tool's diameter. The ring is compared only when the values it
+    /// uses passed their own checks.
+    fn enabled_cut_out(&mut self, p: &Project, inlay: &InlayOp, v_bit: Option<&Tool>) {
+        let Some(cut_out) = &inlay.cut_out else {
+            return;
+        };
+        if inlay.side != InlaySide::Male {
+            self.problems.push(Problem::InlayCutOutNeedsMale {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+            });
+            return;
+        }
+        let Some(tool) = p.tools.iter().find(|t| t.id == cut_out.tool) else {
+            return;
+        };
+        if !tool.cutter.is_flat() {
+            self.problems.push(Problem::CutterNotFlat {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+                field: "cut_out.tool",
+            });
+            return;
+        }
+        let Some(ToolKind::VBit { included_angle_deg }) = v_bit.map(|t| &t.cutter) else {
+            return;
+        };
+        let (Some(plug_depth_mm), Some(margin_mm)) = (inlay.plug_depth_mm, inlay.margin_mm) else {
+            return;
+        };
+        let usable = included_angle_deg.is_finite()
+            && *included_angle_deg > 0.0
+            && *included_angle_deg < 180.0
+            && plug_depth_mm.is_finite()
+            && plug_depth_mm > 0.0
+            && margin_mm.is_finite()
+            && margin_mm > 0.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0;
+        if !usable {
+            return;
+        }
+        let needed_mm =
+            InlayCutOut::margin_needed_mm(plug_depth_mm, *included_angle_deg, tool.diameter_mm);
+        if margin_mm + EPS_MM < needed_mm {
+            self.problems.push(Problem::InlayCutOutNoRoom {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                tool_name: tool.name.clone(),
+                diameter_mm: tool.diameter_mm,
+                margin_mm,
+                needed_mm,
+            });
         }
     }
 
@@ -3578,6 +3744,7 @@ mod tests {
                     tool: ToolId::new("t1"),
                     tool_name: "6.35 mm upcut".into(),
                     cutter: "a V-bit",
+                    field: "tool",
                 },
             ]
         );
@@ -5292,6 +5459,7 @@ mod tests {
                 tool: ToolId::new("t2"),
                 tool_name: "tool t2".into(),
                 cutter: "a V-bit",
+                field: "tool",
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
@@ -5392,6 +5560,7 @@ mod tests {
                     tool: ToolId::new("t2"),
                     tool_name: "tool t2".into(),
                     cutter: cutter.describe(),
+                    field: "tool",
                 }],
                 "{cutter:?}"
             );
@@ -6990,6 +7159,217 @@ mod tests {
                 );
             }
         }
+    }
+
+    // Format 23 (#443): a male Inlay's cut-out.
+
+    /// [`inlay_project`] with the 3.175 mm end mill `t3` added and a
+    /// cut-out with it, four 6 mm tabs 3 mm tall, 0.2 mm through, as
+    /// `edit` leaves the Inlay.
+    fn cut_out_project(edit: impl FnOnce(&mut crate::model::InlayOp)) -> Project {
+        use crate::model::{InlayCutOut, TabPlacement, TabShape, TabSpec};
+        let mut p = inlay_project(|inlay| {
+            inlay.side = crate::model::InlaySide::Male;
+            inlay.cut_out = Some(InlayCutOut {
+                tool: ToolId::new("t3"),
+                tabs: Some(TabSpec {
+                    placement: TabPlacement::Count { count: 4 },
+                    width_mm: 6.0,
+                    height_mm: 3.0,
+                    shape: TabShape::Rect,
+                    on_holes: false,
+                    avoid_corners: true,
+                }),
+                through_cut_allowance_mm: 0.2,
+            });
+            edit(inlay);
+        });
+        p.tools.push(Tool {
+            id: ToolId::new("t3"),
+            name: "1/8 end mill".into(),
+            diameter_mm: 3.175,
+            ..crate::test_support::tool_6_35_upcut()
+        });
+        p
+    }
+
+    /// The male of [`cut_out_project`] is valid: its 6 mm band, 0.5 mm
+    /// deep on the 90° bit, has a floor ring 5 mm wide.
+    #[test]
+    fn cut_out_on_a_male_is_valid() {
+        assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
+    }
+
+    /// #443: only the male has a band to cut the plug out of; a female's
+    /// pocket is in the board it stays in. A cut-out on a female is
+    /// `inlay_cut_out_needs_male`, at `cut_out`, an error.
+    #[test]
+    fn cut_out_on_a_female_is_an_error() {
+        let p = cut_out_project(|inlay| inlay.side = crate::model::InlaySide::Female);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayCutOutNeedsMale {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_cut_out_needs_male");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].cut_out")
+        );
+        assert!(
+            problems[0].to_string().contains("female"),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// #443: the cut-out's tool runs On line round the plug and through
+    /// the board; it must be a flat end mill, `cutter_not_flat` at
+    /// `cut_out.tool` otherwise.
+    #[test]
+    fn cut_out_needs_a_flat_end_mill() {
+        for cutter in [
+            ToolKind::BallNose,
+            ToolKind::Engraver,
+            ToolKind::VBit {
+                included_angle_deg: 60.0,
+            },
+        ] {
+            let mut p = cut_out_project(|_| {});
+            p.tools[2].cutter = cutter.clone();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::CutterNotFlat {
+                    operation: OperationId::new("o7"),
+                    name: "Inlay".into(),
+                    tool: ToolId::new("t3"),
+                    tool_name: "1/8 end mill".into(),
+                    cutter: cutter.describe(),
+                    field: "cut_out.tool",
+                }],
+                "{cutter:?}"
+            );
+            assert_eq!(problems[0].code(), "cutter_not_flat");
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("operations[o7].cut_out.tool")
+            );
+            assert!(
+                problems[0].to_string().contains("cut-out"),
+                "{}",
+                problems[0]
+            );
+        }
+    }
+
+    /// #443: the tool centre runs half the margin out, so the floor ring,
+    /// `M − 2·P·tan(α/2)` wide, must hold the tool's diameter. The star
+    /// with `margin_mm: 4` on the 60° bit (`P·s = 1.155`) leaves 1.69 mm
+    /// for the 3.175 mm end mill: `inlay_cut_out_no_room`, at
+    /// `margin_mm`, naming the margin needed, 2.309 + 3.175 = 5.484 mm.
+    #[test]
+    fn cut_out_with_no_room_in_the_floor_ring_is_an_error() {
+        let mut p = cut_out_project(|inlay| {
+            star(inlay, crate::model::InlaySide::Male);
+            inlay.margin_mm = Some(4.0);
+        });
+        v_bit_angle(&mut p, 60.0);
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let Problem::InlayCutOutNoRoom {
+            operation,
+            margin_mm,
+            needed_mm,
+            diameter_mm,
+            ..
+        } = &problems[0]
+        else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(operation, &OperationId::new("o7"));
+        dc_geometry::assert_approx_eq!(*margin_mm, 4.0, 1e-12);
+        dc_geometry::assert_approx_eq!(*diameter_mm, 3.175, 1e-12);
+        dc_geometry::assert_approx_eq!(
+            *needed_mm,
+            4.0 * (30.0_f64).to_radians().tan() + 3.175,
+            1e-9
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_cut_out_no_room");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].margin_mm")
+        );
+        assert!(problems[0].to_string().contains("5.484"), "{}", problems[0]);
+
+        // The star's own 8 mm margin has room.
+        let mut p = cut_out_project(|inlay| star(inlay, crate::model::InlaySide::Male));
+        v_bit_angle(&mut p, 60.0);
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// #443: the cut-out's tool is a used tool: its feed, plunge rate and
+    /// RPM are required, and so is its step-down, which sets the passes.
+    #[test]
+    fn cut_out_tool_needs_its_rates() {
+        for field in ["feed_mm_min", "plunge_mm_min", "rpm", "step_down_mm"] {
+            let mut p = cut_out_project(|_| {});
+            let tool = &mut p.tools[2];
+            match field {
+                "feed_mm_min" => tool.feed_mm_min = None,
+                "plunge_mm_min" => tool.plunge_mm_min = None,
+                "rpm" => tool.rpm = None,
+                _ => tool.step_down_mm = None,
+            }
+            assert_eq!(
+                validate(&p),
+                vec![Problem::ToolValueUnset {
+                    tool: ToolId::new("t3"),
+                    name: "1/8 end mill".into(),
+                    field,
+                }],
+                "{field}"
+            );
+        }
+    }
+
+    /// #443: the cut-out's fields follow their Profile counterparts': its
+    /// tool must exist, its allowance be 0 or more, and its tabs as a
+    /// Profile's tab request.
+    #[test]
+    fn cut_out_fields_are_checked() {
+        let p = cut_out_project(|inlay| {
+            let cut_out = inlay.cut_out.as_mut().unwrap();
+            cut_out.through_cut_allowance_mm = -0.1;
+            cut_out.tabs.as_mut().unwrap().width_mm = 0.0;
+        });
+        let fields: Vec<Option<String>> = validate(&p).iter().map(Problem::field).collect();
+        assert_eq!(
+            fields,
+            [
+                Some("operations[o7].cut_out.tabs.width_mm".to_owned()),
+                Some("operations[o7].cut_out.through_cut_allowance_mm".to_owned()),
+            ]
+        );
+        let p = cut_out_project(|inlay| inlay.cut_out.as_mut().unwrap().tool = ToolId::new("t9"));
+        assert_eq!(
+            validate(&p),
+            vec![
+                Problem::UnusedTool {
+                    tool: ToolId::new("t3"),
+                    name: "1/8 end mill".into(),
+                },
+                Problem::DanglingTool {
+                    operation: OperationId::new("o7"),
+                    tool: ToolId::new("t9"),
+                },
+            ]
+        );
     }
 
     /// Capability 40: an Inlay's clearing passes follow the V-Carve's

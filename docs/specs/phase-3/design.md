@@ -12,11 +12,11 @@ axis they rest on is a new `dc-geometry` module ported from PureCutCNC's
 come in through `dc-import` and live in the project as **bitmaps**, a new
 list beside the instances. `dc-gcode` gains the cone test (S17), the
 countersink rule (S18) and the groove rule (S19). The CLI gains `init` on
-a picture and an `image` command. The format moves through versions 20 to 23, one per sub-phase ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
+a picture and an `image` command. The format moves through versions 20 to 24, one per sub-phase and one for the Inlay cut-out ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
 
 ```
 SVG / DXF ──dc-import──▶ FeatureDefinitions ─┐
-PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v23, dc-project)
+PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v24, dc-project)
 user edits .dcv ─────────────────────────────┘        │
                                                       ▼
    dc-cam::{profile, pocket, drill (+ countersink), engrave,
@@ -68,15 +68,16 @@ carry the DreamCarve header.
 
 ## Data model
 
-### dc-project (format versions 20 to 23)
+### dc-project (format versions 20 to 24)
 
 One version per sub-phase ("Sub-phases"): 20 adds the V-Carve kind with
-its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23
-`bitmaps` and the Photo V-Carve kind. Every step is additive; a file from
-an earlier version exports the same bytes.
+its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23 the
+male Inlay's cut-out (added in 3.3 on 2026-10-30, #443), 24 `bitmaps` and
+the Photo V-Carve kind. Every step is additive; a file from an earlier
+version exports the same bytes.
 
 ```rust
-pub const CURRENT_VERSION: u32 = 23;   // 20 in sub-phase 3.1, 21 in 3.2, 22 in 3.3, 23 in 3.4
+pub const CURRENT_VERSION: u32 = 24;   // 20 in sub-phase 3.1, 21 in 3.2, 22 and 23 (cut-out, #443) in 3.3, 24 in 3.4
                                        // (phase 2 ended at 19: tool vendor, Drill hole width, Bore, stock to leave)
 
 pub struct Project {
@@ -190,8 +191,19 @@ pub struct InlayOp {
     pub machining_order: MachiningOrder,
     pub through_cut_allowance_mm: f64,
     pub safe_z_mm: f64,
+    /// Male only (format 23, #443; Corbin's "Plug Cutout"): an end-mill
+    /// pass that frees the plug, run last. `None` by default and on
+    /// migration: the plug is sawn free.
+    pub cut_out: Option<InlayCutOut>,
 }
 pub enum InlaySide { Female, Male }
+
+/// A male Inlay's cut-out (#443; "Algorithms → Inlay", step 6).
+pub struct InlayCutOut {
+    pub tool: ToolId,                     // a flat end mill; its step-down sets the passes
+    pub tabs: Option<TabSpec>,            // the Profile's tab request; heights from the stock bottom
+    pub through_cut_allowance_mm: f64,    // S1 for the cut-out run, which goes through the board
+}
 
 pub struct PhotoVCarveOp {
     pub id: OperationId, pub name: String, pub enabled: bool,
@@ -237,10 +249,11 @@ as it writes a vertex.
 **Migrations.** `v19_to_v20`, `v20_to_v21` and `v21_to_v22` change no
 field: each adds an operation kind (or a cycle variant) that a file from
 before cannot contain, so they bump the version only. `v22_to_v23`
-inserts `"bitmaps": []` after `instances`. A file from any earlier
-version exports the same bytes. Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22}/sample.dcv`, each
-holding the kinds its version has.
+inserts `"cut_out": null` after `safe_z_mm` in every Inlay (#443), and
+`v23_to_v24` inserts `"bitmaps": []` after `instances`. A file from any
+earlier version exports the same bytes. Fixtures
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23}/sample.dcv`,
+each holding the kinds its version has.
 
 **Validation** (`validate.rs`), errors unless marked:
 
@@ -311,6 +324,15 @@ holding the kinds its version has.
   base are compared only when the values they use passed their own
   checks. `Operation::depth_mm()` of an Inlay is the same engagement, the
   deepest it cuts below the stock top (#434).
+- The cut-out (format 23, #443): `inlay_cut_out_needs_male` (a `cut_out`
+  on a female; at `cut_out`), `cutter_not_flat` for its tool (at
+  `cut_out.tool`), `inlay_cut_out_no_room` (`M + EPS_MM < 2·P·tan(α/2) +
+  d`, the floor ring narrower than the tool's diameter `d`; at
+  `margin_mm`, naming the margin needed,
+  `InlayCutOut::margin_needed_mm`). Its tool is a used tool, so its
+  rates and step-down are required; its tabs follow a Profile's tab
+  request rules, its allowance is 0 or more, and an unknown tool is
+  `dangling_tool`.
 - `photo_line_angle_range` ([0, 180)), `photo_line_spacing_positive`,
   `photo_lines_overlap` (warning: `line_spacing_fraction < 1`),
   `photo_sample_positive`, `photo_retract_positive`,
@@ -336,7 +358,7 @@ holding the kinds its version has.
 /// run except a carve with clearing passes, which produces one per pass
 /// (that pass's tool, `Clearing(tool)`) and then its own (`Main`).
 pub struct ToolRun { pub label: RunLabel, pub tool: ToolId, pub toolpath: Toolpath }
-pub enum RunLabel { Main, Clearing(ToolId) }
+pub enum RunLabel { Main, Clearing(ToolId), CutOut(ToolId) }   // CutOut: a male Inlay's cut-out, its last run (#443)
 pub fn generate_vcarve(project: &Project, op: &VCarveOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
 pub fn generate_inlay(project: &Project, op: &InlayOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
 pub fn generate_photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
@@ -1080,6 +1102,28 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    from the two toolpaths' cone discs. The test builds both toolpaths,
    mirrors the male's back, and checks that the carved discs of each
    toolpath touch (within 0.02 mm) the same outline at the same inset.
+6. **Cut-out** (male only, format 23, #443; Corbin's optional "Plug
+   Cutout"). With `s = tan(α/2)`, `P`, `M` and `r` the cut-out end
+   mill's radius, the band's flat floor ring lies between the mirrored
+   design grown by `P·s` and by `M − P·s`. The tool centre runs on the
+   mirrored design's **outermost** outlines grown by `c = M / 2` with
+   round joins (`dc_geometry::outer_offset`: one closed path per outer
+   outline, offsets that cross united; an island's offset, inside its
+   part's, dropped), which keeps it at least `r` inside the ring when `M
+   − 2·P·s ≥ 2r`, else `InlayCutOutNoRoom` with the margin needed. It is
+   never at the band's outer edge, where the V wall would leave a
+   full-height knife edge on the freed piece, and design holes are not
+   cut out. The paths are cut by the Profile code as an On line Profile
+   (`inlay::cut_out_profile`: the paths as one definition placed in
+   place, climb, plunge entry, the cut-out's tool, tabs and allowance,
+   depth `thickness + allowance`), with its passes starting at the floor,
+   `D − G + P` below the stock top (`profile::generate_profile_below`):
+   no pass cuts the air the carve removed. Tab heights count from the
+   stock bottom. The run is `RunLabel::CutOut(tool)`, the operation's
+   last, after the V-bit's, so the piece is freed only once carved
+   (`op1 (cut-out t2)`; with the clearing end mill the tool is fitted
+   twice, and `tool_change_avoidable` is expected). The star: `P·s =
+   1.155`, the centre may lie 2.74 to 5.26 mm out, `c = 4`.
 
 ### Bitmap import and storage (dc-import::bitmap, dc-project::bitmap)
 
@@ -1245,6 +1289,20 @@ it does for Pocket and Profile, and never from the toolpath.
   re-derived) is what its tool centres must touch, not a bound on its
   footprint: a rest pass's footprint runs into what they cleared (#406).
   S14's rule unchanged.
+- **S9, an Inlay cut-out** (#443): a male's run labelled `CutOut(tool)`
+  with its cut-out's flat end mill is held to the band's floor rings,
+  re-derived from the project with `dc_geometry` only: the mirrored
+  targets, `surround` at `M`, `floor_regions` at `P·tan(α/2)` less
+  noise, less the floors inside a design outline (the design's holes).
+  Every cut's tool-centre path lies in a ring at least `r` from its
+  outlines, at any Z: above the floor the carve cleared the ring to the
+  top; below it the cut-out cuts the board's base, which S1 bounds with
+  the cut-out's own `through_cut_allowance_mm` (`Material::floor_mm`).
+  Its tabs are held as a Profile's (#337): the pass builds the On line
+  Profile itself on `dc_geometry::outer_offset` of the mirrored design at
+  `M / 2` and places its tab request by `dc_cam::placed_tabs::place`, the
+  documented layout rule. It never calls a generator
+  (`s17_uses_no_generator`).
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
   cut (`G1` with Z motion) in its span is vertical, at a target circle's
   centre, from at most the retract plane to exactly `start_plane − D /
@@ -1360,7 +1418,7 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v22_to_v23), project.rs (cleared_start_plane, ClearedPlane), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v23_to_v24), project.rs (cleared_start_plane, ClearedPlane), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
@@ -1453,6 +1511,7 @@ for V operations.
 - `inlay::female_equals_a_flat_depth_v_carve` (acceptance 56, move for move).
 - `inlay::male_engagement_beyond_the_cone_is_an_error` (H4: `D 2.5, G 0.25, P 1.5`, 90° 6.35 mm bit → `VBitConeExceeded` naming 3.75 mm and 3.175 mm; the star's values pass), `inlay::male_shank_check_in_the_safety_pass_counts_from_the_stock_top` (H4, `safety::`).
 - `inlay::male_mirrors_about_the_targets_centre_line` (acceptance 57: the mirrored outlines; the note's X), `inlay::male_carves_the_surround_and_the_holes` (every cutting point in the band or the circle), `inlay::male_floor_is_at_depth_minus_gap_plus_plug` (nothing below −5), `inlay::male_flank_passes_through_the_outline_at_the_start_plane` (within 0.02), `inlay::female_and_male_walls_mate` (the fit property, `z` 0..3, within 0.02), `inlay::glue_gap_at_or_above_depth_is_an_error`, `inlay::thin_plug_base_warns_on_10_mm_stock_and_not_on_12`, `inlay::clearing_pass_clears_the_male_floor`, `inlay::surround_of_a_star_with_a_hole_has_the_hole_as_a_region`, `inlay::mirror_negates_bulges_and_keeps_areas` (arcs survive the mirror).
+- The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_path_is_half_the_margin_out_from_the_mirrored_outline` (every point 4 mm from the mirrored star within 0.01), `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_refuses_a_female_and_a_narrow_floor`; `validate::cut_out_on_a_female_is_an_error`, `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`; `carve::outer_offset_grows_only_the_outermost_outlines` (dc-geometry).
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
@@ -1466,7 +1525,7 @@ for V operations.
 - `photo::grooves_are_spaced_by_the_fraction_of_the_full_depth_width` (acceptance 59: 1.179 ± 0.001 at 30°, 2 mm, 1.1), `photo::grooves_run_at_the_line_angle_and_alternate`, `photo::one_groove_passes_through_the_top_left_corner`, `photo::zero_angle_grooves_are_parallel_to_x`, `photo::every_cut_is_inside_the_footprint`, `photo::black_is_max_depth_white_is_the_surface_and_grey_is_between` (`gradient.png` with its blocks: −2.000, 0.000 ± 0.01; 50 % ± 0.02), `photo::invert_swaps_black_and_white`, `photo::hatch_adds_a_second_family_at_ninety_degrees`, `photo::between_grooves_the_bit_rises_to_the_retract_and_feeds_across`, `photo::spacing_below_one_warns`, `photo::collinear_samples_merge_into_one_move`, `photo::sample_is_bilinear_and_clamped_at_the_edges`, `photo::top_row_is_at_the_highest_y`, `photo::max_depth_beyond_the_cone_is_an_error`, `photo::start_depth_lowers_the_grooves`, `photo::unknown_bitmap_is_an_error`, `photo::same_input_twice_is_identical`.
 
 **dc-gcode — safety**
-- `safety::cone_through_a_wall_fails_s17` (a hand-built toolpath whose disc crosses the outline), `safety::tip_below_the_flat_depth_fails_s17`, `safety::tip_below_the_cone_height_fails_s17`, `safety::generated_v_carves_pass_s17` (every vcarve fixture), `safety::generated_inlays_pass_s17`, `safety::male_surround_is_derived_from_the_mirrored_targets`.
+- `safety::cone_through_a_wall_fails_s17` (a hand-built toolpath whose disc crosses the outline), `safety::tip_below_the_flat_depth_fails_s17`, `safety::tip_below_the_cone_height_fails_s17`, `safety::generated_v_carves_pass_s17` (every vcarve fixture), `safety::generated_inlays_pass_s17`, `safety::male_surround_is_derived_from_the_mirrored_targets`, `safety::cut_out_off_the_floor_ring_fails`, `safety::generated_cut_outs_pass`, `safety::cut_out_plunge_into_a_tab_fails`, `safety::cut_out_is_held_to_its_own_allowance` (#443).
 - Security review additions: `safety::vertical_descent_above_the_start_plane_passes_s17` and `safety::a_sideways_cut_above_the_start_plane_fails_s17` (H3), `safety::cone_test_is_exact_between_vertices` (M1: a move passing a convex corner with its closest approach between what 1 mm samples would have read fails; a crossing of a 0.5 mm island fails), `safety::constant_z_rings_take_the_segment_path` (M1), `safety::shank_engagement_from_the_stock_top_fails_s17` (H4: a `start_depth_mm: 4` carve acknowledged with the 90° bit), `safety::shank_engagement_from_a_cleared_start_plane_passes` (H4), `safety::clearing_run_is_held_to_the_rederived_floor` (M3), `safety::s17_uses_no_generator` (a compile-time check: `dc-gcode` imports only `dc_cam::{Toolpath, Move, MoveKind, DrillHole, …}` types; the test greps the crate's `use` lines).
 - `safety::countersink_at_the_wrong_depth_fails_s18`, `safety::countersink_written_as_g81_fails_s18`, `safety::generated_countersinks_pass_s18`.
 - `safety::groove_outside_the_picture_fails_s19`, `safety::groove_link_as_a_rapid_fails_s19`, `safety::groove_below_max_depth_fails_s19`, `safety::generated_photos_pass_s19`, `safety::edge_groove_width_is_s7s_business` (a full-depth groove at the picture's edge passes S19 and fails S7 only when it leaves the stock).
@@ -1475,7 +1534,7 @@ for V operations.
 **dreamcarve (integration, `tests/`)**
 - `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`.
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
-- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::star_female_and_male_export` (the inlay pair's two files from `fixtures/star.svg`), `cli::photo_quick_start_runs` (the chapter's commands).
+- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::star_female_and_male_export` (the inlay pair's two files from `fixtures/star.svg`), `cli::star_male_exports_three_programs_with_the_cut_out` (#443: T2 clearing, T1 V-bit, T2 cut-out; all pass S1–S18), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).
 
 **dc-gcode (integration, `tests/golden.rs`)**
@@ -1565,7 +1624,7 @@ Goal: the sign complete, the phase's first real cut.
 16. **3.2 bench check.** Test part 1 cut and recorded (functional spec,
     "Sign"). Exit: acceptance 48 to 55 and 61 green.
 
-### 3.3 Inlay (format v22)
+### 3.3 Inlay (formats v22 and v23)
 
 Goal: the star pair cut and fitted.
 
@@ -1582,16 +1641,23 @@ Goal: the star pair cut and fitted.
 20. **Inlay docs and fixtures.** Inlay chapter (method, four values,
     two-file workflow, fit procedure, gluing and planing),
     `fixtures/star.svg`, `cli::star_female_and_male_export`. [19]
+20a. **Male Inlay cut-out, format v23** (#443, added 2026-10-30 at the
+    maintainer's request, before the bench check): `InlayOp::cut_out`,
+    `v22_to_v23`, its validation, the cut-out run ("Algorithms → Inlay",
+    step 6), S9 on the floor ring, the star male's fixture with a
+    cut-out and the docs. Tests: the cut-out tests of the inlay,
+    validate, migrate, serialize, safety and CLI groups,
+    `quick_start::inlay_pair_chapter_runs`. [19, 20]
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 
-### 3.4 Photo V-Carve (format v23)
+### 3.4 Photo V-Carve (format v24)
 
 Goal: a photograph carved.
 
-22. **Format v23: bitmaps and Photo V-Carve.** `Bitmap`, `BitmapId`,
+22. **Format v24: bitmaps and Photo V-Carve.** `Bitmap`, `BitmapId`,
     `MAX_BITMAP_SIDE_PX`, `Bitmap::header` and `pixels` with their limits,
-    `PhotoVCarveOp`, `PhotoStrategy`, `v22_to_v23`, validation; the `png`
+    `PhotoVCarveOp`, `PhotoStrategy`, `v23_to_v24`, validation; the `png`
     and `base64` dependencies. Tests: the dc-project bitmap and Photo
     tests with the M4 additions. [3.3]
 23. **Bitmap import and the CLI.** `dc-import::bitmap` with `png` and
@@ -1606,7 +1672,7 @@ Goal: a photograph carved.
 25. **Photo goldens.** `tools/parity/photo/capture.py` and the two
     RasterCarve cases. Tests: `golden::photo_*`. [24]
 26. **Photo docs.** Photo V-Carve chapter, Images chapter (`image`,
-    pictures in the file), The project file (v23),
+    pictures in the file), The project file (v24),
     `cli::photo_quick_start_runs`. [23, 24]
 27. **3.4 bench check.** Test part 3 cut and recorded. Exit: acceptance
     58 to 60 green.

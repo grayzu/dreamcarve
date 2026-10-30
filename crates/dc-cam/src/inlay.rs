@@ -34,16 +34,20 @@
 mod tests;
 
 use crate::error::{CamError, ShapeRef};
-use crate::profile::rates_of;
+use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::vcarve::{
     self, Carve, Clearing, Targets, carve_regions, carve_regions_then, checked_v_bit, clearing,
     floor::Floor,
 };
 use crate::warning::Warning;
-use dc_geometry::{EPS_MM, Rect, Region, Transform, nearest_point, surround};
+use dc_geometry::{
+    Contour, EPS_MM, Polyline, Rect, Region, Transform, nearest_point, outer_offset, surround,
+};
 use dc_project::{
-    INLAY_MIN_PLUG_BASE_MM, InlayOp, InlaySide, InstanceId, OperationId, Project, VCarveStrategy,
+    CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
+    INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, Operation, OperationId,
+    ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy,
 };
 
 /// Both sides carve along the medial lines; an Inlay has no strategy of
@@ -210,6 +214,9 @@ pub(crate) struct Side {
     /// The male's mirror line, mm; `None` for the female, or a male with
     /// no closed outline.
     pub mirror_x_mm: Option<f64>,
+    /// The male's mirrored design, nested, whose outer outlines its
+    /// cut-out runs round (#443); empty for the female.
+    pub design: Vec<Region>,
 }
 
 /// The side `op` of `project` carves (design steps 2 to 4). Warnings of
@@ -247,6 +254,7 @@ fn side_of(
             engaged_from_z_mm: thickness_mm,
             flat_depth_mm: values.flat_depth_mm(),
             mirror_x_mm: None,
+            design: Vec::new(),
         });
     };
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
@@ -270,6 +278,7 @@ fn side_of(
         engaged_from_z_mm: thickness_mm,
         flat_depth_mm: values.flat_depth_mm(),
         mirror_x_mm,
+        design: design.regions,
     })
 }
 
@@ -380,6 +389,7 @@ pub fn generate_inlay(
         });
     }
     let values = Values::of(op)?;
+    let cut_out = checked_cut_out(project, op, values, bit.slope)?;
     let passes = clearing::Passes::of_inlay(op, values.start_depth_mm());
     let clearing_tools = clearing::checked_tools(project, &passes, true)?;
     let mut warnings = Vec::new();
@@ -426,6 +436,7 @@ pub fn generate_inlay(
         start_plane_z_mm,
         engaged_from_z_mm,
         flat_depth_mm,
+        design,
         ..
     } = side;
     let carve = Carve {
@@ -466,5 +477,159 @@ pub fn generate_inlay(
         tool: tool.id.clone(),
         toolpath,
     });
+    // #443: the cut-out last, so the piece is freed only once carved.
+    if let (Some((cut_out, margin_mm)), Some(thickness_mm)) = (cut_out, project.stock.thickness_mm)
+    {
+        let paths: Vec<Polyline> = cut_out_paths(&design, margin_mm, project.flatten_tolerance_mm)
+            .into_iter()
+            .map(Contour::into_polyline)
+            .collect();
+        let (cut_project, profile) = cut_out_profile(project, op, cut_out, &paths, thickness_mm);
+        let (toolpath, cut_warnings) =
+            generate_profile_below(&cut_project, &profile, values.engagement_mm())?;
+        warnings.extend(cut_warnings);
+        runs.push(ToolRun {
+            label: RunLabel::CutOut(cut_out.tool.clone()),
+            tool: cut_out.tool.clone(),
+            toolpath,
+        });
+    }
     Ok((runs, warnings))
+}
+
+/// The cut-out of `op` (#443), checked as validation checks it, with the
+/// male's margin: `None` without one. `slope` is the V-bit's `tan(α/2)`.
+///
+/// # Errors
+///
+/// [`CamError::InlayCutOutNeedsMale`] on a female;
+/// [`CamError::UnknownTool`], [`CamError::CutterNotFlat`] or
+/// [`CamError::InvalidToolDiameter`] for its tool; and
+/// [`CamError::InlayCutOutNoRoom`] when the band's flat floor ring,
+/// `M − 2·P·tan(α/2)` wide, is narrower than the tool.
+fn checked_cut_out<'o>(
+    project: &Project,
+    op: &'o InlayOp,
+    values: Values,
+    slope: f64,
+) -> Result<Option<(&'o InlayCutOut, f64)>, CamError> {
+    let Some(cut_out) = &op.cut_out else {
+        return Ok(None);
+    };
+    let Some(margin_mm) = values.margin_mm else {
+        return Err(CamError::InlayCutOutNeedsMale { op: op.id.clone() });
+    };
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == cut_out.tool)
+        .ok_or_else(|| CamError::UnknownTool {
+            op: op.id.clone(),
+            tool: cut_out.tool.clone(),
+        })?;
+    if !tool.cutter.is_flat() {
+        return Err(CamError::CutterNotFlat {
+            op: op.id.clone(),
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+            cutter: tool.cutter.describe(),
+        });
+    }
+    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+        return Err(CamError::InvalidToolDiameter {
+            tool: tool.name.clone(),
+            tool_id: tool.id.clone(),
+            diameter_mm: tool.diameter_mm,
+        });
+    }
+    let flank_mm = 2.0 * values.plug_depth_mm * slope;
+    let needed_mm = flank_mm + tool.diameter_mm;
+    if margin_mm + EPS_MM < needed_mm {
+        return Err(CamError::InlayCutOutNoRoom {
+            op: op.id.clone(),
+            diameter_mm: tool.diameter_mm,
+            floor_mm: margin_mm - flank_mm,
+            needed_mm,
+        });
+    }
+    Ok(Some((cut_out, margin_mm)))
+}
+
+/// A male Inlay's cut-out paths (#443; design "Inlay", step 6): the
+/// outermost outlines of its mirrored `design` grown by half its margin
+/// `margin_mm` ([`dc_geometry::outer_offset`]), so the tool centre runs in
+/// the middle of the band's flat floor, which lies between the design
+/// grown by `P·tan(α/2)` and by `M − P·tan(α/2)`. A hole of the design
+/// is not cut out: it stays in the plug.
+#[must_use]
+pub fn cut_out_paths(design: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Contour> {
+    outer_offset(design, margin_mm / 2.0, tolerance_mm)
+}
+
+/// The On line Profile a male Inlay's cut-out is (#443), and a copy of
+/// `project` that holds it: `paths` (closed, project space) as the
+/// profiles of one definition placed in place, which the Profile targets
+/// with the cut-out's tool, tabs and through-cut allowance, through the
+/// stock `thickness_mm` thick, climb, plunging, with the Inlay's id,
+/// name, machining order and safe Z. The Profile is the copy's only
+/// operation, so its tab request is placed as `dreamcarve tabs place`
+/// places it ([`crate::placed_tabs::place`]); the safety pass builds the
+/// same Profile itself, on paths it derives itself, to place its tabs.
+#[must_use]
+pub fn cut_out_profile(
+    project: &Project,
+    op: &InlayOp,
+    cut_out: &InlayCutOut,
+    paths: &[Polyline],
+    thickness_mm: f64,
+) -> (Project, ProfileOp) {
+    let mut copy = project.clone();
+    let mut stem = format!("{}-cut-out", op.id);
+    while copy.instances.iter().any(|i| i.id.as_str() == stem)
+        || copy.definitions.keys().any(|d| d.as_str() == stem)
+    {
+        stem.push('_');
+    }
+    let definition = DefinitionId::new(stem.clone());
+    let instance = InstanceId::new(stem);
+    copy.definitions.insert(
+        definition.clone(),
+        FeatureDefinition {
+            id: definition.clone(),
+            name: format!("{} cut-out", op.name),
+            profiles: paths.to_vec(),
+        },
+    );
+    copy.instances.push(FeatureInstance {
+        id: instance.clone(),
+        definition,
+        transform: Transform::IDENTITY,
+        name: format!("{} cut-out", op.name),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    });
+    let profile = ProfileOp {
+        id: op.id.clone(),
+        name: op.name.clone(),
+        enabled: true,
+        targets: vec![instance],
+        tool: cut_out.tool.clone(),
+        side: ProfileSide::OnLine,
+        depth_mm: Some(thickness_mm + cut_out.through_cut_allowance_mm),
+        step_down_mm: None,
+        direction: CutDirection::Climb,
+        through_cut_allowance_mm: cut_out.through_cut_allowance_mm,
+        safe_z_mm: op.safe_z_mm,
+        tabs: cut_out.tabs.clone(),
+        machining_order: op.machining_order,
+        entry: Entry::Plunge,
+        lead: None,
+        corner_relief: CornerRelief::None,
+        last_pass: None,
+        start: StartAt::Auto,
+    };
+    copy.operations = vec![Operation::Profile(profile.clone())];
+    (copy, profile)
 }

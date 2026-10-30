@@ -1043,9 +1043,11 @@ fn v_carved_sign_chapter_runs() {
 /// operation apply to both projects, every excerpt is in the program it
 /// names, and the two projects are the committed
 /// `tests/fixtures/star-female.dcv` and `star-male.dcv`, which
-/// `cli::star_female_and_male_export` exports. Each side exports two
-/// programs, listed in run order: the 3.175 mm end mill's clearing pass
-/// (T2), then the 60° V-bit (T1). Each passes the rules a user can check
+/// `cli::star_female_and_male_export` and
+/// `cli::star_male_exports_three_programs_with_the_cut_out` export. Each
+/// side exports its programs listed in run order: the 3.175 mm end mill's
+/// clearing pass (T2), then the 60° V-bit (T1), and on the male the end
+/// mill's cut-out last (T2, #443). Each passes the rules a user can check
 /// on the program alone; `export` has already held it to S1–S18. The male
 /// prints `inlay_male_mirrored`, the female does not.
 #[test]
@@ -1099,12 +1101,14 @@ fn inlay_pair_chapter_runs() {
             "star-female-2-T1.nc",
             "star-male-1-T2.nc",
             "star-male-2-T1.nc",
+            "star-male-3-T2.nc",
         ]
     );
 
+    // The male's cut-out goes 0.2 mm through the 12 mm board (#443).
     let limits = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
         safe_z_mm: 10.0,
-        floor_mm: 12.0,
+        floor_mm: 12.2,
         stock_mm: (100.0, 100.0),
         radius_mm,
         feed_mm_min,
@@ -1124,7 +1128,10 @@ fn inlay_pair_chapter_runs() {
             String::from_utf8_lossy(&out.stderr)
         );
         assert_eq!(out.status.code(), Some(0), "{report}");
-        let names = [format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
+        let mut names = vec![format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
+        if stem == "star-male" {
+            names.push(format!("{stem}-3-T2.nc"));
+        }
         let at: Vec<usize> = names
             .iter()
             .enumerate()
@@ -1143,5 +1150,8 @@ fn inlay_pair_chapter_runs() {
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
         assert_program_safe(&names[0], &read(&names[0]), &limits(300.0, 1000.0, 1.5875));
         assert_program_safe(&names[1], &read(&names[1]), &limits(300.0, 1000.0, 3.175));
+        if let Some(cut_out) = names.get(2) {
+            assert_program_safe(cut_out, &read(cut_out), &limits(300.0, 1000.0, 1.5875));
+        }
     }
 }

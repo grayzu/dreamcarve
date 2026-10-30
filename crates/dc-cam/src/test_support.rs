@@ -95,21 +95,34 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
 
 /// [`assert_safe`] for one tool run of `op` (#406): its own run with the
 /// operation's tool, the cone test included; a carve's clearing run with
-/// its pass's end mill, whose rates it is held to, and no cone test.
+/// its pass's end mill, whose rates it is held to, and no cone test; and
+/// a male Inlay's cut-out (#443) the same with its end mill, down to its
+/// own through-cut allowance.
 pub fn assert_run_safe(run: &ToolRun, project: &Project, op: &Operation) {
-    let RunLabel::Clearing(tool_id) = &run.label else {
-        assert_safe(&run.toolpath, project, op);
-        return;
+    let (tool_id, floor_z_mm) = match &run.label {
+        RunLabel::Main => {
+            assert_safe(&run.toolpath, project, op);
+            return;
+        }
+        RunLabel::Clearing(tool_id) => (tool_id, -op.through_cut_allowance_mm()),
+        // #443: a male Inlay's cut-out, through to its own allowance.
+        RunLabel::CutOut(tool_id) => {
+            let Operation::Inlay(InlayOp {
+                cut_out: Some(cut_out),
+                ..
+            }) = op
+            else {
+                panic!("a cut-out run of an operation with no cut-out: {op:?}");
+            };
+            (tool_id, -cut_out.through_cut_allowance_mm)
+        }
     };
     let tool = project
         .tools
         .iter()
         .find(|t| &t.id == tool_id)
-        .expect("the clearing pass's tool is in the project");
-    assert_eq!(
-        &run.tool, tool_id,
-        "a clearing run cuts with its pass's tool"
-    );
+        .expect("the run's tool is in the project");
+    assert_eq!(&run.tool, tool_id, "a run cuts with its label's tool");
     let thickness_mm = project.stock.thickness_mm.expect("stock has a thickness");
     let feed_mm_min = tool.feed_mm_min.expect("tool has a feed");
     assert_safe_within(
@@ -117,7 +130,7 @@ pub fn assert_run_safe(run: &ToolRun, project: &Project, op: &Operation) {
         &Limits {
             safe_z_mm: thickness_mm + op.safe_z_mm(),
             stock_top_mm: thickness_mm,
-            floor_z_mm: -op.through_cut_allowance_mm(),
+            floor_z_mm,
             feed_mm_min,
             plunge_mm_min: tool.plunge_mm_min.expect("tool has a plunge rate"),
             level_floor_mm_min: feed_mm_min,

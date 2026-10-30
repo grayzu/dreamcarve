@@ -342,11 +342,12 @@ fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<Emit
 /// The deepest cut of operation `op` among `generated`, mm below the
 /// stock top (`docs/specs/phase-3/design.md`, "CLI": the summary prints
 /// it for a carve, whose depth follows its shapes); `None` when it cuts
-/// nothing or the stock has no thickness.
+/// nothing or the stock has no thickness. A male Inlay's cut-out (#443)
+/// is not the carve: it goes through the board, and its line says so.
 pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId) -> Option<f64> {
     generated
         .iter()
-        .filter(|e| e.op.id() == op)
+        .filter(|e| e.op.id() == op && !matches!(e.label, RunLabel::CutOut(_)))
         .filter_map(|e| deepest_mm(project, &e.toolpath))
         .reduce(f64::max)
 }
@@ -357,7 +358,9 @@ pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId)
 /// (design step 6) and whether clearing passes cut the rest. An Inlay's
 /// line names its side, and a male's its start plane, `depth_mm −
 /// glue_gap_mm` below the stock top (#436); its mirror line is the
-/// `inlay_male_mirrored` warning's.
+/// `inlay_male_mirrored` warning's. A male with a cut-out says where it
+/// runs and how far through the board (#443); its deepest cut is the
+/// carve's, not the cut-out's.
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     project
         .operations
@@ -423,6 +426,18 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                             "; V-bit floor ridges {ridges} where no clearing pass reaches"
                         ));
                     }
+                }
+                // #443: where the cut-out frees the plug, and how deep.
+                if let (Some(cut_out), Some(margin_mm)) = (&inlay.cut_out, inlay.margin_mm)
+                    && generated.iter().any(|e| {
+                        e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_))
+                    })
+                {
+                    floor.push_str(&format!(
+                        "; the cut-out frees the plug {} out from the design, in the floor, through the board to {} below it",
+                        describe_length(project, margin_mm / 2.0),
+                        describe_length(project, cut_out.through_cut_allowance_mm)
+                    ));
                 }
                 Some(format!(
                     "Inlay {} `{}` ({side}): deepest cut {} below the stock top, {floor}.",
@@ -1062,7 +1077,8 @@ fn report_post_and_operations(
 
 /// One line per exported tool run, in cut order: each enabled operation's
 /// id, name, tool, target count and depth, a carve's clearing runs before
-/// it named `o6 (clearing t1)` with their own tools and depths (#406).
+/// it named `o6 (clearing t1)` with their own tools and depths (#406), and
+/// a male Inlay's cut-out after it, `op1 (cut-out t2)` (#443).
 pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     let tool_name = |id: &ToolId| {
         project
@@ -1072,25 +1088,28 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
             .map_or("?", |t| t.name.as_str())
     };
     let mut lines = Vec::new();
+    let run_line = |op: &Operation, run: &EmitOp| {
+        let depth = deepest_mm(project, &run.toolpath).map_or_else(
+            || "? mm deep".to_owned(),
+            |d| format!("{} deep", describe_length(project, d)),
+        );
+        format!(
+            "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
+            run.label.naming(op.id().as_str()),
+            op.name(),
+            run.tool.id,
+            tool_name(&run.tool.id),
+            op.targets().len(),
+        )
+    };
     for op in project.operations.iter().filter(|op| op.enabled()) {
         // Design "Clearing passes", step 4: a carve's clearing runs are cut
         // before it, each to the carve's floor.
         for run in generated
             .iter()
-            .filter(|e| e.op.id() == op.id() && e.label != RunLabel::Main)
+            .filter(|e| e.op.id() == op.id() && matches!(e.label, RunLabel::Clearing(_)))
         {
-            let depth = deepest_mm(project, &run.toolpath).map_or_else(
-                || "? mm deep".to_owned(),
-                |d| format!("{} deep", describe_length(project, d)),
-            );
-            lines.push(format!(
-                "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
-                run.label.naming(op.id().as_str()),
-                op.name(),
-                run.tool.id,
-                tool_name(&run.tool.id),
-                op.targets().len(),
-            ));
+            lines.push(run_line(op, run));
         }
         // Validation refuses an unset depth, so an exported one is set; a
         // carve's depth follows its shapes, so its deepest cut is stated,
@@ -1131,6 +1150,13 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
             tool_name(op.tool()),
             op.targets().len(),
         ));
+        // #443: a male Inlay's cut-out is cut after it, through the board.
+        for run in generated
+            .iter()
+            .filter(|e| e.op.id() == op.id() && matches!(e.label, RunLabel::CutOut(_)))
+        {
+            lines.push(run_line(op, run));
+        }
     }
     lines
 }

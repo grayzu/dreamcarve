@@ -154,6 +154,9 @@ the stock top, since the plug above its start plane is never cleared.
 | --- | --- |
 | `inlay_glue_gap_not_below_depth` | An Inlay's `glue_gap_mm` is at least its `depth_mm`: "… has glue_gap_mm … mm, not below its depth_mm … mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat". |
 | `inlay_margin_positive` | A male Inlay's `margin_mm` is 0 or less: "… is a male inlay with margin_mm … mm; its surround is carved that far beyond the design, so it must be above 0". |
+| `inlay_cut_out_needs_male` | A female Inlay has a `cut_out` (format 23): "… is a female inlay with a cut_out; only the male's plug is cut out of its board". At `cut_out`. |
+| `inlay_cut_out_no_room` | A male Inlay's cut-out tool is wider than the band's flat floor, `margin_mm − 2 × plug_depth_mm × tan(α/2)`: "… that floor is narrower than the tool, so the cut-out would cut into the plug's wall or the band's outer wall. Raise margin_mm to at least … mm". At `margin_mm`. |
+| `cutter_not_flat` | A male Inlay's cut-out tool is not a flat end mill: "… cuts its plug's cut-out with tool …". At `cut_out.tool`. |
 
 [Inlay: errors](inlay.md#errors) gives each message and what to do, and
 [Inlay: choosing the bit](inlay.md#choosing-the-bit) what to change when

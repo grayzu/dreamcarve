@@ -921,13 +921,13 @@ impl<'a> Limits<'a> {
             return Self {
                 op: Some(span.op),
                 tool: Some(span.tool),
-                floor_mm: -span.op.through_cut_allowance_mm(),
+                floor_mm: span.material.floor_mm(span.op),
                 safe_z_mm: stock_thickness_mm + span.op.safe_z_mm(),
             };
         }
         let floor_mm = spans
             .iter()
-            .map(|s| -s.op.through_cut_allowance_mm())
+            .map(|s| s.material.floor_mm(s.op))
             .fold(0.0, f64::max);
         let safe_z_mm = spans
             .iter()

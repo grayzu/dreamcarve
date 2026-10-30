@@ -391,7 +391,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v22/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v23/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1224,7 +1224,8 @@ mod tests {
                 "step_over_fraction",
                 "machining_order",
                 "through_cut_allowance_mm",
-                "safe_z_mm"
+                "safe_z_mm",
+                "cut_out"
             ]
         );
         assert_eq!(op["kind"], json!("inlay"));
@@ -1294,6 +1295,116 @@ mod tests {
                     1,
                 ),
                 "start_depth_mm",
+            ),
+        ] {
+            assert_ne!(broken, text, "fixture layout changed:\n{text}");
+            let err = load(broken.as_bytes()).unwrap_err().to_string();
+            assert!(err.contains(named), "{named}: {err}");
+        }
+    }
+
+    /// Format 23 (#443): a male Inlay's `cut_out` saves after `safe_z_mm`
+    /// as `{ "tool", "tabs", "through_cut_allowance_mm" }`, its tabs a
+    /// Profile's tab request or `null`, and loads back the same; `null`
+    /// when there is none; every field required, a length may carry its
+    /// unit, and an unknown field is named.
+    #[test]
+    fn inlay_cut_out_round_trips() {
+        use crate::model::{InlayCutOut, InlaySide, TabPlacement, TabShape, TabSpec};
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        let tabs = TabSpec {
+            placement: TabPlacement::Count { count: 4 },
+            width_mm: 6.0,
+            height_mm: 3.0,
+            shape: TabShape::Rect,
+            on_holes: false,
+            avoid_corners: true,
+        };
+        let male = crate::model::InlayOp {
+            side: InlaySide::Male,
+            cut_out: Some(InlayCutOut {
+                tool: crate::ids::ToolId::new("t1"),
+                tabs: Some(tabs),
+                through_cut_allowance_mm: 0.2,
+            }),
+            ..sample_inlay()
+        };
+        let untabbed = crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            cut_out: Some(InlayCutOut {
+                tabs: None,
+                ..male.cut_out.clone().unwrap()
+            }),
+            ..male.clone()
+        };
+        p.operations.push(Operation::Inlay(male));
+        p.operations.push(Operation::Inlay(untabbed));
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o9"),
+            ..sample_inlay()
+        }));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value["operations"][1]["cut_out"],
+            json!({
+                "tool": "t1",
+                "tabs": {
+                    "placement": { "kind": "count", "count": 4 },
+                    "width_mm": 6.0,
+                    "height_mm": 3.0,
+                    "shape": "rect",
+                    "on_holes": false,
+                    "avoid_corners": true
+                },
+                "through_cut_allowance_mm": 0.2
+            })
+        );
+        assert_eq!(value["operations"][2]["cut_out"]["tabs"], json!(null));
+        assert_eq!(value["operations"][3]["cut_out"], json!(null));
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+
+        let inch = text.replacen(
+            "\"through_cut_allowance_mm\": 0.2\n",
+            "\"through_cut_allowance_mm\": \"0.01 in\"\n",
+            1,
+        );
+        assert_ne!(inch, text, "fixture layout changed:\n{text}");
+        let Some(Operation::Inlay(inlay)) = load(inch.as_bytes())
+            .unwrap()
+            .project
+            .operations
+            .get(1)
+            .cloned()
+        else {
+            panic!("an inlay");
+        };
+        dc_geometry::assert_approx_eq!(
+            inlay.cut_out.unwrap().through_cut_allowance_mm,
+            0.254,
+            1e-9
+        );
+
+        // The o9 Inlay without its `cut_out` line and the comma before it.
+        let null_at = text.find("\"cut_out\": null").expect("a null cut-out");
+        let comma_at = text[..null_at].rfind(',').expect("a field before it");
+        let without = format!(
+            "{}{}",
+            &text[..comma_at],
+            &text[null_at + "\"cut_out\": null".len()..]
+        );
+        for (broken, named) in [
+            (without, "cut_out"),
+            (text.replacen("\"tabs\": null,", "", 1), "tabs"),
+            (
+                text.replacen(
+                    "\"through_cut_allowance_mm\": 0.2\n",
+                    "\"through_cut_allowance_mm\": 0.2, \"entry\": \"plunge\"\n",
+                    1,
+                ),
+                "entry",
             ),
         ] {
             assert_ne!(broken, text, "fixture layout changed:\n{text}");

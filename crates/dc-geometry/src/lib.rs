@@ -22,7 +22,7 @@ mod self_band;
 mod transform;
 
 pub use boolean::{BooleanOp, boolean, difference, intersection, union};
-pub use carve::{floor_regions, surround};
+pub use carve::{floor_regions, outer_offset, surround};
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;
 pub use distance::{

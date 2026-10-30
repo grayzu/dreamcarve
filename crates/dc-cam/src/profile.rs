@@ -328,6 +328,21 @@ pub fn generate_profile(
     project: &Project,
     op: &ProfileOp,
 ) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    generate_profile_below(project, op, 0.0)
+}
+
+/// [`generate_profile`] with its passes starting `start_depth_mm` below
+/// the stock top (#443, a male Inlay's cut-out, whose floor the carve has
+/// already cleared): the first pass is a step-down below that plane, and
+/// no pass cuts above it. Everything else, safe Z, the rapids' clearance
+/// above the stock top, the tab heights and the through-cut limit, keeps
+/// to the stock as it is. `start_depth_mm` is 0 for every Profile, and
+/// below `op.depth_mm`.
+pub(crate) fn generate_profile_below(
+    project: &Project,
+    op: &ProfileOp,
+    start_depth_mm: f64,
+) -> Result<(Toolpath, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -385,7 +400,15 @@ pub fn generate_profile(
     if let Some(last_pass) = last_pass {
         last_pass::check(op, last_pass, tool.diameter_mm, depth_mm, step_down_mm)?;
     }
-    let pass_z = last_pass::pass_z(op, thickness_mm, depth_mm, step_down_mm, last_pass)?;
+    // #443: from a plane below the stock top, the passes step down from
+    // it as from a thinner stock's top.
+    let pass_z = last_pass::pass_z(
+        op,
+        thickness_mm - start_depth_mm,
+        depth_mm - start_depth_mm,
+        step_down_mm,
+        last_pass,
+    )?;
     let last_index = pass_z.len().saturating_sub(1);
     // The passes before the last run on the stock paths; with no pass
     // before it there are none.

@@ -898,6 +898,31 @@ pub enum CamError {
         /// The margin given, mm.
         margin_mm: f64,
     },
+    /// A female Inlay has a cut-out (format 23, #443): only the male's
+    /// plug is cut out of its board.
+    #[error(
+        "operation `{op}` is a female inlay with a cut_out; only the male's plug is cut out of its board"
+    )]
+    InlayCutOutNeedsMale {
+        /// The Inlay.
+        op: OperationId,
+    },
+    /// A male Inlay's cut-out tool is wider than the band's flat floor
+    /// ring (format 23, #443), `margin_mm − 2·plug_depth_mm·tan(α/2)`
+    /// wide, so the cut-out would cut a wall.
+    #[error(
+        "operation `{op}` cuts its plug out with a {diameter_mm} mm end mill in a flat floor {floor_mm:.3} mm wide; raise margin_mm to at least {needed_mm:.3} mm"
+    )]
+    InlayCutOutNoRoom {
+        /// The Inlay.
+        op: OperationId,
+        /// The cut-out tool's diameter, mm.
+        diameter_mm: f64,
+        /// The floor ring's width, mm.
+        floor_mm: f64,
+        /// The least margin with room, mm.
+        needed_mm: f64,
+    },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.
     #[error("shape {shape} encloses itself through other shapes; no cut order exists")]
