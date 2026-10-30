@@ -1000,14 +1000,18 @@ fn v_carved_sign_chapter_runs() {
     }
 
     // The V-bit's program ends with the countersinks: a plunge to 3 mm
-    // below the background's 2.5 mm floor at each hanging hole.
+    // below the background's 2.5 mm floor at each hanging hole, at
+    // (25, 75) and (195, 75), Y modal on the second.
     let v_bit = read("sign-3-T3.nc");
     let sinks = v_bit
         .find("( Operation 3: Countersinks )")
         .map(|at| &v_bit[at..])
         .unwrap_or_else(|| panic!("sign-3-T3.nc has no countersinks"));
-    for hole in ["X25.000 Y75.000", "X195.000 Y75.000"] {
-        assert!(sinks.contains(hole), "a countersink at {hole}: {sinks}");
+    for hole in ["X25.000 Y75.000", "X195.000"] {
+        assert!(
+            sinks.lines().any(|l| l == hole),
+            "a countersink at {hole}: {sinks}"
+        );
     }
     assert_eq!(
         sinks.lines().filter(|l| l.contains("Z-5.500")).count(),

@@ -12,10 +12,11 @@ phases bump the patch number.
 - **V-Carve in the project file; format version 20.** A project can hold a
   `"v_carve"` operation, with its strategy, clearing passes, flat depth and
   start depth, and `check` validates it: the tool must be a V-bit, the flat
-  depth (plus a start depth no earlier Pocket clears) must fit the bit's
-  cone, clearing passes need a flat depth and flat end mills, and a start
-  depth below the stock top needs a Pocket before it or
-  `start_plane_cleared_externally`. Older files upgrade unchanged.
+  depth (plus a start depth no earlier Pocket or V-Carve floor clears) must
+  fit the bit's cone, clearing passes need a flat depth and flat end mills,
+  and a start depth below the stock top needs a Pocket or a V-Carve's flat
+  floor before it, or `start_plane_cleared_externally`. Older files upgrade
+  unchanged.
 - **V-Carve export.** A V-Carve carves along its shapes' medial lines, or in
   offset rings, to the depth the V-bit's angle gives, with a flat depth
   whose floor the V-bit or one or more end-mill clearing passes clear; each
@@ -23,21 +24,27 @@ phases bump the patch number.
   holds the V-bit's whole cone to the carved shapes (safety rule 14, S17).
   User guide chapter "V-Carve operation", and a third quick start, "A
   V-carved sign from SVG outlines", on the new `tests/fixtures/sign.svg`.
-- **Countersink in the project file; format version 21.** A Drill can hold
-  the `{ "countersink": { "diameter_mm", "start_depth_mm",
-  "start_plane_cleared_externally" } }` cycle, and `check` validates and
-  generates it: the tool must be a V-bit, the mouth above 0 and no wider
-  than the bit, the depth `diameter_mm / (2·tan(α/2))` below the start
-  plane plus a start depth no earlier Pocket clears must fit the bit's
-  cone, and a start depth below the stock top needs a Pocket before it
+- **Countersink; format version 21.** A Drill can hold the
+  `{ "countersink": { "diameter_mm", "start_depth_mm",
+  "start_plane_cleared_externally" } }` cycle: a V-bit plunges once at the
+  centre of each circle to `diameter_mm / (2·tan(α/2))` below the start
+  plane, opening a mouth `diameter_mm` wide (a 90° bit opens 6 mm at 3 mm).
+  `check` validates it: the tool must be a V-bit, the mouth above 0 and no
+  wider than the bit, the depth plus a start depth no earlier Pocket or
+  V-Carve floor clears must fit the bit's cone, and a start depth below the
+  stock top needs an earlier Pocket, or an earlier V-Carve's flat floor,
   that holds the whole bit at every hole, or
   `start_plane_cleared_externally`. A circle at least as wide as the mouth
   is skipped (`countersink_mouth_not_wider_than_hole`), and
   `allow_tool_wider_than_hole` has no effect on a countersink
   (`countersink_ignores_tool_width`). `export` writes a countersink as
-  plain moves on every controller, canned cycles on or off, and the safety
-  pass holds each plunge to the derived depth at a hole's centre and the
-  bit's flank to its cone (S18). Older files upgrade unchanged.
+  plain moves on every controller, canned cycles on or off, with no
+  `canned_cycle_expanded` warning, and states its mouth and depth in the
+  summary; the safety pass holds each plunge to the derived depth at a
+  hole's centre and the bit's flank to its cone (safety rule 15, S18).
+  Older files upgrade unchanged. The Drill chapter has a "Countersink"
+  section, and the sign quick start now countersinks its hanging holes on
+  the background's floor.
 
 ### Changed
 

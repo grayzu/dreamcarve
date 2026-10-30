@@ -120,7 +120,7 @@ gives each message and what to do.
 | --- | --- |
 | `v_carve_needs_v_bit` | A V-Carve's tool is not a V-bit. |
 | `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
-| `v_bit_cone_exceeded` | A carve would engage the V-bit deeper than its cone is tall: the flat depth, a start depth no Pocket clears, or with no flat depth the widest part of a shape. |
+| `v_bit_cone_exceeded` | A carve or a countersink would engage the V-bit deeper than its cone is tall: the flat depth or the countersink's depth, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
 | `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
@@ -133,6 +133,36 @@ The safety pass adds two errors of its own for a V-Carve's program,
 cut, at X … Y … Z … (project space)" and "emitted line … engages operation
 …'s V-bit … mm deep, past its … mm cone, so its shank would cut". See
 [Safety](safety.md), rule 14.
+
+## Countersink errors
+
+Not warnings, but listed here with the V-Carve errors a countersink
+shares (`v_bit_angle_range`, `v_bit_cone_exceeded`,
+`start_depth_negative`, `start_depth_uncleared`). These stop `check` and
+`export`; [Drill: countersink](drill.md#countersink) says what to do.
+For a countersink, the start depth errors are at its
+`cycle.countersink.start_depth_mm`, and `v_bit_cone_exceeded` is at its
+`cycle.countersink.diameter_mm`.
+
+| Code | When |
+| --- | --- |
+| `countersink_needs_v_bit` | A countersink's tool is not a V-bit: "… countersinks with tool …; a countersink's depth follows the angle of a V-bit, so use a V-bit". |
+| `countersink_diameter_positive` | A countersink's `diameter_mm` is 0 or less: "… has a countersink diameter_mm of … mm; the mouth must be wider than 0". |
+| `countersink_mouth_exceeds_tool` | A countersink's `diameter_mm` is wider than its V-bit: "… asks for a … mm countersink, wider than the … mm tool …; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit". |
+
+Export reports the same problems if they reach the toolpath generator,
+in its own words; the cone one there reads "operation … countersinks with
+its V-bit's flanks engaged … mm deep, but the bit's cone is only … mm
+tall, so its shank would cut; clear the start depth with a Pocket first,
+or use a smaller mouth or a wider V-bit".
+
+The safety pass adds one error of its own for a countersink's program,
+"emitted line … breaks operation …'s countersink: every cut must be a
+straight plunge at a hole's centre, from no higher than the retract plane
+to Z …, written as plain moves, and every rapid must stay at or above the
+retract plane; this line ends at Z … (project space)", and holds its bit's
+shank with the V-Carve shank error above. See [Safety](safety.md), rule
+15.
 
 ## Import
 
