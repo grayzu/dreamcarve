@@ -37,12 +37,66 @@ use crate::pocket::{self};
 use crate::run::{RunLabel, ToolRun};
 use crate::warning::Warning;
 use dc_geometry::{Contour, Region, nest};
-use dc_project::{CornerRelief, PocketOp, Project, Tool, VCarveOp, WallPass};
+use dc_project::{
+    ClearingPass, CornerRelief, InlayOp, MachiningOrder, OperationId, PocketOp, Project, Tool,
+    VCarveOp, WallPass,
+};
 
-/// The end mills of `op`'s clearing passes, in list order, checked as
-/// validation checks them (design "Clearing passes", step 1): each names a
-/// tool of `project`, a flat end mill with a usable diameter, and the carve
-/// has a flat depth. Empty without passes.
+/// What the clearing passes need of the operation that carves: a V-Carve
+/// or an Inlay side (#436), whose passes are cut alike.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Passes<'a> {
+    /// The carve.
+    pub op: &'a OperationId,
+    /// Its display name.
+    pub name: &'a str,
+    /// Its clearing passes, in cut order.
+    pub clearing: &'a [ClearingPass],
+    /// Its start plane's depth below the stock top, mm: the floor is the
+    /// flat depth below it.
+    pub start_depth_mm: f64,
+    /// Its machining order.
+    pub machining_order: MachiningOrder,
+    /// How far below the stock bottom it may cut, mm.
+    pub through_cut_allowance_mm: f64,
+    /// Its safe Z above the stock top, mm.
+    pub safe_z_mm: f64,
+}
+
+impl<'a> Passes<'a> {
+    /// The passes of V-Carve `op`.
+    pub(crate) fn of_v_carve(op: &'a VCarveOp) -> Self {
+        Self {
+            op: &op.id,
+            name: &op.name,
+            clearing: &op.clearing,
+            start_depth_mm: op.start_depth_mm,
+            machining_order: op.machining_order,
+            through_cut_allowance_mm: op.through_cut_allowance_mm,
+            safe_z_mm: op.safe_z_mm,
+        }
+    }
+
+    /// The passes of Inlay side `op`, whose start plane is
+    /// `start_depth_mm` below the stock top: 0 for the female, `depth_mm −
+    /// glue_gap_mm` for the male.
+    pub(crate) fn of_inlay(op: &'a InlayOp, start_depth_mm: f64) -> Self {
+        Self {
+            op: &op.id,
+            name: &op.name,
+            clearing: &op.clearing,
+            start_depth_mm,
+            machining_order: op.machining_order,
+            through_cut_allowance_mm: op.through_cut_allowance_mm,
+            safe_z_mm: op.safe_z_mm,
+        }
+    }
+}
+
+/// The end mills of the clearing passes `passes`, in list order, checked
+/// as validation checks them (design "Clearing passes", step 1): each
+/// names a tool of `project`, a flat end mill with a usable diameter, and
+/// the carve has a flat depth (`has_floor`). Empty without passes.
 ///
 /// # Errors
 ///
@@ -50,16 +104,16 @@ use dc_project::{CornerRelief, PocketOp, Project, Tool, VCarveOp, WallPass};
 /// and [`CamError::InvalidToolDiameter`].
 pub(crate) fn checked_tools<'p>(
     project: &'p Project,
-    op: &VCarveOp,
+    passes: &Passes<'_>,
+    has_floor: bool,
 ) -> Result<Vec<&'p Tool>, CamError> {
     let invalid = |tool: &dc_project::ToolId, reason| CamError::ClearingInvalid {
-        op: op.id.clone(),
+        op: passes.op.clone(),
         tool: tool.clone(),
         reason,
     };
-    let has_floor = op.flat_depth_mm.is_some_and(|f| f.is_finite() && f > 0.0);
-    let mut tools = Vec::with_capacity(op.clearing.len());
-    for pass in &op.clearing {
+    let mut tools = Vec::with_capacity(passes.clearing.len());
+    for pass in passes.clearing {
         if !has_floor {
             return Err(invalid(&pass.tool, ClearingProblem::NoFlatDepth));
         }
@@ -97,8 +151,8 @@ pub(crate) fn reference(radius_mm: f64) -> Reference {
     }
 }
 
-/// The clearing runs of carve `carve` of operation `op` (design "Clearing
-/// passes", steps 2 and 3), one per pass of `op.clearing` whose end mill
+/// The clearing runs of carve `carve` (design "Clearing passes", steps 2
+/// and 3), one per pass of `passes.clearing` whose end mill
 /// (`tools`, from [`checked_tools`]) reaches some of the floor the passes
 /// before it left, in list order: labelled [`RunLabel::Clearing`], with the
 /// pass's tool. `slope` is the V-bit's `tan(α/2)`.
@@ -110,7 +164,7 @@ pub(crate) fn reference(radius_mm: f64) -> Reference {
 /// range, a depth below the stock bottom, and S9.
 pub(crate) fn runs(
     project: &Project,
-    op: &VCarveOp,
+    passes: &Passes<'_>,
     carve: &Carve<'_>,
     tools: &[&Tool],
     slope: f64,
@@ -135,12 +189,12 @@ pub(crate) fn runs(
     let mut out = Vec::new();
     let mut earlier: Vec<Reference> = Vec::new();
     let mut before: Option<&Tool> = None;
-    for (pass, &tool) in op.clearing.iter().zip(tools) {
+    for (pass, &tool) in passes.clearing.iter().zip(tools) {
         if let Some(previous) = before
             && tool.diameter_mm > previous.diameter_mm
         {
             warnings.push(Warning::ClearingNotDescending {
-                op: op.id.clone(),
+                op: passes.op.clone(),
                 tool: tool.id.clone(),
                 diameter_mm: tool.diameter_mm,
                 earlier_tool: previous.id.clone(),
@@ -155,7 +209,7 @@ pub(crate) fn runs(
             .collect();
         if reached.is_empty() {
             warnings.push(Warning::ClearingNoRoom {
-                op: op.id.clone(),
+                op: passes.op.clone(),
                 tool: tool.name.clone(),
                 tool_id: tool.id.clone(),
                 diameter_mm: tool.diameter_mm,
@@ -163,14 +217,14 @@ pub(crate) fn runs(
         } else {
             let (regions, shapes) = renest(&reached)?;
             let pocket = PocketOp {
-                id: op.id.clone(),
-                name: op.name.clone(),
+                id: passes.op.clone(),
+                name: passes.name.to_owned(),
                 enabled: true,
                 targets: Vec::new(),
                 tool: tool.id.clone(),
                 strategy: pass.strategy.clone(),
                 wall_pass: WallPass::Last,
-                depth_mm: Some(op.start_depth_mm + flat_depth_of(carve)),
+                depth_mm: Some(passes.start_depth_mm + flat_depth_of(carve)),
                 step_down_mm: None,
                 step_over_fraction: None,
                 direction: pass.direction,
@@ -178,9 +232,9 @@ pub(crate) fn runs(
                 rest_of: None,
                 entry: pass.entry.clone(),
                 corner_relief: CornerRelief::None,
-                machining_order: op.machining_order,
-                through_cut_allowance_mm: op.through_cut_allowance_mm,
-                safe_z_mm: op.safe_z_mm,
+                machining_order: passes.machining_order,
+                through_cut_allowance_mm: passes.through_cut_allowance_mm,
+                safe_z_mm: passes.safe_z_mm,
             };
             let toolpath =
                 pocket::pocket_regions(project, &pocket, &regions, &shapes, &earlier, warnings)?;

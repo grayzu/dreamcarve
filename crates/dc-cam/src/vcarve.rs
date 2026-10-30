@@ -51,7 +51,8 @@ use floor::{Floor, FloorCut};
 use medial::{Depth, Tolerances};
 
 /// What a V-bit carve is, independent of which operation asked for it:
-/// V-Carve builds one from its targets (an Inlay will build one per side).
+/// V-Carve builds one from its targets, an Inlay one per side
+/// ([`crate::inlay`]).
 /// Project space: mm, Y-up, Z-up, stock bottom at Z = 0.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Carve<'a> {
@@ -139,11 +140,11 @@ pub fn floor_ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
 
 /// A usable V-bit's slope and cone.
 #[derive(Debug, Clone, Copy, PartialEq)]
-struct VBit {
+pub(crate) struct VBit {
     /// `tan(α/2)`.
-    slope: f64,
+    pub slope: f64,
     /// Cone height, mm.
-    cone_mm: f64,
+    pub cone_mm: f64,
 }
 
 fn v_bit(tool: &Tool) -> Option<VBit> {
@@ -165,7 +166,7 @@ fn v_bit(tool: &Tool) -> Option<VBit> {
 /// The V-bit of operation `op`, or the error that says why `tool` is not
 /// one: [`CamError::VCarveNeedsVBit`], [`CamError::VBitAngleRange`] or
 /// [`CamError::InvalidToolDiameter`].
-fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamError> {
+pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamError> {
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return Err(CamError::VCarveNeedsVBit {
             op: op.clone(),
@@ -571,13 +572,19 @@ pub fn generate_vcarve(
             depth_mm: flat_depth_mm,
         });
     }
-    let clearing_tools = clearing::checked_tools(project, op)?;
+    let passes = clearing::Passes::of_v_carve(op);
+    let clearing_tools = clearing::checked_tools(
+        project,
+        &passes,
+        op.flat_depth_mm.is_some_and(|f| f.is_finite() && f > 0.0),
+    )?;
     let (start_plane_z_mm, engaged_from_z_mm) = start_plane(project, op)?;
     let mut warnings = Vec::new();
     let Targets {
         regions,
         shapes,
         containment,
+        ..
     } = carve_regions(project, &op.id, &op.targets, &mut warnings)?;
     let carve = Carve {
         regions,
@@ -597,7 +604,7 @@ pub fn generate_vcarve(
     let bit = checked_v_bit(&op.id, tool)?;
     let mut runs = clearing::runs(
         project,
-        op,
+        &passes,
         &carve,
         &clearing_tools,
         bit.slope,
@@ -803,6 +810,19 @@ pub(crate) fn carve_regions(
     targets: &[InstanceId],
     warnings: &mut Vec<Warning>,
 ) -> Result<Targets, CamError> {
+    carve_regions_then(project, op, targets, None, warnings)
+}
+
+/// [`carve_regions`] with every placed outline then moved by `then` (a
+/// male Inlay's mirror, [`crate::inlay::male_mirror`]) before it is
+/// nested; `None` moves nothing.
+pub(crate) fn carve_regions_then(
+    project: &Project,
+    op: &OperationId,
+    targets: &[InstanceId],
+    then: Option<dc_geometry::Transform>,
+    warnings: &mut Vec<Warning>,
+) -> Result<Targets, CamError> {
     let mut shapes: Vec<(ShapeRef, Contour)> = Vec::new();
     for instance_id in targets {
         let instance = project
@@ -836,6 +856,10 @@ pub(crate) fn carve_regions(
             let contour = instance
                 .transform
                 .apply_polyline(polyline)
+                .and_then(|placed| match then {
+                    Some(then) => then.apply_polyline(&placed),
+                    None => Ok(placed),
+                })
                 .and_then(Contour::new)
                 .map_err(|source| CamError::InvalidTarget {
                     shape: shape.clone(),
@@ -884,6 +908,7 @@ pub(crate) fn carve_regions(
         regions,
         shapes: region_shapes,
         containment,
+        contours: shapes,
     })
 }
 
@@ -896,6 +921,9 @@ pub(crate) struct Targets {
     pub shapes: Vec<ShapeRef>,
     /// `(inner, encloser)` pairs for `sequence`.
     pub containment: Vec<(ShapeRef, ShapeRef)>,
+    /// Every closed outline placed, with its shape, in target then profile
+    /// order, before nesting.
+    pub contours: Vec<(ShapeRef, Contour)>,
 }
 
 /// True when `p` is inside hole `contour` (either winding).

@@ -26,6 +26,7 @@ mod engrave;
 pub mod entry;
 mod error;
 mod footprint;
+pub mod inlay;
 mod lead;
 pub mod order;
 mod overlap;
@@ -51,6 +52,7 @@ pub use drill::{CannedKind, DrillHole, DrillToolpath, PECK_REENTRY_MM, generate_
 pub use engrave::generate_engrave;
 pub use error::{BlockProblem, CamError, ClearingProblem, FeedField, ShapeRef};
 pub use footprint::footprint;
+pub use inlay::generate_inlay;
 pub use pocket::generate_pocket;
 pub use profile::{Wall, generate_profile, last_pass_step_reach_mm, traversal_is_ccw};
 pub use run::{RunLabel, ToolRun};

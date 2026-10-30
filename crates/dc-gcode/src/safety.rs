@@ -7316,6 +7316,7 @@ mod tests {
         check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
     }
 
+    mod inlay;
     mod s17;
     mod s18;
 }

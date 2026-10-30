@@ -198,6 +198,14 @@ pub enum WarningCode {
     /// before it (format 20, capability 40); validation reports it too. It
     /// still runs on what it can reach.
     ClearingNotDescending,
+    /// A male Inlay's design is mirrored, X about its targets' joint
+    /// bounding box centre line, so the plug seats face down in the
+    /// female (format 22, capability 45). A note, given once per male.
+    InlayMaleMirrored,
+    /// A male Inlay leaves less than [`dc_project::INLAY_MIN_PLUG_BASE_MM`]
+    /// of board under its surround's floor (format 22); validation reports
+    /// it too. The program is still cut.
+    InlayPlugBaseThin,
 }
 
 impl WarningCode {
@@ -251,6 +259,8 @@ impl WarningCode {
             Self::StartDepthMismatch => "start_depth_mismatch",
             Self::ClearingNoRoom => "clearing_no_room",
             Self::ClearingNotDescending => "clearing_not_descending",
+            Self::InlayMaleMirrored => "inlay_male_mirrored",
+            Self::InlayPlugBaseThin => "inlay_plug_base_thin",
         }
     }
 }
@@ -875,6 +885,20 @@ pub enum Warning {
         /// That one's diameter, mm.
         earlier_diameter_mm: f64,
     },
+    /// [`WarningCode::InlayMaleMirrored`].
+    InlayMaleMirrored {
+        /// The male Inlay.
+        op: OperationId,
+        /// The mirror line's X, mm, project space.
+        axis_x_mm: f64,
+    },
+    /// [`WarningCode::InlayPlugBaseThin`].
+    InlayPlugBaseThin {
+        /// The male Inlay.
+        op: OperationId,
+        /// The board left under the surround's floor, mm.
+        base_mm: f64,
+    },
 }
 
 impl Warning {
@@ -930,6 +954,8 @@ impl Warning {
             Self::StartDepthMismatch { .. } => WarningCode::StartDepthMismatch,
             Self::ClearingNoRoom { .. } => WarningCode::ClearingNoRoom,
             Self::ClearingNotDescending { .. } => WarningCode::ClearingNotDescending,
+            Self::InlayMaleMirrored { .. } => WarningCode::InlayMaleMirrored,
+            Self::InlayPlugBaseThin { .. } => WarningCode::InlayPlugBaseThin,
         }
     }
 
@@ -974,7 +1000,9 @@ impl Warning {
             | Self::VCarveSamplingBudget { op, .. }
             | Self::StartDepthMismatch { op, .. }
             | Self::ClearingNoRoom { op, .. }
-            | Self::ClearingNotDescending { op, .. } => Some(op),
+            | Self::ClearingNotDescending { op, .. }
+            | Self::InlayMaleMirrored { op, .. }
+            | Self::InlayPlugBaseThin { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1657,6 +1685,17 @@ impl fmt::Display for Warning {
                 "its clearing pass with tool `{tool}` ({} mm) is wider than the pass before it (`{earlier_tool}`, {} mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach",
                 diameter(*diameter_mm),
                 diameter(*earlier_diameter_mm)
+            ),
+            Self::InlayMaleMirrored { axis_x_mm, .. } => write!(
+                f,
+                "it is a male inlay, so its design is cut mirrored about X = {} mm, the middle of its targets, to seat face down in the female",
+                mm(*axis_x_mm)
+            ),
+            Self::InlayPlugBaseThin { base_mm, .. } => write!(
+                f,
+                "it leaves {} mm of board under its plug's surround, less than {} mm; the plug may flex or crack when pressed into the glue",
+                mm(*base_mm),
+                mm(dc_project::INLAY_MIN_PLUG_BASE_MM)
             ),
         }
     }
@@ -2368,6 +2407,20 @@ mod tests {
                 },
                 "its clearing pass with tool `t3` (3.175 mm) is wider than the pass before it (`t4`, 1.5 mm); it still runs, but list the largest tool first so each pass clears only what the one before could not reach",
             ),
+            (
+                Warning::InlayMaleMirrored {
+                    op: op(),
+                    axis_x_mm: 50.000_000_000_01,
+                },
+                "it is a male inlay, so its design is cut mirrored about X = 50 mm, the middle of its targets, to seat face down in the female",
+            ),
+            (
+                Warning::InlayPlugBaseThin {
+                    op: op(),
+                    base_mm: 5.000_000_001,
+                },
+                "it leaves 5 mm of board under its plug's surround, less than 6 mm; the plug may flex or crack when pressed into the glue",
+            ),
         ]
     }
 
@@ -2428,7 +2481,9 @@ mod tests {
             C::VCarveSamplingBudget => C::StartDepthMismatch,
             C::StartDepthMismatch => C::ClearingNoRoom,
             C::ClearingNoRoom => C::ClearingNotDescending,
-            C::ClearingNotDescending => return None,
+            C::ClearingNotDescending => C::InlayMaleMirrored,
+            C::InlayMaleMirrored => C::InlayPlugBaseThin,
+            C::InlayPlugBaseThin => return None,
         })
     }
 
@@ -2465,7 +2520,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 46);
+        assert_eq!(count, 48);
     }
 
     #[test]

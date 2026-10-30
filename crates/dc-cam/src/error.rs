@@ -849,6 +849,55 @@ pub enum CamError {
         /// How far past the wall, mm.
         overlap_mm: f64,
     },
+    /// One of an Inlay's values is unset (format 22, capability 45;
+    /// validation's `operation_value_unset`): `depth_mm`, `glue_gap_mm` or
+    /// `plug_depth_mm` on either side, `margin_mm` on a male. Validation
+    /// reports this first.
+    #[error("operation `{op}` has no {field}; export fails until it is set")]
+    InlayValueUnset {
+        /// The Inlay.
+        op: OperationId,
+        /// The field, as the project file names it.
+        field: &'static str,
+    },
+    /// An Inlay's `depth_mm` or `plug_depth_mm` is not a number above 0
+    /// (format 22; validation's `out_of_range`). Validation reports this
+    /// first.
+    #[error("operation `{op}` has {field} {value_mm} mm; it must be above 0")]
+    InlayValueRange {
+        /// The Inlay.
+        op: OperationId,
+        /// The field, as the project file names it.
+        field: &'static str,
+        /// The value given, mm.
+        value_mm: f64,
+    },
+    /// An Inlay's glue gap is not 0 or more and below its depth (format
+    /// 22, `inlay_glue_gap_not_below_depth`): the male starts `depth_mm −
+    /// glue_gap_mm` below the stock top, so its plug would have no wall.
+    /// Validation reports this first.
+    #[error(
+        "operation `{op}` has glue_gap_mm {glue_gap_mm} mm; it must be 0 or more and below its depth_mm {depth_mm} mm, or the plug has no wall to seat"
+    )]
+    InlayGlueGap {
+        /// The Inlay.
+        op: OperationId,
+        /// The glue gap given, mm.
+        glue_gap_mm: f64,
+        /// The depth, mm.
+        depth_mm: f64,
+    },
+    /// A male Inlay's margin is not a number above 0 (format 22,
+    /// `inlay_margin_positive`). Validation reports this first.
+    #[error(
+        "operation `{op}` is a male inlay with margin_mm {margin_mm} mm; its surround is carved that far beyond the design, so it must be above 0"
+    )]
+    InlayMargin {
+        /// The Inlay.
+        op: OperationId,
+        /// The margin given, mm.
+        margin_mm: f64,
+    },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.
     #[error("shape {shape} encloses itself through other shapes; no cut order exists")]
