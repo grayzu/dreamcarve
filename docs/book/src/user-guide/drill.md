@@ -223,9 +223,8 @@ used, and `check` does not ask for it. For a 6 mm mouth with the 1/4 in
 | 30° | 11.196 mm | 11.849 mm |
 | 15° | 22.787 mm | 24.117 mm |
 
-A 90° bit suits flat-head wood screws, whose heads are close to 90°; an
-82° bit, the angle of most imperial machine screws, opens 6 mm at
-3.451 mm. The **cone height**, `diameter / (2 × tan(α / 2))` for the bit's
+A 90° bit matches metric countersunk screws, whose heads are 90°; an 82°
+bit, the angle of inch flat-head screws, opens 6 mm at 3.451 mm. The **cone height**, `diameter / (2 × tan(α / 2))` for the bit's
 own diameter, is how far the bit's sides reach before the straight shank
 starts: a mouth the bit's full width puts the tip exactly one cone height
 down, and a wider mouth would need the shank to cut, so it is the error
