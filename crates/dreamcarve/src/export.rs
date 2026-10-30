@@ -34,7 +34,7 @@ use std::process::ExitCode;
 
 use dc_cam::{
     CamError, RunLabel, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave,
-    generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
+    generate_inlay, generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -43,7 +43,7 @@ use dc_gcode::{
     machine_lift_limits_note, scaling_note,
 };
 use dc_project::{
-    DrillCycle, DrillOp, Operation, OperationId, PostProcessorRef, Project, ResetReason,
+    DrillCycle, DrillOp, InlaySide, Operation, OperationId, PostProcessorRef, Project, ResetReason,
     SettingReset, Severity, SourceMap, ToolChangeMode, ToolId, Units, validate,
 };
 
@@ -209,21 +209,27 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                     .collect::<Result<Vec<_>, _>>()
                     .map(|runs| (runs, w))
             }),
-            // Format 22 adds the Inlay to the project; its generator lands
-            // in #436. Until then it is refused, so no program is ever
-            // written for one.
-            Operation::Inlay(op) => Err(CamError::NotSupportedYet {
-                op: op.id.clone(),
-                feature: "a V-bit inlay (`inlay`)".into(),
+            // Format 22 (#436): an Inlay side is a carve, so its runs are a
+            // V-Carve's: its clearing passes', then its V-bit's.
+            Operation::Inlay(op) => generate_inlay(project, op).and_then(|(runs, w)| {
+                runs.into_iter()
+                    .map(|run| run_op(project, operation, run))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map(|runs| (runs, w))
             }),
         };
         match generated {
             Ok((runs, warnings)) => {
                 // Validation reports `clearing_not_descending` (#406), as it
-                // reports `start_depth_uncleared` (#409): once.
-                let warnings = warnings
-                    .iter()
-                    .filter(|w| !matches!(w, dc_cam::Warning::ClearingNotDescending { .. }));
+                // reports `start_depth_uncleared` (#409) and
+                // `inlay_plug_base_thin` (#434): once.
+                let warnings = warnings.iter().filter(|w| {
+                    !matches!(
+                        w,
+                        dc_cam::Warning::ClearingNotDescending { .. }
+                            | dc_cam::Warning::InlayPlugBaseThin { .. }
+                    )
+                });
                 findings.warnings.extend(warnings.map(|w| {
                     Finding::coded(
                         w.code().as_str(),
@@ -345,9 +351,13 @@ pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId)
         .reduce(f64::max)
 }
 
-/// One line per enabled V-Carve of `generated`, for `check` and `export`:
-/// its deepest cut, whether it has a flat depth (capability 39) and, when
-/// the V-bit cuts a floor, the height of the ridges it leaves (design step 6).
+/// One line per enabled V-Carve or Inlay of `generated`, for `check` and
+/// `export`: its deepest cut, whether it has a flat depth (capability 39)
+/// and, when the V-bit cuts a floor, the height of the ridges it leaves
+/// (design step 6) and whether clearing passes cut the rest. An Inlay's
+/// line names its side, and a male's its start plane, `depth_mm −
+/// glue_gap_mm` below the stock top (#436); its mirror line is the
+/// `inlay_male_mirrored` warning's.
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     project
         .operations
@@ -378,6 +388,46 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                     "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
                     carve.id,
                     carve.name,
+                    describe_length(project, deepest)
+                ))
+            }
+            Operation::Inlay(inlay) => {
+                let deepest = deepest_cut_mm(project, generated, &inlay.id)?;
+                // Validation refuses an unset value, so an exported one is
+                // set.
+                let length = |mm: Option<f64>| {
+                    mm.map_or_else(|| "?".to_owned(), |mm| describe_length(project, mm))
+                };
+                let (side, mut floor) = match inlay.side {
+                    InlaySide::Female => (
+                        "female",
+                        format!("a flat floor at depth_mm {}", length(inlay.depth_mm)),
+                    ),
+                    InlaySide::Male => (
+                        "male",
+                        format!(
+                            "the plug's start plane {} below the stock top and the surround's flat floor plug_depth_mm {} below that",
+                            length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
+                            length(inlay.plug_depth_mm)
+                        ),
+                    ),
+                };
+                if let Some(ridge_mm) = dc_cam::inlay::floor_ridge_height_mm(project, inlay) {
+                    let ridges = describe_length(project, ridge_mm);
+                    if inlay.clearing.is_empty() {
+                        floor.push_str(&format!(
+                            "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
+                        ));
+                    } else {
+                        floor.push_str(&format!(
+                            "; V-bit floor ridges {ridges} where no clearing pass reaches"
+                        ));
+                    }
+                }
+                Some(format!(
+                    "Inlay {} `{}` ({side}): deepest cut {} below the stock top, {floor}.",
+                    inlay.id,
+                    inlay.name,
                     describe_length(project, deepest)
                 ))
             }

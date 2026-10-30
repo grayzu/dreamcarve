@@ -13,8 +13,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use dc_cam::{
-    RunLabel, generate_bore, generate_drill, generate_engrave, generate_pocket, generate_profile,
-    generate_vcarve,
+    RunLabel, generate_bore, generate_drill, generate_engrave, generate_inlay, generate_pocket,
+    generate_profile, generate_vcarve,
 };
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_project::{
@@ -293,12 +293,24 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
                 (drilled.toolpath, Some(drilled.holes))
             }
-            // Format 22: the Inlay's generator lands in #436.
-            Operation::Inlay(_) => {
-                return Err(format!(
-                    "operation {} is an Inlay, which this build does not generate yet",
-                    operation.id()
-                ));
+            // Format 22 (#436): an Inlay side's runs, as a V-Carve's.
+            Operation::Inlay(op) => {
+                for run in generate_inlay(project, op).map_err(err)?.0 {
+                    let tool = project
+                        .tools
+                        .iter()
+                        .find(|t| t.id == run.tool)
+                        .ok_or_else(|| format!("operation {} has no tool", operation.id()))?
+                        .clone();
+                    ops.push(EmitOp {
+                        op: operation.clone(),
+                        tool,
+                        toolpath: run.toolpath,
+                        holes: None,
+                        label: run.label,
+                    });
+                }
+                continue;
             }
         };
         ops.push(EmitOp {

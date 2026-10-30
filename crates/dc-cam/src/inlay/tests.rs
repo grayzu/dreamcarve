@@ -1,0 +1,830 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! Tests of the Inlay generator (#436; `docs/specs/phase-3/design.md`,
+//! "Algorithms → Inlay" and "Test plan → dc-cam — inlay"; functional
+//! acceptance 56 and 57).
+//!
+//! The star is the inlay test part's: four points 60 mm tip to tip, inner
+//! vertices 12 mm out on the diagonals, a 12 mm circle in its middle,
+//! centred at (50, 50) on 100 × 100 × 12 mm stock. `t1` is the bench's
+//! 60° 6.35 mm V-bit (cone 5.499 mm), `t2` a 3.175 mm end mill. The values
+//! are the part's: `depth_mm` 4, `glue_gap_mm` 1, `plug_depth_mm` 2,
+//! `margin_mm` 8, so the male's start plane is 3 mm below the stock top
+//! and its floor 5 mm below it.
+
+use super::*;
+use crate::run::RunLabel;
+use crate::test_support::assert_run_safe;
+use crate::toolpath::{MoveKind, Toolpath};
+use crate::vcarve::generate_vcarve;
+use dc_geometry::{
+    Contour, Point, Point3, Polyline, Region, Vertex, floor_regions, nearest_point, nest, surround,
+};
+use dc_project::test_support::{sample_project, tool_6_35_upcut};
+use dc_project::{
+    ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, InlaySide, MachiningOrder, Operation, OperationId, Stock, Tool, ToolId,
+    ToolKind, VCarveOp, VCarveStrategy,
+};
+use std::collections::BTreeMap;
+use std::sync::OnceLock;
+
+const THICKNESS_MM: f64 = 12.0;
+/// The star's centre, mm.
+const CENTRE: (f64, f64) = (50.0, 50.0);
+const DEPTH_MM: f64 = 4.0;
+const GLUE_GAP_MM: f64 = 1.0;
+const PLUG_DEPTH_MM: f64 = 2.0;
+const MARGIN_MM: f64 = 8.0;
+/// The circle's radius, mm.
+const CIRCLE_MM: f64 = 6.0;
+/// The fit property's and the flank's tolerance (acceptance 57), mm.
+const FIT_MM: f64 = 0.02;
+
+/// A 6.35 mm V-bit `t1` of `angle_deg`: 1000 mm/min, plunge 300, step-down
+/// 2 mm, floor step-over 0.4.
+fn v_bit(angle_deg: f64) -> Tool {
+    Tool {
+        id: ToolId::new("t1"),
+        name: format!("{angle_deg}° V-bit"),
+        cutter: ToolKind::VBit {
+            included_angle_deg: angle_deg,
+        },
+        ..tool_6_35_upcut()
+    }
+}
+
+/// The 3.175 mm end mill `t2`: 1000 mm/min, plunge 300, step-down 2 mm,
+/// step-over 0.4.
+fn end_mill() -> Tool {
+    Tool {
+        id: ToolId::new("t2"),
+        name: "3.175 mm end mill".into(),
+        diameter_mm: 3.175,
+        ..tool_6_35_upcut()
+    }
+}
+
+fn slope() -> f64 {
+    (30.0_f64).to_radians().tan()
+}
+
+fn polygon(points: &[(f64, f64)]) -> Polyline {
+    Polyline::new(
+        points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+        true,
+    )
+}
+
+/// The star's corners, centred at the origin: tips on the axes 30 mm out,
+/// inner vertices on the diagonals 12 mm out.
+fn star_points() -> Vec<(f64, f64)> {
+    let inner = 12.0 * std::f64::consts::FRAC_1_SQRT_2;
+    vec![
+        (30.0, 0.0),
+        (inner, inner),
+        (0.0, 30.0),
+        (-inner, inner),
+        (-30.0, 0.0),
+        (-inner, -inner),
+        (0.0, -30.0),
+        (inner, -inner),
+    ]
+}
+
+/// A `width` × `height` × [`THICKNESS_MM`] project with one instance `i1`
+/// of `profiles` placed at `at`, the tools `t1` (a 60° V-bit) and `t2`,
+/// and no operations.
+fn project_of(profiles: Vec<Polyline>, at: (f64, f64), width_mm: f64, height_mm: f64) -> Project {
+    let mut p = sample_project();
+    p.stock = Stock {
+        width_mm,
+        height_mm,
+        thickness_mm: Some(THICKNESS_MM),
+    };
+    let def = FeatureDefinition {
+        id: DefinitionId::new("d1"),
+        name: "Design".into(),
+        profiles,
+    };
+    p.instances = vec![FeatureInstance {
+        id: InstanceId::new("i1"),
+        definition: def.id.clone(),
+        transform: Transform::translate(at.0, at.1),
+        name: "Design".into(),
+        visible: true,
+        locked: false,
+        z_top_mm: None,
+        z_bottom_mm: None,
+    }];
+    p.definitions = BTreeMap::from([(def.id.clone(), def)]);
+    p.tools = vec![v_bit(60.0), end_mill()];
+    p.operations.clear();
+    p
+}
+
+/// The star with its circle on 100 × 100 mm stock `thickness_mm` thick.
+fn star_project(thickness_mm: f64) -> Project {
+    let mut p = project_of(
+        vec![
+            polygon(&star_points()),
+            Polyline::circle(Point::new(0.0, 0.0), CIRCLE_MM),
+        ],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    p.stock.thickness_mm = Some(thickness_mm);
+    p
+}
+
+/// The star part's Inlay `o1` of `i1` with `t1`, side `side`, no clearing.
+fn inlay(side: InlaySide) -> InlayOp {
+    InlayOp {
+        id: OperationId::new("o1"),
+        name: "Star".into(),
+        enabled: true,
+        targets: vec![InstanceId::new("i1")],
+        tool: ToolId::new("t1"),
+        side,
+        depth_mm: Some(DEPTH_MM),
+        glue_gap_mm: Some(GLUE_GAP_MM),
+        plug_depth_mm: Some(PLUG_DEPTH_MM),
+        margin_mm: Some(MARGIN_MM),
+        clearing: Vec::new(),
+        step_over_fraction: None,
+        machining_order: MachiningOrder::FullDepthFirst,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 10.0,
+    }
+}
+
+/// A clearing pass with `t2`, offset, climb, plunging.
+fn clearing_pass() -> ClearingPass {
+    ClearingPass {
+        tool: ToolId::new("t2"),
+        strategy: ClearanceStrategy::Offset,
+        direction: CutDirection::Climb,
+        entry: Entry::Plunge,
+    }
+}
+
+/// `project` with `op` as its only operation.
+fn with_op(project: &Project, op: Operation) -> Project {
+    let mut p = project.clone();
+    p.operations = vec![op];
+    p
+}
+
+/// The generator's result for `op` in `project` (which gains `op`).
+fn try_inlay(project: &Project, op: &InlayOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
+    generate_inlay(&with_op(project, Operation::Inlay(op.clone())), op)
+}
+
+/// [`try_inlay`], which must succeed; every run passes `assert_run_safe`,
+/// the cone test included.
+fn inlay_runs(project: &Project, op: &InlayOp) -> (Vec<ToolRun>, Vec<Warning>) {
+    let p = with_op(project, Operation::Inlay(op.clone()));
+    let (runs, warnings) =
+        generate_inlay(&p, op).unwrap_or_else(|e| panic!("the inlay generates: {e}\n{e:?}"));
+    for run in &runs {
+        assert_run_safe(run, &p, &Operation::Inlay(op.clone()));
+    }
+    (runs, warnings)
+}
+
+/// The V-bit's own run of `runs`.
+fn main_run(runs: &[ToolRun]) -> &Toolpath {
+    &runs
+        .iter()
+        .find(|r| r.label == RunLabel::Main)
+        .expect("a V-bit run")
+        .toolpath
+}
+
+/// The star part's female and male, generated once for the tests that
+/// only read them.
+fn star_side(side: InlaySide) -> &'static (Vec<ToolRun>, Vec<Warning>) {
+    static FEMALE: OnceLock<(Vec<ToolRun>, Vec<Warning>)> = OnceLock::new();
+    static MALE: OnceLock<(Vec<ToolRun>, Vec<Warning>)> = OnceLock::new();
+    let cell = match side {
+        InlaySide::Female => &FEMALE,
+        InlaySide::Male => &MALE,
+    };
+    cell.get_or_init(|| inlay_runs(&star_project(THICKNESS_MM), &inlay(side)))
+}
+
+/// Every point a cutting move of `toolpath` runs through at its ends, with
+/// the move's start.
+fn cut_points(toolpath: &Toolpath) -> Vec<Point3> {
+    let mut out = Vec::new();
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        if mv.is_cut()
+            && let Some(a) = from
+        {
+            out.push(a);
+            out.push(mv.to);
+        }
+        from = Some(mv.to);
+    }
+    out
+}
+
+/// The distance from `p` to the nearest outline of `contours`, mm.
+fn distance_to(contours: &[Polyline], p: Point) -> f64 {
+    contours
+        .iter()
+        .filter_map(|c| nearest_point(c, p))
+        .map(|n| n.gap_mm)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// Every outline of `regions`.
+fn outlines(regions: &[Region]) -> Vec<Polyline> {
+    regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(|c| c.polyline().clone())
+        .collect()
+}
+
+/// Whether `p` is inside one of `regions` or within `slack_mm` of an
+/// outline of one.
+fn in_regions(regions: &[Region], p: Point, slack_mm: f64) -> bool {
+    regions.iter().any(|r| r.contains_point(p)) || distance_to(&outlines(regions), p) <= slack_mm
+}
+
+/// The star placed, project space.
+fn star_placed() -> Polyline {
+    let points: Vec<(f64, f64)> = star_points()
+        .iter()
+        .map(|&(x, y)| (x + CENTRE.0, y + CENTRE.1))
+        .collect();
+    polygon(&points)
+}
+
+/// Sample points along the placed star's edges, fractions 0.25 to 0.75
+/// of each edge. Within `(D − G) · tan 30° / tan 21.5°` =
+/// 4.4 mm of a tip (21.5° is half the tip's angle) the arm is narrower
+/// than the groove 3 mm down, so there the wall at that depth is not the
+/// edge's own inset but the inset tip's, farther off; 0.25 of an edge is
+/// 5.8 mm.
+fn star_samples() -> Vec<Point> {
+    let corners: Vec<(f64, f64)> = star_points()
+        .iter()
+        .map(|&(x, y)| (x + CENTRE.0, y + CENTRE.1))
+        .collect();
+    let mut out = Vec::new();
+    for (k, &(ax, ay)) in corners.iter().enumerate() {
+        let (bx, by) = corners[(k + 1) % corners.len()];
+        for step in 0..=5 {
+            let t = 0.25 + 0.1 * f64::from(step);
+            out.push(Point::new(ax + (bx - ax) * t, ay + (by - ay) * t));
+        }
+    }
+    out
+}
+
+/// Sample points on the placed circle, every 15°.
+fn circle_samples() -> Vec<Point> {
+    (0..24)
+        .map(|k| {
+            let a = f64::from(k) * 15.0_f64.to_radians();
+            Point::new(
+                CENTRE.0 + CIRCLE_MM * a.cos(),
+                CENTRE.1 + CIRCLE_MM * a.sin(),
+            )
+        })
+        .collect()
+}
+
+/// How far the V-bit's cones along `toolpath`, at height `z_mm`, stop
+/// short of `q`, mm: the least over every point `p` of every straight
+/// cutting move whose tip is at or below `z_mm` of `|q − p| − (z_mm − z_p)
+/// · slope`, the distance from `q` to that cone's disc at `z_mm`.
+/// Negative when a disc reaches past `q`, by that much. The function is
+/// convex along a straight move, so its least is searched, not sampled.
+fn disc_gap_mm(toolpath: &Toolpath, q: Point, z_mm: f64, slope: f64) -> f64 {
+    let mut best = f64::INFINITY;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        let start = from;
+        from = Some(mv.to);
+        let Some(a) = start else {
+            continue;
+        };
+        if !mv.is_cut() || !matches!(mv.kind, MoveKind::Linear) {
+            continue;
+        }
+        let b = mv.to;
+        // The part of the move whose tip is at or below `z_mm`.
+        let (lo, hi) = if (b.z - a.z).abs() < 1e-12 {
+            if a.z > z_mm {
+                continue;
+            }
+            (0.0, 1.0)
+        } else {
+            let t = (z_mm - a.z) / (b.z - a.z);
+            if b.z > a.z {
+                (0.0, t.min(1.0))
+            } else {
+                (t.max(0.0), 1.0)
+            }
+        };
+        if lo > hi {
+            continue;
+        }
+        let at = |t: f64| {
+            let p = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+            let z = a.z + (b.z - a.z) * t;
+            q.distance_to(p) - (z_mm - z) * slope
+        };
+        // A cheap bound: no point of the move is nearer `q` than its
+        // segment, and no disc wider than the lowest end's.
+        let seg = dc_geometry::Segment {
+            start: a.xy(),
+            end: b.xy(),
+            bulge: 0.0,
+        };
+        let bound = dc_geometry::point_segment_distance_mm(seg, q) - (z_mm - a.z.min(b.z)) * slope;
+        if bound >= best {
+            continue;
+        }
+        let (mut x0, mut x1) = (lo, hi);
+        for _ in 0..80 {
+            let m0 = x0 + (x1 - x0) / 3.0;
+            let m1 = x1 - (x1 - x0) / 3.0;
+            if at(m0) <= at(m1) {
+                x1 = m1;
+            } else {
+                x0 = m0;
+            }
+        }
+        best = best.min(at(lo)).min(at(hi)).min(at((x0 + x1) / 2.0));
+    }
+    best
+}
+
+/// `toolpath` mirrored back about X = `axis_x_mm`.
+fn mirrored_back(toolpath: &Toolpath, axis_x_mm: f64) -> Toolpath {
+    let mut out = toolpath.clone();
+    for mv in &mut out.moves {
+        mv.to.x = 2.0 * axis_x_mm - mv.to.x;
+    }
+    out
+}
+
+/// The axis of the one `InlayMaleMirrored` among `warnings`.
+fn mirror_axis(warnings: &[Warning]) -> f64 {
+    let axes: Vec<f64> = warnings
+        .iter()
+        .filter_map(|w| match w {
+            Warning::InlayMaleMirrored { axis_x_mm, .. } => Some(*axis_x_mm),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(axes.len(), 1, "one mirror note: {warnings:?}");
+    axes[0]
+}
+
+/// Acceptance 56: the female is a V-Carve of its targets with
+/// `flat_depth_mm: D` from the stock top, move for move, with and without
+/// a clearing pass.
+#[test]
+fn female_equals_a_flat_depth_v_carve() {
+    let project = star_project(THICKNESS_MM);
+    for clearing in [Vec::new(), vec![clearing_pass()]] {
+        let op = InlayOp {
+            clearing: clearing.clone(),
+            ..inlay(InlaySide::Female)
+        };
+        let carve = VCarveOp {
+            id: op.id.clone(),
+            name: op.name.clone(),
+            enabled: true,
+            targets: op.targets.clone(),
+            tool: op.tool.clone(),
+            strategy: VCarveStrategy::Medial,
+            clearing,
+            flat_depth_mm: Some(DEPTH_MM),
+            start_depth_mm: 0.0,
+            start_plane_cleared_externally: false,
+            step_over_fraction: op.step_over_fraction,
+            machining_order: op.machining_order,
+            through_cut_allowance_mm: op.through_cut_allowance_mm,
+            safe_z_mm: op.safe_z_mm,
+        };
+        let (female, female_warnings) = inlay_runs(&project, &op);
+        let (v_carve, v_carve_warnings) =
+            generate_vcarve(&with_op(&project, Operation::VCarve(carve.clone())), &carve)
+                .expect("the V-Carve generates");
+        assert_eq!(female.len(), v_carve.len());
+        for (a, b) in female.iter().zip(&v_carve) {
+            assert_eq!(a.label, b.label);
+            assert_eq!(a.tool, b.tool);
+            assert_eq!(a.toolpath, b.toolpath, "{:?}", a.label);
+        }
+        assert_eq!(female_warnings, v_carve_warnings);
+        assert!(!female.is_empty());
+    }
+}
+
+/// Acceptance 57: the male cuts the design mirrored about the vertical
+/// line through the middle of its targets' joint bounding box, and says
+/// so once. A triangle (X 10 to 40) and a square (X 70 to 76) mirror about
+/// X 43: the male cuts round the triangle at X 46 to 76 and the square at
+/// X 10 to 16, so it cuts inside the triangle as drawn and never inside
+/// the mirrored triangle or square, the plug.
+#[test]
+fn male_mirrors_about_the_targets_centre_line() {
+    let triangle = polygon(&[(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)]);
+    let project = two_shapes();
+    let op = InlayOp {
+        depth_mm: Some(2.0),
+        glue_gap_mm: Some(0.5),
+        plug_depth_mm: Some(1.0),
+        margin_mm: Some(3.0),
+        ..inlay(InlaySide::Male)
+    };
+    let mirror = male_mirror(&project, &op.targets).expect("the targets resolve");
+    let expected = Transform::mirror_x_about(43.0).coeffs();
+    for (got, want) in mirror.coeffs().iter().zip(expected) {
+        assert!((got - want).abs() < 1e-9, "{:?}", mirror.coeffs());
+    }
+    let (runs, warnings) = inlay_runs(&project, &op);
+    assert!((mirror_axis(&warnings) - 43.0).abs() < 1e-9);
+
+    let mirrored: Vec<Contour> = project.definitions[&DefinitionId::new("d1")]
+        .profiles
+        .iter()
+        .map(|p| Contour::new(mirror.apply_polyline(p).expect("mirrors")).expect("a contour"))
+        .collect();
+    let (design, _) = nest(mirrored).expect("nests");
+    let band = surround(&design, 3.0, project.flatten_tolerance_mm);
+    let points = cut_points(main_run(&runs));
+    assert!(!points.is_empty());
+    for p in &points {
+        assert!(
+            in_regions(&band, p.xy(), 0.01),
+            "{p:?} is outside the mirrored surround"
+        );
+        assert!(
+            !design.iter().any(|r| r.contains_point(p.xy())),
+            "{p:?} cuts the plug"
+        );
+    }
+    let (drawn, _) = nest(vec![Contour::new(triangle).expect("a contour")]).expect("nests");
+    assert!(
+        points.iter().any(
+            |p| drawn[0].contains_point(p.xy()) && distance_to(&outlines(&drawn), p.xy()) > 0.5
+        ),
+        "the male cuts where the triangle is drawn, round the mirrored square"
+    );
+}
+
+/// Acceptance 57: every cutting point of the star's male lies in the band
+/// from the star out to 8 mm beyond it, or inside the circle, which is a
+/// hole of the design and so is carved; both are cut.
+#[test]
+fn male_carves_the_surround_and_the_holes() {
+    let (runs, _) = star_side(InlaySide::Male);
+    let star = star_placed();
+    let (star_region, _) = nest(vec![Contour::new(star.clone()).expect("a star")]).expect("nests");
+    let centre = Point::new(CENTRE.0, CENTRE.1);
+    let mut in_band = 0;
+    let mut in_circle = 0;
+    for p in cut_points(main_run(runs)) {
+        let xy = p.xy();
+        let to_star = distance_to(std::slice::from_ref(&star), xy);
+        if xy.distance_to(centre) <= CIRCLE_MM + 0.01 {
+            in_circle += 1;
+            continue;
+        }
+        assert!(
+            !star_region[0].contains_point(xy) || to_star <= 0.01,
+            "{p:?} cuts the plug"
+        );
+        assert!(to_star <= MARGIN_MM + 0.01, "{p:?} is beyond the margin");
+        in_band += 1;
+    }
+    assert!(in_band > 0 && in_circle > 0, "{in_band} {in_circle}");
+}
+
+/// Acceptance 57: the male's floor is `D − G + P` = 5 mm below the stock
+/// top, and nothing is cut below it.
+#[test]
+fn male_floor_is_at_depth_minus_gap_plus_plug() {
+    let (runs, _) = star_side(InlaySide::Male);
+    let floor_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM + PLUG_DEPTH_MM);
+    let lowest = cut_points(main_run(runs))
+        .iter()
+        .map(|p| p.z)
+        .fold(f64::INFINITY, f64::min);
+    assert!(lowest >= floor_z_mm - 1e-6, "{lowest}");
+    assert!((lowest - floor_z_mm).abs() < 0.01, "{lowest}");
+}
+
+/// Acceptance 57: the bit's flank passes through every mirrored outline
+/// point, the star's and the circle's, at the start plane, Z −3, within
+/// 0.02 mm, and 3 mm above it, at the stock top, it stands the design's
+/// inset of 3 · tan 30° = 1.732 mm into the plug.
+#[test]
+fn male_flank_passes_through_the_outline_at_the_start_plane() {
+    let (runs, warnings) = star_side(InlaySide::Male);
+    // The star is symmetric about its centre line, so its mirror is
+    // itself.
+    assert!((mirror_axis(warnings) - CENTRE.0).abs() < 1e-9);
+    let toolpath = main_run(runs);
+    let start_plane_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM);
+    let top_inset_mm = (DEPTH_MM - GLUE_GAP_MM) * slope();
+    assert!((top_inset_mm - 1.732).abs() < 0.001);
+    for q in star_samples().into_iter().chain(circle_samples()) {
+        let at_start = disc_gap_mm(toolpath, q, start_plane_z_mm, slope());
+        assert!(at_start.abs() <= FIT_MM, "{q:?}: {at_start}");
+        let at_top = -disc_gap_mm(toolpath, q, THICKNESS_MM, slope());
+        assert!((at_top - top_inset_mm).abs() <= FIT_MM, "{q:?}: {at_top}");
+    }
+}
+
+/// The fit property (design "Inlay" step 5; acceptance 57): mirrored
+/// back, the plug's wall at height `h` above its start plane stands at
+/// the same inset from the design's outline as the pocket's wall `h` below
+/// the stock top, `h · tan 30°`, within 0.02 mm, for `h` from 0 to `D − G`
+/// = 3 mm. Read from the two toolpaths' cones: the female's discs at
+/// depth `h` stop that far short of each outline point, the male's reach
+/// that far past it. The star is symmetric about its mirror line, so the
+/// triangle and square of `male_mirrors_about_the_targets_centre_line`,
+/// which the mirror moves, are checked too (`D − G` = 1.5 mm there).
+#[test]
+fn female_and_male_walls_mate() {
+    let (female, _) = star_side(InlaySide::Female);
+    let (male, warnings) = star_side(InlaySide::Male);
+    let star = walls_mate(
+        main_run(female),
+        main_run(male),
+        mirror_axis(warnings),
+        &star_samples(),
+        DEPTH_MM - GLUE_GAP_MM,
+    );
+
+    let pair = two_shapes();
+    let op = |side| InlayOp {
+        depth_mm: Some(2.0),
+        glue_gap_mm: Some(0.5),
+        plug_depth_mm: Some(1.0),
+        margin_mm: Some(3.0),
+        ..inlay(side)
+    };
+    let (female, _) = inlay_runs(&pair, &op(InlaySide::Female));
+    let (male, warnings) = inlay_runs(&pair, &op(InlaySide::Male));
+    let corners = [
+        vec![(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)],
+        vec![(70.0, 10.0), (76.0, 10.0), (76.0, 16.0), (70.0, 16.0)],
+    ];
+    let samples: Vec<Point> = corners
+        .iter()
+        .flat_map(|c| edge_samples(c, &[0.3, 0.4, 0.5, 0.6, 0.7]))
+        .collect();
+    let pair = walls_mate(
+        main_run(&female),
+        main_run(&male),
+        mirror_axis(&warnings),
+        &samples,
+        1.5,
+    );
+    println!("fit: worst mismatch {star:.5} mm on the star, {pair:.5} mm on the pair");
+}
+
+/// The triangle (10, 10), (40, 10), (10, 30) and the 6 mm square at
+/// (70, 10), on 100 × 50 mm stock: they mirror about X 43.
+fn two_shapes() -> Project {
+    project_of(
+        vec![
+            polygon(&[(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)]),
+            Polyline::rect(Point::new(70.0, 10.0), 6.0, 6.0),
+        ],
+        (0.0, 0.0),
+        100.0,
+        50.0,
+    )
+}
+
+/// Points at `fractions` along each edge of the closed polygon `corners`.
+fn edge_samples(corners: &[(f64, f64)], fractions: &[f64]) -> Vec<Point> {
+    let mut out = Vec::new();
+    for (k, &(ax, ay)) in corners.iter().enumerate() {
+        let (bx, by) = corners[(k + 1) % corners.len()];
+        for t in fractions {
+            out.push(Point::new(ax + (bx - ax) * t, ay + (by - ay) * t));
+        }
+    }
+    out
+}
+
+/// Asserts the fit property for the female's V-bit run `female` and the
+/// male's `male` (mirrored about X `axis_x_mm`, on [`THICKNESS_MM`] stock,
+/// start plane `rise_mm` below the stock top) at every outline point of
+/// `samples`, for heights 0 to `rise_mm` in tenths; returns the worst
+/// mismatch between the two walls, mm.
+fn walls_mate(
+    female: &Toolpath,
+    male: &Toolpath,
+    axis_x_mm: f64,
+    samples: &[Point],
+    rise_mm: f64,
+) -> f64 {
+    let male = mirrored_back(male, axis_x_mm);
+    let start_plane_z_mm = THICKNESS_MM - rise_mm;
+    let mut worst_mm: f64 = 0.0;
+    for &q in samples {
+        for step in 0..=10 {
+            let h = rise_mm * f64::from(step) / 10.0;
+            let inset = h * slope();
+            let pocket = disc_gap_mm(female, q, THICKNESS_MM - h, slope());
+            let plug = -disc_gap_mm(&male, q, start_plane_z_mm + h, slope());
+            assert!(
+                (pocket - inset).abs() <= FIT_MM,
+                "{q:?} h {h}: pocket {pocket}, inset {inset}"
+            );
+            assert!(
+                (plug - inset).abs() <= FIT_MM,
+                "{q:?} h {h}: plug {plug}, inset {inset}"
+            );
+            assert!(
+                (pocket - plug).abs() <= FIT_MM,
+                "{q:?} h {h}: pocket {pocket}, plug {plug}"
+            );
+            worst_mm = worst_mm.max((pocket - plug).abs());
+        }
+    }
+    worst_mm
+}
+
+/// Security review H4: the male's flank is engaged from the stock top,
+/// `D − G + P`. Corbin's `2.5, 0.25, 1.5` engages the 90° bit 3.75 mm, past
+/// its 3.175 mm cone; the female of the same values engages it 2.5 mm and
+/// generates.
+#[test]
+fn male_engagement_beyond_the_cone_is_an_error() {
+    let mut project = star_project(THICKNESS_MM);
+    project.tools[0] = v_bit(90.0);
+    let corbin = |side| InlayOp {
+        depth_mm: Some(2.5),
+        glue_gap_mm: Some(0.25),
+        plug_depth_mm: Some(1.5),
+        ..inlay(side)
+    };
+    match try_inlay(&project, &corbin(InlaySide::Male)) {
+        Err(CamError::VBitConeExceeded {
+            depth_mm, cone_mm, ..
+        }) => {
+            assert!((depth_mm - 3.75).abs() < 1e-9, "{depth_mm}");
+            assert!((cone_mm - 3.175).abs() < 1e-9, "{cone_mm}");
+        }
+        other => panic!("expected VBitConeExceeded, got {other:?}"),
+    }
+    inlay_runs(&project, &corbin(InlaySide::Female));
+}
+
+/// `0 <= G < D` on either side, else `InlayGlueGap`; a male's margin must
+/// be above 0, else `InlayMargin` (acceptance 57: a `glue_gap_mm` of 4).
+#[test]
+fn glue_gap_at_or_above_depth_is_an_error() {
+    let project = star_project(THICKNESS_MM);
+    for side in [InlaySide::Female, InlaySide::Male] {
+        for gap in [4.0, 5.0, -0.5] {
+            let op = InlayOp {
+                glue_gap_mm: Some(gap),
+                ..inlay(side)
+            };
+            match try_inlay(&project, &op) {
+                Err(CamError::InlayGlueGap {
+                    glue_gap_mm,
+                    depth_mm,
+                    ..
+                }) => {
+                    assert!((glue_gap_mm - gap).abs() < 1e-12, "{glue_gap_mm}");
+                    assert!((depth_mm - DEPTH_MM).abs() < 1e-12, "{depth_mm}");
+                }
+                other => panic!("{side:?} {gap}: expected InlayGlueGap, got {other:?}"),
+            }
+        }
+    }
+    let flat = InlayOp {
+        margin_mm: Some(0.0),
+        ..inlay(InlaySide::Male)
+    };
+    assert!(
+        matches!(try_inlay(&project, &flat), Err(CamError::InlayMargin { margin_mm, .. }) if margin_mm.abs() < 1e-12)
+    );
+    let unset = InlayOp {
+        plug_depth_mm: None,
+        ..inlay(InlaySide::Female)
+    };
+    assert!(matches!(
+        try_inlay(&project, &unset),
+        Err(CamError::InlayValueUnset {
+            field: "plug_depth_mm",
+            ..
+        })
+    ));
+}
+
+/// Acceptance 57: on 10 mm stock the male leaves 10 − 5 = 5 mm under its
+/// floor and warns `inlay_plug_base_thin`; on 12 mm it leaves 7 and does
+/// not, nor does the female. A 20 × 10 rectangle keeps the test quick.
+#[test]
+fn thin_plug_base_warns_on_10_mm_stock_and_not_on_12() {
+    let thin = |thickness_mm: f64, side| {
+        let mut project = project_of(
+            vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 10.0)],
+            (30.0, 30.0),
+            100.0,
+            100.0,
+        );
+        project.stock.thickness_mm = Some(thickness_mm);
+        let (_, warnings) = inlay_runs(&project, &inlay(side));
+        warnings
+            .iter()
+            .filter_map(|w| match w {
+                Warning::InlayPlugBaseThin { base_mm, .. } => Some(*base_mm),
+                _ => None,
+            })
+            .collect::<Vec<f64>>()
+    };
+    let on_10 = thin(10.0, InlaySide::Male);
+    assert_eq!(on_10.len(), 1, "{on_10:?}");
+    assert!((on_10[0] - 5.0).abs() < 1e-9, "{on_10:?}");
+    assert!(thin(12.0, InlaySide::Male).is_empty());
+    assert!(thin(10.0, InlaySide::Female).is_empty());
+}
+
+/// Acceptance 57: with `clearing: [t2]` the male's first run is the end
+/// mill's, which clears the surround's floor at Z −5 (the surround inset
+/// by `P · tan 30°`, its centre at least its radius inside), and the
+/// V-bit's floor cutting shrinks to what the end mill cannot reach, as in
+/// acceptance 51.
+#[test]
+fn clearing_pass_clears_the_male_floor() {
+    let project = star_project(THICKNESS_MM);
+    let op = InlayOp {
+        clearing: vec![clearing_pass()],
+        ..inlay(InlaySide::Male)
+    };
+    let (runs, _) = inlay_runs(&project, &op);
+    let labels: Vec<&RunLabel> = runs.iter().map(|r| &r.label).collect();
+    assert_eq!(
+        labels,
+        [&RunLabel::Clearing(ToolId::new("t2")), &RunLabel::Main]
+    );
+    let floor_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM + PLUG_DEPTH_MM);
+    let clearing = cut_points(&runs[0].toolpath);
+    let lowest = clearing.iter().map(|p| p.z).fold(f64::INFINITY, f64::min);
+    assert!((lowest - floor_z_mm).abs() < 1e-6, "{lowest}");
+
+    let design: Vec<Contour> = [
+        star_placed(),
+        Polyline::circle(Point::new(CENTRE.0, CENTRE.1), CIRCLE_MM),
+    ]
+    .into_iter()
+    .map(|p| Contour::new(p).expect("a contour"))
+    .collect();
+    let (design, _) = nest(design).expect("nests");
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let floors = floor_regions(
+        &surround(&design, MARGIN_MM, tolerance_mm),
+        PLUG_DEPTH_MM * slope(),
+        tolerance_mm,
+    );
+    let radius_mm = 3.175 / 2.0;
+    for p in &clearing {
+        assert!(
+            floors.iter().any(|r| r.contains_point(p.xy()))
+                && distance_to(&outlines(&floors), p.xy()) >= radius_mm - 0.02,
+            "{p:?} is not a floor centre"
+        );
+    }
+
+    let floor_length = |toolpath: &Toolpath| {
+        let mut from: Option<Point3> = None;
+        let mut length = 0.0;
+        for mv in &toolpath.moves {
+            if let Some(a) = from
+                && mv.is_cut()
+                && (a.z - floor_z_mm).abs() < 1e-6
+                && (mv.to.z - floor_z_mm).abs() < 1e-6
+            {
+                length += a.xy().distance_to(mv.to.xy());
+            }
+            from = Some(mv.to);
+        }
+        length
+    };
+    let (alone, _) = star_side(InlaySide::Male);
+    let with = floor_length(&runs[1].toolpath);
+    let without = floor_length(main_run(alone));
+    println!("V-bit floor {with:.1} mm with clearing, {without:.1} mm without");
+    assert!(with < 0.5 * without, "{with} {without}");
+}

@@ -225,6 +225,21 @@
 //!   reach does not bound the run: a rest pass's footprint runs into what
 //!   they cleared, and only its centres must touch what they left.
 //!
+//! - **Inlay** (format 22, #436): each side is held as a V-Carve, its
+//!   V-bit's run to S17 and its clearing runs to its floor, with its
+//!   regions, start plane and floor re-derived from the project. The
+//!   female carves the targets' regions from the stock top, flat at
+//!   `depth_mm` `D`. The male carves the **surround** of its design: the
+//!   targets' closed outlines mirrored about the centre line of their
+//!   joint bounding box (`Transform::mirror_x_about`), nested, and
+//!   [`dc_geometry::surround`] `margin_mm` wide at the project's flatten
+//!   tolerance, the generator's construction, never the generator. Its
+//!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), its
+//!   floor `plug_depth_mm` below that. Either side's flank is engaged from
+//!   the stock top (security review H4): the plug above the male's start
+//!   plane is never cleared. A cut inside the plug, or sideways above the
+//!   male's start plane, fails as it would for a V-Carve.
+//!
 //! A move is allowed to depart from where the toolpath put it by what the
 //! program may already differ by: one unit in the last written place (the
 //! numbers' rounding), the flatten tolerance (arcs written as chords, and
@@ -248,13 +263,15 @@ use cone::{Cone, Fault};
 use countersink::Sink;
 use dc_cam::RunLabel;
 use dc_geometry::{
-    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Vec2,
-    as_circle, closest_points, floor_regions, inset_is_empty, meeting_points, nearest_point, nest,
-    offset, offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
+    Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
+    Vec2, as_circle, closest_points, floor_regions, inset_is_empty, meeting_points, nearest_point,
+    nest, offset, offset_open, point_segment_distance_mm, segment_distance_mm, strip_ends,
+    surround,
 };
 use dc_project::{
-    CornerRelief, InstanceId, Operation, PostProcessor, ProfileOp, Project, Side, TabShape, Tool,
-    ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
+    ClearingPass, CornerRelief, InlayOp, InlaySide, InstanceId, Operation, PostProcessor,
+    ProfileOp, Project, Side, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
+    cleared_start_plane,
 };
 
 use crate::ExportError;
@@ -335,13 +352,14 @@ pub(crate) enum Material {
         /// Every segment of every path.
         edges: Vec<Edge>,
     },
-    /// The V-bit's run of a V-Carve (format 20): S17 (module docs,
-    /// [`cone`]).
+    /// The V-bit's run of a V-Carve (format 20) or of an Inlay side
+    /// (format 22): S17 (module docs, [`cone`]).
     VBit(Cone),
     /// A countersink Drill (format 21): S18 (module docs,
     /// [`countersink`]).
     Countersink(Sink),
-    /// A clearing run of a V-Carve (#406, security review M3): the end
+    /// A clearing run of a V-Carve or an Inlay side (#406, #436; security
+    /// review M3): the end
     /// mill's centre stays inside the carve's floor regions, at least its
     /// radius from their outlines, and no lower than the floor.
     Floor {
@@ -354,10 +372,9 @@ pub(crate) enum Material {
     },
     /// The targets do not resolve to anything an operation of this kind
     /// cuts (an unknown instance, crossing outlines, an invalid stock to
-    /// leave), a V-Carve whose tool or settings are unusable, a run whose
-    /// label or tool the operation does not have, or an Inlay, which has
-    /// no rule before its S17 surround (#436): no cut is in the material,
-    /// fail-closed.
+    /// leave), a V-Carve or Inlay whose tool or settings are unusable, or
+    /// a run whose label or tool the operation does not have: no cut is in
+    /// the material, fail-closed.
     Unresolved,
     /// Tests of the other rules on hand-written programs: S9 is not
     /// checked.
@@ -697,11 +714,12 @@ fn areas_of(regions: Vec<Region>, waste_inside: bool) -> Vec<Area> {
 
 impl Material {
     /// The material the run `label` of `op`, cut with `tool`, may cut in
-    /// `project` (#406): a V-Carve's own run is held to S17 and only when
-    /// cut with the carve's tool; its clearing run with end mill `t` to
-    /// its floor, and only when `t` is one of its passes and the run's
-    /// tool. Every other operation has only its own run, which is held as
-    /// [`Material::of`] says; a clearing run of one is unresolved.
+    /// `project` (#406): a V-Carve's or an Inlay side's own run is held to
+    /// S17 and only when cut with the carve's tool; its clearing run with
+    /// end mill `t` to its floor, and only when `t` is one of its passes
+    /// and the run's tool. Every other operation has only its own run,
+    /// which is held as [`Material::of`] says; a clearing run of one is
+    /// unresolved.
     pub(crate) fn of_run(project: &Project, op: &Operation, label: &RunLabel, tool: &Tool) -> Self {
         match (op, label) {
             (Operation::VCarve(carve), RunLabel::Main) if tool.id == carve.tool => {
@@ -710,7 +728,18 @@ impl Material {
             (Operation::VCarve(carve), RunLabel::Clearing(pass)) if tool.id == *pass => {
                 floor_material(project, carve, pass)
             }
-            (Operation::VCarve(_), _) | (_, RunLabel::Clearing(_)) => Self::Unresolved,
+            // Format 22 (#436): an Inlay side's runs, as a V-Carve's.
+            (Operation::Inlay(inlay), RunLabel::Main) if tool.id == inlay.tool => {
+                inlay_material(project, inlay)
+            }
+            (Operation::Inlay(inlay), RunLabel::Clearing(pass)) if tool.id == *pass => {
+                floor_of(project, &inlay.clearing, pass, || {
+                    inlay_cone(project, inlay)
+                })
+            }
+            (Operation::VCarve(_) | Operation::Inlay(_), _) | (_, RunLabel::Clearing(_)) => {
+                Self::Unresolved
+            }
             // S18 holds a countersink to its own V-bit's angle and cone.
             (Operation::Drill(drill), RunLabel::Main)
                 if drill.cycle.is_countersink() && tool.id != drill.tool =>
@@ -832,11 +861,9 @@ impl Material {
                 None => Self::Unresolved,
             },
             Operation::VCarve(carve) => v_bit_material(project, carve),
-            // Format 22: no Inlay is generated before #436, which adds
-            // S17 for both sides (the male's surround), so the safety pass
-            // has no material rule for one and refuses any program that
-            // claims to be one.
-            Operation::Inlay(_) => Self::Unresolved,
+            // Format 22 (#436): S17 on the side's carve, the male's being
+            // the surround of its mirrored targets.
+            Operation::Inlay(inlay) => inlay_material(project, inlay),
         }
     }
 }
@@ -853,23 +880,31 @@ fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
     }
 }
 
-/// [`v_bit_material`]'s cone, `None` when it is unresolved.
-fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
-    let thickness_mm = project.stock.thickness_mm?;
-    let tool = project.tools.iter().find(|t| t.id == carve.tool)?;
+/// The V-bit `id` of `project` as S17 needs it: its slope `tan(α/2)` and
+/// its cone height, mm; `None` when it is missing or not a V-bit with an
+/// angle in (0°, 180°) and a positive diameter.
+fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
+    let tool = project.tools.iter().find(|t| &t.id == id)?;
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return None;
     };
     let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let start_depth_mm = carve.start_depth_mm;
-    let flat_usable = carve.flat_depth_mm.is_none_or(|f| f.is_finite() && f > 0.0);
     let usable = included_angle_deg > 0.0
         && included_angle_deg < 180.0
         && slope.is_finite()
         && slope > 0.0
         && tool.diameter_mm.is_finite()
-        && tool.diameter_mm > 0.0
-        && thickness_mm.is_finite()
+        && tool.diameter_mm > 0.0;
+    usable.then(|| (slope, tool.diameter_mm / (2.0 * slope)))
+}
+
+/// [`v_bit_material`]'s cone, `None` when it is unresolved.
+fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
+    let thickness_mm = project.stock.thickness_mm?;
+    let (slope, cone_mm) = v_bit_of(project, &carve.tool)?;
+    let start_depth_mm = carve.start_depth_mm;
+    let flat_usable = carve.flat_depth_mm.is_none_or(|f| f.is_finite() && f > 0.0);
+    let usable = thickness_mm.is_finite()
         && start_depth_mm.is_finite()
         && start_depth_mm >= 0.0
         && start_depth_mm <= thickness_mm
@@ -895,8 +930,96 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
         } else {
             thickness_mm
         },
-        cone_mm: tool.diameter_mm / (2.0 * slope),
+        cone_mm,
     })
+}
+
+/// The V-bit material of Inlay side `inlay` (#436; module docs, [`cone`]):
+/// [`Material::Unresolved`] when [`inlay_cone`] is.
+fn inlay_material(project: &Project, inlay: &InlayOp) -> Material {
+    inlay_cone(project, inlay).map_or(Material::Unresolved, Material::VBit)
+}
+
+/// The cone of Inlay side `inlay`, every value re-derived from the project
+/// (design "Inlay" steps 1 to 4, "Safety pass" S17; security review H4):
+///
+/// - **Female:** the targets' regions, from the stock top, flat at
+///   `depth_mm` `D`.
+/// - **Male:** the surround of the targets mirrored about the centre line
+///   of their closed outlines' joint bounding box ([`male_surround`]);
+///   the start plane `D − G` below the stock top, flat at `plug_depth_mm`
+///   `P` below that.
+///
+/// Either side's flank is engaged from the stock top: the female starts
+/// there, and the plug above the male's start plane is never cleared.
+/// `None` when the tool is not a usable V-bit, a value is unset or out of
+/// the range validation allows, or the targets do not resolve.
+fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<Cone> {
+    let thickness_mm = project.stock.thickness_mm.filter(|t| t.is_finite())?;
+    let (slope, cone_mm) = v_bit_of(project, &inlay.tool)?;
+    let depth_mm = inlay.depth_mm.filter(|d| d.is_finite() && *d > 0.0)?;
+    let glue_gap_mm = inlay
+        .glue_gap_mm
+        .filter(|g| g.is_finite() && *g >= 0.0 && *g < depth_mm)?;
+    let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
+    let (regions, start_depth_mm, flat_depth_mm) = match inlay.side {
+        InlaySide::Female => (regions_of(project, &inlay.targets)?, 0.0, depth_mm),
+        InlaySide::Male => {
+            let margin_mm = inlay.margin_mm.filter(|m| m.is_finite() && *m > 0.0)?;
+            (
+                male_surround(project, &inlay.targets, margin_mm)?,
+                depth_mm - glue_gap_mm,
+                plug_depth_mm,
+            )
+        }
+    };
+    let start_plane_z_mm = thickness_mm - start_depth_mm;
+    Some(Cone {
+        areas: areas_of(regions, true),
+        start_plane_z_mm,
+        slope,
+        floor_z_mm: Some(start_plane_z_mm - flat_depth_mm),
+        engaged_from_z_mm: thickness_mm,
+        cone_mm,
+    })
+}
+
+/// A male Inlay's carved regions (design "Inlay" step 4): the closed
+/// outlines of `targets`, placed, mirrored about X = the centre of their
+/// joint bounding box (arc extremes included,
+/// [`Transform::mirror_x_about`]), nested, and the [`surround`] of that
+/// design `margin_mm` wide at the project's flatten tolerance. Pure
+/// geometry on the project, as the generator derives it, never the
+/// generator. `None` when a target does not resolve or outlines cross.
+fn male_surround(project: &Project, targets: &[InstanceId], margin_mm: f64) -> Option<Vec<Region>> {
+    let closed: Vec<Polyline> = placed(project, targets)?
+        .into_iter()
+        .filter(Polyline::is_closed)
+        .collect();
+    let mut bounds: Option<Rect> = None;
+    for b in closed.iter().filter_map(Polyline::bounds) {
+        bounds = Some(match bounds {
+            Some(all) => all.including(b.min).including(b.max),
+            None => b,
+        });
+    }
+    let contours: Vec<Contour> = match bounds {
+        Some(b) => {
+            let mirror = Transform::mirror_x_about((b.min.x + b.max.x) / 2.0);
+            closed
+                .iter()
+                .map(|p| {
+                    mirror
+                        .apply_polyline(p)
+                        .ok()
+                        .and_then(|m| Contour::new(m).ok())
+                })
+                .collect::<Option<_>>()?
+        }
+        None => Vec::new(),
+    };
+    let (design, _) = nest(contours).ok()?;
+    Some(surround(&design, margin_mm, project.flatten_tolerance_mm))
 }
 
 /// The material of carve `carve`'s clearing run with end mill `pass`
@@ -907,8 +1030,20 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
 /// passes or not a flat end mill, or the carve has no usable V-bit or
 /// flat depth.
 fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Material {
+    floor_of(project, &carve.clearing, pass, || cone_of(project, carve))
+}
+
+/// [`floor_material`] for a carve with passes `clearing` whose V-bit
+/// material is `cone` (a V-Carve's, or an Inlay side's, #436): the
+/// carve's floor regions at its floor's Z.
+fn floor_of(
+    project: &Project,
+    clearing: &[ClearingPass],
+    pass: &ToolId,
+    cone: impl FnOnce() -> Option<Cone>,
+) -> Material {
     let resolved = || {
-        if !carve.clearing.iter().any(|p| &p.tool == pass) {
+        if !clearing.iter().any(|p| &p.tool == pass) {
             return None;
         }
         let end_mill = project.tools.iter().find(|t| &t.id == pass)?;
@@ -916,7 +1051,7 @@ fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Materia
         if !(end_mill.cutter.is_flat() && radius_mm.is_finite() && radius_mm > 0.0) {
             return None;
         }
-        let cone = cone_of(project, carve)?;
+        let cone = cone()?;
         let floor_z_mm = cone.floor_z_mm?;
         let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
         let tolerance_mm = project.flatten_tolerance_mm;

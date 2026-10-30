@@ -18,7 +18,7 @@ use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::vcarve::{carve_regions, cone_height_mm, cone_in_material, start_plane};
 use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{Operation, Project, Tool, ToolKind, VCarveOp};
+use dc_project::{InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -49,9 +49,10 @@ use dc_project::{Operation, Project, Tool, ToolKind, VCarveOp};
 ///    `feed · a / (a + r)` (#335).
 /// 5. **Dwells.** A dwell ends where the tool already is and carries no
 ///    feed.
-/// 6. **Cone (S17).** For a V-Carve, the toolpath passes
+/// 6. **Cone (S17).** For a V-Carve or an Inlay side, the toolpath passes
 ///    [`crate::vcarve::cone_in_material`] on the carve's regions, start
-///    plane and engagement as the project gives them.
+///    plane and engagement as the project gives them (an Inlay male's: the
+///    mirrored design's surround, engaged from the stock top).
 ///
 /// Panics with the offending move index on the first violation.
 pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
@@ -85,8 +86,10 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
             level_floor_mm_min,
         },
     );
-    if let Operation::VCarve(carve) = op {
-        assert_cone_in_material(toolpath, project, carve, tool);
+    match op {
+        Operation::VCarve(carve) => assert_cone_in_material(toolpath, project, carve, tool),
+        Operation::Inlay(inlay) => assert_inlay_cone_in_material(toolpath, project, inlay, tool),
+        _ => {}
     }
 }
 
@@ -149,6 +152,34 @@ fn assert_cone_in_material(toolpath: &Toolpath, project: &Project, op: &VCarveOp
         project.flatten_tolerance_mm,
     ) {
         panic!("the V-bit cuts outside its material (S17): {violation:?}");
+    }
+}
+
+/// S17 on the toolpath of Inlay side `op` (#436): its regions, start plane
+/// and engagement as [`crate::inlay`] derives them, then
+/// [`crate::vcarve::cone_in_material`] at the project's flatten tolerance.
+fn assert_inlay_cone_in_material(
+    toolpath: &Toolpath,
+    project: &Project,
+    op: &InlayOp,
+    tool: &Tool,
+) {
+    let side = crate::inlay::side(project, op, &mut Vec::new()).expect("the inlay's side resolves");
+    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+        panic!("an Inlay's tool is a V-bit: {tool:?}");
+    };
+    let slope = (included_angle_deg.to_radians() / 2.0).tan();
+    let cone_mm = cone_height_mm(tool).expect("the V-bit has a cone");
+    if let Err(violation) = cone_in_material(
+        toolpath,
+        &side.targets.regions,
+        side.start_plane_z_mm,
+        side.engaged_from_z_mm,
+        slope,
+        cone_mm,
+        project.flatten_tolerance_mm,
+    ) {
+        panic!("the V-bit cuts outside its inlay's material (S17): {violation:?}");
     }
 }
 

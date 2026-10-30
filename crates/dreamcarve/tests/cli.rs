@@ -1473,29 +1473,100 @@ fn v21_project_exports_the_same_program() {
     assert!(!from_v21.is_empty());
 }
 
-/// Format 22 (#434): a project may hold an Inlay, either side, before its
-/// generator lands (#436). It validates, but `check` and `export` refuse
-/// it by name, and no program is written, not even for the operations
-/// that do generate.
+/// Acceptances 56 and 57 through the CLI (#436): the coaster project with
+/// its operations replaced by an Inlay `o7` of the inlay test part's star
+/// (60 mm tip to tip, a 12 mm circle in its middle) on 100 × 100 × 12 mm
+/// stock, with the 60° 6.35 mm V-bit `tv`, `depth_mm` 4, `glue_gap_mm` 1,
+/// `plug_depth_mm` 2, `margin_mm` 8 and a clearing pass with a 3.175 mm
+/// end mill `te`, on grblHAL. For either side, `check` and `export`
+/// succeed, so both tool runs passed the safety pass (S1 to S17); the
+/// summary states the deepest cut, 4 mm for the female and 5 mm for the
+/// male; the male prints `inlay_male_mirrored` once, at X 50, and the
+/// female not at all; and every run passes `assert_run_safe`.
 #[test]
-fn inlay_is_refused_until_it_is_generated() {
-    for side in [dc_project::InlaySide::Female, dc_project::InlaySide::Male] {
-        let dir = work_dir(&format!("inlay_is_refused_until_it_is_generated_{side:?}"));
+fn inlay_exports_and_passes_safety() {
+    for (side, deepest) in [
+        (dc_project::InlaySide::Female, "4.000"),
+        (dc_project::InlaySide::Male, "5.000"),
+    ] {
+        let dir = work_dir(&format!("inlay_exports_and_passes_safety_{side:?}"));
         let dcv = init_coaster(&dir);
         fill_in(&dcv, 1500.0, 500.0, 18000);
         let mut project = load_file(&dcv).project;
+        assert_eq!(project.post_processor.id, "grblhal");
+        project.stock = dc_project::Stock {
+            width_mm: 100.0,
+            height_mm: 100.0,
+            thickness_mm: Some(12.0),
+        };
         let mut bit = dc_project::test_support::tool_v_bit_90();
         bit.id = ToolId::new("tv");
-        bit.cutter = dc_project::ToolKind::VBit {
+        bit.name = "60° V-bit".into();
+        bit.cutter = ToolKind::VBit {
             included_angle_deg: 60.0,
         };
-        project.tools.push(bit);
-        project.stock.thickness_mm = Some(19.0);
-        let mut inlay = dc_project::test_support::sample_inlay();
-        inlay.targets = project.operations[0].targets().to_vec();
-        inlay.tool = ToolId::new("tv");
-        inlay.side = side;
-        project.operations.insert(0, Operation::Inlay(inlay));
+        bit.feed_mm_min = Some(1000.0);
+        bit.plunge_mm_min = Some(300.0);
+        bit.rpm = Some(18000);
+        bit.step_over_fraction = Some(0.4);
+        let mut end_mill = dc_project::test_support::tool_6_35_upcut();
+        end_mill.id = ToolId::new("te");
+        end_mill.name = "3.175 mm end mill".into();
+        end_mill.diameter_mm = 3.175;
+        end_mill.step_down_mm = Some(2.0);
+        project.tools = vec![bit, end_mill];
+        let inner = 12.0 * std::f64::consts::FRAC_1_SQRT_2;
+        let star = Polyline::new(
+            [
+                (30.0, 0.0),
+                (inner, inner),
+                (0.0, 30.0),
+                (-inner, inner),
+                (-30.0, 0.0),
+                (-inner, -inner),
+                (0.0, -30.0),
+                (inner, -inner),
+            ]
+            .iter()
+            .map(|&(x, y)| dc_geometry::Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let design = FeatureDefinition {
+            id: DefinitionId::new("ds"),
+            name: "Star".into(),
+            profiles: vec![star, Polyline::circle(Point::new(0.0, 0.0), 6.0)],
+        };
+        project.definitions.clear();
+        project.definitions.insert(design.id.clone(), design);
+        project.instances = vec![FeatureInstance {
+            id: InstanceId::new("is"),
+            definition: DefinitionId::new("ds"),
+            transform: Transform::translate(50.0, 50.0),
+            name: "Star".into(),
+            visible: true,
+            locked: false,
+            z_top_mm: None,
+            z_bottom_mm: None,
+        }];
+        project.tabs.clear();
+        let inlay = dc_project::InlayOp {
+            targets: vec![InstanceId::new("is")],
+            tool: ToolId::new("tv"),
+            side,
+            depth_mm: Some(4.0),
+            glue_gap_mm: Some(1.0),
+            plug_depth_mm: Some(2.0),
+            margin_mm: Some(8.0),
+            clearing: vec![dc_project::ClearingPass {
+                tool: ToolId::new("te"),
+                strategy: dc_project::ClearanceStrategy::Offset,
+                direction: dc_project::CutDirection::Climb,
+                entry: dc_project::Entry::Plunge,
+            }],
+            ..dc_project::test_support::sample_inlay()
+        };
+        project.operations = vec![Operation::Inlay(inlay.clone())];
         assert!(
             dc_project::validate(&project).iter().all(|p| !p.is_error()),
             "{:?}",
@@ -1510,20 +1581,31 @@ fn inlay_is_refused_until_it_is_generated() {
             let command = args[0];
             let out = run(&dir, args);
             let report = format!("{}{}", stdout(&out), stderr(&out));
-            assert_ne!(out.status.code(), Some(0), "{side:?} {command}: {report}");
+            assert_eq!(out.status.code(), Some(0), "{side:?} {command}: {report}");
             assert!(
-                report.contains("`o7`")
-                    && report.contains("`inlay`")
-                    && report.contains("not supported"),
+                stdout(&out).contains(&format!("deepest cut {deepest} mm below the stock top")),
                 "{side:?} {command}: {report}"
             );
+            let notes = report.matches("inlay_male_mirrored").count();
+            let expected = usize::from(side == dc_project::InlaySide::Male);
+            assert_eq!(notes, expected, "{side:?} {command}: {report}");
+            if expected == 1 {
+                assert!(report.contains("X = 50 mm"), "{side:?} {command}: {report}");
+            }
         }
         let programs: Vec<_> = std::fs::read_dir(&dir)
             .expect("dir readable")
             .filter_map(Result::ok)
             .filter(|e| e.path().extension().is_some_and(|x| x == "nc"))
             .collect();
-        assert!(programs.is_empty(), "{side:?}: {programs:?}");
+        assert!(!programs.is_empty(), "{side:?}: no program written");
+
+        let project = load_file(&dcv).project;
+        let (runs, _) = dc_cam::generate_inlay(&project, &inlay).expect("the inlay generates");
+        assert_eq!(runs.len(), 2, "{side:?}: a clearing run, then the V-bit's");
+        for run in &runs {
+            dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
+        }
     }
 }
 
