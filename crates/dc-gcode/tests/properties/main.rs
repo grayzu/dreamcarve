@@ -31,8 +31,8 @@ mod projects;
 
 use dc_cam::test_support::assert_safe;
 use dc_cam::{
-    CamError, MoveKind, Toolpath, generate_bore, generate_drill, generate_engrave, generate_pocket,
-    generate_profile, generate_vcarve,
+    CamError, MoveKind, Toolpath, generate_bore, generate_drill, generate_engrave, generate_inlay,
+    generate_pocket, generate_profile, generate_vcarve,
 };
 use dc_gcode::{EmitOp, emit};
 use dc_project::{MachiningOrder, Operation, Problem, Project, validate};
@@ -116,12 +116,16 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
                 .unwrap_or_default();
             EmitOp::from((op, tool, toolpath))
         }
-        // Format 22: the Inlay's generator lands in #436.
-        Operation::Inlay(_) => {
-            return Err(CamError::NotSupportedYet {
-                op: op.id().clone(),
-                feature: "a V-bit inlay (`inlay`)".into(),
-            });
+        // Format 22 (#436): no property generates an Inlay yet; its
+        // V-bit's run is what would be emitted, as a V-Carve's.
+        Operation::Inlay(i) => {
+            let (runs, _) = generate_inlay(project, i)?;
+            let toolpath = runs
+                .into_iter()
+                .find(|r| r.label == dc_cam::RunLabel::Main)
+                .map(|r| r.toolpath)
+                .unwrap_or_default();
+            EmitOp::from((op, tool, toolpath))
         }
     })
 }

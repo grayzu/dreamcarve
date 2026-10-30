@@ -265,8 +265,12 @@ fn star_placed() -> Polyline {
     polygon(&points)
 }
 
-/// Sample points along the placed star's edges, away from their ends:
-/// fractions 0.15 to 0.85 of each edge.
+/// Sample points along the placed star's edges, fractions 0.25 to 0.75
+/// of each edge. Within `(D − G) · tan 30° / tan 21.5°` =
+/// 4.4 mm of a tip (21.5° is half the tip's angle) the arm is narrower
+/// than the groove 3 mm down, so there the wall at that depth is not the
+/// edge's own inset but the inset tip's, farther off; 0.25 of an edge is
+/// 5.8 mm.
 fn star_samples() -> Vec<Point> {
     let corners: Vec<(f64, f64)> = star_points()
         .iter()
@@ -275,8 +279,8 @@ fn star_samples() -> Vec<Point> {
     let mut out = Vec::new();
     for (k, &(ax, ay)) in corners.iter().enumerate() {
         let (bx, by) = corners[(k + 1) % corners.len()];
-        for step in 0..=7 {
-            let t = 0.15 + 0.1 * f64::from(step);
+        for step in 0..=5 {
+            let t = 0.25 + 0.1 * f64::from(step);
             out.push(Point::new(ax + (bx - ax) * t, ay + (by - ay) * t));
         }
     }
@@ -436,8 +440,7 @@ fn female_equals_a_flat_depth_v_carve() {
 #[test]
 fn male_mirrors_about_the_targets_centre_line() {
     let triangle = polygon(&[(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)]);
-    let square = Polyline::rect(Point::new(70.0, 10.0), 6.0, 6.0);
-    let project = project_of(vec![triangle.clone(), square], (0.0, 0.0), 100.0, 50.0);
+    let project = two_shapes();
     let op = InlayOp {
         depth_mm: Some(2.0),
         glue_gap_mm: Some(0.5),
@@ -547,38 +550,116 @@ fn male_flank_passes_through_the_outline_at_the_start_plane() {
 
 /// The fit property (design "Inlay" step 5; acceptance 57): mirrored
 /// back, the plug's wall at height `h` above its start plane stands at
-/// the same inset from the star's outline as the pocket's wall `h` below
+/// the same inset from the design's outline as the pocket's wall `h` below
 /// the stock top, `h · tan 30°`, within 0.02 mm, for `h` from 0 to `D − G`
 /// = 3 mm. Read from the two toolpaths' cones: the female's discs at
 /// depth `h` stop that far short of each outline point, the male's reach
-/// that far past it.
+/// that far past it. The star is symmetric about its mirror line, so the
+/// triangle and square of `male_mirrors_about_the_targets_centre_line`,
+/// which the mirror moves, are checked too (`D − G` = 1.5 mm there).
 #[test]
 fn female_and_male_walls_mate() {
     let (female, _) = star_side(InlaySide::Female);
     let (male, warnings) = star_side(InlaySide::Male);
-    let female = main_run(female);
-    let male = mirrored_back(main_run(male), mirror_axis(warnings));
-    let start_plane_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM);
+    let star = walls_mate(
+        main_run(female),
+        main_run(male),
+        mirror_axis(warnings),
+        &star_samples(),
+        DEPTH_MM - GLUE_GAP_MM,
+    );
+
+    let pair = two_shapes();
+    let op = |side| InlayOp {
+        depth_mm: Some(2.0),
+        glue_gap_mm: Some(0.5),
+        plug_depth_mm: Some(1.0),
+        margin_mm: Some(3.0),
+        ..inlay(side)
+    };
+    let (female, _) = inlay_runs(&pair, &op(InlaySide::Female));
+    let (male, warnings) = inlay_runs(&pair, &op(InlaySide::Male));
+    let corners = [
+        vec![(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)],
+        vec![(70.0, 10.0), (76.0, 10.0), (76.0, 16.0), (70.0, 16.0)],
+    ];
+    let samples: Vec<Point> = corners
+        .iter()
+        .flat_map(|c| edge_samples(c, &[0.3, 0.4, 0.5, 0.6, 0.7]))
+        .collect();
+    let pair = walls_mate(
+        main_run(&female),
+        main_run(&male),
+        mirror_axis(&warnings),
+        &samples,
+        1.5,
+    );
+    println!("fit: worst mismatch {star:.5} mm on the star, {pair:.5} mm on the pair");
+}
+
+/// The triangle (10, 10), (40, 10), (10, 30) and the 6 mm square at
+/// (70, 10), on 100 × 50 mm stock: they mirror about X 43.
+fn two_shapes() -> Project {
+    project_of(
+        vec![
+            polygon(&[(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)]),
+            Polyline::rect(Point::new(70.0, 10.0), 6.0, 6.0),
+        ],
+        (0.0, 0.0),
+        100.0,
+        50.0,
+    )
+}
+
+/// Points at `fractions` along each edge of the closed polygon `corners`.
+fn edge_samples(corners: &[(f64, f64)], fractions: &[f64]) -> Vec<Point> {
+    let mut out = Vec::new();
+    for (k, &(ax, ay)) in corners.iter().enumerate() {
+        let (bx, by) = corners[(k + 1) % corners.len()];
+        for t in fractions {
+            out.push(Point::new(ax + (bx - ax) * t, ay + (by - ay) * t));
+        }
+    }
+    out
+}
+
+/// Asserts the fit property for the female's V-bit run `female` and the
+/// male's `male` (mirrored about X `axis_x_mm`, on [`THICKNESS_MM`] stock,
+/// start plane `rise_mm` below the stock top) at every outline point of
+/// `samples`, for heights 0 to `rise_mm` in tenths; returns the worst
+/// mismatch between the two walls, mm.
+fn walls_mate(
+    female: &Toolpath,
+    male: &Toolpath,
+    axis_x_mm: f64,
+    samples: &[Point],
+    rise_mm: f64,
+) -> f64 {
+    let male = mirrored_back(male, axis_x_mm);
+    let start_plane_z_mm = THICKNESS_MM - rise_mm;
     let mut worst_mm: f64 = 0.0;
-    for q in star_samples() {
-        for step in 0..=6 {
-            let h = 0.5 * f64::from(step);
+    for &q in samples {
+        for step in 0..=10 {
+            let h = rise_mm * f64::from(step) / 10.0;
             let inset = h * slope();
             let pocket = disc_gap_mm(female, q, THICKNESS_MM - h, slope());
             let plug = -disc_gap_mm(&male, q, start_plane_z_mm + h, slope());
             assert!(
                 (pocket - inset).abs() <= FIT_MM,
-                "{q:?} h {h}: pocket {pocket}"
+                "{q:?} h {h}: pocket {pocket}, inset {inset}"
             );
-            assert!((plug - inset).abs() <= FIT_MM, "{q:?} h {h}: plug {plug}");
+            assert!(
+                (plug - inset).abs() <= FIT_MM,
+                "{q:?} h {h}: plug {plug}, inset {inset}"
+            );
             assert!(
                 (pocket - plug).abs() <= FIT_MM,
-                "{q:?} h {h}: {pocket} {plug}"
+                "{q:?} h {h}: pocket {pocket}, plug {plug}"
             );
             worst_mm = worst_mm.max((pocket - plug).abs());
         }
     }
-    println!("worst fit mismatch {worst_mm:.4} mm");
+    worst_mm
 }
 
 /// Security review H4: the male's flank is engaged from the stock top,
@@ -624,8 +705,8 @@ fn glue_gap_at_or_above_depth_is_an_error() {
                     depth_mm,
                     ..
                 }) => {
-                    assert_eq!(glue_gap_mm, gap);
-                    assert_eq!(depth_mm, DEPTH_MM);
+                    assert!((glue_gap_mm - gap).abs() < 1e-12, "{glue_gap_mm}");
+                    assert!((depth_mm - DEPTH_MM).abs() < 1e-12, "{depth_mm}");
                 }
                 other => panic!("{side:?} {gap}: expected InlayGlueGap, got {other:?}"),
             }
@@ -636,7 +717,7 @@ fn glue_gap_at_or_above_depth_is_an_error() {
         ..inlay(InlaySide::Male)
     };
     assert!(
-        matches!(try_inlay(&project, &flat), Err(CamError::InlayMargin { margin_mm, .. }) if margin_mm == 0.0)
+        matches!(try_inlay(&project, &flat), Err(CamError::InlayMargin { margin_mm, .. }) if margin_mm.abs() < 1e-12)
     );
     let unset = InlayOp {
         plug_depth_mm: None,

@@ -451,7 +451,34 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                 }
                 continue;
             }
-            Operation::Inlay(_) => panic!("{name}: no Inlay is generated before #436"),
+            // #436: an Inlay side's runs, as a V-Carve's; a male always
+            // notes its mirror line.
+            Operation::Inlay(p) => {
+                let (runs, w) = dc_cam::generate_inlay(project, p).expect("the Inlay generates");
+                assert!(
+                    w.iter()
+                        .all(|w| matches!(w, dc_cam::Warning::InlayMaleMirrored { .. })),
+                    "{name}: operation `{}` generates without warnings: {w:?}",
+                    op.id()
+                );
+                for run in runs {
+                    let tool = project
+                        .tools
+                        .iter()
+                        .find(|t| t.id == run.tool)
+                        .expect("the run's tool is in the project")
+                        .clone();
+                    assert_safe(&run.toolpath, project, op);
+                    ops.push(EmitOp {
+                        op: op.clone(),
+                        tool,
+                        toolpath: run.toolpath,
+                        holes: None,
+                        label: run.label,
+                    });
+                }
+                continue;
+            }
         };
         assert!(
             warnings.is_empty(),

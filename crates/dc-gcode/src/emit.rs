@@ -5994,7 +5994,16 @@ mod tests {
                         (op_owned, tool, dc_cam::generate_bore(project, p).unwrap().0).into()
                     }
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
-                    Operation::Inlay(_) => panic!("these tests use no Inlay operations"),
+                    // #436: an Inlay side's V-bit run.
+                    Operation::Inlay(p) => {
+                        let (runs, _) = dc_cam::generate_inlay(project, p).unwrap();
+                        let toolpath = runs
+                            .into_iter()
+                            .find(|r| r.label == RunLabel::Main)
+                            .unwrap()
+                            .toolpath;
+                        (op_owned, tool, toolpath).into()
+                    }
                 }
             })
             .collect()

@@ -24,7 +24,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::{FloorKind, Warning};
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{ClearedPlane, DrillCycle, Operation, OperationId, Project, ToolId};
+use dc_project::{ClearedPlane, DrillCycle, InlaySide, Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -373,8 +373,10 @@ fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
 /// in project space, in target then profile order: every closed profile
 /// (none for a Left or Right Profile, which skips them, #207), and the
 /// open paths an Engrave or an On line, Left or Right Profile cuts along
-/// or beside (#175, #206, #207). Other operations skip open paths, so they
-/// are left out, as are
+/// or beside (#175, #206, #207). A male Inlay cuts round its design
+/// mirrored about its targets' centre line ([`crate::inlay::male_mirror`],
+/// #436), so its closed profiles are mirrored too. Other operations skip
+/// open paths, so they are left out, as are
 /// open paths with no length and anything validation already rejects (a
 /// missing instance or definition, a degenerate outline): this check only
 /// warns.
@@ -398,6 +400,16 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         | Operation::VCarve(_)
         | Operation::Inlay(_) => true,
     };
+    // #436: a male Inlay cuts the mirror of what is drawn.
+    let mirror = match op {
+        Operation::Inlay(inlay) if inlay.side == InlaySide::Male => {
+            match crate::inlay::male_mirror(project, &inlay.targets) {
+                Ok(mirror) => Some(mirror),
+                Err(_) => return Vec::new(),
+            }
+        }
+        _ => None,
+    };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
         let Some(instance) = project.instances.iter().find(|i| &i.id == instance_id) else {
@@ -414,6 +426,10 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
                 instance
                     .transform
                     .apply_polyline(polyline)
+                    .and_then(|placed| match mirror {
+                        Some(mirror) => mirror.apply_polyline(&placed),
+                        None => Ok(placed),
+                    })
                     .and_then(Contour::new)
                     .ok()
                     .map(Target::Outline)
@@ -583,7 +599,18 @@ mod tests {
                     Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
-                    Operation::Inlay(_) => panic!("these tests use no Inlay operations"),
+                    // #436: an Inlay side's V-bit run, the one the order
+                    // check is given.
+                    Operation::Inlay(inlay) => {
+                        crate::inlay::generate_inlay(project, inlay).map(|(runs, w)| {
+                            let toolpath = runs
+                                .into_iter()
+                                .find(|r| r.label == crate::RunLabel::Main)
+                                .map(|r| r.toolpath)
+                                .unwrap_or_default();
+                            (toolpath, w)
+                        })
+                    }
                 };
                 let (toolpath, _) =
                     generated.unwrap_or_else(|e| panic!("{} generates: {e}", op.id()));
@@ -763,6 +790,63 @@ mod tests {
             text.contains("`Recess`"),
             "names the pocketed shape: {text}"
         );
+    }
+
+    /// #436: a male Inlay cuts round its design mirrored about its
+    /// targets' centre line, so the order check reads the mirrored
+    /// outlines. Its targets are a 6 mm square `i2` inside the frame, at
+    /// X 35, and one `i3` outside it, at X 140: their centre line is X
+    /// 90.5, so the male cuts round `i3`'s mirror inside the frame and
+    /// round `i2`'s outside it. After an Outside Profile through the stock
+    /// frees the frame, the warning names `i3`, not `i2` as drawn.
+    #[test]
+    fn male_inlay_targets_are_mirrored() {
+        let mut project = frame_and_recess();
+        project
+            .tools
+            .push(dc_project::test_support::tool_v_bit_90());
+        for (n, x) in [(2, 35.0), (3, 140.0)] {
+            let def = FeatureDefinition {
+                id: DefinitionId::new(format!("d{n}")),
+                name: format!("Square {n}"),
+                profiles: vec![Polyline::rect(Point { x: 0.0, y: 0.0 }, 6.0, 6.0)],
+            };
+            project
+                .instances
+                .retain(|i| i.id.as_str() != format!("i{n}"));
+            project.instances.push(FeatureInstance {
+                id: InstanceId::new(format!("i{n}")),
+                definition: def.id.clone(),
+                transform: Transform::translate(x, 50.0),
+                name: format!("Square {n}"),
+                visible: true,
+                locked: false,
+                z_top_mm: Some(6.0),
+                z_bottom_mm: Some(0.0),
+            });
+            project.definitions.insert(def.id.clone(), def);
+        }
+        let male = dc_project::InlayOp {
+            id: OperationId::new("o2"),
+            targets: vec![InstanceId::new("i2"), InstanceId::new("i3")],
+            side: dc_project::InlaySide::Male,
+            depth_mm: Some(1.0),
+            glue_gap_mm: Some(0.25),
+            plug_depth_mm: Some(0.5),
+            margin_mm: Some(2.0),
+            ..dc_project::test_support::sample_inlay()
+        };
+        project.operations = vec![
+            Operation::Profile(profile("o1", "i1", Side::Outside, 6.0)),
+            Operation::Inlay(male),
+        ];
+        let warnings = check_all(&project);
+        let found = with_code(&warnings, WarningCode::CutInsideFreedPart);
+        assert_eq!(found.len(), 1, "one warning: {warnings:?}");
+        let (op, earlier_op, shape, freed) = freed_of(found[0]);
+        assert_eq!((op, earlier_op), ("o2", "o1"));
+        assert_eq!(shape.instance.as_str(), "i3");
+        assert_eq!(freed.instance.as_str(), "i1");
     }
 
     /// Format 18: a Bore is an inside cut that frees nothing, so a Bore of
