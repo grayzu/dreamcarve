@@ -61,9 +61,9 @@
 use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    BoreOp, ClearanceStrategy, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry, InlayOp,
-    InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp, ProfileOp,
-    Project, Side, TabPlacement, Tool, ToolKind, VCarveOp, VCarveStrategy,
+    BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry,
+    InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
+    ProfileOp, Project, Side, TabPlacement, Tool, ToolKind, VCarveOp, VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -511,8 +511,9 @@ pub enum Problem {
         /// The cutter in words, such as `an end mill`.
         cutter: &'static str,
     },
-    /// A V-bit an enabled V-Carve cuts with has an included angle not
-    /// above 0 degrees and below 180 (format 20). Reported instead of
+    /// A V-bit an enabled V-Carve, countersink (format 21) or Inlay (format
+    /// 22) cuts with has an included angle not above 0 degrees and below
+    /// 180 (format 20). Reported instead of
     /// `tool_out_of_range` for such a tool. An error.
     VBitAngleRange {
         /// The tool.
@@ -1560,6 +1561,7 @@ impl Validator {
                 .iter()
                 .filter_map(|op| match op {
                     Operation::VCarve(carve) if carve.enabled => Some(&carve.clearing),
+                    Operation::Inlay(inlay) if inlay.enabled => Some(&inlay.clearing),
                     _ => None,
                 })
                 .flatten()
@@ -1580,6 +1582,7 @@ impl Validator {
             .iter()
             .filter_map(|op| match op {
                 Operation::VCarve(carve) if carve.enabled => Some(&carve.tool),
+                Operation::Inlay(inlay) if inlay.enabled => Some(&inlay.tool),
                 Operation::Drill(drill) if drill.enabled && drill.cycle.is_countersink() => {
                     Some(&drill.tool)
                 }
@@ -2470,23 +2473,7 @@ impl Validator {
         if let VCarveStrategy::Offset { step_over_mm, .. } = carve.strategy {
             self.positive(&format!("{at}.strategy.offset.step_over_mm"), step_over_mm);
         }
-        for (i, pass) in carve.clearing.iter().enumerate() {
-            let pass_at = format!("{at}.clearing[{i}]");
-            if !p.tools.iter().any(|t| t.id == pass.tool) {
-                self.problems.push(Problem::ClearingDanglingTool {
-                    operation: carve.id.clone(),
-                    pass: i,
-                    tool: pass.tool.clone(),
-                });
-            }
-            if let ClearanceStrategy::Raster { angle_deg } = pass.strategy {
-                let field = format!("{pass_at}.strategy.raster.angle_deg");
-                if self.finite(&field, angle_deg) && !(0.0..180.0).contains(&angle_deg) {
-                    self.out_of_range(field, angle_deg, RASTER_ANGLE);
-                }
-            }
-            self.entry(&pass.entry, &pass_at);
-        }
+        self.clearing(p, &carve.id, &carve.clearing, at);
         if !carve.clearing.is_empty() && carve.flat_depth_mm.is_none() {
             self.problems.push(Problem::ClearingNeedsFlatDepth {
                 operation: carve.id.clone(),
@@ -2505,7 +2492,57 @@ impl Validator {
                 field: "start_depth_mm",
             });
         }
-        if let Some(fraction) = carve.step_over_fraction {
+        self.v_bit_floor(
+            carve.step_over_fraction,
+            carve.through_cut_allowance_mm,
+            carve.safe_z_mm,
+            at,
+        );
+        if carve.enabled {
+            self.enabled_v_carve(p, op, carve, tool);
+        }
+    }
+
+    /// The clearing passes of carve `operation` at `at`, in file order
+    /// (format 20; an Inlay's too, format 22): each names a tool of the
+    /// project, and its strategy and entry follow the Pocket's rules.
+    fn clearing(
+        &mut self,
+        p: &Project,
+        operation: &OperationId,
+        clearing: &[ClearingPass],
+        at: &str,
+    ) {
+        for (i, pass) in clearing.iter().enumerate() {
+            let pass_at = format!("{at}.clearing[{i}]");
+            if !p.tools.iter().any(|t| t.id == pass.tool) {
+                self.problems.push(Problem::ClearingDanglingTool {
+                    operation: operation.clone(),
+                    pass: i,
+                    tool: pass.tool.clone(),
+                });
+            }
+            if let ClearanceStrategy::Raster { angle_deg } = pass.strategy {
+                let field = format!("{pass_at}.strategy.raster.angle_deg");
+                if self.finite(&field, angle_deg) && !(0.0..180.0).contains(&angle_deg) {
+                    self.out_of_range(field, angle_deg, RASTER_ANGLE);
+                }
+            }
+            self.entry(&pass.entry, &pass_at);
+        }
+    }
+
+    /// The fields a V-Carve and an Inlay end with, in file order: the
+    /// V-bit floor's step-over fraction, the through-cut allowance and
+    /// safe Z.
+    fn v_bit_floor(
+        &mut self,
+        step_over_fraction: Option<f64>,
+        through_cut_allowance_mm: f64,
+        safe_z_mm: f64,
+        at: &str,
+    ) {
+        if let Some(fraction) = step_over_fraction {
             let field = format!("{at}.step_over_fraction");
             if self.finite(&field, fraction) && !(fraction > 0.0 && fraction <= 1.0) {
                 self.out_of_range(field, fraction, FRACTION);
@@ -2513,12 +2550,9 @@ impl Validator {
         }
         self.non_negative(
             &format!("{at}.through_cut_allowance_mm"),
-            carve.through_cut_allowance_mm,
+            through_cut_allowance_mm,
         );
-        self.positive(&format!("{at}.safe_z_mm"), carve.safe_z_mm);
-        if carve.enabled {
-            self.enabled_v_carve(p, op, carve, tool);
-        }
+        self.positive(&format!("{at}.safe_z_mm"), safe_z_mm);
     }
 
     /// The rules of an enabled V-Carve that need its tools and the
@@ -2534,49 +2568,7 @@ impl Validator {
         carve: &VCarveOp,
         tool: Option<&Tool>,
     ) {
-        if let Some(tool) = tool
-            && !matches!(tool.cutter, ToolKind::VBit { .. })
-        {
-            self.problems.push(Problem::VCarveNeedsVBit {
-                operation: carve.id.clone(),
-                name: carve.name.clone(),
-                tool: tool.id.clone(),
-                tool_name: tool.name.clone(),
-                cutter: tool.cutter.describe(),
-            });
-        }
-        let mut previous: Option<&Tool> = None;
-        for (i, pass) in carve.clearing.iter().enumerate() {
-            let Some(pass_tool) = p.tools.iter().find(|t| t.id == pass.tool) else {
-                continue;
-            };
-            if !pass_tool.cutter.is_flat() {
-                self.problems.push(Problem::ClearingNeedsEndMill {
-                    operation: carve.id.clone(),
-                    name: carve.name.clone(),
-                    pass: i,
-                    tool: pass_tool.id.clone(),
-                    tool_name: pass_tool.name.clone(),
-                    cutter: pass_tool.cutter.describe(),
-                });
-            }
-            if let Some(before) = previous
-                && pass_tool.diameter_mm.is_finite()
-                && before.diameter_mm.is_finite()
-                && pass_tool.diameter_mm > before.diameter_mm
-            {
-                self.problems.push(Problem::ClearingNotDescending {
-                    operation: carve.id.clone(),
-                    name: carve.name.clone(),
-                    pass: i,
-                    tool_name: pass_tool.name.clone(),
-                    diameter_mm: pass_tool.diameter_mm,
-                    previous_tool_name: before.name.clone(),
-                    previous_diameter_mm: before.diameter_mm,
-                });
-            }
-            previous = Some(pass_tool);
-        }
+        self.carving_tools(p, &carve.id, &carve.name, tool, &carve.clearing);
 
         // The start plane (capability 41): an earlier floor that holds the
         // targets clears it, a Pocket's or a V-Carve's flat floor (#426);
@@ -2641,10 +2633,194 @@ impl Validator {
         }
     }
 
+    /// The tool rules of enabled carve `operation` (`name`), a V-Carve
+    /// (format 20) or an Inlay (format 22): it carves with a V-bit, and
+    /// each clearing pass cuts with a flat end mill no wider than the pass
+    /// before (a warning).
+    fn carving_tools(
+        &mut self,
+        p: &Project,
+        operation: &OperationId,
+        name: &str,
+        tool: Option<&Tool>,
+        clearing: &[ClearingPass],
+    ) {
+        if let Some(tool) = tool
+            && !matches!(tool.cutter, ToolKind::VBit { .. })
+        {
+            self.problems.push(Problem::VCarveNeedsVBit {
+                operation: operation.clone(),
+                name: name.to_owned(),
+                tool: tool.id.clone(),
+                tool_name: tool.name.clone(),
+                cutter: tool.cutter.describe(),
+            });
+        }
+        let mut previous: Option<&Tool> = None;
+        for (i, pass) in clearing.iter().enumerate() {
+            let Some(pass_tool) = p.tools.iter().find(|t| t.id == pass.tool) else {
+                continue;
+            };
+            if !pass_tool.cutter.is_flat() {
+                self.problems.push(Problem::ClearingNeedsEndMill {
+                    operation: operation.clone(),
+                    name: name.to_owned(),
+                    pass: i,
+                    tool: pass_tool.id.clone(),
+                    tool_name: pass_tool.name.clone(),
+                    cutter: pass_tool.cutter.describe(),
+                });
+            }
+            if let Some(before) = previous
+                && pass_tool.diameter_mm.is_finite()
+                && before.diameter_mm.is_finite()
+                && pass_tool.diameter_mm > before.diameter_mm
+            {
+                self.problems.push(Problem::ClearingNotDescending {
+                    operation: operation.clone(),
+                    name: name.to_owned(),
+                    pass: i,
+                    tool_name: pass_tool.name.clone(),
+                    diameter_mm: pass_tool.diameter_mm,
+                    previous_tool_name: before.name.clone(),
+                    previous_diameter_mm: before.diameter_mm,
+                });
+            }
+            previous = Some(pass_tool);
+        }
+    }
+
     /// An Inlay's own fields, in file order, then, when it is enabled, its
-    /// tool, clearing and cone rules (format 22; `docs/specs/phase-3/
-    /// design.md`, "Validation" and "Algorithms → Inlay", step 1).
-    fn inlay(&mut self, _p: &Project, _inlay: &InlayOp, _tool: Option<&Tool>, _at: &str) {}
+    /// tool, clearing, cone and plug-base rules (format 22;
+    /// `docs/specs/phase-3/design.md`, "Validation" and "Algorithms →
+    /// Inlay", steps 1 and 4). The depth, glue gap and plug depth are
+    /// required on either side, the margin on a male only. An Inlay has
+    /// no start depth, so no `start_depth_*` rule applies, and it always
+    /// has a flat depth, so its clearing passes always have a floor.
+    fn inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>, at: &str) {
+        let male = inlay.side == InlaySide::Male;
+        let unset = |v: &mut Self, field: &'static str| {
+            v.problems.push(Problem::OperationValueUnset {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                field,
+            });
+        };
+        match inlay.depth_mm {
+            Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
+            None => unset(self, "depth_mm"),
+        }
+        match inlay.glue_gap_mm {
+            Some(glue_gap_mm) => {
+                self.non_negative(&format!("{at}.glue_gap_mm"), glue_gap_mm);
+                if let Some(depth_mm) = inlay.depth_mm
+                    && depth_mm.is_finite()
+                    && depth_mm > 0.0
+                    && glue_gap_mm.is_finite()
+                    && glue_gap_mm >= depth_mm
+                {
+                    self.problems.push(Problem::InlayGlueGapNotBelowDepth {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        glue_gap_mm,
+                        depth_mm,
+                    });
+                }
+            }
+            None => unset(self, "glue_gap_mm"),
+        }
+        match inlay.plug_depth_mm {
+            Some(plug_depth_mm) => {
+                self.positive(&format!("{at}.{INLAY_PLUG_DEPTH}"), plug_depth_mm);
+            }
+            None => unset(self, INLAY_PLUG_DEPTH),
+        }
+        match (male, inlay.margin_mm) {
+            // The female does not use it.
+            (false, Some(margin_mm)) => {
+                self.finite(&format!("{at}.margin_mm"), margin_mm);
+            }
+            (false, None) => {}
+            (true, Some(margin_mm)) => {
+                if self.finite(&format!("{at}.margin_mm"), margin_mm) && margin_mm <= 0.0 {
+                    self.problems.push(Problem::InlayMarginPositive {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        margin_mm,
+                    });
+                }
+            }
+            (true, None) => unset(self, "margin_mm"),
+        }
+        self.clearing(p, &inlay.id, &inlay.clearing, at);
+        self.v_bit_floor(
+            inlay.step_over_fraction,
+            inlay.through_cut_allowance_mm,
+            inlay.safe_z_mm,
+            at,
+        );
+        if inlay.enabled {
+            self.enabled_inlay(p, inlay, tool);
+        }
+    }
+
+    /// The rules of an enabled Inlay that need its tools and the project
+    /// (format 22): its tools as a V-Carve's; its flank engagement from
+    /// the stock top ([`InlayOp::engagement_mm`]; security review H4)
+    /// within the V-bit's cone; and a male's board under its surround's
+    /// floor at least [`INLAY_MIN_PLUG_BASE_MM`] thick (a warning). Only
+    /// values that passed their own checks are compared.
+    fn enabled_inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>) {
+        self.carving_tools(p, &inlay.id, &inlay.name, tool, &inlay.clearing);
+        let depth_ok = inlay.depth_mm.is_some_and(|d| d.is_finite() && d > 0.0);
+        let glue_gap_ok = inlay
+            .glue_gap_mm
+            .zip(inlay.depth_mm)
+            .is_some_and(|(g, d)| g.is_finite() && g >= 0.0 && g < d);
+        let plug_depth_ok = inlay
+            .plug_depth_mm
+            .is_some_and(|p| p.is_finite() && p > 0.0);
+        let male = inlay.side == InlaySide::Male;
+        let usable = depth_ok && (!male || (glue_gap_ok && plug_depth_ok));
+        let Some(engagement_mm) = inlay.engagement_mm().filter(|_| usable) else {
+            return;
+        };
+        if let Some(tool) = tool
+            && let ToolKind::VBit { included_angle_deg } = tool.cutter
+            && included_angle_deg > 0.0
+            && included_angle_deg < 180.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0
+        {
+            let cone_height_mm =
+                tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
+            if engagement_mm > cone_height_mm + EPS_MM {
+                self.problems.push(Problem::VBitConeExceeded {
+                    operation: inlay.id.clone(),
+                    name: inlay.name.clone(),
+                    tool_name: tool.name.clone(),
+                    engagement_mm,
+                    cone_height_mm,
+                    from_stock_top: male,
+                    field: if male { INLAY_PLUG_DEPTH } else { "depth_mm" },
+                });
+            }
+        }
+        if male
+            && let Some(thickness_mm) = p.stock.thickness_mm.filter(|t| t.is_finite() && *t > 0.0)
+        {
+            let base_mm = thickness_mm - engagement_mm;
+            if base_mm < INLAY_MIN_PLUG_BASE_MM {
+                self.problems.push(Problem::InlayPlugBaseThin {
+                    operation: inlay.id.clone(),
+                    name: inlay.name.clone(),
+                    floor_depth_mm: engagement_mm,
+                    thickness_mm,
+                    base_mm,
+                });
+            }
+        }
+    }
 
     /// An Engrave's own fields, in file order.
     fn engrave(&mut self, op: &EngraveOp, at: &str) {
@@ -6449,14 +6625,16 @@ mod tests {
 
     /// The project of [`carve_project`] on a 19 mm board, with the
     /// V-Carve replaced by the Inlay `o7` of the square `i2`
-    /// ([`crate::test_support::sample_inlay`]: female, `D 2.5, G 0.25,
-    /// P 1.5`, margin 6, the 90° 6.35 mm V-bit `t2`), as `edit` leaves it.
+    /// ([`crate::test_support::sample_inlay`] with a 0.5 mm plug depth:
+    /// female, `D 2.5, G 0.25, P 0.5`, margin 6, the 90° 6.35 mm V-bit
+    /// `t2`, so either side fits the cone), as `edit` leaves it.
     fn inlay_project(edit: impl FnOnce(&mut crate::model::InlayOp)) -> Project {
         let mut p = carve_project(|_| {});
         p.stock.thickness_mm = Some(19.0);
         p.operations.pop();
         let mut inlay = crate::test_support::sample_inlay();
         inlay.targets = vec![InstanceId::new("i2")];
+        inlay.plug_depth_mm = Some(0.5);
         edit(&mut inlay);
         p.operations.push(Operation::Inlay(inlay));
         p
@@ -6684,7 +6862,7 @@ mod tests {
             problems[0].field().as_deref(),
             Some("operations[o7].plug_depth_mm")
         );
-        assert_eq!(INLAY_MIN_PLUG_BASE_MM, 6.0);
+        assert!(approx_eq(INLAY_MIN_PLUG_BASE_MM, 6.0, 0.0));
         for thickness_mm in [11.0, 12.0] {
             p.stock.thickness_mm = Some(thickness_mm);
             assert_eq!(validate(&p), vec![], "{thickness_mm} mm");
@@ -6703,7 +6881,15 @@ mod tests {
     #[test]
     fn male_inlay_engagement_beyond_the_cone_is_error() {
         use crate::model::InlaySide;
-        let p = inlay_project(|inlay| inlay.side = InlaySide::Male);
+        let corbin = |inlay: &mut crate::model::InlayOp| {
+            inlay.depth_mm = Some(2.5);
+            inlay.glue_gap_mm = Some(0.25);
+            inlay.plug_depth_mm = Some(1.5);
+        };
+        let p = inlay_project(|inlay| {
+            corbin(inlay);
+            inlay.side = InlaySide::Male;
+        });
         let problems = validate(&p);
         let (engagement_mm, cone_height_mm, from_stock_top, field) = cone_exceeded(&problems);
         assert!(approx_eq(engagement_mm, 3.75, 1e-9), "{engagement_mm}");
@@ -6733,7 +6919,11 @@ mod tests {
     /// plug depth its male uses; located at `depth_mm`.
     #[test]
     fn female_inlay_engagement_is_its_depth() {
-        let p = inlay_project(|inlay| inlay.depth_mm = Some(3.5));
+        // Its male would engage 3.5 − 0.25 + 1.5 = 4.75 mm.
+        let p = inlay_project(|inlay| {
+            inlay.depth_mm = Some(3.5);
+            inlay.plug_depth_mm = Some(1.5);
+        });
         let problems = validate(&p);
         let (engagement_mm, cone_height_mm, from_stock_top, field) = cone_exceeded(&problems);
         assert!(approx_eq(engagement_mm, 3.5, 1e-9), "{engagement_mm}");
