@@ -650,8 +650,8 @@ V-bit's floor corners (0.25 mm ridges, where the tool's 0.4 leaves 1 mm).
 | op1 Drill (T2)   | two 3.175 mm circles, 12 mm deep, `simple`, through-cut allowance 0.2 mm                                                                   |
 | op2 V-Carve (T3) | the 190 × 70 mm rectangle with the oval inside it, `medial`, `flat_depth_mm: 2.5`, `clearing: [t1]` (`offset`, climb, ramp)                                                          |
 | op3 V-Carve (T3) | the lettering, `medial`, `flat_depth_mm: null` (inset; strokes 2 to 3 mm wide carve 1 to 1.5 mm deep)                                      |
-| op4 Drill (T3)   | the two circles, `countersink: { "diameter_mm": 6 }`                                                                                       |
-| op5 Profile (T1) | outside, 12 mm deep, 4 tabs 8 × 3 mm, climb, `entry: ramp`, `lead` 3 mm, through-cut allowance 0.2 mm                                      |
+| op5 Drill (T3)   | the two circles, `countersink: { "diameter_mm": 6, "start_depth_mm": 2.5 }` on op2's floor, which clears its start plane (41, #426): 3 mm below the floor, Z −5.5; listed after op3 and before op4, so the V-bit's three operations share one tool run (changed in #428: the draft had it as op4, before the Profile op5) |
+| op4 Profile (T1) | outside, 12 mm deep, 4 tabs 8 × 3 mm, climb, `entry: ramp`, `lead` 3 mm, through-cut allowance 0.2 mm; last in the list                   |
 | Safe Z           | 15 mm                                                                                                                                      |
 | Controller       | grblHAL, one program per tool run (four: T2, T1 as the clearing pass, T3, T1)                                                                                          |
 
@@ -663,7 +663,20 @@ lettering is cut to a sharp point at the surface, and the letters read
 clearly; the countersinks are 6 ± 0.3 mm across; the sign releases after
 the tabs are cut.
 
-**Cut record:** not yet cut.
+**Cut record:** partial cut, sub-phase 3.1, without the countersinks,
+on 2026-10-29
+([#412](https://github.com/grayzu/dreamcarve/issues/412#issuecomment-6508098597)).
+The full cut, with the countersinks, is #429's.
+
+| Item | Result |
+| --- | --- |
+| Programs | The four programs of the quick start "A V-carved sign from SVG outlines" before #428 (op1 to op4, no countersinks), exported by the build of the day: T2 holes, T1 floor clearing, T3 slope and lettering, T1 cut-out |
+| Controller | Sienci LongMill MK3, grblHAL |
+| Outcome | The sign cut as designed, and its dimensions measured as expected |
+
+Deviations: the oval's short axis measured about 47 mm against the 46 mm
+drawn, which the maintainer judged a difference in measuring, not in the
+cut.
 
 ### Inlay pair
 

@@ -43,8 +43,8 @@ use dc_gcode::{
     machine_lift_limits_note, scaling_note,
 };
 use dc_project::{
-    Operation, OperationId, PostProcessorRef, Project, ResetReason, SettingReset, Severity,
-    SourceMap, ToolChangeMode, ToolId, Units, validate,
+    DrillCycle, DrillOp, Operation, OperationId, PostProcessorRef, Project, ResetReason,
+    SettingReset, Severity, SourceMap, ToolChangeMode, ToolId, Units, validate,
 };
 
 use crate::cli::{
@@ -1036,16 +1036,31 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
             ));
         }
         // Validation refuses an unset depth, so an exported one is set; a
-        // carve's depth follows its shapes, so its deepest cut is stated.
-        let depth = match op {
-            Operation::VCarve(_) => generated
+        // carve's depth follows its shapes, so its deepest cut is stated,
+        // and a countersink's follows its mouth and bit (format 21), so
+        // its mouth and the depth its plunges reach are (#428).
+        let deepest = || {
+            generated
                 .iter()
                 .filter(|e| e.op.id() == op.id() && e.label == RunLabel::Main)
                 .find_map(|e| deepest_mm(project, &e.toolpath))
-                .map_or_else(
+        };
+        let depth = match op {
+            Operation::VCarve(_) => deepest().map_or_else(
+                || "? mm deep".to_owned(),
+                |d| format!("cut {} deep at most", describe_length(project, d)),
+            ),
+            Operation::Drill(DrillOp {
+                cycle: DrillCycle::Countersink { diameter_mm, .. },
+                ..
+            }) => format!(
+                "{} countersinks, {}",
+                describe_length(project, *diameter_mm),
+                deepest().map_or_else(
                     || "? mm deep".to_owned(),
-                    |d| format!("cut {} deep at most", describe_length(project, d)),
+                    |d| format!("{} deep", describe_length(project, d)),
                 ),
+            ),
             _ => op.depth_mm().map_or_else(
                 || "? mm deep".to_owned(),
                 |d| format!("{} deep", describe_length(project, d)),

@@ -139,7 +139,8 @@ written. There are no safety warnings, only errors.
       too. A rest machining Pocket is held to its own outline the same
       way.
     - a [Drill](drill.md): the bit stays inside one of the circles it
-      drills.
+      drills. A [countersink](drill.md#countersink), whose bit is wider
+      than its holes by design, is held by rule 15 instead.
     - a [Bore](bore.md): the centre of the bit stays within the helix
       radius of one of its circles' centres, the circle's radius less the
       bit's and the stock to leave, on the helix, the circle at the bottom and
@@ -218,8 +219,9 @@ written. There are no safety warnings, only errors.
     plane**, `start_depth_mm` below the stock top; the flat depth below
     it; the bit's angle `α` and its **cone height**, `diameter / (2 ×
     tan(α / 2))`; and where the bit's flank is engaged from, which is the
-    stock top unless an enabled Pocket earlier in the list, at the start
-    depth, contains the targets. Then every cutting move of the V-bit:
+    stock top unless an enabled Pocket, or the flat floor of an enabled
+    V-Carve, earlier in the list, at the start depth, contains the
+    targets. Then every cutting move of the V-bit:
 
     - **keeps its tip in the shapes:** the move's ends and middle are
       inside a carved shape, and it crosses no outline;
@@ -237,7 +239,7 @@ written. There are no safety warnings, only errors.
     - **stays at or above the flat depth**;
     - **keeps the shank out:** the depth from where the flank is engaged
       to the tip is at most the cone height. A start depth that no Pocket
-      of the project clears counts in full;
+      or V-Carve floor of the project clears counts in full;
     - **keeps the cone off every wall:** at every point of the move, the
       tip is at least `(start plane − Z) × tan(α / 2)` from every outline
       of the carved shapes, the cone's radius where it meets the start
@@ -259,6 +261,50 @@ written. There are no safety warnings, only errors.
     failure is a bug to report.
     DreamCarve also checks each carve's toolpath the same way before it
     writes a program.
+15. **A countersink goes exactly as deep as its mouth needs.** A
+    [countersink](drill.md#countersink)'s depth is never set, only
+    derived, so the check derives it again from the project, never from
+    the toolpath: the holes (the circles among the Drill's targets, less
+    any at least as wide as the mouth), the start plane `start_depth_mm`
+    below the stock top, the bottom `diameter_mm / (2 × tan(α / 2))`
+    below the start plane, the retract height (`retract_mm` above the
+    stock top, at most safe Z), and the bit's cone height. Then, for every
+    line of the countersink:
+
+    - **no canned cycle:** no `G73`, `G81`, `G82` or `G83`, and no line
+      a controller would run as a cycle. A countersink is always plain
+      moves; a `G81` to the right depth makes the same motion, but is
+      still refused;
+    - **rapids stay up:** every rapid ends at or above the retract height;
+      the only rapid that starts below it is the lift straight up from
+      the bottom of a hole;
+    - **every cut is one plunge:** a straight `G1` (never an arc) that
+      starts and ends at the centre of one of the holes, starts no higher
+      than the retract height, and ends exactly at the bottom;
+    - **the shank stays out:** the depth from where the bit's flank meets
+      wood to the tip is at most the cone height. That is from the start
+      plane only when it is the stock top, or an enabled Pocket or
+      V-Carve floor earlier in the list is at that depth over every hole;
+      otherwise it is from the stock top, even with
+      `start_plane_cleared_externally`, which the check cannot see. A
+      failure is the rule 14 shank error, ``emitted line … engages
+      operation `op5`'s V-bit … mm deep, past its 3.175 mm cone, so its
+      shank would cut``.
+
+    Dwells (`G4`) and lines with no motion pass. The slack is rounding
+    only: one unit in the last decimal place written, in X, Y and Z; a
+    plunge is never flattened or arc-fitted, so no tolerance is added.
+    Any other failure stops the export with ``emitted line … breaks
+    operation `op5`'s countersink: every cut must be a straight plunge at
+    a hole's centre, from no higher than the retract plane to Z …,
+    written as plain moves, and every rapid must stay at or above the
+    retract plane; this line ends at Z … (project space)``. The first Z
+    is the bottom the check derived and the second where the line ends,
+    both in project coordinates (Z from the stock bottom): when they
+    differ, the plunge stops at the wrong depth; when they agree, the
+    line is at the right depth but off the hole's centre, slanted, an arc
+    or a cycle, or it is a rapid below the retract height. DreamCarve's
+    own countersinks never fail it; a failure is a bug to report.
 
 It also checks that:
 
@@ -296,9 +342,15 @@ It also checks that:
   wider than drawn. A V-bit's tip is easy to touch
   off too low; set Z zero with it gently.
 - **Material another program cleared.** With
-  `start_plane_cleared_externally`, a V-Carve trusts that something else
-  cleared its start plane. It counts the bit's flank from the stock top,
-  so the shank stays out either way, but it cannot see that pocket.
+  `start_plane_cleared_externally`, a V-Carve or a countersink trusts
+  that something else cleared its start plane. It counts the bit's flank
+  from the stock top, so the shank stays out either way, but it cannot
+  see that pocket.
+- **Ridges on a V-Carve floor.** A V-Carve's flat floor counts as cleared
+  for a carve or countersink started on it, and is treated as flat. Where
+  the V-bit alone cut it, it has ridges up to `step_over_fraction` times
+  the flat depth high, which the next cut's flank meets above its start
+  plane ([Drill: countersink](drill.md#start-depth)).
 - **Whether the feeds suit the job.** It uses your values exactly. It cannot
   tell whether they suit your machine, bit, and material.
 - **Safe Z height.** It keeps rapids at safe Z, but cannot tell whether safe
@@ -349,9 +401,9 @@ It also checks that:
 8. **Stay at the machine** with the emergency stop or feed hold in reach.
    Wear eye and hearing protection, and keep dust extraction running.
 
-None of the test parts, the coaster in the
+The project has cut the test parts on real machines: the coaster in the
 [first quick start](../quick-start/first-cut.md), the plaque in the
-[second](../quick-start/plaque.md) and the sign in the
-[third](../quick-start/sign.md), has yet been cut on a real machine by
-the project. Until they have, treat every program as untested and watch
-the air cut closely.
+[second](../quick-start/plaque.md), and the sign in the
+[third](../quick-start/sign.md), so far without its countersinks. Your
+machine, bits and stock are not the project's: treat every program as
+untested until its air cut, and watch that closely.

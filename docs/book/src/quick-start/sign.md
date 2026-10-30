@@ -11,17 +11,14 @@ MDF sold as 12 mm:
 - the word **"DreamCarve"** is V-carved into the oval, every serif and
   corner cut to a point;
 - two **hanging holes**, 3.175 mm, are drilled through in the
-  background's top corners;
+  background's top corners, and **countersunk** 6 mm across on the
+  floor, so a screw head sits in each;
 - the **outline** is cut out with four tabs.
 
 You use three bits: a 6.35 mm (1/4") end mill, a 3.175 mm (1/8") end mill
 and a 90° 6.35 mm V-bit. If you have not done [A pocketed plaque from
 DXF](plaque.md), do it first: this chapter assumes you know the tool
 library, pasting operations and running programs one bit at a time.
-
-The countersinks the finished sign has round its hanging holes come in a
-later release (the Drill's countersink cycle); this version drills plain
-holes.
 
 Every command here is run by DreamCarve's test suite exactly as written,
 and the excerpts are checked against the programs it writes, so if it does
@@ -269,6 +266,23 @@ In `sign.dcv`, replace the whole `"operations"` block, from
     "safe_z_mm": 15.0
   },
   {
+    "kind": "drill",
+    "id": "op5",
+    "name": "Countersinks",
+    "enabled": true,
+    "targets": [ "i4", "i5" ],
+    "tool": "t4",
+    "cycle": {
+      "countersink": { "diameter_mm": 6.0, "start_depth_mm": 2.5, "start_plane_cleared_externally": false }
+    },
+    "dwell_s": 0.0,
+    "depth_mm": null,
+    "retract_mm": 1.0,
+    "through_cut_allowance_mm": 0.0,
+    "safe_z_mm": 15.0,
+    "allow_tool_wider_than_hole": false
+  },
+  {
     "kind": "profile",
     "id": "op4",
     "name": "Cut out",
@@ -304,16 +318,40 @@ In `sign.dcv`, replace the whole `"operations"` block, from
 | `op1` Drill "Hanging holes" | Plunges the 3.175 mm end mill (`t3`) through at the centre of each hole | The holes are the bit's size, so a Drill, which only goes straight down, cuts them as drawn. See [Drill operation](../user-guide/drill.md). |
 | `op2` V-Carve "Background" | Cuts the background away to a floor 2.5 mm deep round the oval | `targets` names the rectangle and the oval: the oval, inside the rectangle, is an island and stands. `flat_depth_mm: 2.5` stops the carve at 2.5 mm; with the 90° V-bit (`t4`) the walls slope at 45° from the oval's outline down to the floor 2.5 mm out from it. The pass under `clearing` clears that floor with the 6.35 mm end mill (`t2`) first, in rings (`offset`), ramping in at 15°. The V-bit then traces the floor's edge and cleans out the four corners the end mill cannot reach, in rings 0.5 mm apart (`step_over_fraction: 0.1` of its 5 mm cut width at 2.5 mm). |
 | `op3` V-Carve "Lettering" | Carves the letters into the oval | No flat depth: every stroke is cut to the depth its width needs, at most 1.66 mm here, and every serif runs up to a point. The V-bit's cone is 3.175 mm tall, so it can carve any stroke up to 6.35 mm wide without a flat depth; these are at most 3.3 mm. |
+| `op5` Drill "Countersinks" | Opens a 6 mm countersink round the top of each hanging hole, on the background's floor | A Drill with the `countersink` cycle and the V-bit (`t4`). See [The countersinks](#the-countersinks) below. |
 | `op4` Profile "Cut out" | Cuts the sign out, outside its outline | Through the board into the spoilboard with the 6.35 mm end mill, held by four tabs, as the plaque's. |
 
 See [V-Carve operation](../user-guide/v-carve.md) for every setting.
 
+### The countersinks
+
+`op5` drills the same two circles as `op1`, but with the V-bit and
+`"cycle": { "countersink": … }`. A V-bit plunged into a hole cuts a cone
+round its top, a seat for a screw head. You do not give the depth: you
+give the width of the cone's **mouth**, `diameter_mm`, and DreamCarve
+works out how deep the bit must go to open it, `diameter_mm / (2 ×
+tan(α / 2))` for a bit of angle `α`. A 90° bit opens a 6 mm mouth 3 mm
+down, so `depth_mm` is `null`: a countersink does not use it.
+
+The holes are on the background's floor, 2.5 mm below the board's top,
+so the mouth must open there, not at the top: `start_depth_mm: 2.5` says
+where the cone starts, and the bit goes 3 mm below that, to 5.5 mm. That
+floor counts as cleared because `op2`, earlier in the list, is a V-Carve
+whose 2.5 mm flat floor holds the whole bit at both holes; `check` would
+otherwise stop with `start_depth_uncleared`. The end mill's clearing
+pass, not the V-bit, cleared the floor round both holes, so each cone
+starts on flat wood. See [Drill: countersink](../user-guide/drill.md#countersink).
+
 **The order matters.** The holes come first, while the board is whole.
 The background comes before the lettering only so the V-bit's two carves
 run one after the other in the same program; either order cuts the same.
-The cut-out is last. That means the 6.35 mm end mill is fitted twice:
-once for the background's clearing pass, which must come before the
-V-bit, and again for the cut-out, which must come after it.
+The countersinks come after the background, whose floor they start on,
+and right after the lettering, so the V-bit does all its work in one
+program. The ids are only names: `op5` was added last, but it is listed
+before `op4`, and operations run in the order listed. The cut-out is
+last. That means the 6.35 mm end mill is fitted twice: once for the
+background's clearing pass, which must come before the V-bit, and again
+for the cut-out, which must come after it.
 
 ## 6. Check the project
 
@@ -336,14 +374,14 @@ Program 2 (T1):
     The cutter's edge reaches X 17.500..202.500, Y 17.500..82.500; keep clamps outside that.
   Estimated time: 1 min 14 s (cutting 1 min 11 s, dwells 3 s); 414 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 3 (T3):
-  Extents (machine coordinates, mm, tool centre): X 15.000..205.000, Y 15.000..85.000, Z -2.500..15.000
+  Extents (machine coordinates, mm, tool centre): X 15.000..205.000, Y 15.000..85.000, Z -5.500..15.000
     The cutter's edge reaches X 11.825..208.175, Y 11.825..88.175; keep clamps outside that.
-  Estimated time: 1 min 28 s (cutting 1 min 25 s, dwells 3 s); 3.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 1 min 30 s (cutting 1 min 27 s, dwells 3 s); 3.7 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 4 (T1):
   Extents (machine coordinates, mm, tool centre): X 3.825..213.175, Y 6.825..93.175, Z -12.000..15.000
     The cutter's edge reaches X 0.650..216.350, Y 3.650..96.350; keep clamps outside that.
   Estimated time: 1 min 21 s (cutting 1 min 18 s, dwells 3 s); 137 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 4 min 12 s (cutting 4 min 0 s, dwells 12 s); 4.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 4 min 14 s (cutting 4 min 2 s, dwells 12 s); 4.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 sign.dcv: 0 error(s), 2 warning(s)
 ```
 
@@ -388,6 +426,7 @@ Post-processor grblhal.
   op2 (clearing t2) `Background`: tool `t2` (1/4 end mill), 2 target(s), 2.500 mm deep
   op2 `Background`: tool `t4` (1/4 90 degree V-bit), 2 target(s), cut 2.500 mm deep at most
   op3 `Lettering`: tool `t4` (1/4 90 degree V-bit), 10 target(s), cut 1.658 mm deep at most
+  op5 `Countersinks`: tool `t4` (1/4 90 degree V-bit), 2 target(s), 6.000 mm countersinks, 5.500 mm deep
   op4 `Cut out`: tool `t2` (1/4 end mill), 1 target(s), 12.000 mm deep
 sign-1-T2.nc (25 lines):
   Extents (machine coordinates, mm, tool centre): X 25.000..195.000, Y 75.000..75.000, Z -12.000..15.000
@@ -397,33 +436,39 @@ sign-2-T1.nc (415 lines):
   Extents (machine coordinates, mm, tool centre): X 20.675..199.325, Y 20.675..79.325, Z -2.500..15.000
     The cutter's edge reaches X 17.500..202.500, Y 17.500..82.500; keep clamps outside that.
   Estimated time: 1 min 14 s (cutting 1 min 11 s, dwells 3 s); 414 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-sign-3-T3.nc (5630 lines):
-  Extents (machine coordinates, mm, tool centre): X 15.000..205.000, Y 15.000..85.000, Z -2.500..15.000
+sign-3-T3.nc (5640 lines):
+  Extents (machine coordinates, mm, tool centre): X 15.000..205.000, Y 15.000..85.000, Z -5.500..15.000
     The cutter's edge reaches X 11.825..208.175, Y 11.825..88.175; keep clamps outside that.
-  Estimated time: 1 min 28 s (cutting 1 min 25 s, dwells 3 s); 3.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 1 min 30 s (cutting 1 min 27 s, dwells 3 s); 3.7 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 sign-4-T1.nc (86 lines):
   Extents (machine coordinates, mm, tool centre): X 3.825..213.175, Y 6.825..93.175, Z -12.000..15.000
     The cutter's edge reaches X 0.650..216.350, Y 3.650..96.350; keep clamps outside that.
   Estimated time: 1 min 21 s (cutting 1 min 18 s, dwells 3 s); 137 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 4 min 12 s (cutting 4 min 0 s, dwells 12 s); 4.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 4 min 14 s (cutting 4 min 2 s, dwells 12 s); 4.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 0.250 mm where no clearing pass reaches.
 V-Carve op3 `Lettering`: deepest cut 1.658 mm below the stock top, no flat depth.
 ```
 
 Export writes one program per **tool run**, in the order to run them. The
 background is two runs, its clearing pass with the end mill and its carve
-with the V-bit, so the four operations make five runs, and the two V-bit
+with the V-bit, so the five operations make six runs, and the three V-bit
 runs, one after the other, share a program:
 
 1. `sign-1-T2.nc`, the 3.175 mm end mill: the hanging holes;
 2. `sign-2-T1.nc`, the 6.35 mm end mill: the background's floor;
-3. `sign-3-T3.nc`, the V-bit: the background's slopes and corners, then
-   the lettering;
+3. `sign-3-T3.nc`, the V-bit: the background's slopes and corners, the
+   lettering, then the countersinks;
 4. `sign-4-T1.nc`, the 6.35 mm end mill again: the cut-out.
+
+The summary gives the countersinks' mouth and how deep they go, 5.5 mm
+below the board's top: the 2.5 mm floor plus the 3 mm cone. Program 3's
+Z range now reaches −5.5 for them.
 
 Each program passed the safety checks before it was written, including
 the one that holds the V-bit's whole cone, not just its tip, inside the
-shapes it carves ([Safety](../user-guide/safety.md), rule 14).
+shapes it carves ([Safety](../user-guide/safety.md), rule 14), and the
+one that holds each countersink to a plunge at its hole's centre to
+exactly the depth its mouth needs (rule 15).
 
 ## 8. Read the programs
 
@@ -485,6 +530,31 @@ floor's edge, cleans the corners' floor, and goes on to the lettering:
 ( Operation 2: Lettering )
 ```
 
+The program ends with the countersinks:
+
+<!-- doc-test: contains sign-3-T3.nc -->
+```text
+( Operation 3: Countersinks )
+( Tool 3: 1/4 90 degree V-bit )
+X25.000 Y75.000
+Z1.000
+G1 Z-5.500 F400.000
+G0 Z15.000
+X195.000
+Z1.000
+G1 Z-5.500
+G0 Z15.000
+```
+
+Over each hole the bit drops by rapid to 1 mm above the board, the
+Drill's `retract_mm`, measured from the board's top, not from the floor,
+so the rapid never ends in wood. It then plunges at the plunge rate
+straight down the middle of the hole to Z −5.5, through 2.5 mm of air
+over the floor and 3 mm into it, and lifts straight out. With its 90°
+point 3 mm below the floor, the bit's sides cut a cone 6 mm across at
+the floor. A countersink is always written as these plain moves, never
+as a controller's drilling cycle, whatever the post-processor.
+
 ## 9. Before you cut
 
 Read [Safety](../user-guide/safety.md) once before your first cut. For
@@ -509,7 +579,9 @@ this sign:
 3. Fit the V-bit. Set Z zero with it on the top of the board, on the oval
    or the border, not on the floor just cut: the tip of a V-bit is easy
    to set too low, so touch it off gently. Run `sign-3-T3.nc`: the slope
-   round the oval, the corners, and the lettering.
+   round the oval, the corners, the lettering, and the countersinks. A Z
+   zero set too low makes the countersinks too wide, 2 mm wider for every
+   1 mm too low with this bit.
 4. Fit the 6.35 mm end mill again, set Z zero on the top of the board,
    and run `sign-4-T1.nc`: the cut-out.
 5. Cut the tabs and sand the stubs. A light sanding takes off the fuzz
@@ -518,8 +590,9 @@ this sign:
 The background floor should be flat with no step where the end mill's
 floor meets the V-bit's; the oval's edge should be a clean 45° slope from
 the floor to the surface; every serif and corner of the lettering should
-end in a sharp point at the surface; the holes should be 3.175 mm across;
-and the sign should release after the tabs are cut.
+end in a sharp point at the surface; the holes should be 3.175 mm across,
+each with a countersink 6 mm across at the floor, centred on it and clear
+of the oval's slope; and the sign should release after the tabs are cut.
 
 ## Next steps
 

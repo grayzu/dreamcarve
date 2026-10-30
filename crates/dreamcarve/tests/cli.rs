@@ -5848,6 +5848,120 @@ fn sign_project() -> Project {
     load_file(&tests_fixture("sign.dcv")).project
 }
 
+/// The sign's countersink Drill, `op5` (#428).
+fn sign_countersink(project: &Project) -> &dc_project::DrillOp {
+    project
+        .operations
+        .iter()
+        .find_map(|op| match op {
+            Operation::Drill(drill) if drill.id.as_str() == "op5" => Some(drill),
+            _ => None,
+        })
+        .expect("the sign has countersink Drill `op5`")
+}
+
+/// The XY points the cutting moves of `toolpath` that run level at
+/// `z_mm` pass through, at most `step_mm` apart along each move: straight
+/// moves by length, arcs by angle.
+fn level_cuts_at(toolpath: &dc_cam::Toolpath, z_mm: f64, step_mm: f64) -> Vec<Point> {
+    let mut points = Vec::new();
+    let mut at: Option<dc_geometry::Point3> = None;
+    for m in &toolpath.moves {
+        let to = m.to;
+        if let Some(from) = at
+            && (from.z - z_mm).abs() < 1e-6
+            && (to.z - z_mm).abs() < 1e-6
+        {
+            let (a, b) = (Point::new(from.x, from.y), Point::new(to.x, to.y));
+            match m.kind {
+                dc_cam::MoveKind::Linear => {
+                    let n = ((b - a).length() / step_mm).ceil().max(1.0);
+                    let mut k = 0.0;
+                    while k <= n {
+                        points.push(a + (b - a) * (k / n));
+                        k += 1.0;
+                    }
+                }
+                dc_cam::MoveKind::ArcCw { centre } | dc_cam::MoveKind::ArcCcw { centre } => {
+                    let r = (a - centre).length();
+                    let start = (a.y - centre.y).atan2(a.x - centre.x);
+                    let mut sweep = (b.y - centre.y).atan2(b.x - centre.x) - start;
+                    let ccw = matches!(m.kind, dc_cam::MoveKind::ArcCcw { .. });
+                    if ccw && sweep <= 0.0 {
+                        sweep += std::f64::consts::TAU;
+                    } else if !ccw && sweep >= 0.0 {
+                        sweep -= std::f64::consts::TAU;
+                    }
+                    let n = (r * sweep.abs() / step_mm).ceil().max(1.0);
+                    let mut k = 0.0;
+                    while k <= n {
+                        let t = start + sweep * (k / n);
+                        points.push(Point::new(centre.x + r * t.cos(), centre.y + r * t.sin()));
+                        k += 1.0;
+                    }
+                }
+                _ => {}
+            }
+        }
+        at = Some(to);
+    }
+    points
+}
+
+/// #428: the sign's countersinks start on the background's 2.5 mm floor
+/// where the 6.35 mm end mill's clearing pass cleared it, not on ridges
+/// only the V-bit cut. Every point of the V-bit's disc at each hole (its
+/// whole 6.35 mm width, wider than the 6 mm mouth) lies within the end
+/// mill's radius of the clearing pass's moves along the floor, and the
+/// start plane is that V-Carve's floor (`cleared_start_plane`, #426), so
+/// the cone check counts the bit's flank from it.
+#[test]
+fn sign_countersinks_sit_on_the_end_mill_cleared_floor() {
+    let project = sign_project();
+    let sink = sign_countersink(&project);
+    let plane = dc_project::cleared_start_plane(&project, &Operation::Drill(sink.clone()))
+        .expect("a cleared start plane");
+    assert_eq!(plane.by.id().as_str(), "op2", "the background's floor");
+    assert!(plane.is_at(2.5), "at its 2.5 mm floor");
+
+    let carve = v_carve_op(&project, "op2");
+    let (runs, _) = dc_cam::generate_vcarve(&project, carve).expect("the carve generates");
+    let clearing = runs
+        .iter()
+        .find(|r| r.label == dc_cam::RunLabel::Clearing(ToolId::new("t2")))
+        .expect("the end mill's clearing run");
+    let cuts = level_cuts_at(&clearing.toolpath, 11.8 - 2.5, 0.1);
+    assert!(!cuts.is_empty(), "the clearing pass runs along the floor");
+    let end_mill_radius_mm = 6.35 / 2.0;
+    let v_bit_radius_mm = 6.35 / 2.0;
+
+    let (drilled, _) = dc_cam::generate_drill(&project, sink).expect("the countersinks generate");
+    assert_eq!(drilled.holes.len(), 2);
+    for hole in &drilled.holes {
+        for ring in 0..=8 {
+            let r = v_bit_radius_mm * f64::from(ring) / 8.0;
+            for k in 0..64 {
+                let t = std::f64::consts::TAU * f64::from(k) / 64.0;
+                let p = Point::new(hole.centre.x + r * t.cos(), hole.centre.y + r * t.sin());
+                let nearest = cuts
+                    .iter()
+                    .map(|c| (*c - p).length())
+                    .fold(f64::INFINITY, f64::min);
+                // 0.1 mm sampling along the moves misses a point by at
+                // most 0.05 mm.
+                assert!(
+                    nearest <= end_mill_radius_mm + 0.05,
+                    "({:.3}, {:.3}), by the hole at ({:.3}, {:.3}), is {nearest:.3} mm from the end mill's floor moves",
+                    p.x,
+                    p.y,
+                    hole.centre.x,
+                    hole.centre.y
+                );
+            }
+        }
+    }
+}
+
 /// The V-Carve operation `id` of `project`.
 fn v_carve_op<'a>(project: &'a Project, id: &str) -> &'a dc_project::VCarveOp {
     project
@@ -5860,15 +5974,18 @@ fn v_carve_op<'a>(project: &'a Project, id: &str) -> &'a dc_project::VCarveOp {
         .unwrap_or_else(|| panic!("the sign has V-Carve `{id}`"))
 }
 
-/// #411, acceptance 61 for sub-phase 3.1 (the sign without its
-/// countersinks): the finished sign project exports, on grblHAL with one
-/// program per tool run, four programs in tool-run order: the 3.175 mm end
-/// mill's Drill (T2), the 6.35 mm end mill's clearing pass of the
-/// background carve (T1), the V-bit's two carves (T3), and the 6.35 mm end
-/// mill's cut-out (T1). `export` writes nothing unless every program passes
-/// the safety pass, S1 to S17 (S17 exact, #408), so its success is that
-/// check; each carve's own runs also pass the generator-side cone test
-/// (`assert_safe`).
+/// #411 and #428, acceptance 61: the finished sign project, countersinks
+/// included, exports, on grblHAL with one program per tool run, four
+/// programs in tool-run order: the 3.175 mm end mill's Drill (T2), the
+/// 6.35 mm end mill's clearing pass of the background carve (T1), the
+/// V-bit's two carves and its countersinks (T3), and the 6.35 mm end mill's
+/// cut-out (T1). The countersink Drill, `op5`, is listed before the cut-out
+/// `op4` so that the V-bit is fitted once. `export` writes nothing unless
+/// every program passes the safety pass, S1 to S18 (S17 exact, #408; S18,
+/// #427), so its success is that check; each carve's own runs also pass the
+/// generator-side cone test (`assert_safe`), and each countersink is a
+/// plain plunge at its hole's centre to 3 mm below the background's
+/// 2.5 mm floor.
 #[test]
 fn sign_exports_in_tool_run_order() {
     let dir = work_dir("sign_exports_in_tool_run_order");
@@ -5906,7 +6023,11 @@ fn sign_exports_in_tool_run_order() {
     let expected: [&[&str]; 4] = [
         &["( Operation 1: Hanging holes )"],
         &["( Operation 1: Background clearing t2 )"],
-        &["( Operation 1: Background )", "( Operation 2: Lettering )"],
+        &[
+            "( Operation 1: Background )",
+            "( Operation 2: Lettering )",
+            "( Operation 3: Countersinks )",
+        ],
         &["( Operation 1: Cut out )"],
     ];
     for (name, operations) in names.iter().zip(expected) {
@@ -5914,6 +6035,64 @@ fn sign_exports_in_tool_run_order() {
     }
 
     let project = sign_project();
+    let order: Vec<&str> = project.operations.iter().map(|o| o.id().as_str()).collect();
+    assert_eq!(order, ["op1", "op2", "op3", "op5", "op4"]);
+
+    // The countersinks: the V-bit, a 6 mm mouth on the background's
+    // 2.5 mm floor, so 3 mm below it (90°), plain moves, no cycle word.
+    let sink = sign_countersink(&project);
+    assert_eq!(sink.tool.as_str(), "t4", "the 90° V-bit");
+    assert_eq!(
+        sink.cycle,
+        DrillCycle::Countersink {
+            diameter_mm: 6.0,
+            start_depth_mm: 2.5,
+            start_plane_cleared_externally: false,
+        }
+    );
+    let (drilled, _) = dc_cam::generate_drill(&project, sink).expect("the countersinks generate");
+    let centres: Vec<(f64, f64)> = drilled
+        .holes
+        .iter()
+        .map(|h| {
+            assert_approx_eq!(h.top_z_mm, 11.8 - 2.5, 1e-9);
+            assert_approx_eq!(h.bottom_z_mm, 11.8 - 2.5 - 3.0, 1e-9);
+            assert_eq!(h.cycle, dc_cam::CannedKind::Expanded);
+            (h.centre.x, h.centre.y)
+        })
+        .collect();
+    assert_eq!(centres.len(), 2, "both hanging holes");
+    for (x, y) in [(25.0, 75.0), (195.0, 75.0)] {
+        assert!(
+            centres
+                .iter()
+                .any(|c| (c.0 - x).abs() < 1e-3 && (c.1 - y).abs() < 1e-3),
+            "a countersink at ({x}, {y}): {centres:?}"
+        );
+    }
+    // The summary states the countersinks' mouth and their derived depth,
+    // never "? mm deep" for the `depth_mm` a countersink leaves unset.
+    assert!(
+        report.contains(
+            "op5 `Countersinks`: tool `t4` (1/4 90 degree V-bit), 2 target(s), 6.000 mm countersinks, 5.500 mm deep"
+        ),
+        "{report}"
+    );
+    let v_bit = read("sign-3-T3.nc");
+    let sinks = &v_bit[v_bit
+        .find("( Operation 3: Countersinks )")
+        .expect("the countersinks' comment")..];
+    assert_eq!(
+        sinks.lines().filter(|l| l.contains("Z-5.500")).count(),
+        2,
+        "one plunge to Z -5.5 a hole: {sinks}"
+    );
+    assert!(
+        !v_bit
+            .lines()
+            .any(|l| ["G73", "G81", "G82", "G83"].iter().any(|g| l.contains(g))),
+        "no canned cycle"
+    );
     for id in ["op2", "op3"] {
         let carve = v_carve_op(&project, id);
         let (runs, _) = dc_cam::generate_vcarve(&project, carve).expect("the carve generates");

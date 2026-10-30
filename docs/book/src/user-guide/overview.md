@@ -5,8 +5,8 @@ is a command line tool. **Profile** cuts along closed outlines, to cut a
 part out or a hole through ([Profile](profile.md)); **Pocket** clears the
 material inside a closed outline to a depth ([Pocket](pocket.md));
 **Engrave** follows lines, open or closed, with the bit's centre on the
-line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles
-([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
+line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles,
+or countersinks them with a V-bit ([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
 spiralling down inside them ([Bore](bore.md)). A project holds any number
 of them, cut in the order listed.
 
@@ -245,8 +245,8 @@ output: …`.
 - [Pocket operation](pocket.md): offset and raster clearing, islands,
   stock to leave, rest machining.
 - [Engrave operation](engrave.md): following lines at a fixed depth.
-- [Drill operation](drill.md): simple, peck and dwell cycles, canned
-  cycles.
+- [Drill operation](drill.md): simple, peck and dwell cycles,
+  countersinks, canned cycles.
 - [Bore operation](bore.md): holes bigger than the bit, cut to size along
   a helix.
 - [V-Carve operation](v-carve.md): lettering and signs carved with a V-bit,

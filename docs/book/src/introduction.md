@@ -22,7 +22,7 @@ grblHAL or GRBL machine. Phase 2 adds every 2.5D operation except V-Carve
 (Pocket, Drill, Engrave, and Profile entries, leads and corner relief), DXF
 import, a tool library with Fusion import, and six controllers. Phase 3,
 in progress, adds V-Carve: lettering and signs carved with a V-bit, with
-flat floors an end mill can clear first. Start with
+flat floors an end mill can clear first, and countersinks. Start with
 [Your first cut from an SVG](quick-start/first-cut.md), then
 [A pocketed plaque from DXF](quick-start/plaque.md) and
 [A V-carved sign from SVG outlines](quick-start/sign.md). The

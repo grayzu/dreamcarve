@@ -137,6 +137,23 @@
       "safe_z_mm": 15.0
     },
     {
+      "kind": "drill",
+      "id": "op5",
+      "name": "Countersinks",
+      "enabled": true,
+      "targets": [ "i4", "i5" ],
+      "tool": "t4",
+      "cycle": {
+        "countersink": { "diameter_mm": 6.0, "start_depth_mm": 2.5, "start_plane_cleared_externally": false }
+      },
+      "dwell_s": 0.0,
+      "depth_mm": null,
+      "retract_mm": 1.0,
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 15.0,
+      "allow_tool_wider_than_hole": false
+    },
+    {
       "kind": "profile",
       "id": "op4",
       "name": "Cut out",
