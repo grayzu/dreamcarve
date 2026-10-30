@@ -54,9 +54,20 @@ phases bump the patch number.
   flank's depth from the stock top (`depth_mm` for the female, `depth_mm −
   glue_gap_mm + plug_depth_mm` for the male) must fit the bit's cone; a
   male leaving less than 6 mm of board under its surround warns
-  (`inlay_plug_base_thin`). Clearing passes follow the V-Carve's rules. This
-  build does not export an Inlay yet; `check` and `export` say so. Older
-  files upgrade unchanged.
+  (`inlay_plug_base_thin`). Clearing passes follow the V-Carve's rules.
+  Older files upgrade unchanged.
+- **Inlay export.** The female carves the design as a V-Carve with a flat
+  depth of `depth_mm`; the male carves the surround of the design, mirrored
+  left to right about the middle of its targets (`inlay_male_mirrored`)
+  and offset by `margin_mm`, from a start plane `depth_mm − glue_gap_mm`
+  below the top down to a floor `plug_depth_mm` below that, so the plug's
+  walls meet the pocket's when it is turned over. Either side takes
+  end-mill clearing passes, each a tool run of its own. Every program holds
+  the V-bit's whole cone to its side's material, the male's flank counted
+  from the stock top (safety rule 14, S17). User guide chapter "Inlay
+  operation", with the method, the four values, choosing the bit, the fit
+  procedure and gluing, and a fourth quick start, "An inlay pair", on the
+  new `tests/fixtures/star.svg`.
 
 ### Changed
 
