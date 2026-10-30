@@ -161,8 +161,8 @@
 //!   mouth and its V-bit's angle derive, within rounding; every rapid at
 //!   or above the retract plane; and the flank engaged no deeper than the
 //!   cone, from the start plane when the stock top is it or an enabled
-//!   earlier Pocket at the start depth cleared it
-//!   ([`dc_project::containing_pocket`]), else from the stock top. The
+//!   earlier Pocket or V-Carve floor at the start depth cleared it
+//!   ([`dc_project::cleared_start_plane`]), else from the stock top. The
 //!   tool must be the operation's, a V-bit; anything else is unresolved.
 //! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
 //!   in one of the Bore's holes, the closed targets that are circles, as

@@ -1261,8 +1261,8 @@ it does for Pocket and Profile, and never from the toolpath.
   - The flank's engagement is held to the cone as S17's shank is
     (`ConeHeightExceeded`): `engaged_from − z ≤ cone + rounding`, with
     `engaged_from` the start plane when it is the stock top or an
-    enabled earlier Pocket at the start depth holds the bit
-    (`dc_project::containing_pocket`), else the stock top, and the cone
+    enabled earlier Pocket or V-Carve floor at the start depth holds the
+    bit (`dc_project::cleared_start_plane`), else the stock top, and the cone
     `countersink_depth_mm` of the tool's diameter. A mouth wider than the
     bit fails here wherever it starts.
   - `CountersinkDepth`'s `expected_mm` is always the derived bottom and

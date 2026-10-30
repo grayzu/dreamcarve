@@ -18,10 +18,10 @@ use crate::emit::{EmitOp, ProgramSplit, emit_programs};
 use crate::parse::{CycleModel, parse_program_with};
 use dc_cam::RunLabel;
 use dc_geometry::{Polyline, Transform};
-use dc_project::test_support::{sample_drill, sample_pocket, tool_v_bit_90};
+use dc_project::test_support::{sample_drill, sample_pocket, sample_v_carve, tool_v_bit_90};
 use dc_project::{
     DefinitionId, DrillCycle, DrillOp, FeatureDefinition, FeatureInstance, InstanceId, PocketOp,
-    PostProcessorRef, ToolId, ToolKind,
+    PostProcessorRef, ToolId, ToolKind, VCarveOp,
 };
 
 const DATE: &str = "2026-10-29";
@@ -102,6 +102,17 @@ fn pocket(depth_mm: f64) -> PocketOp {
     PocketOp {
         depth_mm: Some(depth_mm),
         ..sample_pocket()
+    }
+}
+
+/// The sample V-Carve `o6` of the rectangle with the 90° bit `t2` and a
+/// `flat_depth_mm` floor: X 10 + F to 60 − F, Y 10 + F to 40 − F, which
+/// holds every hole's tool-radius disc for F up to 3.
+fn floored_carve(flat_depth_mm: f64) -> VCarveOp {
+    VCarveOp {
+        flat_depth_mm: Some(flat_depth_mm),
+        step_over_fraction: Some(0.4),
+        ..sample_v_carve()
     }
 }
 
@@ -296,7 +307,8 @@ fn countersink_off_centre_fails_s18() {
 /// the stock top: its 3 mm plunge engages 5 mm of the 90° bit's 3.175 mm
 /// cone and fails on the shank. An enabled earlier Pocket 2 mm deep over
 /// the holes clears its start plane, and it passes; a Pocket at another
-/// depth, a disabled one or a later one does not. A shallow countersink
+/// depth, a disabled one or a later one does not. An earlier V-Carve's
+/// 2 mm flat floor clears it too (#426); a 1.5 mm one does not. A shallow countersink
 /// within the cone from the stock top passes uncleared, and a mouth wider
 /// than the bit engages past its cone wherever it starts.
 #[test]
@@ -327,7 +339,17 @@ fn uncleared_countersink_engagement_fails_s18() {
         ..pocket(2.0)
     };
     shank(deep(vec![Operation::Pocket(disabled), drill.clone()]), 5.0);
-    shank(deep(vec![drill, Operation::Pocket(pocket(2.0))]), 5.0);
+    shank(
+        deep(vec![drill.clone(), Operation::Pocket(pocket(2.0))]),
+        5.0,
+    );
+    // #426: an earlier V-Carve's 2 mm flat floor clears it as well; one
+    // at 1.5 mm does not.
+    deep(vec![Operation::VCarve(floored_carve(2.0)), drill.clone()]).unwrap();
+    shank(
+        deep(vec![Operation::VCarve(floored_carve(1.5)), drill]),
+        5.0,
+    );
 
     let shallow = sink(4.0, 1.0, true);
     let project = holes_with(12.0, vec![Operation::Drill(shallow.clone())]);
@@ -373,7 +395,8 @@ fn has_cycle_word(line: &str) -> bool {
 
 /// Every generated countersink passes S18: from the stock top with the
 /// 90° and 82° bits, with a dwell, with a mouth as wide as the bit, from
-/// a start plane an earlier Pocket cleared and from one the user vouches
+/// a start plane an earlier Pocket cleared, from the 2.5 mm flat floor of
+/// an earlier V-Carve (#426) and from one the user vouches
 /// for. Each is exported on the sample's grblHAL and on LinuxCNC with
 /// canned cycles on (acceptance 55, the safety half): there the program
 /// has no cycle word and no `canned_cycle_expanded` warning, since a
@@ -383,6 +406,7 @@ fn generated_countersinks_pass_s18() {
     let thin = holes_with(6.0, Vec::new());
     let thick = holes_with(12.0, Vec::new());
     let pocketed = holes_with(12.0, vec![Operation::Pocket(pocket(4.0))]);
+    let carved = holes_with(12.0, vec![Operation::VCarve(floored_carve(2.5))]);
     let cases: Vec<(&str, &Project, DrillOp)> = vec![
         ("90° from the stock top", &thin, sink(6.0, 0.0, false)),
         (
@@ -403,6 +427,7 @@ fn generated_countersinks_pass_s18() {
         ),
         ("a mouth as wide as the bit", &thin, sink(6.35, 0.0, false)),
         ("on a Pocket's floor", &pocketed, sink(6.0, 4.0, false)),
+        ("on a V-Carve's floor", &carved, sink(6.0, 2.5, false)),
         ("on a vouched start plane", &thick, sink(4.0, 1.0, true)),
     ];
     for (name, project, op) in cases {

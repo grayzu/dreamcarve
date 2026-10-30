@@ -18,9 +18,10 @@
 //! - the **retract plane**: `min(safe Z, stock top + max(retract_mm, 0))`,
 //!   from the stock top whatever the start plane (security review H3);
 //! - the **engagement**: from the start plane when it is the stock top or
-//!   an enabled earlier Pocket at the start depth holds the bit at every
-//!   hole ([`containing_pocket`], as validation and the generator decide
-//!   it), else from the stock top (security review H4); the cone is
+//!   an enabled earlier Pocket, or V-Carve's flat floor (#426), at the
+//!   start depth holds the bit at every hole ([`cleared_start_plane`], as
+//!   validation and the generator decide it), else from the stock top
+//!   (security review H4); the cone is
 //!   [`countersink_depth_mm`] of the tool's own diameter.
 //!
 //! In the operation's span:
@@ -36,7 +37,7 @@
 //!
 //! Each failure is [`ExportError::CountersinkDepth`]; then every cut's
 //! engagement is held to the cone ([`ExportError::ConeHeightExceeded`]),
-//! which a mouth wider than the bit, or a start plane no Pocket cleared,
+//! which a mouth wider than the bit, or a start plane nothing cleared,
 //! fails.
 //!
 //! **Tolerance.** Rounding only: one unit in the last written place of the
@@ -48,7 +49,7 @@
 use dc_geometry::{EPS_MM, Point, Point3, as_circle};
 use dc_project::{
     COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, Operation, PostProcessor, Project, ToolKind,
-    containing_pocket, countersink_depth_mm,
+    cleared_start_plane, countersink_depth_mm,
 };
 
 use super::placed;
@@ -113,11 +114,10 @@ impl Sink {
             .map(|(centre, _)| centre)
             .collect();
         // H4: the stock top, unless the start plane is it or an enabled
-        // earlier Pocket at the start depth cleared it.
+        // earlier Pocket or V-Carve floor at the start depth cleared it.
         let cleared = start_depth_mm <= 0.0
-            || containing_pocket(project, &Operation::Drill(drill.clone()))
-                .and_then(|pocket| pocket.depth_mm)
-                .is_some_and(|d| (d - start_depth_mm).abs() <= EPS_MM);
+            || cleared_start_plane(project, &Operation::Drill(drill.clone()))
+                .is_some_and(|plane| plane.is_at(start_depth_mm));
         Some(Self {
             centres,
             bottom_z_mm: start_plane_z_mm - depth_mm,
