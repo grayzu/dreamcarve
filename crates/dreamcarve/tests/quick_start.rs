@@ -13,18 +13,20 @@
 //! - `<!-- doc-test: run -->` before a `sh` block: each line is a
 //!   `dreamcarve` command, run in order, that must exit 0.
 //!   `<!-- doc-test: run, exit N -->` expects exit code `N` instead.
-//! - `<!-- doc-test: edit FILE -->` before a block of `"key": value` lines:
+//! - `<!-- doc-test: edit FILE… -->` before a block of `"key": value` lines:
 //!   the hand edit the chapter asks for. Each key must occur on exactly one
 //!   line of `FILE`, or else on the line right after the block's previous
 //!   key (the tool's `step_down_mm` follows its `rpm`, #98), and that line's
-//!   value is replaced, as a user would in a text editor.
+//!   value is replaced, as a user would in a text editor. Several files
+//!   may be named; each gets the same edit.
 //! - `<!-- doc-test: write FILE -->` before a block: the reader makes `FILE`
 //!   with exactly that text.
-//! - `<!-- doc-test: paste FILE KEY -->` before a block that starts with
+//! - `<!-- doc-test: paste FILE… KEY -->` before a block that starts with
 //!   `"KEY":`: the reader selects the `"KEY": [ … ]` (or `{ … }`) block of
 //!   `FILE`, from its first line to its closing bracket, and pastes the
 //!   chapter's block over it. The pasted lines take the indentation of the
-//!   line they replace.
+//!   line they replace. Several files may be named; the block is pasted
+//!   into each.
 //! - `<!-- doc-test: excerpt FILE -->` before a block: the first lines of
 //!   `FILE` as the chapter shows them. The header line carrying the date is
 //!   compared up to the date.
@@ -57,6 +59,9 @@ const PLAQUE: &str = "docs/book/src/quick-start/plaque.md";
 
 /// The phase 3 quick start, relative to the repository root.
 const SIGN: &str = "docs/book/src/quick-start/sign.md";
+
+/// The inlay quick start (sub-phase 3.3), relative to the repository root.
+const INLAY: &str = "docs/book/src/quick-start/inlay.md";
 
 /// The marker that opens every step comment.
 const MARKER: &str = "<!-- doc-test:";
@@ -189,6 +194,12 @@ fn step(chapter: &str, directive: &str, at: usize, first: usize, body: &[&str]) 
         assert!(!arg.is_empty(), "{chapter}:{at}: `{verb}` needs a file");
         arg.to_owned()
     };
+    // `edit` and `paste` may name several files, each changed alike.
+    let files = |names: &str| {
+        let names: Vec<String> = names.split_whitespace().map(str::to_owned).collect();
+        assert!(!names.is_empty(), "{chapter}:{at}: `{verb}` needs a file");
+        names
+    };
     match verb.trim_end_matches(',') {
         "run" => {
             let exit = match arg {
@@ -222,7 +233,7 @@ fn step(chapter: &str, directive: &str, at: usize, first: usize, body: &[&str]) 
                 .collect()
         }
         "edit" => {
-            let changes = body
+            let changes: Vec<(String, String)> = body
                 .iter()
                 .filter(|l| !l.trim().is_empty())
                 .map(|l| {
@@ -236,11 +247,14 @@ fn step(chapter: &str, directive: &str, at: usize, first: usize, body: &[&str]) 
                     (key.trim().to_owned(), value.trim().to_owned())
                 })
                 .collect();
-            vec![Step::Edit {
-                file: file(),
-                changes,
-                line: at,
-            }]
+            files(arg)
+                .into_iter()
+                .map(|file| Step::Edit {
+                    file,
+                    changes: changes.clone(),
+                    line: at,
+                })
+                .collect()
         }
         "write" => vec![Step::Write {
             file: file(),
@@ -248,20 +262,23 @@ fn step(chapter: &str, directive: &str, at: usize, first: usize, body: &[&str]) 
             line: at,
         }],
         "paste" => {
-            let (file, key) = arg
-                .split_once(' ')
+            let (targets, key) = arg
+                .rsplit_once(' ')
                 .unwrap_or_else(|| panic!("{chapter}:{at}: expected `paste FILE KEY`"));
             let key = format!("\"{}\":", key.trim());
             assert!(
                 body.first().is_some_and(|l| l.starts_with(&key)),
                 "{chapter}:{at}: a pasted block starts with {key}"
             );
-            vec![Step::Paste {
-                file: file.to_owned(),
-                key,
-                lines: owned(),
-                line: at,
-            }]
+            files(targets)
+                .into_iter()
+                .map(|file| Step::Paste {
+                    file,
+                    key: key.clone(),
+                    lines: owned(),
+                    line: at,
+                })
+                .collect()
         }
         "excerpt" => vec![Step::Excerpt {
             file: file(),
@@ -1018,4 +1035,113 @@ fn v_carved_sign_chapter_runs() {
         2,
         "{sinks}"
     );
+}
+
+/// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437) run
+/// as written on `tests/fixtures/star.svg`: every command exits as the
+/// chapter says, the tool library file, the hand edits and the pasted
+/// operation apply to both projects, every excerpt is in the program it
+/// names, and the two projects are the committed
+/// `tests/fixtures/star-female.dcv` and `star-male.dcv`, which
+/// `cli::star_female_and_male_export` exports. Each side exports two
+/// programs, listed in run order: the 3.175 mm end mill's clearing pass
+/// (T2), then the 60° V-bit (T1). Each passes the rules a user can check
+/// on the program alone; `export` has already held it to S1–S18. The male
+/// prints `inlay_male_mirrored`, the female does not.
+#[test]
+fn inlay_pair_chapter_runs() {
+    let run = Run {
+        chapter: INLAY,
+        drawing: ("tests/fixtures/star.svg", "star.svg"),
+        swap: None,
+    };
+    let text = std::fs::read_to_string(repo_root().join(INLAY)).expect("chapter readable");
+    let steps = steps(INLAY, &text);
+    for (what, has) in [
+        (
+            "write",
+            steps.iter().any(|s| matches!(s, Step::Write { .. })),
+        ),
+        (
+            "paste",
+            steps.iter().any(|s| matches!(s, Step::Paste { .. })),
+        ),
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+        (
+            "excerpt",
+            steps.iter().any(|s| matches!(s, Step::Excerpt { .. })),
+        ),
+    ] {
+        assert!(has, "{INLAY} has no `{what}` step");
+    }
+    let dir = run_chapter("inlay_pair_chapter_runs", &run);
+
+    for stem in ["star-female", "star-male"] {
+        let name = format!("{stem}.dcv");
+        let fixture = format!("tests/fixtures/{name}");
+        let built = std::fs::read_to_string(dir.join(&name)).expect("project written");
+        let committed =
+            std::fs::read_to_string(repo_root().join(&fixture)).expect("fixture readable");
+        assert_same_project(&built, &committed, &fixture, &dir.join(&name));
+    }
+
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(
+        programs,
+        [
+            "star-female-1-T2.nc",
+            "star-female-2-T1.nc",
+            "star-male-1-T2.nc",
+            "star-male-2-T1.nc",
+        ]
+    );
+
+    let limits = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
+        safe_z_mm: 10.0,
+        floor_mm: 12.0,
+        stock_mm: (100.0, 100.0),
+        radius_mm,
+        feed_mm_min,
+        plunge_mm_min,
+        spindle: "M3 S18000",
+    };
+    for stem in ["star-female", "star-male"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
+            .current_dir(&dir)
+            .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
+            .args(["export", &format!("{stem}.dcv")])
+            .output()
+            .expect("binary runs");
+        let report = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{report}");
+        let names = [format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
+        let at: Vec<usize> = names
+            .iter()
+            .enumerate()
+            .map(|(k, name)| {
+                report
+                    .find(&format!("{}. {name}", k + 1))
+                    .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
+            })
+            .collect();
+        assert!(at.is_sorted(), "{report}");
+        assert_eq!(
+            report.contains("inlay_male_mirrored"),
+            stem == "star-male",
+            "{report}"
+        );
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+        assert_program_safe(&names[0], &read(&names[0]), &limits(300.0, 1000.0, 1.5875));
+        assert_program_safe(&names[1], &read(&names[1]), &limits(300.0, 1000.0, 3.175));
+    }
 }

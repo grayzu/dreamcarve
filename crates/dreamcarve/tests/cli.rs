@@ -6357,6 +6357,178 @@ fn sign_lettering_is_within_the_cone() {
     }
 }
 
+/// The lowest Z any line of `program` moves to, mm.
+fn lowest_z(program: &str) -> f64 {
+    program
+        .lines()
+        .filter(|l| !l.starts_with('('))
+        .flat_map(str::split_whitespace)
+        .filter_map(|w| w.strip_prefix('Z').and_then(|z| z.parse::<f64>().ok()))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// #437, acceptances 56 and 57 on the functional spec's "Inlay pair" test
+/// part: `tests/fixtures/star-female.dcv` and `star-male.dcv`, which the
+/// quick start "An inlay pair" builds from `tests/fixtures/star.svg`. Each
+/// is the test part's values: 100 × 100 × 12 mm stock, one Inlay `op1` of
+/// the star and its circle with the 60° 6.35 mm V-bit (T1), `depth_mm` 4,
+/// `glue_gap_mm` 1, `plug_depth_mm` 2, `margin_mm` 8, `step_over_fraction`
+/// 0.1, safe Z 10 mm, and a clearing pass with the 3.175 mm end mill (T2).
+/// Each side exports two programs, listed in this order: `<stem>-1-T2.nc`,
+/// the clearing pass, down to the floor (Z −4 for the female, −5 for the
+/// male), then `<stem>-2-T1.nc`, the V-bit. `export` writes nothing unless
+/// every program passes the safety pass, S1 to S18, so its success is that
+/// check; both runs also pass `assert_run_safe`. The male prints
+/// `inlay_male_mirrored` once, about X = 50 mm, the star's centre; the
+/// female never does.
+#[test]
+fn star_female_and_male_export() {
+    for (side, deepest_mm) in [
+        (dc_project::InlaySide::Female, 4.0),
+        (dc_project::InlaySide::Male, 5.0),
+    ] {
+        let stem = match side {
+            dc_project::InlaySide::Female => "star-female",
+            dc_project::InlaySide::Male => "star-male",
+        };
+        let dir = work_dir(&format!("star_female_and_male_export_{stem}"));
+        let dcv = format!("{stem}.dcv");
+        copy_fixture(&dir, &dcv, &dcv);
+
+        let project = load_file(&dir.join(&dcv)).project;
+        assert_eq!(
+            project.stock,
+            dc_project::Stock {
+                width_mm: 100.0,
+                height_mm: 100.0,
+                thickness_mm: Some(12.0),
+            },
+            "{stem}"
+        );
+        assert_eq!(project.post_processor.id, "grblhal", "{stem}");
+        let [Operation::Inlay(inlay)] = &project.operations[..] else {
+            panic!("{stem} has one operation, an Inlay");
+        };
+        assert_eq!(inlay.side, side, "{stem}");
+        assert_eq!(
+            (
+                inlay.depth_mm,
+                inlay.glue_gap_mm,
+                inlay.plug_depth_mm,
+                inlay.margin_mm,
+                inlay.step_over_fraction,
+            ),
+            (Some(4.0), Some(1.0), Some(2.0), Some(8.0), Some(0.1)),
+            "{stem}: the test part's values"
+        );
+        assert_approx_eq!(inlay.safe_z_mm, 10.0, 1e-12);
+        let names: Vec<&str> = inlay
+            .targets
+            .iter()
+            .map(|t| {
+                project
+                    .instances
+                    .iter()
+                    .find(|i| &i.id == t)
+                    .map(|i| i.name.as_str())
+                    .expect("the target is an instance")
+            })
+            .collect();
+        assert_eq!(names, ["star", "circle"], "{stem}");
+        let tool = |id: &ToolId| {
+            project
+                .tools
+                .iter()
+                .find(|t| &t.id == id)
+                .expect("the tool is in the project")
+        };
+        let v_bit = tool(&inlay.tool);
+        assert_eq!(
+            v_bit.cutter,
+            ToolKind::VBit {
+                included_angle_deg: 60.0
+            },
+            "{stem}"
+        );
+        assert_approx_eq!(v_bit.diameter_mm, 6.35, 1e-12);
+        assert_eq!(v_bit.number, Some(1), "{stem}: the V-bit is T1");
+        let [pass] = &inlay.clearing[..] else {
+            panic!("{stem} has one clearing pass");
+        };
+        assert_eq!(pass.tool.as_str(), "t2", "{stem}");
+        let end_mill = tool(&pass.tool);
+        assert_eq!(end_mill.cutter, ToolKind::EndMill, "{stem}");
+        assert_approx_eq!(end_mill.diameter_mm, 3.175, 1e-12);
+        assert_eq!(end_mill.number, Some(2), "{stem}: the end mill is T2");
+
+        let out = run(&dir, &["export", &dcv, "--date", FIXED_DATE]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "{stem} export: {report}");
+        let programs = [format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
+        let mut written: Vec<String> = std::fs::read_dir(&dir)
+            .expect("work dir readable")
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".nc"))
+            .collect();
+        written.sort();
+        assert_eq!(written, programs, "{report}");
+        let listed: Vec<usize> = programs
+            .iter()
+            .enumerate()
+            .map(|(k, name)| {
+                report
+                    .find(&format!("{}. {name}", k + 1))
+                    .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
+            })
+            .collect();
+        assert!(listed.is_sorted(), "listed in run order: {report}");
+        assert!(
+            report.contains(&format!(
+                "deepest cut {deepest_mm:.3} mm below the stock top"
+            )),
+            "{report}"
+        );
+
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+        let (clearing, carve) = (read(&programs[0]), read(&programs[1]));
+        assert_eq!(
+            operation_comments(&clearing),
+            ["( Operation 1: Star clearing t2 )"],
+            "{stem}"
+        );
+        assert_eq!(
+            operation_comments(&carve),
+            ["( Operation 1: Star )"],
+            "{stem}"
+        );
+        assert_approx_eq!(lowest_z(&clearing), -deepest_mm, 1e-9);
+        assert_approx_eq!(lowest_z(&carve), -deepest_mm, 1e-9);
+
+        let mirrored = report.matches("inlay_male_mirrored").count();
+        if side == dc_project::InlaySide::Male {
+            assert_eq!(mirrored, 1, "{report}");
+            assert!(report.contains("X = 50 mm"), "{report}");
+        } else {
+            assert_eq!(mirrored, 0, "{report}");
+        }
+
+        let (runs, _) = dc_cam::generate_inlay(&project, inlay).expect("the inlay generates");
+        let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
+        assert_eq!(
+            labels,
+            [
+                &dc_cam::RunLabel::Clearing(ToolId::new("t2")),
+                &dc_cam::RunLabel::Main
+            ],
+            "{stem}"
+        );
+        for run in &runs {
+            dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
+        }
+    }
+}
+
 /// #125, acceptance test 34's export half: the finished plaque project
 /// built from `plaque.dxf` (`tests/fixtures/plaque.dcv`, the quick start's
 /// result) and from `plaque.svg` (`tests/fixtures/plaque-svg.dcv`, the
