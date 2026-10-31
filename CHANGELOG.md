@@ -116,6 +116,15 @@ phases bump the patch number.
   how long the cut-out end mill's flutes must be.
 - **`flatten_tolerance_mm` is at most 0.1 mm.** A coarser tolerance is an
   error, in a file of any version: the safety checks' slack scales with it.
+- **The male Inlay carves to every corner of its plug.** The V-bit left
+  full-height wood at the tip of a narrow notch in the design (a serif M's
+  notch between stem and diagonal, under about 29°) and a sliver at a wide
+  one (over 130°), so the plug stood up to its whole height proud of the
+  female and would not go in. The male's carve now reaches every corner
+  of the plug's outline at the start plane and follows each corner's own
+  depth down to the floor. A male with such corners exports a different
+  V-bit program, a few seconds longer; V-Carves and female Inlays export
+  the same programs as before ([#452]).
 
 ### Fixed
 
@@ -903,4 +912,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#389]: https://github.com/grayzu/dreamcarve/issues/389
 [#392]: https://github.com/grayzu/dreamcarve/issues/392
 [#394]: https://github.com/grayzu/dreamcarve/issues/394
+[#452]: https://github.com/grayzu/dreamcarve/issues/452
 [#453]: https://github.com/grayzu/dreamcarve/issues/453

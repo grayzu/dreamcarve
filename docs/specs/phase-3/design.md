@@ -635,6 +635,8 @@ pub struct MedialGraph { pub nodes: Vec<MedialNode>, pub adjacency: Vec<Vec<usiz
 pub struct Resolution { pub step_mm: f64, pub budget_floor_mm: f64, pub budget_limited: bool }
 pub fn resolution(region: &Region) -> Option<Resolution>;
 pub fn medial_axis(region: &Region, step_mm: f64, tolerance_mm: f64) -> MedialGraph;
+pub fn medial_axis_with(region: &Region, step_mm: f64, tolerance_mm: f64, reach: CornerReach) -> MedialGraph;  // #452
+pub enum CornerReach { Upstream, Every { outer: bool, floor_inset_mm: Option<f64> } }
 pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> Vec<Corner>;  // arcs flattened as for medial_axis (#402)
 pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
 ```
@@ -688,6 +690,26 @@ pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
     one whose medial disc reaches the corner, scored as upstream, and
     only when the joining segment stays inside the region at up to 64
     samples.
+    **Corner reach (#452).** `medial_axis` is `medial_axis_with(…,
+    CornerReach::Upstream)`, all of the above. Its passes can leave a
+    convex corner with no branch: spur pruning (step 9) unzips the branch
+    into a corner sharper than about 29°, whose clearance falls only
+    `sin(θ/2)` per mm, under the `0.25` it asks; upstream negates a hole's
+    bisector, so a hole's corner (step 11) seeks its joint through the
+    hole; and a corner turning under 50° gets no tip, though the
+    contact-spread filter drops the branch into any wider than 120°.
+    Where the bit starts at the surface that leaves only the corner's
+    narrow end uncarved, and V-Carve keeps it. `CornerReach::Every` (a
+    carve with material above its start plane, the male Inlay) reaches
+    every convex corner of the holes, and of the outer when `outer`: a
+    leaf on a sharp corner's own branch (within a step of the bisector,
+    its clearance `along · sin(θ/2)` within a step) is not a spur; every
+    bisector points into the region; any convex corner no medial disc,
+    nor the floor's trace `floor_inset_mm` in (a corner turning `τ` is
+    within `d (1 / cos(τ/2) − 1)` of it), reaches within 0.01 mm gets a
+    tip too; and a tip more than a step from its joint gets a node every
+    step on the way, at its own clearance. `convex_corners` returns
+    bisectors into the region.
 12. **Finalise**: nodes with no edges are dropped; a graph with no edges
     keeps its deepest node alone; a graph whose extent is at most
     `3 · step` collapses to its deepest node (a dot). Adjacency lists are
@@ -751,7 +773,18 @@ orientation; DreamCarve's regions are normalised anyway.
    - **Fit** (#404, not upstream): a stretch between two kept points
      whose cone reaches more than 0.1 µm past a wall (a reflex corner or a
      flattened curve between them; the dropped points) is split at its
-     worst point, set to that point's own depth, at most 16 times.
+     worst point, set to that point's own depth, at most 16 times. Where
+     material may stand above the start plane (`engaged_from` above it;
+     #452), a stretch is also read every 0.05 mm and split where it runs
+     more than 0.01 mm shallower than a point's own depth there (a
+     corner's straight fall to the floor, Douglas-Peucker's chord across
+     a bend in depth), and the medial axis is built with
+     `CornerReach::Every` (outer `false` for a male Inlay's band region,
+     whose outer edge is not the plug's; `floor_inset_mm` `F · slope`).
+     Such a carve's chains are then cut off where they run out onto the
+     floor, which the floor's cutting covers. A carve engaged from its
+     start plane is built as before, its program byte for byte the same
+     (`vcarve::start_at_stock_top_is_unchanged`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
@@ -1167,6 +1200,23 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      plus the floor's ring short of the edge, and the plain offset copied
      every notch of the design (the dip over an M, the pinches between
      letters). A user-drawn boundary is #449.
+   - **Every corner of the plug (#452).** The male's flank is engaged
+     from the stock top, so wood stands above its start plane wherever
+     its carve does not reach: a corner of the surround the medial axis
+     misses keeps wood up to the stock top, where a chain ending at the
+     corner, its tip at the start plane, would cut a disc of radius `h ·
+     s` at height `h` about it, exactly the plug's inset there. The
+     carve reaches every convex corner of the plug's outline and fits
+     its chains to their own depth (V-Carve generator, step 5, "Fit";
+     medial axis, "Corner reach"). Found by the maintainer's bench check
+     (#438): a serif "M" whose stem and diagonal meet in a 23° notch
+     lost the notch's whole branch to spur pruning, and the plug stood
+     3 mm proud. `inlay::plug_seats_flush` simulates both sides' programs
+     as heightfields and seats the plug: the male's share of the seat
+     must be within 0.05 mm, and the seat within 0.25 mm, the female's
+     own V-Carve tolerance (its Douglas-Peucker chords, a quarter step
+     off the axis, stop up to 0.11 mm short of a wall on the "DC"
+     letters, which holds the plug 0.185 mm up).
    - `InlayPlugBaseThin` when `thickness − (D − G + P) < 6`.
 5. **Fit property** (acceptance 57; `inlay::female_and_male_walls_mate`):
    for sample points `q` on a design outline and heights `h` in `[0, D −

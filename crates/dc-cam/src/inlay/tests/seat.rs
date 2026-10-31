@@ -1,0 +1,333 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! A heightfield simulation of an inlay's two sides, and the seat check
+//! built on it (#452): the programs themselves, not the outlines they
+//! were built from, decide whether the plug seats.
+//!
+//! Each side's runs are cut into a grid of heights. A cell keeps the
+//! lowest Z any tool's surface reaches over it: a V-bit's cone, `|q − p| /
+//! slope` above its tip, or an end mill's flat disc. Each cell's height is
+//! exact for every straight move (the cone's least height over a move is
+//! found in closed form, the disc's at the lower end of the stretch it
+//! covers); arcs are cut as chords within [`CHORD_MM`]. A coarse grid
+//! therefore samples the true surface at fewer points, but never reports
+//! a cell higher than the programs leave it.
+
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "grid indices and chord counts are small, non-negative and clamped"
+)]
+
+use crate::run::ToolRun;
+use crate::toolpath::{Move, MoveKind};
+use dc_geometry::{Arc, Point, Point3, Rect};
+use std::collections::VecDeque;
+
+/// How far an arc's chords may stray from it, mm.
+const CHORD_MM: f64 = 0.001;
+
+/// How far above its start plane the male's band floor may read and still
+/// part the plug from the board round it, mm: the band's edges meet the
+/// start plane exactly.
+const FLOOR_SLACK_MM: f64 = 0.01;
+
+/// The cutting surface of a tool, as the heightfield sees it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Cutter {
+    /// A V-bit: a cone of radius `(z − tip) · slope` at height `z`.
+    VBit {
+        /// `tan(α/2)`.
+        slope: f64,
+    },
+    /// An end mill's flat bottom.
+    Flat {
+        /// The radius, mm.
+        radius_mm: f64,
+    },
+}
+
+/// The heights a side's runs leave on its stock, on a square grid. With a
+/// mirror line, cell `(i, j)` holds the height at the point mirrored about
+/// it: the male's grid is laid over the female's, as the plug seats.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct Heightfield {
+    /// The first cell's centre, mm, in the grid's (the female's) frame.
+    origin: Point,
+    /// The cell size, mm.
+    step_mm: f64,
+    /// Cells across and up.
+    nx: usize,
+    ny: usize,
+    /// X of the line the toolpaths are mirrored about, mm, if any.
+    mirror_x_mm: Option<f64>,
+    /// The stock top, mm.
+    pub top_z_mm: f64,
+    /// Heights, row by row from the bottom, mm.
+    z_mm: Vec<f64>,
+}
+
+impl Heightfield {
+    /// Uncut stock `top_z_mm` high over `bounds` (the female's frame),
+    /// cells `step_mm` apart; toolpaths are read mirrored about X =
+    /// `mirror_x_mm` when it is set.
+    pub(super) fn new(bounds: Rect, step_mm: f64, top_z_mm: f64, mirror_x_mm: Option<f64>) -> Self {
+        let count = |span: f64| (span / step_mm).ceil() as usize + 1;
+        let (nx, ny) = (
+            count(bounds.max.x - bounds.min.x),
+            count(bounds.max.y - bounds.min.y),
+        );
+        Self {
+            origin: bounds.min,
+            step_mm,
+            nx,
+            ny,
+            mirror_x_mm,
+            top_z_mm,
+            z_mm: vec![top_z_mm; nx * ny],
+        }
+    }
+
+    /// Cells across and up.
+    pub(super) fn size(&self) -> (usize, usize) {
+        (self.nx, self.ny)
+    }
+
+    /// The height of cell `(i, j)`, mm.
+    pub(super) fn z_mm(&self, i: usize, j: usize) -> f64 {
+        self.z_mm[j * self.nx + i]
+    }
+
+    /// Cell `(i, j)`'s centre in the grid's frame.
+    pub(super) fn cell(&self, i: usize, j: usize) -> Point {
+        Point::new(
+            self.origin.x + i as f64 * self.step_mm,
+            self.origin.y + j as f64 * self.step_mm,
+        )
+    }
+
+    /// Cell `(i, j)`'s centre in the toolpaths' frame.
+    pub(super) fn sample(&self, i: usize, j: usize) -> Point {
+        let p = self.cell(i, j);
+        self.mirror_x_mm
+            .map_or(p, |cx| Point::new(2.0 * cx - p.x, p.y))
+    }
+
+    /// Cuts every run of `runs`, each with `cutter_of(run)`.
+    pub(super) fn cut_runs(&mut self, runs: &[ToolRun], cutter_of: impl Fn(&ToolRun) -> Cutter) {
+        for run in runs {
+            let cutter = cutter_of(run);
+            let mut from: Option<Point3> = None;
+            for mv in &run.toolpath.moves {
+                if let Some(a) = from
+                    && mv.is_cut()
+                {
+                    for (p, q) in chords(a, mv) {
+                        self.cut_segment(p, q, cutter);
+                    }
+                }
+                from = Some(mv.to);
+            }
+        }
+    }
+
+    /// Cuts the straight move `a`–`b` with `cutter`.
+    fn cut_segment(&mut self, a: Point3, b: Point3, cutter: Cutter) {
+        let low_mm = a.z.min(b.z);
+        let reach_mm = match cutter {
+            Cutter::VBit { slope } => (self.top_z_mm - low_mm) * slope,
+            Cutter::Flat { radius_mm } => radius_mm,
+        };
+        if low_mm >= self.top_z_mm || reach_mm <= 0.0 {
+            return;
+        }
+        // The cells the move can reach, in the grid's frame.
+        let (x0, x1) = match self.mirror_x_mm {
+            None => (a.x.min(b.x), a.x.max(b.x)),
+            Some(cx) => (2.0 * cx - a.x.max(b.x), 2.0 * cx - a.x.min(b.x)),
+        };
+        let (y0, y1) = (a.y.min(b.y), a.y.max(b.y));
+        let index = |v: f64, origin: f64, n: usize| -> usize {
+            (((v - origin) / self.step_mm).max(0.0) as usize).min(n)
+        };
+        let i0 = index(x0 - reach_mm, self.origin.x, self.nx);
+        let i1 = index(x1 + reach_mm + self.step_mm, self.origin.x, self.nx);
+        let j0 = index(y0 - reach_mm, self.origin.y, self.ny);
+        let j1 = index(y1 + reach_mm + self.step_mm, self.origin.y, self.ny);
+        for j in j0..j1 {
+            for i in i0..i1 {
+                let q = self.sample(i, j);
+                let z = match cutter {
+                    Cutter::VBit { slope } => cone_low_mm(a, b, q, slope),
+                    Cutter::Flat { radius_mm } => disc_low_mm(a, b, q, radius_mm),
+                };
+                let cell = &mut self.z_mm[j * self.nx + i];
+                if z < *cell {
+                    *cell = z;
+                }
+            }
+        }
+    }
+}
+
+/// The straight pieces of the move `mv` from `from`: itself, or an arc's
+/// chords within [`CHORD_MM`], Z falling or rising evenly along it.
+fn chords(from: Point3, mv: &Move) -> Vec<(Point3, Point3)> {
+    let (centre, ccw) = match mv.kind {
+        MoveKind::ArcCw { centre } => (centre, false),
+        MoveKind::ArcCcw { centre } => (centre, true),
+        _ => return vec![(from, mv.to)],
+    };
+    let arc = Arc::from_ends(from.xy(), mv.to.xy(), centre, ccw);
+    let r = arc.radius_mm;
+    let per_chord_rad = if r > CHORD_MM {
+        2.0 * (1.0 - CHORD_MM / r).acos()
+    } else {
+        std::f64::consts::PI
+    };
+    let n = ((arc.sweep_rad.abs() / per_chord_rad).ceil() as usize).max(1);
+    let point = |k: usize| {
+        if k == n {
+            return mv.to;
+        }
+        let t = k as f64 / n as f64;
+        let angle = arc.start_angle_rad + arc.sweep_rad * t;
+        Point3::new(
+            centre.x + r * angle.cos(),
+            centre.y + r * angle.sin(),
+            from.z + (mv.to.z - from.z) * t,
+        )
+    };
+    (0..n).map(|k| (point(k), point(k + 1))).collect()
+}
+
+/// The lowest a V-bit cone of `slope` reaches over `q` while its tip runs
+/// straight from `a` to `b`: the least over `t` of `z(t) + |q − p(t)| /
+/// slope`, which is convex in `t`, so its stationary point clamped to the
+/// move is its least.
+fn cone_low_mm(a: Point3, b: Point3, q: Point, slope: f64) -> f64 {
+    let at = |t: f64| {
+        let p = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        a.z + (b.z - a.z) * t + q.distance_to(p) / slope
+    };
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length = dx.hypot(dy);
+    if length < 1e-12 {
+        return at(if a.z <= b.z { 0.0 } else { 1.0 });
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (qx, qy) = (q.x - a.x, q.y - a.y);
+    // Along the move to the foot of `q`, mm, and the distance off it.
+    let along = qx * ux + qy * uy;
+    let off = (qx * uy - qy * ux).abs();
+    // `f'(t) = dz + L·w / (slope·√(off² + w²))` with `w = L(t − u)`.
+    let k = -(b.z - a.z) * slope / length;
+    if k.abs() >= 1.0 {
+        return at(0.0).min(at(1.0));
+    }
+    let w = k * off / (1.0 - k * k).sqrt();
+    at(((along + w) / length).clamp(0.0, 1.0))
+}
+
+/// The lowest an end mill's flat bottom of `radius_mm` reaches over `q`
+/// while its centre runs straight from `a` to `b`; infinite when it never
+/// covers `q`.
+fn disc_low_mm(a: Point3, b: Point3, q: Point, radius_mm: f64) -> f64 {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length = dx.hypot(dy);
+    if length < 1e-12 {
+        return if q.distance_to(a.xy()) <= radius_mm {
+            a.z.min(b.z)
+        } else {
+            f64::INFINITY
+        };
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (qx, qy) = (q.x - a.x, q.y - a.y);
+    let along = qx * ux + qy * uy;
+    let off = (qx * uy - qy * ux).abs();
+    if off > radius_mm {
+        return f64::INFINITY;
+    }
+    let half = (radius_mm * radius_mm - off * off).sqrt();
+    let t0 = ((along - half) / length).max(0.0);
+    let t1 = ((along + half) / length).min(1.0);
+    if t0 > t1 {
+        return f64::INFINITY;
+    }
+    let z = |t: f64| a.z + (b.z - a.z) * t;
+    z(t0).min(z(t1))
+}
+
+/// One cell of the plug, seated ([`seat`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct SeatCell {
+    /// The cell's centre, mm, in the female's frame.
+    pub at: Point,
+    /// How far this cell holds the plug's start plane above the female's
+    /// surface, mm: the male's height above its start plane less the
+    /// female's depth, both here. Negative where they clear.
+    pub need_mm: f64,
+    /// The male's height above its start plane here, mm.
+    pub plug_mm: f64,
+}
+
+/// The plug's cells, seated on the female (#452). `female` and `male`
+/// share one grid, the male's mirrored. The plug is every cell not joined
+/// to the grid's border through male wood standing above the start plane
+/// (by more than [`FLOOR_SLACK_MM`]): the band's floor rings the plug, and
+/// the board beyond it, V wall and all, falls away when the piece is cut
+/// out. Wood left above the start plane in the band but joined to the
+/// plug is part of it, as it would bind. The plug's start plane stops the
+/// largest `need_mm` above the female's surface.
+pub(super) fn seat(
+    female: &Heightfield,
+    male: &Heightfield,
+    start_plane_z_mm: f64,
+) -> Vec<SeatCell> {
+    let (nx, ny) = male.size();
+    assert_eq!(female.size(), (nx, ny), "one grid for both sides");
+    let standing = |i: usize, j: usize| male.z_mm(i, j) > start_plane_z_mm + FLOOR_SLACK_MM;
+    let mut outside = vec![false; nx * ny];
+    let mut queue = VecDeque::new();
+    for j in 0..ny {
+        for i in 0..nx {
+            let border = i == 0 || j == 0 || i == nx - 1 || j == ny - 1;
+            if border && standing(i, j) {
+                outside[j * nx + i] = true;
+                queue.push_back((i, j));
+            }
+        }
+    }
+    while let Some((i, j)) = queue.pop_front() {
+        let neighbours = [
+            (i.wrapping_sub(1), j),
+            (i + 1, j),
+            (i, j.wrapping_sub(1)),
+            (i, j + 1),
+        ];
+        for (a, b) in neighbours {
+            if a < nx && b < ny && !outside[b * nx + a] && standing(a, b) {
+                outside[b * nx + a] = true;
+                queue.push_back((a, b));
+            }
+        }
+    }
+    let mut cells = Vec::new();
+    for j in 0..ny {
+        for i in 0..nx {
+            if outside[j * nx + i] {
+                continue;
+            }
+            let plug_mm = male.z_mm(i, j) - start_plane_z_mm;
+            cells.push(SeatCell {
+                at: female.cell(i, j),
+                need_mm: plug_mm - (female.top_z_mm - female.z_mm(i, j)),
+                plug_mm,
+            });
+        }
+    }
+    cells
+}

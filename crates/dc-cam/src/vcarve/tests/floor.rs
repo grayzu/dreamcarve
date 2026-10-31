@@ -107,6 +107,7 @@ fn blocks_of(p: &Project, op: &VCarveOp) -> Vec<CutBlock> {
         step_over_fraction: op.step_over_fraction.or(tool.step_over_fraction),
         cleared_by: Vec::new(),
         open_edge: None,
+        design: None,
     };
     blocks(&p, &op.id, &tool, &carve, &mut Vec::new()).expect("blocks")
 }

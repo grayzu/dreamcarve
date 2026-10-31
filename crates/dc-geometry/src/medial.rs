@@ -28,6 +28,12 @@
 //! order. No Y-up re-derivation is needed: a Voronoi skeleton is the same
 //! under reflection, and [`convex_corners`] reads either winding through
 //! `cross · area`, as upstream.
+//!
+//! Upstream's passes can leave a convex corner with no branch at all
+//! (#452; [`CornerReach::Upstream`]). [`medial_axis`] keeps them, so a
+//! V-Carve cuts as it did; [`medial_axis_with`] and
+//! [`CornerReach::Every`] reach every corner, for a carve with material
+//! above its start plane.
 
 mod grid;
 #[cfg(test)]
@@ -96,12 +102,86 @@ pub const MEDIAL_SAMPLE_BUDGET: f64 = 40_000.0;
 /// not corners a V-bit should surface in.
 pub const CORNER_ANGLE_RAD: f64 = 50.0 * std::f64::consts::PI / 180.0;
 
+/// How far [`medial_axis_with`] carries the axis into a region's convex
+/// corners (#452).
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum CornerReach {
+    /// Upstream's passes, as [`medial_axis`] runs them. Spur pruning
+    /// takes the whole branch into a corner whose walls meet at less than
+    /// about 29° (its clearance falls by less than `0.25` per mm toward
+    /// the tip, which pruning reads as a spur), the tip of a hole's corner
+    /// seeks its joint along a bisector that points into the hole, so such
+    /// a corner can be left with no branch at all, and a corner turning
+    /// less than [`CORNER_ANGLE_RAD`] gets no tip, though the
+    /// contact-spread filter drops the branch into any wider than 120°.
+    /// Where the bit starts at the material's surface that leaves the
+    /// corner's narrow end uncarved; V-Carve and the female Inlay keep it,
+    /// so their programs do not change.
+    #[default]
+    Upstream,
+    /// Every convex corner of the reached loops is reached. One sharper
+    /// than [`CORNER_ANGLE_RAD`] keeps its branch, as spur pruning spares
+    /// a leaf on it, and its tip; any other that no medial disc, nor the
+    /// floor's trace, reaches within 0.01 mm gets a tip too; and a tip's
+    /// joint is sought along a bisector into the region, with a node every
+    /// step on the way. For a carve with material above its start plane
+    /// (a male Inlay's plug), where a corner the carve does not reach
+    /// keeps wood up to the stock top. The other loops keep upstream's
+    /// reach.
+    Every {
+        /// Whether the outer's corners are reached, as well as the holes':
+        /// a male Inlay's band region has the plug's outline as its holes
+        /// only, and its outer edge is not the plug's.
+        outer: bool,
+        /// How far in the floor the carve traces lies, mm, `F · tan(α/2)`
+        /// for flat depth `F`; `None` with no floor. A V-bit tracing the
+        /// floor's edge cuts to the walls but for `d · (1 / cos(τ/2) − 1)`
+        /// at a corner turning `τ`, where the floor reaches that corner.
+        floor_inset_mm: Option<f64>,
+    },
+}
+
+impl CornerReach {
+    /// Whether the corners of a loop, a hole when `hole`, are all reached.
+    fn reaches(self, hole: bool) -> bool {
+        match self {
+            Self::Upstream => false,
+            Self::Every { outer, .. } => hole || outer,
+        }
+    }
+
+    /// Whether the floor's trace reaches `corner` within
+    /// [`REACH_SLACK_MM`]: the floor's own corner, `d / cos(τ/2)` along the
+    /// bisector, is that close to the inset `d` beyond it, and the floor
+    /// is there, its clearance (from `grid`) at least `d`.
+    fn floor_covers(self, corner: &Corner, grid: &SegmentDistanceGrid) -> bool {
+        let Self::Every {
+            floor_inset_mm: Some(inset_mm),
+            ..
+        } = self
+        else {
+            return false;
+        };
+        let out_mm = inset_mm / (corner.turn_rad / 2.0).cos();
+        out_mm - inset_mm <= REACH_SLACK_MM
+            && grid.distance_to(corner.p + corner.bisector * out_mm) >= inset_mm - REACH_SLACK_MM
+    }
+}
+
 /// The angle a node's boundary contacts must spread over to keep it: 60°.
 const CONTACT_SPREAD_RAD: f64 = 60.0 * std::f64::consts::PI / 180.0;
 
 /// A leaf edge shorter than this many steps that does not descend toward
 /// the boundary is sampling noise.
 const PRUNE_FACTOR: f64 = 1.5;
+
+/// With [`CornerReach::Every`], how far a convex corner no sharper
+/// than [`CORNER_ANGLE_RAD`] may lie outside every medial disc before it
+/// gets a tip too, mm (#452). The contact-spread filter drops the branch
+/// into a corner wider than 120°, and upstream gives no corner under 50°
+/// a tip, so such a corner can stand that far beyond the carve; above its
+/// start plane a male Inlay keeps that sliver, `gap / tan(α/2)` high.
+const REACH_SLACK_MM: f64 = 0.01;
 
 /// Passes of spur pruning at most.
 const MAX_PRUNE_ITERATIONS: usize = 32;
@@ -159,17 +239,37 @@ fn resolve(outer: &Polyline, holes: &[&Polyline]) -> Option<Resolution> {
 /// graph, node for node.
 #[must_use]
 pub fn medial_axis(region: &Region, step_mm: f64, tolerance_mm: f64) -> MedialGraph {
-    medial_axis_of_loops(&flattened_loops(region, tolerance_mm), step_mm)
+    medial_axis_with(region, step_mm, tolerance_mm, CornerReach::Upstream)
+}
+
+/// [`medial_axis`], carried into the region's sharp convex corners as
+/// `reach` says (#452).
+#[must_use]
+pub fn medial_axis_with(
+    region: &Region,
+    step_mm: f64,
+    tolerance_mm: f64,
+    reach: CornerReach,
+) -> MedialGraph {
+    medial_axis_of_loops(&flattened_loops(region, tolerance_mm), step_mm, reach)
 }
 
 /// The convex corners of `region` turning more than `min_turn_rad`, after
 /// arcs are flattened within `tolerance_mm`: outer vertices where the
 /// boundary turns into the region, and hole vertices the region wraps
 /// round (a notch in an island). Loops in order, outer first, each from its
-/// first vertex; mm.
+/// first vertex; mm. Every bisector points into the region (#452: as
+/// [`CornerReach::Every`] reads them).
 #[must_use]
 pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> Vec<Corner> {
-    corners_of_loops(&flattened_loops(region, tolerance_mm), min_turn_rad)
+    corners_of_loops(
+        &flattened_loops(region, tolerance_mm),
+        min_turn_rad,
+        CornerReach::Every {
+            outer: true,
+            floor_inset_mm: None,
+        },
+    )
 }
 
 /// True when `p` is inside `loops` by the even-odd rule: inside an outer
@@ -281,55 +381,71 @@ fn point_key(p: Point, scale: f64) -> (i64, i64) {
 // Convex corners
 // ---------------------------------------------------------------------------
 
-/// Upstream's `regionConvexCorners` on cleaned loops, outer first.
-fn corners_of_loops(loops: &[Vec<Point>], min_turn_rad: f64) -> Vec<Corner> {
+/// Upstream's `regionConvexCorners` on cleaned loops, outer first. With
+/// [`CornerReach::Upstream`] a hole's bisector is negated, as upstream's
+/// is, and points into the hole; with [`CornerReach::Every`] every
+/// bisector points into the region (#452): at a convex corner the region
+/// lies on the inside of the turn, which `d2 − d1` points into whichever
+/// loop the corner is on.
+fn corners_of_loops(loops: &[Vec<Point>], min_turn_rad: f64, reach: CornerReach) -> Vec<Corner> {
+    loops
+        .iter()
+        .enumerate()
+        .flat_map(|(index, pts)| corners_of_loop(pts, index > 0, min_turn_rad, reach))
+        .collect()
+}
+
+/// [`corners_of_loops`] for one loop, `island` when it is a hole.
+fn corners_of_loop(
+    pts: &[Point],
+    island: bool,
+    min_turn_rad: f64,
+    reach: CornerReach,
+) -> Vec<Corner> {
     let mut corners = Vec::new();
-    for (index, pts) in loops.iter().enumerate() {
-        let island = index > 0;
-        let n = pts.len();
-        if n < 3 {
+    let n = pts.len();
+    if n < 3 {
+        return corners;
+    }
+    let area: f64 = edges(pts).map(|(a, b)| a.x * b.y - b.x * a.y).sum();
+    if area.abs() < 1e-12 {
+        return corners;
+    }
+    let prevs = pts.iter().cycle().skip(n - 1);
+    let nexts = pts.iter().cycle().skip(1);
+    for ((&prev, &curr), &next) in prevs.zip(pts).zip(nexts) {
+        let (d1, d2) = (curr - prev, next - curr);
+        let (len1, len2) = (d1.length(), d2.length());
+        if len1 < 1e-12 || len2 < 1e-12 {
             continue;
         }
-        let area: f64 = edges(pts).map(|(a, b)| a.x * b.y - b.x * a.y).sum();
-        if area.abs() < 1e-12 {
+        let cross = d1.cross(d2);
+        let convex_into_region = if island {
+            cross * area < 0.0
+        } else {
+            cross * area > 0.0
+        };
+        if !convex_into_region {
             continue;
         }
-        let prevs = pts.iter().cycle().skip(n - 1);
-        let nexts = pts.iter().cycle().skip(1);
-        for ((&prev, &curr), &next) in prevs.zip(pts).zip(nexts) {
-            let (d1, d2) = (curr - prev, next - curr);
-            let (len1, len2) = (d1.length(), d2.length());
-            if len1 < 1e-12 || len2 < 1e-12 {
-                continue;
-            }
-            let cross = d1.cross(d2);
-            let convex_into_region = if island {
-                cross * area < 0.0
-            } else {
-                cross * area > 0.0
-            };
-            if !convex_into_region {
-                continue;
-            }
-            let turn_rad = (d1.dot(d2) / (len1 * len2)).clamp(-1.0, 1.0).acos();
-            if turn_rad <= min_turn_rad {
-                continue;
-            }
-            let mut bisector = Vec2::new(d2.x / len2 - d1.x / len1, d2.y / len2 - d1.y / len1);
-            if island {
-                bisector = -bisector;
-            }
-            let length = bisector.length();
-            if length < 1e-12 {
-                continue;
-            }
-            let bisector = bisector * (1.0 / length);
-            corners.push(Corner {
-                p: curr,
-                turn_rad,
-                bisector,
-            });
+        let turn_rad = (d1.dot(d2) / (len1 * len2)).clamp(-1.0, 1.0).acos();
+        if turn_rad <= min_turn_rad {
+            continue;
         }
+        let mut bisector = Vec2::new(d2.x / len2 - d1.x / len1, d2.y / len2 - d1.y / len1);
+        if island && reach == CornerReach::Upstream {
+            bisector = -bisector;
+        }
+        let length = bisector.length();
+        if length < 1e-12 {
+            continue;
+        }
+        let bisector = bisector * (1.0 / length);
+        corners.push(Corner {
+            p: curr,
+            turn_rad,
+            bisector,
+        });
     }
     corners
 }
@@ -355,8 +471,9 @@ fn circumcentre(a: Point, b: Point, c: Point) -> Option<Point> {
 }
 
 /// The medial axis of `loops` (outer first, then holes; any winding)
-/// sampled every `step_mm` (upstream's `computeMedialAxis`).
-fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64) -> MedialGraph {
+/// sampled every `step_mm` (upstream's `computeMedialAxis`), carried into
+/// the sharp corners as `reach` says.
+fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) -> MedialGraph {
     if !(step_mm.is_finite() && step_mm > 0.0) {
         return MedialGraph::default();
     }
@@ -468,16 +585,54 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64) -> MedialGraph {
         }
     }
 
+    // #452: on the loops `reach` reaches, no sharp corner's own branch is
+    // a spur.
+    let reached = |index: usize| reach.reaches(index > 0);
+    let spared: Vec<Corner> = loops
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| reached(index))
+        .flat_map(|(index, pts)| corners_of_loop(pts, index > 0, CORNER_ANGLE_RAD, reach))
+        .collect();
     let mut graph = contract_micro_clusters(&nodes, &graph_edges, step_mm * 0.75);
-    prune_spurs(&mut graph, step_mm * PRUNE_FACTOR);
+    prune_spurs(&mut graph, step_mm * PRUNE_FACTOR, &spared, step_mm);
     drop_small_components(&mut graph, step_mm * 4.0);
-    extend_into_corners(
-        &mut graph,
-        &corners_of_loops(&loops, CORNER_ANGLE_RAD),
-        &loops,
-        step_mm,
-    );
+    // Every sharp corner gets a tip; on a loop `reach` reaches, so does
+    // every convex corner no medial disc reaches.
+    let corners: Vec<Corner> = loops
+        .iter()
+        .enumerate()
+        .flat_map(|(index, pts)| {
+            if reached(index) {
+                corners_of_loop(pts, index > 0, 0.0, reach)
+                    .into_iter()
+                    .filter(|c| {
+                        c.turn_rad > CORNER_ANGLE_RAD
+                            || (!reach.floor_covers(c, &grid)
+                                && reach_gap_mm(&graph, c.p) > REACH_SLACK_MM)
+                    })
+                    .collect()
+            } else {
+                corners_of_loop(pts, index > 0, CORNER_ANGLE_RAD, reach)
+            }
+        })
+        .collect();
+    let sampled = (reach != CornerReach::Upstream).then_some(&grid);
+    extend_into_corners(&mut graph, &corners, &loops, step_mm, sampled);
     finalize(graph, step_mm)
+}
+
+/// How far `p` lies outside every medial disc of `graph`'s joined nodes
+/// (all of them when none is joined), mm: 0 or less when one reaches it.
+fn reach_gap_mm(graph: &Graph, p: Point) -> f64 {
+    let lone = graph.nodes.len() <= 1;
+    graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| lone || graph.degree(i) > 0)
+        .map(|(_, n)| n.p.distance_to(p) - n.clearance_mm)
+        .fold(f64::INFINITY, f64::min)
 }
 
 // ---------------------------------------------------------------------------
@@ -564,7 +719,13 @@ fn contract_micro_clusters(
 /// `pruneSpurs`): a corner branch loses clearance toward its tip, a
 /// sampling spur keeps its junction's. Leaves are visited in index order
 /// and removed at once, so a junction left a leaf can go in the same pass.
-fn prune_spurs(graph: &mut Graph, max_len_mm: f64) {
+///
+/// A corner's branch loses only `sin(θ/2)` of clearance per mm, θ the
+/// corner's angle, so below about 29° the test reads it as a spur and the
+/// passes unzip it from its tip to its junction (#452). A leaf on the
+/// branch of one of `spared` ([`on_corner_branch`], within `step_mm`) is
+/// kept; upstream spares none.
+fn prune_spurs(graph: &mut Graph, max_len_mm: f64, spared: &[Corner], step_mm: f64) {
     for _ in 0..MAX_PRUNE_ITERATIONS {
         let mut removed = 0;
         for leaf in 0..graph.adjacency.len() {
@@ -582,6 +743,9 @@ fn prune_spurs(graph: &mut Graph, max_len_mm: f64) {
             if len >= max_len_mm || l.clearance_mm < j.clearance_mm - 0.25 * len {
                 continue;
             }
+            if spared.iter().any(|c| on_corner_branch(l, c, step_mm)) {
+                continue;
+            }
             graph.unlink(leaf, junction);
             removed += 1;
         }
@@ -589,6 +753,22 @@ fn prune_spurs(graph: &mut Graph, max_len_mm: f64) {
             break;
         }
     }
+}
+
+/// True when `node` is on the straight branch of the medial axis into
+/// `corner` (#452): within `slack_mm` of the corner's bisector, ahead of
+/// the corner, and with the clearance a point that far along the bisector
+/// has, `along · sin(θ/2)` for the corner's angle `θ`, within `slack_mm`.
+/// Beyond the branch's end another wall is nearer and the clearance falls
+/// short of that.
+fn on_corner_branch(node: MedialNode, corner: &Corner, slack_mm: f64) -> bool {
+    let d = node.p - corner.p;
+    let along = d.dot(corner.bisector);
+    let off_axis = d.cross(corner.bisector).abs();
+    let half_angle_rad = (std::f64::consts::PI - corner.turn_rad) / 2.0;
+    along > 0.0
+        && off_axis <= slack_mm
+        && (node.clearance_mm - along * half_angle_rad.sin()).abs() <= slack_mm
 }
 
 /// Drops components shorter in total than `min_total_mm`, the remnants of
@@ -657,8 +837,16 @@ fn drop_small_components(graph: &mut Graph, min_total_mm: f64) {
 /// step short of the corner; the tip continues it so a V-bit surfaces at
 /// the corner. The joint is the best node aligned with the bisector, else
 /// one whose medial disc reaches the corner, and only one whose segment to
-/// the corner stays inside the region.
-fn extend_into_corners(graph: &mut Graph, corners: &[Corner], loops: &[Vec<Point>], step_mm: f64) {
+/// the corner stays inside the region. With `sampled` (#452), the boundary's
+/// distance grid, the segment gets a node every step (upstream's has
+/// none).
+fn extend_into_corners(
+    graph: &mut Graph,
+    corners: &[Corner],
+    loops: &[Vec<Point>],
+    step_mm: f64,
+    sampled: Option<&SegmentDistanceGrid>,
+) {
     for corner in corners {
         let count = graph.nodes.len();
         let mut candidates: Vec<(usize, bool, f64)> = Vec::new();
@@ -695,13 +883,32 @@ fn extend_into_corners(graph: &mut Graph, corners: &[Corner], loops: &[Vec<Point
         let Some(best) = best else {
             continue;
         };
+        // #452: with `sampled`, a joint more than a step off gets nodes a
+        // step apart along the way, each at its own clearance, so the
+        // carve follows the corner's own depth down to the joint rather
+        // than a straight fall to the joint's.
+        let mut last = best;
+        if let (Some(grid), Some(joint)) = (sampled, graph.node(best)) {
+            let pieces = count_of((joint.p.distance_to(corner.p) / step_mm).ceil());
+            for k in (1..pieces).rev() {
+                let p = corner.p + (joint.p - corner.p) * (k as f64 / pieces as f64);
+                let node = graph.nodes.len();
+                graph.nodes.push(MedialNode {
+                    p,
+                    clearance_mm: grid.distance_to(p),
+                });
+                graph.adjacency.push(BTreeSet::new());
+                graph.link(node, last);
+                last = node;
+            }
+        }
         let tip = graph.nodes.len();
         graph.nodes.push(MedialNode {
             p: corner.p,
             clearance_mm: 0.0,
         });
         graph.adjacency.push(BTreeSet::new());
-        graph.link(tip, best);
+        graph.link(tip, last);
     }
 }
 
