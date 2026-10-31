@@ -1477,7 +1477,7 @@ fn v21_project_exports_the_same_program() {
 }
 
 /// Acceptances 56 and 57 through the CLI (#436): the coaster project with
-/// its operations replaced by an Inlay `o7` of the inlay test part's star
+/// its operations replaced by an Inlay `o7` of a four-point star
 /// (60 mm tip to tip, a 12 mm circle in its middle) on 100 × 100 × 12 mm
 /// stock, with the 60° 6.35 mm V-bit `tv`, `depth_mm` 4, `glue_gap_mm` 1,
 /// `plug_depth_mm` 2, `margin_mm` 8 and a clearing pass with a 3.175 mm
@@ -6360,139 +6360,11 @@ fn sign_lettering_is_within_the_cone() {
     }
 }
 
-/// Sets the `cut_out` of the one Inlay of the project at `path` to `null`
-/// (#443), on its own line as the inlay quick start writes it.
-fn without_cut_out(path: &Path) {
-    let text = std::fs::read_to_string(path).expect("dcv readable");
-    let lines: Vec<String> = text
-        .lines()
-        .map(|l| {
-            let body = l.trim_start();
-            if body.starts_with("\"cut_out\":") {
-                let indent = &l[..l.len() - body.len()];
-                let comma = if body.trim_end().ends_with(',') {
-                    ","
-                } else {
-                    ""
-                };
-                format!("{indent}\"cut_out\": null{comma}")
-            } else {
-                l.to_owned()
-            }
-        })
-        .collect();
-    std::fs::write(path, lines.join("\n") + "\n").expect("dcv written");
-}
-
-/// #443, the male of the functional spec's "Inlay pair" with its
-/// cut-out: `tests/fixtures/star-male.dcv` cuts the plug free with the
-/// 3.175 mm end mill (T2), four tabs, last. It exports three programs,
-/// listed in this order: `star-male-1-T2.nc`, the clearing pass, to Z −5;
-/// `star-male-2-T1.nc`, the V-bit, to Z −5; `star-male-3-T2.nc`, the
-/// cut-out, named `Star cut-out t2`, whose cuts start at the floor (no
-/// lap above Z −5) and go through the board to the allowance. `export`
-/// writes nothing unless every program passes the safety pass, S1 to S18,
-/// so its success is that check; every run also passes `assert_run_safe`.
-/// The order is required, so the `tool_change_avoidable` hint is expected.
-#[test]
-fn star_male_exports_three_programs_with_the_cut_out() {
-    let dir = work_dir("star_male_exports_three_programs_with_the_cut_out");
-    let dcv = "star-male.dcv";
-    copy_fixture(&dir, dcv, dcv);
-    let project = load_file(&dir.join(dcv)).project;
-    let [Operation::Inlay(inlay)] = &project.operations[..] else {
-        panic!("the male has one operation, an Inlay");
-    };
-    assert_eq!(inlay.side, dc_project::InlaySide::Male);
-    let cut_out = inlay.cut_out.as_ref().expect("the male has a cut-out");
-    assert_eq!(cut_out.tool.as_str(), "t2");
-    let tabs = cut_out.tabs.as_ref().expect("the cut-out has tabs");
-    assert_eq!(tabs.placement, dc_project::TabPlacement::Count { count: 4 });
-    let allowance_mm = cut_out.through_cut_allowance_mm;
-    assert!(allowance_mm > 0.0, "{allowance_mm}");
-
-    let out = run(&dir, &["export", dcv, "--date", FIXED_DATE]);
-    let report = format!("{}{}", stdout(&out), stderr(&out));
-    assert_eq!(out.status.code(), Some(0), "export: {report}");
-    let programs = [
-        "star-male-1-T2.nc",
-        "star-male-2-T1.nc",
-        "star-male-3-T2.nc",
-    ];
-    let mut written: Vec<String> = std::fs::read_dir(&dir)
-        .expect("work dir readable")
-        .filter_map(Result::ok)
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-        .filter(|n| n.ends_with(".nc"))
-        .collect();
-    written.sort();
-    assert_eq!(written, programs, "{report}");
-    let listed: Vec<usize> = programs
-        .iter()
-        .enumerate()
-        .map(|(k, name)| {
-            report
-                .find(&format!("{}. {name}", k + 1))
-                .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
-        })
-        .collect();
-    assert!(listed.is_sorted(), "listed in run order: {report}");
-    assert!(report.contains("op1 (cut-out t2) `Star`"), "{report}");
-    assert!(report.contains("tool_change_avoidable"), "{report}");
-
-    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
-    let cut = read(programs[2]);
-    assert_eq!(
-        operation_comments(&cut),
-        ["( Operation 1: Star cut-out t2 )"]
-    );
-    assert_approx_eq!(lowest_z(&cut), -12.0 - allowance_mm, 1e-9);
-    assert_approx_eq!(lowest_z(&read(programs[1])), -5.0, 1e-9);
-    // No lap of the cut-out runs above the floor, 5 mm down.
-    let mut z = f64::NAN;
-    let mut motion = "G0";
-    for line in cut.lines().filter(|l| !l.starts_with('(')) {
-        let words: Vec<&str> = line.split_whitespace().collect();
-        if let Some(word) = words
-            .iter()
-            .find(|w| matches!(**w, "G0" | "G1" | "G2" | "G3"))
-        {
-            motion = word;
-        }
-        let moves_xy = words
-            .iter()
-            .any(|w| w.starts_with('X') || w.starts_with('Y'));
-        if let Some(new_z) = words
-            .iter()
-            .find_map(|w| w.strip_prefix('Z').and_then(|v| v.parse::<f64>().ok()))
-        {
-            z = new_z;
-        }
-        if motion != "G0" && moves_xy {
-            assert!(z <= -5.0 + 1e-9, "a lap above the floor: {line}");
-        }
-    }
-
-    let (runs, _) = dc_cam::generate_inlay(&project, inlay).expect("the inlay generates");
-    let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
-    assert_eq!(
-        labels,
-        [
-            &dc_cam::RunLabel::Clearing(ToolId::new("t2")),
-            &dc_cam::RunLabel::Main,
-            &dc_cam::RunLabel::CutOut(ToolId::new("t2")),
-        ]
-    );
-    for run in &runs {
-        dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
-    }
-}
-
 /// Format 23 (#443): the cut-out changes nothing an earlier file holds,
 /// so the version 22 fixture exports the same program as it is and once
-/// saved at version 23, and so does the inlay pair's male as #437 wrote
-/// it, at version 22 with no cut-out, which migrates to `"cut_out": null`
-/// and is still sawn free: two programs, the same bytes.
+/// saved at version 23, and so does the inlay pair's male (#446) written
+/// as a version 22 file, with no cut-out line, which migrates to
+/// `"cut_out": null` and is still sawn free: two programs, the same bytes.
 #[test]
 fn v22_project_exports_the_same_program() {
     let dir = work_dir("v22_project_exports_the_same_program");
@@ -6521,8 +6393,8 @@ fn v22_project_exports_the_same_program() {
     assert!(from_v22 == from_v23, "v22:\n{from_v22}\nv23:\n{from_v23}");
     assert!(!from_v22.is_empty());
 
-    // The star's male as a version 22 file: no `cut_out` line at all.
-    let male = std::fs::read_to_string(tests_fixture("star-male.dcv")).expect("fixture readable");
+    // The inlay pair's male as a version 22 file: no `cut_out` line at all.
+    let male = std::fs::read_to_string(tests_fixture("dc-male.dcv")).expect("fixture readable");
     let old: Vec<&str> = male
         .lines()
         .filter(|l| !l.trim_start().starts_with("\"cut_out\":"))
@@ -6532,7 +6404,7 @@ fn v22_project_exports_the_same_program() {
         .replacen("\"version\": 23,", "\"version\": 22,", 1)
         .replacen("\"safe_z_mm\": 10.0,\n", "\"safe_z_mm\": 10.0\n", 1);
     assert!(!old.contains("cut_out"), "{old}");
-    let sub = dir.join("star");
+    let sub = dir.join("dc");
     std::fs::create_dir_all(&sub).expect("folder created");
     std::fs::write(sub.join("old.dcv"), &old).expect("dcv written");
     let out = run(&sub, &["export", "old.dcv", "--date", FIXED_DATE]);
@@ -6563,51 +6435,148 @@ fn lowest_z(program: &str) -> f64 {
         .fold(f64::INFINITY, f64::min)
 }
 
-/// #437, acceptances 56 and 57 on the functional spec's "Inlay pair" test
-/// part: `tests/fixtures/star-female.dcv` and `star-male.dcv`, which the
-/// quick start "An inlay pair" builds from `tests/fixtures/star.svg`. Each
-/// is the test part's values: 100 × 100 × 12 mm stock, one Inlay `op1` of
-/// the star and its circle with the 60° 6.35 mm V-bit (T1), `depth_mm` 4,
-/// `glue_gap_mm` 1, `plug_depth_mm` 2, `margin_mm` 8, `step_over_fraction`
-/// 0.1, safe Z 10 mm, and a clearing pass with the 3.175 mm end mill (T2).
-/// Each side exports two programs, listed in this order: `<stem>-1-T2.nc`,
-/// the clearing pass, down to the floor (Z −4 for the female, −5 for the
-/// male), then `<stem>-2-T1.nc`, the V-bit. `export` writes nothing unless
-/// every program passes the safety pass, S1 to S18, so its success is that
-/// check; both runs also pass `assert_run_safe`. The male prints
-/// `inlay_male_mirrored` once, about X = 50 mm, the star's centre; the
-/// female never does.
-#[test]
-fn star_female_and_male_export() {
-    for (side, deepest_mm) in [
-        (dc_project::InlaySide::Female, 4.0),
-        (dc_project::InlaySide::Male, 5.0),
-    ] {
-        let stem = match side {
-            dc_project::InlaySide::Female => "star-female",
-            dc_project::InlaySide::Male => "star-male",
-        };
-        let dir = work_dir(&format!("star_female_and_male_export_{stem}"));
-        let dcv = format!("{stem}.dcv");
-        copy_fixture(&dir, &dcv, &dcv);
-        // #443: without its cut-out the male is sawn free, as before.
-        without_cut_out(&dir.join(&dcv));
+/// The lettered inlay pair's board, mm: `init`'s stock for
+/// `tests/fixtures/dc-inlay.svg`, the 90 × 60 mm frame plus 10 mm all
+/// round, and the 12 mm thickness the fixtures set (#446).
+const LETTERED_BOARD_MM: (f64, f64, f64) = (110.0, 80.0, 12.0);
 
-        let project = load_file(&dir.join(&dcv)).project;
+/// The board every cut of the lettered inlay pair leaves untouched at
+/// each edge, mm (#446).
+const LETTERED_BORDER_MM: f64 = 3.0;
+
+/// The `warning: <code>:` codes in `report`, sorted, without repeats.
+fn warning_codes(report: &str) -> Vec<String> {
+    let mut codes: Vec<String> = report
+        .lines()
+        .filter_map(|l| l.split_once("warning: ").map(|(_, rest)| rest))
+        .filter_map(|rest| rest.split_once(':').map(|(code, _)| code.to_owned()))
+        .collect();
+    codes.sort();
+    codes.dedup();
+    codes
+}
+
+/// The X of the mirror line `inlay_male_mirrored` names in `report`, mm.
+fn mirror_x_mm(report: &str) -> f64 {
+    let (_, rest) = report
+        .split_once("mirrored about X = ")
+        .unwrap_or_else(|| panic!("no mirror line: {report}"));
+    let (x, _) = rest.split_once(" mm").expect("the line's X ends in mm");
+    x.parse().expect("the mirror line's X is a number")
+}
+
+/// The closed outlines of the Inlay `inlay`'s targets, placed in project
+/// space.
+fn inlay_design(project: &Project, inlay: &dc_project::InlayOp) -> Vec<Polyline> {
+    inlay
+        .targets
+        .iter()
+        .flat_map(|target| {
+            let instance = project
+                .instances
+                .iter()
+                .find(|i| &i.id == target)
+                .expect("the target is an instance");
+            project
+                .definitions
+                .get(&instance.definition)
+                .expect("the instance's definition")
+                .profiles
+                .iter()
+                .filter(|p| p.is_closed())
+                .map(|p| {
+                    instance
+                        .transform
+                        .apply_polyline(p)
+                        .expect("the outline places")
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The distance from `p` to the nearest of `outlines`, following arcs, mm.
+fn distance_to_outlines_mm(p: Point, outlines: &[Polyline]) -> f64 {
+    outlines
+        .iter()
+        .filter_map(|o| dc_geometry::nearest_point(o, p))
+        .map(|n| n.gap_mm)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The one Inlay of `project`.
+fn the_inlay(project: &Project) -> &dc_project::InlayOp {
+    let [Operation::Inlay(inlay)] = &project.operations[..] else {
+        panic!("the project has one operation, an Inlay");
+    };
+    inlay
+}
+
+/// Copies the lettered inlay's fixture `<stem>.dcv` into a work folder
+/// named after `test` and `stem`, exports it, and returns the folder, the
+/// export's report (stdout and stderr) and the programs it wrote, sorted.
+fn export_lettered(test: &str, stem: &str) -> (PathBuf, String, Vec<String>) {
+    let dir = work_dir(&format!("{test}_{stem}"));
+    let dcv = format!("{stem}.dcv");
+    copy_fixture(&dir, &dcv, &dcv);
+    let out = run(&dir, &["export", &dcv, "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "{stem} export: {report}");
+    let mut written: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    written.sort();
+    (dir, report, written)
+}
+
+/// #446, the functional spec's "Lettered inlay pair": the quick start "An
+/// inlay pair"'s two projects, `tests/fixtures/dc-female.dcv` and
+/// `dc-male.dcv`, built from `tests/fixtures/dc-inlay.svg`, the monogram
+/// "DC". Each is the test part's values: a 110 × 80 × 12 mm board, one
+/// Inlay `op1` `DC` of the two letters with the 60° 6.35 mm V-bit (T1),
+/// `depth_mm` 4, `glue_gap_mm` 1, `plug_depth_mm` 2, `margin_mm` 8,
+/// `step_over_fraction` 0.1, safe Z 10 mm, and a clearing pass with the
+/// 3.175 mm end mill (T2). The male also cuts its plug out with the same
+/// end mill, four rect tabs, 0.2 mm through.
+///
+/// The female exports two programs, listed in this order:
+/// `dc-female-1-T2.nc`, the clearing pass, to Z −4, then
+/// `dc-female-2-T1.nc`, the V-bit, to Z −4. The male exports three:
+/// `dc-male-1-T2.nc` and `dc-male-2-T1.nc` to Z −5, then the cut-out
+/// `dc-male-3-T2.nc`, `DC cut-out t2`, from the floor (no lap above
+/// Z −5) through the board to Z −12.2. `export` writes nothing unless
+/// every program passes the safety pass, S1 to S18, so its success is
+/// that check; every run also passes `assert_run_safe`. The warnings are
+/// the expected ones and no others: `unused_tool` (`init`'s "Set me") on
+/// both; on the female `entry_fallback` (the C's stroke has no room for
+/// the clearing pass's ramp); on the male `inlay_male_mirrored`, once,
+/// about X = 55 mm, the board's middle, and `tool_change_avoidable` (the
+/// end mill clears first and cuts out last: the order is required).
+#[test]
+fn lettered_inlay_female_and_male_export() {
+    for side in [dc_project::InlaySide::Female, dc_project::InlaySide::Male] {
+        let male = side == dc_project::InlaySide::Male;
+        let stem = if male { "dc-male" } else { "dc-female" };
+        let (dir, report, written) = export_lettered("lettered_inlay_female_and_male_export", stem);
+
+        let project = load_file(&dir.join(format!("{stem}.dcv"))).project;
+        let (width_mm, height_mm, thickness_mm) = LETTERED_BOARD_MM;
         assert_eq!(
             project.stock,
             dc_project::Stock {
-                width_mm: 100.0,
-                height_mm: 100.0,
-                thickness_mm: Some(12.0),
+                width_mm,
+                height_mm,
+                thickness_mm: Some(thickness_mm),
             },
             "{stem}"
         );
         assert_eq!(project.post_processor.id, "grblhal", "{stem}");
-        let [Operation::Inlay(inlay)] = &project.operations[..] else {
-            panic!("{stem} has one operation, an Inlay");
-        };
+        let inlay = the_inlay(&project);
         assert_eq!(inlay.side, side, "{stem}");
+        assert_eq!(inlay.name, "DC", "{stem}");
         assert_eq!(
             (
                 inlay.depth_mm,
@@ -6632,7 +6601,7 @@ fn star_female_and_male_export() {
                     .expect("the target is an instance")
             })
             .collect();
-        assert_eq!(names, ["star", "circle"], "{stem}");
+        assert_eq!(names, ["letter-D", "letter-C"], "{stem}");
         let tool = |id: &ToolId| {
             project
                 .tools
@@ -6653,23 +6622,36 @@ fn star_female_and_male_export() {
         let [pass] = &inlay.clearing[..] else {
             panic!("{stem} has one clearing pass");
         };
-        assert_eq!(pass.tool.as_str(), "t2", "{stem}");
         let end_mill = tool(&pass.tool);
         assert_eq!(end_mill.cutter, ToolKind::EndMill, "{stem}");
         assert_approx_eq!(end_mill.diameter_mm, 3.175, 1e-12);
         assert_eq!(end_mill.number, Some(2), "{stem}: the end mill is T2");
+        if male {
+            let cut_out = inlay.cut_out.as_ref().expect("the male has a cut-out");
+            assert_eq!(
+                cut_out.tool, pass.tool,
+                "the cut-out is the clearing end mill's"
+            );
+            let tabs = cut_out.tabs.as_ref().expect("the cut-out has tabs");
+            assert_eq!(tabs.placement, TabPlacement::Count { count: 4 });
+            assert_eq!(tabs.shape, TabShape::Rect);
+            assert_approx_eq!(cut_out.through_cut_allowance_mm, 0.2, 1e-12);
+        } else {
+            assert_eq!(inlay.cut_out, None);
+        }
 
-        let out = run(&dir, &["export", &dcv, "--date", FIXED_DATE]);
-        let report = format!("{}{}", stdout(&out), stderr(&out));
-        assert_eq!(out.status.code(), Some(0), "{stem} export: {report}");
-        let programs = [format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
-        let mut written: Vec<String> = std::fs::read_dir(&dir)
-            .expect("work dir readable")
-            .filter_map(Result::ok)
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .filter(|n| n.ends_with(".nc"))
-            .collect();
-        written.sort();
+        let programs: Vec<String> = if male {
+            vec![
+                "dc-male-1-T2.nc".to_owned(),
+                "dc-male-2-T1.nc".to_owned(),
+                "dc-male-3-T2.nc".to_owned(),
+            ]
+        } else {
+            vec![
+                "dc-female-1-T2.nc".to_owned(),
+                "dc-female-2-T1.nc".to_owned(),
+            ]
+        };
         assert_eq!(written, programs, "{report}");
         let listed: Vec<usize> = programs
             .iter()
@@ -6681,6 +6663,7 @@ fn star_female_and_male_export() {
             })
             .collect();
         assert!(listed.is_sorted(), "listed in run order: {report}");
+        let deepest_mm = if male { 5.0 } else { 4.0 };
         assert!(
             report.contains(&format!(
                 "deepest cut {deepest_mm:.3} mm below the stock top"
@@ -6688,43 +6671,268 @@ fn star_female_and_male_export() {
             "{report}"
         );
 
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
-        let (clearing, carve) = (read(&programs[0]), read(&programs[1]));
-        assert_eq!(
-            operation_comments(&clearing),
-            ["( Operation 1: Star clearing t2 )"],
-            "{stem}"
-        );
-        assert_eq!(
-            operation_comments(&carve),
-            ["( Operation 1: Star )"],
-            "{stem}"
-        );
-        assert_approx_eq!(lowest_z(&clearing), -deepest_mm, 1e-9);
-        assert_approx_eq!(lowest_z(&carve), -deepest_mm, 1e-9);
-
+        let expected: &[&str] = if male {
+            &[
+                "inlay_male_mirrored",
+                "tool_change_avoidable",
+                "unused_tool",
+            ]
+        } else {
+            &["entry_fallback", "unused_tool"]
+        };
+        assert_eq!(warning_codes(&report), expected, "{stem}: {report}");
         let mirrored = report.matches("inlay_male_mirrored").count();
-        if side == dc_project::InlaySide::Male {
+        if male {
             assert_eq!(mirrored, 1, "{report}");
-            assert!(report.contains("X = 50 mm"), "{report}");
+            assert_approx_eq!(mirror_x_mm(&report), width_mm / 2.0, 1e-9);
         } else {
             assert_eq!(mirrored, 0, "{report}");
         }
 
+        let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+        let comments: Vec<Vec<String>> = programs
+            .iter()
+            .map(|p| operation_comments(&read(p)))
+            .collect();
+        let mut want = vec![
+            vec!["( Operation 1: DC clearing t2 )".to_owned()],
+            vec!["( Operation 1: DC )".to_owned()],
+        ];
+        if male {
+            want.push(vec!["( Operation 1: DC cut-out t2 )".to_owned()]);
+        }
+        assert_eq!(comments, want, "{stem}");
+        assert_approx_eq!(lowest_z(&read(&programs[0])), -deepest_mm, 1e-9);
+        assert_approx_eq!(lowest_z(&read(&programs[1])), -deepest_mm, 1e-9);
+        if male {
+            let cut = read(&programs[2]);
+            assert_approx_eq!(lowest_z(&cut), -thickness_mm - 0.2, 1e-9);
+            let moves = dc_gcode::parse_motion(&cut).expect("program parses");
+            for m in moves.iter().filter(|m| m.kind.is_cut()) {
+                let moves_xy = m.from.x != m.to.x || m.from.y != m.to.y;
+                let z = m.to.z.expect("Z is known");
+                assert!(
+                    !moves_xy || z <= -deepest_mm + 1e-9,
+                    "a lap above the floor, line {}",
+                    m.line
+                );
+            }
+        }
+
         let (runs, _) = dc_cam::generate_inlay(&project, inlay).expect("the inlay generates");
         let labels: Vec<&dc_cam::RunLabel> = runs.iter().map(|r| &r.label).collect();
-        assert_eq!(
-            labels,
-            [
-                &dc_cam::RunLabel::Clearing(ToolId::new("t2")),
-                &dc_cam::RunLabel::Main
-            ],
-            "{stem}"
-        );
+        let mut want = vec![
+            dc_cam::RunLabel::Clearing(ToolId::new("t2")),
+            dc_cam::RunLabel::Main,
+        ];
+        if male {
+            want.push(dc_cam::RunLabel::CutOut(ToolId::new("t2")));
+        }
+        assert_eq!(labels, want.iter().collect::<Vec<_>>(), "{stem}");
         for run in &runs {
             dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
         }
     }
+}
+
+/// #446: the lettered inlay pair fits its board, 110 × 80 mm. For every program of `dc-female.dcv` and `dc-male.dcv`, the box
+/// `export` reports the cutter's edge reaching (tool centre extents plus
+/// the radius, arcs included) leaves at least 3 mm of board at each edge;
+/// so does every cutting move's own end point, with the radius. The
+/// male's cut-out runs `margin_mm / 2` = 4 mm out from the mirrored
+/// letters: every point it cuts to, below the floor, is that far from the
+/// nearest mirrored outline, within the flatten tolerance plus the arc
+/// fit's.
+#[test]
+fn lettered_inlay_fits_its_board() {
+    let (width_mm, height_mm, _) = LETTERED_BOARD_MM;
+    let inside = |what: &str, x: (f64, f64), y: (f64, f64)| {
+        assert!(
+            x.0 >= LETTERED_BORDER_MM
+                && x.1 <= width_mm - LETTERED_BORDER_MM
+                && y.0 >= LETTERED_BORDER_MM
+                && y.1 <= height_mm - LETTERED_BORDER_MM,
+            "{what} reaches X {:.3}..{:.3}, Y {:.3}..{:.3}: less than {LETTERED_BORDER_MM} mm from the edge of the {width_mm} × {height_mm} mm board",
+            x.0,
+            x.1,
+            y.0,
+            y.1
+        );
+    };
+    for stem in ["dc-female", "dc-male"] {
+        let (dir, report, written) = export_lettered("lettered_inlay_fits_its_board", stem);
+        let project = load_file(&dir.join(format!("{stem}.dcv"))).project;
+        assert_approx_eq!(project.stock.width_mm, width_mm, 1e-12);
+        assert_approx_eq!(project.stock.height_mm, height_mm, 1e-12);
+
+        // The report's box, for each program in turn.
+        let reaches: Vec<&str> = report
+            .lines()
+            .filter_map(|l| l.trim().strip_prefix("The cutter's edge reaches "))
+            .collect();
+        // `export` prints each program's box once.
+        assert_eq!(reaches.len(), written.len(), "{report}");
+        for (name, line) in written.iter().zip(&reaches) {
+            let range = |axis: &str| {
+                let (_, rest) = line
+                    .split_once(&format!("{axis} "))
+                    .unwrap_or_else(|| panic!("no {axis} range: {line}"));
+                let range = rest.split([',', ';']).next().expect("a range");
+                let (lo, hi) = range.split_once("..").expect("lo..hi");
+                (
+                    lo.parse::<f64>().expect("a number"),
+                    hi.parse::<f64>().expect("a number"),
+                )
+            };
+            inside(&format!("{stem}: {name}"), range("X"), range("Y"));
+        }
+
+        for name in &written {
+            let program = std::fs::read_to_string(dir.join(name)).expect("program readable");
+            let number: u32 = name
+                .rsplit_once("-T")
+                .and_then(|(_, n)| n.strip_suffix(".nc"))
+                .and_then(|n| n.parse().ok())
+                .expect("the program's tool number");
+            let radius_mm = project
+                .tools
+                .iter()
+                .find(|t| t.number == Some(number))
+                .expect("the program's tool")
+                .diameter_mm
+                / 2.0;
+            let moves = dc_gcode::parse_motion(&program).expect("program parses");
+            let cuts: Vec<&MachineMove> = moves.iter().filter(|m| m.kind.is_cut()).collect();
+            assert!(!cuts.is_empty(), "{name} cuts");
+            let (mut x, mut y) = (
+                (f64::INFINITY, f64::NEG_INFINITY),
+                (f64::INFINITY, f64::NEG_INFINITY),
+            );
+            for m in cuts {
+                let (px, py) = (m.to.x.expect("X known"), m.to.y.expect("Y known"));
+                x = (x.0.min(px - radius_mm), x.1.max(px + radius_mm));
+                y = (y.0.min(py - radius_mm), y.1.max(py + radius_mm));
+            }
+            inside(&format!("{stem}: {name}'s cuts"), x, y);
+        }
+
+        if stem == "dc-male" {
+            let inlay = the_inlay(&project);
+            let mirror = dc_cam::inlay::male_mirror(&project, &inlay.targets).expect("the mirror");
+            let mirrored: Vec<Polyline> = inlay_design(&project, inlay)
+                .iter()
+                .map(|p| mirror.apply_polyline(p).expect("the outline mirrors"))
+                .collect();
+            let half_margin_mm = inlay.margin_mm.expect("the male's margin") / 2.0;
+            assert_approx_eq!(half_margin_mm, 4.0, 1e-12);
+            let floor_z_mm = -5.0;
+            let cut =
+                std::fs::read_to_string(dir.join("dc-male-3-T2.nc")).expect("cut-out written");
+            let moves = dc_gcode::parse_motion(&cut).expect("program parses");
+            let mut checked = 0;
+            for m in &moves {
+                let z = m.to.z.expect("Z is known");
+                if !m.kind.is_cut() || z > floor_z_mm {
+                    continue;
+                }
+                let p = Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
+                let gap_mm = distance_to_outlines_mm(p, &mirrored);
+                assert!(
+                    (gap_mm - half_margin_mm).abs()
+                        <= 2.0 * project.flatten_tolerance_mm
+                            + project.arc_fit_tolerance_mm.unwrap_or(0.0)
+                            + 1e-6,
+                    "line {}: the cut-out at ({:.3}, {:.3}) is {gap_mm:.4} mm from the mirrored letters, not {half_margin_mm}",
+                    m.line,
+                    p.x,
+                    p.y
+                );
+                checked += 1;
+            }
+            assert!(checked > 100, "{checked} cut-out points checked");
+        }
+    }
+}
+
+/// #446: the male cuts the female's design mirrored. The two fixtures hold
+/// the same drawing; the male's design outlines (its targets placed, then
+/// mirrored by `dc_cam::inlay::male_mirror`) are the female's outlines
+/// reflected about the X that `inlay_male_mirrored` states, X = 55 mm,
+/// the middle of the letters' bounding box: every vertex of each lies
+/// within the flatten tolerance of the other, both ways. "DC" is not
+/// symmetric, so the mirror shows: the female's letters, unmirrored, are
+/// more than 1 mm from some of the male's. And the male's cut-out, which
+/// runs 4 mm out from the mirrored letters, does not run 4 mm out from the
+/// female's.
+#[test]
+fn lettered_male_is_the_mirror_of_the_female() {
+    let (_, male_report, _) =
+        export_lettered("lettered_male_is_the_mirror_of_the_female", "dc-male");
+    let x_mm = mirror_x_mm(&male_report);
+    let female = load_file(&tests_fixture("dc-female.dcv")).project;
+    let male = load_file(&tests_fixture("dc-male.dcv")).project;
+    assert_eq!(female.instances, male.instances, "the same drawing");
+    assert_eq!(female.definitions, male.definitions, "the same drawing");
+    let (female_op, male_op) = (the_inlay(&female), the_inlay(&male));
+    assert_eq!(female_op.targets, male_op.targets);
+
+    let drawn = inlay_design(&female, female_op);
+    let bounds = drawn
+        .iter()
+        .filter_map(Polyline::bounds)
+        .reduce(|a, b| a.including(b.min).including(b.max))
+        .expect("the design has bounds");
+    assert_approx_eq!(x_mm, (bounds.min.x + bounds.max.x) / 2.0, 1e-3);
+
+    // The female's outlines reflected about X by hand: x to 2X − x, and
+    // each arc turns the other way.
+    let reflected: Vec<Polyline> = drawn
+        .iter()
+        .map(|p| {
+            let vertices = p
+                .vertices()
+                .iter()
+                .map(|v| dc_geometry::Vertex::new(2.0 * x_mm - v.x, v.y, -v.bulge))
+                .collect();
+            Polyline::new(vertices, true)
+        })
+        .collect();
+    let mirror = dc_cam::inlay::male_mirror(&male, &male_op.targets).expect("the mirror");
+    let cut: Vec<Polyline> = inlay_design(&male, male_op)
+        .iter()
+        .map(|p| mirror.apply_polyline(p).expect("the outline mirrors"))
+        .collect();
+    assert_eq!(cut.len(), reflected.len(), "the same outlines");
+    let tolerance_mm = male.flatten_tolerance_mm;
+    let farthest = |from: &[Polyline], to: &[Polyline]| {
+        from.iter()
+            .flat_map(|p| p.vertices().iter().map(|v| Point::new(v.x, v.y)))
+            .map(|p| distance_to_outlines_mm(p, to))
+            .fold(0.0, f64::max)
+    };
+    let (there, back) = (farthest(&cut, &reflected), farthest(&reflected, &cut));
+    assert!(
+        there <= tolerance_mm && back <= tolerance_mm,
+        "the male's outlines are {there:.4} mm and {back:.4} mm from the female's reflected about X = {x_mm}"
+    );
+    let unmirrored = farthest(&cut, &drawn);
+    assert!(unmirrored > 1.0, "the mirror shows: {unmirrored:.3} mm");
+
+    let dir = work_dir("lettered_male_is_the_mirror_of_the_female_dc-male");
+    let program = std::fs::read_to_string(dir.join("dc-male-3-T2.nc")).expect("cut-out written");
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    let off = moves
+        .iter()
+        .filter(|m| m.kind.is_cut() && m.to.z.is_some_and(|z| z <= -5.0))
+        .map(|m| {
+            let p = Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
+            (distance_to_outlines_mm(p, &drawn) - 4.0).abs()
+        })
+        .fold(0.0, f64::max);
+    assert!(
+        off > 1.0,
+        "the cut-out follows the mirrored letters, not the drawn: {off:.3} mm"
+    );
 }
 
 /// #125, acceptance test 34's export half: the finished plaque project

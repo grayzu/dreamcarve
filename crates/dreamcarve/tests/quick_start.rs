@@ -1037,14 +1037,15 @@ fn v_carved_sign_chapter_runs() {
     );
 }
 
-/// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437) run
-/// as written on `tests/fixtures/star.svg`: every command exits as the
-/// chapter says, the tool library file, the hand edits and the pasted
-/// operation apply to both projects, every excerpt is in the program it
-/// names, and the two projects are the committed
-/// `tests/fixtures/star-female.dcv` and `star-male.dcv`, which
-/// `cli::star_female_and_male_export` and
-/// `cli::star_male_exports_three_programs_with_the_cut_out` export. Each
+/// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437,
+/// lettered in #446) run as written on `tests/fixtures/dc-inlay.svg`, the
+/// monogram "DC": every command exits as the chapter says, the tool
+/// library file, the hand edits and the pasted operation apply to both
+/// projects, every excerpt is in the program it names, and the two
+/// projects are the committed `tests/fixtures/dc-female.dcv` and
+/// `dc-male.dcv`, which `cli::lettered_inlay_female_and_male_export`,
+/// `cli::lettered_inlay_fits_its_board` and
+/// `cli::lettered_male_is_the_mirror_of_the_female` export. Each
 /// side exports its programs listed in run order: the 3.175 mm end mill's
 /// clearing pass (T2), then the 60° V-bit (T1), and on the male the end
 /// mill's cut-out last (T2, #443). Each passes the rules a user can check
@@ -1054,7 +1055,7 @@ fn v_carved_sign_chapter_runs() {
 fn inlay_pair_chapter_runs() {
     let run = Run {
         chapter: INLAY,
-        drawing: ("tests/fixtures/star.svg", "star.svg"),
+        drawing: ("tests/fixtures/dc-inlay.svg", "dc-inlay.svg"),
         swap: None,
     };
     let text = std::fs::read_to_string(repo_root().join(INLAY)).expect("chapter readable");
@@ -1078,7 +1079,7 @@ fn inlay_pair_chapter_runs() {
     }
     let dir = run_chapter("inlay_pair_chapter_runs", &run);
 
-    for stem in ["star-female", "star-male"] {
+    for stem in ["dc-female", "dc-male"] {
         let name = format!("{stem}.dcv");
         let fixture = format!("tests/fixtures/{name}");
         let built = std::fs::read_to_string(dir.join(&name)).expect("project written");
@@ -1097,11 +1098,11 @@ fn inlay_pair_chapter_runs() {
     assert_eq!(
         programs,
         [
-            "star-female-1-T2.nc",
-            "star-female-2-T1.nc",
-            "star-male-1-T2.nc",
-            "star-male-2-T1.nc",
-            "star-male-3-T2.nc",
+            "dc-female-1-T2.nc",
+            "dc-female-2-T1.nc",
+            "dc-male-1-T2.nc",
+            "dc-male-2-T1.nc",
+            "dc-male-3-T2.nc",
         ]
     );
 
@@ -1109,13 +1110,13 @@ fn inlay_pair_chapter_runs() {
     let limits = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
         safe_z_mm: 10.0,
         floor_mm: 12.2,
-        stock_mm: (100.0, 100.0),
+        stock_mm: (110.0, 80.0),
         radius_mm,
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
     };
-    for stem in ["star-female", "star-male"] {
+    for stem in ["dc-female", "dc-male"] {
         let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
             .current_dir(&dir)
             .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
@@ -1129,7 +1130,7 @@ fn inlay_pair_chapter_runs() {
         );
         assert_eq!(out.status.code(), Some(0), "{report}");
         let mut names = vec![format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
-        if stem == "star-male" {
+        if stem == "dc-male" {
             names.push(format!("{stem}-3-T2.nc"));
         }
         let at: Vec<usize> = names
@@ -1144,7 +1145,7 @@ fn inlay_pair_chapter_runs() {
         assert!(at.is_sorted(), "{report}");
         assert_eq!(
             report.contains("inlay_male_mirrored"),
-            stem == "star-male",
+            stem == "dc-male",
             "{report}"
         );
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
