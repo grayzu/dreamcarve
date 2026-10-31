@@ -1311,6 +1311,34 @@ mod tests {
         assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
     }
 
+    /// #453: with the chord's ends unequally far from the centre, the arc
+    /// bows farthest from it square to the chord, not towards its middle.
+    /// A 30° arc of a 10 mm circle over a chord from (10, 0), on the
+    /// circle, to 9.5 mm out at 30°: the farthest point is at 20.47°,
+    /// `r` less the line's distance from the centre, 0.63121 mm. Towards
+    /// the middle (14.61°) and the ten samples it read 0.62843 mm, short by
+    /// 0.0028 mm; the fitter and S12 would have let such an arc stray that
+    /// far past the tolerance.
+    #[test]
+    fn arc_chord_deviation_is_found_square_to_the_chord() {
+        let o = Point::new(0.0, 0.0);
+        let r = 10.0;
+        let sweep = 30.0_f64.to_radians();
+        let a = Point::new(r, 0.0);
+        let b = Point::new(9.5 * sweep.cos(), 9.5 * sweep.sin());
+        let line_mm = (a - o).cross(b - o).abs() / a.distance_to(b);
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, 0.0, sweep, a, b),
+            r - line_mm,
+            1e-9
+        );
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, sweep, -sweep, b, a),
+            r - line_mm,
+            1e-9
+        );
+    }
+
     /// A chord between two points on the circle is bowed off by the arc's
     /// sagitta, `r(1 − cos(sweep/2))`, either way round; ends off the
     /// circle add how far they are off.
