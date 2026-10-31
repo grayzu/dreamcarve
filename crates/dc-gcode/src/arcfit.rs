@@ -375,13 +375,18 @@ pub fn arc_chord_deviation_mm(
         };
         turn.rem_euclid(TAU) <= sweep
     };
-    // Towards the chord's middle: where the arc bows farthest from it.
+    // Where the arc bows farthest from the chord's line: square to the
+    // chord, where the arc's tangent is parallel to it (#453). Towards the
+    // chord's middle is the same only when both ends are equally far from
+    // the centre; a run's vertices may each be off the circle by up to the
+    // tolerance, and there the arc strayed 0.00002 mm past it unseen.
     let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-    let normal_rad = (middle.y - centre.y).atan2(middle.x - centre.x);
+    let middle_rad = (middle.y - centre.y).atan2(middle.x - centre.x);
+    let square_rad = (a.x - b.x).atan2(b.y - a.y);
     let samples = (0..=DEVIATION_SAMPLES + 1)
         .map(|k| sweep_rad * f64::from(k) / f64::from(DEVIATION_SAMPLES + 1))
         .map(|t| from_rad + t);
-    let farthest = [normal_rad, normal_rad + PI]
+    let farthest = [middle_rad, middle_rad + PI, square_rad, square_rad + PI]
         .into_iter()
         .filter(|&angle| on_arc(angle));
     samples
@@ -978,13 +983,25 @@ impl WrittenArc {
         if !self.on_circle(p, budget) {
             return false;
         }
-        let slack = if self.radius > 0.0 {
+        let slack = self.slack(budget);
+        let turn = self.turn(p);
+        turn <= self.sweep_rad + slack || turn >= TAU - slack
+    }
+
+    /// The angle `budget` makes at the radius.
+    fn slack(&self, budget: f64) -> f64 {
+        if self.radius > 0.0 {
             budget / self.radius
         } else {
             TAU
-        };
+        }
+    }
+
+    /// Whether `p` is past the arc's end by no more than the angle
+    /// `budget` makes at the radius, as S12 places it.
+    fn past_end(&self, p: Point, budget: f64) -> bool {
         let turn = self.turn(p);
-        turn <= self.sweep_rad + slack || turn >= TAU - slack
+        turn > self.sweep_rad && turn <= self.sweep_rad + self.slack(budget)
     }
 
     /// The turn to the point of the arc nearest `p` in angle: the start or
@@ -1068,6 +1085,17 @@ fn written_arcs_follow_moves(
                     return false;
                 };
                 if current.holds(p, budget) {
+                    // As S12 (#453): past the piece's end, away from the
+                    // joint, and on the next piece, `p` is on the next,
+                    // though on a circle near the budget in radius it is
+                    // still within this piece's angle slack.
+                    let on_next = written
+                        .get(piece + 1)
+                        .is_some_and(|next| next.holds(p, budget));
+                    if current.past_end(p, budget) && !near(p, current.end) && on_next {
+                        piece += 1;
+                        continue;
+                    }
                     break;
                 }
                 if !current.on_circle(p, budget) || piece + 1 >= written.len() {

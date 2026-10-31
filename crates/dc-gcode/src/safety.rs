@@ -1925,7 +1925,22 @@ fn match_fitted_arc(
             // On the current piece, or past its end and on the next.
             loop {
                 let current = pieces.get(piece)?;
-                if current.turn_to(p, allowed_mm).is_some() {
+                if let Some(turn_rad) = current.turn_to(p, allowed_mm) {
+                    // #453: past the piece's end, away from the joint, and
+                    // on the next piece, `p` is on the next. On a circle
+                    // whose radius is near the allowance the angle slack
+                    // is wider than a piece, so a vertex well into the
+                    // next piece is still within this one's slack, and
+                    // the walk would never reach the last piece.
+                    let at_joint = approx_eq(p.x, current.end.x, tolerance_mm)
+                        && approx_eq(p.y, current.end.y, tolerance_mm);
+                    let on_next = pieces
+                        .get(piece + 1)
+                        .is_some_and(|next| next.turn_to(p, allowed_mm).is_some());
+                    if turn_rad > current.sweep_rad && !at_joint && on_next {
+                        piece += 1;
+                        continue;
+                    }
                     break;
                 }
                 let on_circle =
