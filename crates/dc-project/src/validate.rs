@@ -7313,6 +7313,92 @@ mod tests {
         assert_eq!(validate(&p), vec![]);
     }
 
+    /// #448: with an open band edge the floor ring runs from the plug's
+    /// foot, `P·tan(α/2)` out, to the band's edge, `M` out, and the cut-out
+    /// runs in its middle, so it needs `M ≥ P·tan(α/2) + d`. The star's
+    /// values on the 60° bit (`P·s` = 1.155) with a 3.175 mm clearing pass
+    /// `t3`, which opens the edge, and a 6.35 mm cut-out `t1`: an 8 mm
+    /// margin has room (6.845 mm), which a V wall would not (it needs
+    /// 8.66 mm); a 6 mm margin has not, and names 1.155 + 6.35 = 7.505 mm.
+    #[test]
+    fn cut_out_room_follows_the_open_edge() {
+        use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry};
+        let open = |margin_mm: f64, clearing: bool| {
+            let mut p = cut_out_project(|inlay| {
+                star(inlay, crate::model::InlaySide::Male);
+                inlay.margin_mm = Some(margin_mm);
+                if let Some(cut_out) = inlay.cut_out.as_mut() {
+                    cut_out.tool = ToolId::new("t1");
+                }
+                if clearing {
+                    inlay.clearing = vec![ClearingPass {
+                        tool: ToolId::new("t3"),
+                        strategy: ClearanceStrategy::Offset,
+                        direction: CutDirection::Climb,
+                        entry: Entry::Plunge,
+                    }];
+                }
+            });
+            v_bit_angle(&mut p, 60.0);
+            validate(&p)
+        };
+        assert_eq!(open(8.0, true), vec![]);
+        let needed = |problems: Vec<Problem>| match &problems[..] {
+            [Problem::InlayCutOutNoRoom { needed_mm, .. }] => *needed_mm,
+            other => panic!("{other:?}"),
+        };
+        let s = (30.0_f64).to_radians().tan();
+        dc_geometry::assert_approx_eq!(needed(open(6.0, true)), 2.0 * s + 6.35, 1e-9);
+        dc_geometry::assert_approx_eq!(needed(open(8.0, false)), 4.0 * s + 6.35, 1e-9);
+    }
+
+    /// #448: `outline_rounding_mm` is the radius the male's band is closed
+    /// by; set, it must be a number above 0. 0, −1 and NaN are each
+    /// `inlay_outline_rounding`, an error at the field, on either side
+    /// (the female ignores the value, but a pair shares it); `null` and 5
+    /// are valid.
+    #[test]
+    fn outline_rounding_must_be_positive() {
+        for side in SIDES {
+            for rounding_mm in [0.0, -1.0, f64::NAN] {
+                let p = inlay_project(|inlay| {
+                    inlay.side = side;
+                    inlay.outline_rounding_mm = Some(rounding_mm);
+                });
+                let problems = validate(&p);
+                assert_eq!(problems.len(), 1, "{side:?} {rounding_mm}: {problems:?}");
+                let Problem::InlayOutlineRounding {
+                    operation,
+                    rounding_mm: got,
+                    ..
+                } = &problems[0]
+                else {
+                    panic!("{problems:?}");
+                };
+                assert_eq!(operation, &OperationId::new("o7"));
+                assert!(got.is_nan() == rounding_mm.is_nan() && (got.is_nan() || *got == rounding_mm));
+                assert_eq!(problems[0].severity(), Severity::Error);
+                assert_eq!(problems[0].code(), "inlay_outline_rounding");
+                assert_eq!(
+                    problems[0].field().as_deref(),
+                    Some("operations[o7].outline_rounding_mm")
+                );
+                assert!(
+                    problems[0].to_string().contains("outline_rounding_mm"),
+                    "{}",
+                    problems[0]
+                );
+            }
+            for rounding_mm in [None, Some(5.0)] {
+                let p = inlay_project(|inlay| {
+                    inlay.side = side;
+                    inlay.outline_rounding_mm = rounding_mm;
+                });
+                assert_eq!(validate(&p), vec![], "{side:?} {rounding_mm:?}");
+            }
+        }
+    }
+
     /// #443: the cut-out's tool is a used tool: its feed, plunge rate and
     /// RPM are required, and so is its step-down, which sets the passes.
     #[test]

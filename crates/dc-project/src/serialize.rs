@@ -391,7 +391,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v23/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v24/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1220,6 +1220,7 @@ mod tests {
                 "glue_gap_mm",
                 "plug_depth_mm",
                 "margin_mm",
+                "outline_rounding_mm",
                 "clearing",
                 "step_over_fraction",
                 "machining_order",
@@ -1411,6 +1412,61 @@ mod tests {
             let err = load(broken.as_bytes()).unwrap_err().to_string();
             assert!(err.contains(named), "{named}: {err}");
         }
+    }
+
+    /// Format 24 (#448): an Inlay's `outline_rounding_mm` saves right after
+    /// `margin_mm`, a number or `null`, and loads back the same; it may
+    /// carry its unit, and it is required, `null` included.
+    #[test]
+    fn inlay_outline_rounding_round_trips() {
+        use crate::model::InlaySide;
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            side: InlaySide::Male,
+            outline_rounding_mm: Some(10.0),
+            ..sample_inlay()
+        }));
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            ..sample_inlay()
+        }));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["operations"][1]["outline_rounding_mm"], json!(10.0));
+        assert_eq!(value["operations"][2]["outline_rounding_mm"], json!(null));
+        let keys: Vec<&str> = value["operations"][1]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = keys.iter().position(|k| *k == "margin_mm").unwrap();
+        assert_eq!(keys.get(at + 1), Some(&"outline_rounding_mm"));
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+
+        let inch = text.replacen(
+            "\"outline_rounding_mm\": 10.0,",
+            "\"outline_rounding_mm\": \"0.5 in\",",
+            1,
+        );
+        assert_ne!(inch, text, "fixture layout changed:\n{text}");
+        let Some(Operation::Inlay(inlay)) = load(inch.as_bytes())
+            .unwrap()
+            .project
+            .operations
+            .get(1)
+            .cloned()
+        else {
+            panic!("an inlay");
+        };
+        dc_geometry::assert_approx_eq!(inlay.outline_rounding_mm.unwrap(), 12.7, 1e-9);
+
+        let without = text.replacen("\"outline_rounding_mm\": null,", "", 1);
+        assert_ne!(without, text, "fixture layout changed:\n{text}");
+        let err = load(without.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("outline_rounding_mm"), "{err}");
     }
 
     /// Format 20: the V-Carve strategy is externally tagged, like a drill

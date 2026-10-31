@@ -2838,7 +2838,7 @@ mod tests {
             ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayOp, InlaySide,
         };
         use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
-        assert_eq!(CURRENT_VERSION, 23);
+        const { assert!(CURRENT_VERSION >= 23) };
         let fixture: Value = serde_json::from_slice(V22_FIXTURE).unwrap();
         let stepped = v22_to_v23(fixture.as_object().unwrap().clone()).unwrap();
         assert_eq!(
@@ -2869,6 +2869,8 @@ mod tests {
             let mut old = current.clone();
             if let Some(fields) = old.as_object_mut() {
                 fields.shift_remove("cut_out");
+                // Format 24 (#448) adds it after.
+                fields.shift_remove("outline_rounding_mm");
             }
             root["operations"].as_array_mut().unwrap().push(old);
             expected["operations"].as_array_mut().unwrap().push(current);
@@ -2904,7 +2906,114 @@ mod tests {
     /// A version 22 reader refuses a version 23 file as newer (ADR-0002).
     #[test]
     fn version_23_is_newer_than_22() {
-        assert_eq!(CURRENT_VERSION, 23);
+        const { assert!(CURRENT_VERSION > 22) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 23 → 24 (#448): a male Inlay's outline rounding.
+
+    const V23_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v23/sample.dcv");
+
+    #[test]
+    fn version_23_fixture_loads() {
+        let text = std::str::from_utf8(V23_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 23,"), "a version 23 file");
+        let loaded = load(V23_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// Format 24: every Inlay gains `"outline_rounding_mm": null` right
+    /// after its `margin_mm`, whatever its side, clearing and cut-out; no
+    /// other operation changes, and the keys keep their order. A version
+    /// 23 Inlay that already has the field is not one.
+    #[test]
+    fn v23_to_v24_adds_null_outline_rounding() {
+        use crate::ids::ToolId;
+        use crate::model::{
+            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp,
+            InlaySide,
+        };
+        use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
+        assert_eq!(CURRENT_VERSION, 24);
+        let fixture: Value = serde_json::from_slice(V23_FIXTURE).unwrap();
+        let stepped = v23_to_v24(fixture.as_object().unwrap().clone()).unwrap();
+        assert_eq!(
+            Value::Object(stepped),
+            serde_json::from_slice::<Value>(V23_FIXTURE).unwrap(),
+            "a file with no Inlay is unchanged"
+        );
+
+        let male = InlayOp {
+            side: InlaySide::Male,
+            clearing: vec![ClearingPass {
+                tool: ToolId::new("t1"),
+                strategy: ClearanceStrategy::Offset,
+                direction: CutDirection::Climb,
+                entry: Entry::Plunge,
+            }],
+            cut_out: Some(InlayCutOut {
+                tool: ToolId::new("t1"),
+                tabs: None,
+                through_cut_allowance_mm: 0.2,
+            }),
+            ..sample_inlay()
+        };
+        let mut root = sample_root_at(23);
+        let mut expected = sample_root_at(CURRENT_VERSION);
+        for op in [
+            Operation::Pocket(sample_pocket()),
+            Operation::Inlay(sample_inlay()),
+            Operation::VCarve(sample_v_carve()),
+            Operation::Inlay(male),
+        ] {
+            let current = serde_json::to_value(op).unwrap();
+            let mut old = current.clone();
+            if let Some(fields) = old.as_object_mut() {
+                fields.shift_remove("outline_rounding_mm");
+            }
+            root["operations"].as_array_mut().unwrap().push(old);
+            expected["operations"].as_array_mut().unwrap().push(current);
+        }
+        for op in expected["operations"].as_array().unwrap() {
+            if op["kind"] == json!("inlay") {
+                let keys: Vec<&str> = op
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect();
+                let at = keys.iter().position(|k| *k == "margin_mm").unwrap();
+                assert_eq!(keys.get(at + 1), Some(&"outline_rounding_mm"));
+                assert_eq!(op["outline_rounding_mm"], Value::Null);
+            }
+        }
+        let migrated = migrate(root, 23).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+
+        let mut bad = sample_root_at(23);
+        bad["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(sample_inlay())).unwrap());
+        let err = migrate(bad, 23).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 23, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// A version 23 reader refuses a version 24 file as newer (ADR-0002).
+    #[test]
+    fn version_24_is_newer_than_23() {
+        assert_eq!(CURRENT_VERSION, 24);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

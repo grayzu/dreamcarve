@@ -1068,7 +1068,9 @@ fn v_carved_sign_chapter_runs() {
 /// clearing pass (T2), then the 60° V-bit (T1), and on the male the end
 /// mill's cut-out last (T2, #443). Each passes the rules a user can check
 /// on the program alone; `export` has already held it to S1–S18. The male
-/// prints `inlay_male_mirrored`, the female does not.
+/// prints `inlay_male_mirrored`, the female does not. The pasted operation
+/// rounds the male's band by 10 mm (#448), and the chapter says the
+/// band's outer edge is the end mill's.
 #[test]
 fn inlay_pair_chapter_runs() {
     let run = Run {
@@ -1095,6 +1097,14 @@ fn inlay_pair_chapter_runs() {
     ] {
         assert!(has, "{INLAY} has no `{what}` step");
     }
+    assert!(
+        text.contains("\"outline_rounding_mm\": 10.0,"),
+        "{INLAY} pastes the band's rounding"
+    );
+    assert!(
+        text.contains("outer edge"),
+        "{INLAY} says where the band's outer edge is cut"
+    );
     let dir = run_chapter("inlay_pair_chapter_runs", &run);
 
     for stem in ["dc-female", "dc-male"] {

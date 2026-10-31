@@ -10,6 +10,7 @@
 mod countersink;
 mod history;
 mod ids;
+mod inlay;
 mod layout;
 mod locate;
 mod migrate;

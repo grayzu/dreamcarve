@@ -105,6 +105,7 @@ fn inlay(side: InlaySide, tool: &str, plug_mm: f64, margin_mm: f64) -> InlayOp {
         glue_gap_mm: Some(0.5),
         plug_depth_mm: Some(plug_mm),
         margin_mm: Some(margin_mm),
+        outline_rounding_mm: None,
         clearing: Vec::new(),
         step_over_fraction: Some(0.4),
         machining_order: MachiningOrder::FullDepthFirst,
@@ -241,6 +242,124 @@ fn generated_inlays_pass_s17() {
     }
     let male = inlay(InlaySide::Male, "t2", 1.0, 3.0);
     export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
+    // #448: open, rounded band edges: the small star's male with the end
+    // mill's pass (its 4 mm margin has room for it) rounded by 3 mm, and
+    // the two shapes' male rounded by 20 mm, which joins their bands.
+    for (project, op) in [
+        (
+            star.clone(),
+            InlayOp {
+                clearing: vec![pass.clone()],
+                outline_rounding_mm: Some(3.0),
+                ..inlay(InlaySide::Male, "t5", 1.0, 4.0)
+            },
+        ),
+        (
+            two_shapes(),
+            InlayOp {
+                clearing: vec![pass.clone()],
+                outline_rounding_mm: Some(20.0),
+                ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+            },
+        ),
+    ] {
+        let programs = export_inlay(&project, &op).unwrap_or_else(|e| panic!("{op:?}: {e}"));
+        assert_eq!(programs.len(), 2);
+    }
+}
+
+// #448: the male's band with an open, rounded outer edge.
+
+/// A clearing pass with the 3.175 mm end mill `t3`, which fits the two
+/// shapes' 6 mm band on the 90° bit (`M − P·s` = 5 mm), so the band's
+/// edge is open.
+fn edge_pass() -> ClearingPass {
+    ClearingPass {
+        tool: ToolId::new("t3"),
+        strategy: ClearanceStrategy::Offset,
+        direction: CutDirection::Climb,
+        entry: Entry::Plunge,
+    }
+}
+
+/// #448: the band's rounding comes from the project. The two shapes'
+/// male (margin 6, `P` 1, the 90° bit) with the end mill's pass: its
+/// mirrored square (X 10 to 16) and rectangle (X 46 to 76) are 30 mm
+/// apart, so their plain bands leave an 18 mm gap, which a 20 mm rounding
+/// fills. A V-bit cut across the gap's middle at the floor, Z −2.5, 14 mm
+/// from both shapes, is in the rounded band (its cone 2.5 mm wide at the
+/// stock top, more than 4 mm from the band's edge) and passes; with no
+/// rounding it is off the material and fails S17.
+#[test]
+fn male_band_rounding_is_derived_from_the_project() {
+    let project = two_shapes();
+    let rounded = InlayOp {
+        clearing: vec![edge_pass()],
+        outline_rounding_mm: Some(20.0),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    let cut = program_at(30.0, 23.0, "G1 Z-2.5 F300\nX32 F1000\n");
+    check_male(&cut, &project, &rounded).unwrap();
+    let plain = InlayOp {
+        outline_rounding_mm: None,
+        ..rounded
+    };
+    assert_cone_off(check_male(&cut, &project, &plain), 6);
+}
+
+/// #448: with an open edge the board beyond the band's edge `B` stands
+/// to the stock top, so the V-bit's cone may not cross `B` below it. The
+/// two shapes' male, margin 6, with the end mill's pass: `B` runs 6 mm
+/// below the mirrored rectangle, at Y 14. A V-bit cut at the floor, Z
+/// −2.5, whose cone is 2.5 mm wide at the stock top, fails S17 at Y 15.5,
+/// 1.5 mm from `B`, and passes at Y 17. Without the pass the edge is a V
+/// wall, held at the start plane only, where the cone is 1 mm wide, so
+/// the cut at Y 15.5 passes.
+#[test]
+fn v_bit_across_the_open_edge_fails_s17() {
+    let project = two_shapes();
+    let open = InlayOp {
+        clearing: vec![edge_pass()],
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    let at = |y: f64| program_at(56.0, y, "G1 Z-2.5 F300\nX57 F1000\n");
+    check_male(&at(17.0), &project, &open).unwrap();
+    assert_cone_off(check_male(&at(15.5), &project, &open), 6);
+    let v_wall = inlay(InlaySide::Male, "t2", 1.0, 6.0);
+    check_male(&at(15.5), &project, &v_wall).unwrap();
+}
+
+/// #448: with an open edge the floor ring runs from the plug's foot, 1 mm
+/// below the mirrored rectangle (Y 19), to the band's edge, 6 mm below it
+/// (Y 14), and the cut-out runs in its middle, 3.5 mm below it: the
+/// 3.175 mm end mill's centre may run from Y 15.59 to Y 17.41. At Y 16.5
+/// and Y 15.8 it passes; at Y 15.4 its footprint crosses the band's edge
+/// and at Y 17.6 the plug's foot, and each fails S9. Without the
+/// clearing pass the ring is the V wall's, 1 to 5 mm below, and Y 15.8 is
+/// off it.
+#[test]
+fn cut_out_off_the_open_edge_ring_fails() {
+    let project = two_shapes();
+    let open = InlayOp {
+        clearing: vec![edge_pass()],
+        cut_out: Some(cut_out(None)),
+        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+    };
+    let label = RunLabel::CutOut(ToolId::new("t3"));
+    let at = |y: f64| program_at(55.0, y, "G1 Z-12.2 F300\nX60 F1000\n");
+    for y in [16.5, 15.8] {
+        check_run(&at(y), &project, &open, &label, "t3")
+            .unwrap_or_else(|e| panic!("Y {y}: {e}"));
+    }
+    for y in [15.4, 17.6] {
+        assert_off(check_run(&at(y), &project, &open, &label, "t3"), 6);
+    }
+    let v_wall = InlayOp {
+        clearing: Vec::new(),
+        ..open
+    };
+    check_run(&at(16.9), &project, &v_wall, &label, "t3").unwrap();
+    assert_off(check_run(&at(15.8), &project, &v_wall, &label, "t3"), 6);
 }
 
 /// The male's surround is the targets' mirrored about X 43, not as drawn:
@@ -539,4 +658,18 @@ fn generated_cut_outs_pass() {
         ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
     };
     export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
+    // #448: open, rounded band edges, the cut-out in the middle of the
+    // open floor ring.
+    for (project, rounding_mm) in [(star, 4.0), (two_shapes(), 20.0)] {
+        let tool = if rounding_mm < 10.0 { "t5" } else { "t2" };
+        let op = InlayOp {
+            clearing: vec![pass.clone()],
+            outline_rounding_mm: Some(rounding_mm),
+            cut_out: Some(cut_out(Some(four_tabs()))),
+            ..inlay(InlaySide::Male, tool, 1.0, 6.0)
+        };
+        let programs =
+            export_inlay(&project, &op).unwrap_or_else(|e| panic!("R {rounding_mm}: {e}"));
+        assert_eq!(programs.len(), 3);
+    }
 }
