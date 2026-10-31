@@ -117,6 +117,20 @@ phases bump the patch number.
 - **`flatten_tolerance_mm` is at most 0.1 mm.** A coarser tolerance is an
   error, in a file of any version: the safety checks' slack scales with it.
 
+### Fixed
+
+- A male Inlay without a clearing pass no longer fails export with "an arc
+  in place of operation's straight moves that does not follow them". Round
+  the band's V wall the arc fitter replaced a few moves a few thousandths
+  of a millimetre long with arcs on a circle 0.008 mm in radius, within
+  0.002 mm of the moves, and the safety pass's arc check (S12) lost its
+  place along them and refused them. The check now places each move on
+  the right arc, and still refuses an arc that strays from its moves. The
+  fitter and the check also find where an arc bows farthest from a move
+  more exactly, so an arc no longer strays a few hundred-thousandths of a
+  millimetre past the arc-fit tolerance; a few arcs of other programs
+  change where they did ([#453]).
+
 ## [0.2.0] - 2026-10-27
 
 Phase 2: every 2.5D operation except V-Carve, from SVG or DXF, for six
@@ -889,3 +903,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#389]: https://github.com/grayzu/dreamcarve/issues/389
 [#392]: https://github.com/grayzu/dreamcarve/issues/392
 [#394]: https://github.com/grayzu/dreamcarve/issues/394
+[#453]: https://github.com/grayzu/dreamcarve/issues/453

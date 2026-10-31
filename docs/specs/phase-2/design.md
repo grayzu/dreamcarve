@@ -2335,6 +2335,12 @@ the fitted centre is transformed like a point).
    point farthest from the chord's line, and eight points between, from
    the chord; for a chord between points on the circle, its sagitta
    `r(1 − cos(step/2))`); a shallow corner arc counts as its chord.
+   (changed in #453: the point farthest from the chord's line is square
+   to the chord, where the arc's tangent is parallel to it; it was looked
+   for towards the chord's middle, the same only when the chord's ends
+   are equally far from the centre, and with vertices off the circle
+   within the tolerance a fitted arc strayed 0.00002 mm past it;
+   `arcfit::arc_chord_deviation_is_found_square_to_the_chord`.)
    (changed in #226, #229, #233: only the vertices were checked, and a
    square's four corners lie on one circle, so a 7 mm square cut On line
    became four 90° arcs bowing 1.45 mm off its sides and failed S9. A
@@ -2403,7 +2409,14 @@ shallow arcs) when:
   piece was taken from that piece's start; on a helix's flat revolution
   0.17 mm across the slack is a whole 7.5° chord, so S12 measured arc
   the chord does not span, 0.011023 mm off it against 0.011001 allowed,
-  and refused the fitter's correct arcs);
+  and refused the fitter's correct arcs). A vertex past a piece's end,
+  not at the joint, that the next piece holds is on the next piece
+  (changed in #453: on a circle whose radius is near the allowance the
+  slack is wider than a piece, so every vertex stayed on the first
+  piece, the walk never reached the chain's end, and S12 refused a
+  0.008 mm-radius run on a male Inlay's V wall that lay within
+  0.002 mm of its moves; the fitter's own check places vertices the same
+  way);
 - the direction matches the sign of the vertices' turn.
 
 A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
@@ -2412,8 +2425,10 @@ failure is `ExportError::ArcFitViolation`. `fitted_arcs_pass_s6`,
 `arc_bowing_off_a_long_straight_move_fails_s12` (mm and inch) and
 `arc_within_tolerance_of_every_chord_passes`,
 `chord_across_a_piece_end_is_measured_on_both_pieces` and
-`arcfit::small_helix_flat_revolution_in_inches_exports` (#262) are the
-tests. (changed in slice 14, #128: one arc per run could not match a
+`arcfit::small_helix_flat_revolution_in_inches_exports` (#262),
+`arc_fit::fitted_arc_on_a_circle_within_the_allowance_passes_s12`,
+`arc_fit::deviation_beyond_tolerance_is_still_rejected` and
+`arc_fit::rounded_band_edge_v_wall_exports` (#453) are the tests. (changed in slice 14, #128: one arc per run could not match a
 split run; slice 4, #137, chained each piece's centre to the previous
 piece's rather than the first, because snapped centres drift along a
 run.)

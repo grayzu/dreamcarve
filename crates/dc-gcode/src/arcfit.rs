@@ -375,13 +375,18 @@ pub fn arc_chord_deviation_mm(
         };
         turn.rem_euclid(TAU) <= sweep
     };
-    // Towards the chord's middle: where the arc bows farthest from it.
+    // Where the arc bows farthest from the chord's line: square to the
+    // chord, where the arc's tangent is parallel to it (#453). Towards the
+    // chord's middle is the same only when both ends are equally far from
+    // the centre; a run's vertices may each be off the circle by up to the
+    // tolerance, and there the arc strayed 0.00002 mm past it unseen.
     let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-    let normal_rad = (middle.y - centre.y).atan2(middle.x - centre.x);
+    let middle_rad = (middle.y - centre.y).atan2(middle.x - centre.x);
+    let square_rad = (a.x - b.x).atan2(b.y - a.y);
     let samples = (0..=DEVIATION_SAMPLES + 1)
         .map(|k| sweep_rad * f64::from(k) / f64::from(DEVIATION_SAMPLES + 1))
         .map(|t| from_rad + t);
-    let farthest = [normal_rad, normal_rad + PI]
+    let farthest = [middle_rad, middle_rad + PI, square_rad, square_rad + PI]
         .into_iter()
         .filter(|&angle| on_arc(angle));
     samples
@@ -978,13 +983,25 @@ impl WrittenArc {
         if !self.on_circle(p, budget) {
             return false;
         }
-        let slack = if self.radius > 0.0 {
+        let slack = self.slack(budget);
+        let turn = self.turn(p);
+        turn <= self.sweep_rad + slack || turn >= TAU - slack
+    }
+
+    /// The angle `budget` makes at the radius.
+    fn slack(&self, budget: f64) -> f64 {
+        if self.radius > 0.0 {
             budget / self.radius
         } else {
             TAU
-        };
+        }
+    }
+
+    /// Whether `p` is past the arc's end by no more than the angle
+    /// `budget` makes at the radius, as S12 places it.
+    fn past_end(&self, p: Point, budget: f64) -> bool {
         let turn = self.turn(p);
-        turn <= self.sweep_rad + slack || turn >= TAU - slack
+        turn > self.sweep_rad && turn <= self.sweep_rad + self.slack(budget)
     }
 
     /// The turn to the point of the arc nearest `p` in angle: the start or
@@ -1068,6 +1085,17 @@ fn written_arcs_follow_moves(
                     return false;
                 };
                 if current.holds(p, budget) {
+                    // As S12 (#453): past the piece's end, away from the
+                    // joint, and on the next piece, `p` is on the next,
+                    // though on a circle near the budget in radius it is
+                    // still within this piece's angle slack.
+                    let on_next = written
+                        .get(piece + 1)
+                        .is_some_and(|next| next.holds(p, budget));
+                    if current.past_end(p, budget) && !near(p, current.end) && on_next {
+                        piece += 1;
+                        continue;
+                    }
                     break;
                 }
                 if !current.on_circle(p, budget) || piece + 1 >= written.len() {
@@ -1309,6 +1337,34 @@ mod tests {
         ];
         let fitted = fit(&moves, TOL);
         assert_eq!(runs_of(&fitted), 0, "{fitted:?}");
+    }
+
+    /// #453: with the chord's ends unequally far from the centre, the arc
+    /// bows farthest from it square to the chord, not towards its middle.
+    /// A 30° arc of a 10 mm circle over a chord from (10, 0), on the
+    /// circle, to 9.5 mm out at 30°: the farthest point is at 20.47°,
+    /// `r` less the line's distance from the centre, 0.63121 mm. Towards
+    /// the middle (14.61°) and the ten samples it read 0.62843 mm, short by
+    /// 0.0028 mm; the fitter and S12 would have let such an arc stray that
+    /// far past the tolerance.
+    #[test]
+    fn arc_chord_deviation_is_found_square_to_the_chord() {
+        let o = Point::new(0.0, 0.0);
+        let r = 10.0;
+        let sweep = 30.0_f64.to_radians();
+        let a = Point::new(r, 0.0);
+        let b = Point::new(9.5 * sweep.cos(), 9.5 * sweep.sin());
+        let line_mm = (a - o).cross(b - o).abs() / a.distance_to(b);
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, 0.0, sweep, a, b),
+            r - line_mm,
+            1e-9
+        );
+        assert_approx_eq!(
+            arc_chord_deviation_mm(o, r, sweep, -sweep, b, a),
+            r - line_mm,
+            1e-9
+        );
     }
 
     /// A chord between two points on the circle is bowed off by the arc's
