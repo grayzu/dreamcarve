@@ -13,6 +13,8 @@
 //! `margin_mm` 8, so the male's start plane is 3 mm below the stock top
 //! and its floor 5 mm below it.
 
+mod seat;
+
 use super::*;
 use crate::run::RunLabel;
 use crate::test_support::assert_run_safe;
@@ -28,6 +30,7 @@ use dc_project::{
     FeatureInstance, InlaySide, MachiningOrder, Operation, OperationId, Stock, Tool, ToolId,
     ToolKind, VCarveOp, VCarveStrategy,
 };
+use seat::{Cutter, Heightfield, SeatCell, seat};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -1488,5 +1491,317 @@ fn cut_out_no_room_uses_the_open_edge_rule() {
             }
             other => panic!("{clearing:?}: {other:?}"),
         }
+    }
+}
+
+/// #452: the acute-notch design's outline, centred at the origin: a Λ 20
+/// mm wide and 40 mm tall whose legs are split by a notch from (0, 12)
+/// down to the foot, 2.8 mm wide there, so its walls meet at 5.0°. In the
+/// male's surround the notch is a convex corner of a hole, which the
+/// medial axis must reach.
+fn notch_points() -> Vec<(f64, f64)> {
+    vec![
+        (-10.0, -20.0),
+        (-1.4, -20.0),
+        (0.0, 12.0),
+        (1.4, -20.0),
+        (10.0, -20.0),
+        (0.0, 20.0),
+    ]
+}
+
+/// The notch tip, project space.
+fn notch_tip() -> Point {
+    Point::new(CENTRE.0, CENTRE.1 + 12.0)
+}
+
+/// The acute-notch design on 100 × 100 mm stock [`THICKNESS_MM`] thick.
+fn notch_project() -> Project {
+    project_of(vec![polygon(&notch_points())], CENTRE, 100.0, 100.0)
+}
+
+/// The cutter a run of `project` cuts with, as the heightfield models it.
+fn cutter_of(project: &Project, run: &ToolRun) -> Cutter {
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id == run.tool)
+        .expect("the run's tool is in the project");
+    match tool.cutter {
+        ToolKind::VBit { included_angle_deg } => Cutter::VBit {
+            slope: (included_angle_deg.to_radians() / 2.0).tan(),
+        },
+        _ => Cutter::Flat {
+            radius_mm: tool.diameter_mm / 2.0,
+        },
+    }
+}
+
+/// The signed distance from `p` into `design`, mm: positive inside.
+fn inset_mm(design: &[Region], p: Point) -> f64 {
+    let gap_mm = distance_to(&outlines(design), p);
+    if design.iter().any(|r| r.contains_point(p)) {
+        gap_mm
+    } else {
+        -gap_mm
+    }
+}
+
+/// #452 (the fit property on the programs): the male's cuts reach the tip
+/// of a 5° notch. For each male, with and without a clearing pass, the
+/// heightfield its runs leave round the notch (0.05 mm grid) is at or
+/// below `start_plane + h` wherever the mirrored design inset by `h · s`
+/// excludes the point, for `h` from 0 to `D − G`: at most `start_plane +
+/// max(0, e / s)` where `e` is the point's inset into the design, within
+/// 0.05 mm. Before #452 spur pruning took the notch's whole medial branch
+/// and left a fin of full-height wood in it.
+#[test]
+fn male_carves_to_the_tip_of_an_acute_notch() {
+    const STEP_MM: f64 = 0.05;
+    const TOLERANCE_MM: f64 = 0.05;
+    let project = notch_project();
+    let tip = notch_tip();
+    let rise_mm = DEPTH_MM - GLUE_GAP_MM;
+    // The notch from 2 mm above its tip to 16 mm below, and the legs.
+    let window = Rect {
+        min: Point::new(tip.x - 4.0, tip.y - 16.0),
+        max: Point::new(tip.x + 4.0, tip.y + 2.0),
+    };
+    for clearing in [Vec::new(), vec![clearing_pass()]] {
+        let op = InlayOp {
+            clearing: clearing.clone(),
+            ..inlay(InlaySide::Male)
+        };
+        let (runs, _) = inlay_runs(&project, &op);
+        let male = side(
+            &with_op(&project, Operation::Inlay(op.clone())),
+            &op,
+            &mut Vec::new(),
+        )
+        .expect("the male resolves");
+        let mut field = Heightfield::new(window, STEP_MM, THICKNESS_MM, None);
+        field.cut_runs(&runs, |run| cutter_of(&project, run));
+        let (nx, ny) = field.size();
+        let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+        for j in 0..ny {
+            for i in 0..nx {
+                let p = field.cell(i, j);
+                let height_mm = (inset_mm(&male.design, p) / slope()).max(0.0);
+                if height_mm >= rise_mm {
+                    continue;
+                }
+                let over_mm = field.z_mm(i, j) - (male.start_plane_z_mm + height_mm);
+                if over_mm > worst.0 {
+                    worst = (over_mm, p);
+                }
+            }
+        }
+        assert!(
+            worst.0 <= TOLERANCE_MM,
+            "clearing {}: the male leaves {:.3} mm too much at {:?}",
+            !clearing.is_empty(),
+            worst.0,
+            worst.1
+        );
+    }
+}
+
+/// How an inlay pair seats (#452), from its two sides' programs.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Fit {
+    /// How far the plug's start plane stops above the female's surface,
+    /// mm, and the cell (female's frame) that stops it.
+    seat_mm: f64,
+    seat_at: Point,
+    /// The male's share of it, mm: the most, over the cells that hold the
+    /// plug up more than [`SEAT_MM`], by which the plug stands higher
+    /// above its start plane than the pocket the female's design describes
+    /// is deep there, `min(e / s, D)` for a point `e` inside the design;
+    /// and that cell. Where the female's own V-Carve falls short of its
+    /// design, this is what the male adds to it.
+    male_mm: f64,
+    male_at: Point,
+}
+
+/// How far the plug may stand proud of its female, from the male's own
+/// cuts, mm (#452).
+const SEAT_MM: f64 = 0.05;
+
+/// The fit of `female` (in `female_project`) and `male` (in
+/// `male_project`): both sides' runs simulated as heightfields (`seat`),
+/// cells `step_mm` apart, over the design's box grown by the margin and 2
+/// mm, the male mirrored as it seats.
+fn fit_of(
+    female_project: &Project,
+    female: &InlayOp,
+    male_project: &Project,
+    male: &InlayOp,
+    step_mm: f64,
+) -> Fit {
+    let (female_runs, _) = inlay_runs(female_project, female);
+    let (male_runs, _) = inlay_runs(male_project, male);
+    let resolve = |project: &Project, op: &InlayOp| {
+        side(
+            &with_op(project, Operation::Inlay(op.clone())),
+            op,
+            &mut Vec::new(),
+        )
+        .expect("the side resolves")
+    };
+    let female_side = resolve(female_project, female);
+    let male_side = resolve(male_project, male);
+    // The mirror is about the middle of the design's box, so the mirrored
+    // design's box is the design's.
+    let mut bounds: Option<Rect> = None;
+    for outline in outlines(&male_side.design) {
+        let b = outline.bounds().expect("an outline has a box");
+        bounds = Some(bounds.map_or(b, |all| all.including(b.min).including(b.max)));
+    }
+    let grow_mm = male.margin_mm.expect("a male has a margin") + 2.0;
+    let b = bounds.expect("the design has an outline");
+    let bounds = Rect {
+        min: Point::new(b.min.x - grow_mm, b.min.y - grow_mm),
+        max: Point::new(b.max.x + grow_mm, b.max.y + grow_mm),
+    };
+    let top_mm = |p: &Project| p.stock.thickness_mm.expect("stock has a thickness");
+    let mut female_field = Heightfield::new(bounds, step_mm, top_mm(female_project), None);
+    female_field.cut_runs(&female_runs, |run| cutter_of(female_project, run));
+    let mut male_field =
+        Heightfield::new(bounds, step_mm, top_mm(male_project), male_side.mirror_x_mm);
+    male_field.cut_runs(&male_runs, |run| cutter_of(male_project, run));
+    let cells = seat(&female_field, &male_field, male_side.start_plane_z_mm);
+    let worst = cells
+        .iter()
+        .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))
+        .expect("the plug has cells");
+    let Cutter::VBit { slope } = cutter_of(female_project, main_run_of(&female_runs)) else {
+        panic!("the female's main run is a V-bit's");
+    };
+    let depth_mm = female.depth_mm.expect("a depth");
+    let share = |c: &SeatCell| {
+        let pocket_mm = (inset_mm(&female_side.targets.regions, c.at) / slope).clamp(0.0, depth_mm);
+        (c.plug_mm - pocket_mm, c.at)
+    };
+    // Where the plug seats within `SEAT_MM` everywhere, the male's share
+    // at the cell that holds it highest.
+    let male = cells
+        .iter()
+        .filter(|c| c.need_mm > SEAT_MM)
+        .map(share)
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .unwrap_or_else(|| share(worst));
+    Fit {
+        seat_mm: worst.need_mm,
+        seat_at: worst.at,
+        male_mm: male.0,
+        male_at: male.1,
+    }
+}
+
+/// The V-bit's run of `runs`.
+fn main_run_of(runs: &[ToolRun]) -> &ToolRun {
+    runs.iter()
+        .find(|r| r.label == RunLabel::Main)
+        .expect("a V-bit run")
+}
+
+/// The project and the Inlay of a tutorial fixture
+/// (`tests/fixtures/dc-female.dcv`, `dc-male.dcv`; #446).
+fn fixture(text: &str) -> (Project, InlayOp) {
+    let project = dc_project::load(text.as_bytes())
+        .expect("the fixture loads")
+        .project;
+    let op = project
+        .operations
+        .iter()
+        .find_map(|o| match o {
+            Operation::Inlay(op) => Some(op.clone()),
+            _ => None,
+        })
+        .expect("the fixture has an Inlay");
+    (project, op)
+}
+
+/// How far the female's own V-Carve may hold the plug up, mm (#452). The
+/// female is a V-Carve, which #452 leaves as it is: the medial strategy's
+/// Douglas-Peucker pass (upstream's, a quarter of the sampling step) lets
+/// a chain run up to that far off the axis, and fitting cuts each point
+/// to its own depth, so its cone touches the nearer wall and stops short
+/// of the farther by up to twice that. On the "DC" female the groove
+/// stops up to 0.11 mm inside the outline, which holds the plug 0.185 mm
+/// up. The male's share is held to [`SEAT_MM`].
+const FEMALE_SEAT_MM: f64 = 0.25;
+
+/// #452 (the regression test): the plug seats flush. Each pair's female
+/// and male are generated and simulated as heightfields (V-bit cone,
+/// end-mill disc, arcs cut as chords), the male flipped about its mirror
+/// line and its start plane laid on the female's surface. Where a cell
+/// holds the plug up more than [`SEAT_MM`], the male may stand no more
+/// than that above the pocket the female's design describes, and the
+/// whole seat, the female's own V-Carve tolerance included, is within
+/// [`FEMALE_SEAT_MM`]. The pairs: the tutorial's "DC" (clearing, open
+/// rounded band, cut-out; 0.2 mm grid), the star (no clearing, a V wall,
+/// the V-bit's floor rings at the step-over the user guide asks for, 0.1;
+/// 0.2 mm grid) and the acute notch with a clearing pass (0.1 mm grid).
+/// Before #452 the notch's male left a fin of full-height wood in the
+/// notch and stood 3 mm proud.
+#[test]
+fn plug_seats_flush() {
+    let (dc_female, dc_female_op) =
+        fixture(include_str!("../../../../tests/fixtures/dc-female.dcv"));
+    let (dc_male, dc_male_op) = fixture(include_str!("../../../../tests/fixtures/dc-male.dcv"));
+    let star = star_project(THICKNESS_MM);
+    let fine = |side| InlayOp {
+        step_over_fraction: Some(0.1),
+        ..inlay(side)
+    };
+    let notch = notch_project();
+    let with_clearing = |side| InlayOp {
+        clearing: vec![clearing_pass()],
+        ..inlay(side)
+    };
+    let pairs = [
+        (
+            "DC",
+            fit_of(&dc_female, &dc_female_op, &dc_male, &dc_male_op, 0.2),
+        ),
+        (
+            "star",
+            fit_of(
+                &star,
+                &fine(InlaySide::Female),
+                &star,
+                &fine(InlaySide::Male),
+                0.2,
+            ),
+        ),
+        (
+            "notch",
+            fit_of(
+                &notch,
+                &with_clearing(InlaySide::Female),
+                &notch,
+                &with_clearing(InlaySide::Male),
+                0.1,
+            ),
+        ),
+    ];
+    for (name, fit) in pairs {
+        println!(
+            "{name}: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
+            fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
+        );
+        assert!(
+            fit.male_mm <= SEAT_MM,
+            "{name}: the male stands {:.3} mm proud of the female's design at {:?}",
+            fit.male_mm,
+            fit.male_at
+        );
+        assert!(
+            fit.seat_mm <= FEMALE_SEAT_MM,
+            "{name}: the plug stands {:.3} mm proud, binding at {:?}",
+            fit.seat_mm,
+            fit.seat_at
+        );
     }
 }

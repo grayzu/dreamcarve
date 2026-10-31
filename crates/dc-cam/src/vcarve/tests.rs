@@ -1351,3 +1351,124 @@ fn uncleared_start_depth_is_refused_and_acknowledged_counts_toward_the_cone() {
     let (toolpath, _) = carve(&p, &op);
     assert_approx_eq!(TOP_MM - min_z(&toolpath), 5.0, 1e-6);
 }
+
+/// FNV-1a over `runs`' moves as a program writes them: the run, the move's
+/// kind and arc centre, its end and its feed, each to 0.001.
+fn program_digest(runs: &[ToolRun]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut eat = |text: &str| {
+        for byte in text.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x0100_0000_01b3);
+        }
+    };
+    for run in runs {
+        eat(&format!("{:?} {}\n", run.label, run.tool));
+        for mv in &run.toolpath.moves {
+            let kind = match mv.kind {
+                MoveKind::Rapid => "G0".to_owned(),
+                MoveKind::Linear => "G1".to_owned(),
+                MoveKind::ArcCw { centre } => format!("G2 {:.3} {:.3}", centre.x, centre.y),
+                MoveKind::ArcCcw { centre } => format!("G3 {:.3} {:.3}", centre.x, centre.y),
+                MoveKind::Dwell { seconds } => format!("G4 {seconds:.3}"),
+            };
+            eat(&format!(
+                "{kind} {:.3} {:.3} {:.3} {:.3}\n",
+                mv.to.x,
+                mv.to.y,
+                mv.to.z,
+                mv.feed_mm_min.unwrap_or(0.0)
+            ));
+        }
+    }
+    hash
+}
+
+/// #452: the acute-notch design of the Inlay tests (a Λ 20 × 40 mm whose
+/// legs a 5° notch splits) as a hole in a 40 × 60 mm rectangle, at [`AT`]:
+/// a plain V-Carve round it, the shape a male Inlay's band has.
+fn notch_in_a_frame() -> Project {
+    project(vec![
+        rect(40.0, 60.0),
+        polygon(&[
+            (10.0, 10.0),
+            (18.6, 10.0),
+            (20.0, 42.0),
+            (21.4, 10.0),
+            (30.0, 10.0),
+            (20.0, 50.0),
+        ]),
+    ])
+}
+
+/// #452: what a carve from the stock top cuts does not change. The male
+/// Inlay's carve reaches every corner it stands against and fits its
+/// chains to their own depth, because its plug stands above its start
+/// plane; a carve whose flank is engaged only from its start plane keeps
+/// upstream's medial axis and tolerances, so its program is byte for byte
+/// what it was before #452. Each case is a digest of its runs' moves to
+/// 0.001 mm (as a program writes them), taken before the change: the
+/// plain fixtures above, the sign's V-Carves
+/// (`tests/fixtures/sign.dcv`), the tutorial's female Inlay
+/// (`tests/fixtures/dc-female.dcv`), and the notch design as a hole, the
+/// shape #452 changes for the male.
+#[test]
+fn start_at_stock_top_is_unchanged() {
+    let mut cases: Vec<(String, u64)> = Vec::new();
+    for (name, p, op) in fixtures() {
+        let (runs, _) = generate_vcarve(&with_op(&p, &op), &op).expect("the carve generates");
+        cases.push((name.to_owned(), program_digest(&runs)));
+    }
+    let sign = dc_project::load(include_bytes!("../../../../tests/fixtures/sign.dcv"))
+        .expect("the sign loads")
+        .project;
+    for operation in &sign.operations {
+        if let Operation::VCarve(op) = operation {
+            let (runs, _) = generate_vcarve(&sign, op).expect("the sign's V-Carve generates");
+            cases.push((format!("sign {}", op.id), program_digest(&runs)));
+        }
+    }
+    let female = dc_project::load(include_bytes!("../../../../tests/fixtures/dc-female.dcv"))
+        .expect("the female loads")
+        .project;
+    for operation in &female.operations {
+        if let Operation::Inlay(op) = operation {
+            let (runs, _) =
+                crate::inlay::generate_inlay(&female, op).expect("the female generates");
+            cases.push(("DC female".to_owned(), program_digest(&runs)));
+        }
+    }
+    let notch = notch_in_a_frame();
+    let op = VCarveOp {
+        flat_depth_mm: Some(2.0),
+        step_over_fraction: Some(0.1),
+        ..carve_op(&notch)
+    };
+    let (runs, _) = generate_vcarve(&with_op(&notch, &op), &op).expect("the notch generates");
+    cases.push(("notch in a frame".to_owned(), program_digest(&runs)));
+    // The digests before #452 (main at 52ec5b9).
+    let before = [
+        ("rectangle", 0xa3b7_18f7_def1_2c12),
+        ("square", 0xdfda_970d_f578_54ad),
+        ("circle", 0xac7c_49ce_f703_7c48),
+        ("ring", 0x6385_88bb_ef10_2a88),
+        ("triangle", 0x120d_a9b0_98d9_e7d5),
+        ("L", 0xbc47_e8a1_9987_8971),
+        ("bars", 0x78a6_b36d_a0da_561f),
+        ("square, flat 2", 0xb882_dcbf_00d1_a348),
+        ("Rag", 0x0159_4983_ee1f_68f0),
+        ("Rag, flat 0.5", 0x8583_0d4c_ca6e_2eb0),
+        ("sign op2", 0x00df_9ea8_96d7_df7f),
+        ("sign op3", 0x4529_6d29_062f_4c96),
+        ("DC female", 0x5d2c_1e41_ff9c_eac1),
+        ("notch in a frame", 0x846e_37b1_0d09_2351),
+    ];
+    assert_eq!(cases.len(), before.len(), "{cases:#x?}");
+    for ((name, digest), (want_name, want)) in cases.iter().zip(before) {
+        assert_eq!(name, want_name);
+        assert_eq!(
+            *digest, want,
+            "{name}: the program changed: 0x{digest:016x}, was 0x{want:016x}"
+        );
+    }
+}
