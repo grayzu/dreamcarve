@@ -348,8 +348,7 @@ fn cut_out_off_the_open_edge_ring_fails() {
     let label = RunLabel::CutOut(ToolId::new("t3"));
     let at = |y: f64| program_at(55.0, y, "G1 Z-12.2 F300\nX60 F1000\n");
     for y in [16.5, 15.8] {
-        check_run(&at(y), &project, &open, &label, "t3")
-            .unwrap_or_else(|e| panic!("Y {y}: {e}"));
+        check_run(&at(y), &project, &open, &label, "t3").unwrap_or_else(|e| panic!("Y {y}: {e}"));
     }
     for y in [15.4, 17.6] {
         assert_off(check_run(&at(y), &project, &open, &label, "t3"), 6);
@@ -578,7 +577,7 @@ fn cut_out_plunge_into_a_tab_fails() {
     .collect();
     let (design, _) = dc_geometry::nest(design).expect("nests");
     let paths: Vec<Polyline> =
-        dc_geometry::outer_offset(&design, 3.0, project.flatten_tolerance_mm)
+        dc_geometry::outer_offset(&design, 3.0, 0.0, project.flatten_tolerance_mm)
             .into_iter()
             .map(dc_geometry::Contour::into_polyline)
             .collect();

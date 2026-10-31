@@ -62,9 +62,8 @@ use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
     BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry,
-    InlayCutOut, InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab,
-    PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp,
-    VCarveStrategy,
+    InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
+    ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp, VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -715,6 +714,17 @@ pub enum Problem {
         /// The margin set, mm.
         margin_mm: f64,
     },
+    /// An Inlay's `outline_rounding_mm` is set and not a number above 0
+    /// (format 24, #448): it is the radius the male's band is closed by,
+    /// so 0 or less rounds nothing and is written `null`. An error.
+    InlayOutlineRounding {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The rounding set, mm.
+        rounding_mm: f64,
+    },
     /// A male Inlay leaves less than [`INLAY_MIN_PLUG_BASE_MM`] of board
     /// under its surround's floor (format 22; capability 45): the board
     /// the plug stands on may flex or crack when it is pressed into the
@@ -741,10 +751,11 @@ pub enum Problem {
         name: String,
     },
     /// A male Inlay's cut-out tool does not fit the band's flat floor
-    /// (format 23, #443): the floor ring, between the mirrored design
-    /// grown by `P·tan(α/2)` and by `M − P·tan(α/2)`, is narrower than the
-    /// tool, so a cut-out half the margin out would cut into the plug's
-    /// wall or the band's outer wall. An error.
+    /// (format 23, #443; #448): the floor ring, from the mirrored design
+    /// grown by `P·tan(α/2)` out to the band's edge (`M` out when a
+    /// clearing pass cuts the edge, `M − P·tan(α/2)` with a V-walled
+    /// edge), is narrower than the tool, so a cut-out in its middle would
+    /// cut into the plug's wall or the band's outer wall. An error.
     InlayCutOutNoRoom {
         /// The operation.
         operation: OperationId,
@@ -756,8 +767,9 @@ pub enum Problem {
         diameter_mm: f64,
         /// The margin set, mm.
         margin_mm: f64,
-        /// The least margin with room, mm: `2·P·tan(α/2)` plus the
-        /// diameter.
+        /// The least margin with room, mm: `P·tan(α/2)` plus the diameter
+        /// with an open edge, `2·P·tan(α/2)` plus it with a V wall
+        /// ([`crate::MaleBand::cut_out_margin_needed_mm`]).
         needed_mm: f64,
     },
 }
@@ -844,6 +856,7 @@ impl Problem {
             Self::CountersinkIgnoresToolWidth { .. } => "countersink_ignores_tool_width",
             Self::InlayGlueGapNotBelowDepth { .. } => "inlay_glue_gap_not_below_depth",
             Self::InlayMarginPositive { .. } => "inlay_margin_positive",
+            Self::InlayOutlineRounding { .. } => "inlay_outline_rounding",
             Self::InlayPlugBaseThin { .. } => "inlay_plug_base_thin",
             Self::InlayCutOutNeedsMale { .. } => "inlay_cut_out_needs_male",
             Self::InlayCutOutNoRoom { .. } => "inlay_cut_out_no_room",
@@ -895,6 +908,7 @@ impl Problem {
             | Self::CountersinkMouthExceedsTool { .. }
             | Self::InlayGlueGapNotBelowDepth { .. }
             | Self::InlayMarginPositive { .. }
+            | Self::InlayOutlineRounding { .. }
             | Self::ClearanceBelowSafeZ { .. }
             | Self::MachineZNotBelowHome { .. }
             | Self::MachineZNeedsG53 { .. } => Severity::Error,
@@ -1062,6 +1076,9 @@ impl Problem {
             }
             Self::InlayMarginPositive { operation, .. } => {
                 Some(format!("operations[{operation}].margin_mm"))
+            }
+            Self::InlayOutlineRounding { operation, .. } => {
+                Some(format!("operations[{operation}].outline_rounding_mm"))
             }
             Self::InlayPlugBaseThin { operation, .. } => {
                 Some(format!("operations[{operation}].{INLAY_PLUG_DEPTH}"))
@@ -1484,6 +1501,14 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) is a male inlay with margin_mm {margin_mm} mm; its surround is carved that far beyond the design, so it must be above 0 (5 to 7.5 mm leaves room to clamp the plug board)"
             ),
+            Self::InlayOutlineRounding {
+                operation,
+                name,
+                rounding_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has outline_rounding_mm {rounding_mm} mm; the male's band is rounded by that radius, so it must be above 0. Set it to null for no rounding, or to a radius such as 10"
+            ),
             Self::InlayPlugBaseThin {
                 operation,
                 name,
@@ -1507,7 +1532,7 @@ impl fmt::Display for Problem {
                 needed_mm,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, half its margin_mm {margin_mm} mm out, in the band's flat floor; that floor is narrower than the tool, so the cut-out would cut into the plug's wall or the band's outer wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
+                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, in the middle of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall or the band's outer wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
             ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
@@ -2839,6 +2864,16 @@ impl Validator {
             }
             (true, None) => unset(self, "margin_mm"),
         }
+        // Format 24 (#448): on either side, so a pair shares it.
+        if let Some(rounding_mm) = inlay.outline_rounding_mm
+            && !(rounding_mm.is_finite() && rounding_mm > 0.0)
+        {
+            self.problems.push(Problem::InlayOutlineRounding {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                rounding_mm,
+            });
+        }
         self.clearing(p, &inlay.id, &inlay.clearing, at);
         self.v_bit_floor(
             inlay.step_over_fraction,
@@ -2870,9 +2905,11 @@ impl Validator {
 
     /// The rules of an enabled Inlay's cut-out that need its tools
     /// (format 23, #443): only a male has one; its tool is a flat end
-    /// mill; and the band's flat floor ring, `M − 2·P·tan(α/2)` wide, holds
-    /// the tool's diameter. The ring is compared only when the values it
-    /// uses passed their own checks.
+    /// mill; and the band's flat floor ring holds the tool's diameter: `M
+    /// − P·tan(α/2)` wide when a clearing pass cuts the band's edge, `M −
+    /// 2·P·tan(α/2)` with a V-walled edge (#448, [`crate::male_band`]).
+    /// The ring is compared only when the values it uses passed their own
+    /// checks.
     fn enabled_cut_out(&mut self, p: &Project, inlay: &InlayOp, v_bit: Option<&Tool>) {
         let Some(cut_out) = &inlay.cut_out else {
             return;
@@ -2898,26 +2935,17 @@ impl Validator {
             });
             return;
         }
-        let Some(ToolKind::VBit { included_angle_deg }) = v_bit.map(|t| &t.cutter) else {
-            return;
-        };
-        let (Some(plug_depth_mm), Some(margin_mm)) = (inlay.plug_depth_mm, inlay.margin_mm) else {
-            return;
-        };
-        let usable = included_angle_deg.is_finite()
-            && *included_angle_deg > 0.0
-            && *included_angle_deg < 180.0
-            && plug_depth_mm.is_finite()
-            && plug_depth_mm > 0.0
-            && margin_mm.is_finite()
-            && margin_mm > 0.0
-            && tool.diameter_mm.is_finite()
-            && tool.diameter_mm > 0.0;
-        if !usable {
+        if !matches!(v_bit.map(|t| &t.cutter), Some(ToolKind::VBit { .. })) {
             return;
         }
-        let needed_mm =
-            InlayCutOut::margin_needed_mm(plug_depth_mm, *included_angle_deg, tool.diameter_mm);
+        let Some(band) = crate::male_band(p, inlay) else {
+            return;
+        };
+        if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
+            return;
+        }
+        let margin_mm = band.margin_mm;
+        let needed_mm = band.cut_out_margin_needed_mm(tool.diameter_mm);
         if margin_mm + EPS_MM < needed_mm {
             self.problems.push(Problem::InlayCutOutNoRoom {
                 operation: inlay.id.clone(),
@@ -7343,9 +7371,13 @@ mod tests {
             validate(&p)
         };
         assert_eq!(open(8.0, true), vec![]);
-        let needed = |problems: Vec<Problem>| match &problems[..] {
-            [Problem::InlayCutOutNoRoom { needed_mm, .. }] => *needed_mm,
-            other => panic!("{other:?}"),
+        // Without the pass the end mill `t3` is unused, a warning.
+        let needed = |problems: Vec<Problem>| {
+            let errors: Vec<&Problem> = problems.iter().filter(|p| p.is_error()).collect();
+            match &errors[..] {
+                [Problem::InlayCutOutNoRoom { needed_mm, .. }] => *needed_mm,
+                other => panic!("{other:?}"),
+            }
         };
         let s = (30.0_f64).to_radians().tan();
         dc_geometry::assert_approx_eq!(needed(open(6.0, true)), 2.0 * s + 6.35, 1e-9);
@@ -7376,7 +7408,10 @@ mod tests {
                     panic!("{problems:?}");
                 };
                 assert_eq!(operation, &OperationId::new("o7"));
-                assert!(got.is_nan() == rounding_mm.is_nan() && (got.is_nan() || *got == rounding_mm));
+                assert!(
+                    got.is_nan() == rounding_mm.is_nan()
+                        && (got.is_nan() || got.to_bits() == rounding_mm.to_bits())
+                );
                 assert_eq!(problems[0].severity(), Severity::Error);
                 assert_eq!(problems[0].code(), "inlay_outline_rounding");
                 assert_eq!(

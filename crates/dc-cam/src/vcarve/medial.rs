@@ -47,7 +47,7 @@ use crate::block::CutBlock;
 use crate::error::ShapeRef;
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
-use crate::vcarve::cone::Walls;
+use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::warning::Warning;
 use dc_geometry::medial::{MedialGraph, medial_axis, resolution};
 use dc_geometry::{EPS_MM, Point3, Region};
@@ -203,7 +203,8 @@ pub(crate) fn region_graph(
 /// `floors` (step 6, #405; empty without a floor), then ordered from the shallowest
 /// chain end by nearest end, continued through shared nodes, linked
 /// tool-down where the link passes the cone test, and split by a retract
-/// elsewhere.
+/// elsewhere. The generator calls [`runs_within`].
+#[cfg(test)]
 pub(crate) fn runs(
     graph: &MedialGraph,
     depth: &Depth,
@@ -211,17 +212,33 @@ pub(crate) fn runs(
     walls: &Walls,
     floors: &[Region],
 ) -> Vec<Run> {
+    runs_within(graph, depth, tolerances, walls, floors, None)
+}
+
+/// [`runs`], each fitted chain first cut to the stretches whose moves keep
+/// the cone inside `edge` at the stock top (#448: a male Inlay's open band
+/// edge, beyond which the board stands full height); `None` keeps every
+/// chain whole. Only the chains a V wall at the band's edge needs fail it,
+/// and chains on the floor far out, which the floor's cutting covers.
+pub(crate) fn runs_within(
+    graph: &MedialGraph,
+    depth: &Depth,
+    tolerances: Tolerances,
+    walls: &Walls,
+    floors: &[Region],
+    edge: Option<&OpenEdgeWalls>,
+) -> Vec<Run> {
     let chains: Vec<Vec<Point3>> =
         prune_redundant_leaf_chains(graph, extract_chains(graph), tolerances.redundancy_mm)
             .iter()
-            .map(|chain| {
+            .flat_map(|chain| {
                 let points: Vec<Point3> = chain
                     .iter()
                     .filter_map(|&i| graph.nodes.get(i))
                     .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
                     .collect();
                 let simple = simplify_chain(&points, tolerances.simplify_mm, depth.slope);
-                fit_chain(&simple, walls, depth)
+                within_edge(fit_chain(&simple, walls, depth), edge)
             })
             .filter(|points| !points.is_empty() && !inside_floor(points, depth, floors))
             .collect();
@@ -279,6 +296,41 @@ pub(crate) fn runs(
     }
     runs.extend(current);
     runs
+}
+
+/// The stretches of chain `points` whose every move `edge` allows
+/// (#448), in order; `points` whole when there is no edge. A lone point is
+/// kept when its plunge is allowed.
+fn within_edge(points: Vec<Point3>, edge: Option<&OpenEdgeWalls>) -> Vec<Vec<Point3>> {
+    let Some(edge) = edge else {
+        return vec![points];
+    };
+    if let [p] = points[..] {
+        return if edge.allows(p, p) {
+            vec![points]
+        } else {
+            Vec::new()
+        };
+    }
+    let mut out = Vec::new();
+    let mut current: Vec<Point3> = Vec::new();
+    for pair in points.windows(2) {
+        let &[a, b] = pair else {
+            continue;
+        };
+        if edge.allows(a, b) {
+            if current.is_empty() {
+                current.push(a);
+            }
+            current.push(b);
+        } else if !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 /// Step 6: true when the fitted chain `points` lies wholly on the cleared

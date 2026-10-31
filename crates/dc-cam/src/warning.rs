@@ -206,6 +206,11 @@ pub enum WarningCode {
     /// of board under its surround's floor (format 22); validation reports
     /// it too. The program is still cut.
     InlayPlugBaseThin,
+    /// A male Inlay has clearing passes, but none fits the band's flat
+    /// floor ring (or the V-bit's flank would reach past the band's edge
+    /// at the stock top), so the band's outer edge is a V wall, cut by the
+    /// V-bit, not the end mill's upright one (#448).
+    InlayBandEdgeVWall,
 }
 
 impl WarningCode {
@@ -261,6 +266,7 @@ impl WarningCode {
             Self::ClearingNotDescending => "clearing_not_descending",
             Self::InlayMaleMirrored => "inlay_male_mirrored",
             Self::InlayPlugBaseThin => "inlay_plug_base_thin",
+            Self::InlayBandEdgeVWall => "inlay_band_edge_v_wall",
         }
     }
 }
@@ -899,6 +905,14 @@ pub enum Warning {
         /// The board left under the surround's floor, mm.
         base_mm: f64,
     },
+    /// [`WarningCode::InlayBandEdgeVWall`].
+    InlayBandEdgeVWall {
+        /// The male Inlay.
+        op: OperationId,
+        /// The least margin that would let a clearing pass cut the edge,
+        /// mm ([`dc_project::BandEdge::VWall`]).
+        margin_needed_mm: f64,
+    },
 }
 
 impl Warning {
@@ -956,6 +970,7 @@ impl Warning {
             Self::ClearingNotDescending { .. } => WarningCode::ClearingNotDescending,
             Self::InlayMaleMirrored { .. } => WarningCode::InlayMaleMirrored,
             Self::InlayPlugBaseThin { .. } => WarningCode::InlayPlugBaseThin,
+            Self::InlayBandEdgeVWall { .. } => WarningCode::InlayBandEdgeVWall,
         }
     }
 
@@ -1002,7 +1017,8 @@ impl Warning {
             | Self::ClearingNoRoom { op, .. }
             | Self::ClearingNotDescending { op, .. }
             | Self::InlayMaleMirrored { op, .. }
-            | Self::InlayPlugBaseThin { op, .. } => Some(op),
+            | Self::InlayPlugBaseThin { op, .. }
+            | Self::InlayBandEdgeVWall { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1696,6 +1712,13 @@ impl fmt::Display for Warning {
                 "it leaves {} mm of board under its plug's surround, less than {} mm; the plug may flex or crack when pressed into the glue",
                 mm(*base_mm),
                 mm(dc_project::INLAY_MIN_PLUG_BASE_MM)
+            ),
+            Self::InlayBandEdgeVWall {
+                margin_needed_mm, ..
+            } => write!(
+                f,
+                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least {} mm in both projects for the first clearing pass that fits to cut it",
+                mm(*margin_needed_mm)
             ),
         }
     }
@@ -2421,6 +2444,13 @@ mod tests {
                 },
                 "it leaves 5 mm of board under its plug's surround, less than 6 mm; the plug may flex or crack when pressed into the glue",
             ),
+            (
+                Warning::InlayBandEdgeVWall {
+                    op: op(),
+                    margin_needed_mm: 4.330_127_018_922_193,
+                },
+                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least 4.33 mm in both projects for the first clearing pass that fits to cut it",
+            ),
         ]
     }
 
@@ -2483,7 +2513,8 @@ mod tests {
             C::ClearingNoRoom => C::ClearingNotDescending,
             C::ClearingNotDescending => C::InlayMaleMirrored,
             C::InlayMaleMirrored => C::InlayPlugBaseThin,
-            C::InlayPlugBaseThin => return None,
+            C::InlayPlugBaseThin => C::InlayBandEdgeVWall,
+            C::InlayBandEdgeVWall => return None,
         })
     }
 
@@ -2520,7 +2551,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 48);
+        assert_eq!(count, 49);
     }
 
     #[test]

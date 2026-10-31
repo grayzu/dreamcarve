@@ -1245,7 +1245,10 @@ fn male_with_clearing_has_no_v_wall_at_the_band_edge() {
             gap_mm >= cone_at_top_mm - tolerance_mm,
             "{p:?}: the cone is {cone_at_top_mm:.3} mm wide at the stock top, {gap_mm:.3} mm from the band's edge"
         );
-        assert!(gap_mm >= 1.0, "{p:?} is {gap_mm:.3} mm from the band's edge");
+        assert!(
+            gap_mm >= 1.0,
+            "{p:?} is {gap_mm:.3} mm from the band's edge"
+        );
         nearest_mm = nearest_mm.min(gap_mm);
     }
     println!("the V-bit stays {nearest_mm:.3} mm inside the band's edge");
@@ -1344,12 +1347,7 @@ fn male_without_clearing_keeps_the_v_wall() {
         };
         let (runs, warnings) = inlay_runs(&project, &op);
         assert!(v_wall_warnings(&warnings).is_empty(), "{warnings:?}");
-        let band = rounded_band(
-            &design,
-            MARGIN_MM,
-            rounding_mm.unwrap_or(0.0),
-            tolerance_mm,
-        );
+        let band = rounded_band(&design, MARGIN_MM, rounding_mm.unwrap_or(0.0), tolerance_mm);
         let toolpath = main_run(&runs);
         let wall = on_v_wall(&cut_points(toolpath), &outlines(&band));
         assert!(wall > 20, "{rounding_mm:?}: {wall}");
@@ -1419,7 +1417,12 @@ fn rounded_cut_out_runs_mid_floor_ring() {
         .toolpath;
     let c_mm = (MARGIN_MM + PLUG_DEPTH_MM * slope()) / 2.0;
     assert!((c_mm - 4.577).abs() < 1e-3, "{c_mm}");
-    let closed_design = outlines(&closed(&design, c_mm + rounding_mm, tolerance_mm));
+    // The reference is closed at a hundredth of the tolerance: closing by
+    // `c + R` brings the star's sharp tips back exactly, and chords
+    // flattened at the tolerance would pull each back by the tolerance
+    // over the sine of its half-angle, 0.027 mm.
+    let closed_design = outlines(&closed(&design, c_mm + rounding_mm, tolerance_mm / 100.0));
+    let mut worst_mm: f64 = 0.0;
     let star: Vec<Polyline> = design
         .iter()
         .map(|r| r.outer().polyline().clone())
@@ -1430,12 +1433,15 @@ fn rounded_cut_out_runs_mid_floor_ring() {
     for p in &samples {
         let gap_mm = distance_to(&closed_design, p.xy());
         assert!(
-            (gap_mm - c_mm).abs() <= 0.01,
+            (gap_mm - c_mm).abs() <= tolerance_mm + 1e-6,
             "{p:?} is {gap_mm:.4} mm from the closed star, not {c_mm:.3}"
         );
+        worst_mm = worst_mm.max((gap_mm - c_mm).abs());
         farthest_mm = farthest_mm.max(distance_to(&star, p.xy()));
     }
-    println!("the rounded cut-out runs up to {farthest_mm:.3} mm from the star");
+    println!(
+        "the rounded cut-out runs c from the closed star within {worst_mm:.4} mm, up to {farthest_mm:.3} mm from the star"
+    );
     assert!(farthest_mm > c_mm + 0.2, "{farthest_mm}");
 }
 

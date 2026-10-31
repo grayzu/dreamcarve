@@ -427,15 +427,27 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                         ));
                     }
                 }
+                let band = dc_project::male_band(project, inlay);
+                // #448: the end mill's upright edge, and its rounding.
+                if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
+                    let rounding = band
+                        .as_ref()
+                        .map_or(0.0, |b| b.edge_rounding_mm);
+                    floor.push_str(&format!(
+                        "; clearing pass `{}` cuts the band's outer edge upright, its inward curves rounded to {}",
+                        pass.tool,
+                        describe_length(project, rounding)
+                    ));
+                }
                 // #443: where the cut-out frees the plug, and how deep.
-                if let (Some(cut_out), Some(margin_mm)) = (&inlay.cut_out, inlay.margin_mm)
+                if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
                     && generated.iter().any(|e| {
                         e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_))
                     })
                 {
                     floor.push_str(&format!(
                         "; the cut-out frees the plug {} out from the design, in the floor, through the board to {} below it",
-                        describe_length(project, margin_mm / 2.0),
+                        describe_length(project, band.cut_out_offset_mm()),
                         describe_length(project, cut_out.through_cut_allowance_mm)
                     ));
                 }

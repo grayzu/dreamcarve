@@ -62,6 +62,11 @@ pub(crate) struct Cone {
     pub(super) engaged_from_z_mm: f64,
     /// The cone's height, mm: `diameter / (2 · slope)`.
     pub(super) cone_mm: f64,
+    /// A male Inlay's open band edge (#448): the same cone held to the
+    /// band `B` with the stock top as its plane, since beyond `B` the
+    /// board stands to the top, so no disc below the stock top may cross
+    /// it. `None` for every other carve.
+    pub(super) edge: Option<Box<Cone>>,
 }
 
 /// Why a cut fails S17.
@@ -97,7 +102,24 @@ impl Cone {
     /// - No cut reaches below the flat depth, nor engages the flank deeper
     ///   than the cone (the shank, H4).
     /// - Its room is at least `−slack_mm` all along (module docs).
+    /// - With an open band edge (#448), the same holds of the edge's cone,
+    ///   whose plane is the stock top: the cone's disc there stays inside
+    ///   the band.
     pub(super) fn check(
+        &self,
+        path: Segment,
+        z_mm: (f64, f64),
+        slack_mm: f64,
+    ) -> Result<(), Fault> {
+        self.check_own(path, z_mm, slack_mm)?;
+        match &self.edge {
+            Some(edge) => edge.check(path, z_mm, slack_mm),
+            None => Ok(()),
+        }
+    }
+
+    /// [`Cone::check`] against this cone's own regions and plane.
+    fn check_own(
         &self,
         path: Segment,
         (from_z_mm, to_z_mm): (f64, f64),

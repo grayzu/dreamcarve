@@ -32,6 +32,7 @@
 //!   lines tangent to them, outside the circle, on the floor's side; an arc
 //!   that turns counter-clockwise keeps its chords, which already are.
 
+use super::cone::Walls;
 use super::{Carve, VBit, carve_regions, v_bit};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
@@ -42,7 +43,10 @@ use crate::pocket::rings::{
 use crate::pocket::{MAX_RINGS, ring_path};
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
-use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, floor_regions};
+use dc_geometry::{
+    Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, floor_regions, intersection,
+    nearest_point, surround_floor_regions,
+};
 use dc_project::{CutDirection, OperationId, Project, Tool, VCarveOp};
 use std::f64::consts::FRAC_PI_2;
 
@@ -83,6 +87,32 @@ impl Floor {
             .into_iter()
             .filter(|r| !is_noise(r, tolerance_mm))
             .collect()
+    }
+
+    /// The floor regions of carved region `region` of `carve`: as
+    /// [`Floor::regions`], except that a band region of a carve with an
+    /// open edge (#448, [`super::OpenEdge`]) keeps the band's edge where it
+    /// is and is inset only from the design ([`surround_floor_regions`]),
+    /// less noise.
+    pub(crate) fn regions_of(
+        &self,
+        carve: &Carve<'_>,
+        region: &Region,
+        tolerance_mm: f64,
+    ) -> Vec<Region> {
+        match &carve.open_edge {
+            Some(edge) => surround_floor_regions(
+                std::slice::from_ref(region),
+                &edge.design,
+                self.inset_mm,
+                true,
+                tolerance_mm,
+            )
+            .into_iter()
+            .filter(|r| !is_noise(r, tolerance_mm))
+            .collect(),
+            None => self.regions(region, tolerance_mm),
+        }
     }
 
     /// The ring step-over, mm, `step_over_fraction · 2 · inset_mm`.
@@ -162,6 +192,60 @@ pub(crate) fn blocks(
     cut: &FloorCut<'_>,
     anchor: &mut Option<Point>,
 ) -> Result<Vec<CutBlock>, CamError> {
+    blocks_open(floor, floors, reached_by, cut, anchor, None)
+}
+
+/// Where a V-bit may cut the floor of a male Inlay's band whose outer
+/// edge is open (#448; `docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay", step 4): the end mill cuts that edge upright, and beyond it the
+/// board stands to the stock top.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenFloor {
+    /// The band's edge inset by the cone's radius at the stock top for a
+    /// tip at the floor, `(top − floor) · tan(α/2)`: the tip on the floor
+    /// stays in here, so the cone never crosses the edge below the stock
+    /// top.
+    pub tip_room: Vec<Region>,
+    /// The band's edge, `B`.
+    pub band: Walls,
+    /// The mirrored design.
+    pub design: Walls,
+}
+
+impl OpenFloor {
+    /// The parts of `regions` in [`OpenFloor::tip_room`], less noise.
+    fn within(&self, regions: &[Region], tolerance_mm: f64) -> Vec<Region> {
+        intersection(regions, &self.tip_room, tolerance_mm)
+            .into_iter()
+            .filter(|r| !is_noise(r, tolerance_mm))
+            .collect()
+    }
+
+    /// Whether floor loop `contour` runs along the band's edge rather than
+    /// the plug's foot: its first vertex is nearer the edge than the
+    /// design. The floor ring's edge loops are `M − P·tan(α/2)` from the
+    /// foot's, so the test is never close.
+    fn is_edge(&self, contour: &Contour) -> bool {
+        contour.polyline().vertices().first().is_some_and(|v| {
+            self.band.clearance_mm(v.point()) < self.design.clearance_mm(v.point())
+        })
+    }
+}
+
+/// [`blocks`] of a band floor whose outer edge is open (#448), when
+/// `open` is set: the V-bit's rings clear only the part of what the
+/// passes leave that lies in [`OpenFloor::tip_room`], and its boundary
+/// trace runs only along the plug's foot, never round the band's edge,
+/// which the edge pass cuts; the trace's cleared area, for `sequence`'s
+/// stay-down links, is the floor's part in the tip room.
+pub(crate) fn blocks_open(
+    floor: &Floor,
+    floors: &[Region],
+    reached_by: &[Reference],
+    cut: &FloorCut<'_>,
+    anchor: &mut Option<Point>,
+    open: Option<&OpenFloor>,
+) -> Result<Vec<CutBlock>, CamError> {
     if floors.is_empty() {
         return Ok(Vec::new());
     }
@@ -174,21 +258,52 @@ pub(crate) fn blocks(
             .copied()
             .filter(|r| !inset_region(region, r.radius_mm, cut.tolerance_mm).is_empty())
             .collect();
+        let Some(open) = open else {
+            if reaching.is_empty() {
+                out.extend(rings_clearing(region, floor, cut, anchor)?);
+                continue;
+            }
+            for piece in rest::left_by(region, 0.0, &reaching, cut.tolerance_mm) {
+                out.extend(rings_clearing(&piece, floor, cut, anchor)?);
+            }
+            for ring in rings_of(region, 0, anchor, |_| true) {
+                out.push(ring_block(ring, Some(region), floor, cut));
+            }
+            continue;
+        };
+        let reachable = open.within(std::slice::from_ref(region), cut.tolerance_mm);
         if reaching.is_empty() {
-            out.extend(rings_clearing(region, floor, cut, anchor)?);
+            for piece in &reachable {
+                out.extend(rings_clearing(piece, floor, cut, anchor)?);
+            }
             continue;
         }
-        for piece in rest::left_by(region, 0.0, &reaching, cut.tolerance_mm) {
+        let left = rest::left_by(region, 0.0, &reaching, cut.tolerance_mm);
+        for piece in open.within(&left, cut.tolerance_mm) {
             out.extend(rings_clearing(&piece, floor, cut, anchor)?);
         }
-        for ring in rings_of(region, 0, anchor) {
-            out.push(ring_block(ring, region, floor, cut));
+        for ring in rings_of(region, 0, anchor, |c| !open.is_edge(c)) {
+            let cleared = reachable
+                .iter()
+                .map(|r| (r, distance_to_loops(r, ring.start)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(r, _)| r);
+            out.push(ring_block(ring, cleared, floor, cut));
         }
     }
     if let Some(last) = out.last() {
         *anchor = Some(last.exit);
     }
     Ok(out)
+}
+
+/// The distance from `p` to the nearest loop of `region`, mm.
+fn distance_to_loops(region: &Region, p: Point) -> f64 {
+    std::iter::once(region.outer())
+        .chain(region.holes())
+        .filter_map(|c| nearest_point(c.polyline(), p))
+        .map(|n| n.gap_mm)
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// The rings that clear `region` (a floor region, or a piece of one) at
@@ -224,13 +339,13 @@ fn rings_clearing(
             centred.push(ring.node);
             let mut from = Some(ring.start);
             for centre in residual_regions(&node.region, &[], stepover_mm / 2.0, cut.tolerance_mm) {
-                for centre_ring in rings_of(&centre, ring.node, &mut from) {
-                    out.push(ring_block(centre_ring, &centre, floor, cut));
+                for centre_ring in rings_of(&centre, ring.node, &mut from, |_| true) {
+                    out.push(ring_block(centre_ring, Some(&centre), floor, cut));
                 }
             }
         }
         let cleared = node.region.clone();
-        out.push(ring_block(ring, &cleared, floor, cut));
+        out.push(ring_block(ring, Some(&cleared), floor, cut));
     }
     if let Some(last) = out.last() {
         *anchor = Some(last.exit);
@@ -238,11 +353,18 @@ fn rings_clearing(
     Ok(out)
 }
 
-/// The outer and holes of `region` as rings of `node`, nearest `anchor`
-/// first, each starting at its point nearest the end of the one before.
-fn rings_of(region: &Region, node: usize, anchor: &mut Option<Point>) -> Vec<Ring> {
+/// The outer and holes of `region` that `keep` keeps, as rings of `node`,
+/// nearest `anchor` first, each starting at its point nearest the end of
+/// the one before.
+fn rings_of(
+    region: &Region,
+    node: usize,
+    anchor: &mut Option<Point>,
+    keep: impl Fn(&Contour) -> bool,
+) -> Vec<Ring> {
     let mut pending: Vec<(Ring, f64)> = std::iter::once((region.outer(), RingKind::Outer))
         .chain(region.holes().iter().map(|h| (h, RingKind::Hole)))
+        .filter(|(contour, _)| keep(contour))
         .map(|(contour, kind)| {
             (
                 Ring {
@@ -277,7 +399,7 @@ fn rings_of(region: &Region, node: usize, anchor: &mut Option<Point>) -> Vec<Rin
 /// One ring as a closed lap at the floor's Z: climb, from its start, arcs
 /// flattened to the floor's side ([`flatten_inside`]), every move at the
 /// feed.
-fn ring_block(ring: Ring, cleared: &Region, floor: &Floor, cut: &FloorCut<'_>) -> CutBlock {
+fn ring_block(ring: Ring, cleared: Option<&Region>, floor: &Floor, cut: &FloorCut<'_>) -> CutBlock {
     let start = ring.start;
     let path = ring_path(ring, CutDirection::Climb);
     let points = flatten_inside(&path, cut.tolerance_mm);
@@ -309,7 +431,7 @@ fn ring_block(ring: Ring, cleared: &Region, floor: &Floor, cut: &FloorCut<'_>) -
         cuts,
         exit,
         frees: false,
-        cleared: Some(cleared.clone()),
+        cleared: cleared.cloned(),
         group: 0,
     }
 }

@@ -278,14 +278,15 @@ use countersink::Sink;
 use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
-    Vec2, as_circle, closest_points, floor_regions, inset_is_empty, meeting_points, nearest_point,
-    nest, offset, offset_open, outer_offset, point_segment_distance_mm, segment_distance_mm,
-    strip_ends, surround,
+    Vec2, as_circle, closest_points, floor_regions, inset_is_empty, is_design_hole, meeting_points,
+    nearest_point, nest, offset, offset_open, outer_offset, point_segment_distance_mm,
+    rounded_band, segment_distance_mm, strip_ends, surround, surround_floor_regions,
 };
 use dc_project::{
     ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlayOp, InlaySide, InstanceId, Operation, PostProcessor, ProfileOp, Project,
-    Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
+    FeatureInstance, InlayOp, InlaySide, InstanceId, MaleBand, Operation, PostProcessor, ProfileOp,
+    Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
+    male_band,
 };
 
 use crate::ExportError;
@@ -761,9 +762,7 @@ impl Material {
                 inlay_material(project, inlay)
             }
             (Operation::Inlay(inlay), RunLabel::Clearing(pass)) if tool.id == *pass => {
-                floor_of(project, &inlay.clearing, pass, || {
-                    inlay_cone(project, inlay)
-                })
+                inlay_floor_material(project, inlay, pass)
             }
             // Format 23 (#443): a male's cut-out, with its own end mill.
             (Operation::Inlay(inlay), RunLabel::CutOut(cut)) if tool.id == *cut => {
@@ -972,30 +971,88 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
             thickness_mm
         },
         cone_mm,
+        edge: None,
     })
 }
 
 /// The V-bit material of Inlay side `inlay` (#436; module docs, [`cone`]):
 /// [`Material::Unresolved`] when [`inlay_cone`] is.
 fn inlay_material(project: &Project, inlay: &InlayOp) -> Material {
-    inlay_cone(project, inlay).map_or(Material::Unresolved, Material::VBit)
+    inlay_cone(project, inlay).map_or(Material::Unresolved, |(cone, _)| Material::VBit(cone))
+}
+
+/// A male Inlay's band as the safety pass derives it (#448; module docs):
+/// the band's edge rule from [`dc_project::male_band`], the geometry from
+/// `dc_geometry`, never the generator.
+struct MaleGeometry {
+    /// The edge, open or a V wall, and the roundings.
+    band: MaleBand,
+    /// The mirrored design, nested ([`male_design`]).
+    design: Vec<Region>,
+    /// The carved regions: the band less the design ([`surround`]).
+    surround: Vec<Region>,
+    /// The band `B` ([`rounded_band`]) when its edge is open; empty with
+    /// a V wall.
+    edge: Vec<Region>,
+}
+
+impl MaleGeometry {
+    /// The male Inlay `inlay`'s; `None` when its band or design does not
+    /// resolve.
+    fn of(project: &Project, inlay: &InlayOp) -> Option<Self> {
+        let band = male_band(project, inlay)?;
+        let design = male_design(project, &inlay.targets)?;
+        let tolerance_mm = project.flatten_tolerance_mm;
+        let surround = surround(&design, band.margin_mm, band.edge_rounding_mm, tolerance_mm);
+        let edge = if band.is_open() {
+            rounded_band(&design, band.margin_mm, band.edge_rounding_mm, tolerance_mm)
+        } else {
+            Vec::new()
+        };
+        Some(Self {
+            band,
+            design,
+            surround,
+            edge,
+        })
+    }
+
+    /// The floor regions of the surround, inset by `inset_mm`: out to the
+    /// band's edge where it is open ([`surround_floor_regions`]), less
+    /// noise, as the generator's floor drops it.
+    fn floors(&self, inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+        surround_floor_regions(
+            &self.surround,
+            &self.design,
+            inset_mm,
+            self.band.is_open(),
+            tolerance_mm,
+        )
+        .into_iter()
+        .filter(|f| !is_noise(f, tolerance_mm))
+        .collect()
+    }
 }
 
 /// The cone of Inlay side `inlay`, every value re-derived from the project
-/// (design "Inlay" steps 1 to 4, "Safety pass" S17; security review H4):
+/// (design "Inlay" steps 1 to 4, "Safety pass" S17; security review H4),
+/// with the male's band geometry:
 ///
 /// - **Female:** the targets' regions, from the stock top, flat at
 ///   `depth_mm` `D`.
 /// - **Male:** the surround of the targets mirrored about the centre line
-///   of their closed outlines' joint bounding box ([`male_surround`]);
-///   the start plane `D − G` below the stock top, flat at `plug_depth_mm`
-///   `P` below that.
+///   of their closed outlines' joint bounding box ([`MaleGeometry`]): the
+///   band `margin_mm` wide, closed by its edge rounding (#448), less the
+///   design; the start plane `D − G` below the stock top, flat at
+///   `plug_depth_mm` `P` below that. When a clearing pass cuts the band's
+///   edge upright, the cone is also held to the band at the stock top
+///   ([`Cone::edge`]).
 ///
 /// Either side's flank is engaged from the stock top: the female starts
 /// there, and the plug above the male's start plane is never cleared.
 /// `None` when the tool is not a usable V-bit, a value is unset or out of
 /// the range validation allows, or the targets do not resolve.
-fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<Cone> {
+fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<(Cone, Option<MaleGeometry>)> {
     let thickness_mm = project.stock.thickness_mm.filter(|t| t.is_finite())?;
     let (slope, cone_mm) = v_bit_of(project, &inlay.tool)?;
     let depth_mm = inlay.depth_mm.filter(|d| d.is_finite() && *d > 0.0)?;
@@ -1003,38 +1060,40 @@ fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<Cone> {
         .glue_gap_mm
         .filter(|g| g.is_finite() && *g >= 0.0 && *g < depth_mm)?;
     let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
-    let (regions, start_depth_mm, flat_depth_mm) = match inlay.side {
-        InlaySide::Female => (regions_of(project, &inlay.targets)?, 0.0, depth_mm),
+    let (regions, start_depth_mm, flat_depth_mm, male) = match inlay.side {
+        InlaySide::Female => (regions_of(project, &inlay.targets)?, 0.0, depth_mm, None),
         InlaySide::Male => {
-            let margin_mm = inlay.margin_mm.filter(|m| m.is_finite() && *m > 0.0)?;
+            let male = MaleGeometry::of(project, inlay)?;
             (
-                male_surround(project, &inlay.targets, margin_mm)?,
+                male.surround.clone(),
                 depth_mm - glue_gap_mm,
                 plug_depth_mm,
+                Some(male),
             )
         }
     };
     let start_plane_z_mm = thickness_mm - start_depth_mm;
-    Some(Cone {
+    let edge = male.as_ref().filter(|m| m.band.is_open()).map(|m| {
+        Box::new(Cone {
+            areas: areas_of(m.edge.clone(), true),
+            start_plane_z_mm: thickness_mm,
+            slope,
+            floor_z_mm: None,
+            engaged_from_z_mm: thickness_mm,
+            cone_mm,
+            edge: None,
+        })
+    });
+    let cone = Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,
         slope,
         floor_z_mm: Some(start_plane_z_mm - flat_depth_mm),
         engaged_from_z_mm: thickness_mm,
         cone_mm,
-    })
-}
-
-/// A male Inlay's carved regions (design "Inlay" step 4): the closed
-/// outlines of `targets`, placed, mirrored about X = the centre of their
-/// joint bounding box (arc extremes included,
-/// [`Transform::mirror_x_about`]), nested, and the [`surround`] of that
-/// design `margin_mm` wide at the project's flatten tolerance. Pure
-/// geometry on the project, as the generator derives it, never the
-/// generator. `None` when a target does not resolve or outlines cross.
-fn male_surround(project: &Project, targets: &[InstanceId], margin_mm: f64) -> Option<Vec<Region>> {
-    let design = male_design(project, targets)?;
-    Some(surround(&design, margin_mm, project.flatten_tolerance_mm))
+        edge,
+    };
+    Some((cone, male))
 }
 
 /// A male Inlay's design: the closed outlines of `targets`, placed,
@@ -1072,18 +1131,19 @@ fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>>
     Some(design)
 }
 
-/// What a male Inlay's cut-out run is held to (#443; module docs): the
-/// rings of the band's flat floor round the outer outlines of the
-/// mirrored design, re-derived from the project with `dc_geometry` alone,
-/// and the cut-out's paths, for its tabs.
+/// What a male Inlay's cut-out run is held to (#443, #448; module docs):
+/// the rings of the band's flat floor round the outer outlines of the
+/// mirrored design, re-derived from the project with `dc_geometry` and
+/// [`dc_project::male_band`] alone, and the cut-out's paths, for its tabs.
 struct CutOutGeometry {
-    /// The floor rings: the floor regions of the male's surround
-    /// ([`floor_regions`] of [`surround`], less noise, as its clearing
-    /// runs are held), except those inside a design outline, the floors
-    /// of the design's holes, which stay in the plug.
+    /// The floor rings: the floor regions of the male's surround (out to
+    /// the band's edge when it is open, [`MaleGeometry::floors`], as its
+    /// clearing runs are held), except those inside a design outline, the
+    /// floors of the design's holes, which stay in the plug.
     rings: Vec<Region>,
     /// The tool-centre paths: the mirrored design's outermost outlines
-    /// grown by half the margin ([`dc_geometry::outer_offset`]).
+    /// grown by the cut-out's offset and rounded by `outline_rounding_mm`
+    /// ([`dc_geometry::outer_offset`], [`MaleBand::cut_out_offset_mm`]).
     paths: Vec<Polyline>,
 }
 
@@ -1101,33 +1161,25 @@ fn cut_out_geometry(project: &Project, inlay: &InlayOp, tool: &Tool) -> Option<C
     if inlay.side != InlaySide::Male || !usable_tool {
         return None;
     }
-    let cone = inlay_cone(project, inlay)?;
-    let margin_mm = inlay.margin_mm?;
+    let (cone, male) = inlay_cone(project, inlay)?;
+    let male = male?;
     let floor_z_mm = cone.floor_z_mm?;
     let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
     let tolerance_mm = project.flatten_tolerance_mm;
-    let design = male_design(project, &inlay.targets)?;
-    let outers: Vec<Region> = design
-        .iter()
-        .filter_map(|r| nest(vec![r.outer().clone()]).ok())
-        .filter_map(|(r, _)| r.into_iter().next())
-        .collect();
-    let surround: Vec<Region> = cone.areas.into_iter().map(|a| a.region).collect();
-    let rings = floor_regions(&surround, inset_mm, tolerance_mm)
+    let rings = male
+        .floors(inset_mm, tolerance_mm)
         .into_iter()
-        .filter(|f| !is_noise(f, tolerance_mm))
-        .filter(|f| {
-            f.outer()
-                .polyline()
-                .vertices()
-                .first()
-                .is_some_and(|v| !outers.iter().any(|o| o.contains_point(v.point())))
-        })
+        .filter(|f| !is_design_hole(f, &male.design))
         .collect();
-    let paths = outer_offset(&design, margin_mm / 2.0, tolerance_mm)
-        .into_iter()
-        .map(Contour::into_polyline)
-        .collect();
+    let paths = outer_offset(
+        &male.design,
+        male.band.cut_out_offset_mm(),
+        male.band.outline_rounding_mm,
+        tolerance_mm,
+    )
+    .into_iter()
+    .map(Contour::into_polyline)
+    .collect();
     Some(CutOutGeometry { rings, paths })
 }
 
@@ -1160,17 +1212,47 @@ fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool) -> Material
 /// passes or not a flat end mill, or the carve has no usable V-bit or
 /// flat depth.
 fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Material {
-    floor_of(project, &carve.clearing, pass, || cone_of(project, carve))
+    floor_of(project, &carve.clearing, pass, |inset_mm, tolerance_mm| {
+        let cone = cone_of(project, carve)?;
+        let regions: Vec<Region> = cone.areas.iter().map(|a| a.region.clone()).collect();
+        let floors = floor_regions(&regions, inset_mm(&cone)?, tolerance_mm)
+            .into_iter()
+            .filter(|f| !is_noise(f, tolerance_mm))
+            .collect();
+        Some((cone, floors))
+    })
 }
 
-/// [`floor_material`] for a carve with passes `clearing` whose V-bit
-/// material is `cone` (a V-Carve's, or an Inlay side's, #436): the
-/// carve's floor regions at its floor's Z.
+/// The material of male or female Inlay `inlay`'s clearing run with end
+/// mill `pass` (#436): its floor, out to the band's edge when a clearing
+/// pass cuts that edge upright (#448, [`MaleGeometry::floors`]).
+fn inlay_floor_material(project: &Project, inlay: &InlayOp, pass: &ToolId) -> Material {
+    floor_of(project, &inlay.clearing, pass, |inset_mm, tolerance_mm| {
+        let (cone, male) = inlay_cone(project, inlay)?;
+        let inset_mm = inset_mm(&cone)?;
+        let floors = match male {
+            Some(male) => male.floors(inset_mm, tolerance_mm),
+            None => {
+                let regions: Vec<Region> = cone.areas.iter().map(|a| a.region.clone()).collect();
+                floor_regions(&regions, inset_mm, tolerance_mm)
+                    .into_iter()
+                    .filter(|f| !is_noise(f, tolerance_mm))
+                    .collect()
+            }
+        };
+        Some((cone, floors))
+    })
+}
+
+/// [`floor_material`] for a carve with passes `clearing`: the floor
+/// regions `floors` gives with its V-bit material's cone (a V-Carve's, or
+/// an Inlay side's, #436), at the floor's Z. `floors` is handed a function
+/// that gives a cone's floor inset, `F · tan(α/2)`, and the tolerance.
 fn floor_of(
     project: &Project,
     clearing: &[ClearingPass],
     pass: &ToolId,
-    cone: impl FnOnce() -> Option<Cone>,
+    floors: impl FnOnce(&dyn Fn(&Cone) -> Option<f64>, f64) -> Option<(Cone, Vec<Region>)>,
 ) -> Material {
     let resolved = || {
         if !clearing.iter().any(|p| &p.tool == pass) {
@@ -1181,18 +1263,14 @@ fn floor_of(
         if !(end_mill.cutter.is_flat() && radius_mm.is_finite() && radius_mm > 0.0) {
             return None;
         }
-        let cone = cone()?;
-        let floor_z_mm = cone.floor_z_mm?;
-        let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
-        let tolerance_mm = project.flatten_tolerance_mm;
-        let regions: Vec<Region> = cone.areas.into_iter().map(|a| a.region).collect();
-        let floors = floor_regions(&regions, inset_mm, tolerance_mm)
-            .into_iter()
-            .filter(|f| !is_noise(f, tolerance_mm))
-            .collect();
+        let inset_mm = |cone: &Cone| {
+            cone.floor_z_mm
+                .map(|floor_z_mm| (cone.start_plane_z_mm - floor_z_mm) * cone.slope)
+        };
+        let (cone, floors) = floors(&inset_mm, project.flatten_tolerance_mm)?;
         Some(Material::Floor {
             areas: areas_of(floors, true),
-            floor_z_mm,
+            floor_z_mm: cone.floor_z_mm?,
             radius_mm,
         })
     };

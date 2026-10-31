@@ -287,6 +287,7 @@ pub fn sample_inlay() -> InlayOp {
         glue_gap_mm: Some(0.25),
         plug_depth_mm: Some(1.5),
         margin_mm: Some(6.0),
+        outline_rounding_mm: None,
         clearing: Vec::new(),
         step_over_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,

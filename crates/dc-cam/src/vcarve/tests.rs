@@ -492,6 +492,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         strategy: &VCarveStrategy::Medial,
         step_over_fraction: None,
         cleared_by: Vec::new(),
+        open_edge: None,
     };
     let result = finish(
         &p,
@@ -1140,6 +1141,7 @@ fn chains_become_blocks_that_sequence_in_generator_order() {
         strategy: &VCarveStrategy::Medial,
         step_over_fraction: None,
         cleared_by: Vec::new(),
+        open_edge: None,
     };
     let blocks = blocks(&p, &op.id, &tool, &rectangle, &mut Vec::new()).expect("blocks");
     assert!(!blocks.is_empty());

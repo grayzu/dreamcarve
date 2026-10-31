@@ -112,6 +112,12 @@
 //!   `safe_z_mm`: `null`, or `{ "tool", "tabs", "through_cut_allowance_mm"
 //!   }`. The migration writes `"cut_out": null` in every Inlay, so a
 //!   version 22 file cuts the same.
+//! - **24**: adds a male Inlay's outline rounding (#448),
+//!   `"outline_rounding_mm"`, after `margin_mm`: `null` or a length above
+//!   0. The migration writes `"outline_rounding_mm": null` in every
+//!   Inlay. The male's band edge changed in the same release (it is cut
+//!   by the end mill when a clearing pass fits), so a version 23 male
+//!   exports what the same project written at version 24 does.
 
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
@@ -122,7 +128,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 23;
+pub const CURRENT_VERSION: u32 = 24;
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -154,6 +160,7 @@ fn step(from: u32) -> Option<Step> {
         20 => Some(v20_to_v21),
         21 => Some(v21_to_v22),
         22 => Some(v22_to_v23),
+        23 => Some(v23_to_v24),
         _ => None,
     }
 }
@@ -869,6 +876,44 @@ fn v22_to_v23(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
         }
         if at_end {
             out.insert("cut_out".into(), Value::Null);
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
+/// Version 23 → 24 (#448): a male Inlay's outline rounding. Inserts
+/// `"outline_rounding_mm": null` after `margin_mm` (at the end when it is
+/// missing) in every Inlay. Other operations are unchanged. Fails if an
+/// Inlay already has `outline_rounding_mm`: that is not a version 23
+/// file.
+fn v23_to_v24(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("inlay") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("outline_rounding_mm") {
+            return Err(format!(
+                "a version 23 file has no `operations[{i}].outline_rounding_mm`, but this one does"
+            ));
+        }
+        let at_end = !fields.contains_key("margin_mm");
+        let mut out = Map::new();
+        for (k, v) in fields {
+            let after = k == "margin_mm";
+            out.insert(k, v);
+            if after {
+                out.insert("outline_rounding_mm".into(), Value::Null);
+            }
+        }
+        if at_end {
+            out.insert("outline_rounding_mm".into(), Value::Null);
         }
         *op = Value::Object(out);
     }
@@ -2933,8 +2978,7 @@ mod tests {
     fn v23_to_v24_adds_null_outline_rounding() {
         use crate::ids::ToolId;
         use crate::model::{
-            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp,
-            InlaySide,
+            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp, InlaySide,
         };
         use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
         assert_eq!(CURRENT_VERSION, 24);
@@ -2979,12 +3023,7 @@ mod tests {
         }
         for op in expected["operations"].as_array().unwrap() {
             if op["kind"] == json!("inlay") {
-                let keys: Vec<&str> = op
-                    .as_object()
-                    .unwrap()
-                    .keys()
-                    .map(String::as_str)
-                    .collect();
+                let keys: Vec<&str> = op.as_object().unwrap().keys().map(String::as_str).collect();
                 let at = keys.iter().position(|k| *k == "margin_mm").unwrap();
                 assert_eq!(keys.get(at + 1), Some(&"outline_rounding_mm"));
                 assert_eq!(op["outline_rounding_mm"], Value::Null);

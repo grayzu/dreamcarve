@@ -6914,7 +6914,8 @@ fn lettered_inlay_fits_its_board() {
             let rounding_mm = inlay
                 .outline_rounding_mm
                 .expect("the tutorial rounds the band");
-            let foot_mm = inlay.plug_depth_mm.expect("the plug depth") * 30.0_f64.to_radians().tan();
+            let foot_mm =
+                inlay.plug_depth_mm.expect("the plug depth") * 30.0_f64.to_radians().tan();
             let half_margin_mm = (inlay.margin_mm.expect("the male's margin") + foot_mm) / 2.0;
             assert_approx_eq!(half_margin_mm, 4.577, 1e-3);
             let contours: Vec<dc_geometry::Contour> = inlay_design(&project, inlay)
