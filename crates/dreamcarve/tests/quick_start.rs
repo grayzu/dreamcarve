@@ -556,6 +556,11 @@ struct Limits {
     plunge_mm_min: f64,
     /// The spindle line the program must start the spindle with.
     spindle: &'static str,
+    /// A V-bit's half angle, degrees, or `None` for a flat end mill. A
+    /// V-bit's cone clears the material above its cut as well as the cut
+    /// itself, so a rapid may come down beside a cut, to just above the
+    /// cone's wall (#446).
+    cone_half_angle_deg: Option<f64>,
 }
 
 /// The XY length of `m`, mm: the chord, or the arc for `G2`/`G3`.
@@ -590,7 +595,8 @@ fn xy_length(m: &MachineMove) -> f64 {
 /// S2 and S15 every rapid down ends above the stock top or no deeper than
 /// a cut has reached at that point (one that ended there, or a straight
 /// cut through it: a Pocket's later pass starts its ramp just above the
-/// floor a link cut, #214); S3 and S10 every cut has a feed no faster
+/// floor a link cut, #214; or, for a V-bit, a straight cut whose cone's
+/// wall reaches it, #446); S3 and S10 every cut has a feed no faster
 /// than the tool's, and goes down no faster than its plunge rate; S4 the
 /// spindle starts before the first cut and the program ends `M5`, `M30`;
 /// and the tool's edge stays on the stock.
@@ -666,7 +672,17 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
                         0.0
                     };
                     let (px, py) = (ax + dx * t, ay + dy * t);
-                    ((px - x).hypot(py - y) < 2e-3).then_some(az + (bz - az) * t)
+                    let off = (px - x).hypot(py - y);
+                    let cut_z = az + (bz - az) * t;
+                    if off < 2e-3 {
+                        Some(cut_z)
+                    } else {
+                        // A V-bit's cone, its tip on the cut, clears down
+                        // to its wall `off` from the tip's line.
+                        limits.cone_half_angle_deg.and_then(|half| {
+                            (off <= limits.radius_mm).then(|| cut_z + off / half.to_radians().tan())
+                        })
+                    }
                 });
                 let reached = cut_depth
                     .iter()
@@ -881,6 +897,7 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
     assert_program_safe("plaque-1-T2.nc", &one, &stock(300.0, 1000.0, 1.5875));
     assert_program_safe("plaque-2-T1.nc", &two, &stock(500.0, 1500.0, 3.175));
@@ -1005,6 +1022,7 @@ fn v_carved_sign_chapter_runs() {
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
     let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
     for (name, limits) in names.iter().zip([
@@ -1037,14 +1055,15 @@ fn v_carved_sign_chapter_runs() {
     );
 }
 
-/// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437) run
-/// as written on `tests/fixtures/star.svg`: every command exits as the
-/// chapter says, the tool library file, the hand edits and the pasted
-/// operation apply to both projects, every excerpt is in the program it
-/// names, and the two projects are the committed
-/// `tests/fixtures/star-female.dcv` and `star-male.dcv`, which
-/// `cli::star_female_and_male_export` and
-/// `cli::star_male_exports_three_programs_with_the_cut_out` export. Each
+/// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437,
+/// lettered in #446) run as written on `tests/fixtures/dc-inlay.svg`, the
+/// monogram "DC": every command exits as the chapter says, the tool
+/// library file, the hand edits and the pasted operation apply to both
+/// projects, every excerpt is in the program it names, and the two
+/// projects are the committed `tests/fixtures/dc-female.dcv` and
+/// `dc-male.dcv`, which `cli::lettered_inlay_female_and_male_export`,
+/// `cli::lettered_inlay_fits_its_board` and
+/// `cli::lettered_male_is_the_mirror_of_the_female` export. Each
 /// side exports its programs listed in run order: the 3.175 mm end mill's
 /// clearing pass (T2), then the 60° V-bit (T1), and on the male the end
 /// mill's cut-out last (T2, #443). Each passes the rules a user can check
@@ -1054,7 +1073,7 @@ fn v_carved_sign_chapter_runs() {
 fn inlay_pair_chapter_runs() {
     let run = Run {
         chapter: INLAY,
-        drawing: ("tests/fixtures/star.svg", "star.svg"),
+        drawing: ("tests/fixtures/dc-inlay.svg", "dc-inlay.svg"),
         swap: None,
     };
     let text = std::fs::read_to_string(repo_root().join(INLAY)).expect("chapter readable");
@@ -1078,7 +1097,7 @@ fn inlay_pair_chapter_runs() {
     }
     let dir = run_chapter("inlay_pair_chapter_runs", &run);
 
-    for stem in ["star-female", "star-male"] {
+    for stem in ["dc-female", "dc-male"] {
         let name = format!("{stem}.dcv");
         let fixture = format!("tests/fixtures/{name}");
         let built = std::fs::read_to_string(dir.join(&name)).expect("project written");
@@ -1097,11 +1116,11 @@ fn inlay_pair_chapter_runs() {
     assert_eq!(
         programs,
         [
-            "star-female-1-T2.nc",
-            "star-female-2-T1.nc",
-            "star-male-1-T2.nc",
-            "star-male-2-T1.nc",
-            "star-male-3-T2.nc",
+            "dc-female-1-T2.nc",
+            "dc-female-2-T1.nc",
+            "dc-male-1-T2.nc",
+            "dc-male-2-T1.nc",
+            "dc-male-3-T2.nc",
         ]
     );
 
@@ -1109,13 +1128,14 @@ fn inlay_pair_chapter_runs() {
     let limits = |plunge_mm_min, feed_mm_min, radius_mm| Limits {
         safe_z_mm: 10.0,
         floor_mm: 12.2,
-        stock_mm: (100.0, 100.0),
+        stock_mm: (110.0, 80.0),
         radius_mm,
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
-    for stem in ["star-female", "star-male"] {
+    for stem in ["dc-female", "dc-male"] {
         let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
             .current_dir(&dir)
             .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
@@ -1129,7 +1149,7 @@ fn inlay_pair_chapter_runs() {
         );
         assert_eq!(out.status.code(), Some(0), "{report}");
         let mut names = vec![format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
-        if stem == "star-male" {
+        if stem == "dc-male" {
             names.push(format!("{stem}-3-T2.nc"));
         }
         let at: Vec<usize> = names
@@ -1144,12 +1164,16 @@ fn inlay_pair_chapter_runs() {
         assert!(at.is_sorted(), "{report}");
         assert_eq!(
             report.contains("inlay_male_mirrored"),
-            stem == "star-male",
+            stem == "dc-male",
             "{report}"
         );
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
         assert_program_safe(&names[0], &read(&names[0]), &limits(300.0, 1000.0, 1.5875));
-        assert_program_safe(&names[1], &read(&names[1]), &limits(300.0, 1000.0, 3.175));
+        let v_bit = Limits {
+            cone_half_angle_deg: Some(30.0),
+            ..limits(300.0, 1000.0, 3.175)
+        };
+        assert_program_safe(&names[1], &read(&names[1]), &v_bit);
         if let Some(cut_out) = names.get(2) {
             assert_program_safe(cut_out, &read(cut_out), &limits(300.0, 1000.0, 1.5875));
         }

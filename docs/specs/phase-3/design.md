@@ -1070,8 +1070,8 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    (security review H4: the draft checked `P` alone; with the bench's
    90°, 6.35 mm bit, cone 3.175 mm, Corbin's `D 2.5, G 0.25, P 1.5`
    engages 3.75 mm and would have run the shank into the plug wall).
-   Validation checks the same sums. The star test part engages 3 + 2 =
-   5 mm against the 60° bit's 5.5 mm cone.
+   Validation checks the same sums. The inlay test part's `4, 1, 2`
+   engage 3 + 2 = 5 mm against the 60° bit's 5.5 mm cone.
 2. **Design regions.** Targets nested as V-Carve's (step 2).
 3. **Female.** `Carve { regions: design, start_plane: thickness,
    flat_depth: Some(D), strategy: Medial, cleared_by: the
@@ -1425,7 +1425,7 @@ crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, star.svg, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
+tests/fixtures/{sign.svg, dc-inlay.svg, dc-female.dcv, dc-male.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
 crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22}/sample.dcv
 ```
 
@@ -1534,7 +1534,7 @@ for V operations.
 **dreamcarve (integration, `tests/`)**
 - `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`.
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
-- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::star_female_and_male_export` (the inlay pair's two files from `fixtures/star.svg`), `cli::star_male_exports_three_programs_with_the_cut_out` (#443: T2 clearing, T1 V-bit, T2 cut-out; all pass S1–S18), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
+- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_female_and_male_export` (#446, the inlay pair's two files from `fixtures/dc-inlay.svg`: female T2 clearing, T1 V-bit; male T2 clearing, T1 V-bit, T2 cut-out; all pass S1–S18; the male prints the mirror note), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).
 
 **dc-gcode (integration, `tests/golden.rs`)**
@@ -1626,7 +1626,7 @@ Goal: the sign complete, the phase's first real cut.
 
 ### 3.3 Inlay (formats v22 and v23)
 
-Goal: the star pair cut and fitted.
+Goal: the lettered inlay pair cut and fitted.
 
 17. **Format v22 and the Inlay model.** `InlayOp`, `InlaySide`,
     `v21_to_v22`, validation with the male engagement sum. Tests: the
@@ -1648,6 +1648,16 @@ Goal: the star pair cut and fitted.
     cut-out and the docs. Tests: the cut-out tests of the inlay,
     validate, migrate, serialize, safety and CLI groups,
     `quick_start::inlay_pair_chapter_runs`. [19, 20]
+20b. **A lettered inlay example** (#446, added 2026-10-30 at the
+    maintainer's request: the star is symmetric, so the tutorial never
+    showed the male's mirror). The monogram "DC" in Droid Serif Bold,
+    `fixtures/dc-inlay.svg` from `tools/parity/inlay-fixture.ts`, on a
+    110 × 80 × 12 mm board, replaces the star in the fixtures, the quick
+    start and the Inlay chapter; the unit tests keep the star as
+    geometry. Tests: `cli::lettered_inlay_female_and_male_export`,
+    `cli::lettered_inlay_fits_its_board`,
+    `cli::lettered_male_is_the_mirror_of_the_female`,
+    `quick_start::inlay_pair_chapter_runs`. [20a]
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 

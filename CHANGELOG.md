@@ -67,7 +67,7 @@ phases bump the patch number.
   from the stock top (safety rule 14, S17). User guide chapter "Inlay
   operation", with the method, the four values, choosing the bit, the fit
   procedure and gluing, and a fourth quick start, "An inlay pair", on the
-  new `tests/fixtures/star.svg`.
+  new `tests/fixtures/star.svg` (since replaced by a lettered example).
 - **Inlay cut-out; format version 23.** A male Inlay can hold a
   `cut_out`, `{ "tool", "tabs", "through_cut_allowance_mm" }`, which frees
   the plug from its board with a flat end mill instead of a saw, as the
@@ -84,6 +84,13 @@ phases bump the patch number.
 
 ### Changed
 
+- **A lettered inlay example.** The inlay quick start, "An inlay pair",
+  and the Inlay chapter now inlay the monogram "DC" in Droid Serif Bold
+  (`tests/fixtures/dc-inlay.svg`, `dc-female.dcv`, `dc-male.dcv`) on a
+  110 × 80 × 12 mm board instead of the star, which was symmetric and so
+  never showed the male's mirror. The chapter says which way to turn the
+  plug over, how to prepare your own design in a drawing program, and
+  how long the cut-out end mill's flutes must be.
 - **`flatten_tolerance_mm` is at most 0.1 mm.** A coarser tolerance is an
   error, in a file of any version: the safety checks' slack scales with it.
 
