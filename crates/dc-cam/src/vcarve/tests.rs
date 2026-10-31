@@ -1411,18 +1411,29 @@ fn notch_in_a_frame() -> Project {
 /// chains to their own depth, because its plug stands above its start
 /// plane; a carve whose flank is engaged only from its start plane keeps
 /// upstream's medial axis and tolerances, so its program is byte for byte
-/// what it was before #452. Each case is a digest of its runs' moves to
-/// 0.001 mm (as a program writes them), taken before the change: the
-/// plain fixtures above, the sign's V-Carves
-/// (`tests/fixtures/sign.dcv`), the tutorial's female Inlay
-/// (`tests/fixtures/dc-female.dcv`), and the notch design as a hole, the
-/// shape #452 changes for the male.
+/// what it was before #452. The cases: the plain fixtures above, the
+/// sign's V-Carves (`tests/fixtures/sign.dcv`), the tutorial's female
+/// Inlay (`tests/fixtures/dc-female.dcv`), and the notch design as a
+/// hole, the shape #452 changes for the male.
+///
+/// On every platform, each case's flank is engaged from its start plane,
+/// and a carve so engaged takes upstream's corner reach and tolerances,
+/// the only ways in for #452's changes. On macOS each case's runs are
+/// also digested, moves to 0.001 mm as a program writes them, and must
+/// equal the digest taken there before the change. The medial axis's
+/// choices follow the platform's `atan2`, `sin` and `cos` in their last
+/// bit, so a digest holds only where it was taken; CI runs macOS too.
 #[test]
 fn start_at_stock_top_is_unchanged() {
     let mut cases: Vec<(String, u64)> = Vec::new();
+    // Each case's start plane and the Z its flank is engaged from.
+    let mut planes: Vec<(String, f64, f64)> = Vec::new();
     for (name, p, op) in fixtures() {
-        let (runs, _) = generate_vcarve(&with_op(&p, &op), &op).expect("the carve generates");
+        let p = with_op(&p, &op);
+        let (runs, _) = generate_vcarve(&p, &op).expect("the carve generates");
         cases.push((name.to_owned(), program_digest(&runs)));
+        let (start_mm, engaged_mm) = start_plane(&p, &op).expect("a start plane");
+        planes.push((name.to_owned(), start_mm, engaged_mm));
     }
     let sign = dc_project::load(include_bytes!("../../../../tests/fixtures/sign.dcv"))
         .expect("the sign loads")
@@ -1431,6 +1442,8 @@ fn start_at_stock_top_is_unchanged() {
         if let Operation::VCarve(op) = operation {
             let (runs, _) = generate_vcarve(&sign, op).expect("the sign's V-Carve generates");
             cases.push((format!("sign {}", op.id), program_digest(&runs)));
+            let (start_mm, engaged_mm) = start_plane(&sign, op).expect("a start plane");
+            planes.push((format!("sign {}", op.id), start_mm, engaged_mm));
         }
     }
     let female = dc_project::load(include_bytes!("../../../../tests/fixtures/dc-female.dcv"))
@@ -1441,6 +1454,12 @@ fn start_at_stock_top_is_unchanged() {
             let (runs, _) =
                 crate::inlay::generate_inlay(&female, op).expect("the female generates");
             cases.push(("DC female".to_owned(), program_digest(&runs)));
+            let side = crate::inlay::side(&female, op, &mut Vec::new()).expect("the female");
+            planes.push((
+                "DC female".to_owned(),
+                side.start_plane_z_mm,
+                side.engaged_from_z_mm,
+            ));
         }
     }
     let notch = notch_in_a_frame();
@@ -1449,9 +1468,40 @@ fn start_at_stock_top_is_unchanged() {
         step_over_fraction: Some(0.1),
         ..carve_op(&notch)
     };
-    let (runs, _) = generate_vcarve(&with_op(&notch, &op), &op).expect("the notch generates");
+    let notch = with_op(&notch, &op);
+    let (runs, _) = generate_vcarve(&notch, &op).expect("the notch generates");
     cases.push(("notch in a frame".to_owned(), program_digest(&runs)));
-    // The digests before #452 (main at 52ec5b9).
+    let (start_mm, engaged_mm) = start_plane(&notch, &op).expect("a start plane");
+    planes.push(("notch in a frame".to_owned(), start_mm, engaged_mm));
+
+    let regions = regions_of(&notch, &op);
+    for (name, start_mm, engaged_mm) in &planes {
+        assert_approx_eq!(*start_mm, *engaged_mm, 1e-12);
+        let carve = Carve {
+            regions: regions.clone(),
+            shapes: vec![test_shape(); regions.len()],
+            start_plane_z_mm: *start_mm,
+            engaged_from_z_mm: *engaged_mm,
+            flat_depth_mm: Some(2.0),
+            strategy: &VCarveStrategy::Medial,
+            step_over_fraction: Some(0.1),
+            cleared_by: Vec::new(),
+            open_edge: None,
+            design: None,
+        };
+        for region in &regions {
+            assert_eq!(
+                carve.corner_reach(region, slope_of(60.0)),
+                CornerReach::Upstream,
+                "{name}"
+            );
+        }
+        assert_eq!(carve.tolerances(0.2), Tolerances::at_step(0.2), "{name}");
+    }
+    if !cfg!(target_os = "macos") {
+        return;
+    }
+    // The digests before #452 (main at 52ec5b9, macOS).
     let before = [
         ("rectangle", 0xa3b7_18f7_def1_2c12),
         ("square", 0xdfda_970d_f578_54ad),
