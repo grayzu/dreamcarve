@@ -81,9 +81,32 @@ phases bump the patch number.
   holds it to the floor ring, worked out again from the project, and
   round its tabs. Older files upgrade with `"cut_out": null` and export
   the same. The inlay quick start's male now cuts its plug out.
+- **A rounded male band; format version 24.** An Inlay can hold
+  `outline_rounding_mm`, `null` or a radius above 0 (`inlay_outline_rounding`
+  otherwise): the male's band is the design grown by `margin_mm` and
+  closed by that radius, so its outer edge no longer copies every notch of
+  the design (the dip between two letters, the inside of a C), and the
+  cut-out follows the same rounding. Older files upgrade with
+  `"outline_rounding_mm": null`. The inlay quick start rounds its band by
+  10 mm.
 
 ### Changed
 
+- **The male Inlay's band edge is cut upright by the end mill.** When a
+  male Inlay has a clearing pass whose end mill fits the band's flat floor
+  (`margin_mm − plug_depth_mm · tan(α/2)` at least its diameter, and room
+  for the V-bit's flank at the plug's foot), that pass clears the floor
+  out to the band's outer edge and cuts the edge upright; the V-bit cuts
+  only the plug's walls, the narrow places and the floor's corners, and
+  no longer a sloped wall round the band's edge. The safety pass holds the
+  V-bit's whole cone inside the band up to the stock top. The cut-out
+  moves to the middle of the wider floor, `(margin_mm + plug_depth_mm ·
+  tan(α/2)) / 2` out, and needs only `margin_mm ≥ plug_depth_mm ·
+  tan(α/2) + d`. When the Inlay has clearing passes but none fits,
+  `inlay_band_edge_v_wall` warns and names the margin needed. Every
+  existing male with a fitting clearing pass exports a different program:
+  no release has shipped the Inlay, and a version 22 or 23 file exports
+  as the same project written at version 24.
 - **A lettered inlay example.** The inlay quick start, "An inlay pair",
   and the Inlay chapter now inlay the monogram "DC" in Droid Serif Bold
   (`tests/fixtures/dc-inlay.svg`, `dc-female.dcv`, `dc-male.dcv`) on a

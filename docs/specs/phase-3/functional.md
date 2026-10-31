@@ -265,6 +265,14 @@ is no GUI in this phase.
     VCarve's drawn boundary): how far beyond the design's outer outlines
     the male's surround is carved. Used by the male only; the female
     ignores it.
+    - `outline_rounding_mm` (format 24, added 2026-10-31 in #448): `null`
+    or a radius above 0 (`inlay_outline_rounding` otherwise) the male's
+    band is rounded by, so its outer edge need not follow the plug's
+    shape: the band is the design grown by `margin_mm` and **closed** by
+    the radius (grown by `margin_mm` plus it, then shrunk by it), so its
+    inward curves are no tighter than the radius and notches and gaps
+    narrower than about twice it fill. Male only; the female ignores it.
+    A user-drawn boundary, as VCarve's and Corbin's, is #449.
      With `side: "female"` the operation is a V-Carve of its targets with
      `flat_depth_mm: depth_mm` and start depth 0, move for move. With
      `side: "male"` the targets are **mirrored** left to right in place,
@@ -272,9 +280,22 @@ is no GUI in this phase.
      the plug is turned over onto the pocket; `export` and `check` say so
      once per male operation (`inlay_male_mirrored`). The male then
      V-carves the **surround**: the mirrored outlines offset outward by
-     `margin_mm`, minus the mirrored design, so the band round the design
-     and every hole in the design (a circle inside a star) is carved and
-     the design stands. Its start plane is `depth_mm − glue_gap_mm` below
+     `margin_mm` and rounded, minus the mirrored design, so the band round
+     the design and every hole in the design (a circle inside a star) is
+     carved and the design stands. The band's **outer edge** (changed in
+     #448 after the maintainer's preview of a lettered male): when a
+     clearing pass's end mill fits the band's flat floor (`margin_mm −
+     plug_depth_mm · tan(α/2)` at least its diameter; the first that
+     does, the edge pass) and the margin leaves room for the V-bit's flank
+     at the plug's foot (`margin_mm ≥ (depth_mm − glue_gap_mm + 2 ·
+     plug_depth_mm) · tan(α/2)`), the end mill clears the floor out to
+     the edge and cuts it upright, the band rounded by at least the end
+     mill's radius, and the V-bit carves only the walls against the design
+     and the floor no end mill reaches, its cone never crossing the edge
+     below the stock top. Otherwise the V-bit cuts the edge as a V wall,
+     and with clearing passes `inlay_band_edge_v_wall` names the margin
+     that would open it. Only the walls against the design mate with the
+     female; past the cut-out everything is waste. Its start plane is `depth_mm − glue_gap_mm` below
      the stock top and its flat depth `plug_depth_mm`, so the surround's
      floor is `depth_mm − glue_gap_mm + plug_depth_mm` deep. At the start
      plane the plug's walls pass exactly through the mirrored outline;
@@ -299,11 +320,13 @@ is no GUI in this phase.
      (`cut_out`, format 23, added 2026-10-30 in #443; Corbin's optional
      "Plug Cutout", a contour toolpath "with or without tabs"): a flat end
      mill (`tool`; `cutter_not_flat` otherwise) runs On line round the
-     mirrored design's outer outlines grown by `margin_mm / 2`, in the
-     middle of the band's flat floor, which lies between the design grown
-     by `plug_depth_mm · tan(α/2)` and by `margin_mm − plug_depth_mm ·
-     tan(α/2)`; never at the band's outer edge, where the V wall would
-     leave a knife edge the board's full height round the freed piece. Its
+     mirrored design's outer outlines, rounded as the band is, in the
+     middle of the band's flat floor, which runs from the design grown by
+     `plug_depth_mm · tan(α/2)` out to the band's edge when the edge is
+     open (so `(margin_mm + plug_depth_mm · tan(α/2)) / 2` out), or to
+     `margin_mm − plug_depth_mm · tan(α/2)` with a V wall (`margin_mm /
+     2` out); never at the band's outer edge, where a V wall would leave
+     a knife edge the board's full height round the freed piece. Its
      passes start at the floor and go through the board to its own
      `through_cut_allowance_mm`, with `tabs` as a Profile's tab request
      (heights from the stock bottom; `null` for none). It is the
@@ -551,13 +574,22 @@ Numbering continues from phase 2's 47.
  not. With `clearing: [t2]` (a 3.175 mm end mill) the male's first run
  clears the surround's floor at Z −5 and its V-bit floor cutting shrinks
  as in 51. With a `cut_out` by the 3.175 mm end mill (4 tabs, #443) the
- male's last run is the cut-out, `op1 (cut-out t2)`: every point of its
+     male's last run is the cut-out, `op1 (cut-out t2)`: every point of its
  tool-centre path is 4 mm from the mirrored star within 0.01 mm (the
  floor ring runs from 1.155 to 6.845 mm out, so its cutter stays at
  least its radius inside both edges); no lap runs above Z −5, and its
  last pass reaches Z −12 less the allowance; it never runs round the
  circle; and its passes below the tabs' top rise over all four. With
  `margin_mm: 4` the floor is 1.69 mm wide: `inlay_cut_out_no_room`.
+ With `clearing: [t2]` the band's edge is open (#448): no V-bit cut
+ comes within its cone's radius at the stock top of the band's edge,
+ and none within 1 mm; the end mill's outermost path at Z −5 is the
+ edge less its radius; without clearing the V wall is cut; with
+ `margin_mm: 4` the pass does not fit and `inlay_band_edge_v_wall`
+ names 4.33 mm. With `clearing: [t2]`, `outline_rounding_mm: 6` and the
+ cut-out, every point of the cut-out's path is `(8 + 1.155) / 2` =
+ 4.577 mm from the star closed by 10.577 mm, within 0.01 mm, and the
+ walls still mate within 0.02 mm (with `outline_rounding_mm: 12`).
 58. **Bitmap and placement.** `init fixtures/photo/gradient.png --width  100` (a 64 × 32 pixel picture) writes a project with one bitmap, 100 ×
  50 mm at the origin, and one Photo V-Carve naming it; `--height 50`
  gives the same; both flags, or neither, is an error. `image add  plaque.dcv gradient.png --width 60 --at 20,30` adds a bitmap whose
@@ -719,7 +751,8 @@ the same file with `side` changed. `tests/fixtures/dc-female.dcv` and
 `init`'s unused "Set me", `t2` the end mill, `t3` the V-bit; both set
 `thickness_mm: 12`, which the user replaces with each board's
 measurement. Every cut of both lies inside the 110 × 80 mm board with
-at least 3 mm to spare (the male's V-bit comes within 8.3 mm of an edge).
+at least 3 mm to spare (the male's clearing pass, which cuts the band's
+edge, comes within 10.3 mm of an edge).
 
 
 | Item         | Value                                                                                                |
@@ -728,9 +761,9 @@ at least 3 mm to spare (the male's V-bit comes within 8.3 mm of an edge).
 | Male board   | a contrasting dark hardwood (walnut), nominal 12 mm, 110 × 80 mm stock                               |
 | T1           | 60° V-bit, 6.35 mm diameter (cone height 5.5 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t3`) |
 | T2           | 3.175 mm two-flute upcut end mill, at least 14.2 mm of flute (12 mm board + 0.2 mm through + 2 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
-| Inlay        | `op1` `DC`, targets the two letters; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
+| Inlay        | `op1` `DC`, targets the two letters; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `outline_rounding_mm: 10` (#448), `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
 | dc-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `dc-female-1-T2.nc` to Z −4, about 30 s, then `dc-female-2-T1.nc`, about 1 min 6 s); prints `unused_tool` and `entry_fallback` (the C's stroke has no room for the clearing pass's ramp, so it plunges there) |
-| dc-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (three runs: `dc-male-1-T2.nc` to Z −5, about 3 min 11 s, `dc-male-2-T1.nc`, about 1 min 4 s, then the cut-out `dc-male-3-T2.nc` from the floor to Z −12.2, about 1 min 32 s); prints `unused_tool`, `inlay_male_mirrored` at X = 55 mm and `tool_change_avoidable` (the order is required) |
+| dc-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (three runs: `dc-male-1-T2.nc` to Z −5, which clears the band out to its edge and cuts the edge upright, about 5 min 26 s, `dc-male-2-T1.nc`, the plug's walls and the floor's corners, about 47 s, then the cut-out `dc-male-3-T2.nc` from the floor to Z −12.2, 4.577 mm out from the letters, about 1 min 17 s; changed in #448 from 3 min 11 s, 1 min 4 s and 1 min 32 s with a V-walled edge); prints `unused_tool`, `inlay_male_mirrored` at X = 55 mm and `tool_change_avoidable` (the order is required) |
 | Safe Z       | 10 mm                                                                                                |
 | Controller   | grblHAL, one program per tool run                                                                    |
 

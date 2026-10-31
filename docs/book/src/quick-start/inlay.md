@@ -13,8 +13,9 @@ boards:
 - the **male** board, the dark one, gets a **plug**: the letters,
   mirrored, so that they read as a reversed "DC", standing 5 mm proud of
   a flat band carved round them, with walls sloping the other way, and a
-  hole where the D's counter is; the end mill then cuts the plug free of
-  the board, on a rim of the band. Turned over, the plug fits the pocket:
+  hole where the D's counter is. The band's outer edge is an upright
+  wall the end mill cuts, its inward curves rounded off; the end mill
+  then cuts the plug free of the board, on a rim of the band. Turned over, the plug fits the pocket:
   its walls meet the pocket's walls, and its face stops 1 mm short of the
   pocket's floor, which leaves room for glue.
 
@@ -65,8 +66,8 @@ below), 3 mm apart and 73.4 mm across together; and a 90 × 60 mm
 rectangle round them, the **frame**. Nothing cuts the frame. It is there
 because `init` makes the stock the drawing plus 10 mm all round: with the
 frame, the stock is 110 × 80 mm with the letters at its centre, and the
-male's band, which reaches about 10 mm beyond the letters, keeps more than
-8 mm of board at every edge.
+male's band, which reaches 8 mm beyond the letters, keeps more than 10 mm
+of board at every edge.
 
 ## 2. Create the two projects
 
@@ -238,6 +239,7 @@ In both files, replace the whole `"operations"` block, from
     "glue_gap_mm": 1.0,
     "plug_depth_mm": 2.0,
     "margin_mm": 8.0,
+    "outline_rounding_mm": 10.0,
     "clearing": [
       { "tool": "t2", "strategy": "offset", "direction": "climb", "entry": { "ramp": { "angle_deg": 15.0 } } }
     ],
@@ -261,7 +263,8 @@ One **Inlay** operation describes both sides with the same four values;
 | `glue_gap_mm` | 1 | The plug's face stops 1 mm above the pocket's floor (Corbin's "Inlay Fit Adjustment"). It is the value you change to adjust the fit. |
 | `plug_depth_mm` | 2 | The male's flat band is cut 2 mm deeper than the plug's walls need, so the seated plug's backing stands 2 mm clear of the female, room to saw it off. |
 | `margin_mm` | 8 | The male's band reaches 8 mm beyond the letters (Corbin's "Plug Stock Offset"). The female ignores it. |
-| `clearing` | `t2` | The end mill clears the flat floor first, on either side; the V-bit then cuts the walls and the corners the end mill cannot reach. |
+| `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. The female ignores it. |
+| `clearing` | `t2` | The end mill clears the flat floor first, on either side; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
 | `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |
 | `cut_out` | `null` | No cut-out here; the male gets one in the next step. |
@@ -285,9 +288,9 @@ change a value in one, change it in the other.
 
 The **cut-out** is the male's last pass: the end mill (`t2`) cuts the
 plug free of its board, so you need not saw it out. It runs in the
-middle of the band's flat floor, half the margin (4 mm) out from the
-mirrored letters, from the floor 5 mm down through the board and 0.2 mm
-into the spoilboard (`through_cut_allowance_mm`). Four **tabs**, 6 mm
+middle of the band's flat floor, 4.577 mm out from the mirrored letters
+and rounded as the band is, from the floor 5 mm down through the board
+and 0.2 mm into the spoilboard (`through_cut_allowance_mm`). Four **tabs**, 6 mm
 long and 3 mm tall from the bottom of the board, hold the plug in place
 until you cut them. Only the male has a cut-out; on the female it is an
 error.
@@ -297,10 +300,10 @@ board, so the end mill's flutes must be at least the board's thickness
 plus the through-cut allowance plus 2 mm long: 12 + 0.2 + 2 = 14.2 mm
 here. Many 1/8 in end mills have only 12.7 mm (1/2 in) of flute. If
 yours is shorter, use one with longer flutes for the cut-out; or a
-6.35 mm end mill, which needs a wider band (`margin_mm` at least 8.66,
-so 10, in both projects: see [Cutting the plug
-free](../user-guide/inlay.md#cutting-the-plug-free)); or set `"cut_out":
-null` and saw the plug free.
+6.35 mm end mill, which the 8 mm band still holds (it needs `margin_mm`
+at least 7.505 while the 3.175 mm end mill clears the floor: see
+[Cutting the plug free](../user-guide/inlay.md#cutting-the-plug-free));
+or set `"cut_out": null` and saw the plug free.
 
 ## 7. Check the projects
 
@@ -327,20 +330,20 @@ dc-female.dcv: 0 error(s), 2 warning(s)
 dc-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; the cut-out frees the plug 4.000 mm out from the design, in the floor, through the board to 0.200 mm below it.
+Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug 4.577 mm out from the design, in the floor, through the board to 0.200 mm below it.
 Program 1 (T2):
-  Extents (machine coordinates, mm, tool centre): X 13.069..96.939, Y 14.176..65.821, Z -5.000..10.000
-    The cutter's edge reaches X 11.481..98.527, Y 12.588..67.409; keep clamps outside that.
-  Estimated time: 3 min 11 s (cutting 3 min 8 s, dwells 3 s); 872 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
+    The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
+  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 2 (T1):
-  Extents (machine coordinates, mm, tool centre): X 11.481..98.526, Y 12.587..67.409, Z -5.000..10.000
-    The cutter's edge reaches X 8.306..101.701, Y 9.412..70.584; keep clamps outside that.
-  Estimated time: 1 min 4 s (cutting 1 min 1 s, dwells 3 s); 272 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
+    The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
+  Estimated time: 47 s (cutting 44 s, dwells 3 s); 418 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 3 (T2):
-  Extents (machine coordinates, mm, tool centre): X 14.316..95.681, Y 15.435..64.568, Z -12.200..10.000
-    The cutter's edge reaches X 12.729..97.269, Y 13.847..66.155; keep clamps outside that.
-  Estimated time: 1 min 32 s (cutting 1 min 29 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 5 min 48 s (cutting 5 min 39 s, dwells 9 s); 1.2 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Extents (machine coordinates, mm, tool centre): X 13.744..96.260, Y 14.852..65.144, Z -12.200..10.000
+    The cutter's edge reaches X 12.156..97.848, Y 13.265..66.732; keep clamps outside that.
+  Estimated time: 1 min 17 s (cutting 1 min 14 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 7 min 29 s (cutting 7 min 20 s, dwells 9 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-male.dcv: 0 error(s), 3 warning(s)
 ```
 
@@ -420,41 +423,44 @@ Post-processor grblhal.
   op1 (clearing t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 5.000 mm deep
   op1 `DC`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 5.000 mm deep
   op1 (cut-out t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 12.200 mm deep
-dc-male-1-T2.nc (1034 lines):
-  Extents (machine coordinates, mm, tool centre): X 13.069..96.939, Y 14.176..65.821, Z -5.000..10.000
-    The cutter's edge reaches X 11.481..98.527, Y 12.588..67.409; keep clamps outside that.
-  Estimated time: 3 min 11 s (cutting 3 min 8 s, dwells 3 s); 872 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-2-T1.nc (1387 lines):
-  Extents (machine coordinates, mm, tool centre): X 11.481..98.526, Y 12.587..67.409, Z -5.000..10.000
-    The cutter's edge reaches X 8.306..101.701, Y 9.412..70.584; keep clamps outside that.
-  Estimated time: 1 min 4 s (cutting 1 min 1 s, dwells 3 s); 272 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-3-T2.nc (324 lines):
-  Extents (machine coordinates, mm, tool centre): X 14.316..95.681, Y 15.435..64.568, Z -12.200..10.000
-    The cutter's edge reaches X 12.729..97.269, Y 13.847..66.155; keep clamps outside that.
-  Estimated time: 1 min 32 s (cutting 1 min 29 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 5 min 48 s (cutting 5 min 39 s, dwells 9 s); 1.2 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; the cut-out frees the plug 4.000 mm out from the design, in the floor, through the board to 0.200 mm below it.
+dc-male-1-T2.nc (8822 lines):
+  Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
+    The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
+  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-male-2-T1.nc (605 lines):
+  Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
+    The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
+  Estimated time: 47 s (cutting 44 s, dwells 3 s); 418 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-male-3-T2.nc (246 lines):
+  Extents (machine coordinates, mm, tool centre): X 13.744..96.260, Y 14.852..65.144, Z -12.200..10.000
+    The cutter's edge reaches X 12.156..97.848, Y 13.265..66.732; keep clamps outside that.
+  Estimated time: 1 min 17 s (cutting 1 min 14 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 7 min 29 s (cutting 7 min 20 s, dwells 9 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug 4.577 mm out from the design, in the floor, through the board to 0.200 mm below it.
 ```
 
 Each **tool run** is a program: on either side the end mill's clearing
 pass first, then the V-bit, and on the male the end mill's cut-out last.
 The female takes about a minute and a half of cutting, the male about
-six minutes, not counting rapids or tool changes.
+seven and a half minutes, not counting rapids or tool changes.
 
 | Program | Bit | What it cuts |
 | --- | --- | --- |
 | `dc-female-1-T2.nc` | 3.175 mm end mill | The pocket's flat floor, 4 mm deep, in the wide parts of both letters, round the D's counter |
 | `dc-female-2-T1.nc` | 60° V-bit | The pocket's walls, from the surface down to the floor, the serifs and thin strokes the end mill cannot enter, and the floor's corners |
-| `dc-male-1-T2.nc` | 3.175 mm end mill | The band's flat floor round the plug, 5 mm deep, and the floor of the hole where the D's counter is |
-| `dc-male-2-T1.nc` | 60° V-bit | The plug's walls, the band's outer wall, the narrow gap between the letters, and the floor's corners |
-| `dc-male-3-T2.nc` | 3.175 mm end mill | The cut-out: round both letters in the band's floor, 4 mm out from them, from the floor through the board, leaving four tabs 3 mm tall |
+| `dc-male-1-T2.nc` | 3.175 mm end mill | The band's flat floor round the plug, 5 mm deep, out to the band's outer edge, which it cuts upright, and the floor of the hole where the D's counter is |
+| `dc-male-2-T1.nc` | 60° V-bit | The plug's walls, the narrow gap between the letters, and the floor's corners by the plug's foot |
+| `dc-male-3-T2.nc` | 3.175 mm end mill | The cut-out: round both letters in the band's floor, about 4.6 mm out from them, from the floor through the board, leaving four tabs 3 mm tall |
 
 Each program passed the safety checks before it was written, including
 the one that holds the V-bit's whole cone, not just its tip, to the
 material its side may cut: the letters for the female, the band round the
 mirrored letters for the male ([Safety](../user-guide/safety.md), rule 14).
-The cut-out is held to the band's flat floor, its whole cutter at least
-clear of the plug's wall and the band's outer wall, and round its tabs.
+The V-bit is also held clear of the band's outer edge: beyond it the
+board stands to its full height, so no part of the bit's cone may cross
+that edge below the top. The cut-out is held to the band's flat floor,
+its whole cutter clear of the plug's wall and the band's outer edge, and
+round its tabs.
 
 ## 9. Read the programs
 
@@ -466,7 +472,7 @@ The clearing passes are named after the operation:
 ( Tool 2: 1/8 end mill )
 ```
 
-The male's V-bit program starts in the gap between the mirrored letters:
+The male's V-bit program starts in a corner by the reversed D's stem:
 
 <!-- doc-test: excerpt dc-male-2-T1.nc -->
 ```text
@@ -485,22 +491,25 @@ G54
 G0 Z10.000
 M3 S18000
 G4 P3.000
-X51.929 Y34.030
+X89.362 Y24.099
 Z1.000
 G1 Z-5.000 F300.000
 ```
 
-The bit comes down at (51.929, 34.030), between the reversed C on the
-left and the reversed D on the right. The letters there are 3 mm apart,
-too close for the end mill, so the V-bit clears that strip of floor
-itself, at the floor depth, Z −5, then traces the plug's foot round both
-letters and the D's counter, and the band's outer edge. The band reaches
-8 mm beyond the letters at the start plane; at the floor, 2 mm deeper,
-the bit's tip runs 2 × tan 30° = 1.155 mm inside that, so that its side
-cuts the band's outer wall at 30° from the vertical.
+The bit comes down at (89.362, 24.099), at the floor depth, Z −5, in the
+corner of the floor between the reversed D's stem and its bottom serif,
+where the end mill's round end could not reach. It clears the corners like it, and the 3 mm
+strip of floor between the reversed C on the left and the reversed D on
+the right, too narrow for the end mill, then traces the plug's foot
+round both letters and the D's counter, 2 × tan 30° = 1.155 mm out from
+them at the floor, so that its side cuts the plug's wall at 30° from the
+vertical up to the top. It never goes near the band's outer **edge**: the
+end mill cut that upright in the first program, out to 8 mm beyond the
+letters and round the dips between them in curves no tighter than
+10 mm.
 
-The cut-out comes down onto the floor below the reversed C and cuts its
-first lap 2 mm below the floor, Z −7:
+The cut-out comes down onto the floor above the gap between the letters
+and cuts its first lap 2 mm below the floor, Z −7:
 
 <!-- doc-test: contains dc-male-3-T2.nc -->
 ```text
@@ -509,14 +518,15 @@ first lap 2 mm below the floor, Z −7:
 G0 Z10.000
 M3 S18000
 G4 P3.000
-X29.917 Y15.452
+X57.791 Y60.302
 Z1.000
 G1 Z-7.000 F300.000
 ```
 
-It runs 4 mm out from the letters all the way round both, as one loop:
-across the 3 mm gap between them the band is solid, so it does not go
-between the letters. It never runs round the D's counter: that hole
+It runs in the middle of the floor, 4.577 mm out from the letters, all
+the way round both, as one loop, and rounded as the band's edge is:
+across the gap between the letters it bridges the dip in one smooth
+curve. It never runs round the D's counter: that hole
 stays in the plug. On its last two passes, at Z −11 and Z −12.2, it
 rises to Z −9, 3 mm above the bottom of the board, over each of the four
 tabs.
@@ -532,12 +542,13 @@ this inlay:
    over.
 2. **Fix the stock.** The `Extents` lines are boxes round the cuts. On
    the female, the cut stays inside the box from X 15.1 to 93.9 and Y 16.8
-   to 63.2 mm. On the male, the V-bit's box comes to within 8.3 mm of the
-   left and right edges and 9.4 mm of the front and back. Clamp at the
-   four corners, with low clamps, or hold the whole underside with
-   double-sided tape. The male's cut-out runs inside the band, so clamps
-   that clear the V-bit clear it too; the plug it frees is held by its
-   four tabs, not by the clamps.
+   to 63.2 mm. On the male, the end mill's first program reaches widest:
+   to within 10.3 mm of the left and right edges and 11.4 mm of the front
+   and back. Clamp at the four corners, with low clamps, or hold the
+   whole underside with double-sided tape. The male's V-bit and cut-out
+   run inside the band, so clamps that clear the first program clear
+   them too; the plug it frees is held by its four tabs, not by the
+   clamps.
 3. **Use a spoilboard**: the cut-out goes 0.2 mm into it. Do an air cut
    of each program with Z zero 20 mm above the board.
 
@@ -564,8 +575,9 @@ with Z zero on the top, `dc-male-2-T1.nc`.
 
 The plug is the reversed "DC" standing 5 mm proud of a flat band, its
 walls sloping out towards the band at the same angle, with a hole the
-shape of the D's counter in the D. The board outside the band is still
-at full thickness.
+shape of the D's counter in the D. The band's outer edge is an upright
+wall, 5 mm high, that curves smoothly round the letters. The board
+outside the band is still at full thickness.
 
 ## 13. Cut the plug free
 
@@ -575,23 +587,24 @@ plug must come out of its board. The third program does that.
 
 1. Fit the end mill again and set Z zero with it on the top of the
    board, outside the band. Keep X and Y zero. Run `dc-male-3-T2.nc`:
-   the end mill comes down onto the band's floor 4 mm out from the
-   letters and cuts round them, 2 mm a pass, through the board and
+   the end mill comes down onto the band's floor about 4.6 mm out from
+   the letters and cuts round them, 2 mm a pass, through the board and
    0.2 mm into the spoilboard. Below 3 mm from the bottom it lifts over
    four tabs, each 6 mm long, which hold the piece in the board.
 2. Cut the four tabs with a knife or a fine saw, and lift the piece out.
    Pare or sand what is left of each tab off its edge.
 
 What you keep is the plug on a backing 7 mm thick (12 mm less the 5 mm
-band), with a rim of the band's floor 4 mm wide round it. The rim is the
+band), with a rim of the band's floor round it, reaching about 3 mm out
+from the letters. The rim is the
 band's flat floor, 2 mm below the plug's start plane, so it clears the
 light board's surface when the plug is seated.
 
 Without a cut-out (`"cut_out": null`), saw the plug free instead: round
 the plug, through the board, inside the band, anywhere between the
-plug's foot and the band's outer wall. The band's flat floor is at
-least 5.7 mm wide; you need not follow the plug closely, only stay off
-both walls.
+plug's foot and the band's outer edge. The band's flat floor is at
+least 6.8 mm wide; you need not follow the plug closely, only stay off
+the plug's wall and the band's edge.
 
 ## 14. Test the fit
 
