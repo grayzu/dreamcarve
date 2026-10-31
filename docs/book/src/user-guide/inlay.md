@@ -397,6 +397,12 @@ they show, and they are the part to treat gently when you saw and plane.
 Parts of a design narrower than the bit can reach into come out as fine
 V's on both sides.
 
+A notch in the design, such as the narrow V where a serif M's stem meets
+its diagonal, is a point of the surround the male carves: its V-bit runs
+into the notch right to its tip, at every angle, so the plug's wall there
+leans back exactly as the pocket's does. Wood left standing in a notch
+would hold the whole plug up.
+
 ## Gluing and planing
 
 1. Spread glue on the plug's walls and in the pocket. The gap under the
