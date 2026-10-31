@@ -32,53 +32,162 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
         .collect()
 }
 
-/// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
-/// Inlay" step 4): the area within `margin_mm` outside the design that the
-/// male carve removes around its plug. Every region's outer is offset
-/// outward by `margin_mm` with round joins, the offsets are united, and
-/// `regions` themselves are subtracted. Subtracting a region removes its
-/// outer and gives back its holes, so a hole in the design (a circle
-/// inside a star) comes back as a surround region of its own; holes are
-/// never offset. Overlapping margins merge into one region.
+/// A male inlay's band (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay" step 4; #448): the design's outers grown by `margin_mm` and
+/// closed by `rounding_mm`, `B = ((outers) ⊕ (M + R)) ⊖ R`, with round
+/// joins. Every region's outer is offset outward by `M + R`, the offsets
+/// are united, and the union is inset by `R` ([`floor_regions`]: its
+/// outers shrunk, its holes grown). Inward curves of the plain band
+/// tighter than `R` become arcs of radius `R`, and notches and gaps
+/// narrower than about `2R` fill; nothing reaches farther than the design
+/// grown by `M + R`, and no more than the plain band where it is convex.
+/// With `rounding_mm` 0 it is the union of the margin offsets exactly.
+/// Holes of the design are never offset.
 ///
-/// The subtraction is [`crate::difference`], so the result is polygonal:
-/// arcs are flattened to chords within `tolerance_mm`, and the area is off
-/// the exact one by at most `tolerance_mm` times the arc length flattened.
-/// Outers come back counter-clockwise and holes clockwise (mm, Y-up,
-/// ADR-0001), in [`crate::boolean()`]'s canonical order, so the same input
-/// gives the same regions. Empty when `regions` is empty or `margin_mm`
-/// is not a positive finite number (the caller validates the margin).
+/// The union is [`crate::union`], so the result is polygonal: arcs are
+/// flattened to chords within `tolerance_mm`. Outers come back
+/// counter-clockwise and holes clockwise (mm, Y-up, ADR-0001), in a fixed
+/// order, so the same input gives the same regions. Empty when `regions`
+/// is empty, `margin_mm` is not a positive finite number, or
+/// `rounding_mm` is not 0 or a positive finite number (the caller
+/// validates both).
 #[must_use]
-pub fn surround(regions: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Region> {
-    if !(margin_mm.is_finite() && margin_mm > 0.0) {
+pub fn rounded_band(
+    regions: &[Region],
+    margin_mm: f64,
+    rounding_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Region> {
+    if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
     }
-    let grown: Vec<Region> = regions
-        .iter()
-        .flat_map(|r| offset(r.outer(), margin_mm))
-        .filter_map(single_region)
-        .collect();
-    // The subject's regions overlap where margins meet; `difference` fills
-    // non-zero, so they count as their union.
-    difference(&grown, regions, tolerance_mm)
+    let united = union(
+        &grown_outers(regions, margin_mm + rounding_mm),
+        &[],
+        tolerance_mm,
+    );
+    if rounding_mm == 0.0 {
+        return united;
+    }
+    floor_regions(&united, rounding_mm, tolerance_mm)
 }
 
-/// The outermost outlines of `regions` grown by `distance_mm`: a male
-/// inlay's cut-out path (`docs/specs/phase-3/design.md`, "Algorithms →
-/// Inlay", step 6; #443), which the generator cuts and the safety pass
-/// holds it to. Every region's outer is offset outward by `distance_mm`
-/// with round joins; holes are never offset. Of the offsets, only those
-/// inside no other come back, counter-clockwise (mm, Y-up), in the order
-/// of `regions`: an island in a design hole, whose offset lies inside its
-/// part's, is not cut round. When the offsets lie apart they come back as
-/// they are and keep their arcs; when they touch or cross they are united
-/// with [`crate::union`], which flattens arcs within `tolerance_mm`, and
-/// the union's outers come back in its canonical order. Empty when
-/// `regions` is empty or `distance_mm` is not a positive finite number.
+/// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay" step 4): the area of its band ([`rounded_band`], `margin_mm`
+/// beyond the design, closed by `rounding_mm`; #448) outside the design,
+/// which the male carve removes around its plug. `regions` themselves are
+/// subtracted from the band. Subtracting a region removes its outer and
+/// gives back its holes, so a hole in the design (a circle inside a star)
+/// comes back as a surround region of its own, with walls all round;
+/// holes are never offset. Overlapping margins merge into one region.
+///
+/// With `rounding_mm` 0 the band is the margin offsets themselves, which
+/// [`crate::difference`] fills non-zero, so they count as their union:
+/// exactly the plain surround. The subtraction flattens arcs to chords
+/// within `tolerance_mm`, and the area is off the exact one by at most
+/// `tolerance_mm` times the arc length flattened. Outers come back
+/// counter-clockwise and holes clockwise (mm, Y-up, ADR-0001), in
+/// [`crate::boolean()`]'s canonical order, so the same input gives the
+/// same regions. Empty as [`rounded_band`] is.
 #[must_use]
-pub fn outer_offset(regions: &[Region], distance_mm: f64, tolerance_mm: f64) -> Vec<Contour> {
-    if !(distance_mm.is_finite() && distance_mm > 0.0) {
+pub fn surround(
+    regions: &[Region],
+    margin_mm: f64,
+    rounding_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Region> {
+    if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
+    }
+    let band = if rounding_mm == 0.0 {
+        grown_outers(regions, margin_mm)
+    } else {
+        rounded_band(regions, margin_mm, rounding_mm, tolerance_mm)
+    };
+    difference(&band, regions, tolerance_mm)
+}
+
+/// The floor of a male inlay's surround, flat `inset_mm` (`P·tan(α/2)`)
+/// below its start plane (`docs/specs/phase-3/design.md`, "Algorithms →
+/// Inlay", step 4; #448). With a V-walled outer edge (`open_edge` false)
+/// it is [`floor_regions`] of `surround`: every wall inset. With an open
+/// edge, which an end mill cuts upright, a band region (one outside every
+/// outer of `design`, the mirrored design nested) keeps its outer edge
+/// where it is and loses only the design's outers grown by `inset_mm`
+/// (the plug's foot), cut with [`crate::difference`] within
+/// `tolerance_mm`; a region inside a design outer (a design hole) has
+/// walls all round and is inset as with a V wall. Outers come back
+/// counter-clockwise and holes clockwise, region by region in the order
+/// of `surround`.
+#[must_use]
+pub fn surround_floor_regions(
+    surround: &[Region],
+    design: &[Region],
+    inset_mm: f64,
+    open_edge: bool,
+    tolerance_mm: f64,
+) -> Vec<Region> {
+    if !open_edge {
+        return floor_regions(surround, inset_mm, tolerance_mm);
+    }
+    let foot = grown_outers(design, inset_mm);
+    surround
+        .iter()
+        .flat_map(|region| {
+            if is_design_hole(region, design) {
+                inset_region(region, inset_mm, tolerance_mm)
+            } else {
+                difference(std::slice::from_ref(region), &foot, tolerance_mm)
+            }
+        })
+        .collect()
+}
+
+/// Whether surround region `region` lies inside an outer of `design`: a
+/// hole of the design, not the band round it. Its outer's first vertex is
+/// tested, which for a hole region lies on the design hole's outline,
+/// inside its part's outer.
+#[must_use]
+pub fn is_design_hole(region: &Region, design: &[Region]) -> bool {
+    let Some(probe) = region.outer().polyline().vertices().first() else {
+        return false;
+    };
+    design.iter().any(|d| {
+        single_region(d.outer().clone()).is_some_and(|outer| outer.contains_point(probe.point()))
+    })
+}
+
+/// The outermost outlines of `regions` grown by `distance_mm` and closed
+/// by `rounding_mm`: a male inlay's cut-out path
+/// (`docs/specs/phase-3/design.md`, "Algorithms → Inlay", step 6; #443,
+/// #448), `((outers) ⊕ (c + R)) ⊖ R`, which the generator cuts and the
+/// safety pass holds it to. Every region's outer is offset outward by
+/// `distance_mm + rounding_mm` with round joins; holes are never offset.
+/// With no rounding, of the offsets only those inside no other come back,
+/// counter-clockwise (mm, Y-up), in the order of `regions`: an island in a
+/// design hole, whose offset lies inside its part's, is not cut round.
+/// When the offsets lie apart they come back as they are and keep their
+/// arcs; when they touch or cross they are united with [`crate::union`],
+/// which flattens arcs within `tolerance_mm`, and the union's outers come
+/// back in its canonical order. With a rounding the union is inset by it
+/// ([`rounded_band`]) and its outers come back. Empty when `regions` is
+/// empty, `distance_mm` is not a positive finite number, or
+/// `rounding_mm` is not 0 or one.
+#[must_use]
+pub fn outer_offset(
+    regions: &[Region],
+    distance_mm: f64,
+    rounding_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Contour> {
+    if !(usable(distance_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
+        return Vec::new();
+    }
+    if rounding_mm > 0.0 {
+        return rounded_band(regions, distance_mm, rounding_mm, tolerance_mm)
+            .into_iter()
+            .map(|r| r.outer().clone())
+            .collect();
     }
     let grown: Vec<Contour> = regions
         .iter()
@@ -97,6 +206,21 @@ pub fn outer_offset(regions: &[Region], distance_mm: f64, tolerance_mm: f64) -> 
     union(&subject, &[], tolerance_mm)
         .into_iter()
         .map(|r| r.outer().clone())
+        .collect()
+}
+
+/// Whether `mm` is a positive finite length.
+fn usable(mm: f64) -> bool {
+    mm.is_finite() && mm > 0.0
+}
+
+/// Every region's outer offset outward by `distance_mm` with round joins,
+/// each the region it encloses; they may overlap.
+fn grown_outers(regions: &[Region], distance_mm: f64) -> Vec<Region> {
+    regions
+        .iter()
+        .flat_map(|r| offset(r.outer(), distance_mm))
+        .filter_map(single_region)
         .collect()
 }
 
@@ -262,7 +386,7 @@ mod tests {
             nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
         assert_eq!(design.len(), 1, "a star with a hole");
 
-        let s = surround(&design, 8.0, TOL);
+        let s = surround(&design, 8.0, 0.0, TOL);
         assert_eq!(s.len(), 2, "the band and the circle: {s:?}");
         let band = s
             .iter()
@@ -310,7 +434,7 @@ mod tests {
         .expect("squares nest");
         assert_eq!(design.len(), 3);
 
-        let s = surround(&design, 4.0, TOL);
+        let s = surround(&design, 4.0, 0.0, TOL);
         assert_eq!(s.len(), 2, "the merged pair and the lone square: {s:?}");
         let mut holes: Vec<usize> = s.iter().map(|r| r.holes().len()).collect();
         holes.sort_unstable();
@@ -323,7 +447,7 @@ mod tests {
         assert!((b.min.x + 4.0).abs() < TOL && (b.max.x - 30.0).abs() < TOL);
         assert!((b.min.y + 4.0).abs() < TOL && (b.max.y - 14.0).abs() < TOL);
         assert_eq!(
-            surround(&design, 4.0, TOL),
+            surround(&design, 4.0, 0.0, TOL),
             s,
             "the same input gives the same regions"
         );
@@ -338,7 +462,7 @@ mod tests {
     fn outer_offset_grows_only_the_outermost_outlines() {
         let (design, _) =
             nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
-        let grown = outer_offset(&design, 4.0, TOL);
+        let grown = outer_offset(&design, 4.0, 0.0, TOL);
         assert_eq!(grown.len(), 1, "{grown:?}");
         assert!(grown[0].is_ccw());
         assert!(
@@ -359,7 +483,7 @@ mod tests {
             rect(16.0, 0.0, 10.0, 10.0),
         ])
         .expect("squares nest");
-        let grown = outer_offset(&pair, 4.0, TOL);
+        let grown = outer_offset(&pair, 4.0, 0.0, TOL);
         assert_eq!(grown.len(), 1, "united: {grown:?}");
         let b = grown[0].polyline().bounds().expect("bounds");
         assert!((b.min.x + 4.0).abs() < TOL && (b.max.x - 30.0).abs() < TOL);
@@ -371,13 +495,13 @@ mod tests {
         ])
         .expect("nests");
         assert_eq!(island.len(), 2, "a ring and an island");
-        let grown = outer_offset(&island, 2.0, TOL);
+        let grown = outer_offset(&island, 2.0, 0.0, TOL);
         assert_eq!(grown.len(), 1, "{grown:?}");
         let b = grown[0].polyline().bounds().expect("bounds");
         assert!((b.min.x + 2.0).abs() < 1e-9 && (b.max.x - 42.0).abs() < 1e-9);
 
-        assert!(outer_offset(&design, 0.0, TOL).is_empty());
-        assert!(outer_offset(&design, f64::NAN, TOL).is_empty());
+        assert!(outer_offset(&design, 0.0, 0.0, TOL).is_empty());
+        assert!(outer_offset(&design, f64::NAN, 0.0, TOL).is_empty());
     }
 
     /// The surround's area is the margin offset's area minus the design's:
@@ -396,7 +520,7 @@ mod tests {
         .expect("design nests");
         let margin = 3.0;
 
-        let s = surround(&design, margin, TOL);
+        let s = surround(&design, margin, 0.0, TOL);
         let offset_area = 800.0 + 2.0 * margin * 60.0 + PI * margin * margin + PI * 64.0;
         let design_area = 750.0 + PI * 25.0;
         let arcs_mm = 2.0 * PI * (margin + 8.0 + 5.0);
@@ -407,8 +531,217 @@ mod tests {
             offset_area - design_area
         );
         assert!(
-            surround(&design, 0.0, TOL).is_empty(),
+            surround(&design, 0.0, 0.0, TOL).is_empty(),
             "no margin, no surround"
         );
+    }
+
+    // #448: the rounded band, the open floor and the rounded cut-out.
+
+    /// Whether `p` lies in one of `regions`, or within `slack_mm` of an
+    /// outline of one.
+    fn holds(regions: &[Region], p: Point, slack_mm: f64) -> bool {
+        regions.iter().any(|r| r.contains_point(p))
+            || regions.iter().any(|r| {
+                std::iter::once(r.outer())
+                    .chain(r.holes())
+                    .filter_map(|c| crate::nearest_point(c.polyline(), p))
+                    .any(|n| n.gap_mm <= slack_mm)
+            })
+    }
+
+    /// The star with its circle, a square beside it and an L, which has a
+    /// reflex corner: the design the rounding tests share.
+    fn notched_design() -> Vec<Region> {
+        let l = Contour::new(Polyline::new(
+            [
+                (60.0, -30.0),
+                (90.0, -30.0),
+                (90.0, -20.0),
+                (70.0, -20.0),
+                (70.0, 10.0),
+                (60.0, 10.0),
+            ]
+            .iter()
+            .map(|&(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        ))
+        .expect("an L");
+        let (design, _) = nest(vec![
+            star(),
+            circle(Point::new(0.0, 0.0), 6.0),
+            rect(40.0, -5.0, 10.0, 10.0),
+            l,
+        ])
+        .expect("the design nests");
+        design
+    }
+
+    /// #448: with no rounding the surround is the plain one, the union of
+    /// the margin offsets less the design, region for region, and the band
+    /// is the union of the offsets.
+    #[test]
+    fn rounding_zero_is_the_plain_surround() {
+        let design = notched_design();
+        let grown: Vec<Region> = design
+            .iter()
+            .flat_map(|r| offset(r.outer(), 8.0))
+            .filter_map(single_region)
+            .collect();
+        assert_eq!(
+            surround(&design, 8.0, 0.0, TOL),
+            difference(&grown, &design, TOL)
+        );
+        assert_eq!(
+            rounded_band(&design, 8.0, 0.0, TOL),
+            union(&grown, &[], TOL)
+        );
+    }
+
+    /// #448: rounding only adds: every outline point of the plain band
+    /// lies in the rounded band, whose area is at least the plain one's;
+    /// and the rounded band reaches no farther than the design grown by
+    /// the margin and the rounding.
+    #[test]
+    fn rounded_band_contains_the_plain_band() {
+        let design = notched_design();
+        let plain = rounded_band(&design, 8.0, 0.0, TOL);
+        for rounding in [2.0, 5.0, 12.0] {
+            let rounded = rounded_band(&design, 8.0, rounding, TOL);
+            assert!(!rounded.is_empty());
+            for p in plain
+                .iter()
+                .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+                .flat_map(|c| c.polyline().vertices().iter().map(|v| v.point()))
+            {
+                assert!(holds(&rounded, p, 2.0 * TOL), "R {rounding}: {p:?}");
+            }
+            assert!(
+                area_mm2(&rounded) >= area_mm2(&plain) - 1e-6,
+                "R {rounding}: {} < {}",
+                area_mm2(&rounded),
+                area_mm2(&plain)
+            );
+            let (reach, _) =
+                nest(outer_offset(&design, 8.0 + rounding, 0.0, TOL)).expect("the reach nests");
+            for p in rounded
+                .iter()
+                .flat_map(|r| r.outer().polyline().vertices().iter().map(|v| v.point()))
+            {
+                assert!(holds(&reach, p, 2.0 * TOL), "R {rounding}: {p:?}");
+            }
+        }
+    }
+
+    /// #448: two 10 mm squares 6 mm apart with a 2 mm margin leave a 2 mm
+    /// gap between their bands; the gap's centre is outside the plain
+    /// band and inside the band rounded by 5 mm, which fills gaps
+    /// narrower than about twice its radius. So is it in the surround.
+    #[test]
+    fn rounding_fills_a_gap_narrower_than_twice_the_radius() {
+        let (design, _) = nest(vec![
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(16.0, 0.0, 10.0, 10.0),
+        ])
+        .expect("squares nest");
+        let centre = Point::new(13.0, 5.0);
+        let plain = rounded_band(&design, 2.0, 0.0, TOL);
+        assert_eq!(plain.len(), 2, "two bands: {plain:?}");
+        assert!(!plain.iter().any(|r| r.contains_point(centre)));
+        let rounded = rounded_band(&design, 2.0, 5.0, TOL);
+        assert_eq!(rounded.len(), 1, "one band: {rounded:?}");
+        assert!(rounded[0].contains_point(centre));
+        assert!(
+            surround(&design, 2.0, 5.0, TOL)
+                .iter()
+                .any(|r| r.contains_point(centre))
+        );
+        assert!(
+            !surround(&design, 2.0, 0.0, TOL)
+                .iter()
+                .any(|r| r.contains_point(centre))
+        );
+    }
+
+    /// #448: the rounded surround is the band less the design, so the
+    /// star's circle, a hole of the design, is still a region of its own
+    /// with walls all round, whatever the rounding.
+    #[test]
+    fn rounding_keeps_design_holes_as_regions() {
+        let (design, _) =
+            nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
+        for rounding in [3.0, 12.0] {
+            let s = surround(&design, 8.0, rounding, TOL);
+            assert_eq!(s.len(), 2, "R {rounding}: the band and the circle: {s:?}");
+            let disc = s
+                .iter()
+                .find(|r| r.holes().is_empty())
+                .expect("the circle is a region of its own");
+            assert!(
+                (disc.area_mm2() - 36.0 * PI).abs() < TOL * 12.0 * PI,
+                "{}",
+                disc.area_mm2()
+            );
+            let band = s
+                .iter()
+                .find(|r| r.holes().len() == 1)
+                .expect("the band has the star as its hole");
+            let hole = band.holes()[0].polyline().bounds().expect("hole bounds");
+            for v in [hole.max.x, hole.max.y, -hole.min.x, -hole.min.y] {
+                assert!((v - 30.0).abs() < 1e-6, "the hole is the star: {hole:?}");
+            }
+        }
+    }
+
+    /// #448: the floor of a surround with an open outer edge keeps the
+    /// band's outer edge where it is and grows only the design's outers
+    /// by the inset; a design hole's floor is inset all round, as with a
+    /// V wall. With a V wall it is `floor_regions`.
+    #[test]
+    fn open_floor_keeps_the_band_edge() {
+        let (design, _) =
+            nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
+        let s = surround(&design, 8.0, 0.0, TOL);
+        assert_eq!(
+            surround_floor_regions(&s, &design, 1.0, false, TOL),
+            floor_regions(&s, 1.0, TOL)
+        );
+        let open = surround_floor_regions(&s, &design, 1.0, true, TOL);
+        assert_eq!(open.len(), 2, "{open:?}");
+        let ring = open
+            .iter()
+            .find(|r| !r.holes().is_empty())
+            .expect("the band's floor ring");
+        let b = ring.outer().polyline().bounds().expect("bounds");
+        for v in [b.max.x, b.max.y, -b.min.x, -b.min.y] {
+            assert!((v - 38.0).abs() < TOL, "the outer edge stays: {b:?}");
+        }
+        let foot = ring.holes()[0].polyline().bounds().expect("bounds");
+        for v in [foot.max.x, foot.max.y, -foot.min.x, -foot.min.y] {
+            assert!((v - 31.0).abs() < TOL, "the star grown by 1 mm: {foot:?}");
+        }
+        let disc = open
+            .iter()
+            .find(|r| r.holes().is_empty())
+            .expect("the circle's floor");
+        assert!((disc.area_mm2() - 25.0 * PI).abs() < TOL * 10.0 * PI);
+    }
+
+    /// #448: the cut-out path rounds as the band does: two squares 6 mm
+    /// apart grown by 2 mm are two outlines, rounded by 5 mm one, across
+    /// the gap; with no rounding it is the plain offset.
+    #[test]
+    fn outer_offset_rounds_across_a_gap() {
+        let (pair, _) = nest(vec![
+            rect(0.0, 0.0, 10.0, 10.0),
+            rect(16.0, 0.0, 10.0, 10.0),
+        ])
+        .expect("squares nest");
+        assert_eq!(outer_offset(&pair, 2.0, 0.0, TOL).len(), 2);
+        let rounded = outer_offset(&pair, 2.0, 5.0, TOL);
+        assert_eq!(rounded.len(), 1, "{rounded:?}");
+        let (region, _) = nest(rounded).expect("nests");
+        assert!(region[0].contains_point(Point::new(13.0, 5.0)));
     }
 }

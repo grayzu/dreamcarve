@@ -181,7 +181,8 @@ pub(crate) fn runs(
         .iter()
         .zip(&carve.shapes)
         .flat_map(|(region, shape)| {
-            flat.regions(region, tolerance_mm)
+            // #448: out to an open band edge.
+            flat.regions_of(carve, region, tolerance_mm)
                 .into_iter()
                 .map(move |f| (f, shape))
         })

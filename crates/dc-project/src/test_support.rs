@@ -65,7 +65,7 @@ pub fn tool_v_bit_90() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v23/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v24/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -287,6 +287,7 @@ pub fn sample_inlay() -> InlayOp {
         glue_gap_mm: Some(0.25),
         plug_depth_mm: Some(1.5),
         margin_mm: Some(6.0),
+        outline_rounding_mm: None,
         clearing: Vec::new(),
         step_over_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,

@@ -252,6 +252,30 @@ impl Walls {
     }
 }
 
+/// A male Inlay's open band edge (#448; `docs/specs/phase-3/design.md`,
+/// "Algorithms → Inlay", step 4): beyond these walls the board stands to
+/// the stock top, so the V-bit's cone may not cross them below it. The
+/// widest disc a cone cuts below the stock top is the one at the stock
+/// top, `(top − z) · slope` across for a tip at `z`.
+#[derive(Debug, Clone)]
+pub(crate) struct OpenEdgeWalls {
+    /// The band's edge, `B`.
+    pub walls: Walls,
+    /// The stock top, mm.
+    pub top_z_mm: f64,
+    /// The V-bit's `tan(α/2)`.
+    pub slope: f64,
+}
+
+impl OpenEdgeWalls {
+    /// Whether the straight move `a`–`b` keeps the cone's disc at the
+    /// stock top within the walls all along it, exactly
+    /// ([`Walls::least_room`]).
+    pub(crate) fn allows(&self, a: Point3, b: Point3) -> bool {
+        self.walls.least_room(a, b, self.top_z_mm, self.slope).0 >= 0.0
+    }
+}
+
 /// The minimiser in [0, 1] of convex `f`, by golden-section search.
 fn golden_minimum(f: &impl Fn(f64) -> f64) -> f64 {
     let ratio = (5.0_f64.sqrt() - 1.0) / 2.0;

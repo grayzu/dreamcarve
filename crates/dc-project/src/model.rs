@@ -1070,6 +1070,15 @@ pub struct InlayOp {
     /// the male only; required there.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub margin_mm: Option<f64>,
+    /// How far the male's band is rounded, millimetres, above 0 (format
+    /// 24, #448): the band's outer edge is the design grown by
+    /// `margin_mm` and closed by this radius, so its inward curves are no
+    /// tighter and notches and gaps narrower than about twice it fill; the
+    /// cut-out follows it. `None` (`init` and migration) rounds by nothing
+    /// but the edge pass's radius when the edge is open. Used by the male
+    /// only.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub outline_rounding_mm: Option<f64>,
     /// Clearing passes in cut order, largest tool first (capability 40),
     /// on either side. Empty by default: the V-bit clears its floor
     /// itself.
@@ -1095,10 +1104,11 @@ pub struct InlayOp {
 }
 
 /// A male Inlay's cut-out (format 23, #443; Corbin's "Plug Cutout"): a
-/// closed On line pass of a flat end mill round the plug, half the margin
-/// out from the mirrored design's outer outlines, so in the middle of the
-/// band's flat floor, from the floor down through the board, with tabs as
-/// a Profile's. The freed piece is the plug on a rim at floor height.
+/// closed On line pass of a flat end mill round the plug, in the middle of
+/// the band's flat floor ([`crate::MaleBand::cut_out_offset_mm`] out from
+/// the mirrored design's outer outlines, rounded as the band is; #448),
+/// from the floor down through the board, with tabs as a Profile's. The
+/// freed piece is the plug on a rim at floor height.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InlayCutOut {
@@ -1111,19 +1121,6 @@ pub struct InlayCutOut {
     /// How far below the stock bottom the cut-out may go, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub through_cut_allowance_mm: f64,
-}
-
-impl InlayCutOut {
-    /// The least `margin_mm` that leaves a cut-out of a tool `diameter_mm`
-    /// wide room in the band's flat floor, mm (#443): the floor ring lies
-    /// between the design grown by `P·tan(α/2)` and by `M − P·tan(α/2)`,
-    /// and the tool centre runs `M / 2` out, so the ring must hold the
-    /// diameter: `M ≥ 2·P·tan(α/2) + diameter`. `plug_depth_mm` is `P`,
-    /// `included_angle_deg` the V-bit's `α`.
-    #[must_use]
-    pub fn margin_needed_mm(plug_depth_mm: f64, included_angle_deg: f64, diameter_mm: f64) -> f64 {
-        2.0 * plug_depth_mm * (included_angle_deg.to_radians() / 2.0).tan() + diameter_mm
-    }
 }
 
 impl InlayOp {

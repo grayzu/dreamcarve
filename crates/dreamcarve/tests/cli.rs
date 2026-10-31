@@ -6382,28 +6382,37 @@ fn v22_project_exports_the_same_program() {
     let from_v22 = std::fs::read_to_string(dir.join("v22.nc")).expect("v22.nc written");
 
     let project = load_file(&v22).project;
-    assert_eq!(project.version, 23);
+    assert_eq!(project.version, dc_project::CURRENT_VERSION);
     let v23 = dir.join("v23.dcv");
     std::fs::write(&v23, save(&project).expect("project saves")).expect("dcv written");
     let saved = std::fs::read_to_string(&v23).expect("dcv readable");
-    assert!(saved.contains("\"version\": 23,"), "{saved}");
+    assert!(
+        saved.contains(&format!("\"version\": {},", dc_project::CURRENT_VERSION)),
+        "{saved}"
+    );
     let out = run(&dir, &["export", "v23.dcv", "--date", FIXED_DATE]);
     assert_eq!(out.status.code(), Some(0), "export v23: {}", stderr(&out));
     let from_v23 = std::fs::read_to_string(dir.join("v23.nc")).expect("v23.nc written");
     assert!(from_v22 == from_v23, "v22:\n{from_v22}\nv23:\n{from_v23}");
     assert!(!from_v22.is_empty());
 
-    // The inlay pair's male as a version 22 file: no `cut_out` line at all.
+    // The inlay pair's male as a version 22 file: no `cut_out` line at all,
+    // and no `outline_rounding_mm` (format 24, #448).
     let male = std::fs::read_to_string(tests_fixture("dc-male.dcv")).expect("fixture readable");
     let old: Vec<&str> = male
         .lines()
-        .filter(|l| !l.trim_start().starts_with("\"cut_out\":"))
+        .filter(|l| {
+            let l = l.trim_start();
+            !l.starts_with("\"cut_out\":") && !l.starts_with("\"outline_rounding_mm\":")
+        })
         .collect();
     let mut old = old.join("\n") + "\n";
     old = old
-        .replacen("\"version\": 23,", "\"version\": 22,", 1)
+        .replacen("\"version\": 24,", "\"version\": 22,", 1)
         .replacen("\"safe_z_mm\": 10.0,\n", "\"safe_z_mm\": 10.0\n", 1);
     assert!(!old.contains("cut_out"), "{old}");
+    assert!(!old.contains("outline_rounding_mm"), "{old}");
+    assert!(old.contains("\"version\": 22,"), "{old}");
     let sub = dir.join("dc");
     std::fs::create_dir_all(&sub).expect("folder created");
     std::fs::write(sub.join("old.dcv"), &old).expect("dcv written");
@@ -6425,6 +6434,69 @@ fn v22_project_exports_the_same_program() {
     assert!(!sub.join("old-3-T2.nc").exists());
 }
 
+/// Format 24 (#448): the outline rounding changes nothing an earlier file
+/// holds, so the version 23 fixture exports the same program as it is
+/// and once saved at version 24; and the inlay pair's male written as a
+/// version 23 file, with no `outline_rounding_mm` line, migrates to
+/// `"outline_rounding_mm": null` and exports the same three programs,
+/// byte for byte, as that project written at version 24.
+#[test]
+fn v23_project_exports_the_same_program() {
+    let dir = work_dir("v23_project_exports_the_same_program");
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dc-project/tests/fixtures/dcv/v23/sample.dcv");
+    let v23 = dir.join("v23.dcv");
+    std::fs::copy(&fixture, &v23).expect("fixture copied");
+    let text = std::fs::read_to_string(&v23).expect("dcv readable");
+    assert!(
+        text.contains("\"version\": 23,"),
+        "the fixture is a version 23 file"
+    );
+    let out = run(&dir, &["export", "v23.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v23: {}", stderr(&out));
+    let from_v23 = std::fs::read_to_string(dir.join("v23.nc")).expect("v23.nc written");
+    let project = load_file(&v23).project;
+    assert_eq!(project.version, 24);
+    let v24 = dir.join("v24.dcv");
+    std::fs::write(&v24, save(&project).expect("project saves")).expect("dcv written");
+    let saved = std::fs::read_to_string(&v24).expect("dcv readable");
+    assert!(saved.contains("\"version\": 24,"), "{saved}");
+    let out = run(&dir, &["export", "v24.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export v24: {}", stderr(&out));
+    let from_v24 = std::fs::read_to_string(dir.join("v24.nc")).expect("v24.nc written");
+    assert!(from_v23 == from_v24, "v23:\n{from_v23}\nv24:\n{from_v24}");
+    assert!(!from_v23.is_empty());
+
+    // The inlay pair's male as a version 23 file.
+    let male = std::fs::read_to_string(tests_fixture("dc-male.dcv")).expect("fixture readable");
+    let old: Vec<&str> = male
+        .lines()
+        .filter(|l| !l.trim_start().starts_with("\"outline_rounding_mm\":"))
+        .collect();
+    let old = (old.join("\n") + "\n").replacen("\"version\": 24,", "\"version\": 23,", 1);
+    assert!(!old.contains("outline_rounding_mm"), "{old}");
+    assert!(old.contains("\"version\": 23,"), "{old}");
+    let sub = dir.join("dc");
+    std::fs::create_dir_all(&sub).expect("folder created");
+    std::fs::write(sub.join("old.dcv"), &old).expect("dcv written");
+    let out = run(&sub, &["export", "old.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export old: {}", stderr(&out));
+    let project = load_file(&sub.join("old.dcv")).project;
+    let [Operation::Inlay(inlay)] = &project.operations[..] else {
+        panic!("one Inlay");
+    };
+    assert_eq!(inlay.outline_rounding_mm, None);
+    assert!(inlay.cut_out.is_some(), "the male still cuts its plug out");
+    std::fs::write(sub.join("new.dcv"), save(&project).expect("saves")).expect("dcv written");
+    let out = run(&sub, &["export", "new.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "export new: {}", stderr(&out));
+    for k in ["1-T2", "2-T1", "3-T2"] {
+        let a = std::fs::read_to_string(sub.join(format!("old-{k}.nc"))).expect("old written");
+        let b = std::fs::read_to_string(sub.join(format!("new-{k}.nc"))).expect("new written");
+        assert!(a == b, "{k}:\n{a}\n{b}");
+    }
+}
+
 /// The lowest Z any line of `program` moves to, mm.
 fn lowest_z(program: &str) -> f64 {
     program
@@ -6443,6 +6515,11 @@ const LETTERED_BOARD_MM: (f64, f64, f64) = (110.0, 80.0, 12.0);
 /// The board every cut of the lettered inlay pair leaves untouched at
 /// each edge, mm (#446).
 const LETTERED_BORDER_MM: f64 = 3.0;
+
+/// The lettered inlay pair's `outline_rounding_mm`, mm (#448): enough to
+/// smooth the dip over the letters and the pinch between them, within the
+/// board.
+const LETTERED_ROUNDING_MM: f64 = 10.0;
 
 /// The `warning: <code>:` codes in `report`, sorted, without repeats.
 fn warning_codes(report: &str) -> Vec<String> {
@@ -6587,6 +6664,13 @@ fn lettered_inlay_female_and_male_export() {
             ),
             (Some(4.0), Some(1.0), Some(2.0), Some(8.0), Some(0.1)),
             "{stem}: the test part's values"
+        );
+        // #448: both share the male's outline rounding; the female
+        // ignores it.
+        assert_eq!(
+            inlay.outline_rounding_mm,
+            Some(LETTERED_ROUNDING_MM),
+            "{stem}"
         );
         assert_approx_eq!(inlay.safe_z_mm, 10.0, 1e-12);
         let names: Vec<&str> = inlay
@@ -6738,11 +6822,13 @@ fn lettered_inlay_female_and_male_export() {
 /// #446: the lettered inlay pair fits its board, 110 × 80 mm. For every program of `dc-female.dcv` and `dc-male.dcv`, the box
 /// `export` reports the cutter's edge reaching (tool centre extents plus
 /// the radius, arcs included) leaves at least 3 mm of board at each edge;
-/// so does every cutting move's own end point, with the radius. The
-/// male's cut-out runs `margin_mm / 2` = 4 mm out from the mirrored
-/// letters: every point it cuts to, below the floor, is that far from the
-/// nearest mirrored outline, within the flatten tolerance plus the arc
-/// fit's.
+/// so does every cutting move's own end point, with the radius, with the
+/// male's band rounded by its `outline_rounding_mm` (#448). The male's
+/// band edge is open, so its cut-out runs in the middle of the floor
+/// ring, `c = (margin_mm + plug_depth_mm · tan 30°) / 2` = 4.577 mm out
+/// from the mirrored letters closed by `c + outline_rounding_mm`: every
+/// point it cuts to, below the floor, is that far from the closed
+/// letters, within the flatten tolerance plus the arc fit's.
 #[test]
 fn lettered_inlay_fits_its_board() {
     let (width_mm, height_mm, _) = LETTERED_BOARD_MM;
@@ -6819,12 +6905,46 @@ fn lettered_inlay_fits_its_board() {
         if stem == "dc-male" {
             let inlay = the_inlay(&project);
             let mirror = dc_cam::inlay::male_mirror(&project, &inlay.targets).expect("the mirror");
-            let mirrored: Vec<Polyline> = inlay_design(&project, inlay)
+            let tolerance_mm = project.flatten_tolerance_mm;
+            // #448: the band's edge is open (the end mill's clearing pass
+            // fits its floor ring), so the cut-out runs in the middle of
+            // the ring, `c = (M + P·tan 30°) / 2` out, on the letters
+            // grown by `c + R` and shrunk by `R`: `c` from the letters
+            // closed by `c + R`.
+            let rounding_mm = inlay
+                .outline_rounding_mm
+                .expect("the tutorial rounds the band");
+            let foot_mm =
+                inlay.plug_depth_mm.expect("the plug depth") * 30.0_f64.to_radians().tan();
+            let half_margin_mm = (inlay.margin_mm.expect("the male's margin") + foot_mm) / 2.0;
+            assert_approx_eq!(half_margin_mm, 4.577, 1e-3);
+            let contours: Vec<dc_geometry::Contour> = inlay_design(&project, inlay)
                 .iter()
-                .map(|p| mirror.apply_polyline(p).expect("the outline mirrors"))
+                .map(|p| {
+                    dc_geometry::Contour::new(mirror.apply_polyline(p).expect("mirrors"))
+                        .expect("a contour")
+                })
                 .collect();
-            let half_margin_mm = inlay.margin_mm.expect("the male's margin") / 2.0;
-            assert_approx_eq!(half_margin_mm, 4.0, 1e-12);
+            let (design, _) = dc_geometry::nest(contours).expect("the letters nest");
+            let close_mm = half_margin_mm + rounding_mm;
+            let grown: Vec<dc_geometry::Region> = design
+                .iter()
+                .flat_map(|r| dc_geometry::offset(r.outer(), close_mm))
+                .filter_map(|c| {
+                    dc_geometry::nest(vec![c])
+                        .ok()
+                        .and_then(|(r, _)| r.into_iter().next())
+                })
+                .collect();
+            let mirrored: Vec<Polyline> = dc_geometry::floor_regions(
+                &dc_geometry::union(&grown, &[], tolerance_mm),
+                close_mm,
+                tolerance_mm,
+            )
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .map(|c| c.polyline().clone())
+            .collect();
             let floor_z_mm = -5.0;
             let cut =
                 std::fs::read_to_string(dir.join("dc-male-3-T2.nc")).expect("cut-out written");
@@ -6862,8 +6982,9 @@ fn lettered_inlay_fits_its_board() {
 /// within the flatten tolerance of the other, both ways. "DC" is not
 /// symmetric, so the mirror shows: the female's letters, unmirrored, are
 /// more than 1 mm from some of the male's. And the male's cut-out, which
-/// runs 4 mm out from the mirrored letters, does not run 4 mm out from the
-/// female's.
+/// follows the mirrored letters (#448: 4.577 mm out from them, rounded),
+/// does not follow the female's: somewhere it is more than 1 mm off
+/// running 4 mm out from them.
 #[test]
 fn lettered_male_is_the_mirror_of_the_female() {
     let (dir, male_report, _) =

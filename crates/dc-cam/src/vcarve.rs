@@ -41,13 +41,15 @@ use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{MoveKind, Toolpath};
 use crate::warning::Warning;
-use cone::Walls;
-use dc_geometry::{Contour, EPS_MM, GeometryWarning, Point3, Region, nest};
+use cone::{OpenEdgeWalls, Walls};
+use dc_geometry::{
+    Contour, EPS_MM, GeometryWarning, Point3, Region, floor_regions, is_design_hole, nest,
+};
 use dc_project::{
     InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp, VCarveStrategy,
     cleared_start_plane,
 };
-use floor::{Floor, FloorCut};
+use floor::{Floor, FloorCut, OpenFloor};
 use medial::{Depth, Tolerances};
 
 /// What a V-bit carve is, independent of which operation asked for it:
@@ -81,6 +83,28 @@ pub struct Carve<'a> {
     pub step_over_fraction: Option<f64>,
     /// The clearing passes' tools, in order (#406).
     pub cleared_by: Vec<Clearing>,
+    /// A male Inlay's band edge when an end mill cuts it upright (#448);
+    /// `None` for every other carve, whose every wall is a V wall. Only
+    /// the medial strategy honours it.
+    pub open_edge: Option<OpenEdge>,
+}
+
+/// The open outer edge of a male Inlay's band (#448;
+/// `docs/specs/phase-3/design.md`, "Algorithms → Inlay", step 4). The
+/// carve's regions are still the surround, `band` less `design`, and its
+/// floor runs out to `band`'s edge, which the edge pass cuts upright. The
+/// V-bit carves only the walls against `design` and the floor no pass
+/// reaches, and its cone never crosses `band`'s edge below the stock top,
+/// where the board stands beyond it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OpenEdge {
+    /// The band, `B`: the design grown by the margin and closed by the
+    /// edge's rounding ([`dc_geometry::rounded_band`]).
+    pub band: Vec<Region>,
+    /// The mirrored design, nested.
+    pub design: Vec<Region>,
+    /// The stock top, mm.
+    pub top_z_mm: f64,
 }
 
 /// One clearing pass of a [`Carve`], as the carve needs it: what its end
@@ -347,6 +371,32 @@ pub fn blocks(
     };
     let flat = Floor::of(carve, bit.slope);
     let tolerance_mm = project.flatten_tolerance_mm;
+    // #448: the open edge, as the medial chains and the floor see it.
+    let edge_walls = carve.open_edge.as_ref().map(|edge| OpenEdgeWalls {
+        walls: Walls::new(&edge.band, tolerance_mm),
+        top_z_mm: edge.top_z_mm,
+        slope: bit.slope,
+    });
+    let open_floor = carve
+        .open_edge
+        .as_ref()
+        .zip(flat.as_ref())
+        .zip(edge_walls.as_ref())
+        .map(|((edge, flat), walls)| OpenFloor {
+            tip_room: floor_regions(
+                &edge.band,
+                (edge.top_z_mm - flat.z_mm) * bit.slope,
+                tolerance_mm,
+            ),
+            band: walls.walls.clone(),
+            design: Walls::new(&edge.design, tolerance_mm),
+        });
+    let is_band = |region: &Region| {
+        carve
+            .open_edge
+            .as_ref()
+            .is_some_and(|edge| !is_design_hole(region, &edge.design))
+    };
     let mut budget_warned = false;
     let mut out = Vec::new();
     let deepest = |shape: &ShapeRef, deepest_z_mm: f64| {
@@ -438,16 +488,20 @@ pub fn blocks(
         deepest(shape, depth.z_mm(widest_mm))?;
         // Step 6: the floor, where the region is wider than the groove at
         // the flat depth; the chains it covers are dropped.
+        // #448: a band region with an open edge floors out to the edge,
+        // and its V-bit keeps its cone off the edge.
+        let band = is_band(region);
         let floors = flat
-            .map(|f| f.regions(region, tolerance_mm))
+            .map(|f| f.regions_of(carve, region, tolerance_mm))
             .unwrap_or_default();
         let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
-        let runs = medial::runs(
+        let runs = medial::runs_within(
             &graph,
             &depth,
             Tolerances::at_step(step_mm),
             &walls,
             &floors,
+            edge_walls.as_ref().filter(|_| band),
         );
         let mut anchor = runs
             .last()
@@ -465,12 +519,13 @@ pub fn blocks(
                 safe_z_mm,
                 tolerance_mm,
             };
-            out.extend(floor::blocks(
+            out.extend(floor::blocks_open(
                 flat,
                 &floors,
                 &reached_by,
                 &cut,
                 &mut anchor,
+                open_floor.as_ref().filter(|_| band),
             )?);
         }
     }
@@ -600,6 +655,7 @@ pub fn generate_vcarve(
                 radius_mm: t.diameter_mm / 2.0,
             })
             .collect(),
+        open_edge: None,
     };
     let bit = checked_v_bit(&op.id, tool)?;
     let mut runs = clearing::runs(
@@ -685,6 +741,21 @@ pub(crate) fn finish(
         bit.cone_mm,
         project.flatten_tolerance_mm,
     )
+    .and_then(|()| {
+        // #448: beyond an open band edge the board stands to the stock
+        // top, so the cone is held to the edge there.
+        carve.open_edge.as_ref().map_or(Ok(()), |edge| {
+            cone_in_material(
+                &toolpath,
+                &edge.band,
+                edge.top_z_mm,
+                edge.top_z_mm,
+                bit.slope,
+                bit.cone_mm,
+                project.flatten_tolerance_mm,
+            )
+        })
+    })
     .map_err(|violation| {
         let at = match violation {
             ConeViolation::Wall { at, .. }

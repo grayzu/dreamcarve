@@ -201,7 +201,8 @@ written. There are no safety warnings, only errors.
       male. A clearing pass is held as a V-Carve's is, as a Pocket of the
       side's floor. A male's [cut-out](inlay.md#cutting-the-plug-free) is
       held to the band's flat floor ring round the mirrored design (the
-      surround's floor less the floors of the design's holes): the whole
+      surround's floor, out to the band's edge when a clearing pass cuts
+      it, less the floors of the design's holes): the whole
       width of its end mill stays inside the ring at every depth, since
       the carve has cleared the ring to the top and below the floor it
       cuts the board's base, which rule 1 bounds with the cut-out's own
@@ -244,12 +245,17 @@ written. There are no safety warnings, only errors.
     - the **male**: the **surround**, worked out again from the project
       with the geometry library alone, never from the generator: the
       targets mirrored about the middle of their bounding box, offset
-      outward by `margin_mm`, less the mirrored design. Its start plane
+      outward by `margin_mm` and rounded by `outline_rounding_mm` (or
+      the edge pass's radius), less the mirrored design. Its start plane
       is `depth_mm − glue_gap_mm` below the stock top and its flat depth
       `plug_depth_mm` below that. The plug's wood above the start plane
       is never cleared, so the shank check counts the flank from the
       stock top: `depth_mm − glue_gap_mm + plug_depth_mm` must fit the
-      cone.
+      cone. When a clearing pass cuts the band's outer edge upright
+      ([Inlay: the band's outer edge](inlay.md#the-bands-outer-edge)),
+      the board beyond that edge stands to the stock top, so the cone is
+      also held inside the band right up to the stock top: no part of it
+      may cross the edge below the top.
 
     Then every cutting move of the V-bit:
 

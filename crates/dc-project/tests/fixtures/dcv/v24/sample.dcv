@@ -1,0 +1,123 @@
+{
+  "version": 24,
+  "name": "Sample",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 100.0,
+    "height_mm": 100.0,
+    "thickness_mm": 6.0
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "6.35 mm upcut",
+      "vendor": null,
+      "product_id": null,
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": 2.0,
+      "step_over_fraction": 0.4
+    }
+  ],
+  "operations": [
+    {
+      "kind": "profile",
+      "id": "o1",
+      "name": "Cut out",
+      "enabled": true,
+      "targets": [
+        "i1"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": 6.0,
+      "step_down_mm": null,
+      "direction": "climb",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 5.0,
+      "tabs": {
+        "placement": {
+          "kind": "count",
+          "count": 4
+        },
+        "width_mm": 6.0,
+        "height_mm": 2.0,
+        "shape": "rect",
+        "on_holes": true,
+        "avoid_corners": false
+      },
+      "machining_order": "full_depth_first",
+      "entry": "plunge",
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "start": "auto"
+    }
+  ],
+  "tabs": [],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        10.0,
+        10.0
+      ],
+      "name": "Rectangle 1",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": 6.0,
+      "z_bottom_mm": 0.0
+    }
+  ],
+  "post_processor": {
+    "id": "grbl",
+    "definition_version": 1,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "Rectangle",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 0.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 0.0, "bulge": 0.0 },
+            { "x": 50.0, "y": 30.0, "bulge": 0.0 },
+            { "x": 0.0, "y": 30.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

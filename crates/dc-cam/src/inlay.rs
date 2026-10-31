@@ -37,17 +37,18 @@ use crate::error::{CamError, ShapeRef};
 use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::vcarve::{
-    self, Carve, Clearing, Targets, carve_regions, carve_regions_then, checked_v_bit, clearing,
-    floor::Floor,
+    self, Carve, Clearing, OpenEdge, Targets, carve_regions, carve_regions_then, checked_v_bit,
+    clearing, floor::Floor,
 };
 use crate::warning::Warning;
 use dc_geometry::{
-    Contour, EPS_MM, Polyline, Rect, Region, Transform, nearest_point, outer_offset, surround,
+    Contour, EPS_MM, Polyline, Rect, Region, Transform, nearest_point, outer_offset, rounded_band,
+    surround,
 };
 use dc_project::{
-    CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
-    INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, Operation, OperationId,
-    ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy,
+    BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
+    INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
+    OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy, male_band,
 };
 
 /// Both sides carve along the medial lines; an Inlay has no strategy of
@@ -164,6 +165,10 @@ impl Values {
                 Some(margin_mm)
             }
         };
+        // #448: as validation's `inlay_outline_rounding`, on either side.
+        if let Some(rounding_mm) = op.outline_rounding_mm {
+            positive("outline_rounding_mm", rounding_mm)?;
+        }
         Ok(Self {
             depth_mm,
             glue_gap_mm,
@@ -217,6 +222,11 @@ pub(crate) struct Side {
     /// The male's mirrored design, nested, whose outer outlines its
     /// cut-out runs round (#443); empty for the female.
     pub design: Vec<Region>,
+    /// The male's band (#448): its edge and roundings, from
+    /// [`dc_project::male_band`]; `None` for the female.
+    pub band: Option<MaleBand>,
+    /// The male's band edge when a clearing pass cuts it upright (#448).
+    pub open_edge: Option<OpenEdge>,
 }
 
 /// The side `op` of `project` carves (design steps 2 to 4). Warnings of
@@ -255,12 +265,23 @@ fn side_of(
             flat_depth_mm: values.flat_depth_mm(),
             mirror_x_mm: None,
             design: Vec::new(),
+            band: None,
+            open_edge: None,
         });
     };
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
-    let regions = surround(&design.regions, margin_mm, project.flatten_tolerance_mm);
+    // #448: the band's edge, closed by `R'`, and whether it is open.
+    let band = male_band(project, op);
+    let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let regions = surround(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
+    let open_edge = band.as_ref().filter(|b| b.is_open()).map(|_| OpenEdge {
+        band: rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm),
+        design: design.regions.clone(),
+        top_z_mm: thickness_mm,
+    });
     let shapes = regions
         .iter()
         .map(|region| bordering_shape(region, &design))
@@ -279,6 +300,8 @@ fn side_of(
         flat_depth_mm: values.flat_depth_mm(),
         mirror_x_mm,
         design: design.regions,
+        band,
+        open_edge,
     })
 }
 
@@ -389,7 +412,7 @@ pub fn generate_inlay(
         });
     }
     let values = Values::of(op)?;
-    let cut_out = checked_cut_out(project, op, values, bit.slope)?;
+    let cut_out = checked_cut_out(project, op, values)?;
     let passes = clearing::Passes::of_inlay(op, values.start_depth_mm());
     let clearing_tools = clearing::checked_tools(project, &passes, true)?;
     let mut warnings = Vec::new();
@@ -431,12 +454,23 @@ pub fn generate_inlay(
             });
         }
     }
+    // #448: clearing passes that leave the band's edge a V wall.
+    if let Some(BandEdge::VWall {
+        margin_needed_mm: Some(margin_needed_mm),
+    }) = side.band.as_ref().map(|b| &b.edge)
+    {
+        warnings.push(Warning::InlayBandEdgeVWall {
+            op: op.id.clone(),
+            margin_needed_mm: *margin_needed_mm,
+        });
+    }
     let Side {
         targets,
         start_plane_z_mm,
         engaged_from_z_mm,
         flat_depth_mm,
         design,
+        open_edge,
         ..
     } = side;
     let carve = Carve {
@@ -453,6 +487,7 @@ pub fn generate_inlay(
                 radius_mm: t.diameter_mm / 2.0,
             })
             .collect(),
+        open_edge,
     };
     let mut runs = clearing::runs(
         project,
@@ -478,9 +513,8 @@ pub fn generate_inlay(
         toolpath,
     });
     // #443: the cut-out last, so the piece is freed only once carved.
-    if let (Some((cut_out, margin_mm)), Some(thickness_mm)) = (cut_out, project.stock.thickness_mm)
-    {
-        let paths: Vec<Polyline> = cut_out_paths(&design, margin_mm, project.flatten_tolerance_mm)
+    if let (Some((cut_out, band)), Some(thickness_mm)) = (cut_out, project.stock.thickness_mm) {
+        let paths: Vec<Polyline> = cut_out_paths(&design, &band, project.flatten_tolerance_mm)
             .into_iter()
             .map(Contour::into_polyline)
             .collect();
@@ -498,21 +532,21 @@ pub fn generate_inlay(
 }
 
 /// The cut-out of `op` (#443), checked as validation checks it, with the
-/// male's margin: `None` without one. `slope` is the V-bit's `tan(α/2)`.
+/// male's band ([`dc_project::male_band`], #448): `None` without one.
 ///
 /// # Errors
 ///
 /// [`CamError::InlayCutOutNeedsMale`] on a female;
 /// [`CamError::UnknownTool`], [`CamError::CutterNotFlat`] or
 /// [`CamError::InvalidToolDiameter`] for its tool; and
-/// [`CamError::InlayCutOutNoRoom`] when the band's flat floor ring,
-/// `M − 2·P·tan(α/2)` wide, is narrower than the tool.
+/// [`CamError::InlayCutOutNoRoom`] when the band's flat floor ring is
+/// narrower than the tool: `M − P·tan(α/2)` wide with an open edge, `M −
+/// 2·P·tan(α/2)` with a V wall.
 fn checked_cut_out<'o>(
     project: &Project,
     op: &'o InlayOp,
     values: Values,
-    slope: f64,
-) -> Result<Option<(&'o InlayCutOut, f64)>, CamError> {
+) -> Result<Option<(&'o InlayCutOut, MaleBand)>, CamError> {
     let Some(cut_out) = &op.cut_out else {
         return Ok(None);
     };
@@ -542,28 +576,42 @@ fn checked_cut_out<'o>(
             diameter_mm: tool.diameter_mm,
         });
     }
-    let flank_mm = 2.0 * values.plug_depth_mm * slope;
-    let needed_mm = flank_mm + tool.diameter_mm;
+    // Values::of has checked every value the band needs, and
+    // `generate_inlay` the V-bit, so the band resolves.
+    let Some(band) = male_band(project, op) else {
+        return Err(CamError::InlayMargin {
+            op: op.id.clone(),
+            margin_mm,
+        });
+    };
+    let needed_mm = band.cut_out_margin_needed_mm(tool.diameter_mm);
     if margin_mm + EPS_MM < needed_mm {
         return Err(CamError::InlayCutOutNoRoom {
             op: op.id.clone(),
             diameter_mm: tool.diameter_mm,
-            floor_mm: margin_mm - flank_mm,
+            floor_mm: margin_mm - (needed_mm - tool.diameter_mm),
             needed_mm,
         });
     }
-    Ok(Some((cut_out, margin_mm)))
+    Ok(Some((cut_out, band)))
 }
 
-/// A male Inlay's cut-out paths (#443; design "Inlay", step 6): the
-/// outermost outlines of its mirrored `design` grown by half its margin
-/// `margin_mm` ([`dc_geometry::outer_offset`]), so the tool centre runs in
-/// the middle of the band's flat floor, which lies between the design
-/// grown by `P·tan(α/2)` and by `M − P·tan(α/2)`. A hole of the design
-/// is not cut out: it stays in the plug.
+/// A male Inlay's cut-out paths (#443, #448; design "Inlay", step 6):
+/// the outermost outlines of its mirrored `design` grown by `c` and
+/// rounded by `R` ([`dc_geometry::outer_offset`]), where `c` is
+/// [`MaleBand::cut_out_offset_mm`] and `R` the band's
+/// `outline_rounding_mm`, so the tool centre runs in the middle of the
+/// band's flat floor: from the design grown by `P·tan(α/2)` out to the
+/// band's edge when it is open, `M`, or to `M − P·tan(α/2)` with a V wall.
+/// A hole of the design is not cut out: it stays in the plug.
 #[must_use]
-pub fn cut_out_paths(design: &[Region], margin_mm: f64, tolerance_mm: f64) -> Vec<Contour> {
-    outer_offset(design, margin_mm / 2.0, tolerance_mm)
+pub fn cut_out_paths(design: &[Region], band: &MaleBand, tolerance_mm: f64) -> Vec<Contour> {
+    outer_offset(
+        design,
+        band.cut_out_offset_mm(),
+        band.outline_rounding_mm,
+        tolerance_mm,
+    )
 }
 
 /// The On line Profile a male Inlay's cut-out is (#443), and a copy of
