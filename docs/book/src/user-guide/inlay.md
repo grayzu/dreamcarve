@@ -32,7 +32,7 @@ start](../quick-start/inlay.md):
 {
   "kind": "inlay",
   "id": "op1",
-  "name": "Star",
+  "name": "DC",
   "enabled": true,
   "targets": [ "i1", "i2" ],
   "tool": "t3",
@@ -130,11 +130,15 @@ use the same angle; two files cannot check that for you.
 
 ## Two projects from one drawing
 
-Make both projects from the same drawing, with `-o` to name each:
+Draw the design as it should read in the finished board, closed outlines
+only, and never mirror it yourself; [Preparing your own
+design](../quick-start/inlay.md#preparing-your-own-design) lists what to
+check in your drawing program. Make both projects from the same drawing,
+with `-o` to name each:
 
 ```text
-dreamcarve init star.svg -o star-female.dcv
-dreamcarve init star.svg -o star-male.dcv
+dreamcarve init dc-inlay.svg -o dc-female.dcv
+dreamcarve init dc-inlay.svg -o dc-male.dcv
 ```
 
 Then add the same tools to both, paste the same Inlay into both, and
@@ -142,7 +146,7 @@ change `side` to `"male"` in the second, and give it a
 [`cut_out`](#cutting-the-plug-free) if the machine is to cut the plug
 free; the female's stays `null`. Set each project's
 `thickness_mm` to its own board's measured thickness. Each exports its
-own programs, named after its file: `star-female-1-T2.nc` and so on.
+own programs, named after its file: `dc-female-1-T2.nc` and so on.
 
 ## The female
 
@@ -151,15 +155,15 @@ The female is a [V-Carve](v-carve.md) of the design with a flat depth of
 from the outline at the surface down to a floor `depth_mm` deep, and the
 V-bit runs up into every corner, so each comes out sharp at the surface.
 Shapes nested in the design stand in the pocket as islands, as the
-quick start's circle does.
+quick start's D's counter does.
 
 ## The male
 
 The male cuts the **surround**: the design mirrored, then offset outward
 by `margin_mm`, less the mirrored design itself. So the band round the
 design is carved, and so is every hole in the design: the quick start's
-circle is a hole through the plug, which its standing walnut circle
-fills. The design stands as the plug.
+D's counter is a hole through the plug, which the counter left standing
+in the pocket fills. The design stands as the plug.
 
 - **Start plane.** The male's walls pass exactly through the mirrored
   outline at its start plane, `depth_mm − glue_gap_mm` below the top.
@@ -175,8 +179,8 @@ fills. The design stands as the plug.
 `check` and `export` say what each side cuts:
 
 ```text
-Inlay op1 `Star` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
-Inlay op1 `Star` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches.
+Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches.
 ```
 
 ### The mirror, and which way to flip the plug
@@ -187,18 +191,21 @@ targets' bounding box. `check` and `export` say so once for each male
 Inlay, with the line's X:
 
 ```text
-warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 50 mm, the middle of its targets, to seat face down in the female
+warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 ```
 
 Draw the design as it should read in the finished board, and never
 mirror it yourself. The program itself is not flipped: its moves are the
 mirrored toolpath, in the project's coordinates.
 
-To fit, turn the plug over **left to right**, about a vertical line,
-like turning a page, so that its top edge (+Y on the machine) stays at
-the top. Turned over top to bottom instead, an asymmetric design ends up
-rotated half a turn and does not fit. Pencil "top" on each board's back
-edge before you cut it.
+So the quick start's "DC" is carved on the male as a reversed "DC", the
+C on the left and the D on the right, both facing left. To fit, turn the
+plug over **left to right**, about a vertical line, like turning a page:
+over its left or right edge, so that its top edge (+Y on the machine)
+stays at the top. Face down, it reads "DC" again. Turned over top to
+bottom instead, over its top or bottom edge, an asymmetric design ends
+up rotated half a turn and does not fit until you spin it round. Pencil
+"top" on each board's back edge before you cut it.
 
 ### Cutting the plug free
 
@@ -218,7 +225,7 @@ contour does:
 
 | Field | Meaning |
 | --- | --- |
-| `tool` | A flat end mill. Its feed, plunge rate, speed and `step_down_mm` are used; each pass goes one step-down deeper. |
+| `tool` | A flat end mill, long enough to go through the board (see **Flute length** below). Its feed, plunge rate, speed and `step_down_mm` are used; each pass goes one step-down deeper. |
 | `tabs` | Holding tabs, as a [Profile's tab request](tabs.md): how many or where, their width along the cut, their top above the bottom of the board, and their shape. `null` cuts the plug free on the last pass: hold it down another way, with double-sided tape under it. |
 | `through_cut_allowance_mm` | How far below the board the last pass goes, into the spoilboard: 0.2 mm is usual. |
 
@@ -240,14 +247,22 @@ the freed piece, and it would land on the female's surface. The piece
 it frees is the plug on its backing, with a rim of the band's floor
 round it, `plug_depth_mm` below the plug's start plane, which clears the
 female's surface by that much when the plug is seated. A hole in the
-design (the circle in the star) is never cut round: it stays in the
-plug.
+design (the D's counter in the quick start) is never cut round: it stays
+in the plug.
 
 **Room.** The floor ring is `margin_mm − 2 × plug_depth_mm × tan(α/2)`
 wide, and it must be at least the end mill's diameter wide; else `check`
 refuses it, `inlay_cut_out_no_room`, and names the margin needed. With
 the 60° bit and a 2 mm plug depth, a 3.175 mm end mill needs a margin of
-at least 5.48 mm.
+at least 5.48 mm, and a 6.35 mm end mill at least 8.66 mm (use 10).
+
+**Flute length.** The cut-out goes through the board, so the end mill's
+flutes must be at least the board's thickness plus
+`through_cut_allowance_mm` plus 2 mm long: 14.2 mm for a 12 mm board
+with 0.2 mm through. DreamCarve does not know a tool's flute length and
+cannot check it. A 1/8 in end mill often has only 12.7 mm (1/2 in); for a
+thick male board use one with longer flutes, a 1/4 in end mill with a
+wider margin, or `"cut_out": null` and a saw.
 
 **Depth.** The passes start at the band's floor, `depth_mm −
 glue_gap_mm + plug_depth_mm` below the top, so none cuts the air the
@@ -317,10 +332,10 @@ Both sides carve every corner to a point: a V-bit cannot cut a sharp
 corner below the surface, so at each depth the pocket is the outline
 shrunk by the wall's slope, and a sharp point shrinks back along its
 length much more than a straight side moves in. In the quick start's
-star, 3 mm down the pocket's points end several millimetres short of the
-drawn tips. The plug's points are the same shape turned over, so the two
-still meet; but the last few millimetres of each point are only a
-shallow V. That is expected: the points are sharp at the surface, where
+"DC", the serifs' tips and the C's pointed terminals end, 3 mm down,
+well short of where they are drawn. The plug's points are the same shape
+turned over, so the two still meet; but the last few millimetres of each
+point are only a shallow V. That is expected: the points are sharp at the surface, where
 they show, and they are the part to treat gently when you saw and plane.
 Parts of a design narrower than the bit can reach into come out as fine
 V's on both sides.

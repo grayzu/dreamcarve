@@ -49,7 +49,7 @@ then a second Drill on the same circles with the V-bit and
 `countersink: { "diameter_mm": 6 }`. The V-bit plunges exactly deep
 enough to open a 6 mm mouth.
 - **Alex** makes a cutting-board inlay as in Corbin's Workshop's Fusion
-tutorial: a star with a circle in it, walnut into maple. They make
+tutorial: a two-letter monogram, walnut into maple. They make
 `female.dcv` and `male.dcv` from the same SVG, each with one Inlay
 operation and the same 60° V-bit, `depth_mm: 4`, `glue_gap_mm: 1`,
 `plug_depth_mm: 2`; one says `side: female`, the other `side: male`.
@@ -702,33 +702,40 @@ Deviations: the oval's short axis measured about 47 mm against the 46 mm
 drawn, which the maintainer judged a difference in measuring, not in the
 cut.
 
-### Inlay pair
+### Lettered inlay pair
 
-**Star inlay.** Corbin's Workshop's cutting-board method, 2D: a four-point
-star 60 mm tip to tip (tips 30 mm out on the axes, inner vertices 12 mm
-out on the diagonals) with a 12 mm circle at its centre, drawn as
-`tests/fixtures/star.svg` by `tools/parity/star-fixture.ts` (#437), with an
-80 × 80 mm `frame` round it that nothing cuts, so that `init` makes the
-100 × 100 mm stock with the star at its centre; the female in one board,
-the male in another, from the same file with `side` changed.
-`tests/fixtures/star-female.dcv` and `star-male.dcv` are the quick start
-"An inlay pair"'s projects: `t1` is `init`'s unused "Set me", `t2` the end
-mill, `t3` the V-bit; both set `thickness_mm: 12`, which the user replaces
-with each board's measurement.
+**"DC" inlay.** Corbin's Workshop's cutting-board method, 2D, on a
+tutorial piece (changed in #446 from a symmetric star, which never showed
+the male's mirror): the monogram "DC" in Droid Serif Bold (Apache-2.0),
+40 mm cap height, the letters 3 mm apart, 73.4 × 41.1 mm in all, drawn
+as `tests/fixtures/dc-inlay.svg` by `tools/parity/inlay-fixture.ts`, with
+a 90 × 60 mm `frame` round it that nothing cuts, so that `init` makes the
+110 × 80 mm stock with the letters at its centre. The D's counter is a
+design hole: an island in the female, a hole in the male's plug. Both
+letters face right, so the male carves a reversed "DC" and the flip
+direction matters. The female in one board, the male in another, from
+the same file with `side` changed. `tests/fixtures/dc-female.dcv` and
+`dc-male.dcv` are the quick start "An inlay pair"'s projects: `t1` is
+`init`'s unused "Set me", `t2` the end mill, `t3` the V-bit; both set
+`thickness_mm: 12`, which the user replaces with each board's
+measurement. Every cut of both lies inside the 110 × 80 mm board with
+at least 3 mm to spare (the male's V-bit comes within 8.3 mm of an edge).
 
 
 | Item         | Value                                                                                                |
 | ------------ | ---------------------------------------------------------------------------------------------------- |
-| Female board | walnut (or any hardwood), nominal 12 mm, 100 × 100 mm stock                                          |
-| Male board   | maple (contrasting), nominal 12 mm, 100 × 100 mm stock                                               |
+| Female board | a light hardwood (maple, oak), nominal 12 mm, 110 × 80 mm stock                                      |
+| Male board   | a contrasting dark hardwood (walnut), nominal 12 mm, 110 × 80 mm stock                               |
 | T1           | 60° V-bit, 6.35 mm diameter (cone height 5.5 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t3`) |
-| T2           | 3.175 mm two-flute upcut end mill: 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
-| Inlay        | targets the star and the circle; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
-| star-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `star-female-1-T2.nc` to Z −4, then `star-female-2-T1.nc`) |
-| star-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (#443) (three runs: `star-male-1-T2.nc` to Z −5, `star-male-2-T1.nc`, then the cut-out `star-male-3-T2.nc` from the floor to Z −12.2); prints `inlay_male_mirrored` at X = 50 mm and `tool_change_avoidable` (the order is required) |
+| T2           | 3.175 mm two-flute upcut end mill, at least 14.2 mm of flute (12 mm board + 0.2 mm through + 2 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
+| Inlay        | `op1` `DC`, targets the two letters; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
+| dc-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `dc-female-1-T2.nc` to Z −4, about 30 s, then `dc-female-2-T1.nc`, about 1 min 6 s); prints `unused_tool` and `entry_fallback` (the C's stroke has no room for the clearing pass's ramp, so it plunges there) |
+| dc-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (three runs: `dc-male-1-T2.nc` to Z −5, about 3 min 11 s, `dc-male-2-T1.nc`, about 1 min 4 s, then the cut-out `dc-male-3-T2.nc` from the floor to Z −12.2, about 1 min 32 s); prints `unused_tool`, `inlay_male_mirrored` at X = 55 mm and `tool_change_avoidable` (the order is required) |
 | Safe Z       | 10 mm                                                                                                |
 | Controller   | grblHAL, one program per tool run                                                                    |
 
+The times are `export`'s estimates, cutting and dwells only, without
+rapids, acceleration or tool changes.
 
 **Procedure** (Corbin, "Inlay Fit Adjustment"): cut the female, then the
 male. Test fit dry: the plug should seat with no gap at the top and stop
@@ -739,14 +746,18 @@ board, since the male board outside the band is at full thickness and
 would rest on the female (changed in #437: the draft clamped the male's
 whole board face down): the male's third program cuts it out in the
 band's floor, leaving four tabs, which are cut by hand (#443; with
-`cut_out: null`, saw it free inside the band instead). Turn the plug
-over left to right, glue, clamp, let it dry, saw off the plug's backing,
-plane flush.
+`cut_out: null`, saw it free inside the band instead). The plug reads as
+a reversed "DC": turn it over left to right, about a vertical line, over
+its left or right edge, so its top edge stays at the back; face down it
+reads "DC". Glue, clamp, let it dry, saw off the plug's backing, plane
+flush. A bench check may substitute its own design and boards, prepared
+as the chapter's "Preparing your own design" says.
 
-**Success:** after planing, no visible gap round the star or the circle
-(a 0.1 mm feeler gauge does not enter), the star's points are sharp, and
-a second pair cut in half shows about 1 mm of glue gap under the plug and
-the walls mated along their height.
+**Success:** after planing, no visible gap round the letters or the D's
+counter (a 0.1 mm feeler gauge does not enter), the serifs are sharp, the
+monogram reads "DC" the right way round, and a second pair cut in half
+shows about 1 mm of glue gap under the plug and the walls mated along
+their height.
 
 **Cut record:** not yet cut.
 
