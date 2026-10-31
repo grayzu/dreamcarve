@@ -197,13 +197,7 @@ pub(crate) fn region_graph(
     Some((graph, step_mm))
 }
 
-/// The runs that carve one region from its medial `graph`: chains
-/// ([`extract_chains`]) less the redundant leaves, each node at its depth,
-/// simplified and fitted to `walls`, less the chains wholly on the cleared
-/// `floors` (step 6, #405; empty without a floor), then ordered from the shallowest
-/// chain end by nearest end, continued through shared nodes, linked
-/// tool-down where the link passes the cone test, and split by a retract
-/// elsewhere. The generator calls [`runs_within`].
+/// [`runs_within`] with no open edge: every chain whole.
 #[cfg(test)]
 pub(crate) fn runs(
     graph: &MedialGraph,
@@ -215,11 +209,18 @@ pub(crate) fn runs(
     runs_within(graph, depth, tolerances, walls, floors, None)
 }
 
-/// [`runs`], each fitted chain first cut to the stretches whose moves keep
-/// the cone inside `edge` at the stock top (#448: a male Inlay's open band
-/// edge, beyond which the board stands full height); `None` keeps every
-/// chain whole. Only the chains a V wall at the band's edge needs fail it,
-/// and chains on the floor far out, which the floor's cutting covers.
+/// The runs that carve one region from its medial `graph`: chains
+/// ([`extract_chains`]) less the redundant leaves, each node at its depth,
+/// simplified and fitted to `walls`, each cut to the stretches whose moves
+/// keep the cone inside `edge` at the stock top (#448: a male Inlay's open
+/// band edge, beyond which the board stands full height; `None` keeps
+/// every chain whole), less the chains wholly on the cleared `floors`
+/// (step 6, #405; empty without a floor), then ordered from the shallowest
+/// chain end by nearest end, continued through shared nodes, linked
+/// tool-down where the link passes the cone test, and split by a retract
+/// elsewhere. With an edge only the chains a V wall at the band's edge
+/// needs fail it, and chains on the floor far out, which the floor's
+/// cutting covers.
 pub(crate) fn runs_within(
     graph: &MedialGraph,
     depth: &Depth,
