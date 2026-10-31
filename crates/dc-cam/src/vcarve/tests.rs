@@ -300,6 +300,7 @@ fn runs_of(
     let no_simplifying = Tolerances {
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
+        deepen_mm: None,
     };
     medial::runs(graph, &depth, no_simplifying, &walls, &[])
 }
@@ -478,6 +479,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
     let no_simplifying = Tolerances {
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
+        deepen_mm: None,
     };
     let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
         .iter()
@@ -493,6 +495,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         step_over_fraction: None,
         cleared_by: Vec::new(),
         open_edge: None,
+        design: None,
     };
     let result = finish(
         &p,
@@ -1142,6 +1145,7 @@ fn chains_become_blocks_that_sequence_in_generator_order() {
         step_over_fraction: None,
         cleared_by: Vec::new(),
         open_edge: None,
+        design: None,
     };
     let blocks = blocks(&p, &op.id, &tool, &rectangle, &mut Vec::new()).expect("blocks");
     assert!(!blocks.is_empty());
@@ -1248,6 +1252,7 @@ fn links_never_run_below_the_final_v_surface() {
             let Some((graph, step_mm)) = medial::region_graph(
                 region,
                 p.flatten_tolerance_mm,
+                CornerReach::Upstream,
                 &op.id,
                 shape,
                 &mut false,

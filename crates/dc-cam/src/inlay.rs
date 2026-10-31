@@ -488,6 +488,8 @@ pub fn generate_inlay(
             })
             .collect(),
         open_edge,
+        // #452: the male's walls along the plug reach every corner.
+        design: values.margin_mm.map(|_| design.clone()),
     };
     let mut runs = clearing::runs(
         project,

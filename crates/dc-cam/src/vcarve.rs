@@ -42,6 +42,7 @@ use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
+use dc_geometry::medial::CornerReach;
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point3, Region, floor_regions, is_design_hole, nest,
 };
@@ -87,7 +88,59 @@ pub struct Carve<'a> {
     /// `None` for every other carve, whose every wall is a V wall. Only
     /// the medial strategy honours it.
     pub open_edge: Option<OpenEdge>,
+    /// A male Inlay's mirrored design, nested (#452): the plug's outline,
+    /// which its band regions have as holes and its design-hole regions
+    /// as every loop. `None` for every other carve.
+    pub design: Option<Vec<Region>>,
 }
+
+impl Carve<'_> {
+    /// Whether material may stand above the start plane where the carve
+    /// cuts: the flank is engaged from above it (a male Inlay's plug,
+    /// never cleared; a V-Carve whose start plane is cleared by other
+    /// means).
+    fn stands_above(&self) -> bool {
+        self.engaged_from_z_mm > self.start_plane_z_mm + EPS_MM
+    }
+
+    /// How far the medial axis of `region` reaches into its corners, for
+    /// a V-bit of `slope` (#452). Where material may stand above the start
+    /// plane, every convex corner of the loops it stands against: a corner
+    /// the axis misses keeps that material, where a chain ending at the
+    /// corner, its tip at the start plane, would have cut a disc of radius
+    /// `h · tan(α/2)` at height `h` about it, exactly the plug's inset
+    /// there. A male's band region stands against the plug at its holes
+    /// only; its outer edge is not the plug's. Upstream's reach otherwise,
+    /// which leaves V-Carve and the female Inlay as they were.
+    pub(crate) fn corner_reach(&self, region: &Region, slope: f64) -> CornerReach {
+        if !self.stands_above() {
+            return CornerReach::Upstream;
+        }
+        CornerReach::Every {
+            outer: self
+                .design
+                .as_ref()
+                .is_none_or(|design| is_design_hole(region, design)),
+            floor_inset_mm: self.flat_depth_mm.map(|f| f * slope),
+        }
+    }
+
+    /// How far the medial chains of a region sampled every `step_mm` may
+    /// be simplified (#452): upstream's tolerances, and where material
+    /// may stand above the start plane, no stretch left more than
+    /// [`DEEPEN_MM`] shallower than its own depth.
+    pub(crate) fn tolerances(&self, step_mm: f64) -> Tolerances {
+        Tolerances {
+            deepen_mm: self.stands_above().then_some(DEEPEN_MM),
+            ..Tolerances::at_step(step_mm)
+        }
+    }
+}
+
+/// How far a medial stretch may run shallower than its own depth where
+/// material stands above the start plane, mm (#452): a hundredth of a
+/// millimetre, below what the plug's seat can feel.
+const DEEPEN_MM: f64 = 0.01;
 
 /// The open outer edge of a male Inlay's band (#448;
 /// `docs/specs/phase-3/design.md`, "Algorithms → Inlay", step 4). The
@@ -471,6 +524,7 @@ pub fn blocks(
         let Some((graph, step_mm)) = medial::region_graph(
             region,
             tolerance_mm,
+            carve.corner_reach(region, bit.slope),
             op,
             shape,
             &mut budget_warned,
@@ -498,7 +552,7 @@ pub fn blocks(
         let runs = medial::runs_within(
             &graph,
             &depth,
-            Tolerances::at_step(step_mm),
+            carve.tolerances(step_mm),
             &walls,
             &floors,
             edge_walls.as_ref().filter(|_| band),
@@ -656,6 +710,7 @@ pub fn generate_vcarve(
             })
             .collect(),
         open_edge: None,
+        design: None,
     };
     let bit = checked_v_bit(&op.id, tool)?;
     let mut runs = clearing::runs(

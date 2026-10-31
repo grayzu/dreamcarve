@@ -22,6 +22,7 @@
 )]
 
 use super::*;
+use crate::assert_approx_eq;
 use crate::contour::Contour;
 use crate::distance::point_segment_distance_mm;
 use crate::flatten::FLATTEN_TOLERANCE_DEFAULT_MM;
@@ -592,6 +593,140 @@ fn acute_corner_tips_survive_contact_filtering() {
     }
 }
 
+/// The 40 mm square with the notched island of
+/// `convex_corners_are_classified`: the notch's apex at (20, 20), its
+/// walls to (19, 30) and (21, 30), 11.4° apart, is a convex corner of the
+/// region round the island.
+fn notched_island_region() -> Region {
+    let island = vec![
+        Point::new(10.0, 10.0),
+        Point::new(30.0, 10.0),
+        Point::new(30.0, 30.0),
+        Point::new(21.0, 30.0),
+        Point::new(20.0, 20.0),
+        Point::new(19.0, 30.0),
+        Point::new(10.0, 30.0),
+    ];
+    region(&rect_loop(0.0, 0.0, 40.0, 40.0), &[island])
+}
+
+/// [`CornerReach::Every`] on every loop, with no floor.
+const EVERY: CornerReach = CornerReach::Every {
+    outer: true,
+    floor_inset_mm: None,
+};
+
+/// #452: an island's convex corner's bisector points into the region
+/// round it, as [`Corner::bisector`] says: the notch apex's points up the
+/// notch, +Y. (Upstream's `regionConvexCorners` negates an island's,
+/// which points into the island; [`CornerReach::Upstream`] keeps that.)
+#[test]
+fn island_corner_bisector_points_into_the_region() {
+    let corners = convex_corners(&notched_island_region(), CORNER_ANGLE_RAD, TOL);
+    let apex = corners
+        .iter()
+        .find(|c| c.p.distance_to(Point::new(20.0, 20.0)) < 1e-9)
+        .expect("the apex is a corner");
+    assert_approx_eq!(apex.bisector.x, 0.0, 1e-9);
+    assert_approx_eq!(apex.bisector.y, 1.0, 1e-9);
+}
+
+/// #452: with [`CornerReach::Every`] the axis reaches the island's 11.4°
+/// notch: a zero-clearance tip at the apex, joined once, and the notch's
+/// branch, nodes up its bisector at their exact clearances. Upstream's
+/// passes leave the notch with no node at all: its clearance falls
+/// `sin 5.7°` = 0.1 per mm toward the apex, under the 0.25 spur pruning
+/// asks of a corner's branch, so pruning unzips it, and the apex's tip
+/// seeks its joint along a bisector into the island.
+#[test]
+fn every_corner_reaches_an_island_notch() {
+    let r = notched_island_region();
+    let step_mm = resolution(&r).expect("a resolution").step_mm;
+    let apex = Point::new(20.0, 20.0);
+    let in_notch = |graph: &MedialGraph| -> Vec<MedialNode> {
+        graph
+            .nodes
+            .iter()
+            .filter(|n| n.p.y > 20.0 && n.p.y < 29.0 && (n.p.x - 20.0).abs() < 1.0)
+            .copied()
+            .collect()
+    };
+
+    let upstream = medial_axis(&r, step_mm, TOL);
+    assert!(
+        in_notch(&upstream).is_empty(),
+        "upstream: {:?}",
+        in_notch(&upstream)
+    );
+
+    let every = medial_axis_with(&r, step_mm, TOL, EVERY);
+    let tip = every
+        .nodes
+        .iter()
+        .position(|n| n.p.distance_to(apex) < 1e-9 && n.clearance_mm < 1e-9)
+        .expect("a tip at the apex");
+    assert_eq!(every.adjacency[tip].len(), 1, "the tip joins once");
+    let branch = in_notch(&every);
+    assert!(
+        branch.len() as f64 >= 8.0 / step_mm / 2.0,
+        "{} nodes up the 9 mm notch at step {step_mm}",
+        branch.len()
+    );
+    for n in &branch {
+        assert_approx_eq!(n.clearance_mm, distance_to_boundary(&r, n.p), 1e-9);
+        assert!((n.p.x - 20.0).abs() < step_mm, "{n:?} is off the bisector");
+    }
+}
+
+/// #452: the 30 × 10 mm bar `blunt` ends in a point at (31.82, 5) whose
+/// walls turn 40° there, under [`CORNER_ANGLE_RAD`], and the
+/// contact-spread filter drops the branch into it (its contacts are 40°
+/// apart, under 60°), so upstream gives it no tip. With
+/// [`CornerReach::Every`] it gets one, joined to the axis by nodes at most
+/// a step apart at their exact clearances, unless a floor `d` in from the
+/// walls reaches it within 0.01 mm, as a floor of 0.1 mm does (`d (1 / cos
+/// 20° − 1)` = 0.006 mm) and one of 1 mm does not (0.064 mm).
+#[test]
+fn every_corner_reaches_an_obtuse_corner() {
+    let point = Point::new(30.0 + 5.0 * 20.0_f64.to_radians().tan(), 5.0);
+    let blunt = vec![
+        Point::new(0.0, 0.0),
+        Point::new(30.0, 0.0),
+        point,
+        Point::new(30.0, 10.0),
+        Point::new(0.0, 10.0),
+    ];
+    let r = region(&blunt, &[]);
+    let step_mm = resolution(&r).expect("a resolution").step_mm;
+    let tipped = |graph: &MedialGraph| zero_clearance_nodes_near(graph, point, 1e-9) == 1;
+    assert!(!tipped(&medial_axis(&r, step_mm, TOL)), "upstream");
+    let every = medial_axis_with(&r, step_mm, TOL, EVERY);
+    assert!(tipped(&every), "every corner");
+    for (i, n) in every.nodes.iter().enumerate() {
+        assert_approx_eq!(n.clearance_mm, distance_to_boundary(&r, n.p), 1e-9);
+        for &j in &every.adjacency[i] {
+            let m = every.nodes[j];
+            if m.p.distance_to(point) < 1e-9 || n.p.distance_to(point) < 1e-9 {
+                let edge_mm = n.p.distance_to(m.p);
+                assert!(edge_mm <= step_mm + 1e-9, "tip edge {edge_mm} mm long");
+            }
+        }
+    }
+    let floored = |inset_mm| {
+        medial_axis_with(
+            &r,
+            step_mm,
+            TOL,
+            CornerReach::Every {
+                outer: true,
+                floor_inset_mm: Some(inset_mm),
+            },
+        )
+    };
+    assert!(!tipped(&floored(0.1)), "a 0.1 mm floor reaches the point");
+    assert!(tipped(&floored(1.0)), "a 1 mm floor does not");
+}
+
 /// Port of `testAutomaticResolutionKeepsScaledTopologyStable`: a 40 × 10
 /// and a 4 × 1 rectangle at their automatic steps (ratio 10) have equal
 /// node, edge and component counts.
@@ -735,12 +870,12 @@ fn winding_does_not_change_the_graph() {
         vec![regular_polygon(0.0, 0.0, 8.0, 64)],
     ];
     for loops in shapes {
-        let ccw = medial_axis_of_loops(&loops, 0.5);
+        let ccw = medial_axis_of_loops(&loops, 0.5, CornerReach::Upstream);
         let reversed: Vec<Vec<Point>> = loops
             .iter()
             .map(|l| l.iter().rev().copied().collect())
             .collect();
-        let cw = medial_axis_of_loops(&reversed, 0.5);
+        let cw = medial_axis_of_loops(&reversed, 0.5, CornerReach::Upstream);
         assert!(!ccw.nodes.is_empty(), "the shape has an axis");
         assert_eq!(
             canonical(&ccw),

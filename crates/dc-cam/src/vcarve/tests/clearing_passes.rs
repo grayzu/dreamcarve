@@ -219,6 +219,7 @@ fn v_bit_floor(p: &Project, op: &VCarveOp) -> Vec<(Point, Point)> {
             })
             .collect(),
         open_edge: None,
+        design: None,
     };
     blocks(&p, &op.id, &tool, &carve, &mut Vec::new())
         .expect("blocks")

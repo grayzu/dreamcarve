@@ -40,6 +40,12 @@
 //!   bends there (a reflex corner, a flattened curve). Each such stretch
 //!   is split at its worst point, set to that point's own depth, until the
 //!   cone test passes ([`fit_chain`]). Upstream does not check this.
+//! - **Material above the start plane (#452).** A carve whose flank is
+//!   engaged from above its start plane (a male Inlay) builds its axis to
+//!   reach every corner of its walls (`CornerReach::Every`), fits each
+//!   stretch down to its own depth as well (`Tolerances::deepen_mm`), and
+//!   cuts its chains off where they run onto the floor ([`off_floor`]):
+//!   there a corner the carve misses keeps wood up to the stock top.
 //! - Y-up needs no re-derivation: a medial axis, its chains and the
 //!   greedy order are the same under reflection.
 
@@ -49,7 +55,7 @@ use crate::tabs::LapRates;
 use crate::toolpath::Move;
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::warning::Warning;
-use dc_geometry::medial::{MedialGraph, medial_axis, resolution};
+use dc_geometry::medial::{CornerReach, MedialGraph, medial_axis_with, resolution};
 use dc_geometry::{EPS_MM, Point3, Region};
 use dc_project::OperationId;
 use std::collections::BTreeSet;
@@ -75,6 +81,10 @@ const TIP_CLEARANCE_MM: f64 = 1e-9;
 /// How many times a stretch is halved at most when its cone is fitted to
 /// the walls ([`fit_chain`]).
 const MAX_FIT_LEVELS: usize = 16;
+
+/// With [`Tolerances::deepen_mm`], how far apart a stretch is read for
+/// points whose own depth is deeper than the stretch there, mm (#452).
+const DEEPEN_SAMPLE_MM: f64 = 0.05;
 
 /// How far a stretch's cone may reach past a wall before it is split, mm:
 /// a tenth of a micrometre, ten times finer than a program writes. Where a
@@ -115,6 +125,10 @@ pub(crate) struct Tolerances {
     pub simplify_mm: f64,
     /// Redundant-leaf slack, in clearance; 0 prunes nothing.
     pub redundancy_mm: f64,
+    /// How far, mm, a fitted stretch may run shallower than its points'
+    /// own depth before it is split there too (#452); `None` splits only
+    /// where the cone reaches past a wall, as upstream's tolerance allows.
+    pub deepen_mm: Option<f64>,
 }
 
 impl Tolerances {
@@ -123,6 +137,7 @@ impl Tolerances {
         Self {
             simplify_mm: SIMPLIFY_STEPS * step_mm,
             redundancy_mm: REDUNDANCY_STEPS * step_mm,
+            deepen_mm: None,
         }
     }
 }
@@ -149,12 +164,14 @@ pub(crate) struct Step {
 
 /// The medial graph of `region`, at its automatic resolution, refined up
 /// to [`MAX_AUTO_REFINEMENTS`] times while empty, with the step it was
-/// built at. Warns [`Warning::VCarveSamplingBudget`] once per operation
+/// built at, carried into the region's sharp corners as `reach` says
+/// (#452). Warns [`Warning::VCarveSamplingBudget`] once per operation
 /// (`budget_warned`) and [`Warning::VCarveNoMedialAxis`] when there is no
 /// graph, then gives `None`.
 pub(crate) fn region_graph(
     region: &Region,
     tolerance_mm: f64,
+    reach: CornerReach,
     op: &OperationId,
     shape: &ShapeRef,
     budget_warned: &mut bool,
@@ -176,7 +193,7 @@ pub(crate) fn region_graph(
             resolution_mm: step_mm,
         });
     }
-    let mut graph = medial_axis(region, step_mm, tolerance_mm);
+    let mut graph = medial_axis_with(region, step_mm, tolerance_mm, reach);
     // A region narrower than the step can miss every interior Voronoi
     // vertex: retry finer before giving up.
     for _ in 0..MAX_AUTO_REFINEMENTS {
@@ -188,7 +205,7 @@ pub(crate) fn region_graph(
             break;
         }
         step_mm = refined_mm;
-        graph = medial_axis(region, step_mm, tolerance_mm);
+        graph = medial_axis_with(region, step_mm, tolerance_mm, reach);
     }
     if graph.nodes.is_empty() {
         warnings.push(no_axis());
@@ -239,7 +256,17 @@ pub(crate) fn runs_within(
                     .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
                     .collect();
                 let simple = simplify_chain(&points, tolerances.simplify_mm, depth.slope);
-                within_edge(fit_chain(&simple, walls, depth), edge)
+                within_edge(fit_chain(&simple, walls, depth, tolerances.deepen_mm), edge)
+            })
+            .map(|points| {
+                // #452: a chain deepened to its corners is cut off where
+                // it runs out onto the floor, which the floor's cutting
+                // covers.
+                if tolerances.deepen_mm.is_some() {
+                    off_floor(points, depth, floors)
+                } else {
+                    points
+                }
             })
             .filter(|points| !points.is_empty() && !inside_floor(points, depth, floors))
             .collect();
@@ -332,6 +359,27 @@ fn within_edge(points: Vec<Point3>, edge: Option<&OpenEdgeWalls>) -> Vec<Vec<Poi
         out.push(current);
     }
     out
+}
+
+/// The fitted chain `points` less the stretches at either end that lie on
+/// the cleared `floors` (#452): from each end, every stretch whose two
+/// points are both on a floor at the flat depth ([`inside_floor`]'s test,
+/// which holds the stretch between them to the floor too). A chain wholly
+/// on the floor keeps one point, which [`inside_floor`] then drops.
+fn off_floor(points: Vec<Point3>, depth: &Depth, floors: &[Region]) -> Vec<Point3> {
+    let on_floor = |p: Option<&Point3>| p.is_some_and(|&p| inside_floor(&[p], depth, floors));
+    let mut lo = 0;
+    while lo + 1 < points.len() && on_floor(points.get(lo)) && on_floor(points.get(lo + 1)) {
+        lo += 1;
+    }
+    let mut hi = points.len();
+    while hi > lo + 1 && on_floor(points.get(hi - 1)) && on_floor(points.get(hi - 2)) {
+        hi -= 1;
+    }
+    points
+        .get(lo..hi)
+        .map(<[Point3]>::to_vec)
+        .unwrap_or_default()
 }
 
 /// Step 6: true when the fitted chain `points` lies wholly on the cleared
@@ -684,40 +732,97 @@ pub(crate) fn simplify_chain(points: &[Point3], tolerance_mm: f64, slope: f64) -
 /// passes or [`MAX_FIT_LEVELS`] halvings are spent. A point's own depth is
 /// never deeper than the stretch it splits, so fitting only ever raises
 /// the carve toward its true V surface.
-fn fit_chain(points: &[Point3], walls: &Walls, depth: &Depth) -> Vec<Point3> {
+///
+/// With `deepen_mm` (#452), a stretch that passes is also read every
+/// [`DEEPEN_SAMPLE_MM`], and where it runs more than `deepen_mm` shallower
+/// than a point's own depth it is split there, at that depth, which
+/// touches the nearer wall and so passes. A straight fall from a corner's
+/// tip to the floor, or Douglas-Peucker's chord across a bend in depth,
+/// would otherwise leave the cone short of the walls, which only loses air
+/// where the carve starts at the material's surface.
+fn fit_chain(
+    points: &[Point3],
+    walls: &Walls,
+    depth: &Depth,
+    deepen_mm: Option<f64>,
+) -> Vec<Point3> {
     let Some((&first, rest)) = points.split_first() else {
         return Vec::new();
+    };
+    let fit = Fit {
+        walls,
+        depth,
+        deepen_mm,
     };
     let mut out = vec![first];
     let mut from = first;
     for &to in rest {
-        fit_stretch(from, to, walls, depth, MAX_FIT_LEVELS, &mut out);
+        fit.stretch(from, to, MAX_FIT_LEVELS, &mut out);
         from = to;
     }
     out
 }
 
-/// [`fit_chain`] for the stretch `a`–`b`, `a` already written: writes the
-/// points after `a`, up to and including `b`.
-fn fit_stretch(
-    a: Point3,
-    b: Point3,
-    walls: &Walls,
-    depth: &Depth,
-    levels: usize,
-    out: &mut Vec<Point3>,
-) {
-    if levels > 0 && a.xy().distance_to(b.xy()) > EPS_MM {
-        let (room_mm, worst) = walls.least_room(a, b, depth.start_plane_z_mm, depth.slope);
+/// What [`fit_chain`] fits a chain to.
+struct Fit<'a> {
+    walls: &'a Walls,
+    depth: &'a Depth,
+    deepen_mm: Option<f64>,
+}
+
+impl Fit<'_> {
+    /// [`fit_chain`] for the stretch `a`–`b`, `a` already written: writes
+    /// the points after `a`, up to and including `b`.
+    fn stretch(&self, a: Point3, b: Point3, levels: usize, out: &mut Vec<Point3>) {
+        if levels > 0 && a.xy().distance_to(b.xy()) > EPS_MM {
+            let split = self.overcut(a, b).or_else(|| self.undercut(a, b));
+            if let Some(split) = split {
+                self.stretch(a, split, levels - 1, out);
+                self.stretch(split, b, levels - 1, out);
+                return;
+            }
+        }
+        out.push(b);
+    }
+
+    /// Where the cone along `a`–`b` reaches furthest past a wall, set to
+    /// its own depth, when it does by more than [`FIT_SLACK_MM`] away from
+    /// the ends.
+    fn overcut(&self, a: Point3, b: Point3) -> Option<Point3> {
+        let (room_mm, worst) =
+            self.walls
+                .least_room(a, b, self.depth.start_plane_z_mm, self.depth.slope);
         let inside =
             worst.xy().distance_to(a.xy()) > EPS_MM && worst.xy().distance_to(b.xy()) > EPS_MM;
-        if room_mm < -FIT_SLACK_MM && inside {
-            let own_z = depth.z_mm(walls.clearance_mm(worst.xy()));
-            let split = Point3::new(worst.x, worst.y, own_z.max(worst.z));
-            fit_stretch(a, split, walls, depth, levels - 1, out);
-            fit_stretch(split, b, walls, depth, levels - 1, out);
-            return;
-        }
+        (room_mm < -FIT_SLACK_MM && inside).then(|| {
+            let own_z = self.depth.z_mm(self.walls.clearance_mm(worst.xy()));
+            Point3::new(worst.x, worst.y, own_z.max(worst.z))
+        })
     }
-    out.push(b);
+
+    /// With `deepen_mm`, the point of `a`–`b`, read every
+    /// [`DEEPEN_SAMPLE_MM`] short of its ends, whose own depth is deepest
+    /// below the stretch, at that depth, when it is more than `deepen_mm`
+    /// below.
+    fn undercut(&self, a: Point3, b: Point3) -> Option<Point3> {
+        let slack_mm = self.deepen_mm?;
+        let pieces = (a.xy().distance_to(b.xy()) / DEEPEN_SAMPLE_MM).ceil();
+        let mut worst: Option<(f64, Point3)> = None;
+        let mut k = 1.0;
+        while k < pieces {
+            let t = k / pieces;
+            let p = Point3::new(
+                a.x + (b.x - a.x) * t,
+                a.y + (b.y - a.y) * t,
+                a.z + (b.z - a.z) * t,
+            );
+            let own_z = self.depth.z_mm(self.walls.clearance_mm(p.xy()));
+            let below_mm = p.z - own_z;
+            if below_mm > slack_mm && worst.is_none_or(|(w, _)| below_mm > w) {
+                worst = Some((below_mm, Point3::new(p.x, p.y, own_z)));
+            }
+            k += 1.0;
+        }
+        worst.map(|(_, p)| p)
+    }
 }
