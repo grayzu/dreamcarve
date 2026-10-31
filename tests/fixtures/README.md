@@ -40,33 +40,43 @@ needed. `cli::sign_lettering_is_within_the_cone` holds it to 3 mm.
 not in the 5 mm border (too narrow for a hole and the 6 mm countersink
 the finished sign has) or the oval (the lettering fills it).
 
-## `star.svg`, `star-female.dcv` and `star-male.dcv`
+## `dc-inlay.svg`, `dc-female.dcv` and `dc-male.dcv`
 
-The phase 3 inlay test part (`docs/specs/phase-3/functional.md`, "Inlay
-pair"; #437), drawn by `tools/parity/star-fixture.ts`. Do not edit it by
-hand; re-run the tool. `star-female.dcv` and `star-male.dcv` are the two
-projects the quick start "An inlay pair" builds from it; they differ only
-in the Inlay's `side`.
+The phase 3 inlay test part (`docs/specs/phase-3/functional.md`,
+"Lettered inlay pair"; #446, replacing #437's star), drawn by
+`tools/parity/inlay-fixture.ts`. Do not edit it by hand; re-run the tool.
+`dc-female.dcv` and `dc-male.dcv` are the two projects the quick start
+"An inlay pair" builds from it; they differ only in the Inlay's `side`
+and the male's `cut_out`.
 
 | Shape | Size, mm | Where (SVG, Y-down) |
 | --- | --- | --- |
-| `star` | four points, 60 tip to tip; tips 30 out on the axes, inner vertices 12 out on the diagonals | centred at (40, 40) |
-| `circle` | 12 across | centred at (40, 40) |
-| `frame` | 80 × 80 square | the page; not cut |
+| `letter-D` | Droid Serif Bold "D", 40 cap height, with its counter | from X 8.3 to 46.6 |
+| `letter-C` | "C", 41.1 tall with its overshoot | from X 49.6 to 81.7, 3 mm right of the D |
+| `frame` | 90 × 60 rectangle | the page; not cut |
 
-It is the star `cli::inlay_exports_and_passes_safety` and the
-`dc-cam::inlay` tests build in code. The frame is there only so that
-`init`, which makes the stock the drawing plus 10 mm all round, makes the
-test part's 100 × 100 mm stock with the star at its centre, (50, 50) in
-project space. Each project sets `thickness_mm` to 12; a user measures
-each board and sets its own.
+The two letters together are 73.4 × 41.1 mm, centred on the page by
+their exact extent (the curves' extremes, not their control points). Both
+face right, so the male, mirrored, reads as a reversed "DC". The D's
+counter is a design hole: an island in the female's pocket, a hole in the
+male's plug. The frame is there only so that `init`, which makes the
+stock the drawing plus 10 mm all round, makes the test part's
+110 × 80 mm stock with the letters at its centre, (55, 40) in project
+space. The male's band, `margin_mm` 8 plus the V wall above the start
+plane, keeps more than 8 mm of board at every edge. Each project sets
+`thickness_mm` to 12; a user measures each board and sets its own.
+
+The unit tests (`cli::inlay_exports_and_passes_safety`, the `dc-cam`
+inlay tests) still build a four-point star in code: they test geometry,
+not the tutorial.
 
 ## Font notice
 
-The lettering is converted outline data of Droid Serif Bold, from
-three.js 0.183.2, `examples/fonts/droid/droid_serif_bold.typeface.json`,
-the copy a PureCutCNC checkout installs (the V-Carve text fixtures used
-the same files). Its directory's NOTICE and README read:
+The lettering of `sign.svg` and `dc-inlay.svg` is converted outline data
+of Droid Serif Bold, from three.js 0.183.2,
+`examples/fonts/droid/droid_serif_bold.typeface.json`, the copy a
+PureCutCNC checkout installs (the V-Carve text fixtures used the same
+files). Its directory's NOTICE and README read:
 
 ```text
 Copyright (C) 2008 The Android Open Source Project

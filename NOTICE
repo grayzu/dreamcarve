@@ -85,3 +85,10 @@ glyph outlines read from three.js's droid_serif_bold.typeface.json, scaled,
 and set on an arc by tools/parity/sign-fixture.ts; tests/fixtures/README.md
 has the details. Used under the Apache License, Version 2.0, under the same
 notice as above; not part of any DreamCarve binary.
+
+The inlay test part, tests/fixtures/dc-inlay.svg (and tests/fixtures/dc-female.dcv
+and dc-male.dcv, the projects built from it), has the monogram "DC" set in
+Droid Serif Bold: glyph outlines read from the same typeface file, scaled
+and placed by tools/parity/inlay-fixture.ts; tests/fixtures/README.md has
+the details. Used under the Apache License, Version 2.0, under the same
+notice as above; not part of any DreamCarve binary.

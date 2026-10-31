@@ -79,19 +79,20 @@ byte-identical run to run. Node 23.6 or newer also runs it directly, as
 `tests/fixtures/sign.dcv`: the quick start test
 (`quick_start::v_carved_sign_chapter_runs`) says how when it differs.
 
-## The star fixture
+## The inlay fixture
 
-`star-fixture.ts` writes `tests/fixtures/star.svg`, the phase 3 inlay test
-part (#437): a four-point star 60 mm tip to tip with a 12 mm circle at its
-centre, and the 80 × 80 mm frame that makes `init`'s stock 100 × 100 mm. It
-reads nothing.
+`inlay-fixture.ts` writes `tests/fixtures/dc-inlay.svg`, the phase 3
+inlay test part (#446, which replaced #437's star): the monogram "DC" in
+Droid Serif Bold, 40 mm cap height, the letters 3 mm apart, centred in
+the 90 × 60 mm frame that makes `init`'s stock 110 × 80 mm. It reads the
+same typeface file as `sign-fixture.ts`, from a PureCutCNC checkout:
 
 ```sh
 cd tools/parity
-npx tsx star-fixture.ts
+npx tsx inlay-fixture.ts --purecutcnc ../../../purecutcnc
 ```
 
-The output is byte-identical run to run; `node star-fixture.ts` runs it
+The output is byte-identical run to run; `node inlay-fixture.ts` runs it
 too, on Node 23.6 or newer. After changing it, rebuild
-`tests/fixtures/star-female.dcv` and `star-male.dcv`: the quick start test
+`tests/fixtures/dc-female.dcv` and `dc-male.dcv`: the quick start test
 (`quick_start::inlay_pair_chapter_runs`) says how when they differ.

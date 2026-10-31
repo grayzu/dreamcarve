@@ -6866,7 +6866,7 @@ fn lettered_inlay_fits_its_board() {
 /// female's.
 #[test]
 fn lettered_male_is_the_mirror_of_the_female() {
-    let (_, male_report, _) =
+    let (dir, male_report, _) =
         export_lettered("lettered_male_is_the_mirror_of_the_female", "dc-male");
     let x_mm = mirror_x_mm(&male_report);
     let female = load_file(&tests_fixture("dc-female.dcv")).project;
@@ -6918,7 +6918,6 @@ fn lettered_male_is_the_mirror_of_the_female() {
     let unmirrored = farthest(&cut, &drawn);
     assert!(unmirrored > 1.0, "the mirror shows: {unmirrored:.3} mm");
 
-    let dir = work_dir("lettered_male_is_the_mirror_of_the_female_dc-male");
     let program = std::fs::read_to_string(dir.join("dc-male-3-T2.nc")).expect("cut-out written");
     let moves = dc_gcode::parse_motion(&program).expect("program parses");
     let off = moves

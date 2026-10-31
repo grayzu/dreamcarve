@@ -556,6 +556,11 @@ struct Limits {
     plunge_mm_min: f64,
     /// The spindle line the program must start the spindle with.
     spindle: &'static str,
+    /// A V-bit's half angle, degrees, or `None` for a flat end mill. A
+    /// V-bit's cone clears the material above its cut as well as the cut
+    /// itself, so a rapid may come down beside a cut, to just above the
+    /// cone's wall (#446).
+    cone_half_angle_deg: Option<f64>,
 }
 
 /// The XY length of `m`, mm: the chord, or the arc for `G2`/`G3`.
@@ -590,7 +595,8 @@ fn xy_length(m: &MachineMove) -> f64 {
 /// S2 and S15 every rapid down ends above the stock top or no deeper than
 /// a cut has reached at that point (one that ended there, or a straight
 /// cut through it: a Pocket's later pass starts its ramp just above the
-/// floor a link cut, #214); S3 and S10 every cut has a feed no faster
+/// floor a link cut, #214; or, for a V-bit, a straight cut whose cone's
+/// wall reaches it, #446); S3 and S10 every cut has a feed no faster
 /// than the tool's, and goes down no faster than its plunge rate; S4 the
 /// spindle starts before the first cut and the program ends `M5`, `M30`;
 /// and the tool's edge stays on the stock.
@@ -666,7 +672,17 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
                         0.0
                     };
                     let (px, py) = (ax + dx * t, ay + dy * t);
-                    ((px - x).hypot(py - y) < 2e-3).then_some(az + (bz - az) * t)
+                    let off = (px - x).hypot(py - y);
+                    let cut_z = az + (bz - az) * t;
+                    if off < 2e-3 {
+                        Some(cut_z)
+                    } else {
+                        // A V-bit's cone, its tip on the cut, clears down
+                        // to its wall `off` from the tip's line.
+                        limits.cone_half_angle_deg.and_then(|half| {
+                            (off <= limits.radius_mm).then(|| cut_z + off / half.to_radians().tan())
+                        })
+                    }
                 });
                 let reached = cut_depth
                     .iter()
@@ -881,6 +897,7 @@ fn pocketed_plaque_from_dxf_chapter_runs() {
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
     assert_program_safe("plaque-1-T2.nc", &one, &stock(300.0, 1000.0, 1.5875));
     assert_program_safe("plaque-2-T1.nc", &two, &stock(500.0, 1500.0, 3.175));
@@ -1005,6 +1022,7 @@ fn v_carved_sign_chapter_runs() {
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
     let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
     for (name, limits) in names.iter().zip([
@@ -1115,6 +1133,7 @@ fn inlay_pair_chapter_runs() {
         feed_mm_min,
         plunge_mm_min,
         spindle: "M3 S18000",
+        cone_half_angle_deg: None,
     };
     for stem in ["dc-female", "dc-male"] {
         let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
@@ -1150,7 +1169,11 @@ fn inlay_pair_chapter_runs() {
         );
         let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
         assert_program_safe(&names[0], &read(&names[0]), &limits(300.0, 1000.0, 1.5875));
-        assert_program_safe(&names[1], &read(&names[1]), &limits(300.0, 1000.0, 3.175));
+        let v_bit = Limits {
+            cone_half_angle_deg: Some(30.0),
+            ..limits(300.0, 1000.0, 3.175)
+        };
+        assert_program_safe(&names[1], &read(&names[1]), &v_bit);
         if let Some(cut_out) = names.get(2) {
             assert_program_safe(cut_out, &read(cut_out), &limits(300.0, 1000.0, 1.5875));
         }
