@@ -125,6 +125,14 @@ phases bump the patch number.
   depth down to the floor. A male with such corners exports a different
   V-bit program, a few seconds longer; V-Carves and female Inlays export
   the same programs as before ([#452]).
+- **Every V-Carve reaches every corner.** V-Carves and female Inlays now
+  carve every convex corner of their walls crisp, as the male does since
+  [#452]: the notch of a raised serif letter, such as the V between a
+  raised "v"'s arms, which lost its whole branch of the cut, a wide
+  corner over 130° (a 40 mm octagon's were left 0.19 mm short), and
+  a narrow corner under about 29°. A carve with such corners exports a
+  different, slightly longer program; a round stroke end the old carve
+  stopped a few hundredths short of gets one cut into it ([#456]).
 
 ### Fixed
 
@@ -914,3 +922,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#394]: https://github.com/grayzu/dreamcarve/issues/394
 [#452]: https://github.com/grayzu/dreamcarve/issues/452
 [#453]: https://github.com/grayzu/dreamcarve/issues/453
+[#456]: https://github.com/grayzu/dreamcarve/issues/456

@@ -698,18 +698,24 @@ pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
     bisector, so a hole's corner (step 11) seeks its joint through the
     hole; and a corner turning under 50° gets no tip, though the
     contact-spread filter drops the branch into any wider than 120°.
-    Where the bit starts at the surface that leaves only the corner's
-    narrow end uncarved, and V-Carve keeps it. `CornerReach::Every` (a
-    carve with material above its start plane, the male Inlay) reaches
-    every convex corner of the holes, and of the outer when `outer`: a
-    leaf on a sharp corner's own branch (within a step of the bisector,
-    its clearance `along · sin(θ/2)` within a step) is not a spur; every
-    bisector points into the region; any convex corner no medial disc,
-    nor the floor's trace `floor_inset_mm` in (a corner turning `τ` is
-    within `d (1 / cos(τ/2) − 1)` of it), reaches within 0.01 mm gets a
-    tip too; and a tip more than a step from its joint gets a node every
-    step on the way, at its own clearance. `convex_corners` returns
-    bisectors into the region.
+    Where the bit starts at the surface that leaves the corner blunt or
+    a whole branch of the cut missing (the V between a raised "v"'s
+    arms). `CornerReach::Every`, which every carve uses (#452 for the
+    male Inlay, #456 for V-Carve and the female), reaches every convex
+    corner of the holes, and of the outer when `outer`: a leaf on a sharp
+    corner's own branch (within a step of the bisector, its clearance
+    `along · sin(θ/2)` within a step) is not a spur; every bisector
+    points into the region; any other convex corner no medial disc, nor
+    the floor's trace `floor_inset_mm` in (a corner turning `τ` is within
+    `d (1 / cos(τ/2) − 1)` of it), reaches within 0.01 mm gets a tip too,
+    worst first, each tip's branch counted before the next is chosen
+    (#456: a round stroke end the contact-spread filter cut the axis
+    short of has every flattened vertex a few hundredths beyond the axis;
+    the branch into the worst runs to the curve's centre and reaches the
+    rest, so the end gets one tip, not one per vertex); and a tip more
+    than a step from its joint gets a node every step on the way, at its
+    own clearance. `convex_corners` returns bisectors into the region.
+    `medial_axis` (upstream's reach) stays for the ported tests.
 12. **Finalise**: nodes with no edges are dropped; a graph with no edges
     keeps its deepest node alone; a graph whose extent is at most
     `3 · step` collapses to its deepest node (a dot). Adjacency lists are
@@ -778,13 +784,13 @@ orientation; DreamCarve's regions are normalised anyway.
      #452), a stretch is also read every 0.05 mm and split where it runs
      more than 0.01 mm shallower than a point's own depth there (a
      corner's straight fall to the floor, Douglas-Peucker's chord across
-     a bend in depth), and the medial axis is built with
-     `CornerReach::Every` (outer `false` for a male Inlay's band region,
-     whose outer edge is not the plug's; `floor_inset_mm` `F · slope`).
-     Such a carve's chains are then cut off where they run out onto the
-     floor, which the floor's cutting covers. A carve engaged from its
-     start plane is built as before, its program byte for byte the same
-     (`vcarve::start_at_stock_top_is_unchanged`).
+     a bend in depth), and the chains are then cut off where they run
+     out onto the floor, which the floor's cutting covers. Every carve's
+     medial axis is built with `CornerReach::Every` (#456; outer `false`
+     for a male Inlay's band region, whose outer edge is not the plug's;
+     `floor_inset_mm` `F · slope`), so every convex corner of its walls
+     is cut crisp (`vcarve::raised_text_corners_are_crisp`,
+     `vcarve::female_corners_reach_the_tip`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
@@ -1518,11 +1524,18 @@ program's path passes only as a link between two points where the other
 program lifts and plunges; chain direction is not compared (#404,
 decision 3); the offset case compares its rings level by level as sets
 and not its links; the `.camj` files turn off PureCutCNC's export arc
-fitting, which turns a square ring into a circle past the wall. Two
-`Difference`s: `DescentsHeldToPlunge` (S10) on every case, and
+fitting, which turns a square ring into a circle past the wall. Three
+`Difference`s: `DescentsHeldToPlunge` (S10) on every case;
 `ChainDepthFitted` on `vcarve-medial-text-rag`, where upstream's
 simplified chords reach up to 0.256 mm past a wall and DreamCarve's depth
-fitting (#404, decision 2) raises them.
+fitting (#404, decision 2) raises them; and `EveryCornerReached` on
+`vcarve-medial-text-rag` (#456), where upstream's medial axis misses a
+corner turning 39.5° by 0.097 mm and five curved stroke ends by 0.010 to
+0.030 mm: DreamCarve must come within 0.01 mm of every convex
+corner turning more than 20°, and a cut of DreamCarve's on no golden cut
+must lie on the V surface and reach a wall the golden program misses by
+more than 0.01 mm. The other seven cases are unchanged by #456: upstream
+reaches their corners.
 
 **RasterCarve cases** (`tools/parity/photo/`): `capture.py`, run as
 `python3 -I capture.py --rastercarve ../../../rastercarve --case

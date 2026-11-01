@@ -518,7 +518,9 @@ fn vcarve_medial_l() {
 /// clamped at 5 mm (no stroke reaches it). R, a and g are compared in
 /// that order. Where upstream's simplified chords take the cone past a
 /// wall, DreamCarve's depth fitting raises the carve
-/// ([`Difference::ChainDepthFitted`]).
+/// ([`Difference::ChainDepthFitted`]); where upstream's medial axis
+/// leaves a corner or a curved stroke end short, DreamCarve's runs into
+/// it (#456, [`Difference::EveryCornerReached`]).
 #[test]
 fn vcarve_medial_text_rag() {
     harness::check(&case(
@@ -526,6 +528,7 @@ fn vcarve_medial_text_rag() {
         vec![
             Difference::DescentsHeldToPlunge,
             Difference::ChainDepthFitted,
+            Difference::EveryCornerReached,
         ],
         Order::InOrder,
     ));

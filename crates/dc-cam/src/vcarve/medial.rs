@@ -40,12 +40,14 @@
 //!   bends there (a reflex corner, a flattened curve). Each such stretch
 //!   is split at its worst point, set to that point's own depth, until the
 //!   cone test passes ([`fit_chain`]). Upstream does not check this.
+//! - **Every corner (#452, #456).** Every carve builds its axis to reach
+//!   every convex corner of its walls (`CornerReach::Every`), where
+//!   upstream's passes leave some with no branch.
 //! - **Material above the start plane (#452).** A carve whose flank is
-//!   engaged from above its start plane (a male Inlay) builds its axis to
-//!   reach every corner of its walls (`CornerReach::Every`), fits each
-//!   stretch down to its own depth as well (`Tolerances::deepen_mm`), and
-//!   cuts its chains off where they run onto the floor ([`off_floor`]):
-//!   there a corner the carve misses keeps wood up to the stock top.
+//!   engaged from above its start plane (a male Inlay) also fits each
+//!   stretch down to its own depth (`Tolerances::deepen_mm`) and cuts its
+//!   chains off where they run onto the floor ([`off_floor`]): there a
+//!   corner the carve misses keeps wood up to the stock top.
 //! - Y-up needs no re-derivation: a medial axis, its chains and the
 //!   greedy order are the same under reflection.
 

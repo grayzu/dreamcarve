@@ -30,10 +30,10 @@
 //! `cross · area`, as upstream.
 //!
 //! Upstream's passes can leave a convex corner with no branch at all
-//! (#452; [`CornerReach::Upstream`]). [`medial_axis`] keeps them, so a
-//! V-Carve cuts as it did; [`medial_axis_with`] and
-//! [`CornerReach::Every`] reach every corner, for a carve with material
-//! above its start plane.
+//! (#452; [`CornerReach::Upstream`]). [`medial_axis`] keeps them, as
+//! upstream's tests and the parity corpus read it; [`medial_axis_with`]
+//! and [`CornerReach::Every`] reach every corner, which every carve uses
+//! (#456).
 
 mod grid;
 #[cfg(test)]
@@ -114,9 +114,8 @@ pub enum CornerReach {
     /// a corner can be left with no branch at all, and a corner turning
     /// less than [`CORNER_ANGLE_RAD`] gets no tip, though the
     /// contact-spread filter drops the branch into any wider than 120°.
-    /// Where the bit starts at the material's surface that leaves the
-    /// corner's narrow end uncarved; V-Carve and the female Inlay keep it,
-    /// so their programs do not change.
+    /// That leaves the corner blunt, or a whole branch of the cut missing;
+    /// no carve uses it since #456.
     #[default]
     Upstream,
     /// Every convex corner of the reached loops is reached. One sharper
@@ -124,10 +123,10 @@ pub enum CornerReach {
     /// a leaf on it, and its tip; any other that no medial disc, nor the
     /// floor's trace, reaches within 0.01 mm gets a tip too; and a tip's
     /// joint is sought along a bisector into the region, with a node every
-    /// step on the way. For a carve with material above its start plane
-    /// (a male Inlay's plug), where a corner the carve does not reach
-    /// keeps wood up to the stock top. The other loops keep upstream's
-    /// reach.
+    /// step on the way. Every carve (#456): a corner the carve does not
+    /// reach is blunt, and where material stands above the start plane (a
+    /// male Inlay's plug, #452) keeps wood up to the stock top. The other
+    /// loops keep upstream's reach.
     Every {
         /// Whether the outer's corners are reached, as well as the holes':
         /// a male Inlay's band region has the plug's outline as its holes
@@ -598,41 +597,96 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
     prune_spurs(&mut graph, step_mm * PRUNE_FACTOR, &spared, step_mm);
     drop_small_components(&mut graph, step_mm * 4.0);
     // Every sharp corner gets a tip; on a loop `reach` reaches, so does
-    // every convex corner no medial disc reaches.
-    let corners: Vec<Corner> = loops
-        .iter()
-        .enumerate()
-        .flat_map(|(index, pts)| {
-            if reached(index) {
-                corners_of_loop(pts, index > 0, 0.0, reach)
-                    .into_iter()
-                    .filter(|c| {
-                        c.turn_rad > CORNER_ANGLE_RAD
-                            || (!reach.floor_covers(c, &grid)
-                                && reach_gap_mm(&graph, c.p) > REACH_SLACK_MM)
-                    })
-                    .collect()
-            } else {
-                corners_of_loop(pts, index > 0, CORNER_ANGLE_RAD, reach)
+    // every other convex corner no medial disc, nor the floor's trace,
+    // reaches.
+    let mut sharp: Vec<Corner> = Vec::new();
+    let mut blunt: Vec<Corner> = Vec::new();
+    for (index, pts) in loops.iter().enumerate() {
+        let min_turn_rad = if reached(index) {
+            0.0
+        } else {
+            CORNER_ANGLE_RAD
+        };
+        for corner in corners_of_loop(pts, index > 0, min_turn_rad, reach) {
+            if corner.turn_rad > CORNER_ANGLE_RAD {
+                sharp.push(corner);
+            } else if !reach.floor_covers(&corner, &grid) {
+                blunt.push(corner);
             }
-        })
-        .collect();
+        }
+    }
     let sampled = (reach != CornerReach::Upstream).then_some(&grid);
-    extend_into_corners(&mut graph, &corners, &loops, step_mm, sampled);
+    extend_into_corners(&mut graph, &sharp, &loops, step_mm, sampled);
+    reach_blunt_corners(&mut graph, &blunt, &loops, step_mm, &grid);
     finalize(graph, step_mm)
 }
 
 /// How far `p` lies outside every medial disc of `graph`'s joined nodes
-/// (all of them when none is joined), mm: 0 or less when one reaches it.
-fn reach_gap_mm(graph: &Graph, p: Point) -> f64 {
+/// from `from` on (all of them when none is joined), mm: 0 or less when
+/// one reaches it.
+fn reach_gap_mm(graph: &Graph, p: Point, from: usize) -> f64 {
     let lone = graph.nodes.len() <= 1;
     graph
         .nodes
         .iter()
         .enumerate()
+        .skip(from)
         .filter(|&(i, _)| lone || graph.degree(i) > 0)
         .map(|(_, n)| n.p.distance_to(p) - n.clearance_mm)
         .fold(f64::INFINITY, f64::min)
+}
+
+/// Gives a tip to each of `corners` (no sharper than [`CORNER_ANGLE_RAD`])
+/// that no medial disc reaches within [`REACH_SLACK_MM`] (#452, #456),
+/// worst first, each tip's own branch counted before the next is chosen.
+/// Where a curve's flattened vertices all stand a little beyond the axis
+/// (a round stroke end the contact-spread filter cut the axis short of),
+/// the branch into the worst runs to the curve's centre, whose disc
+/// reaches the rest, so the curve gets one tip rather than one per vertex;
+/// a coarse polygon's corners, each beyond every other's discs, get one
+/// each.
+fn reach_blunt_corners(
+    graph: &mut Graph,
+    corners: &[Corner],
+    loops: &[Vec<Point>],
+    step_mm: f64,
+    grid: &SegmentDistanceGrid,
+) {
+    let mut gaps: Vec<f64> = corners
+        .iter()
+        .map(|c| reach_gap_mm(graph, c.p, 0))
+        .collect();
+    loop {
+        let worst = gaps
+            .iter()
+            .enumerate()
+            .filter(|&(_, &gap)| gap > REACH_SLACK_MM)
+            .fold(None, |best: Option<(usize, f64)>, (i, &gap)| {
+                if best.is_none_or(|(_, g)| gap > g) {
+                    Some((i, gap))
+                } else {
+                    best
+                }
+            });
+        let Some((i, _)) = worst else {
+            break;
+        };
+        let added = graph.nodes.len();
+        extend_into_corners(
+            graph,
+            corners.get(i..=i).unwrap_or_default(),
+            loops,
+            step_mm,
+            Some(grid),
+        );
+        for (gap, corner) in gaps.iter_mut().zip(corners) {
+            *gap = gap.min(reach_gap_mm(graph, corner.p, added));
+        }
+        // A corner with no joint inside the region is left as it is.
+        if let Some(gap) = gaps.get_mut(i) {
+            *gap = f64::NEG_INFINITY;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

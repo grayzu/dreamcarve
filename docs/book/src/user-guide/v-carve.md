@@ -81,8 +81,10 @@ deep with a 60° bit. So:
 
 - the cut is as wide as the shape at every point, and its walls slope at
   the bit's angle;
-- at every sharp outside corner, the medial lines run up into the corner
-  and the bit rises to the surface there: a serif ends in a point;
+- at every outside corner, the medial lines run up into the corner and
+  the bit rises to the surface there: a serif ends in a point, and so do
+  a narrow notch, the V between a raised letter's arms, and a wide
+  corner such as an octagon's;
 - a round end is cut deepest at its centre, where the bit comes down;
 - a circle is one plunge at its centre.
 

@@ -16,6 +16,7 @@
 mod seat;
 
 use super::*;
+use crate::heightfield::{Cutter, Heightfield};
 use crate::run::RunLabel;
 use crate::test_support::assert_run_safe;
 use crate::toolpath::{MoveKind, Toolpath};
@@ -30,7 +31,7 @@ use dc_project::{
     FeatureInstance, InlaySide, MachiningOrder, Operation, OperationId, Stock, Tool, ToolId,
     ToolKind, VCarveOp, VCarveStrategy,
 };
-use seat::{Cutter, Heightfield, SeatCell, seat};
+use seat::{SeatCell, seat};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 

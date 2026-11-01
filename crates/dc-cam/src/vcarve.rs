@@ -104,18 +104,16 @@ impl Carve<'_> {
     }
 
     /// How far the medial axis of `region` reaches into its corners, for
-    /// a V-bit of `slope` (#452). Where material may stand above the start
-    /// plane, every convex corner of the loops it stands against: a corner
-    /// the axis misses keeps that material, where a chain ending at the
-    /// corner, its tip at the start plane, would have cut a disc of radius
-    /// `h · tan(α/2)` at height `h` about it, exactly the plug's inset
-    /// there. A male's band region stands against the plug at its holes
-    /// only; its outer edge is not the plug's. Upstream's reach otherwise,
-    /// which leaves V-Carve and the female Inlay as they were.
+    /// a V-bit of `slope`: every convex corner of the loops the carve's
+    /// walls are (#452, #456). A chain ending at a corner, its tip at the
+    /// start plane, cuts the corner crisp, a disc of radius `h · tan(α/2)`
+    /// at height `h` above the tip about it; upstream's passes leave some
+    /// corners with no branch, which blunts a V-Carve's or a female's
+    /// corner and, where material stands above the start plane (a male
+    /// Inlay's plug), keeps wood up to the stock top there. A male's band
+    /// region has the plug's outline as its holes only; its outer edge is
+    /// not the plug's, so its corners keep upstream's reach.
     pub(crate) fn corner_reach(&self, region: &Region, slope: f64) -> CornerReach {
-        if !self.stands_above() {
-            return CornerReach::Upstream;
-        }
         CornerReach::Every {
             outer: self
                 .design
