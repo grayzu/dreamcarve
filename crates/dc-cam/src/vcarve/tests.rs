@@ -19,6 +19,7 @@
 mod clearing_passes;
 mod corners;
 mod floor;
+mod walls;
 
 use super::*;
 use crate::entry::ENTRY_CLEARANCE_MM;
