@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="540" viewBox="0 0 720 540" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: import dialog</title>
+<rect width="720" height="540" fill="#ffffff"/>
+<rect x="0" y="0" width="720" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">02 · Import a drawing (capability 55). DXF shown; an SVG has no options.</text>
+<rect x="20" y="40" width="680" height="480" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="20" y="40" width="680" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="28" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Import drawing</text>
+<text x="680" y="57" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">✕</text>
+<text x="36" y="90" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">File</text>
+<rect x="36" y="98" width="540" height="22" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="113" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">/Users/sam/cnc/plaque.dxf</text>
+<rect x="584" y="97" width="100" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="634.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Choose…</text>
+<text x="36" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start">DXF · 14 closed shapes, 1 open path, 3 layers · units from the file: mm</text>
+<text x="36" y="176" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Options</text>
+<text x="36" y="200" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Units</text>
+<rect x="174" y="186" width="182" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="180" y="200" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Millimetres (from the file)</text>
+<text x="348" y="200" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="36" y="226" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Join tolerance</text>
+<rect x="174" y="212" width="182" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="180" y="226" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0.01</text>
+<text x="350" y="226" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="36" y="242" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Units are required when the file declares none ($INSUNITS).</text>
+<text x="36" y="270" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Layers</text>
+<rect x="36" y="280" width="320" height="90" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="44" y="288" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M46 294 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="62" y="299" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">CUT · 7 shapes</text>
+<rect x="44" y="310" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M46 316 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="62" y="321" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">POCKET · 3 shapes</text>
+<rect x="44" y="332" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M46 338 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="62" y="343" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">DRILL · 4 circles</text>
+<rect x="44" y="354" width="12" height="12" rx="2" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="62" y="365" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start">NOTES · 2 TEXT (not read)</text>
+<rect x="380" y="196" width="300" height="190" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="386" y="210" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Preview</text>
+<rect x="400" y="230" width="260" height="130" rx="8" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<rect x="440" y="250" width="120" height="80" rx="0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="500" cy="290" r="18" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="415" cy="245" r="5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="645" cy="245" r="5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="415" cy="345" r="5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="645" cy="345" r="5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<path d="M590 320 q20 -60 50 -30" fill="none" stroke="#2b2b2b" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="36" y="410" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Shapes are placed as drawn, the drawing's origin at the stock's bottom-left, and selected after import.</text>
+<text x="36" y="426" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">Warnings: 2 TEXT entities are not read and will be listed in the Warnings panel.</text>
+<rect x="500" y="480" width="80" height="26" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="540.0" y="497.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Cancel</text>
+<rect x="590" y="480" width="94" height="26" rx="3" fill="#2f6fdb" stroke="#2f6fdb" stroke-width="1"/>
+<text x="637.0" y="497.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#ffffff" text-anchor="middle">Import</text>
+</svg>

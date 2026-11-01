@@ -1,0 +1,221 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="1000" viewBox="0 0 700 1000" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: Profile editor</title>
+<rect width="700" height="1000" fill="#ffffff"/>
+<rect x="0" y="0" width="700" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">05 · Operation editor, Profile, every group open (capabilities 66–69). Field names are the file's; labels are the chapters'.</text>
+<rect x="20" y="40" width="330" height="940" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="20" y="40" width="330" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="28" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Outside cut · Profile</text>
+<text x="340" y="57" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">⤢</text>
+<rect x="20" y="72" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="86" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Identity</text>
+<text x="28" y="110" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Name</text>
+<rect x="166" y="96" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="110" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Outside cut</text>
+<rect x="28" y="124" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M30 130 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="46" y="135" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Enabled</text>
+<rect x="20" y="148" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="162" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Targets</text>
+<rect x="28" y="172" width="314" height="42" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="34" y="186" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline</text>
+<text x="336" y="186" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">✕</text>
+<text x="34" y="202" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">1 target · hover to highlight</text>
+<rect x="28" y="220" width="86" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="71.0" y="234.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Add selected</text>
+<rect x="120" y="220" width="110" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="175.0" y="234.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Replace with selected</text>
+<rect x="236" y="220" width="50" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="261.0" y="234.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Pick…</text>
+<rect x="20" y="250" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="264" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Tool</text>
+<text x="28" y="288" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tool</text>
+<circle cx="152" cy="284" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="287" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="274" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="288" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">6.35 mm end mill (T1)</text>
+<text x="334" y="288" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<rect x="166" y="296" width="120" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="226.0" y="310.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Add from library…</text>
+<rect x="20" y="324" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="338" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Depth</text>
+<text x="28" y="362" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Depth</text>
+<circle cx="152" cy="358" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="361" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="348" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="362" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">12.2</text>
+<text x="336" y="362" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="28" y="388" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Step-down</text>
+<circle cx="152" cy="384" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="387" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="374" width="158" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="388" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">tool's: 4 mm</text>
+<text x="318" y="388" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="328" y="389" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="start">⟲</text>
+<text x="28" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Through-cut allowance</text>
+<circle cx="152" cy="410" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="413" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="400" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="414" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0.2</text>
+<text x="336" y="414" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<rect x="20" y="428" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="442" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Strategy</text>
+<text x="28" y="466" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Side</text>
+<circle cx="152" cy="462" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="465" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="452" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="466" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Outside</text>
+<text x="334" y="466" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="492" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Direction</text>
+<circle cx="152" cy="488" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="491" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="478" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="492" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Climb</text>
+<text x="334" y="492" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="518" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Start point</text>
+<circle cx="152" cy="514" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="517" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="504" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="518" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Auto</text>
+<text x="334" y="518" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="544" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Last pass</text>
+<circle cx="152" cy="540" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="543" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="530" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="544" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Off</text>
+<text x="334" y="544" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<rect x="20" y="558" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="572" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Entry and leads</text>
+<text x="28" y="596" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Entry</text>
+<circle cx="152" cy="592" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="595" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="582" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="596" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Ramp</text>
+<text x="334" y="596" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="622" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Ramp angle</text>
+<circle cx="152" cy="618" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="621" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="608" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="622" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">15</text>
+<text x="336" y="622" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">°</text>
+<text x="28" y="648" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lead</text>
+<circle cx="152" cy="644" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="647" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="634" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="648" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Arc</text>
+<text x="334" y="648" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="674" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lead radius</text>
+<circle cx="152" cy="670" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="673" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="660" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="674" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">3</text>
+<text x="336" y="674" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="28" y="700" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lead sweep</text>
+<circle cx="152" cy="696" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="699" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="686" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="700" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">90</text>
+<text x="336" y="700" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">°</text>
+<rect x="166" y="714" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M168 720 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="184" y="725" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lead out</text>
+<text x="28" y="748" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Overcut</text>
+<circle cx="152" cy="744" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="747" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="734" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="748" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0</text>
+<text x="336" y="748" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<rect x="20" y="762" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="776" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Corners and tabs</text>
+<text x="28" y="800" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Corner relief</text>
+<circle cx="152" cy="796" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="799" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="786" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="800" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">None</text>
+<text x="334" y="800" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="826" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tabs</text>
+<circle cx="152" cy="822" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="825" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="812" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="826" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Count</text>
+<text x="334" y="826" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="28" y="852" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Count</text>
+<circle cx="152" cy="848" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="851" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="838" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="852" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">4</text>
+<text x="28" y="878" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Width</text>
+<circle cx="152" cy="874" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="877" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="864" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="878" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">8</text>
+<text x="336" y="878" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="28" y="904" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Height</text>
+<circle cx="152" cy="900" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="903" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="890" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="904" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">3</text>
+<text x="336" y="904" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="28" y="930" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Shape</text>
+<circle cx="152" cy="926" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="929" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="916" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="930" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rect</text>
+<text x="334" y="930" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<rect x="166" y="944" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="184" y="955" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">On holes</text>
+<rect x="166" y="966" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M168 972 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="184" y="977" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Avoid corners</text>
+<rect x="166" y="986" width="100" height="20" rx="3" fill="#2f6fdb" stroke="#2f6fdb" stroke-width="1"/>
+<text x="216.0" y="1000.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#ffffff" text-anchor="middle">Place tabs</text>
+<text x="274" y="1000" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">4 placed on outline</text>
+<rect x="20" y="1014" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="1028" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Order</text>
+<text x="28" y="1052" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Machining order</text>
+<circle cx="152" cy="1048" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="1051" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="1038" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="1052" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Full depth first</text>
+<text x="334" y="1052" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<rect x="20" y="1066" width="330" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="26" y="1080" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Heights</text>
+<text x="28" y="1104" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Safe Z</text>
+<circle cx="152" cy="1100" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
+<text x="152" y="1103" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
+<rect x="166" y="1090" width="176" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="172" y="1104" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">5</text>
+<text x="336" y="1104" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="380" y="80" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Groups</text>
+<text x="380" y="96" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Identity · Targets · Tool · Depth · Strategy · Entry</text>
+<text x="380" y="110" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">and leads · Corners and tabs · Order · Heights. A</text>
+<text x="380" y="124" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">group with no field for the kind is not shown. Open</text>
+<text x="380" y="138" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">state is remembered.</text>
+<text x="380" y="162" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tool-derived defaults</text>
+<text x="380" y="178" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Step-down, stepover and pitch show the tool's value</text>
+<text x="380" y="192" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">as grey placeholder text and write null. ⟲ clears</text>
+<text x="380" y="206" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">back to it.</text>
+<text x="380" y="230" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Help</text>
+<text x="380" y="246" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">? beside a label shows the chapter's one-sentence</text>
+<text x="380" y="260" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">definition on hover. Labels are the chapters' names;</text>
+<text x="380" y="274" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">the file's field name is in the tooltip.</text>
+<text x="380" y="298" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Located warnings</text>
+<text x="380" y="314" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">A warning check locates at a field shows under that</text>
+<text x="380" y="328" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">field, in the warning colour, as well as in the</text>
+<text x="380" y="342" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Warnings panel (10).</text>
+<text x="380" y="366" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Targets</text>
+<text x="380" y="382" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Hovering the group highlights the targets on the</text>
+<text x="380" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Viewport. Pick… lets the user click shapes until</text>
+<text x="380" y="410" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Escape.</text>
+<text x="380" y="434" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tabs</text>
+<text x="380" y="450" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">The request (count or distances, size, shape, on</text>
+<text x="380" y="464" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">holes, avoid corners) is the file's tabs field.</text>
+<text x="380" y="478" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Place tabs runs tabs place and the request becomes</text>
+<text x="380" y="492" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">placed tabs on the part (ADR-0005), listed in the</text>
+<text x="380" y="506" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Design Tree and draggable on the Viewport (08).</text>
+<text x="380" y="530" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Never offered</text>
+<text x="380" y="546" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Nothing the generator ignores for this kind appears;</text>
+<text x="380" y="560" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">nothing it reads is hidden. Acceptance test 73</text>
+<text x="380" y="574" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">checks the table in capability 68 against the</text>
+<text x="380" y="588" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">editor.</text>
+</svg>

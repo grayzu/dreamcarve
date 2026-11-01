@@ -1,0 +1,225 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: preview controls</title>
+<rect width="1280" height="620" fill="#ffffff"/>
+<rect x="0" y="0" width="1280" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">09 · Toolpath visibility and depth colouring (capabilities 72–74): By depth mode, arrows on, program extents on, the Pocket regenerating (faded).</text>
+<rect x="0" y="30" width="1000" height="566" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<line x1="60.0" y1="116.0" x2="60.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="102.0" y1="116.0" x2="102.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="144.0" y1="116.0" x2="144.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="186.0" y1="116.0" x2="186.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="228.0" y1="116.0" x2="228.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="270.0" y1="116.0" x2="270.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="312.0" y1="116.0" x2="312.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="354.0" y1="116.0" x2="354.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="396.0" y1="116.0" x2="396.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="438.0" y1="116.0" x2="438.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="480.0" y1="116.0" x2="480.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="522.0" y1="116.0" x2="522.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="564.0" y1="116.0" x2="564.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="606.0" y1="116.0" x2="606.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="648.0" y1="116.0" x2="648.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="690.0" y1="116.0" x2="690.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="732.0" y1="116.0" x2="732.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="536.0" x2="732.0" y2="536.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="494.0" x2="732.0" y2="494.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="452.0" x2="732.0" y2="452.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="410.0" x2="732.0" y2="410.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="368.0" x2="732.0" y2="368.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="326.0" x2="732.0" y2="326.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="284.0" x2="732.0" y2="284.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="242.0" x2="732.0" y2="242.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="200.0" x2="732.0" y2="200.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="158.0" x2="732.0" y2="158.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="116.0" x2="732.0" y2="116.0" stroke="#eeeeee" stroke-width="1"/>
+<rect x="60" y="116.0" width="672.0" height="420.0" rx="0" fill="none" stroke="#7f7f7f" stroke-width="1.2" stroke-dasharray="6 4"/>
+<line x1="50" y1="536" x2="70" y2="536" stroke="#2b2b2b" stroke-width="1.2"/>
+<line x1="60" y1="526" x2="60" y2="546" stroke="#2b2b2b" stroke-width="1.2"/>
+<text x="46" y="550" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">0,0</text>
+<path d="M685.0 137.0 h10 M690.0 132.0 v10" fill="none" stroke="#7a7a7a" stroke-width="1"/>
+<circle cx="690.0" cy="137.0" r="5" fill="none" stroke="#7a7a7a" stroke-width="1"/>
+<rect x="102.0" y="158.0" width="588.0" height="336.0" rx="25.200000000000003" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<rect x="186.0" y="200.0" width="294.0" height="210.0" rx="0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="333.0" cy="305.0" r="42.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="144.0" cy="452.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="648.0" cy="452.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="144.0" cy="200.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="648.0" cy="200.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<path d="M522.0 368.0 q63.0 -168.0 126.0 -126.0" fill="none" stroke="#2b2b2b" stroke-width="1" stroke-dasharray="3 2"/>
+<rect x="88.665" y="144.665" width="614.67" height="362.67" rx="38.535000000000004" fill="none" stroke="#321e87" stroke-width="1.6"/>
+<line x1="379.2" y1="507.335" x2="412.8" y2="507.335" stroke="#321e87" stroke-width="5"/>
+<line x1="379.2" y1="144.665" x2="412.8" y2="144.665" stroke="#321e87" stroke-width="5"/>
+<line x1="88.665" y1="309.2" x2="88.665" y2="342.8" stroke="#321e87" stroke-width="5"/>
+<line x1="703.335" y1="309.2" x2="703.335" y2="342.8" stroke="#321e87" stroke-width="5"/>
+<circle cx="88.665" cy="326.0" r="13.334999999999999" fill="none" stroke="#321e87" stroke-width="1"/>
+<line x1="88.665" y1="326.0" x2="88.665" y2="299.33" stroke="#321e87" stroke-width="1"/>
+<g opacity="0.35">
+<line x1="199.44000000000003" y1="392.5" x2="466.56" y2="392.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="375.0" x2="466.56" y2="375.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="357.5" x2="315.18585954922327" y2="357.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="350.81414045077673" y1="357.5" x2="466.56" y2="357.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="340.0" x2="290.0047258410881" y2="340.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="375.9952741589119" y1="340.0" x2="466.56" y2="340.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="322.5" x2="280.3944527639908" y2="322.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="385.6055472360092" y1="322.5" x2="466.56" y2="322.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="305.0" x2="277.56" y2="305.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="388.44" y1="305.0" x2="466.56" y2="305.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="287.5" x2="280.3944527639908" y2="287.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="385.6055472360092" y1="287.5" x2="466.56" y2="287.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="270.0" x2="290.0047258410881" y2="270.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="375.9952741589119" y1="270.0" x2="466.56" y2="270.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="252.5" x2="315.18585954922327" y2="252.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="350.81414045077673" y1="252.5" x2="466.56" y2="252.5" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="235.0" x2="466.56" y2="235.0" stroke="#7d7dc3" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="217.49999999999994" x2="466.56" y2="217.49999999999994" stroke="#7d7dc3" stroke-width="1.2"/>
+<rect x="199.44" y="213.44" width="267.12" height="183.12" rx="0" fill="none" stroke="#7d7dc3" stroke-width="1.4"/>
+<circle cx="333.0" cy="305.0" r="55.44" fill="none" stroke="#7d7dc3" stroke-width="1.4"/>
+</g>
+<circle cx="144.0" cy="452.0" r="10.5" fill="none" stroke="#321e87" stroke-width="1.4"/>
+<circle cx="648.0" cy="452.0" r="10.5" fill="none" stroke="#321e87" stroke-width="1.4"/>
+<circle cx="144.0" cy="200.0" r="10.5" fill="none" stroke="#321e87" stroke-width="1.4"/>
+<circle cx="648.0" cy="200.0" r="10.5" fill="none" stroke="#321e87" stroke-width="1.4"/>
+<path d="M522.0 368.0 q63.0 -168.0 126.0 -126.0" fill="none" stroke="#bbccf5" stroke-width="1.6"/>
+<line x1="144.0" y1="200.0" x2="648.0" y2="200.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="648.0" y1="200.0" x2="648.0" y2="452.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
+<path d="M238.33249999999998 141.665 l5 3 l-5 3" fill="none" stroke="#321e87" stroke-width="1"/>
+<path d="M392.0 141.665 l5 3 l-5 3" fill="none" stroke="#321e87" stroke-width="1"/>
+<path d="M545.6674999999999 141.665 l5 3 l-5 3" fill="none" stroke="#321e87" stroke-width="1"/>
+<rect x="88.665" y="144.66500000000002" width="614.6700000000001" height="362.66999999999996" rx="0" fill="none" stroke="#2b2b2b" stroke-width="1" stroke-dasharray="2 2"/>
+<rect x="75.33" y="131.32999999999998" width="641.3399999999999" height="389.34" rx="0" fill="none" stroke="#7a7a7a" stroke-width="1" stroke-dasharray="6 3"/>
+<text x="75.33" y="125.32999999999998" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Program extents  X −6.35..156.35  Y −6.35..96.35  Z −12.2..5  (edge of the bit, dashed)</text>
+<rect x="802" y="38" width="190" height="236" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="802" y="38" width="190" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="810" y="54" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Toolpaths</text>
+<circle cx="818" cy="78" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="830" y="83" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">By operation</text>
+<circle cx="818" cy="98" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<circle cx="818" cy="98" r="3" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="830" y="103" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">By depth</text>
+<rect x="812" y="116" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M814 122 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="830" y="127" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Cuts</text>
+<rect x="812" y="138" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M814 144 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="830" y="149" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rapids</text>
+<rect x="812" y="160" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M814 166 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="830" y="171" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Plunges</text>
+<rect x="812" y="182" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="830" y="193" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Direction arrows</text>
+<rect x="812" y="204" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M814 210 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="830" y="215" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Start points</text>
+<rect x="812" y="226" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M814 232 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="830" y="237" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tab marks</text>
+<rect x="812" y="248" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="830" y="259" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Only the selected operation</text>
+<rect x="812" y="270" width="80" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="852.0" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Show all</text>
+<rect x="900" y="270" width="80" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="940.0" y="284.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Hide all</text>
+<text x="1020" y="52" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Depth</text>
+<rect x="1020" y="60" width="18" height="4" rx="0" fill="#c8dcff" stroke="none" stroke-width="1"/>
+<rect x="1020" y="64" width="18" height="4" rx="0" fill="#c5d8fc" stroke="none" stroke-width="1"/>
+<rect x="1020" y="68" width="18" height="4" rx="0" fill="#c2d5fa" stroke="none" stroke-width="1"/>
+<rect x="1020" y="72" width="18" height="4" rx="0" fill="#c0d2f8" stroke="none" stroke-width="1"/>
+<rect x="1020" y="76" width="18" height="4" rx="0" fill="#bdcff6" stroke="none" stroke-width="1"/>
+<rect x="1020" y="80" width="18" height="4" rx="0" fill="#bbcbf4" stroke="none" stroke-width="1"/>
+<rect x="1020" y="84" width="18" height="4" rx="0" fill="#b8c8f2" stroke="none" stroke-width="1"/>
+<rect x="1020" y="88" width="18" height="4" rx="0" fill="#b6c5f0" stroke="none" stroke-width="1"/>
+<rect x="1020" y="92" width="18" height="4" rx="0" fill="#b3c2ee" stroke="none" stroke-width="1"/>
+<rect x="1020" y="96" width="18" height="4" rx="0" fill="#b1bfec" stroke="none" stroke-width="1"/>
+<rect x="1020" y="100" width="18" height="4" rx="0" fill="#aebbea" stroke="none" stroke-width="1"/>
+<rect x="1020" y="104" width="18" height="4" rx="0" fill="#acb8e8" stroke="none" stroke-width="1"/>
+<rect x="1020" y="108" width="18" height="4" rx="0" fill="#a9b5e6" stroke="none" stroke-width="1"/>
+<rect x="1020" y="112" width="18" height="4" rx="0" fill="#a6b2e4" stroke="none" stroke-width="1"/>
+<rect x="1020" y="116" width="18" height="4" rx="0" fill="#a4aee2" stroke="none" stroke-width="1"/>
+<rect x="1020" y="120" width="18" height="4" rx="0" fill="#a1abe0" stroke="none" stroke-width="1"/>
+<rect x="1020" y="124" width="18" height="4" rx="0" fill="#9fa8de" stroke="none" stroke-width="1"/>
+<rect x="1020" y="128" width="18" height="4" rx="0" fill="#9ca5dc" stroke="none" stroke-width="1"/>
+<rect x="1020" y="132" width="18" height="4" rx="0" fill="#9aa2da" stroke="none" stroke-width="1"/>
+<rect x="1020" y="136" width="18" height="4" rx="0" fill="#979ed8" stroke="none" stroke-width="1"/>
+<rect x="1020" y="140" width="18" height="4" rx="0" fill="#959bd6" stroke="none" stroke-width="1"/>
+<rect x="1020" y="144" width="18" height="4" rx="0" fill="#9298d4" stroke="none" stroke-width="1"/>
+<rect x="1020" y="148" width="18" height="4" rx="0" fill="#9095d2" stroke="none" stroke-width="1"/>
+<rect x="1020" y="152" width="18" height="4" rx="0" fill="#8d91d0" stroke="none" stroke-width="1"/>
+<rect x="1020" y="156" width="18" height="4" rx="0" fill="#8a8ece" stroke="none" stroke-width="1"/>
+<rect x="1020" y="160" width="18" height="4" rx="0" fill="#888bcc" stroke="none" stroke-width="1"/>
+<rect x="1020" y="164" width="18" height="4" rx="0" fill="#8588ca" stroke="none" stroke-width="1"/>
+<rect x="1020" y="168" width="18" height="4" rx="0" fill="#8385c8" stroke="none" stroke-width="1"/>
+<rect x="1020" y="172" width="18" height="4" rx="0" fill="#8081c6" stroke="none" stroke-width="1"/>
+<rect x="1020" y="176" width="18" height="4" rx="0" fill="#7e7ec4" stroke="none" stroke-width="1"/>
+<rect x="1020" y="180" width="18" height="4" rx="0" fill="#7b7bc1" stroke="none" stroke-width="1"/>
+<rect x="1020" y="184" width="18" height="4" rx="0" fill="#7978bf" stroke="none" stroke-width="1"/>
+<rect x="1020" y="188" width="18" height="4" rx="0" fill="#7674bd" stroke="none" stroke-width="1"/>
+<rect x="1020" y="192" width="18" height="4" rx="0" fill="#7471bb" stroke="none" stroke-width="1"/>
+<rect x="1020" y="196" width="18" height="4" rx="0" fill="#716eb9" stroke="none" stroke-width="1"/>
+<rect x="1020" y="200" width="18" height="4" rx="0" fill="#6f6bb7" stroke="none" stroke-width="1"/>
+<rect x="1020" y="204" width="18" height="4" rx="0" fill="#6c68b5" stroke="none" stroke-width="1"/>
+<rect x="1020" y="208" width="18" height="4" rx="0" fill="#6964b3" stroke="none" stroke-width="1"/>
+<rect x="1020" y="212" width="18" height="4" rx="0" fill="#6761b1" stroke="none" stroke-width="1"/>
+<rect x="1020" y="216" width="18" height="4" rx="0" fill="#645eaf" stroke="none" stroke-width="1"/>
+<rect x="1020" y="220" width="18" height="4" rx="0" fill="#625bad" stroke="none" stroke-width="1"/>
+<rect x="1020" y="224" width="18" height="4" rx="0" fill="#5f57ab" stroke="none" stroke-width="1"/>
+<rect x="1020" y="228" width="18" height="4" rx="0" fill="#5d54a9" stroke="none" stroke-width="1"/>
+<rect x="1020" y="232" width="18" height="4" rx="0" fill="#5a51a7" stroke="none" stroke-width="1"/>
+<rect x="1020" y="236" width="18" height="4" rx="0" fill="#584ea5" stroke="none" stroke-width="1"/>
+<rect x="1020" y="240" width="18" height="4" rx="0" fill="#554ba3" stroke="none" stroke-width="1"/>
+<rect x="1020" y="244" width="18" height="4" rx="0" fill="#5347a1" stroke="none" stroke-width="1"/>
+<rect x="1020" y="248" width="18" height="4" rx="0" fill="#50449f" stroke="none" stroke-width="1"/>
+<rect x="1020" y="252" width="18" height="4" rx="0" fill="#4d419d" stroke="none" stroke-width="1"/>
+<rect x="1020" y="256" width="18" height="4" rx="0" fill="#4b3e9b" stroke="none" stroke-width="1"/>
+<rect x="1020" y="260" width="18" height="4" rx="0" fill="#483a99" stroke="none" stroke-width="1"/>
+<rect x="1020" y="264" width="18" height="4" rx="0" fill="#463797" stroke="none" stroke-width="1"/>
+<rect x="1020" y="268" width="18" height="4" rx="0" fill="#433495" stroke="none" stroke-width="1"/>
+<rect x="1020" y="272" width="18" height="4" rx="0" fill="#413193" stroke="none" stroke-width="1"/>
+<rect x="1020" y="276" width="18" height="4" rx="0" fill="#3e2e91" stroke="none" stroke-width="1"/>
+<rect x="1020" y="280" width="18" height="4" rx="0" fill="#3c2a8f" stroke="none" stroke-width="1"/>
+<rect x="1020" y="284" width="18" height="4" rx="0" fill="#39278d" stroke="none" stroke-width="1"/>
+<rect x="1020" y="288" width="18" height="4" rx="0" fill="#37248b" stroke="none" stroke-width="1"/>
+<rect x="1020" y="292" width="18" height="4" rx="0" fill="#342189" stroke="none" stroke-width="1"/>
+<rect x="1020" y="296" width="18" height="4" rx="0" fill="#321e87" stroke="none" stroke-width="1"/>
+<line x1="1038" y1="60.0" x2="1046" y2="60.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1050" y="64.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−0  stock top mm</text>
+<line x1="1038" y1="79.66666666666666" x2="1046" y2="79.66666666666666" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1050" y="83.66666666666666" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−1  Flourish mm</text>
+<line x1="1038" y1="178.0" x2="1046" y2="178.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1050" y="182.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−6  Panel pocket mm</text>
+<line x1="1038" y1="296.0" x2="1046" y2="296.0" stroke="#2b2b2b" stroke-width="1"/>
+<text x="1050" y="300.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−12  Outside cut, Screw holes mm</text>
+<text x="1020" y="330" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">By depth colours every cutting move from pale</text>
+<text x="1020" y="344" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">at the stock top to dark at the deepest cut.</text>
+<text x="1020" y="358" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">By operation uses the --preview palette.</text>
+<text x="1020" y="390" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Marks (as --preview draws them):</text>
+<line x1="1020" y1="410" x2="1050" y2="410" stroke="#1f77b4" stroke-width="1.6"/>
+<text x="1060" y="414" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">cutting move, operation colour</text>
+<line x1="1020" y1="430" x2="1050" y2="430" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="1060" y="434" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">rapid at safe Z or clearance</text>
+<line x1="1020" y1="450" x2="1050" y2="450" stroke="#1f77b4" stroke-width="5"/>
+<text x="1060" y="454" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">tab mark: a pass rising over a tab</text>
+<circle cx="1028" cy="470" r="7" fill="none" stroke="#1f77b4" stroke-width="1"/>
+<line x1="1028" y1="470" x2="1028" y2="456" stroke="#1f77b4" stroke-width="1"/>
+<text x="1060" y="474" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">start point: bit circle, tick = first cut</text>
+<circle cx="1028" cy="492" r="6" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
+<text x="1060" y="496" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">drill hole: the bit at each hole</text>
+<path d="M1024 511 l5 3 l-5 3" fill="none" stroke="#1f77b4" stroke-width="1"/>
+<text x="1060" y="518" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">direction arrow (toggle)</text>
+<rect x="1020" y="530" width="30" height="12" rx="0" fill="none" stroke="#7a7a7a" stroke-width="1" stroke-dasharray="6 3"/>
+<text x="1060" y="540" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">program extents, bit edge (toggle)</text>
+<text x="1020" y="566" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Faded = regenerating; the row shows a spinner</text>
+<text x="1020" y="580" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">and the export dialog waits (S20).</text>
+<rect x="0" y="596" width="1280" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="10" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">mm</text>
+<line x1="34.4" y1="601" x2="34.4" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+<text x="46.4" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stock 160 × 100 × 12 mm</text>
+<line x1="201.0" y1="601" x2="201.0" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+<text x="213.0" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">X 64.2  Y 51.8</text>
+<line x1="311.8" y1="601" x2="311.8" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+<text x="323.8" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Generating 1 of 5…</text>
+<line x1="447.40000000000003" y1="601" x2="447.40000000000003" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+<text x="459.40000000000003" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">⚠ 1 warning</text>
+<line x1="539.6" y1="601" x2="539.6" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+<text x="551.6" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Z −12.2..5</text>
+<line x1="625.6" y1="601" x2="625.6" y2="615" stroke="#9a9a9a" stroke-width="1"/>
+</svg>
