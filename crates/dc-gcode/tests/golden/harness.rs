@@ -209,6 +209,17 @@ pub enum Difference {
     /// DreamCarve's must reach past a wall; a golden point higher than it
     /// stops short of the surface DreamCarve's reaches.
     ChainDepthFitted,
+    /// DreamCarve's medial axis reaches every convex corner of a region
+    /// (#456, `CornerReach::Every`); upstream's leaves some with no branch
+    /// (spur pruning takes the branch into a corner under about 29°, a
+    /// hole's corner seeks its joint through the hole, a corner wider than
+    /// 130° gets no tip; #452). DreamCarve must come within 0.01 mm of
+    /// every convex corner turning more than 20°, the golden program must
+    /// miss at least one by more, and a DreamCarve cut on no golden cut is
+    /// accepted only where it lies on the V surface (its cone touching a
+    /// wall, within the tolerance) and its move reaches a wall the golden
+    /// program misses by more than 0.01 mm.
+    EveryCornerReached,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.
@@ -266,7 +277,7 @@ pub fn check(case: &Case) {
             case.order,
         ) {
             Ok((golden, ours)) => eprintln!(
-                "{}: sampled points (golden, DreamCarve): matched ({}, {}), at the flat depth ({}, {}), on links ({}, {}), depth-fitted ({}, {})",
+                "{}: sampled points (golden, DreamCarve): matched ({}, {}), at the flat depth ({}, {}), on links ({}, {}), depth-fitted ({}, {}), into a corner ({}, {})",
                 case.name,
                 golden.matched,
                 ours.matched,
@@ -275,7 +286,9 @@ pub fn check(case: &Case) {
                 golden.link,
                 ours.link,
                 golden.fitted,
-                ours.fitted
+                ours.fitted,
+                golden.corner,
+                ours.corner
             ),
             Err(e) => fail("V-Carve cuts differ", e),
         }

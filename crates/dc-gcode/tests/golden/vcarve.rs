@@ -44,7 +44,8 @@
 //! deeper than it reaches past a wall.
 
 use dc_gcode::parse::MotionKind;
-use dc_geometry::{Point, Region, Segment, approx_eq, point_segment_distance_mm};
+use dc_geometry::medial::convex_corners;
+use dc_geometry::{Point, Region, Segment, approx_eq, nearest_point, point_segment_distance_mm};
 use dc_project::{Operation, Project, ToolKind, VCarveOp, VCarveStrategy};
 
 use super::{
@@ -66,6 +67,13 @@ pub const ALLOWED_MM: f64 = TOLERANCE_MM + 2.0 * 0.0005 * 1.732_050_808;
 /// 90° bits).
 const ROOM_ROUNDING_MM: f64 = ROUNDING_MM + Z_ROUNDING_MM;
 
+/// The least turn of a corner [`Difference::EveryCornerReached`] reads,
+/// radians: 20°. A drawing's curves, flattened, turn less at each vertex.
+const CORNER_TURN_RAD: f64 = 20.0 * std::f64::consts::PI / 180.0;
+
+/// How near a carve must come to a corner to reach it, mm (#456).
+const CORNER_REACH_MM: f64 = 0.01;
+
 /// What the comparison needs to know about the case's carve, in the
 /// machine frame (Z zero at the stock top, XY as the project's: every
 /// case's origin is the stock's bottom-left corner).
@@ -85,6 +93,8 @@ struct Carve {
     /// The tool's feed and plunge rate, mm/min.
     feed: f64,
     plunge: f64,
+    /// The regions' convex corners turning more than [`CORNER_TURN_RAD`].
+    corners: Vec<Point>,
 }
 
 impl Carve {
@@ -128,7 +138,13 @@ impl Carve {
             .flat_map(|c| c.polyline().segments().collect::<Vec<_>>())
             .collect();
         let start_z = -carve.start_depth_mm;
+        let corners = regions
+            .iter()
+            .flat_map(|r| convex_corners(r, CORNER_TURN_RAD, project.flatten_tolerance_mm))
+            .map(|c| c.p)
+            .collect();
         Ok(Self {
+            corners,
             regions,
             walls,
             start_z,
@@ -256,6 +272,33 @@ impl Cut {
             return 0.0;
         }
         (((p.x - self.a.x) * dx + (p.y - self.a.y) * dy) / len2).clamp(0.0, 1.0)
+    }
+
+    /// The lowest a V-bit cone of `slope` reaches over `q` while its tip
+    /// runs along the cut: the least over `t` of `z(t) + |q − p(t)| /
+    /// slope`, convex in `t`, so its stationary point clamped to the cut.
+    fn cone_low(&self, q: Point, slope: f64) -> f64 {
+        let at = |t: f64| {
+            let p = self.at(t);
+            p.z + q.distance_to(p.xy()) / slope
+        };
+        let length = self.xy_length();
+        if length < 1e-12 {
+            return at(0.0).min(at(1.0));
+        }
+        let (ux, uy) = (
+            (self.b.x - self.a.x) / length,
+            (self.b.y - self.a.y) / length,
+        );
+        let (qx, qy) = (q.x - self.a.x, q.y - self.a.y);
+        let along = qx * ux + qy * uy;
+        let off = (qx * uy - qy * ux).abs();
+        let k = -(self.b.z - self.a.z) * slope / length;
+        if k.abs() >= 1.0 {
+            return at(0.0).min(at(1.0));
+        }
+        let w = k * off / (1.0 - k * k).sqrt();
+        at(((along + w) / length).clamp(0.0, 1.0))
     }
 
     /// Whether the cut, from `a` to `b`, points the same way as `other`
@@ -422,6 +465,19 @@ impl Program {
         (deepest, above)
     }
 
+    /// How far, mm, the program's cuts miss `q` at the start plane: the
+    /// least over its cuts of the cone's reach short of `q` (0 or less
+    /// where a cone reaches it).
+    fn reach_gap(&self, q: Point, carve: &Carve) -> f64 {
+        let low = self
+            .cuts
+            .iter()
+            .chain(&self.verticals)
+            .map(|c| c.cone_low(q, carve.slope))
+            .fold(f64::INFINITY, f64::min);
+        (low - carve.start_z) * carve.slope
+    }
+
     /// Whether `p` is where the program starts or ends a stroke.
     fn ends_stroke_at(&self, p: P3) -> bool {
         self.stroke_ends
@@ -480,15 +536,22 @@ pub fn compare(
     }
     check_floor(&golden, &ours, &carve)?;
     let (mut gt, mut ot) = (Tally::default(), Tally::default());
-    let fitted = has(Difference::ChainDepthFitted);
+    let rules = Rules {
+        fitted: has(Difference::ChainDepthFitted),
+        corners: if has(Difference::EveryCornerReached) {
+            corners_missed(&golden, &ours, &carve)?
+        } else {
+            Vec::new()
+        },
+    };
     for r in 0..carve.regions.len() {
         let (g, o) = (golden.in_region(r), ours.in_region(r));
         let region = |e: String| format!("region {r}: {e}");
         if carve.offset {
             compare_levels(&g, &o, &carve, &mut gt, &mut ot).map_err(region)?;
         } else {
-            within(&golden, &g, &ours, &o, &carve, fitted, &mut gt).map_err(region)?;
-            within(&ours, &o, &golden, &g, &carve, fitted, &mut ot).map_err(region)?;
+            within(&golden, &g, &ours, &o, &carve, &rules, &mut gt).map_err(region)?;
+            within(&ours, &o, &golden, &g, &carve, &rules, &mut ot).map_err(region)?;
         }
     }
     Ok((gt, ot))
@@ -567,6 +630,42 @@ fn check_floor(golden: &Program, ours: &Program, carve: &Carve) -> Result<(), St
     Ok(())
 }
 
+/// The declared differences [`within`] applies.
+struct Rules {
+    /// [`Difference::ChainDepthFitted`].
+    fitted: bool,
+    /// With [`Difference::EveryCornerReached`], the convex corners the
+    /// golden program misses; empty otherwise.
+    corners: Vec<Point>,
+}
+
+/// [`Difference::EveryCornerReached`]: DreamCarve reaches every convex
+/// corner of the carve within [`CORNER_REACH_MM`]; the corners the golden
+/// program misses by more, which must be some (else the difference is not
+/// one).
+fn corners_missed(golden: &Program, ours: &Program, carve: &Carve) -> Result<Vec<Point>, String> {
+    let mut missed = Vec::new();
+    for &c in &carve.corners {
+        let gap = ours.reach_gap(c, carve);
+        if gap > CORNER_REACH_MM {
+            return Err(format!(
+                "DreamCarve misses the corner at ({:.3}, {:.3}) by {gap:.3} mm",
+                c.x, c.y
+            ));
+        }
+        if golden.reach_gap(c, carve) > CORNER_REACH_MM {
+            missed.push(c);
+        }
+    }
+    if missed.is_empty() {
+        return Err(
+            "the golden program reaches every corner: EveryCornerReached is not a difference here"
+                .into(),
+        );
+    }
+    Ok(missed)
+}
+
 /// How many sampled points of one program each rule of [`within`] took.
 #[derive(Debug, Default)]
 pub struct Tally {
@@ -579,6 +678,9 @@ pub struct Tally {
     /// At the same XY as the other program's, at another depth
     /// ([`Difference::ChainDepthFitted`]).
     pub fitted: usize,
+    /// On DreamCarve's carve into a corner the golden program misses
+    /// ([`Difference::EveryCornerReached`]).
+    pub corner: usize,
 }
 
 /// Every sampled point of `a_cuts` (program `a`) above the flat depth lies
@@ -591,10 +693,11 @@ fn within(
     b: &Program,
     b_cuts: &[Cut],
     carve: &Carve,
-    fitted: bool,
+    rules: &Rules,
     tally: &mut Tally,
 ) -> Result<(), String> {
     let who = a.who;
+    let fitted = rules.fitted;
     for cut in a_cuts {
         for p in cut.samples() {
             if carve.at_floor(p.z) {
@@ -617,9 +720,8 @@ fn within(
                     (q.xy().distance_to(p.xy()) <= ALLOWED_MM).then_some(q.z)
                 })
                 .min_by(|x, y| (x - p.z).abs().total_cmp(&(y - p.z).abs()));
-            match other_z {
+            let verdict = match other_z {
                 Some(z) if fitted => {
-                    tally.fitted += 1;
                     // DreamCarve's point is on the V surface, higher or
                     // deeper; a deeper golden point reaches past a wall; a
                     // higher golden point stops short of the surface that
@@ -630,36 +732,74 @@ fn within(
                     } else {
                         p.z > z || room <= ROOM_ROUNDING_MM
                     };
-                    if !right {
-                        return Err(format!(
+                    if right {
+                        Ok(&mut tally.fitted)
+                    } else {
+                        Err(format!(
                             "{here} is {:.3} mm {} than {} with {room:.4} mm between its cone and the walls",
                             (z - p.z).abs(),
                             if p.z < z { "deeper" } else { "higher" },
                             b.who
-                        ));
+                        ))
                     }
                 }
-                Some(z) => {
-                    return Err(format!(
-                        "{here} is {:.3} mm from {}'s cut at Z {z:.3} there",
-                        (p.z - z).abs(),
-                        b.who
-                    ));
-                }
+                Some(z) => Err(format!(
+                    "{here} is {:.3} mm from {}'s cut at Z {z:.3} there",
+                    (p.z - z).abs(),
+                    b.who
+                )),
                 None => {
                     let link = [cut.a, cut.b].iter().all(|&end| {
                         b.ends_stroke_at(end)
                             && b_cuts.iter().any(|c| c.distance3(end) <= ALLOWED_MM)
                     });
-                    if !link {
-                        return Err(format!("{here} is on no cut of {}", b.who));
+                    if link {
+                        Ok(&mut tally.link)
+                    } else {
+                        Err(format!("{here} is on no cut of {}", b.who))
                     }
-                    tally.link += 1;
+                }
+            };
+            match verdict {
+                Ok(count) => *count += 1,
+                Err(e) => {
+                    if a.who == "DreamCarve"
+                        && !rules.corners.is_empty()
+                        && into_corner(p, cut, carve, b)
+                    {
+                        tally.corner += 1;
+                    } else {
+                        return Err(e);
+                    }
                 }
             }
         }
     }
     Ok(())
+}
+
+/// [`Difference::EveryCornerReached`]: DreamCarve's point `p` of `cut`
+/// lies on the V surface, its cone touching a wall within the tolerance,
+/// and `cut` reaches a wall point the golden program misses by more than
+/// [`CORNER_REACH_MM`]: the point nearest some sample of `cut`, which its
+/// cone touches.
+fn into_corner(p: P3, cut: &Cut, carve: &Carve, golden: &Program) -> bool {
+    let touched = |q: P3| {
+        carve
+            .regions
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .filter_map(|c| nearest_point(c.polyline(), q.xy()))
+            .min_by(|a, b| a.gap_mm.total_cmp(&b.gap_mm))
+            .map(|n| n.point)
+    };
+    let gap = cut
+        .samples()
+        .into_iter()
+        .filter_map(touched)
+        .map(|w| golden.reach_gap(w, carve))
+        .fold(f64::NEG_INFINITY, f64::max);
+    carve.room(p).abs() <= ALLOWED_MM && gap > CORNER_REACH_MM
 }
 
 /// Offset rings: the levels above the flat depth are the same in both
