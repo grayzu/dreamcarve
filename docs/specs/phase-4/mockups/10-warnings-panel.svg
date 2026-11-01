@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="420" viewBox="0 0 1280 420" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: warnings panel</title>
+<rect width="1280" height="420" fill="#ffffff"/>
+<rect x="0" y="0" width="1280" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">10 · Warnings panel as a drawer above the status bar (capability 76). It is check, live. Click a row to go to the operation and field.</text>
+<rect x="0" y="30" width="1280" height="366" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="0" y="30" width="1280" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="8" y="46" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Warnings · 1 error · 3 warnings · 1 hint</text>
+<rect x="1110" y="34" width="60" height="18" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1140.0" y="47.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Copy</text>
+<rect x="1176" y="34" width="96" height="18" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1224.0" y="47.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Regenerate all</text>
+<rect x="1" y="62" width="1278" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="10" y="75" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Project</text>
+<circle cx="20" cy="93" r="4" fill="#c62828" stroke="none" stroke-width="1"/>
+<text x="36" y="97" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start">error</text>
+<text x="96" y="97" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#c62828" text-anchor="start">stock_thickness_unset</text>
+<text x="330" y="97" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stock thickness is not set. Export refuses until it is.</text>
+<text x="1268" y="97" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Project ▸ Stock ▸ Thickness</text>
+<circle cx="20" cy="119" r="4" fill="none" stroke="#7a7a7a" stroke-width="1"/>
+<text x="36" y="123" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">hint</text>
+<text x="96" y="123" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start">tool_change_avoidable</text>
+<text x="330" y="123" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">T2 is used by Screw holes and Flourish, which are not adjacent; one tool change could be saved.</text>
+<text x="1268" y="123" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Operations list</text>
+<rect x="1" y="136" width="1278" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="10" y="149" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Panel pocket · Pocket</text>
+<path d="M20 161 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="36" y="171" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">warning</text>
+<text x="96" y="171" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#b26a00" text-anchor="start">relief_corner_too_tight</text>
+<text x="330" y="171" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">2 of panel's corners are too tight for a dogbone with a 6.35 mm bit; skipped.</text>
+<text x="1268" y="171" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Corners ▸ Corner relief</text>
+<rect x="1" y="184" width="1278" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="10" y="197" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Lettering · V-Carve</text>
+<rect x="1" y="204" width="1278" height="26" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
+<circle cx="20" cy="215" r="4" fill="#c62828" stroke="none" stroke-width="1"/>
+<text x="36" y="219" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start">error</text>
+<text x="96" y="219" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#c62828" text-anchor="start">tool_missing_plunge</text>
+<text x="330" y="219" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">90° V-bit 6.35 mm has no plunge rate. Export refuses until it is set.</text>
+<text x="1268" y="219" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Tools ▸ 90° V-bit ▸ Plunge rate</text>
+<path d="M20 235 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="36" y="245" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">warning</text>
+<text x="96" y="245" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#b26a00" text-anchor="start">v_carve_target_open</text>
+<text x="330" y="245" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">flourish is an open path and is not carved.</text>
+<text x="1268" y="245" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Targets</text>
+<rect x="1" y="258" width="1278" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
+<text x="10" y="271" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Outside cut · Profile</text>
+<path d="M20 283 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="36" y="293" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">warning</text>
+<text x="96" y="293" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#b26a00" text-anchor="start">tab_on_hole</text>
+<text x="330" y="293" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">A tab on hole-3 holds its slug; cutting it free is work by hand.</text>
+<text x="1268" y="293" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Design Tree ▸ Tabs</text>
+<text x="10" y="328" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Same codes, same text and same tiers as `dreamcarve check` (acceptance 82). Codes link to the Warnings chapter.</text>
+<rect x="0" y="396" width="1280" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="10" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">mm</text>
+<line x1="34.4" y1="401" x2="34.4" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+<text x="46.4" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stock 160 × 100 × — mm</text>
+<line x1="194.8" y1="401" x2="194.8" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+<text x="206.8" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">X —  Y —</text>
+<line x1="268.4" y1="401" x2="268.4" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+<text x="280.4" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Idle</text>
+<line x1="317.2" y1="401" x2="317.2" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+<text x="329.2" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">⚠ 3 warnings · ● 1 error · 1 hint  ▴</text>
+<line x1="564.4" y1="401" x2="564.4" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+<text x="576.4" y="412" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Est. —</text>
+<line x1="625.6" y1="401" x2="625.6" y2="415" stroke="#9a9a9a" stroke-width="1"/>
+</svg>

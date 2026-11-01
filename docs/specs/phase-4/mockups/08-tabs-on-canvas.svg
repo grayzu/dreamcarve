@@ -1,0 +1,139 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="620" viewBox="0 0 1280 620" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: tabs on the Viewport</title>
+<rect width="1280" height="620" fill="#ffffff"/>
+<rect x="0" y="0" width="1280" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">08 · Placed tabs on the Viewport (capability 69). Dragging a tab keeps it on its outline; a tab no cut crosses is hollow.</text>
+<rect x="0" y="30" width="900" height="566" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<line x1="60.0" y1="116.0" x2="60.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="102.0" y1="116.0" x2="102.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="144.0" y1="116.0" x2="144.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="186.0" y1="116.0" x2="186.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="228.0" y1="116.0" x2="228.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="270.0" y1="116.0" x2="270.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="312.0" y1="116.0" x2="312.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="354.0" y1="116.0" x2="354.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="396.0" y1="116.0" x2="396.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="438.0" y1="116.0" x2="438.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="480.0" y1="116.0" x2="480.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="522.0" y1="116.0" x2="522.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="564.0" y1="116.0" x2="564.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="606.0" y1="116.0" x2="606.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="648.0" y1="116.0" x2="648.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="690.0" y1="116.0" x2="690.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="732.0" y1="116.0" x2="732.0" y2="536" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="536.0" x2="732.0" y2="536.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="494.0" x2="732.0" y2="494.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="452.0" x2="732.0" y2="452.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="410.0" x2="732.0" y2="410.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="368.0" x2="732.0" y2="368.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="326.0" x2="732.0" y2="326.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="284.0" x2="732.0" y2="284.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="242.0" x2="732.0" y2="242.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="200.0" x2="732.0" y2="200.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="158.0" x2="732.0" y2="158.0" stroke="#eeeeee" stroke-width="1"/>
+<line x1="60" y1="116.0" x2="732.0" y2="116.0" stroke="#eeeeee" stroke-width="1"/>
+<rect x="60" y="116.0" width="672.0" height="420.0" rx="0" fill="none" stroke="#7f7f7f" stroke-width="1.2" stroke-dasharray="6 4"/>
+<line x1="50" y1="536" x2="70" y2="536" stroke="#2b2b2b" stroke-width="1.2"/>
+<line x1="60" y1="526" x2="60" y2="546" stroke="#2b2b2b" stroke-width="1.2"/>
+<text x="46" y="550" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">0,0</text>
+<path d="M685.0 137.0 h10 M690.0 132.0 v10" fill="none" stroke="#7a7a7a" stroke-width="1"/>
+<circle cx="690.0" cy="137.0" r="5" fill="none" stroke="#7a7a7a" stroke-width="1"/>
+<rect x="102.0" y="158.0" width="588.0" height="336.0" rx="25.200000000000003" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<rect x="186.0" y="200.0" width="294.0" height="210.0" rx="0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="333.0" cy="305.0" r="42.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="144.0" cy="452.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="648.0" cy="452.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="144.0" cy="200.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="648.0" cy="200.0" r="10.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<path d="M522.0 368.0 q63.0 -168.0 126.0 -126.0" fill="none" stroke="#2b2b2b" stroke-width="1" stroke-dasharray="3 2"/>
+<rect x="88.665" y="144.665" width="614.67" height="362.67" rx="38.535000000000004" fill="none" stroke="#1f77b4" stroke-width="1.6"/>
+<line x1="379.2" y1="507.335" x2="412.8" y2="507.335" stroke="#1f77b4" stroke-width="5"/>
+<line x1="379.2" y1="144.665" x2="412.8" y2="144.665" stroke="#1f77b4" stroke-width="5"/>
+<line x1="88.665" y1="309.2" x2="88.665" y2="342.8" stroke="#ffffff" stroke-width="5"/>
+<rect x="86.165" y="309.2" width="5" height="33.6" rx="0" fill="none" stroke="#1f77b4" stroke-width="1"/>
+<line x1="703.335" y1="309.2" x2="703.335" y2="342.8" stroke="#ffffff" stroke-width="5"/>
+<rect x="700.835" y="309.2" width="5" height="33.6" rx="0" fill="none" stroke="#1f77b4" stroke-width="1"/>
+<circle cx="88.665" cy="326.0" r="13.334999999999999" fill="none" stroke="#1f77b4" stroke-width="1"/>
+<line x1="88.665" y1="326.0" x2="88.665" y2="299.33" stroke="#1f77b4" stroke-width="1"/>
+<g opacity="1.0">
+<line x1="199.44000000000003" y1="392.5" x2="466.56" y2="392.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="375.0" x2="466.56" y2="375.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="357.5" x2="315.18585954922327" y2="357.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="350.81414045077673" y1="357.5" x2="466.56" y2="357.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="340.0" x2="290.0047258410881" y2="340.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="375.9952741589119" y1="340.0" x2="466.56" y2="340.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="322.5" x2="280.3944527639908" y2="322.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="385.6055472360092" y1="322.5" x2="466.56" y2="322.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="305.0" x2="277.56" y2="305.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="388.44" y1="305.0" x2="466.56" y2="305.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="287.5" x2="280.3944527639908" y2="287.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="385.6055472360092" y1="287.5" x2="466.56" y2="287.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="270.0" x2="290.0047258410881" y2="270.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="375.9952741589119" y1="270.0" x2="466.56" y2="270.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="252.5" x2="315.18585954922327" y2="252.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="350.81414045077673" y1="252.5" x2="466.56" y2="252.5" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="235.0" x2="466.56" y2="235.0" stroke="#d62728" stroke-width="1.2"/>
+<line x1="199.44000000000003" y1="217.49999999999994" x2="466.56" y2="217.49999999999994" stroke="#d62728" stroke-width="1.2"/>
+<rect x="199.44" y="213.44" width="267.12" height="183.12" rx="0" fill="none" stroke="#d62728" stroke-width="1.4"/>
+<circle cx="333.0" cy="305.0" r="55.44" fill="none" stroke="#d62728" stroke-width="1.4"/>
+</g>
+<circle cx="144.0" cy="452.0" r="10.5" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
+<circle cx="648.0" cy="452.0" r="10.5" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
+<circle cx="144.0" cy="200.0" r="10.5" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
+<circle cx="648.0" cy="200.0" r="10.5" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
+<path d="M522.0 368.0 q63.0 -168.0 126.0 -126.0" fill="none" stroke="#9467bd" stroke-width="1.6"/>
+<line x1="144.0" y1="200.0" x2="648.0" y2="200.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
+<line x1="648.0" y1="200.0" x2="648.0" y2="452.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
+<circle cx="396.0" cy="144.665" r="10" fill="none" stroke="#2f6fdb" stroke-width="1" stroke-dasharray="3 2"/>
+<path d="M410.0 134.0 l16 0 l-4 -4 m4 4 l-4 4" fill="none" stroke="#2f6fdb" stroke-width="1"/>
+<text x="432.0" y="138.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="start">drag along the outline</text>
+<text x="114.0" y="296.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">hollow: tab_not_crossed</text>
+<text x="114.0" y="309.0" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">(no enabled Profile cuts here)</text>
+<circle cx="564.0" cy="494.0" r="6" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<text x="504.0" y="547.335" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tab tool: click an outline to add a tab with the last-used size</text>
+<rect x="920" y="30" width="340" height="200" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="920" y="30" width="340" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="928" y="46" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Design Tree · Tabs</text>
+<rect x="921" y="58" width="338" height="18" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
+<ellipse cx="934" cy="67" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="934" cy="67" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="950" y="71" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline · tab 1  (80, 90)</text>
+<ellipse cx="934" cy="87" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="934" cy="87" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="950" y="91" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline · tab 2  (80, 10)</text>
+<ellipse cx="934" cy="107" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="934" cy="107" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="950" y="111" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline · tab 3  (10, 50)</text>
+<ellipse cx="934" cy="127" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
+<circle cx="934" cy="127" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="950" y="131" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline · tab 4  (150, 50)</text>
+<text x="930" y="154" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Points are in the instance's definition space, so tabs follow it.</text>
+<rect x="920" y="250" width="340" height="190" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="920" y="250" width="340" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="928" y="266" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Properties · tab 1</text>
+<text x="928" y="296" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Width</text>
+<rect x="1008" y="282" width="244" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1014" y="296" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">8</text>
+<text x="1246" y="296" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="928" y="322" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Height</text>
+<rect x="1008" y="308" width="244" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1014" y="322" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">3</text>
+<text x="1246" y="322" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="928" y="348" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Shape</text>
+<rect x="1008" y="334" width="244" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1014" y="348" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rect</text>
+<text x="1244" y="348" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="928" y="374" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Position</text>
+<rect x="1008" y="360" width="244" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="1014" y="374" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">80, 90</text>
+<text x="1246" y="374" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
+<text x="928" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Crossed by: Outside cut (Profile). Delete removes the tab.</text>
+<rect x="920" y="460" width="340" height="136" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="920" y="460" width="340" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="928" y="476" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Rules (ADR-0005)</text>
+<text x="930" y="492" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Place tabs on a Profile turns its request into placed tabs.</text>
+<text x="930" y="510" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Every enabled Profile cutting the outline rises over the tab.</text>
+<text x="930" y="528" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">A disabled Profile keeps its request until it is placed.</text>
+<text x="930" y="546" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Deleting an instance deletes its tabs; deleting an operation does not.</text>
+<text x="930" y="564" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">The saved file holds placed tabs only, as tabs place leaves it.</text>
+</svg>
