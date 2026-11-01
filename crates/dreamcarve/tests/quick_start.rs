@@ -608,6 +608,9 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
     let mut cut_depth: Vec<((f64, f64), f64)> = Vec::new();
     // Straight cuts: from XY and Z, to XY and Z.
     let mut straight: Vec<(Xyz, Xyz)> = Vec::new();
+    // Level arcs (a floor's trace, fitted at export): the distance from a
+    // point to each, and its Z.
+    let mut arcs: Vec<LevelArc> = Vec::new();
     let first_cut = moves
         .iter()
         .find(|m| m.kind.is_cut())
@@ -663,7 +666,7 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
                 );
             }
             if z < from_z - tol && z < -tol {
-                let through = straight.iter().filter_map(|&((ax, ay, az), (bx, by, bz))| {
+                let lines = straight.iter().map(|&((ax, ay, az), (bx, by, bz))| {
                     let (dx, dy) = (bx - ax, by - ay);
                     let length_sq = dx * dx + dy * dy;
                     let t = if length_sq > 0.0 {
@@ -672,8 +675,10 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
                         0.0
                     };
                     let (px, py) = (ax + dx * t, ay + dy * t);
-                    let off = (px - x).hypot(py - y);
-                    let cut_z = az + (bz - az) * t;
+                    ((px - x).hypot(py - y), az + (bz - az) * t)
+                });
+                let level_arcs = arcs.iter().map(|a| (a.distance_mm(x, y), a.z));
+                let through = lines.chain(level_arcs).filter_map(|(off, cut_z)| {
                     if off < 2e-3 {
                         Some(cut_z)
                     } else {
@@ -723,6 +728,57 @@ fn assert_program_safe(name: &str, program: &str, limits: &Limits) {
             && let (Some(fx), Some(fy)) = (m.from.x, m.from.y)
         {
             straight.push(((fx, fy, from_z), (x, y, z)));
+        }
+        if matches!(m.kind, MotionKind::ArcCw | MotionKind::ArcCcw)
+            && (from_z - z).abs() < tol
+            && let (Some(fx), Some(fy), Some(i), Some(j)) = (m.from.x, m.from.y, m.arc.i, m.arc.j)
+        {
+            arcs.push(LevelArc {
+                from: (fx, fy),
+                to: (x, y),
+                centre: (fx + i, fy + j),
+                ccw: m.kind == MotionKind::ArcCcw,
+                z,
+            });
+        }
+    }
+}
+
+/// A level arc of a program (#457: the S15 check reads a rapid down beside
+/// a floor's trace the emitter fitted with arcs).
+struct LevelArc {
+    from: (f64, f64),
+    to: (f64, f64),
+    centre: (f64, f64),
+    ccw: bool,
+    z: f64,
+}
+
+impl LevelArc {
+    /// The distance, mm, from `(x, y)` to the arc.
+    fn distance_mm(&self, x: f64, y: f64) -> f64 {
+        let (cx, cy) = self.centre;
+        let r = (self.from.0 - cx).hypot(self.from.1 - cy);
+        let tau = std::f64::consts::TAU;
+        let angle = |(px, py): (f64, f64)| (py - cy).atan2(px - cx);
+        let (a0, a1, a) = (angle(self.from), angle(self.to), angle((x, y)));
+        let sweep = |from: f64, to: f64| {
+            if self.ccw {
+                (to - from).rem_euclid(tau)
+            } else {
+                (from - to).rem_euclid(tau)
+            }
+        };
+        let total = match sweep(a0, a1) {
+            s if s < 1e-9 => tau,
+            s => s,
+        };
+        if sweep(a0, a) <= total {
+            ((x - cx).hypot(y - cy) - r).abs()
+        } else {
+            (x - self.from.0)
+                .hypot(y - self.from.1)
+                .min((x - self.to.0).hypot(y - self.to.1))
         }
     }
 }

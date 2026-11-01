@@ -774,12 +774,43 @@ orientation; DreamCarve's regions are normalised anyway.
    - **Depth** per node: `d = min(clearance / slope, F)`; `z = start_plane
      − d`. The carved disc radius at the start plane is `d · slope`
      (the clamped value, never the raw clearance: upstream's gouge fix).
-   - **Simplify** (`simplifyChain`, tolerance `0.25 · step`):
-     Douglas-Peucker on XYZ with the Z error scaled by `slope`.
+   - **Simplify** (`simplifyChain`; measured on the carved edge since
+     #457): Douglas-Peucker on the chain's nodes, tolerance
+     `min(0.25 · step, 0.005 mm)`. A stretch `a`–`b` stands for the nodes
+     between when, for each such node `p`, `slope · (low − z_p) ≤ tol`,
+     `low` the lowest the stretch's cone reaches over `p` (closed form, as
+     the heightfield's): the carved surface rises no faster than
+     `1 / slope` per mm, so that bounds the shortfall over the whole of
+     `p`'s cone, its walls included. The stretch's cone may also reach no
+     wall past 0.1 µm (`Walls::least_room`). Else it is split at the worst
+     node (for a wall, the node nearest the worst point), so every kept
+     point is a node at its own depth. Upstream measures the error on the
+     axis (XY distance to the chord, Z error times `slope`, `0.25 ·
+     step`), which lets a chord run a quarter step off the axis; its cone,
+     at its own depth, then touches the nearer wall and stops up to twice
+     that short of the farther (0.11 mm on the tutorial "DC" female). The
+     edge measure drops the nodes' sideways noise that upstream's keeps,
+     so programs get shorter (the sign's V-bit program 5630 → 4141
+     lines).
    - **Fit** (#404, not upstream): a stretch between two kept points
      whose cone reaches more than 0.1 µm past a wall (a reflex corner or a
      flattened curve between them; the dropped points) is split at its
-     worst point, set to that point's own depth, at most 16 times. Where
+     worst point, set to that point's own depth, at most 16 times. Each
+     stretch is also read every 0.05 mm, at most 16 times more (#457):
+     for each point, its nearest wall point `w` and the largest disc
+     inside the walls tangent at `w` with its centre on the line from `w`
+     through the point (`Walls::ball_radius_mm`, the ball-shrinking
+     construction: per wall segment the least `|q − w|² / (2 (q − w)·u)`
+     in closed form) give the medial axis point `m` there, its radius `r`
+     its exact clearance. Where the stretch carves more than 0.005 mm
+     short of `m`'s cone at its own depth (`slope · (low − z_m)`), it is
+     split at `m`, which is on the axis, so it gouges nothing. Points past
+     the flat depth are left to the floor. Medial nodes are a step apart
+     and merged within three quarters of one, so the cut between two of
+     them, above all into a junction where a corner's diagonal meets a
+     spine, can run off the axis even unsimplified: on the "DC" female a
+     serif end's junction node sat 0.048 mm along the spine from the true
+     one, and the plug stood 0.064 mm proud there. Where
      material may stand above the start plane (`engaged_from` above it;
      #452), a stretch is also read every 0.05 mm and split where it runs
      more than 0.01 mm shallower than a point's own depth there (a
@@ -1219,10 +1250,10 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      lost the notch's whole branch to spur pruning, and the plug stood
      3 mm proud. `inlay::plug_seats_flush` simulates both sides' programs
      as heightfields and seats the plug: the male's share of the seat
-     must be within 0.05 mm, and the seat within 0.25 mm, the female's
-     own V-Carve tolerance (its Douglas-Peucker chords, a quarter step
-     off the axis, stop up to 0.11 mm short of a wall on the "DC"
-     letters, which holds the plug 0.185 mm up).
+     must be within 0.05 mm, and since #457 so must the whole seat (the
+     female's Douglas-Peucker chords, a quarter step off the axis,
+     stopped up to 0.11 mm short of a wall on the "DC" letters, which
+     held the plug 0.185 mm up; it now seats 0.011 mm up).
    - `InlayPlugBaseThin` when `thickness − (D − G + P) < 6`.
 5. **Fit property** (acceptance 57; `inlay::female_and_male_walls_mate`):
    for sample points `q` on a design outline and heights `h` in `[0, D −
@@ -1535,7 +1566,17 @@ corner turning 39.5° by 0.097 mm and five curved stroke ends by 0.010 to
 corner turning more than 20°, and a cut of DreamCarve's on no golden cut
 must lie on the V surface and reach a wall the golden program misses by
 more than 0.01 mm. The other seven cases are unchanged by #456: upstream
-reaches their corners.
+reaches their corners. And `ChainsOnTheAxis` (#457) on every medial
+case but the circle (a single plunge): DreamCarve's simplification is
+measured on the carved edge and its chains are split onto the medial
+axis between nodes, where upstream's chords and its straight cuts into
+a junction run off it. Where the programs part, a DreamCarve point must
+be on the final V surface (its cone past no wall, and DreamCarve's carve
+there as deep as the walls allow, within the tolerance), and a golden
+point must be carved at least as deep by DreamCarve or reach past a
+wall; DreamCarve's deepest cut above a flat depth may be nearer it than
+the golden's (the rectangle's −4.98 against −4.926, where the corner
+diagonals run down onto the floor).
 
 **RasterCarve cases** (`tools/parity/photo/`): `capture.py`, run as
 `python3 -I capture.py --rastercarve ../../../rastercarve --case

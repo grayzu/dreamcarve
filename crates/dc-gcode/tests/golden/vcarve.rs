@@ -156,6 +156,17 @@ impl Carve {
         })
     }
 
+    /// The final V surface over `p`, Z: as deep as its distance to the
+    /// walls, at most the flat depth.
+    fn ideal_z(&self, p: Point) -> f64 {
+        let wall = self
+            .walls
+            .iter()
+            .map(|s| point_segment_distance_mm(*s, p))
+            .fold(f64::INFINITY, f64::min);
+        (self.start_z - wall / self.slope).max(self.floor_z())
+    }
+
     /// The flat depth's Z, or below every cut without one.
     fn floor_z(&self) -> f64 {
         self.flat_z.unwrap_or(f64::NEG_INFINITY)
@@ -469,13 +480,16 @@ impl Program {
     /// least over its cuts of the cone's reach short of `q` (0 or less
     /// where a cone reaches it).
     fn reach_gap(&self, q: Point, carve: &Carve) -> f64 {
-        let low = self
-            .cuts
+        (self.low(q, carve) - carve.start_z) * carve.slope
+    }
+
+    /// The lowest the program's cone reaches over `q`, Z.
+    fn low(&self, q: Point, carve: &Carve) -> f64 {
+        self.cuts
             .iter()
             .chain(&self.verticals)
             .map(|c| c.cone_low(q, carve.slope))
-            .fold(f64::INFINITY, f64::min);
-        (low - carve.start_z) * carve.slope
+            .fold(f64::INFINITY, f64::min)
     }
 
     /// Whether `p` is where the program starts or ends a stroke.
@@ -519,8 +533,14 @@ pub fn compare(
         }
     }
     let ((_, g), (_, o)) = (golden.deepest(&carve), ours.deepest(&carve));
+    // With `ChainsOnTheAxis` DreamCarve's chains follow the axis between
+    // upstream's nodes, so they come nearer the flat depth where they run
+    // down into it (never below it, checked above).
+    let on_axis = has(Difference::ChainsOnTheAxis);
     let same = match (g, o) {
-        (Some(g), Some(o)) => approx_eq(g, o, 2.0 * Z_ROUNDING_MM),
+        (Some(g), Some(o)) => {
+            approx_eq(g, o, 2.0 * Z_ROUNDING_MM) || (on_axis && o < g && carve.flat_z.is_some())
+        }
         (g, o) => g.is_none() && o.is_none(),
     };
     if !same {
@@ -538,6 +558,7 @@ pub fn compare(
     let (mut gt, mut ot) = (Tally::default(), Tally::default());
     let rules = Rules {
         fitted: has(Difference::ChainDepthFitted),
+        on_axis,
         corners: if has(Difference::EveryCornerReached) {
             corners_missed(&golden, &ours, &carve)?
         } else {
@@ -634,6 +655,8 @@ fn check_floor(golden: &Program, ours: &Program, carve: &Carve) -> Result<(), St
 struct Rules {
     /// [`Difference::ChainDepthFitted`].
     fitted: bool,
+    /// [`Difference::ChainsOnTheAxis`].
+    on_axis: bool,
     /// With [`Difference::EveryCornerReached`], the convex corners the
     /// golden program misses; empty otherwise.
     corners: Vec<Point>,
@@ -681,6 +704,9 @@ pub struct Tally {
     /// On DreamCarve's carve into a corner the golden program misses
     /// ([`Difference::EveryCornerReached`]).
     pub corner: usize,
+    /// Off the other program's cuts where DreamCarve's chains follow the
+    /// axis ([`Difference::ChainsOnTheAxis`]).
+    pub axis: usize,
 }
 
 /// Every sampled point of `a_cuts` (program `a`) above the flat depth lies
@@ -768,6 +794,8 @@ fn within(
                         && into_corner(p, cut, carve, b)
                     {
                         tally.corner += 1;
+                    } else if rules.on_axis && on_the_axis(p, a, b, carve) {
+                        tally.axis += 1;
                     } else {
                         return Err(e);
                     }
@@ -776,6 +804,24 @@ fn within(
         }
     }
     Ok(())
+}
+
+/// [`Difference::ChainsOnTheAxis`]: a point `p` of program `a` off
+/// program `b`'s cuts. DreamCarve's is on the final V surface: its cone
+/// reaches no wall past the tolerance, and DreamCarve's cones carve that
+/// surface there within it (where a chain runs onto the flat depth, the
+/// floor's trace does). The golden's is carved at least as deep by
+/// DreamCarve's cones, within the tolerance, or reaches past a wall, which
+/// DreamCarve rightly does not follow. So DreamCarve cuts everything the
+/// golden program cuts inside the walls, and where it cuts more, it cuts
+/// the V surface exactly.
+fn on_the_axis(p: P3, a: &Program, b: &Program, carve: &Carve) -> bool {
+    let tolerance = ALLOWED_MM / carve.slope;
+    if a.who == "DreamCarve" {
+        carve.room(p) >= -ALLOWED_MM && a.low(p.xy(), carve) <= carve.ideal_z(p.xy()) + tolerance
+    } else {
+        b.low(p.xy(), carve) <= p.z + tolerance || carve.room(p) < -ROOM_ROUNDING_MM
+    }
 }
 
 /// [`Difference::EveryCornerReached`]: DreamCarve's point `p` of `cut`
