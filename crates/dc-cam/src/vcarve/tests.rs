@@ -17,6 +17,7 @@
 //! top unless a test sets a start depth; upstream's Z 0 is the top.
 
 mod clearing_passes;
+mod corners;
 mod floor;
 
 use super::*;

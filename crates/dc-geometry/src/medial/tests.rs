@@ -727,6 +727,80 @@ fn every_corner_reaches_an_obtuse_corner() {
     assert!(tipped(&floored(1.0)), "a 1 mm floor does not");
 }
 
+/// A region with an outer corner whose walls meet at `angle_deg`: the
+/// apex at the origin, its walls 20 mm long either side of +X, closed by
+/// a 10 mm deep box beyond their ends.
+fn outer_corner_region(angle_deg: f64) -> Region {
+    let half = (angle_deg / 2.0).to_radians();
+    let (x, y) = (20.0 * half.cos(), 20.0 * half.sin());
+    region(
+        &[
+            Point::new(0.0, 0.0),
+            Point::new(x, -y),
+            Point::new(x + 10.0, -y),
+            Point::new(x + 10.0, y),
+            Point::new(x, y),
+        ],
+        &[],
+    )
+}
+
+/// A 60 mm square round a 30 mm square island whose top edge has a V
+/// notch whose walls meet at `angle_deg`, the notch's apex at (30, 45 −
+/// depth): the apex is a convex corner of the region round the island,
+/// as the notch of a serif M is in a male Inlay's surround.
+fn hole_corner_region(angle_deg: f64) -> Region {
+    let half = (angle_deg / 2.0).to_radians();
+    let depth_mm = (12.0 / half.tan()).min(10.0);
+    let width_mm = depth_mm * half.tan();
+    let island = vec![
+        Point::new(15.0, 15.0),
+        Point::new(45.0, 15.0),
+        Point::new(45.0, 45.0),
+        Point::new(30.0 + width_mm, 45.0),
+        Point::new(30.0, 45.0 - depth_mm),
+        Point::new(30.0 - width_mm, 45.0),
+        Point::new(15.0, 45.0),
+    ];
+    region(&rect_loop(0.0, 0.0, 60.0, 60.0), &[island])
+}
+
+/// #456: [`CornerReach::Every`] reaches every convex corner, an outer's
+/// and a hole's, whose walls meet at 10°, 23° (the serif M's notch of
+/// #452), 90° or 133° (the star's inner vertex): for every convex corner
+/// of each region some medial disc, a node's clearance about it, comes
+/// within 0.01 mm of the corner. That disc is the carve's cone at the
+/// start plane, so the carve cuts the corner crisp. Upstream's passes miss
+/// some of these: spur pruning takes a branch into a corner under about
+/// 29°, a hole's corner seeks its joint through the hole, and a corner
+/// wider than 130° gets no tip (#452).
+#[test]
+fn every_convex_corner_gets_a_tip() {
+    for angle_deg in [10.0, 23.0, 90.0, 133.0] {
+        for (kind, r) in [
+            ("outer", outer_corner_region(angle_deg)),
+            ("hole", hole_corner_region(angle_deg)),
+        ] {
+            let step_mm = resolution(&r).expect("a resolution").step_mm;
+            let graph = medial_axis_with(&r, step_mm, TOL, EVERY);
+            let corners = convex_corners(&r, 0.0, TOL);
+            assert!(!corners.is_empty(), "{kind} {angle_deg}°: no corners");
+            for corner in corners {
+                let gap_mm = graph
+                    .nodes
+                    .iter()
+                    .map(|n| n.p.distance_to(corner.p) - n.clearance_mm)
+                    .fold(f64::INFINITY, f64::min);
+                assert!(
+                    gap_mm <= 0.01,
+                    "{kind} {angle_deg}°: the corner at {:?} is {gap_mm:.4} mm from every medial disc",
+                    corner.p
+                );
+            }
+        }
+    }
+}
+
 /// Port of `testAutomaticResolutionKeepsScaledTopologyStable`: a 40 × 10
 /// and a 4 × 1 rectangle at their automatic steps (ratio 10) have equal
 /// node, edge and component counts.
