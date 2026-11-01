@@ -459,7 +459,10 @@ fn order_pass_first() {
 fn vcarve_medial_rect() {
     harness::check(&case(
         "vcarve-medial-rect",
-        vec![Difference::DescentsHeldToPlunge],
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainsOnTheAxis,
+        ],
         Order::InOrder,
     ));
 }
@@ -471,7 +474,10 @@ fn vcarve_medial_rect() {
 fn vcarve_medial_square() {
     harness::check(&case(
         "vcarve-medial-square",
-        vec![Difference::DescentsHeldToPlunge],
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainsOnTheAxis,
+        ],
         Order::InOrder,
     ));
 }
@@ -496,7 +502,10 @@ fn vcarve_medial_circle() {
 fn vcarve_medial_ring() {
     harness::check(&case(
         "vcarve-medial-ring",
-        vec![Difference::DescentsHeldToPlunge],
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainsOnTheAxis,
+        ],
         Order::InOrder,
     ));
 }
@@ -508,7 +517,10 @@ fn vcarve_medial_ring() {
 fn vcarve_medial_l() {
     harness::check(&case(
         "vcarve-medial-l",
-        vec![Difference::DescentsHeldToPlunge],
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainsOnTheAxis,
+        ],
         Order::InOrder,
     ));
 }
@@ -529,6 +541,7 @@ fn vcarve_medial_text_rag() {
             Difference::DescentsHeldToPlunge,
             Difference::ChainDepthFitted,
             Difference::EveryCornerReached,
+            Difference::ChainsOnTheAxis,
         ],
         Order::InOrder,
     ));
@@ -541,7 +554,10 @@ fn vcarve_medial_text_rag() {
 fn vcarve_medial_triangle() {
     harness::check(&case(
         "vcarve-medial-triangle",
-        vec![Difference::DescentsHeldToPlunge],
+        vec![
+            Difference::DescentsHeldToPlunge,
+            Difference::ChainsOnTheAxis,
+        ],
         Order::InOrder,
     ));
 }

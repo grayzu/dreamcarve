@@ -133,6 +133,15 @@ phases bump the patch number.
   a narrow corner under about 29°. A carve with such corners exports a
   different, slightly longer program; a round stroke end the old carve
   stopped a few hundredths short of gets one cut into it ([#456]).
+- **The V-bit's groove reaches every wall.** A V-Carve's or Inlay's
+  groove could stop up to about 0.1 mm short of a wall: its medial lines
+  were simplified with a tolerance measured on the lines, not on the cut,
+  and the straight cut into a junction, such as where a serif end's
+  diagonals meet, could run off the medial line. The tutorial "DC" plug
+  stood 0.185 mm proud of its female; it now seats within 0.011 mm. The
+  groove now comes within 0.01 mm of every wall, and the programs are
+  shorter: the sign's V-bit program has 4141 lines where it had 5630
+  ([#457]).
 
 ### Fixed
 
@@ -923,3 +932,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#452]: https://github.com/grayzu/dreamcarve/issues/452
 [#453]: https://github.com/grayzu/dreamcarve/issues/453
 [#456]: https://github.com/grayzu/dreamcarve/issues/456
+[#457]: https://github.com/grayzu/dreamcarve/issues/457

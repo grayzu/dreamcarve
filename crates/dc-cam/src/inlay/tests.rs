@@ -1624,8 +1624,8 @@ struct Fit {
     male_at: Point,
 }
 
-/// How far the plug may stand proud of its female, from the male's own
-/// cuts, mm (#452).
+/// How far the plug may stand proud of its female, mm: from the male's
+/// own cuts (#452), and in all (#457).
 const SEAT_MM: f64 = 0.05;
 
 /// The fit of `female` (in `female_project`) and `male` (in
@@ -1723,24 +1723,16 @@ fn fixture(text: &str) -> (Project, InlayOp) {
     (project, op)
 }
 
-/// How far the female's own V-Carve may hold the plug up, mm (#452). The
-/// female is a V-Carve, which #452 leaves as it is: the medial strategy's
-/// Douglas-Peucker pass (upstream's, a quarter of the sampling step) lets
-/// a chain run up to that far off the axis, and fitting cuts each point
-/// to its own depth, so its cone touches the nearer wall and stops short
-/// of the farther by up to twice that. On the "DC" female the groove
-/// stops up to 0.11 mm inside the outline, which holds the plug 0.185 mm
-/// up. The male's share is held to [`SEAT_MM`].
-const FEMALE_SEAT_MM: f64 = 0.25;
-
 /// #452 (the regression test): the plug seats flush. Each pair's female
 /// and male are generated and simulated as heightfields (V-bit cone,
 /// end-mill disc, arcs cut as chords), the male flipped about its mirror
 /// line and its start plane laid on the female's surface. Where a cell
 /// holds the plug up more than [`SEAT_MM`], the male may stand no more
 /// than that above the pocket the female's design describes, and the
-/// whole seat, the female's own V-Carve tolerance included, is within
-/// [`FEMALE_SEAT_MM`]. The pairs: the tutorial's "DC" (clearing, open
+/// whole seat, the female's own V-Carve included, is within [`SEAT_MM`]
+/// too (#457: before, the female's Douglas-Peucker chords ran up to a
+/// quarter step off the medial axis and its groove stopped up to 0.11 mm
+/// short of a wall, which held the "DC" plug 0.185 mm up). The pairs: the tutorial's "DC" (clearing, open
 /// rounded band, cut-out; 0.2 mm grid), the star (no clearing, a V wall,
 /// the V-bit's floor rings at the step-over the user guide asks for, 0.1;
 /// 0.2 mm grid) and the acute notch with a clearing pass (0.1 mm grid).
@@ -1799,7 +1791,7 @@ fn plug_seats_flush() {
             fit.male_at
         );
         assert!(
-            fit.seat_mm <= FEMALE_SEAT_MM,
+            fit.seat_mm <= SEAT_MM,
             "{name}: the plug stands {:.3} mm proud, binding at {:?}",
             fit.seat_mm,
             fit.seat_at

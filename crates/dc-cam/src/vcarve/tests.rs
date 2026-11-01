@@ -19,6 +19,7 @@
 mod clearing_passes;
 mod corners;
 mod floor;
+mod walls;
 
 use super::*;
 use crate::entry::ENTRY_CLEARANCE_MM;
@@ -302,6 +303,7 @@ fn runs_of(
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
         deepen_mm: None,
+        axis_mm: None,
     };
     medial::runs(graph, &depth, no_simplifying, &walls, &[])
 }
@@ -481,6 +483,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         simplify_mm: 0.0,
         redundancy_mm: 0.0,
         deepen_mm: None,
+        axis_mm: None,
     };
     let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
         .iter()

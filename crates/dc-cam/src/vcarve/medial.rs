@@ -40,6 +40,14 @@
 //!   bends there (a reflex corner, a flattened curve). Each such stretch
 //!   is split at its worst point, set to that point's own depth, until the
 //!   cone test passes ([`fit_chain`]). Upstream does not check this.
+//! - **Simplification on the carved edge (#457).** Upstream's
+//!   Douglas-Peucker tolerance is measured on the axis, so a chord can run
+//!   a quarter step off it and its cone stop up to twice that short of a
+//!   wall. Here it is measured on the carved edge ([`simplify_chain`],
+//!   [`EDGE_MM`]), and fitting also splits a stretch on the medial axis
+//!   where it carves short of it between its points, a junction's above
+//!   all (`Fit::off_axis`), so the groove reaches every wall within
+//!   0.01 mm.
 //! - **Every corner (#452, #456).** Every carve builds its axis to reach
 //!   every convex corner of its walls (`CornerReach::Every`), where
 //!   upstream's passes leave some with no branch.
@@ -58,7 +66,7 @@ use crate::toolpath::Move;
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::warning::Warning;
 use dc_geometry::medial::{CornerReach, MedialGraph, medial_axis_with, resolution};
-use dc_geometry::{EPS_MM, Point3, Region};
+use dc_geometry::{EPS_MM, Point, Point3, Region};
 use dc_project::OperationId;
 use std::collections::BTreeSet;
 
@@ -67,8 +75,14 @@ use std::collections::BTreeSet;
 pub(crate) const MAX_AUTO_REFINEMENTS: usize = 2;
 
 /// Douglas-Peucker tolerance, in medial steps (upstream's
-/// `simplifyTolerance: resolution * 0.25`).
+/// `simplifyTolerance: resolution * 0.25`), at most [`EDGE_MM`].
 pub(crate) const SIMPLIFY_STEPS: f64 = 0.25;
+
+/// How far short of the walls a simplified chain may carve, mm, measured
+/// on the carved edge (#457; [`simplify_chain`]): half of the 0.01 mm the
+/// groove must reach every wall within, which leaves the other half to the
+/// medial axis's own nodes and to fitting.
+pub(crate) const EDGE_MM: f64 = 0.005;
 
 /// Redundant-leaf tolerance, in medial steps (upstream's
 /// `redundancyTolerance: resolution * 0.75`).
@@ -83,6 +97,11 @@ const TIP_CLEARANCE_MM: f64 = 1e-9;
 /// How many times a stretch is halved at most when its cone is fitted to
 /// the walls ([`fit_chain`]).
 const MAX_FIT_LEVELS: usize = 16;
+
+/// With [`Tolerances::axis_mm`], how far beyond a point's nearest wall
+/// its medial axis point is sought, mm (#457): a stretch further off the
+/// axis is split at the point that far out, which is then nearer it.
+const AXIS_REACH_MM: f64 = 1.0;
 
 /// With [`Tolerances::deepen_mm`], how far apart a stretch is read for
 /// points whose own depth is deeper than the stretch there, mm (#452).
@@ -131,15 +150,20 @@ pub(crate) struct Tolerances {
     /// own depth before it is split there too (#452); `None` splits only
     /// where the cone reaches past a wall, as upstream's tolerance allows.
     pub deepen_mm: Option<f64>,
+    /// How far, mm, a fitted stretch may carve short of the medial axis
+    /// between its points before it is split on the axis (#457); `None`
+    /// fits to the walls alone.
+    pub axis_mm: Option<f64>,
 }
 
 impl Tolerances {
     /// Upstream's tolerances for a region sampled every `step_mm`.
     pub(crate) fn at_step(step_mm: f64) -> Self {
         Self {
-            simplify_mm: SIMPLIFY_STEPS * step_mm,
+            simplify_mm: (SIMPLIFY_STEPS * step_mm).min(EDGE_MM),
             redundancy_mm: REDUNDANCY_STEPS * step_mm,
             deepen_mm: None,
+            axis_mm: Some(EDGE_MM),
         }
     }
 }
@@ -257,8 +281,8 @@ pub(crate) fn runs_within(
                     .filter_map(|&i| graph.nodes.get(i))
                     .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
                     .collect();
-                let simple = simplify_chain(&points, tolerances.simplify_mm, depth.slope);
-                within_edge(fit_chain(&simple, walls, depth, tolerances.deepen_mm), edge)
+                let simple = simplify_chain(&points, tolerances.simplify_mm, walls, depth);
+                within_edge(fit_chain(&simple, walls, depth, &tolerances), edge)
             })
             .map(|points| {
                 // #452: a chain deepened to its corners is cut off where
@@ -670,26 +694,33 @@ fn prune_redundant_leaf_chains(
         .collect()
 }
 
-/// Douglas-Peucker on a chain's points (upstream's `simplifyChain`), where
-/// a dropped point's error is the larger of its XY distance to the chord
-/// and its Z error times `slope` (a depth error `dz` is as visible on the
-/// carved wall as an XY error of `dz · slope`). The ends are always kept.
-pub(crate) fn simplify_chain(points: &[Point3], tolerance_mm: f64, slope: f64) -> Vec<Point3> {
+/// Douglas-Peucker on a chain's points, measured on the carved edge (#457;
+/// upstream's `simplifyChain` measures on the axis). A stretch from `a`
+/// to `b` stands for the points between when, for each point `p` of
+/// them, the stretch's cone carves within `tolerance_mm` of the walls
+/// `p`'s own cone touches: `slope · (low − z_p)`, where `low` is the
+/// lowest the cone reaches over `p` along the stretch
+/// ([`cone_low_mm`]), is at most the tolerance. Since the carved surface
+/// rises no faster than `1 / slope` per mm, that bounds the shortfall
+/// over the whole of `p`'s cone. And the stretch's cone may not reach
+/// past a wall (`walls`, at most [`FIT_SLACK_MM`]). Else the stretch is
+/// split at its worst point, or where its cone reaches past a wall at the
+/// point nearest that. The kept points are the chain's own, each on the
+/// axis at its own depth; the ends are always kept.
+///
+/// Upstream's tolerance on the axis lets a chord run a quarter step off
+/// it; its cone, fitted to its own depth, then touches the nearer wall
+/// and stops up to twice that short of the farther (a female Inlay's
+/// groove 0.11 mm short on the "DC" letters, #452).
+pub(crate) fn simplify_chain(
+    points: &[Point3],
+    tolerance_mm: f64,
+    walls: &Walls,
+    depth: &Depth,
+) -> Vec<Point3> {
     if tolerance_mm <= 0.0 || points.len() <= 2 {
         return points.to_vec();
     }
-    let deviation = |p: Point3, a: Point3, b: Point3| -> f64 {
-        let (abx, aby) = (b.x - a.x, b.y - a.y);
-        let length_sq = abx * abx + aby * aby;
-        let t = if length_sq > 1e-18 {
-            (((p.x - a.x) * abx + (p.y - a.y) * aby) / length_sq).clamp(0.0, 1.0)
-        } else {
-            0.0
-        };
-        let xy = (p.x - (a.x + abx * t)).hypot(p.y - (a.y + aby * t));
-        let z = (p.z - (a.z + (b.z - a.z) * t)).abs() * slope;
-        xy.max(z)
-    };
     let mut keep = vec![false; points.len()];
     if let Some(k) = keep.first_mut() {
         *k = true;
@@ -705,13 +736,26 @@ pub(crate) fn simplify_chain(points: &[Point3], tolerance_mm: f64, slope: f64) -
         let (Some(&a), Some(&b)) = (points.get(lo), points.get(hi)) else {
             continue;
         };
+        let inner = || points.iter().enumerate().take(hi).skip(lo + 1);
         let mut worst: Option<usize> = None;
-        let mut worst_deviation = tolerance_mm;
-        for (i, &p) in points.iter().enumerate().take(hi).skip(lo + 1) {
-            let d = deviation(p, a, b);
-            if d > worst_deviation {
-                worst_deviation = d;
+        let mut worst_mm = tolerance_mm;
+        for (i, &p) in inner() {
+            let short_mm = depth.slope * (cone_low_mm(a, b, p.xy(), depth.slope) - p.z);
+            if short_mm > worst_mm {
+                worst_mm = short_mm;
                 worst = Some(i);
+            }
+        }
+        if worst.is_none() {
+            let (room_mm, at) = walls.least_room(a, b, depth.start_plane_z_mm, depth.slope);
+            if room_mm < -FIT_SLACK_MM {
+                worst = inner()
+                    .min_by(|x, y| {
+                        x.1.xy()
+                            .distance_to(at.xy())
+                            .total_cmp(&y.1.xy().distance_to(at.xy()))
+                    })
+                    .map(|(i, _)| i);
             }
         }
         if let Some(w) = worst {
@@ -727,6 +771,34 @@ pub(crate) fn simplify_chain(points: &[Point3], tolerance_mm: f64, slope: f64) -
         .zip(keep)
         .filter_map(|(&p, k)| k.then_some(p))
         .collect()
+}
+
+/// The lowest a V-bit cone of `slope` reaches over `q`, mm, while its tip
+/// runs straight from `a` to `b`: the least over `t` of `z(t) + |q −
+/// p(t)| / slope`, which is convex in `t`, so its stationary point
+/// clamped to the move is its least.
+fn cone_low_mm(a: Point3, b: Point3, q: Point, slope: f64) -> f64 {
+    let at = |t: f64| {
+        let p = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+        a.z + (b.z - a.z) * t + q.distance_to(p) / slope
+    };
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let length = dx.hypot(dy);
+    if length <= EPS_MM {
+        return at(0.0).min(at(1.0));
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (qx, qy) = (q.x - a.x, q.y - a.y);
+    let along = qx * ux + qy * uy;
+    let off = (qx * uy - qy * ux).abs();
+    // `f'(t) = dz + L·w / (slope·√(off² + w²))` with `w = L(t − u)`: a
+    // move that falls faster than its cone widens is least at an end.
+    let k = -(b.z - a.z) * slope / length;
+    if k.abs() >= 1.0 {
+        return at(0.0).min(at(1.0));
+    }
+    let w = k * off / (1.0 - k * k).sqrt();
+    at(((along + w) / length).clamp(0.0, 1.0))
 }
 
 /// `points` with every stretch whose cone reaches past `walls` split at
@@ -746,7 +818,7 @@ fn fit_chain(
     points: &[Point3],
     walls: &Walls,
     depth: &Depth,
-    deepen_mm: Option<f64>,
+    tolerances: &Tolerances,
 ) -> Vec<Point3> {
     let Some((&first, rest)) = points.split_first() else {
         return Vec::new();
@@ -754,12 +826,13 @@ fn fit_chain(
     let fit = Fit {
         walls,
         depth,
-        deepen_mm,
+        deepen_mm: tolerances.deepen_mm,
+        axis_mm: tolerances.axis_mm,
     };
     let mut out = vec![first];
     let mut from = first;
     for &to in rest {
-        fit.stretch(from, to, MAX_FIT_LEVELS, &mut out);
+        fit.stretch(from, to, (MAX_FIT_LEVELS, MAX_FIT_LEVELS), &mut out);
         from = to;
     }
     out
@@ -770,17 +843,30 @@ struct Fit<'a> {
     walls: &'a Walls,
     depth: &'a Depth,
     deepen_mm: Option<f64>,
+    axis_mm: Option<f64>,
 }
 
 impl Fit<'_> {
     /// [`fit_chain`] for the stretch `a`–`b`, `a` already written: writes
-    /// the points after `a`, up to and including `b`.
-    fn stretch(&self, a: Point3, b: Point3, levels: usize, out: &mut Vec<Point3>) {
-        if levels > 0 && a.xy().distance_to(b.xy()) > EPS_MM {
-            let split = self.overcut(a, b).or_else(|| self.undercut(a, b));
-            if let Some(split) = split {
-                self.stretch(a, split, levels - 1, out);
-                self.stretch(split, b, levels - 1, out);
+    /// the points after `a`, up to and including `b`. `levels` counts the
+    /// splits left for a cone past a wall or a stretch short of its depth,
+    /// then for one short of the axis, each its own, so splits on the axis
+    /// never use up the gouge test's.
+    fn stretch(&self, a: Point3, b: Point3, levels: (usize, usize), out: &mut Vec<Point3>) {
+        let (walls, axis) = levels;
+        if a.xy().distance_to(b.xy()) > EPS_MM {
+            let fitted = (walls > 0)
+                .then(|| self.overcut(a, b).or_else(|| self.undercut(a, b)))
+                .flatten();
+            let split = fitted.map(|p| (p, (walls - 1, axis))).or_else(|| {
+                (axis > 0)
+                    .then(|| self.off_axis(a, b))
+                    .flatten()
+                    .map(|p| (p, (walls, axis - 1)))
+            });
+            if let Some((split, left)) = split {
+                self.stretch(a, split, left, out);
+                self.stretch(split, b, left, out);
                 return;
             }
         }
@@ -800,6 +886,48 @@ impl Fit<'_> {
             let own_z = self.depth.z_mm(self.walls.clearance_mm(worst.xy()));
             Point3::new(worst.x, worst.y, own_z.max(worst.z))
         })
+    }
+
+    /// With `axis_mm` (#457), the medial axis point the stretch `a`–`b`
+    /// carves shortest of, on the axis at its own depth, when the
+    /// stretch's cone stops more than `axis_mm` short of the walls it
+    /// touches. The stretch is read every [`DEEPEN_SAMPLE_MM`] short of
+    /// its ends; each point's axis point is found by shrinking a disc
+    /// tangent at its nearest wall point, along the line through it
+    /// (`Walls::ball_radius_mm`), and the stretch carves within the
+    /// tolerance of that disc's walls exactly when its cone reaches `slope
+    /// · (low − z)` of the disc's own depth `z`, `low` the lowest its cone
+    /// comes over the disc's centre ([`cone_low_mm`]). Points at the flat
+    /// depth are left to the floor. A chain's points are medial nodes, a
+    /// step apart and merged where they crowd, so the straight cut between
+    /// two of them, and above all into a junction, can run off the axis
+    /// even unsimplified.
+    fn off_axis(&self, a: Point3, b: Point3) -> Option<Point3> {
+        let tolerance_mm = self.axis_mm?;
+        let slope = self.depth.slope;
+        let floor_mm = self.depth.flat_depth_mm.map(|f| f * slope);
+        let pieces = (a.xy().distance_to(b.xy()) / DEEPEN_SAMPLE_MM).ceil();
+        let mut worst: Option<(f64, Point3)> = None;
+        let mut k = 1.0;
+        while k < pieces {
+            let t = k / pieces;
+            k += 1.0;
+            let x = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+            let (near_mm, w) = self.walls.nearest(x)?;
+            if near_mm <= EPS_MM || floor_mm.is_some_and(|f| near_mm >= f) {
+                continue;
+            }
+            let u = (x - w) * (1.0 / near_mm);
+            let radius_mm = self.walls.ball_radius_mm(w, u, near_mm + AXIS_REACH_MM);
+            let m = w + u * radius_mm;
+            let own_z = self.depth.z_mm(radius_mm);
+            let short_mm = slope * (cone_low_mm(a, b, m, slope) - own_z);
+            if short_mm > tolerance_mm && worst.is_none_or(|(s, _)| short_mm > s) {
+                worst = Some((short_mm, Point3::new(m.x, m.y, own_z)));
+            }
+        }
+        let (_, m) = worst?;
+        (m.xy().distance_to(a.xy()) > EPS_MM && m.xy().distance_to(b.xy()) > EPS_MM).then_some(m)
     }
 
     /// With `deepen_mm`, the point of `a`–`b`, read every

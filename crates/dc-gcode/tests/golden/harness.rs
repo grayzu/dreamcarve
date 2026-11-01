@@ -220,6 +220,20 @@ pub enum Difference {
     /// wall, within the tolerance) and its move reaches a wall the golden
     /// program misses by more than 0.01 mm.
     EveryCornerReached,
+    /// DreamCarve's medial chains follow the medial axis between the
+    /// nodes it keeps (#457): its simplification is measured on the carved
+    /// edge rather than on the axis, and each stretch that carves more
+    /// than 0.005 mm short of the axis between its points is split on the
+    /// axis. Upstream's chords run up to a quarter step off the axis, and
+    /// its straight cut into a junction off it, which stops its cone short
+    /// of a wall. Where the two programs part, a DreamCarve point must lie
+    /// on the final V surface (its cone past no wall, and DreamCarve's
+    /// carve there as deep as the walls allow, both within the tolerance);
+    /// a golden point must be carved at least as deep by DreamCarve's
+    /// cones, or reach past a wall.
+    /// DreamCarve's deepest cut above a flat depth may be nearer it than
+    /// the golden's.
+    ChainsOnTheAxis,
 }
 
 /// The DreamCarve project of case `name`: `tests/golden/<name>/dreamcarve.dcv`.
@@ -277,7 +291,7 @@ pub fn check(case: &Case) {
             case.order,
         ) {
             Ok((golden, ours)) => eprintln!(
-                "{}: sampled points (golden, DreamCarve): matched ({}, {}), at the flat depth ({}, {}), on links ({}, {}), depth-fitted ({}, {}), into a corner ({}, {})",
+                "{}: sampled points (golden, DreamCarve): matched ({}, {}), at the flat depth ({}, {}), on links ({}, {}), depth-fitted ({}, {}), into a corner ({}, {}), on the axis ({}, {})",
                 case.name,
                 golden.matched,
                 ours.matched,
@@ -288,7 +302,9 @@ pub fn check(case: &Case) {
                 golden.fitted,
                 ours.fitted,
                 golden.corner,
-                ours.corner
+                ours.corner,
+                golden.axis,
+                ours.axis
             ),
             Err(e) => fail("V-Carve cuts differ", e),
         }

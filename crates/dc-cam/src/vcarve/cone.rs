@@ -143,6 +143,97 @@ impl Walls {
             .fold(f64::INFINITY, f64::min)
     }
 
+    /// The wall point nearest `p` and its distance, mm; `None` with no
+    /// walls. The grid is searched outward until the nearest point found
+    /// is no farther than the cells searched reach, so the answer is exact.
+    pub(crate) fn nearest(&self, p: Point) -> Option<(f64, Point)> {
+        let foot = |a: Point, b: Point| {
+            let ab: Vec2 = b - a;
+            let length_sq = ab.dot(ab);
+            let t = if length_sq > 1e-18 {
+                ((p - a).dot(ab) / length_sq).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            a + ab * t
+        };
+        let best_of = |indices: &[usize]| {
+            indices
+                .iter()
+                .filter_map(|&i| self.segments.get(i))
+                .map(|&(a, b)| {
+                    let q = foot(a, b);
+                    (p.distance_to(q), q)
+                })
+                .min_by(|x, y| x.0.total_cmp(&y.0))
+        };
+        let mut margin_mm = self.cell_mm;
+        let span_mm = self.cell_mm * (self.columns + self.rows) as f64;
+        while margin_mm <= 2.0 * span_mm {
+            let best = best_of(&self.near(p, p, margin_mm));
+            if best.is_some_and(|(d, _)| d <= margin_mm) {
+                return best;
+            }
+            margin_mm *= 2.0;
+        }
+        let all: Vec<usize> = (0..self.segments.len()).collect();
+        best_of(&all)
+    }
+
+    /// The radius, mm, of the largest disc inside the walls that touches
+    /// the wall point `w` with its centre along the unit vector `u` from
+    /// it, at most `cap_mm` (the ball-shrinking construction of a medial
+    /// axis point: for each wall segment the least radius whose disc,
+    /// tangent at `w`, reaches it, `|q − w|² / (2 (q − w)·u)` over the
+    /// segment's points `q` ahead of `w`, found in closed form). The discs
+    /// tangent at `w` are nested, so only the walls within the largest,
+    /// `cap_mm` about `w + u · cap_mm`, can bound it.
+    pub(crate) fn ball_radius_mm(&self, w: Point, u: Vec2, cap_mm: f64) -> f64 {
+        let centre = w + u * cap_mm;
+        let mut radius_mm = cap_mm;
+        for &(a, b) in self
+            .near(centre, centre, cap_mm + EPS_MM)
+            .iter()
+            .filter_map(|&i| self.segments.get(i))
+        {
+            let d0: Vec2 = a - w;
+            let e: Vec2 = b - a;
+            let ratio = |t: f64| {
+                let d = Vec2::new(d0.x + e.x * t, d0.y + e.y * t);
+                let ahead = 2.0 * d.dot(u);
+                // A point at or behind `w`'s tangent bounds no disc.
+                (ahead > 1e-9 * (1.0 + d.length())).then(|| d.dot(d) / ahead)
+            };
+            // The stationary points of the ratio along the segment.
+            let (eu, du) = (e.dot(u), d0.dot(u));
+            let qa = e.dot(e) * eu;
+            let qb = 2.0 * e.dot(e) * du;
+            let qc = 2.0 * d0.dot(e) * du - d0.dot(d0) * eu;
+            // The roots of `qa t² + qb t + qc`, in the form that keeps
+            // its precision when `qa` is tiny (a wall nearly parallel to
+            // the tangent).
+            let mut ts = vec![0.0, 1.0];
+            let disc = qb * qb - 4.0 * qa * qc;
+            if disc >= 0.0 {
+                let q = -0.5 * (qb + qb.signum() * disc.sqrt());
+                if q.abs() > 1e-300 {
+                    ts.push(qc / q);
+                }
+                if qa.abs() > 1e-300 {
+                    ts.push(q / qa);
+                }
+            }
+            for t in ts {
+                if (0.0..=1.0).contains(&t)
+                    && let Some(r) = ratio(t)
+                {
+                    radius_mm = radius_mm.min(r);
+                }
+            }
+        }
+        radius_mm
+    }
+
     /// Whether `p` lies inside the regions by the even-odd rule, or within
     /// `slack_mm` of a wall.
     pub(crate) fn holds(&self, p: Point, slack_mm: f64) -> bool {
