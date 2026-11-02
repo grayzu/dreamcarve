@@ -505,7 +505,10 @@ the measured thickness), `InlayBandEdgeVWall (op, margin_needed_mm)`
 the least margin, `max(P·s + d_min, (D − G + 2P)·s)`, that would let one),
 `InlayBandClipped (op, edges: Vec<StockEdge>, open, narrowest_mm)` (#495:
 a male band that runs past the stock, clipped to it; the edges, whether the
-edge is open, and the band left at its narrowest), `PhotoLinesOverlap (op, fraction)`. New
+edge is open, and the band left at its narrowest), `InlayPartsMerged (op,
+first, second, x_mm, y_mm, gap_mm, merge_mm)` (#479: two parts of an
+Inlay's design closer than the merge distance, cut as one shape; the point
+as drawn, the male's mirrored back), `PhotoLinesOverlap (op, fraction)`. New
 `CamError`s: `VCarveNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkDiameterPositive { op, diameter_mm }`,
@@ -1337,7 +1340,66 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    engages 3.75 mm and would have run the shank into the plug wall).
    Validation checks the same sums. The inlay test part's `4, 1, 2`
    engage 3 + 2 = 5 mm against the 60° bit's 5.5 mm cone.
-2. **Design regions.** Targets nested as V-Carve's (step 2).
+2. **Design regions.** Targets nested as V-Carve's (step 2), then
+   **near parts merged** (#479; `dc_geometry::merge_near_parts`, which
+   the generator and the safety pass both call). Two parts whose outlines
+   come closer than the merge distance `d` across a gap outside the
+   design (two outers side by side, or a hole and an island directly in
+   it; not two holes, nor a hole and its own outer, which have the
+   design's material between them) are one shape on both sides. A V-bit
+   cannot carve such a gap: the female left a wall standing to the stock
+   top between the two pockets, the male cut no groove between the two
+   parts of its plug, and the plug stood up to `D − G` proud on the
+   wall (found by the #464 stress tests: 3 mm on two squares 0.001 mm
+   apart, 2.06 mm at a circle 0.005 mm from a square). `d` is
+   `dc_project::INLAY_MERGE_MM`, 0.05 mm, the most the maintainer allows
+   (decided on #479). A gap under `2·tol + √2·q` (0.0214 mm by default;
+   `tol` the project's flatten tolerance, `q` a unit in the last place
+   written) cannot be carved at all: each outline is carved as chords up
+   to `tol` off it, so two outlines closer than `2·tol` can meet in what
+   the carve follows (the circle beside the square failed to seat with
+   gaps up to 0.02 mm and seated from 0.0205 mm), and a tip path keeps
+   `q/√2` from each wall (#469), so a gap needs `√2·q` more to hold one
+   (the squares failed 0.0012 mm apart and seated 0.0015 mm apart). That
+   bound was tried as `d` and was not enough: near touches up to 0.044
+   mm wide still held the plug up to 1.6 mm proud, where the carve does
+   not reach into the narrow wedge either side of the gap (the stress
+   sweep's line art seed `0x32`, 0.0436 mm, and a square's corner 0.022
+   to 0.035 mm from a circle, 1.05 to 1.11 mm), and merged, the wedge a
+   closing by 0.0107 mm leaves past the fill was still too narrow at
+   some gaps (the corner, 0.016 mm: 0.70 mm). With `d` 0.05 mm every one
+   of them seats at every gap tried from 0.001 to 0.048 mm (within 0.021
+   mm). The smallest `d` that seats them all lies above 0.0436 mm, and
+   the stress tests draw near touches up to 0.05 mm. Outlines that touch (within
+   `EPS_MM`) are separate parts, as `nest` takes them. A group of near
+   parts is closed by `r = d/2 + f` with round joins, `(X ⊕ r) ⊖ r`; the
+   pieces the closing adds against two outlines (the gaps; not those
+   against one, an inward corner rounded) are grown by `f` into the parts
+   and held to the closing, so they overlap the parts rather than meet
+   them along edges a rounding error apart, and united with them; and the
+   slivers the booleans leave, a region or hole of area at most `f` times
+   its length, are dropped (left in, a sliver hole was a wall inside the
+   merged letter, and the generator refused its own cut past it; and the
+   closing less its corner pieces, used at first, left outlines touching
+   themselves). So the parts keep their shape but at the gap, where the closing's arc dips `r − √(r² −
+   (g/2)²)` into a gap `g` that opens between two outward corners. Where
+   two outlines part (a circle beside a square), the closing ends the
+   fill with an arc of radius `r`; its vertices off the parts (more than
+   `1e-5` mm from them as the booleans flatten them) are cut to the one
+   farthest from them, so the fill ends in a corner, which the medial
+   axis reaches (`CornerReach::Every`). Ended round, the fill left the
+   male's V-bit half a millimetre short in the narrow wedge beyond it at
+   some gaps (the circle 0.009 to 0.013 and 0.019 to 0.021 mm from the
+   square, with `d` at 0.0214 mm), and the plug stood 0.9 to 2 mm proud.
+   The
+   group is flattened within `f`, the finer of the V-bit's wall tolerance
+   (`dc_geometry::wall_tolerance_mm`, #478) and `d/8`, so the
+   flattening cannot reopen a gap `d` closes; regions with no near part
+   keep their arcs, and a design with none is unchanged. Each pair of
+   outlines warns `inlay_parts_merged` with the gap and its middle as
+   drawn. The male merges its mirrored design, the same rule on the same
+   shapes. A gap of `d` or more is left as drawn: two squares 0.1 mm
+   apart keep the ridge between the female's pockets, and the pair seats.
 3. **Female.** `Carve { regions: design, start_plane: thickness,
    flat_depth: Some(D), strategy: Medial, cleared_by: the
    operation's clearing passes }`. Identical to a V-Carve with `flat_depth_mm: D`,
@@ -1628,7 +1690,9 @@ it does for Pocket and Profile, and never from the toolpath.
 
 - **S17, cone.** For a V-Carve, an Inlay side or a Photo V-Carve: `α`
   from the tool, `start_plane` from the operation, the regions from the
-  project (targets nested; the male's surround by
+  project (targets nested; an Inlay's near parts merged by
+  `dc_geometry::merge_near_parts` at `dc_project::INLAY_MERGE_MM`, #479;
+  the male's surround by
   `dc_geometry::surround` on the targets mirrored by
   `Transform::mirror_x_about` the targets' bounding-box centre, closed by
   `R'` from `dc_project::male_band`, and clipped to `MaleBand::board` of
@@ -1855,8 +1919,8 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 ## Module layout
 
 ```
-crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v24_to_v25), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole), merge.rs (merge_near_parts, MergedParts, NearParts; #479), transform.rs (+ mirror_x_about)}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v24_to_v25), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
@@ -1953,6 +2017,7 @@ for V operations.
 - The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::inset_outers_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::cut_out_no_room`.
 - The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
 - The band and the cut-out clipped to the stock (#495): `inlay::band_is_clipped_to_the_stock` (a star 2 mm from the left edge, `M` 8, a 3.175 mm 60° V-bit and a 1.5 mm end mill: no run's tool past the stock, the clearing floor out to the board's edge, `inlay_band_clipped` naming the left edge and 2 mm), `inlay::v_wall_band_is_clipped_inside_the_board` (clipped `R_v` inside it), `inlay::cut_out_runs_edge_to_edge_when_clipped` (open paths, their ends `r` inside the edge, every cut on them and on the stock, the tabs on them), `inlay::clipped_male_still_seats` (`plug_seats_flush`'s 0.05 mm), `inlay::design_too_near_the_edge_is_explained` (the bench's bits: `InlayTooNearEdge`, 4.330 mm needed), `inlay::unclipped_band_is_unchanged` (the tutorial's "DC" and the star: the surround and `B` as before, the same runs on stock ten times the size), `carve::band_on_board_clips_only_what_runs_past`, `carve::without_rect_sides_opens_outlines_along_the_board` (dc-geometry), `inlay::band_is_clipped_to_the_board` (dc-project); `safety::clipped_band_is_derived_from_the_project` (S17 and S9 refuse past the clipped band on 60 mm stock and pass on 100 mm), `safety::cut_out_off_the_stock_still_fails` (the unclipped cut-out on the narrow stock fails S7; a cut along the dropped stretch fails S9).
+- Near parts merged (#479): `inlay::near::male_of_parts_closer_than_the_written_precision_seats` (squares 0.001 mm apart), `inlay::near::male_of_a_pinch_seats` (a circle 0.005 mm from a square, 60° and 90°), `inlay::near::male_of_a_merged_pinch_seats_at_every_gap` (0.01, 0.012, 0.02 and 0.04 mm, 60°), `inlay::near::male_of_a_corner_beside_a_curve_seats` (0.016 and 0.03 mm), `inlay::near::male_of_parts_a_hair_apart_seats` (0.003 mm), `inlay::near::parts_closer_than_the_merge_distance_merge_and_warn` (one region a side, one `inlay_parts_merged` a side, the female's pocket across the gap), `inlay::near::parts_a_tenth_apart_are_not_merged` (0.1 mm: two regions, no warning, the female's ridge stands to the stock top, the pair seats); `merge::squares_a_hair_apart_merge`, `merge::circle_at_a_pinch_merges`, `merge::merging_ends_a_gap_in_a_corner`, `merge::island_near_its_hole_merges_and_a_thin_web_does_not`, `merge::touching_parts_and_no_distance_merge_nothing`, `merge::merging_keeps_inward_corners_away_from_the_gap` (dc-geometry); `safety::female_holds_merged_parts_as_one_shape` (a cut over the 0.001 mm gap passes, over a 0.1 mm gap fails S17), `safety::generated_near_parts_pass_the_safety_pass`; the stress tests' `known_issue` no longer excuses near touches.
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).

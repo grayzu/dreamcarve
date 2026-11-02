@@ -14,7 +14,7 @@ use dc_cam::test_support::assert_run_safe;
 use dc_cam::test_support::seat::{SEAT_MM, fit};
 use dc_cam::{CamError, ToolRun, generate_inlay, generate_vcarve};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
-use dc_geometry::{Point, Polyline, Rect, Transform, meeting_points};
+use dc_geometry::Transform;
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
     ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
@@ -418,75 +418,28 @@ fn generate(project: &Project, op: &Operation) -> Result<Vec<ToolRun>, CamError>
     }
 }
 
-/// The places, project space, where two of `project`'s outlines come
-/// within [`NEAR_TOUCH_MM`] of each other: a near touch (#479).
-fn near_touches(project: &Project) -> Vec<Point> {
-    let mut outlines: Vec<Polyline> = Vec::new();
-    for instance in &project.instances {
-        if let Some(def) = project.definitions.get(&instance.definition) {
-            outlines.extend(
-                def.profiles
-                    .iter()
-                    .filter_map(|p| instance.transform.apply_polyline(p).ok()),
-            );
-        }
-    }
-    let boxes: Vec<Option<Rect>> = outlines.iter().map(Polyline::bounds).collect();
-    let mut out = Vec::new();
-    for (i, a) in outlines.iter().enumerate() {
-        for (j, b) in outlines.iter().enumerate().skip(i + 1) {
-            let (Some(p), Some(q)) = (boxes[i], boxes[j]) else {
-                continue;
-            };
-            let apart = p.min.x - NEAR_TOUCH_MM > q.max.x
-                || q.min.x - NEAR_TOUCH_MM > p.max.x
-                || p.min.y - NEAR_TOUCH_MM > q.max.y
-                || q.min.y - NEAR_TOUCH_MM > p.max.y;
-            if !apart {
-                out.extend(meeting_points(a, b, NEAR_TOUCH_MM));
-            }
-        }
-    }
-    out
-}
-
-/// How near two outlines come for #479's near touch, mm: the issue's
-/// largest gap.
-const NEAR_TOUCH_MM: f64 = 0.05;
-
-/// How far from a near touch a seat failure may lie and still be #479's,
-/// mm: the plug is held up on the gap, and the grid reads it within a
-/// cell or two.
-const NEAR_TOUCH_REACH_MM: f64 = 2.0;
-
-/// The open issue a seat failure of `case` at `at` (female frame) is,
-/// if any. Each is a class the sweep found that this PR does not fix,
-/// filed with its own reproduction and an ignored regression test; a
-/// failure matching one is reported, not failed, and the issue's fix
-/// removes its line here. Nothing else is excused: a generation, safety
-/// or panic failure never is.
-fn known_issue(case: &Case, kind: Kind, at: Point, near: &[Point]) -> Option<u32> {
-    if let Some(&(.., issue)) = KNOWN_CASES
+/// The open issue a seat failure of `case` is, if any. Each is a class
+/// the sweep found that this PR does not fix, filed with its own
+/// reproduction and an ignored regression test; a failure matching one is
+/// reported, not failed, and the issue's fix removes its line here.
+/// Nothing else is excused: a generation, safety or panic failure never
+/// is.
+fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
+    KNOWN_CASES
         .iter()
         .find(|&&(family, seed, k, _)| case.family == family && case.seed == seed && k == kind)
-    {
-        return Some(issue);
-    }
-    // #479: where two outlines nearly touch, the male cuts no groove
-    // between them, and the plug stands up to its whole height there.
-    if near
-        .iter()
-        .any(|p| p.distance_to(at) <= NEAR_TOUCH_REACH_MM)
-    {
-        return Some(479);
-    }
-    None
+        .map(|&(.., issue)| issue)
 }
 
-/// Seat failures of the CI tests' designs that no rule of
-/// [`known_issue`] covers, each with the open issue it is filed under:
+/// Seat failures of the CI tests' designs, each with the open issue it
+/// is filed under:
 /// family, seed, operation, issue.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 4] = [
+const KNOWN_CASES: [(&str, u64, Kind, u32); 5] = [
+    // #501: with the 15° bit, 0.067 mm 4.6 mm from the near touch #479
+    // merges (0.051 mm, the male's share, at the merged gap itself).
+    // #479's rule hid it: before the merge the near touch held the plug
+    // 0.105 mm up, and set aside, the rest stood 0.082 mm up.
+    ("small line art", 0x0464_0000, Kind::MaleVWall, 501),
     // #484: beside the last "e"'s mouth, 0.36 mm.
     ("small lettering", 0x0464_1000, Kind::MaleVWall, 484),
     // #501: inside a curve of the "a", 0.015 mm sideways at every bit,
@@ -640,7 +593,6 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                 .collect()
         }
     };
-    let near = near_touches(&case.project);
     for (kind, male_project, male_op, male_runs) in chosen {
         let seated = catch_unwind(AssertUnwindSafe(|| {
             fit(
@@ -657,7 +609,7 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                     "the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?}); at most {SEAT_MM}",
                     f.seat_mm, f.seat_at, f.male_mm, f.male_at
                 );
-                match known_issue(case, *kind, f.seat_at, &near) {
+                match known_issue(case, *kind) {
                     Some(issue) => out
                         .known
                         .push(format!("#{issue}: {kind:?} of {}\n  {what}", case.label)),

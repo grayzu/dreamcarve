@@ -284,6 +284,26 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
     })
 }
 
+/// How close two parts of an Inlay's design may come before both sides
+/// cut them as one shape (#479; `docs/specs/phase-3/design.md`,
+/// "Algorithms → Inlay", step 2), mm: 0.05, the most the maintainer
+/// allows. The generator, and the safety pass that re-derives the
+/// design, both use it.
+///
+/// A gap narrower than twice the flatten tolerance plus `√2` units in the
+/// last place written (0.0214 mm by default) cannot be carved at all:
+/// each outline is carved as chords up to the tolerance off it, and a
+/// V-bit's tip path keeps `quantum / √2` from each wall (#469). But that
+/// distance is not enough. Near touches up to 0.044 mm wide still held
+/// the plug up to 1.6 mm proud, where the carve does not reach into the
+/// narrow wedge either side of the gap (the stress sweep's line art seed
+/// `0x32`, 0.0436 mm; a square's corner beside a circle, 0.022 to
+/// 0.035 mm), and merged at 0.0214 mm, the wedge the closing leaves past
+/// the fill was still too narrow at some gaps (the corner, 0.016 mm). At
+/// 0.05 mm every one of them, the issue's two squares and the circle
+/// beside the square seat at every gap tried.
+pub const INLAY_MERGE_MM: f64 = 0.05;
+
 #[cfg(test)]
 mod tests {
     use super::*;

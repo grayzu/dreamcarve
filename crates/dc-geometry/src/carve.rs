@@ -334,7 +334,7 @@ fn grown_outers(regions: &[Region], distance_mm: f64, bays: Bays) -> Vec<Region>
 /// twice the distance grows over the mouth, and its offset comes back as
 /// two loops, its outline and an inner one round the bay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Bays {
+pub(crate) enum Bays {
     /// The bay is a hole of the grown contour: the points in it farther
     /// than the distance from the contour, which a floor keeps.
     Floor,
@@ -397,7 +397,7 @@ fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64, bays: Bays) -
 /// floor lost the bay with the island round it), and as one region per
 /// loop with [`Bays::Island`]. `offset` gives every loop the contour's
 /// winding, so they are told apart by containment.
-fn grown_contour(contour: &Contour, distance_mm: f64, bays: Bays) -> Vec<Region> {
+pub(crate) fn grown_contour(contour: &Contour, distance_mm: f64, bays: Bays) -> Vec<Region> {
     let loops = offset(contour, distance_mm);
     if bays == Bays::Floor
         && let Ok((regions, _)) = nest(loops.clone())
@@ -432,7 +432,7 @@ fn holes_stay_apart(region: &Region, inset_mm: f64) -> bool {
 
 /// Whether `a` comes within `reach_mm` of `b` anywhere, following arcs.
 /// Only segments whose boxes come that near are measured.
-fn closer_than(a: &Polyline, b: &Polyline, reach_mm: f64) -> bool {
+pub(crate) fn closer_than(a: &Polyline, b: &Polyline, reach_mm: f64) -> bool {
     let near = |p: &Rect, q: &Rect| {
         p.min.x - reach_mm <= q.max.x
             && q.min.x - reach_mm <= p.max.x
@@ -457,7 +457,7 @@ fn closer_than(a: &Polyline, b: &Polyline, reach_mm: f64) -> bool {
 
 /// A box holding `segment`: its ends' for a line, its whole circle's for
 /// an arc.
-fn segment_box(segment: Segment) -> Rect {
+pub(crate) fn segment_box(segment: Segment) -> Rect {
     match segment.arc() {
         Some(arc) => {
             let (c, r) = (arc.centre, arc.radius_mm);
@@ -471,7 +471,7 @@ fn segment_box(segment: Segment) -> Rect {
 }
 
 /// The region `contour` alone encloses.
-fn single_region(contour: Contour) -> Option<Region> {
+pub(crate) fn single_region(contour: Contour) -> Option<Region> {
     nest(vec![contour])
         .ok()
         .and_then(|(regions, _)| regions.into_iter().next())

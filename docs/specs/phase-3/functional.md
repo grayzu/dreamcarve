@@ -361,6 +361,15 @@ is no GUI in this phase.
      plane, which clears the female's surface. With `cut_out: null` the
      plug is sawn free inside the band. Cutting the backing off after
      gluing stays the user's: a saw.
+     **Parts that nearly touch** (added 2026-11-02 in #479, the
+     maintainer's decision): two parts of the design closer than 0.05 mm
+     are cut as one shape on both sides, so the female cuts one pocket with no
+     knife-edge wall between them and the male one plug with no groove,
+     and `inlay_parts_merged` names the two shapes, the gap and where it
+     is. A V-bit cannot carve such a gap: the female left the wall to
+     the stock top, the male no groove, and the plug stood up to
+     `depth_mm − glue_gap_mm` proud on it. Plain V-Carve and Pocket cut
+     their parts as drawn.
 
 ### Photo V-Carve
 
@@ -444,7 +453,7 @@ is no GUI in this phase.
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
  `inlay_male_mirrored`, `inlay_band_clipped` (#495),
- `photo_lines_overlap`, `image_colour_converted`,
+ `inlay_parts_merged` (#479), `photo_lines_overlap`, `image_colour_converted`,
  `start_depth_mismatch`, `start_depth_uncleared`,
  `countersink_ignores_tool_width`. An error stops export
  and names the operation, shape, tool or field; a warning never does.

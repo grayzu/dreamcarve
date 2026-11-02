@@ -26,6 +26,11 @@
 //!   clipped to the board ([`MaleBand::board`], #495), and its cut-out
 //!   stops at the board's edge.
 //!
+//! On both sides, parts of the design that come closer than
+//! [`INLAY_MERGE_MM`] are first merged into one shape ([`merge_near_parts`];
+//! #479): no V-bit can carve the gap between them, so the female would
+//! leave a wall standing in it and the plug would stand proud on it.
+//!
 //! The two mate: the female's pocket `h` below the stock top is the
 //! design inset by `h · tan(α/2)`, and the plug `h` above its start plane
 //! is the mirrored design inset by the same, for `h` from 0 to `D − G`
@@ -46,13 +51,14 @@ use crate::vcarve::{
 use crate::warning::Warning;
 use dc_geometry::{
     Contour, EPS_MM, Point, Polyline, Rect, Region, Transform, band_on_board, difference_within,
-    inset_outers, nearest_point, rounded_band, surround_within, wall_tolerance_mm,
-    without_rect_sides,
+    inset_outers, merge_near_parts, nearest_point, rounded_band, surround_within,
+    wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
     BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
-    INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
-    OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy, male_band,
+    INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand,
+    Operation, OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy,
+    male_band,
 };
 
 /// Both sides carve along the medial lines; an Inlay has no strategy of
@@ -327,8 +333,9 @@ fn bounds_of<'c>(contours: impl Iterator<Item = &'c Contour>) -> Option<Rect> {
         .reduce(|all, b| all.including(b.min).including(b.max))
 }
 
-/// The side `op` of `project` carves (design steps 2 to 4). Warnings of
-/// the design's outlines (an open path, a duplicate) go to `warnings`.
+/// The side `op` of `project` carves (design steps 2 to 4), its near
+/// parts merged ([`merge_near`]). Warnings of the design's outlines (an
+/// open path, a duplicate, near parts merged) go to `warnings`.
 ///
 /// # Errors
 ///
@@ -356,8 +363,9 @@ fn side_of(
         .ok_or(CamError::MissingThickness)?;
     let start_plane_z_mm = thickness_mm - values.start_depth_mm();
     let Some(margin_mm) = values.margin_mm else {
+        let design = carve_regions(project, &op.id, &op.targets, warnings)?;
         return Ok(Side {
-            targets: carve_regions(project, &op.id, &op.targets, warnings)?,
+            targets: merge_near(design, project, op, None, warnings),
             start_plane_z_mm,
             engaged_from_z_mm: thickness_mm,
             flat_depth_mm: values.flat_depth_mm(),
@@ -371,20 +379,14 @@ fn side_of(
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
+    let design = merge_near(design, project, op, mirror, warnings);
     // #448: the band's edge, closed by `R'`, and whether it is open.
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
     // #478: the plug's outline within the V-bit's wall tolerance; the
     // band's edge within the project's.
-    let plug_tolerance_mm = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .and_then(|t| checked_v_bit(&op.id, t).ok())
-        .map_or(tolerance_mm, |bit| {
-            wall_tolerance_mm(tolerance_mm, bit.slope)
-        });
+    let plug_tolerance_mm = plug_tolerance_mm(project, op);
     let edge = rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
     // #495: a band that runs past the board's edge is clipped to it.
     let on_board = band.as_ref().and_then(|b| {
@@ -445,6 +447,105 @@ fn side_of(
         open_edge,
         clipped,
     })
+}
+
+/// How near, mm, the plug's outline is drawn for Inlay `op` (#478): the
+/// project's flatten tolerance scaled for its V-bit
+/// ([`wall_tolerance_mm`]), or the tolerance itself when the tool is not a
+/// usable V-bit.
+fn plug_tolerance_mm(project: &Project, op: &InlayOp) -> f64 {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .and_then(|t| checked_v_bit(&op.id, t).ok())
+        .map_or(tolerance_mm, |bit| {
+            wall_tolerance_mm(tolerance_mm, bit.slope)
+        })
+}
+
+/// `design`, the targets of Inlay `op` resolved (the male's moved by its
+/// `mirror`), with the parts that come closer than [`INLAY_MERGE_MM`]
+/// merged into one shape ([`merge_near_parts`]; #479, design "Inlay",
+/// step 2), as the safety pass merges them. Each pair of outlines that
+/// come near warns [`Warning::InlayPartsMerged`] at the middle of their
+/// gap as drawn: the male's point is mirrored back. A merged region is
+/// named by the shape of its first part, and the containment pairs follow
+/// the names, less those inside one merged region.
+///
+/// A merged group is drawn within the V-bit's wall tolerance (#478), as
+/// the plug's outline is.
+fn merge_near(
+    design: Targets,
+    project: &Project,
+    op: &InlayOp,
+    mirror: Option<Transform>,
+    warnings: &mut Vec<Warning>,
+) -> Targets {
+    let merge_mm = INLAY_MERGE_MM;
+    let merged = merge_near_parts(&design.regions, merge_mm, plug_tolerance_mm(project, op));
+    if merged.near.is_empty() {
+        return design;
+    }
+    let shape_of = |index: usize| design.contours.get(index).map(|(s, _)| s.clone());
+    for near in &merged.near {
+        let (Some(first), Some(second)) = (shape_of(near.first), shape_of(near.second)) else {
+            continue;
+        };
+        // A mirror is its own inverse.
+        let at = mirror.map_or(near.at, |m| m.apply(near.at));
+        warnings.push(Warning::InlayPartsMerged {
+            op: op.id.clone(),
+            first,
+            second,
+            x_mm: at.x,
+            y_mm: at.y,
+            gap_mm: near.gap_mm,
+            merge_mm,
+        });
+    }
+    // Each input region's shape, and the shape it is now named by.
+    let mut renamed: Vec<(&ShapeRef, &ShapeRef)> = Vec::new();
+    let shapes: Vec<ShapeRef> = merged
+        .sources
+        .iter()
+        .map(|sources| {
+            let name = sources.first().and_then(|&k| design.shapes.get(k));
+            if let Some(name) = name {
+                renamed.extend(
+                    sources
+                        .iter()
+                        .filter_map(|&k| design.shapes.get(k))
+                        .map(|s| (s, name)),
+                );
+            }
+            name.cloned().unwrap_or_else(|| ShapeRef {
+                instance: InstanceId::new(""),
+                instance_name: String::new(),
+                profile: 0,
+            })
+        })
+        .collect();
+    let rename = |s: &ShapeRef| {
+        renamed
+            .iter()
+            .find(|(from, _)| *from == s)
+            .map_or_else(|| s.clone(), |(_, to)| (*to).clone())
+    };
+    let mut containment = Vec::new();
+    for (inner, encloser) in &design.containment {
+        let pair = (rename(inner), rename(encloser));
+        if pair.0 != pair.1 && !containment.contains(&pair) {
+            containment.push(pair);
+        }
+    }
+    Targets {
+        regions: merged.regions,
+        shapes,
+        containment,
+        contours: design.contours,
+    }
 }
 
 /// The design outline surround region `region` borders, to name it by:
@@ -520,7 +621,9 @@ pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp) -> Option<f64> {
 /// `plug_depth_mm`, engaged from the stock top; it warns
 /// [`Warning::InlayMaleMirrored`] with the line's X, and
 /// [`Warning::InlayPlugBaseThin`] when less than
-/// [`INLAY_MIN_PLUG_BASE_MM`] of board is left under its floor.
+/// [`INLAY_MIN_PLUG_BASE_MM`] of board is left under its floor. On either
+/// side, parts of the design closer than [`INLAY_MERGE_MM`] are cut as one
+/// shape, each pair warning [`Warning::InlayPartsMerged`] (#479).
 ///
 /// # Errors
 ///

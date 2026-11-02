@@ -227,7 +227,10 @@
 //!
 //! - **Inlay** (format 22, #436): each side is held as a V-Carve, its
 //!   V-bit's run to S17 and its clearing runs to its floor, with its
-//!   regions, start plane and floor re-derived from the project. The
+//!   regions, start plane and floor re-derived from the project. On
+//!   either side the design's parts that come closer than
+//!   [`INLAY_MERGE_MM`] are one shape ([`merge_near_parts`], #479), as the
+//!   generator merges them. The
 //!   female carves the targets' regions from the stock top, flat at
 //!   `depth_mm` `D`. The male carves the **surround** of its design: the
 //!   targets' closed outlines mirrored about the centre line of their
@@ -291,15 +294,15 @@ use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
     Vec2, as_circle, band_on_board, closest_points, difference_within, floor_regions,
-    inset_is_empty, inset_outers, is_design_hole, meeting_points, nearest_point, nest, offset,
-    offset_open, point_segment_distance_mm, rounded_band, segment_distance_mm, strip_ends,
-    surround_floor_regions, surround_within, wall_tolerance_mm, without_rect_sides,
+    inset_is_empty, inset_outers, is_design_hole, meeting_points, merge_near_parts, nearest_point,
+    nest, offset, offset_open, point_segment_distance_mm, rounded_band, segment_distance_mm,
+    strip_ends, surround_floor_regions, surround_within, wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
     ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlayOp, InlaySide, InstanceId, MaleBand, Operation, PostProcessor, ProfileOp,
-    Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
-    male_band,
+    FeatureInstance, INLAY_MERGE_MM, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
+    PostProcessor, ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units,
+    VCarveOp, cleared_start_plane, male_band,
 };
 
 use crate::ExportError;
@@ -1019,7 +1022,7 @@ impl MaleGeometry {
     /// surround is the clipped band less the design.
     fn of(project: &Project, inlay: &InlayOp) -> Option<Self> {
         let band = male_band(project, inlay)?;
-        let design = male_design(project, &inlay.targets)?;
+        let design = male_design(project, inlay)?;
         let tolerance_mm = project.flatten_tolerance_mm;
         // #478: the plug's outline within the V-bit's wall tolerance, as
         // the generator draws it.
@@ -1069,8 +1072,8 @@ impl MaleGeometry {
 /// (design "Inlay" steps 1 to 4, "Safety pass" S17; security review H4),
 /// with the male's band geometry:
 ///
-/// - **Female:** the targets' regions, from the stock top, flat at
-///   `depth_mm` `D`.
+/// - **Female:** the targets' regions, their near parts merged
+///   ([`merged_design`]), from the stock top, flat at `depth_mm` `D`.
 /// - **Male:** the surround of the targets mirrored about the centre line
 ///   of their closed outlines' joint bounding box ([`MaleGeometry`]): the
 ///   band `margin_mm` wide, closed by its edge rounding (#448), less the
@@ -1092,7 +1095,12 @@ fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<(Cone, Option<MaleGe
         .filter(|g| g.is_finite() && *g >= 0.0 && *g < depth_mm)?;
     let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
     let (regions, start_depth_mm, flat_depth_mm, male) = match inlay.side {
-        InlaySide::Female => (regions_of(project, &inlay.targets)?, 0.0, depth_mm, None),
+        InlaySide::Female => (
+            merged_design(project, inlay, regions_of(project, &inlay.targets)?),
+            0.0,
+            depth_mm,
+            None,
+        ),
         InlaySide::Male => {
             let male = MaleGeometry::of(project, inlay)?;
             (
@@ -1146,10 +1154,11 @@ fn male_band_on_board(
 
 /// A male Inlay's design: the closed outlines of `targets`, placed,
 /// mirrored about X = the centre of their joint bounding box (arc extremes
-/// included, [`Transform::mirror_x_about`]), nested. `None` when a target
-/// does not resolve or outlines cross.
-fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>> {
-    let closed: Vec<Polyline> = placed(project, targets)?
+/// included, [`Transform::mirror_x_about`]), nested, its near parts merged
+/// ([`merged_design`]). `None` when a target does not resolve or
+/// outlines cross.
+fn male_design(project: &Project, inlay: &InlayOp) -> Option<Vec<Region>> {
+    let closed: Vec<Polyline> = placed(project, &inlay.targets)?
         .into_iter()
         .filter(Polyline::is_closed)
         .collect();
@@ -1176,7 +1185,19 @@ fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>>
         None => Vec::new(),
     };
     let (design, _) = nest(contours).ok()?;
-    Some(design)
+    Some(merged_design(project, inlay, design))
+}
+
+/// Inlay `inlay`'s `design` (nested) with the parts that come closer
+/// than [`INLAY_MERGE_MM`] merged into one shape, drawn within its V-bit's
+/// wall tolerance ([`wall_tolerance_mm`], #478), as the generator merges
+/// them (#479; [`merge_near_parts`]).
+fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Vec<Region> {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let plug_tolerance_mm = v_bit_of(project, &inlay.tool).map_or(tolerance_mm, |(slope, _)| {
+        wall_tolerance_mm(tolerance_mm, slope)
+    });
+    merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions
 }
 
 /// What a male Inlay's cut-out run is held to (#443, #448; module docs):
