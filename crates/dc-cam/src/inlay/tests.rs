@@ -14,19 +14,20 @@
 //! and its floor 5 mm below it.
 
 mod line_art;
-mod seat;
+mod near;
 mod spike;
 mod traced;
 
 use super::*;
-use crate::heightfield::{Cutter, Heightfield};
+use crate::heightfield::Heightfield;
 use crate::run::RunLabel;
 use crate::test_support::assert_run_safe;
+use crate::test_support::seat::{Fit, SEAT_MM, cutter_of, distance_to, fit, inset_mm, outlines};
 use crate::toolpath::{MoveKind, Toolpath};
 use crate::vcarve::generate_vcarve;
 use dc_geometry::{
-    Contour, Point, Point3, Polyline, Region, Vertex, floor_regions, nearest_point, nest, offset,
-    rounded_band, surround, surround_floor_regions,
+    Contour, Point, Point3, Polyline, Region, Vertex, floor_regions, nest, offset, rounded_band,
+    surround, surround_floor_regions,
 };
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
@@ -34,7 +35,6 @@ use dc_project::{
     FeatureInstance, InlaySide, MachiningOrder, Operation, OperationId, Stock, Tool, ToolId,
     ToolKind, VCarveOp, VCarveStrategy,
 };
-use seat::{SeatCell, seat};
 use std::collections::BTreeMap;
 use std::sync::OnceLock;
 
@@ -240,24 +240,6 @@ fn cut_points(toolpath: &Toolpath) -> Vec<Point3> {
         from = Some(mv.to);
     }
     out
-}
-
-/// The distance from `p` to the nearest outline of `contours`, mm.
-fn distance_to(contours: &[Polyline], p: Point) -> f64 {
-    contours
-        .iter()
-        .filter_map(|c| nearest_point(c, p))
-        .map(|n| n.gap_mm)
-        .fold(f64::INFINITY, f64::min)
-}
-
-/// Every outline of `regions`.
-fn outlines(regions: &[Region]) -> Vec<Polyline> {
-    regions
-        .iter()
-        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
-        .map(|c| c.polyline().clone())
-        .collect()
 }
 
 /// Whether `p` is inside one of `regions` or within `slack_mm` of an
@@ -1598,33 +1580,6 @@ fn notch_project() -> Project {
     project_of(vec![polygon(&notch_points())], CENTRE, 100.0, 100.0)
 }
 
-/// The cutter a run of `project` cuts with, as the heightfield models it.
-fn cutter_of(project: &Project, run: &ToolRun) -> Cutter {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == run.tool)
-        .expect("the run's tool is in the project");
-    match tool.cutter {
-        ToolKind::VBit { included_angle_deg } => Cutter::VBit {
-            slope: (included_angle_deg.to_radians() / 2.0).tan(),
-        },
-        _ => Cutter::Flat {
-            radius_mm: tool.diameter_mm / 2.0,
-        },
-    }
-}
-
-/// The signed distance from `p` into `design`, mm: positive inside.
-fn inset_mm(design: &[Region], p: Point) -> f64 {
-    let gap_mm = distance_to(&outlines(design), p);
-    if design.iter().any(|r| r.contains_point(p)) {
-        gap_mm
-    } else {
-        -gap_mm
-    }
-}
-
 /// #452 (the fit property on the programs): the male's cuts reach the tip
 /// of a 5° notch. For each male, with and without a clearing pass, the
 /// heightfield its runs leave round the notch (0.05 mm grid) is at or
@@ -1684,31 +1639,9 @@ fn male_carves_to_the_tip_of_an_acute_notch() {
     }
 }
 
-/// How an inlay pair seats (#452), from its two sides' programs.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Fit {
-    /// How far the plug's start plane stops above the female's surface,
-    /// mm, and the cell (female's frame) that stops it.
-    seat_mm: f64,
-    seat_at: Point,
-    /// The male's share of it, mm: the most, over the cells that hold the
-    /// plug up more than [`SEAT_MM`], by which the plug stands higher
-    /// above its start plane than the pocket the female's design describes
-    /// is deep there, `min(e / s, D)` for a point `e` inside the design;
-    /// and that cell. Where the female's own V-Carve falls short of its
-    /// design, this is what the male adds to it.
-    male_mm: f64,
-    male_at: Point,
-}
-
-/// How far the plug may stand proud of its female, mm: from the male's
-/// own cuts (#452), and in all (#457).
-const SEAT_MM: f64 = 0.05;
-
 /// The fit of `female` (in `female_project`) and `male` (in
-/// `male_project`): both sides' runs simulated as heightfields (`seat`),
-/// cells `step_mm` apart, over the design's box grown by the margin and 2
-/// mm, the male mirrored as it seats.
+/// `male_project`), each generated and held to `assert_run_safe`:
+/// [`fit`], cells `step_mm` apart.
 fn fit_of(
     female_project: &Project,
     female: &InlayOp,
@@ -1718,69 +1651,13 @@ fn fit_of(
 ) -> Fit {
     let (female_runs, _) = inlay_runs(female_project, female);
     let (male_runs, _) = inlay_runs(male_project, male);
-    let resolve = |project: &Project, op: &InlayOp| {
-        side(
-            &with_op(project, Operation::Inlay(op.clone())),
-            op,
-            &mut Vec::new(),
-        )
-        .expect("the side resolves")
-    };
-    let female_side = resolve(female_project, female);
-    let male_side = resolve(male_project, male);
-    // The mirror is about the middle of the design's box, so the mirrored
-    // design's box is the design's.
-    let mut bounds: Option<Rect> = None;
-    for outline in outlines(&male_side.design) {
-        let b = outline.bounds().expect("an outline has a box");
-        bounds = Some(bounds.map_or(b, |all| all.including(b.min).including(b.max)));
-    }
-    let grow_mm = male.margin_mm.expect("a male has a margin") + 2.0;
-    let b = bounds.expect("the design has an outline");
-    let bounds = Rect {
-        min: Point::new(b.min.x - grow_mm, b.min.y - grow_mm),
-        max: Point::new(b.max.x + grow_mm, b.max.y + grow_mm),
-    };
-    let top_mm = |p: &Project| p.stock.thickness_mm.expect("stock has a thickness");
-    let mut female_field = Heightfield::new(bounds, step_mm, top_mm(female_project), None);
-    female_field.cut_runs(&female_runs, |run| cutter_of(female_project, run));
-    let mut male_field =
-        Heightfield::new(bounds, step_mm, top_mm(male_project), male_side.mirror_x_mm);
-    male_field.cut_runs(&male_runs, |run| cutter_of(male_project, run));
-    let cells = seat(&female_field, &male_field, male_side.start_plane_z_mm);
-    let worst = cells
-        .iter()
-        .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))
-        .expect("the plug has cells");
-    let Cutter::VBit { slope } = cutter_of(female_project, main_run_of(&female_runs)) else {
-        panic!("the female's main run is a V-bit's");
-    };
-    let depth_mm = female.depth_mm.expect("a depth");
-    let share = |c: &SeatCell| {
-        let pocket_mm = (inset_mm(&female_side.targets.regions, c.at) / slope).clamp(0.0, depth_mm);
-        (c.plug_mm - pocket_mm, c.at)
-    };
-    // Where the plug seats within `SEAT_MM` everywhere, the male's share
-    // at the cell that holds it highest.
-    let male = cells
-        .iter()
-        .filter(|c| c.need_mm > SEAT_MM)
-        .map(share)
-        .max_by(|a, b| a.0.total_cmp(&b.0))
-        .unwrap_or_else(|| share(worst));
-    Fit {
-        seat_mm: worst.need_mm,
-        seat_at: worst.at,
-        male_mm: male.0,
-        male_at: male.1,
-    }
-}
-
-/// The V-bit's run of `runs`.
-fn main_run_of(runs: &[ToolRun]) -> &ToolRun {
-    runs.iter()
-        .find(|r| r.label == RunLabel::Main)
-        .expect("a V-bit run")
+    let female_project = with_op(female_project, Operation::Inlay(female.clone()));
+    let male_project = with_op(male_project, Operation::Inlay(male.clone()));
+    fit(
+        (&female_project, female, &female_runs),
+        (&male_project, male, &male_runs),
+        step_mm,
+    )
 }
 
 /// The project and the Inlay of a tutorial fixture
@@ -1870,6 +1747,44 @@ fn plug_seats_flush() {
         assert!(
             fit.seat_mm <= SEAT_MM,
             "{name}: the plug stands {:.3} mm proud, binding at {:?}",
+            fit.seat_mm,
+            fit.seat_at
+        );
+    }
+}
+
+/// #478 (found by #464): the star seats within [`SEAT_MM`] (0.1 mm grid)
+/// with the bench's narrow bits, 15° and 30°, its depths scaled to the
+/// cone, `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`, the floor at
+/// step-over 0.1. The seat grows as `1 / tan(α/2)`: 0.018 mm with the
+/// 90° bit and 0.031 with the 60°, but 0.066 with the 30° and 0.140 with
+/// the 15°, a fixed 0.018 mm off the wall turned into height by the
+/// cone.
+#[test]
+#[ignore = "#478: the seat error grows as 1/tan(α/2)"]
+fn star_seats_flush_with_narrow_bits() {
+    for angle_deg in [15.0, 30.0] {
+        let mut star = star_project(THICKNESS_MM);
+        star.tools[0] = v_bit(angle_deg);
+        let cone_mm = 3.175 / (angle_deg / 2.0_f64).to_radians().tan();
+        let depth_mm = (cone_mm / 2.0).min(4.0);
+        let side = |side| InlayOp {
+            step_over_fraction: Some(0.1),
+            depth_mm: Some(depth_mm),
+            glue_gap_mm: Some(depth_mm / 4.0),
+            plug_depth_mm: Some(0.4 * depth_mm),
+            ..inlay(side)
+        };
+        let fit = fit_of(
+            &star,
+            &side(InlaySide::Female),
+            &star,
+            &side(InlaySide::Male),
+            0.1,
+        );
+        assert!(
+            fit.is_flush(),
+            "{angle_deg}°: the plug stands {:.3} mm proud at {:?}",
             fit.seat_mm,
             fit.seat_at
         );

@@ -2166,4 +2166,48 @@ mod tests {
         let (a, b) = (Point::new(12.0, 10.15), Point::new(12.0, 9.85));
         assert!(link_inside_cleared(&cleared, &cleared, a, b));
     }
+
+    /// #464, S2: a rapid straight down over a steep cut (a 15° V-bit's
+    /// descent, here falling 4.4 mm per mm) stops 1 mm above the cut's
+    /// highest Z within [`CLEARED_POINT_TOLERANCE_MM`] along it of where it
+    /// passes nearest, not 1 mm above that nearest point. The safety pass
+    /// finds the nearest point on the cut as written, rounded, which on so
+    /// steep a cut can stand a few thousandths higher: a stress test's
+    /// male stopped its rapid at 5.844 over a floor the program put at
+    /// 4.846, and S2 refused it.
+    #[test]
+    fn rapid_down_over_a_steep_cut_clears_the_floor_as_written() {
+        let mut steep = square("a", 10.0, 0.0, 5.0, 0, 1);
+        let end = Point3::new(10.048, 0.0, 4.7888);
+        steep.entry_z_mm = 5.0;
+        steep.z_mm = end.z;
+        // S10: the descent's feed holds it to the plunge rate.
+        let (run_mm, drop_mm) = (0.048_f64, 5.0 - end.z);
+        let feed = PLUNGE_MM_MIN * run_mm.hypot(drop_mm) / drop_mm;
+        steep.cuts = vec![Move::linear(end, feed)];
+        steep.exit = end.xy();
+        let at = Point::new(10.0364, 0.0004);
+        let mut ramp = square("b", 30.0, 0.0, 5.0, 0, 1);
+        ramp.descent_from = at;
+        ramp.descent_from_z_mm = 4.5;
+        ramp.descent = vec![Move::linear(Point3::new(30.0, 0.0, 4.0), FEED_MM_MIN)];
+        let tp = run(&input(
+            vec![steep, ramp],
+            MachiningOrder::FullDepthFirst,
+            &[],
+        ));
+        let rapid = tp
+            .moves
+            .iter()
+            .find(|m| m.is_rapid() && m.to.xy() == at && m.to.z < SAFE_Z_MM)
+            .unwrap_or_else(|| panic!("a rapid down at {at:?}: {:?}", tp.moves));
+        // The cut's Z 0.01 mm back from the nearest point, 0.0364 along.
+        let floor_mm = 5.0 - (5.0 - end.z) * (0.0364 - CLEARED_POINT_TOLERANCE_MM) / 0.048;
+        assert!(
+            (rapid.to.z - (floor_mm + ENTRY_CLEARANCE_MM)).abs() <= 1e-9,
+            "the rapid stops at {}, not {}",
+            rapid.to.z,
+            floor_mm + ENTRY_CLEARANCE_MM
+        );
+    }
 }

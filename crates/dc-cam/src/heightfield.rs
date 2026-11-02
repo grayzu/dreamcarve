@@ -18,7 +18,14 @@
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     clippy::cast_precision_loss,
+    clippy::indexing_slicing,
     reason = "grid indices and chord counts are small, non-negative and clamped"
+)]
+// Built for tests, and with the `test-support` feature for the seat check
+// other crates' tests run (#464); some helpers are this crate's tests' only.
+#![cfg_attr(
+    not(test),
+    allow(dead_code, reason = "the seat check uses part of the module")
 )]
 
 use crate::run::ToolRun;

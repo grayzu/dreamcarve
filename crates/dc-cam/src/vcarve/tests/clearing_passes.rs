@@ -595,3 +595,42 @@ fn offset_carve_clears_with_the_pass_too() {
         "{with_mm} mm with the pass, {without_mm} mm without"
     );
 }
+
+/// #464 (a stress test's design): a rotated 5.1 × 7.9 mm rectangle carved
+/// with the 90° bit at a 0.432 mm flat depth and floor step-over 0.337,
+/// after the 3.175 mm end mill's pass, generates, both runs passing
+/// `assert_run_safe`. The floor less the end mill's reach is the four
+/// corners its radius rounds off; one came back from the boolean with a
+/// spike along a whole side of the floor, and the V-bit's rings round it
+/// cut 0.09 mm past the wall: "would cut 0.0881 mm past a wall"
+/// (`dc_geometry`'s `difference_along_a_shared_side_leaves_no_spike`).
+#[test]
+fn rest_corners_after_a_pass_stay_on_the_floor() {
+    let quad = Polyline::new(
+        [
+            (4.425300346927401, 9.415043038727124),
+            (0.0, 6.875014947617232),
+            (3.9461120657884816, 0.0),
+            (8.371412412715882, 2.5400280911098916),
+        ]
+        .iter()
+        .map(|&(x, y)| Vertex::line(x, y))
+        .collect(),
+        true,
+    );
+    let (mut p, op) = with_passes(
+        Some(vec![quad]),
+        Some(0.33673406934005534),
+        vec![ClearingPass {
+            direction: CutDirection::Conventional,
+            ..pass("t3")
+        }],
+    );
+    p.instances[0].transform = Transform::translate(23.291682667542652, 23.291682667542652);
+    let op = VCarveOp {
+        flat_depth_mm: Some(0.4319889717051823),
+        ..op
+    };
+    let (runs, _) = runs_of(&p, &op);
+    assert_eq!(runs.len(), 2, "the end mill's run and the V-bit's");
+}

@@ -735,4 +735,46 @@ mod tests {
         let (region, _) = nest(rounded).expect("nests");
         assert!(region[0].contains_point(Point::new(13.0, 5.0)));
     }
+
+    /// #464: two holes a hair apart, 0.001 and 0.003 mm, each grown by
+    /// more than the gap (2·tan 30°, a 60° bit's floor inset at a 2 mm
+    /// flat depth), share area, so the floor keeps one hole, their union
+    /// grown: a rounded rectangle `(20 + g + 2i) × (10 + 2i)` with corners
+    /// of radius `i`, out of the plate shrunk to `(60 − 2i) × (30 − 2i)`.
+    /// The union's arcs are cut as chords within [`TOL`], so the area is
+    /// held to 0.1 mm². Before, `nest` judged the grown holes apart
+    /// (cavalier's boolean missed their nearly coincident round corners,
+    /// whose straight sides run on one line) and the floor kept both, 2.3
+    /// mm deep in each other, its area short by their overlap, 27 mm²; the
+    /// male inlay of two squares that near cut its floor inside them.
+    #[test]
+    fn floor_of_holes_a_hair_apart_merges_them() {
+        let i = 2.0 * (PI / 6.0).tan();
+        for gap in [0.001, 0.003] {
+            let (plate, _) = nest(vec![
+                rect(20.0, 30.0, 60.0, 30.0),
+                rect(40.0 - gap / 2.0, 40.0, 10.0, 10.0),
+                rect(50.0 + gap / 2.0, 40.0, 10.0, 10.0),
+            ])
+            .expect("plate nests");
+            let floor = floor_regions(&plate, i, TOL);
+            assert_eq!(floor.len(), 1, "gap {gap}: {floor:?}");
+            assert_eq!(
+                floor[0].holes().len(),
+                1,
+                "gap {gap}: the grown holes merge"
+            );
+            let union = (20.0 + gap + 2.0 * i) * (10.0 + 2.0 * i) - (4.0 - PI) * i * i;
+            let expected = (60.0 - 2.0 * i) * (30.0 - 2.0 * i) - union;
+            assert!(
+                (floor[0].area_mm2() - expected).abs() < 0.1,
+                "gap {gap}: {} mm², not {expected}",
+                floor[0].area_mm2()
+            );
+            assert!(
+                !floor[0].contains_point(Point::new(50.0, 45.0)),
+                "gap {gap}: the floor runs between the holes"
+            );
+        }
+    }
 }

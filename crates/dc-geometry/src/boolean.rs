@@ -477,4 +477,56 @@ mod tests {
         assert_eq!(gap.len(), 1);
         assert_approx_eq!(area_mm2(&gap), 5.0 * 50.0, 1e-6);
     }
+
+    /// #464: a floor less what an end mill reached of it, the reach's
+    /// straight sides on the floor's own, leaves the four corner pieces
+    /// the end mill's radius rounds off, each a simple polygon. The floor
+    /// is a rotated 5.1 × 7.9 mm rectangle (a stress test's, the 90°
+    /// V-bit's floor inset 0.432 mm, `crate::floor_regions`); the reach is
+    /// the floor shrunk and grown back by the 3.175 mm end mill's radius,
+    /// so its sides lie on the floor's a rounding error off. Before,
+    /// i_overlay's ring for one corner ran out along a whole side and
+    /// straight back, a spike the V-bit's rings followed 0.15 mm past the
+    /// wall. Each piece is now a contour that does not touch itself
+    /// ([`Contour::new`]) of area `r²(1 − π/4)`, within the 0.03 mm² the
+    /// arc's chords take off it.
+    #[test]
+    fn difference_along_a_shared_side_leaves_no_spike() {
+        let rect = Polyline::new(
+            [
+                (4.425300346927401, 9.415043038727124),
+                (0.0, 6.875014947617232),
+                (3.9461120657884816, 0.0),
+                (8.371412412715882, 2.5400280911098916),
+            ]
+            .iter()
+            .map(|&(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let floor = crate::floor_regions(&[region_of(vec![rect])], 0.4319889717051823, TOL_MM);
+        assert_eq!(floor.len(), 1);
+        let r = 3.175 / 2.0;
+        let centre = crate::floor_regions(&floor, r, TOL_MM);
+        let reach: Vec<Region> = centre
+            .iter()
+            .flat_map(|c| crate::offset(c.outer(), r))
+            .map(|c| region_of(vec![c.into_polyline()]))
+            .collect();
+        let pieces = difference(&floor, &reach, TOL_MM);
+        assert_eq!(pieces.len(), 4, "{pieces:?}");
+        let corner_mm2 = r * r * (1.0 - PI / 4.0);
+        for piece in &pieces {
+            let outline = piece.outer().polyline().clone();
+            assert!(
+                Contour::new(outline.clone()).is_ok(),
+                "a piece touches itself: {outline:?}"
+            );
+            assert!(
+                (piece.area_mm2() - corner_mm2).abs() < 0.03,
+                "{} mm², not {corner_mm2}",
+                piece.area_mm2()
+            );
+        }
+    }
 }
