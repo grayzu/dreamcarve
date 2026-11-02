@@ -6824,11 +6824,11 @@ fn lettered_inlay_female_and_male_export() {
 /// the radius, arcs included) leaves at least 3 mm of board at each edge;
 /// so does every cutting move's own end point, with the radius, with the
 /// male's band rounded by its `outline_rounding_mm` (#448). The male's
-/// band edge is open, so its cut-out runs in the middle of the floor
-/// ring, `c = (margin_mm + plug_depth_mm · tan 30°) / 2` = 4.577 mm out
-/// from the mirrored letters closed by `c + outline_rounding_mm`: every
-/// point it cuts to, below the floor, is that far from the closed
-/// letters, within the flatten tolerance plus the arc fit's.
+/// band edge is open, so its cut-out runs on the band's edge `B` (the
+/// mirrored letters grown by `margin_mm` and closed by
+/// `outline_rounding_mm`) inset by the end mill's radius (#461): every
+/// point it cuts to, below the floor, is the radius from `B`, inside it,
+/// within the flatten tolerance plus the arc fit's.
 #[test]
 fn lettered_inlay_fits_its_board() {
     let (width_mm, height_mm, _) = LETTERED_BOARD_MM;
@@ -6907,17 +6907,23 @@ fn lettered_inlay_fits_its_board() {
             let mirror = dc_cam::inlay::male_mirror(&project, &inlay.targets).expect("the mirror");
             let tolerance_mm = project.flatten_tolerance_mm;
             // #448: the band's edge is open (the end mill's clearing pass
-            // fits its floor ring), so the cut-out runs in the middle of
-            // the ring, `c = (M + P·tan 30°) / 2` out, on the letters
-            // grown by `c + R` and shrunk by `R`: `c` from the letters
-            // closed by `c + R`.
+            // fits its floor ring), so the floor reaches the band's edge
+            // `B`, the letters grown by `M` and closed by `R` (more than
+            // the end mill's radius), and #461 runs the cut-out on `B`
+            // inset by the cut-out end mill's radius, its edge on `B`.
             let rounding_mm = inlay
                 .outline_rounding_mm
                 .expect("the tutorial rounds the band");
-            let foot_mm =
-                inlay.plug_depth_mm.expect("the plug depth") * 30.0_f64.to_radians().tan();
-            let half_margin_mm = (inlay.margin_mm.expect("the male's margin") + foot_mm) / 2.0;
-            assert_approx_eq!(half_margin_mm, 4.577, 1e-3);
+            let margin_mm = inlay.margin_mm.expect("the male's margin");
+            let cut_out_tool = &inlay.cut_out.as_ref().expect("the male's cut-out").tool;
+            let radius_mm = project
+                .tools
+                .iter()
+                .find(|t| &t.id == cut_out_tool)
+                .expect("the cut-out's tool")
+                .diameter_mm
+                / 2.0;
+            assert!(rounding_mm >= radius_mm, "{rounding_mm}");
             let contours: Vec<dc_geometry::Contour> = inlay_design(&project, inlay)
                 .iter()
                 .map(|p| {
@@ -6926,25 +6932,12 @@ fn lettered_inlay_fits_its_board() {
                 })
                 .collect();
             let (design, _) = dc_geometry::nest(contours).expect("the letters nest");
-            let close_mm = half_margin_mm + rounding_mm;
-            let grown: Vec<dc_geometry::Region> = design
+            let band = dc_geometry::rounded_band(&design, margin_mm, rounding_mm, tolerance_mm);
+            let edge: Vec<Polyline> = band
                 .iter()
-                .flat_map(|r| dc_geometry::offset(r.outer(), close_mm))
-                .filter_map(|c| {
-                    dc_geometry::nest(vec![c])
-                        .ok()
-                        .and_then(|(r, _)| r.into_iter().next())
-                })
+                .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+                .map(|c| c.polyline().clone())
                 .collect();
-            let mirrored: Vec<Polyline> = dc_geometry::floor_regions(
-                &dc_geometry::union(&grown, &[], tolerance_mm),
-                close_mm,
-                tolerance_mm,
-            )
-            .iter()
-            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
-            .map(|c| c.polyline().clone())
-            .collect();
             let floor_z_mm = -5.0;
             let cut =
                 std::fs::read_to_string(dir.join("dc-male-3-T2.nc")).expect("cut-out written");
@@ -6956,13 +6949,20 @@ fn lettered_inlay_fits_its_board() {
                     continue;
                 }
                 let p = Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
-                let gap_mm = distance_to_outlines_mm(p, &mirrored);
+                let gap_mm = distance_to_outlines_mm(p, &edge);
                 assert!(
-                    (gap_mm - half_margin_mm).abs()
+                    band.iter().any(|r| r.contains_point(p)),
+                    "line {}: the cut-out at ({:.3}, {:.3}) is outside the band",
+                    m.line,
+                    p.x,
+                    p.y
+                );
+                assert!(
+                    (gap_mm - radius_mm).abs()
                         <= 2.0 * project.flatten_tolerance_mm
                             + project.arc_fit_tolerance_mm.unwrap_or(0.0)
                             + 1e-6,
-                    "line {}: the cut-out at ({:.3}, {:.3}) is {gap_mm:.4} mm from the mirrored letters, not {half_margin_mm}",
+                    "line {}: the cut-out at ({:.3}, {:.3}) is {gap_mm:.4} mm from the band's edge, not {radius_mm}",
                     m.line,
                     p.x,
                     p.y
@@ -6982,9 +6982,9 @@ fn lettered_inlay_fits_its_board() {
 /// within the flatten tolerance of the other, both ways. "DC" is not
 /// symmetric, so the mirror shows: the female's letters, unmirrored, are
 /// more than 1 mm from some of the male's. And the male's cut-out, which
-/// follows the mirrored letters (#448: 4.577 mm out from them, rounded),
-/// does not follow the female's: somewhere it is more than 1 mm off
-/// running 4 mm out from them.
+/// follows the mirrored letters (#461: along the band's edge, 8 mm out from
+/// them and rounded, inset by its 1.5875 mm radius), does not follow the
+/// female's: somewhere it is more than 1 mm off running 6.4125 mm out from them.
 #[test]
 fn lettered_male_is_the_mirror_of_the_female() {
     let (dir, male_report, _) =
@@ -7046,7 +7046,7 @@ fn lettered_male_is_the_mirror_of_the_female() {
         .filter(|m| m.kind.is_cut() && m.to.z.is_some_and(|z| z <= -5.0))
         .map(|m| {
             let p = Point::new(m.to.x.expect("X known"), m.to.y.expect("Y known"));
-            (distance_to_outlines_mm(p, &drawn) - 4.0).abs()
+            (distance_to_outlines_mm(p, &drawn) - 6.4125).abs()
         })
         .fold(0.0, f64::max);
     assert!(

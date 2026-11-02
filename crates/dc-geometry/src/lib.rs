@@ -23,7 +23,7 @@ mod transform;
 
 pub use boolean::{BooleanOp, boolean, difference, intersection, union};
 pub use carve::{
-    floor_regions, is_design_hole, outer_offset, rounded_band, surround, surround_floor_regions,
+    floor_regions, inset_outers, is_design_hole, rounded_band, surround, surround_floor_regions,
 };
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;

@@ -25,7 +25,7 @@ use crate::toolpath::{MoveKind, Toolpath};
 use crate::vcarve::generate_vcarve;
 use dc_geometry::{
     Contour, Point, Point3, Polyline, Region, Vertex, floor_regions, nearest_point, nest, offset,
-    rounded_band, surround, surround_floor_regions, union,
+    rounded_band, surround, surround_floor_regions,
 };
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
@@ -988,24 +988,120 @@ fn cut_out_runs_last_with_its_own_tool() {
     assert!(runs.iter().all(|r| !matches!(r.label, RunLabel::CutOut(_))));
 }
 
-/// #443: the tool centre runs on the mirrored star's outline grown by
-/// half the margin, 4 mm: every point of every cut within 0.01 mm of it.
+/// #461: the star's band edge `B`, the mirrored star's outline grown by
+/// the margin and closed by `rounding_mm` (design "Inlay", step 4), built
+/// here with `dc_geometry`, and its outlines.
+fn band_edge(project: &Project, rounding_mm: f64) -> (Vec<Region>, Vec<Polyline>) {
+    let band = rounded_band(
+        &mirrored_design(project),
+        MARGIN_MM,
+        rounding_mm,
+        project.flatten_tolerance_mm,
+    );
+    let edge = outlines(&band);
+    (band, edge)
+}
+
+/// The cut-out run of `op` on the star.
+fn cut_out_of(project: &Project, op: &InlayOp) -> Toolpath {
+    let (runs, _) = inlay_runs(project, op);
+    runs.into_iter()
+        .find(|r| matches!(r.label, RunLabel::CutOut(_)))
+        .expect("a cut-out run")
+        .toolpath
+}
+
+/// #461: with an open edge (the end mill's clearing pass fits the floor
+/// ring) the floor reaches the band's edge `B`, so the cut-out's centre
+/// runs on `B` inset by its radius: every point of every cut is the
+/// radius from `B`, within the flatten tolerance, inside `B`. Above the
+/// floor (its plunges) its swept disc lies inside `B`, which the edge
+/// pass cut down to the floor, so it cuts nothing the carve left. Plain
+/// (`B` closed by the edge pass's radius) and rounded by 6 mm. Where the
+/// band is plain it runs `M − r` = 6.41 mm from the star, where the old
+/// rule ran it in the middle of the ring, `(M + P·tan 30°) / 2` = 4.58 mm.
 #[test]
-fn cut_out_path_is_half_the_margin_out_from_the_mirrored_outline() {
+fn cut_out_hugs_the_band_edge() {
     let project = star_project(THICKNESS_MM);
-    let design = mirrored_design(&project);
-    let star: Vec<Polyline> = design
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let star: Vec<Polyline> = mirrored_design(&project)
         .iter()
         .map(|r| r.outer().polyline().clone())
         .collect();
-    let samples = cut_samples(&cut_out_run().toolpath);
-    assert!(samples.len() > 100, "{}", samples.len());
-    for p in &samples {
-        let gap_mm = distance_to(&star, p.xy());
-        assert!(
-            (gap_mm - MARGIN_MM / 2.0).abs() <= 0.01,
-            "{p:?} is {gap_mm} mm from the mirrored star"
+    for rounding_mm in [None, Some(6.0)] {
+        let op = InlayOp {
+            clearing: vec![clearing_pass()],
+            outline_rounding_mm: rounding_mm,
+            ..cut_out_male()
+        };
+        let toolpath = cut_out_of(&project, &op);
+        let edge_rounding_mm = rounding_mm.unwrap_or(0.0).max(END_MILL_RADIUS_MM);
+        let (band, edge) = band_edge(&project, edge_rounding_mm);
+        let samples = cut_samples(&toolpath);
+        assert!(samples.len() > 100, "{}", samples.len());
+        let mut worst_mm: f64 = 0.0;
+        let mut farthest_mm: f64 = 0.0;
+        for p in &samples {
+            assert!(
+                in_regions(&band, p.xy(), 1e-6),
+                "{rounding_mm:?}: {p:?} is outside the band"
+            );
+            let gap_mm = distance_to(&edge, p.xy());
+            assert!(
+                (gap_mm - END_MILL_RADIUS_MM).abs() <= tolerance_mm + 1e-6,
+                "{rounding_mm:?}: {p:?} is {gap_mm:.4} mm from the band's edge, not its radius"
+            );
+            if p.z > male_floor_z_mm() + 1e-9 {
+                assert!(
+                    gap_mm >= END_MILL_RADIUS_MM - tolerance_mm - 1e-6,
+                    "{rounding_mm:?}: above the floor at {p:?} the end mill reaches past the band"
+                );
+            }
+            worst_mm = worst_mm.max((gap_mm - END_MILL_RADIUS_MM).abs());
+            farthest_mm = farthest_mm.max(distance_to(&star, p.xy()));
+        }
+        println!(
+            "{rounding_mm:?}: the cut-out runs its radius inside the band's edge within {worst_mm:.4} mm, up to {farthest_mm:.3} mm from the star"
         );
+        assert!(
+            farthest_mm >= MARGIN_MM - END_MILL_RADIUS_MM - tolerance_mm,
+            "{rounding_mm:?}: {farthest_mm}"
+        );
+    }
+}
+
+/// #461: with a V wall (no clearing pass) the floor ends at the slope's
+/// foot, `P·tan 30°` = 1.155 mm inside the band's edge `B`, so the
+/// cut-out's centre runs on `B` inset by `P·tan 30° + r` = 2.742 mm:
+/// every point of every cut within the flatten tolerance of that, inside
+/// `B`. Its edge stays on the floor and never reaches the slope, so the
+/// freed plug has no knife edge. Plain and rounded by 6 mm (`B` closed by
+/// `R` alone).
+#[test]
+fn cut_out_hugs_the_slope_foot_with_a_v_wall() {
+    let project = star_project(THICKNESS_MM);
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let inset_mm = PLUG_DEPTH_MM * slope() + END_MILL_RADIUS_MM;
+    for rounding_mm in [None, Some(6.0)] {
+        let op = InlayOp {
+            outline_rounding_mm: rounding_mm,
+            ..cut_out_male()
+        };
+        let toolpath = cut_out_of(&project, &op);
+        let (band, edge) = band_edge(&project, rounding_mm.unwrap_or(0.0));
+        let samples = cut_samples(&toolpath);
+        assert!(samples.len() > 100, "{}", samples.len());
+        for p in &samples {
+            assert!(
+                in_regions(&band, p.xy(), 1e-6),
+                "{rounding_mm:?}: {p:?} is outside the band"
+            );
+            let gap_mm = distance_to(&edge, p.xy());
+            assert!(
+                (gap_mm - inset_mm).abs() <= tolerance_mm + 1e-6,
+                "{rounding_mm:?}: {p:?} is {gap_mm:.4} mm from the band's edge, not {inset_mm:.4}"
+            );
+        }
     }
 }
 
@@ -1212,17 +1308,6 @@ fn on_v_wall(points: &[Point3], edge: &[Polyline]) -> usize {
         .count()
 }
 
-/// The outers of `design` closed by `radius_mm`: grown by it with round
-/// joins, united, and shrunk by it again.
-fn closed(design: &[Region], radius_mm: f64, tolerance_mm: f64) -> Vec<Region> {
-    let grown: Vec<Region> = design
-        .iter()
-        .flat_map(|r| offset(r.outer(), radius_mm))
-        .filter_map(|c| nest(vec![c]).ok().and_then(|(r, _)| r.into_iter().next()))
-        .collect();
-    floor_regions(&union(&grown, &[], tolerance_mm), radius_mm, tolerance_mm)
-}
-
 /// #448: with a clearing pass that fits the floor ring the band's outer
 /// edge is the end mill's: no V-bit cut comes within 1 mm of the band's
 /// edge `B` (the star's outline grown by the margin and closed by the end
@@ -1398,59 +1483,6 @@ fn clearing_that_does_not_fit_keeps_the_v_wall_and_warns() {
     assert!(wall > 20, "{wall}");
 }
 
-/// #448: the cut-out follows the rounding: with an open edge it runs
-/// `c = (M + P · tan 30°) / 2` = 4.577 mm out, in the middle of the floor
-/// ring, on the star's outline grown by `c + R` and shrunk by `R` (`R` =
-/// 6 mm), which is `c` from the star closed by `c + R`: every point of
-/// its cuts within 0.01 mm. Where the rounding fills the star's notches
-/// it runs farther than `c` from the star itself.
-#[test]
-fn rounded_cut_out_runs_mid_floor_ring() {
-    let project = star_project(THICKNESS_MM);
-    let design = mirrored_design(&project);
-    let tolerance_mm = project.flatten_tolerance_mm;
-    let rounding_mm = 6.0;
-    let op = InlayOp {
-        clearing: vec![clearing_pass()],
-        outline_rounding_mm: Some(rounding_mm),
-        ..cut_out_male()
-    };
-    let (runs, _) = inlay_runs(&project, &op);
-    let cut = &runs
-        .iter()
-        .find(|r| matches!(r.label, RunLabel::CutOut(_)))
-        .expect("a cut-out run")
-        .toolpath;
-    let c_mm = (MARGIN_MM + PLUG_DEPTH_MM * slope()) / 2.0;
-    assert!((c_mm - 4.577).abs() < 1e-3, "{c_mm}");
-    // The reference is closed at a hundredth of the tolerance: closing by
-    // `c + R` brings the star's sharp tips back exactly, and chords
-    // flattened at the tolerance would pull each back by the tolerance
-    // over the sine of its half-angle, 0.027 mm.
-    let closed_design = outlines(&closed(&design, c_mm + rounding_mm, tolerance_mm / 100.0));
-    let mut worst_mm: f64 = 0.0;
-    let star: Vec<Polyline> = design
-        .iter()
-        .map(|r| r.outer().polyline().clone())
-        .collect();
-    let samples = cut_samples(cut);
-    assert!(samples.len() > 100, "{}", samples.len());
-    let mut farthest_mm: f64 = 0.0;
-    for p in &samples {
-        let gap_mm = distance_to(&closed_design, p.xy());
-        assert!(
-            (gap_mm - c_mm).abs() <= tolerance_mm + 1e-6,
-            "{p:?} is {gap_mm:.4} mm from the closed star, not {c_mm:.3}"
-        );
-        worst_mm = worst_mm.max((gap_mm - c_mm).abs());
-        farthest_mm = farthest_mm.max(distance_to(&star, p.xy()));
-    }
-    println!(
-        "the rounded cut-out runs c from the closed star within {worst_mm:.4} mm, up to {farthest_mm:.3} mm from the star"
-    );
-    assert!(farthest_mm > c_mm + 0.2, "{farthest_mm}");
-}
-
 /// #448: with an open edge the floor ring runs from the plug's foot to
 /// the band's edge, so a cut-out needs `M − P · tan 30° ≥ d`; with a V
 /// wall (no clearing pass) the old `M − 2 · P · tan 30° ≥ d`. A 6.35 mm
@@ -1458,7 +1490,7 @@ fn rounded_cut_out_runs_mid_floor_ring() {
 /// `P · tan 30° + 6.35` = 7.505 mm with the end mill's clearing pass and
 /// `2 · P · tan 30° + 6.35` = 8.66 mm without.
 #[test]
-fn cut_out_no_room_uses_the_open_edge_rule() {
+fn cut_out_no_room() {
     let mut project = star_project(THICKNESS_MM);
     project.tools.push(Tool {
         id: ToolId::new("t3"),

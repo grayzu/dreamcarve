@@ -392,14 +392,16 @@ fn v_bit_across_the_open_edge_fails_s17() {
     check_male(&at(15.5), &project, &v_wall).unwrap();
 }
 
-/// #448: with an open edge the floor ring runs from the plug's foot, 1 mm
-/// below the mirrored rectangle (Y 19), to the band's edge, 6 mm below it
-/// (Y 14), and the cut-out runs in its middle, 3.5 mm below it: the
-/// 3.175 mm end mill's centre may run from Y 15.59 to Y 17.41. At Y 16.5
-/// and Y 15.8 it passes; at Y 15.4 its footprint crosses the band's edge
-/// and at Y 17.6 the plug's foot, and each fails S9. Without the
-/// clearing pass the ring is the V wall's, 1 to 5 mm below, and Y 15.8 is
-/// off it.
+/// #448, #461: with an open edge the floor ring runs from the plug's
+/// foot, 1 mm below the mirrored rectangle (Y 19), to the band's edge
+/// `B`, 6 mm below it (Y 14), and the cut-out runs on `B` inset by the
+/// 3.175 mm end mill's radius, at Y 15.5875, its edge on `B`. There it
+/// passes. In the ring but off that path, at Y 16.5 (near the ring's
+/// middle, where the cut-out ran before #461), it fails S9, as it does at
+/// Y 15.4, where its footprint crosses `B`, and at Y 17.6, near the
+/// plug's foot. Without the clearing pass the edge is a V wall, its ring
+/// 1 to 5 mm below, and the path is `B` inset by `P·s + r`, at Y 16.5875:
+/// that passes, and Y 15.8 and the open edge's path are off it.
 #[test]
 fn cut_out_off_the_open_edge_ring_fails() {
     let project = two_shapes();
@@ -410,18 +412,18 @@ fn cut_out_off_the_open_edge_ring_fails() {
     };
     let label = RunLabel::CutOut(ToolId::new("t3"));
     let at = |y: f64| program_at(55.0, y, "G1 Z-12.2 F300\nX60 F1000\n");
-    for y in [16.5, 15.8] {
-        check_run(&at(y), &project, &open, &label, "t3").unwrap_or_else(|e| panic!("Y {y}: {e}"));
-    }
-    for y in [15.4, 17.6] {
+    check_run(&at(15.5875), &project, &open, &label, "t3").unwrap();
+    for y in [16.5, 15.4, 17.6] {
         assert_off(check_run(&at(y), &project, &open, &label, "t3"), 6);
     }
     let v_wall = InlayOp {
         clearing: Vec::new(),
         ..open
     };
-    check_run(&at(16.9), &project, &v_wall, &label, "t3").unwrap();
-    assert_off(check_run(&at(15.8), &project, &v_wall, &label, "t3"), 6);
+    check_run(&at(16.5875), &project, &v_wall, &label, "t3").unwrap();
+    for y in [15.8, 15.5875] {
+        assert_off(check_run(&at(y), &project, &v_wall, &label, "t3"), 6);
+    }
 }
 
 /// The male's surround is the targets' mirrored about X 43, not as drawn:
@@ -561,15 +563,17 @@ fn assert_off(result: Result<(), ExportError>, line: usize) {
     );
 }
 
-/// #443: the two shapes' male with the 90° bit, `P` 1 and a 6 mm
-/// margin: its floor ring runs from 1 mm to 5 mm off the mirrored
-/// rectangle (X 46 to 76, Y 20 to 30), so the 3.175 mm end mill's centre
-/// may run from 2.59 to 3.41 mm off it. A cut-out 3 mm below it, through
-/// the board, passes; 1.5 mm or 4.5 mm below it, its footprint crosses
-/// the plug's wall or the band's outer wall, and below the rectangle as
-/// drawn (X 20) it is off the ring: each fails S9 at the cut. A cut-out
-/// run with another tool than the cut-out's, or of an Inlay with no
-/// cut-out, is unresolved.
+/// #443, #461: the two shapes' male with the 90° bit, `P` 1 and a 6 mm
+/// margin, no clearing pass: its floor ring runs from 1 mm to 5 mm off the
+/// mirrored rectangle (X 46 to 76, Y 20 to 30), the band's V wall's foot,
+/// and the cut-out's path is the band's edge `B` (6 mm off) inset by
+/// `P·s + r` = 2.5875 mm: 3.4125 mm below the rectangle, Y 16.5875. A cut-out
+/// there, through the board, passes. One 3 mm below it, in the ring's
+/// middle, where the cut-out ran before #461, is off the path; 1.5 mm or
+/// 4.5 mm below it, its footprint crosses the plug's wall or the band's
+/// V wall; below the rectangle as drawn (X 20) it is off the ring: each
+/// fails S9 at the cut. A cut-out run with another tool than the
+/// cut-out's, or of an Inlay with no cut-out, is unresolved.
 #[test]
 fn cut_out_off_the_floor_ring_fails() {
     let project = two_shapes();
@@ -579,20 +583,22 @@ fn cut_out_off_the_floor_ring_fails() {
     };
     let label = RunLabel::CutOut(ToolId::new("t3"));
     let at = |x: f64, y: f64| program_at(x, y, &format!("G1 Z-12.2 F300\nX{} F1000\n", x + 5.0));
-    check_run(&at(55.0, 17.0), &project, &op, &label, "t3").unwrap();
-    check_run(&at(55.0, 17.4), &project, &op, &label, "t3").unwrap();
-    for (x, y) in [(55.0, 18.5), (55.0, 15.5), (20.0, 17.0)] {
+    check_run(&at(55.0, 16.5875), &project, &op, &label, "t3").unwrap();
+    for (x, y) in [(55.0, 17.0), (55.0, 18.5), (55.0, 15.5), (20.0, 16.5875)] {
         assert_off(check_run(&at(x, y), &project, &op, &label, "t3"), 6);
     }
     // Below the ring the cut is held by S1, not S9: one deeper is still in
     // the ring.
-    let deeper = program_at(55.0, 17.0, "G1 Z-13 F300\nX60 F1000\n");
+    let deeper = program_at(55.0, 16.5875, "G1 Z-13 F300\nX60 F1000\n");
     check_run(&deeper, &project, &op, &label, "t3").unwrap();
     // The wrong tool, or no cut-out.
-    assert_off(check_run(&at(55.0, 17.0), &project, &op, &label, "t2"), 6);
+    assert_off(
+        check_run(&at(55.0, 16.5875), &project, &op, &label, "t2"),
+        6,
+    );
     let without = inlay(InlaySide::Male, "t2", 1.0, 6.0);
     assert_off(
-        check_run(&at(55.0, 17.0), &project, &without, &label, "t3"),
+        check_run(&at(55.0, 16.5875), &project, &without, &label, "t3"),
         6,
     );
     let female = InlayOp {
@@ -600,7 +606,7 @@ fn cut_out_off_the_floor_ring_fails() {
         ..op.clone()
     };
     assert_off(
-        check_run(&at(55.0, 17.0), &project, &female, &label, "t3"),
+        check_run(&at(55.0, 16.5875), &project, &female, &label, "t3"),
         6,
     );
 }
@@ -627,8 +633,8 @@ fn cut_out_plunge_into_a_tab_fails() {
     let operation = Operation::Inlay(op.clone());
     assert_eq!(
         material::run_tab_spines(&project, &operation, &label, &tool).len(),
-        6,
-        "four round the rectangle; two round the square, whose path is too short for four"
+        7,
+        "four round the rectangle; three round the square, whose 45 mm path (#461) is too short for four"
     );
     // The tabs as placing the cut-out's request finds them.
     let design: Vec<dc_geometry::Contour> = [
@@ -639,11 +645,14 @@ fn cut_out_plunge_into_a_tab_fails() {
     .map(|p| dc_geometry::Contour::new(p).expect("a contour"))
     .collect();
     let (design, _) = dc_geometry::nest(design).expect("nests");
-    let paths: Vec<Polyline> =
-        dc_geometry::outer_offset(&design, 3.0, 0.0, project.flatten_tolerance_mm)
-            .into_iter()
-            .map(dc_geometry::Contour::into_polyline)
-            .collect();
+    // #461: the band's edge, 6 mm out, inset by `P·s + r`, its V wall's
+    // foot plus the end mill's radius.
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let band = dc_geometry::rounded_band(&design, 6.0, 0.0, tolerance_mm);
+    let paths: Vec<Polyline> = dc_geometry::floor_regions(&band, 1.0 + 3.175 / 2.0, tolerance_mm)
+        .iter()
+        .map(|r| r.outer().polyline().clone())
+        .collect();
     let (copy, profile) = dc_cam::inlay::cut_out_profile(
         &project,
         &op,
@@ -686,8 +695,8 @@ fn cut_out_is_held_to_its_own_allowance() {
     assert!(!cut_out.contains("Z-12.201"), "{cut_out}");
 }
 
-/// #443: every generated cut-out passes the whole safety pass, S1 to
-/// S18 with S9's floor ring and tab rules: the small star's male with the
+/// #443, #461: every generated cut-out passes the whole safety pass, S1
+/// to S19 with S9's floor ring, path and tab rules: the small star's male with the
 /// 60° bit and a 6 mm margin, with and without tabs and a clearing pass,
 /// and the two shapes' male, whose mirror moves them, with the 90° bit.
 /// The cut-out is the last program, with its own tool.
@@ -720,8 +729,8 @@ fn generated_cut_outs_pass() {
         ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
     };
     export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
-    // #448: open, rounded band edges, the cut-out in the middle of the
-    // open floor ring.
+    // #448, #461: open, rounded band edges, the cut-out its radius inside
+    // them.
     for (project, rounding_mm) in [(star, 4.0), (two_shapes(), 20.0)] {
         let tool = if rounding_mm < 10.0 { "t5" } else { "t2" };
         let op = InlayOp {

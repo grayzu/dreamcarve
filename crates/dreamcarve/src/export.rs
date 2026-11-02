@@ -439,15 +439,19 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                         describe_length(project, rounding)
                     ));
                 }
-                // #443: where the cut-out frees the plug, and how deep.
+                // #443, #461: where the cut-out frees the plug, and how
+                // deep.
                 if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
+                    && let Some(tool) = project.tools.iter().find(|t| t.id == cut_out.tool)
                     && generated.iter().any(|e| {
                         e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_))
                     })
                 {
+                    let inset_mm = band.cut_out_inset_mm(tool.diameter_mm);
                     floor.push_str(&format!(
-                        "; the cut-out frees the plug {} out from the design, in the floor, through the board to {} below it",
-                        describe_length(project, band.cut_out_offset_mm()),
+                        "; the cut-out frees the plug along the floor's outer edge, its centre {} inside the band's edge and at least {} out from the design, through the board to {} below it",
+                        describe_length(project, inset_mm),
+                        describe_length(project, band.margin_mm - inset_mm),
                         describe_length(project, cut_out.through_cut_allowance_mm)
                     ));
                 }

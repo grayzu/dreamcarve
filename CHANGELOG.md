@@ -71,10 +71,10 @@ phases bump the patch number.
 - **Inlay cut-out; format version 23.** A male Inlay can hold a
   `cut_out`, `{ "tool", "tabs", "through_cut_allowance_mm" }`, which frees
   the plug from its board with a flat end mill instead of a saw, as the
-  operation's last tool run (`op1 (cut-out t2)`): an On line Profile half
-  `margin_mm` out from the mirrored design's outer outlines, in the
-  middle of the band's flat floor, from the floor down through the board,
-  with a Profile's tabs. `check` refuses it on a female
+  operation's last tool run (`op1 (cut-out t2)`): an On line Profile
+  round the mirrored design along the outer edge of the band's flat
+  floor (since [#461]), from the floor down through the board, with a
+  Profile's tabs. `check` refuses it on a female
   (`inlay_cut_out_needs_male`), with a tool that is not a flat end mill
   (`cutter_not_flat`), and where the floor is narrower than the tool
   (`inlay_cut_out_no_room`, naming the margin needed). The safety pass
@@ -100,9 +100,8 @@ phases bump the patch number.
   only the plug's walls, the narrow places and the floor's corners, and
   no longer a sloped wall round the band's edge. The safety pass holds the
   V-bit's whole cone inside the band up to the stock top. The cut-out
-  moves to the middle of the wider floor, `(margin_mm + plug_depth_mm ·
-  tan(α/2)) / 2` out, and needs only `margin_mm ≥ plug_depth_mm ·
-  tan(α/2) + d`. When the Inlay has clearing passes but none fits,
+  moves out onto the wider floor and needs only `margin_mm ≥
+  plug_depth_mm · tan(α/2) + d`. When the Inlay has clearing passes but none fits,
   `inlay_band_edge_v_wall` warns and names the margin needed. Every
   existing male with a fitting clearing pass exports a different program:
   no release has shipped the Inlay, and a version 22 or 23 file exports
@@ -142,6 +141,19 @@ phases bump the patch number.
   groove now comes within 0.01 mm of every wall, and the programs are
   shorter: the sign's V-bit program has 4141 lines where it had 5630
   ([#457]).
+- **The male Inlay's cut-out runs along the band's outer edge.** It ran
+  in the middle of the band's flat floor, leaving a wide strip of floor
+  outside it. It now runs as far out as the floor reaches, cutting
+  nothing the carve left standing: with an end mill's upright edge, its
+  cutter runs along that wall, its centre its radius inside the band's
+  edge; with a V wall, its cutter runs along the wall's foot, so the
+  freed plug still has no knife edge. It is rounded as the band's edge
+  is, and needs the same margin as before. The safety pass now also holds
+  the cut-out's end mill to that path, worked out again from the
+  project. Every male with a cut-out exports a different cut-out program;
+  no release has shipped it. The quick start's cut-out runs 6.412 mm out
+  from the letters where it ran 4.577 mm, and takes 1 min 19 s where it
+  took 1 min 17 s ([#461]).
 
 ### Fixed
 
@@ -955,5 +967,6 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#453]: https://github.com/grayzu/dreamcarve/issues/453
 [#456]: https://github.com/grayzu/dreamcarve/issues/456
 [#457]: https://github.com/grayzu/dreamcarve/issues/457
+[#461]: https://github.com/grayzu/dreamcarve/issues/461
 [#463]: https://github.com/grayzu/dreamcarve/issues/463
 [#466]: https://github.com/grayzu/dreamcarve/issues/466

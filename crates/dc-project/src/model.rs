@@ -1104,11 +1104,12 @@ pub struct InlayOp {
 }
 
 /// A male Inlay's cut-out (format 23, #443; Corbin's "Plug Cutout"): a
-/// closed On line pass of a flat end mill round the plug, in the middle of
-/// the band's flat floor ([`crate::MaleBand::cut_out_offset_mm`] out from
-/// the mirrored design's outer outlines, rounded as the band is; #448),
-/// from the floor down through the board, with tabs as a Profile's. The
-/// freed piece is the plug on a rim at floor height.
+/// closed On line pass of a flat end mill round the plug, along the outer
+/// edge of the band's flat floor (the band's edge inset by
+/// [`crate::MaleBand::cut_out_inset_mm`]: the tool's radius with an open
+/// edge, the V wall's foot plus the radius otherwise; #448, #461), from
+/// the floor down through the board, with tabs as a Profile's. The freed
+/// piece is the plug on a rim at floor height.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InlayCutOut {

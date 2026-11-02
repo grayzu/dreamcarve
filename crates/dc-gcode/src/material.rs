@@ -248,10 +248,13 @@
 //!   least its radius from both its edges, at every depth: above the
 //!   floor the carve has cleared the ring to the top, and below it the
 //!   cut-out cuts the board's base, which S1 bounds with the cut-out's own
-//!   through-cut allowance ([`Material::floor_mm`]). Its tabs are held as
-//!   an On line Profile's: the Profile the cut-out is, built here on the
-//!   mirrored design's outermost outlines grown by half the margin
-//!   ([`dc_geometry::outer_offset`]), and its tab request placed by the
+//!   through-cut allowance ([`Material::floor_mm`]). And it stays on the
+//!   cut-out's path (#461), derived here: the band's edge round the
+//!   mirrored design ([`rounded_band`]) inset by the tool's radius with
+//!   an open edge, or by `P·tan(α/2)` plus it with a V wall
+//!   ([`dc_geometry::inset_outers`], [`MaleBand::cut_out_inset_mm`]). Its
+//!   tabs are held as an On line Profile's: the Profile the cut-out is,
+//!   built here on that path, and its tab request placed by the
 //!   documented layout rule. Nothing comes from the generator.
 //!
 //! A move is allowed to depart from where the toolpath put it by what the
@@ -278,8 +281,8 @@ use countersink::Sink;
 use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
-    Vec2, as_circle, closest_points, floor_regions, inset_is_empty, is_design_hole, meeting_points,
-    nearest_point, nest, offset, offset_open, outer_offset, point_segment_distance_mm,
+    Vec2, as_circle, closest_points, floor_regions, inset_is_empty, inset_outers, is_design_hole,
+    meeting_points, nearest_point, nest, offset, offset_open, point_segment_distance_mm,
     rounded_band, segment_distance_mm, strip_ends, surround, surround_floor_regions,
 };
 use dc_project::{
@@ -389,10 +392,13 @@ pub(crate) enum Material {
     /// centre stays inside the band's floor rings, at least its radius
     /// from their outlines, at any depth: above the floor the carve has
     /// cleared the ring to the top, below it the cut-out cuts the board's
-    /// base, which S1 bounds with the cut-out's own allowance.
+    /// base, which S1 bounds with the cut-out's own allowance. And it
+    /// stays on the cut-out's path (#461).
     CutOut {
         /// The floor rings, outer and holes.
         areas: Vec<Area>,
+        /// Every segment of every cut-out path, as cut.
+        centres: Vec<Edge>,
         /// The cut-out's end mill's radius, mm.
         radius_mm: f64,
         /// The lowest Z it may reach, mm: its through-cut allowance below
@@ -1141,9 +1147,10 @@ struct CutOutGeometry {
     /// clearing runs are held), except those inside a design outline, the
     /// floors of the design's holes, which stay in the plug.
     rings: Vec<Region>,
-    /// The tool-centre paths: the mirrored design's outermost outlines
-    /// grown by the cut-out's offset and rounded by `outline_rounding_mm`
-    /// ([`dc_geometry::outer_offset`], [`MaleBand::cut_out_offset_mm`]).
+    /// The tool-centre paths (#461): the outer outlines of the band's
+    /// edge round the mirrored design ([`rounded_band`], closed by the
+    /// edge's rounding) inset by [`MaleBand::cut_out_inset_mm`]
+    /// ([`dc_geometry::inset_outers`]).
     paths: Vec<Polyline>,
 }
 
@@ -1171,10 +1178,15 @@ fn cut_out_geometry(project: &Project, inlay: &InlayOp, tool: &Tool) -> Option<C
         .into_iter()
         .filter(|f| !is_design_hole(f, &male.design))
         .collect();
-    let paths = outer_offset(
+    let edge = rounded_band(
         &male.design,
-        male.band.cut_out_offset_mm(),
-        male.band.outline_rounding_mm,
+        male.band.margin_mm,
+        male.band.edge_rounding_mm,
+        tolerance_mm,
+    );
+    let paths = inset_outers(
+        &edge,
+        male.band.cut_out_inset_mm(tool.diameter_mm),
         tolerance_mm,
     )
     .into_iter()
@@ -1199,6 +1211,7 @@ fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool) -> Material
     }
     Material::CutOut {
         areas: areas_of(geometry.rings, true),
+        centres: geometry.paths.iter().flat_map(edges_of).collect(),
         radius_mm: tool.diameter_mm / 2.0,
         floor_mm: -allowance_mm,
     }
@@ -2489,8 +2502,16 @@ pub(crate) fn check(
                     && in_regions(areas, path, radius_mm - slack_mm, None, &mut last)
             }),
             Material::CutOut {
-                areas, radius_mm, ..
-            } => in_regions(areas, path, radius_mm - slack_mm, None, &mut last),
+                areas,
+                centres,
+                radius_mm,
+                ..
+            } => {
+                in_regions(areas, path, radius_mm - slack_mm, None, &mut last)
+                    && points_of(path)
+                        .iter()
+                        .all(|&p| on_line(centres, p, slack_mm))
+            }
         });
         if !inside {
             return Err(ExportError::OffMaterial {
