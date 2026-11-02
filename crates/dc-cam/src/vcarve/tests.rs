@@ -62,6 +62,19 @@ fn slope_of(angle_deg: f64) -> f64 {
     (angle_deg.to_radians() / 2.0).tan()
 }
 
+/// How far a project's program may move a point when it writes it, mm:
+/// `quantum / √2` (#469).
+fn written_mm(p: &Project) -> f64 {
+    p.post_processor.decimal_places.quantum_mm(p.display_units) * std::f64::consts::FRAC_1_SQRT_2
+}
+
+/// How far below the surface the 60° bit's cut into a corner may stop
+/// (#469): where its tip is [`written_mm`] from both walls, at that
+/// clearance's depth.
+fn written_depth_mm(p: &Project) -> f64 {
+    written_mm(p) / slope_of(60.0) + 1e-6
+}
+
 /// A 200 × 150 × 12 mm project with one definition of `profiles` per
 /// entry of `drawings`, each placed once at its offset from [`AT`], as
 /// instances `i1`, `i2`, … The tools are the sample end mill `t1` and a
@@ -305,6 +318,7 @@ fn runs_of(
         redundancy_mm: 0.0,
         deepen_mm: None,
         axis_mm: None,
+        written_mm: 0.0,
     };
     medial::runs(graph, &depth, no_simplifying, &walls, &[])
 }
@@ -485,6 +499,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         redundancy_mm: 0.0,
         deepen_mm: None,
         axis_mm: None,
+        written_mm: 0.0,
     };
     let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
         .iter()
@@ -526,7 +541,8 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
 /// Port of `testGeneratorSquare`: a 20 × 20 mm square, 60° bit, flat
 /// depth 2: every cut inside the square, the deepest at −2 (the centre's
 /// 10 mm clearance would be 17.3 mm deep), the corner tips at the
-/// surface, no warnings.
+/// surface, no warnings. Since #469 a corner's cut stops where its tip is
+/// [`written_mm`] from both walls, [`written_depth_mm`] below the surface.
 #[test]
 fn square_clamps_at_flat_depth_and_surfaces_at_corners() {
     let p = project(vec![rect(20.0, 20.0)]);
@@ -546,7 +562,7 @@ fn square_clamps_at_flat_depth_and_surfaces_at_corners() {
     assert_approx_eq!(min_z(&toolpath), TOP_MM - 2.0, 1e-6);
     let max_z = points.iter().map(|q| q.z).fold(f64::NEG_INFINITY, f64::max);
     assert!(
-        max_z >= TOP_MM - 1e-6,
+        max_z >= TOP_MM - written_depth_mm(&p),
         "no corner tip at the surface: {max_z}"
     );
 }
@@ -692,14 +708,15 @@ fn outline_text_target_carves() {
 /// Port of `testGeneratorTriangle`, scaled by 0.4 so the incentre's depth
 /// (inradius 2.57 mm, 4.45 mm deep) is within the 60° bit's 5.5 mm cone
 /// (upstream's 24 × 18 triangle would be 11.1 mm deep): the three arms
-/// reach the surface at the three corners.
+/// reach the surface at the three corners, within [`written_depth_mm`]
+/// (#469).
 #[test]
 fn triangle_arms_surface_at_three_corners() {
     let p = project(vec![triangle()]);
     let (toolpath, _) = carve(&p, &carve_op(&p));
     for (x, y) in TRIANGLE {
         assert!(
-            surfaces_at(&toolpath, at(x, y), TOP_MM, 0.01, 1e-6),
+            surfaces_at(&toolpath, at(x, y), TOP_MM, 0.01, written_depth_mm(&p)),
             "no cut reaches the surface at corner ({x}, {y})"
         );
     }

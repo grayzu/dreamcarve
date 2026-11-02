@@ -275,6 +275,19 @@ impl Walls {
         radius_mm
     }
 
+    /// How near the straight tip path `a`–`b` comes to a wall, mm, among
+    /// the walls within `reach_mm` of it (#469): 0 where it meets one;
+    /// `reach_mm` or more when none is nearer.
+    pub(crate) fn path_clearance_mm(&self, a: Point, b: Point, reach_mm: f64) -> f64 {
+        let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
+        let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
+        self.near(lo, hi, reach_mm)
+            .into_iter()
+            .filter_map(|i| self.segments.get(i))
+            .map(|&(c, d)| segment_distance(a, b, c, d))
+            .fold(reach_mm, f64::min)
+    }
+
     /// Whether `p` lies inside the regions by the even-odd rule, or within
     /// `slack_mm` of a wall.
     pub(crate) fn holds(&self, p: Point, slack_mm: f64) -> bool {
@@ -553,6 +566,24 @@ fn golden_minimum(f: &impl Fn(f64) -> f64) -> f64 {
 }
 
 /// Distance, mm, from `p` to the segment `a`–`b`.
+/// The distance between segments `a`–`b` and `c`–`d`, mm: 0 where they
+/// cross or touch.
+fn segment_distance(a: Point, b: Point, c: Point, d: Point) -> f64 {
+    let (ab, cd) = (b - a, d - c);
+    let denom = ab.cross(cd);
+    if denom.abs() > 1e-18 {
+        let t = (c - a).cross(cd) / denom;
+        let u = (c - a).cross(ab) / denom;
+        if (0.0..=1.0).contains(&t) && (0.0..=1.0).contains(&u) {
+            return 0.0;
+        }
+    }
+    point_segment(a, c, d)
+        .min(point_segment(b, c, d))
+        .min(point_segment(c, a, b))
+        .min(point_segment(d, a, b))
+}
+
 pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
     let ab: Vec2 = b - a;
     let length_sq = ab.dot(ab);

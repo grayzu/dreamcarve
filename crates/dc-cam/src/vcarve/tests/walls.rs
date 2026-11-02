@@ -56,8 +56,28 @@ impl Moves {
     }
 }
 
-/// The wall points `toolpath` misses by more than [`REACH_MM`], with by
-/// how far and at which height above the start plane: the walls of
+/// How far from wall point `w` the groove may stop, mm: [`REACH_MM`], or
+/// within `written / sin(θ/2)` of a convex corner of angle `θ` of
+/// `regions`, that distance (#469). There the carve stops where its tip
+/// is `written_mm` from both walls, the most writing a point can move it,
+/// and leaves a sliver no wider than that.
+fn allowance_mm(regions: &[Region], w: Point, written_mm: f64, tolerance_mm: f64) -> f64 {
+    regions
+        .iter()
+        .flat_map(|r| dc_geometry::medial::convex_corners(r, 0.0, tolerance_mm))
+        .map(|c| {
+            let short_mm = written_mm / ((std::f64::consts::PI - c.turn_rad) / 2.0).sin();
+            if c.p.distance_to(w) <= short_mm {
+                short_mm + REACH_MM
+            } else {
+                REACH_MM
+            }
+        })
+        .fold(REACH_MM, f64::max)
+}
+
+/// The wall points `toolpath` misses by more than [`allowance_mm`], with
+/// by how far and at which height above the start plane: the walls of
 /// `regions`, arcs flattened within `tolerance_mm` as the generator
 /// carves them, sampled every [`SAMPLE_MM`], each read at the start plane
 /// and moved out from the region by `h · slope` for each height `h` of
@@ -67,7 +87,7 @@ fn missed_walls(
     regions: &[Region],
     start_z_mm: f64,
     slope: f64,
-    tolerance_mm: f64,
+    (tolerance_mm, written_mm): (f64, f64),
 ) -> (Vec<(Point, f64, f64)>, usize) {
     let moves = Moves::of(toolpath, start_z_mm, slope);
     let mut missed = Vec::new();
@@ -95,7 +115,9 @@ fn missed_walls(
                     let q = Point::new(w.x + out.x * h * slope, w.y + out.y * h * slope);
                     let gap_mm = (moves.low_mm(q, slope) - start_z_mm - h) * slope;
                     count += 1;
-                    if gap_mm > REACH_MM {
+                    if gap_mm > REACH_MM
+                        && gap_mm > allowance_mm(regions, w, written_mm, tolerance_mm)
+                    {
                         missed.push((w, h, gap_mm));
                     }
                 }
@@ -119,7 +141,9 @@ fn wedge() -> Polyline {
 /// medial chains were simplified with upstream's Douglas-Peucker tolerance
 /// (a quarter of the sampling step, measured on the medial axis), so a
 /// chord could run that far off the axis and its cone, fitted to its own
-/// depth, stopped up to twice that short of the farther wall.
+/// depth, stopped up to twice that short of the farther wall. Since #469 a
+/// corner's groove stops where its tip is `quantum / √2` from both walls
+/// ([`allowance_mm`]): 0.016 mm short of the wedge's 5° point.
 #[test]
 fn groove_reaches_the_walls() {
     let sign = dc_project::load(include_bytes!("../../../../../tests/fixtures/sign.dcv"))
@@ -149,7 +173,7 @@ fn groove_reaches_the_walls() {
             &regions,
             p.stock.thickness_mm.expect("a thickness") - op.start_depth_mm,
             slope_of(angle_deg),
-            p.flatten_tolerance_mm,
+            (p.flatten_tolerance_mm, written_mm(&p)),
         );
         assert!(count > 100, "{name}: {count} wall points");
         if let Some(worst) = missed.iter().max_by(|a, b| a.2.total_cmp(&b.2)) {

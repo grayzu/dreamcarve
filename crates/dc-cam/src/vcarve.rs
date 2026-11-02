@@ -423,6 +423,13 @@ pub fn blocks(
     };
     let flat = Floor::of(carve, bit.slope);
     let tolerance_mm = project.flatten_tolerance_mm;
+    // #469: how far the program may move a point it writes, half a unit in
+    // its last place on each axis.
+    let written_mm = project
+        .post_processor
+        .decimal_places
+        .quantum_mm(project.display_units)
+        * std::f64::consts::FRAC_1_SQRT_2;
     // #448: the open edge, as the medial chains and the floor see it.
     let edge_walls = carve.open_edge.as_ref().map(|edge| OpenEdgeWalls {
         walls: Walls::new(&edge.band, tolerance_mm),
@@ -551,7 +558,10 @@ pub fn blocks(
         let runs = medial::runs_within(
             &graph,
             &depth,
-            carve.tolerances(step_mm),
+            Tolerances {
+                written_mm,
+                ..carve.tolerances(step_mm)
+            },
             &walls,
             &floors,
             edge_walls.as_ref().filter(|_| band),
