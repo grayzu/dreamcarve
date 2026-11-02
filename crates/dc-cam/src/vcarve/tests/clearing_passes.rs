@@ -727,40 +727,90 @@ fn closed_c() -> Vec<Polyline> {
 /// its walls, and wood stood in it up to the stock top.
 #[test]
 fn closed_c_bay_is_cut() {
-    const STEP_MM: f64 = 0.1;
-    const TOLERANCE_MM: f64 = 0.05;
-    const STEP_OVER_FRACTION: f64 = 0.1;
-    let slope = slope_of(90.0);
-    let ridge_mm = 0.59 * (STEP_OVER_FRACTION * 2.0 * F_MM * slope) / slope;
     for clearing in [Vec::new(), vec![pass("t3")]] {
-        let (p, op) = with_passes(Some(closed_c()), Some(STEP_OVER_FRACTION), clearing.clone());
-        let (runs, _) = runs_of(&p, &op);
-        let regions = regions_of(&with_op(&p, &op), &op);
+        let (p, op) = with_passes(Some(closed_c()), Some(FINE_STEP_OVER), clearing.clone());
         let window = Rect {
             min: at(14.0, 14.0),
             max: at(26.0, 26.0),
         };
-        let mut field = Heightfield::new(window, STEP_MM, TOP_MM, None);
-        field.cut_runs(&runs, |run| cutter_of(&p, run));
-        let (nx, ny) = field.size();
-        let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
-        for j in 0..ny {
-            for i in 0..nx {
-                let q = field.cell(i, j);
-                let depth_mm = wall_distance(&regions, q) / slope;
-                let ridge_mm = if depth_mm >= F_MM { ridge_mm } else { 0.0 };
-                let over_mm = field.z_mm(i, j) - (TOP_MM - depth_mm.min(F_MM)) - ridge_mm;
-                if over_mm > worst.0 {
-                    worst = (over_mm, q);
-                }
-            }
-        }
+        let (over_mm, q) = wood_over_design_mm(&p, &op, window);
         assert!(
-            worst.0 <= TOLERANCE_MM,
-            "clearing {}: the bay keeps {:.3} mm of wood too much at {:?}",
+            over_mm <= WOOD_TOLERANCE_MM,
+            "clearing {}: the bay keeps {over_mm:.3} mm of wood too much at {q:?}",
             !clearing.is_empty(),
-            worst.0,
-            worst.1
         );
     }
+}
+
+/// The step-over fraction of the V-bit's floor in the heightfield tests.
+const FINE_STEP_OVER: f64 = 0.1;
+
+/// How much wood a heightfield test lets stand above the design's surface.
+const WOOD_TOLERANCE_MM: f64 = 0.05;
+
+/// The most wood the 90° V-Carve `op` of `p` (its floor at
+/// [`FINE_STEP_OVER`]) leaves above the design's surface in `window`, with
+/// the cell where it does: its runs simulated as a heightfield (0.1 mm
+/// grid), each cell of the carve's regions at most `top − min(F, d /
+/// slope)`, `d` its distance to the walls as drawn. On the floor (`d ≥ F
+/// · slope`) the V-bit's rings may leave their ridges too, up to `0.59 s
+/// / slope` at a ring's convex corner for a step-over `s` (design, "V-Carve
+/// generator", step 6). Cells outside the regions are not counted.
+fn wood_over_design_mm(p: &Project, op: &VCarveOp, window: Rect) -> (f64, Point) {
+    const STEP_MM: f64 = 0.1;
+    let slope = slope_of(90.0);
+    let ridge_mm = 0.59 * (FINE_STEP_OVER * 2.0 * F_MM * slope) / slope;
+    let (runs, _) = runs_of(p, op);
+    let regions = regions_of(&with_op(p, op), op);
+    let mut field = Heightfield::new(window, STEP_MM, TOP_MM, None);
+    field.cut_runs(&runs, |run| cutter_of(p, run));
+    let (nx, ny) = field.size();
+    let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+    for j in 0..ny {
+        for i in 0..nx {
+            let q = field.cell(i, j);
+            if !regions.iter().any(|r| r.contains_point(q)) {
+                continue;
+            }
+            let depth_mm = wall_distance(&regions, q) / slope;
+            let ridge_mm = if depth_mm >= F_MM { ridge_mm } else { 0.0 };
+            let over_mm = field.z_mm(i, j) - (TOP_MM - depth_mm.min(F_MM)) - ridge_mm;
+            if over_mm > worst.0 {
+                worst = (over_mm, q);
+            }
+        }
+    }
+    worst
+}
+
+/// #493: a 40 mm square with a 4 mm round island whose edge is 9.85 mm
+/// off the bottom wall. The floor, inset by `F · tan 45° = 2`, has an
+/// 8 mm island 5.85 mm off its wall, which the 6.35 mm end mill `t1`
+/// cannot pass: its tool-centre region goes round the island, a C whose
+/// mouth, the 5.26 mm between its cusps by the gap, closes as it grows
+/// back by the radius. The end mill cuts the middle of the gap from the
+/// cusps but leaves a sliver of floor under the island, up to 0.9 mm,
+/// which belongs to the bay the grown reach closes round the island.
+/// Simulated as a heightfield round the island ([`wood_over_design_mm`]),
+/// the carve leaves nothing above the design's surface. Before #493 the
+/// pass's reach took in the bay (`offset`'s loop round it was a region of
+/// its own), the V-bit's rings skipped the sliver, and only the floor's
+/// trace round the island cut it.
+#[test]
+fn clearing_reach_leaves_no_bay_uncut() {
+    let island = Polyline::circle(Point::new(20.0, 11.85), 2.0);
+    let (p, op) = with_passes(
+        Some(vec![rect(40.0, 40.0), island]),
+        Some(FINE_STEP_OVER),
+        vec![pass("t1")],
+    );
+    let window = Rect {
+        min: at(13.0, 0.0),
+        max: at(27.0, 19.0),
+    };
+    let (over_mm, q) = wood_over_design_mm(&p, &op, window);
+    assert!(
+        over_mm <= WOOD_TOLERANCE_MM,
+        "the bay keeps {over_mm:.3} mm of wood too much at {q:?}"
+    );
 }

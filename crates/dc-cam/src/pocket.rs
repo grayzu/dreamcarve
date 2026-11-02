@@ -2341,7 +2341,22 @@ mod tests {
         rough_stock_to_leave_mm: f64,
         rest_mm: f64,
     ) -> (Project, PocketOp, PocketOp) {
-        let mut p = project(vec![notched_rect()], &[("i1", at_20_20())]);
+        rough_and_rest_of(
+            vec![notched_rect()],
+            rough_mm,
+            rough_stock_to_leave_mm,
+            rest_mm,
+        )
+    }
+
+    /// [`rough_and_rest`] of the shape `profiles`, placed at (20, 20).
+    fn rough_and_rest_of(
+        profiles: Vec<Polyline>,
+        rough_mm: f64,
+        rough_stock_to_leave_mm: f64,
+        rest_mm: f64,
+    ) -> (Project, PocketOp, PocketOp) {
+        let mut p = project(profiles, &[("i1", at_20_20())]);
         p.tools = vec![tool_of(&p, "t1", rough_mm), tool_of(&p, "t2", rest_mm)];
         let mut rough = pocket_op(&p, CutDirection::Climb);
         rough.stock_to_leave_mm = rough_stock_to_leave_mm;
@@ -2472,6 +2487,92 @@ mod tests {
         assert!(
             rest_mm < 0.25 * full_mm,
             "rest cuts {rest_mm} mm, a full pocket {full_mm} mm"
+        );
+    }
+
+    /// #493: a 6.35 mm rough with no stock to leave, then a 3.175 mm
+    /// rest Pocket, of the 100 × 50 rect with a 2 mm round island 5.2 mm
+    /// off its bottom wall. The rough tool cannot pass the island, so its
+    /// tool-centre region goes round it, a C whose mouth, the 5.75 mm
+    /// between its cusps by the gap, closes as it grows back by the
+    /// radius. The rough cuts the middle of the gap from the cusps but
+    /// leaves a sliver under the island, up to 0.68 mm, which belongs to
+    /// the bay the grown reach closes round the island. Simulated as a
+    /// heightfield (0.05 mm grid) round the island, the two Pockets leave
+    /// nothing above the floor that the rest tool reaches: every cell less
+    /// than its radius (less a 0.05 mm margin) from its tool-centre region,
+    /// the rect inset by its radius less the island grown by it. Before
+    /// #493 the rough's reach took in the bay (`offset`'s loop round it was
+    /// a region of its own), the rest Pocket never came there, and the
+    /// sliver stood to the stock top.
+    #[test]
+    fn rest_of_cuts_a_closed_bay() {
+        use crate::heightfield::{Cutter, Heightfield};
+        use crate::run::{RunLabel, ToolRun};
+        const STEP_MM: f64 = 0.05;
+        const MARGIN_MM: f64 = 0.05;
+        let island = Point::new(50.0, 6.2);
+        let (p, rough, rest) = rough_and_rest_of(
+            vec![rect_100x50(), Polyline::circle(island, 1.0)],
+            DIAMETER_MM,
+            0.0,
+            REST_MM,
+        );
+        let run = |op: &PocketOp, diameter_mm: f64| {
+            let (toolpath, _) = generate(&p, op);
+            (
+                ToolRun {
+                    label: RunLabel::Main,
+                    tool: op.tool.clone(),
+                    toolpath,
+                },
+                Cutter::Flat {
+                    radius_mm: diameter_mm / 2.0,
+                },
+            )
+        };
+        let runs = [run(&rough, DIAMETER_MM), run(&rest, REST_MM)];
+        let window = Rect {
+            min: Point::new(63.0, 20.0),
+            max: Point::new(77.0, 33.0),
+        };
+        let mut field = Heightfield::new(window, STEP_MM, THICKNESS_MM, None);
+        for (run, cutter) in &runs {
+            field.cut_runs(std::slice::from_ref(run), |_| *cutter);
+        }
+        let region = region_of(&[rect_100x50(), Polyline::circle(island, 1.0)], at_20_20());
+        let centre = inset_region(&region, REST_MM / 2.0, FLAT_TOL);
+        let to_centre = |q: Point| {
+            if centre.iter().any(|r| r.contains_point(q)) {
+                return 0.0;
+            }
+            centre
+                .iter()
+                .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+                .flat_map(|c| c.polyline().segments().collect::<Vec<_>>())
+                .map(|s| dc_geometry::point_segment_distance_mm(s, q))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let floor_mm = THICKNESS_MM - DEPTH_MM;
+        let (nx, ny) = field.size();
+        let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+        for j in 0..ny {
+            for i in 0..nx {
+                let q = field.cell(i, j);
+                if to_centre(q) > REST_MM / 2.0 - MARGIN_MM {
+                    continue;
+                }
+                let over_mm = field.z_mm(i, j) - floor_mm;
+                if over_mm > worst.0 {
+                    worst = (over_mm, q);
+                }
+            }
+        }
+        assert!(
+            worst.0 <= 1e-6,
+            "the rest tool reaches wood {:.3} mm above the floor at {:?}",
+            worst.0,
+            worst.1
         );
     }
 

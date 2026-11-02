@@ -281,4 +281,52 @@ mod tests {
         let left = left_by(&region, 0.5, &[reference], TOL);
         assert_eq!(left.len(), 4, "{left:?}");
     }
+
+    /// #493: a C-shaped tool-centre region, a 20 mm square wall 4 mm thick
+    /// from (10, 10) with a mouth 1 mm wide in its right side, grown by
+    /// 1.5 mm closes over its mouth. The bay inside it, the 12 mm square
+    /// less 1.5 mm from its walls, is a hole of the reach: a tool whose
+    /// centre stays in the C never comes within its radius of the bay's
+    /// middle. The reach still runs 1.5 mm into the bay from its walls.
+    /// Before #493 `offset`'s loop round the bay was a region of its own,
+    /// so the bay was counted reached.
+    #[test]
+    fn grown_reach_excludes_a_closed_bay() {
+        let points = [
+            (10.0, 10.0),
+            (30.0, 10.0),
+            (30.0, 19.5),
+            (26.0, 19.5),
+            (26.0, 14.0),
+            (14.0, 14.0),
+            (14.0, 26.0),
+            (26.0, 26.0),
+            (26.0, 20.5),
+            (30.0, 20.5),
+            (30.0, 30.0),
+            (10.0, 30.0),
+        ];
+        let vertices = points
+            .iter()
+            .map(|&(x, y)| dc_geometry::Vertex::line(x, y))
+            .collect();
+        let c = single_region(Contour::new(Polyline::new(vertices, true)).unwrap()).unwrap();
+        let grown = grow_region(&c, 1.5, TOL);
+        let reached = |q: Point| grown.iter().any(|r| r.contains_point(q));
+        for q in [
+            Point::new(20.0, 20.0),
+            Point::new(15.6, 20.0),
+            Point::new(24.4, 24.4),
+        ] {
+            assert!(!reached(q), "the bay at {q:?} is counted reached");
+        }
+        for q in [Point::new(15.4, 20.0), Point::new(20.0, 24.6)] {
+            assert!(reached(q), "{q:?}, 1.4 mm from the C, is not reached");
+        }
+        assert_eq!(grown.len(), 1, "{grown:?}");
+        assert_eq!(grown[0].holes().len(), 1, "the bay is one hole");
+        // The bay: the 9 mm square, its corners by the mouth notched by the
+        // round joins about the mouth's corners (a sliver under 0.03 mm²).
+        assert_approx_eq!(grown[0].holes()[0].signed_area_mm2().abs(), 81.0, 0.05);
+    }
 }
