@@ -325,8 +325,8 @@ Program 1 (T2):
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 2 (T1):
-  Extents (machine coordinates, mm, tool centre): X 18.319..91.094, Y 20.000..60.000, Z -4.000..10.000
-    The cutter's edge reaches X 15.144..94.269, Y 16.825..63.175; keep clamps outside that.
+  Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
+    The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
   Estimated time: 1 min 5 s (cutting 1 min 2 s, dwells 3 s); 779 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated total time: 1 min 34 s (cutting 1 min 28 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-female.dcv: 0 error(s), 2 warning(s)
@@ -408,8 +408,8 @@ dc-female-1-T2.nc (137 lines):
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-female-2-T1.nc (1082 lines):
-  Extents (machine coordinates, mm, tool centre): X 18.319..91.094, Y 20.000..60.000, Z -4.000..10.000
-    The cutter's edge reaches X 15.144..94.269, Y 16.825..63.175; keep clamps outside that.
+  Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
+    The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
   Estimated time: 1 min 5 s (cutting 1 min 2 s, dwells 3 s); 779 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated total time: 1 min 34 s (cutting 1 min 28 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
