@@ -39,11 +39,11 @@
 //! bug is understood.
 //!
 //! What the sweep found is on #464. While #481 to #484 are open, the
-//! sweep still fails: S17 at export beside a pinch (#481), a containment
-//! cycle (#482), a written program that does not reproduce its toolpath
-//! (#483), and seat failures with 60° and 90° bits away from a near touch
-//! (#484). Their reproductions are the ignored tests at the end of this
-//! file and in dc-cam's inlay tests.
+//! sweep still fails: S17 at export near the stock top with a 15° bit
+//! (#481), a containment cycle (#482), a written program that does not
+//! reproduce its toolpath (#483), and seat failures with 60° and 90° bits
+//! away from a near touch (#484). Their reproductions are the ignored
+//! tests at the end of this file and in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,
@@ -317,7 +317,7 @@ fn lettering_seats_beside_a_narrow_mouth() {
 /// past the material it may cut", at Z 11.983, just below the stock top.
 /// The female of the same design fails the same way.
 #[test]
-#[ignore = "#481: S17 at export beside a pinch finer than the written precision"]
+#[ignore = "#481: S17 at export near the stock top with a 15° bit"]
 fn v_carve_beside_a_hair_thin_pinch_passes_s17() {
     let outcome = reproduce(
         "line art",
