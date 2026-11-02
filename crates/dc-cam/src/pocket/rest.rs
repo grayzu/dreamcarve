@@ -48,12 +48,13 @@ pub struct Reference {
 
 /// `region` grown by `by_mm` (≥ 0): its outer offset outward and its holes
 /// shrunk, holes that vanish dropped. Polygonal, as booleans return it.
+///
+/// An outer shaped like a C whose mouth is narrower than `2 · by_mm` grows
+/// over its mouth; the bay inside it, the points more than `by_mm` from
+/// the region, is a hole of the result (#493).
 #[must_use]
 pub fn grow_region(region: &Region, by_mm: f64, tolerance_mm: f64) -> Vec<Region> {
-    let outers: Vec<Region> = offset(region.outer(), by_mm)
-        .into_iter()
-        .filter_map(single_region)
-        .collect();
+    let outers = grown_outer(region.outer(), by_mm);
     // `offset` keeps a hole's clockwise winding and shrinks it for a
     // negative delta.
     let holes: Vec<Region> = region
@@ -63,6 +64,21 @@ pub fn grow_region(region: &Region, by_mm: f64, tolerance_mm: f64) -> Vec<Region
         .filter_map(|c| single_region(c.reversed()))
         .collect();
     difference(&outers, &holes, tolerance_mm)
+}
+
+/// The area `outer` encloses grown by `by_mm`, as regions. When the outer
+/// grows over a bay's mouth, `offset` gives back its outline and a loop
+/// round the bay, both counter-clockwise; nested, the bay is a hole of the
+/// outline's region. Before #493 each loop was a region of its own, so a
+/// tool's reach took in a bay its centre never came within its radius of.
+fn grown_outer(outer: &Contour, by_mm: f64) -> Vec<Region> {
+    let loops = offset(outer, by_mm);
+    if loops.len() > 1
+        && let Ok((regions, _)) = nest(loops.clone())
+    {
+        return regions;
+    }
+    loops.into_iter().filter_map(single_region).collect()
 }
 
 /// The union of every region of `regions` grown by `by_mm`.
