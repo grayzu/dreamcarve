@@ -15,6 +15,7 @@
 
 mod line_art;
 mod seat;
+mod spike;
 mod traced;
 
 use super::*;
