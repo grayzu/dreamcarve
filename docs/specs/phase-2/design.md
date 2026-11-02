@@ -2328,8 +2328,14 @@ the fitted centre is transformed like a point).
    start (endpoints exact); accept if every point (and every shallow-arc
    midpoint) is within `tolerance` of the circle, every angular step ≤
    90°, the largest step ≤ 4 × the median, the total sweep ≥ 0.5°, and
-   the chord ≥ 0.15·r (or a full circle), and at least two chord steps
-   are within 4× of the largest. The median gate leaves out the
+   the chord ≥ 0.15·r (or a full circle), the total sweep under one turn
+   (one turn for a full circle), and at least two chord steps
+   are within 4× of the largest. (changed in #502: a male Inlay's V-bit
+   joined a ring of its band three chords before the point it lapped from,
+   so 55 moves went round one circle 21° past a full turn; step 3 takes
+   the sweep from the run's ends, modulo a turn, and the run was written
+   as its last 21° alone, the lap never cut. S6 refused the program.
+   `arcfit::run_past_a_full_turn_keeps_its_lap`.) The median gate leaves out the
    shallow-arc joints: their tiny steps are not chord steps, and counting
    them fails every odd-length window on a faceted curve. (changed in
    #213: a 0.006 mm stay-down link, a shallow corner arc and a 40 mm wall
@@ -2358,7 +2364,10 @@ the fitted centre is transformed like a point).
    the sign of the summed cross products (negative = clockwise = `G2`).
 3. Split each fitted run into arcs of ≤ 90° with intermediate endpoints on
    the circle and the last endpoint exactly the source point; `I`,`J` per
-   sub-arc from its own start.
+   sub-arc from its own start. A run whose ends are within 1e-6·r (a full
+   circle in step 2) is a whole turn, whichever way its ends are apart.
+   (changed in #502: a ring that closed a hair past its start was split
+   as a hair-long arc; `arcfit::run_closing_a_hair_past_its_start_is_a_whole_turn`.)
 4. After number formatting (machine coordinates, the post's decimals),
    check each arc as the controller will: with `ij`, snap `I`,`J` within
    ±2 quanta to minimise the radius disagreement; accept when

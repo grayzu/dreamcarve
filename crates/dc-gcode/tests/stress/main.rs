@@ -358,3 +358,20 @@ fn male_lettering_with_rounding_clears_inside_the_band() {
     );
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
+
+/// #502 (found by the sweep): the males of line-art seed `0xc5` (a
+/// 6.54 mm crescent and four circles; 30° bit, millimetre program, arc
+/// fitting on) with the end mill's clearing pass, rounding or a cut-out
+/// export. The safety pass refused them: "the program does not reproduce
+/// operation `o1` move 344". The V-bit joins a ring of the band three chords
+/// before the point it laps from, so 55 moves go round one circle 21°
+/// past a full turn, and the arc fitter took them as one run. Its sub-arcs
+/// take their sweep from the run's ends, modulo a turn, so the program cut
+/// the last 21° and skipped the lap before them.
+#[test]
+fn males_of_line_art_keep_each_lap_when_fitted() {
+    for kind in [Kind::MaleOpenEdge, Kind::MaleRounded, Kind::MaleCutOut] {
+        let outcome = reproduce("line art", 0xc5, designs::line_art(0xc5), kind);
+        assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    }
+}

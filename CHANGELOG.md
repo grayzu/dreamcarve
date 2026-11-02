@@ -205,6 +205,13 @@ phases bump the patch number.
   though the toolpath stayed in the band. A grown offset is now also held
   to the most area it can enclose, and made again a finer way when it
   exceeds it. The fixtures' programs are unchanged ([#490]).
+- A male Inlay with arc fitting on no longer fails export with "the
+  program does not reproduce operation … move …" where the V-bit goes
+  round a ring of the band past a full turn. The arc fitter took the whole
+  run as one arc, and an arc's sweep comes from its ends, so the program
+  would have cut the last part of the run and skipped the lap before it;
+  the safety pass refused it. A fitted run now turns at most once. The
+  fixtures' programs are unchanged ([#502]).
 - A male Inlay without a clearing pass no longer fails export with "an arc
   in place of operation's straight moves that does not follow them". Round
   the band's V wall the arc fitter replaced a few moves a few thousandths
@@ -998,3 +1005,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#466]: https://github.com/grayzu/dreamcarve/issues/466
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
+[#502]: https://github.com/grayzu/dreamcarve/issues/502
