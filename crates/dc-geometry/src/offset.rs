@@ -30,8 +30,8 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 /// its distance check at the default tolerances. An open piece is no
 /// contour, and dropped it took the whole loop with it (a male Inlay's
 /// hole lost its floor). Such an offset is taken again with finer
-/// tolerances ([`RETRY_EPS_MM`]), and the first that closes every piece is
-/// kept.
+/// tolerances (1e-6, then 1e-7, then 1e-8 mm), and the first that closes
+/// every piece is kept.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let ccw = contour.is_ccw();
