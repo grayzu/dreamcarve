@@ -40,8 +40,19 @@ pub enum BooleanOp {
 /// area rounds to zero are dropped.
 #[must_use]
 pub fn boolean(a: &[Region], b: &[Region], op: BooleanOp, tolerance_mm: f64) -> Vec<Region> {
-    let subject = to_shapes(a, tolerance_mm);
-    let clip = to_shapes(b, tolerance_mm);
+    boolean_within(a, b, op, (tolerance_mm, tolerance_mm))
+}
+
+/// [`boolean`] with `a`'s arcs flattened within `tolerances.0` and `b`'s
+/// within `tolerances.1` (#478: a male inlay's band and its plug).
+pub(crate) fn boolean_within(
+    a: &[Region],
+    b: &[Region],
+    op: BooleanOp,
+    tolerances: (f64, f64),
+) -> Vec<Region> {
+    let subject = to_shapes(a, tolerances.0);
+    let clip = to_shapes(b, tolerances.1);
     if subject.is_empty() && clip.is_empty() {
         return Vec::new();
     }
@@ -206,6 +217,19 @@ pub fn union(a: &[Region], b: &[Region], tolerance_mm: f64) -> Vec<Region> {
 #[must_use]
 pub fn difference(a: &[Region], b: &[Region], tolerance_mm: f64) -> Vec<Region> {
     boolean(a, b, BooleanOp::Difference, tolerance_mm)
+}
+
+/// [`difference`] with `a`'s arcs flattened within `tolerance_mm` and
+/// `b`'s within `b_tolerance_mm` (#478: a male inlay's band less its
+/// plug, whose outline a steep V-bit wants nearer its arcs).
+#[must_use]
+pub fn difference_within(
+    a: &[Region],
+    b: &[Region],
+    tolerance_mm: f64,
+    b_tolerance_mm: f64,
+) -> Vec<Region> {
+    boolean_within(a, b, BooleanOp::Difference, (tolerance_mm, b_tolerance_mm))
 }
 
 /// Area in both `a` and `b`; see [`boolean`].

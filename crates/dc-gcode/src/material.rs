@@ -232,12 +232,13 @@
 //!   `depth_mm` `D`. The male carves the **surround** of its design: the
 //!   targets' closed outlines mirrored about the centre line of their
 //!   joint bounding box (`Transform::mirror_x_about`), nested, and
-//!   [`dc_geometry::surround`] `margin_mm` wide at the project's flatten
-//!   tolerance, the generator's construction, never the generator; where
-//!   the band runs past the board it is clipped to
-//!   [`MaleBand::board`] of the project's stock (#495,
-//!   [`dc_geometry::band_on_board`]) and the surround is the clipped band
-//!   less the design. Its
+//!   [`dc_geometry::surround_within`] `margin_mm` wide, the band's edge at
+//!   the project's flatten tolerance and the plug's outline at the V-bit's
+//!   [`dc_geometry::wall_tolerance_mm`] (#478), the generator's
+//!   construction, never the generator; where the band runs past the
+//!   board it is clipped to [`MaleBand::board`] of the project's stock
+//!   (#495, [`dc_geometry::band_on_board`]) and the surround is the
+//!   clipped band less the design. Its
 //!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), its
 //!   floor `plug_depth_mm` below that. Either side's flank is engaged from
 //!   the stock top (security review H4): the plug above the male's start
@@ -289,10 +290,10 @@ use countersink::Sink;
 use dc_cam::RunLabel;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
-    Vec2, as_circle, band_on_board, closest_points, difference, floor_regions, inset_is_empty,
-    inset_outers, is_design_hole, meeting_points, nearest_point, nest, offset, offset_open,
-    point_segment_distance_mm, rounded_band, segment_distance_mm, strip_ends, surround,
-    surround_floor_regions, without_rect_sides,
+    Vec2, as_circle, band_on_board, closest_points, difference_within, floor_regions,
+    inset_is_empty, inset_outers, is_design_hole, meeting_points, nearest_point, nest, offset,
+    offset_open, point_segment_distance_mm, rounded_band, segment_distance_mm, strip_ends,
+    surround_floor_regions, surround_within, wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
     ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
@@ -1004,7 +1005,7 @@ struct MaleGeometry {
     band: MaleBand,
     /// The mirrored design, nested ([`male_design`]).
     design: Vec<Region>,
-    /// The carved regions: the band less the design ([`surround`]).
+    /// The carved regions: the band less the design ([`surround_within`]).
     surround: Vec<Region>,
     /// The band `B` ([`rounded_band`]) when its edge is open; empty with
     /// a V wall. Clipped to the board when it runs past it (#495).
@@ -1020,11 +1021,23 @@ impl MaleGeometry {
         let band = male_band(project, inlay)?;
         let design = male_design(project, &inlay.targets)?;
         let tolerance_mm = project.flatten_tolerance_mm;
+        // #478: the plug's outline within the V-bit's wall tolerance, as
+        // the generator draws it.
+        let plug_tolerance_mm = v_bit_of(project, &inlay.tool)
+            .map_or(tolerance_mm, |(slope, _)| {
+                wall_tolerance_mm(tolerance_mm, slope)
+            });
         let (edge, clipped) = male_band_on_board(project, &band, &design);
         let surround = if clipped {
-            difference(&edge, &design, tolerance_mm)
+            difference_within(&edge, &design, tolerance_mm, plug_tolerance_mm)
         } else {
-            surround(&design, band.margin_mm, band.edge_rounding_mm, tolerance_mm)
+            surround_within(
+                &design,
+                band.margin_mm,
+                band.edge_rounding_mm,
+                tolerance_mm,
+                plug_tolerance_mm,
+            )
         };
         let edge = if band.is_open() { edge } else { Vec::new() };
         Some(Self {

@@ -71,8 +71,6 @@ pub struct Case {
     /// The family's name.
     pub family: String,
     pub seed: u64,
-    /// The V-bit's included angle, degrees.
-    pub angle_deg: f64,
     pub project: Project,
     pub ops: Vec<(Kind, Operation)>,
 }
@@ -390,7 +388,6 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         label,
         family: family.to_owned(),
         seed,
-        angle_deg,
         project,
         ops,
     }
@@ -475,12 +472,6 @@ fn known_issue(case: &Case, kind: Kind, at: Point, near: &[Point]) -> Option<u32
     {
         return Some(issue);
     }
-    // #478: with a 15° or 30° bit the seat error, a fixed 0.018 mm off
-    // the walls turned into height by the cone, is 0.066 to 0.140 mm
-    // even on the star test part.
-    if case.angle_deg < 45.0 {
-        return Some(478);
-    }
     // #479: where two outlines nearly touch, the male cuts no groove
     // between them, and the plug stands up to its whole height there.
     if near
@@ -495,9 +486,18 @@ fn known_issue(case: &Case, kind: Kind, at: Point, near: &[Point]) -> Option<u32
 /// Seat failures of the CI tests' designs that no rule of
 /// [`known_issue`] covers, each with the open issue it is filed under:
 /// family, seed, operation, issue.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 1] = [
+const KNOWN_CASES: [(&str, u64, Kind, u32); 4] = [
     // #484: beside the last "e"'s mouth, 0.36 mm.
     ("small lettering", 0x0464_1000, Kind::MaleVWall, 484),
+    // #501: inside a curve of the "a", 0.015 mm sideways at every bit,
+    // 0.057 mm with the 30° bit.
+    ("small lettering", 0x0464_1001, Kind::MaleOpenEdge, 501),
+    // #499: the written-precision margin at a sharp corner, 0.055 mm with
+    // the 30° bit.
+    ("small lettering", 0x0464_1002, Kind::MaleRounded, 499),
+    // #500: the female's groove stops 0.025 mm into a 125° corner,
+    // 0.092 mm with the 30° bit.
+    ("line art", 0x34, Kind::MaleOpenEdge, 500),
 ];
 
 /// The validation problems a valid design may still raise with the

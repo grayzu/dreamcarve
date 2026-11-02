@@ -436,3 +436,43 @@ fn floor_without_a_step_over_is_refused() {
     }
     carve(&narrow, &narrow_op);
 }
+
+/// #478: the boundary trace follows an arc within the bit's wall
+/// tolerance, `0.01 · tan 7.5° / tan 30°` (0.0023 mm) for the bench's 15°
+/// bit, not within the whole flatten tolerance: a chord of the trace
+/// 0.01 mm inside its arc stopped the flank 0.01 mm short of the wall,
+/// which the 15° cone turns into 0.076 mm of height (a star's female
+/// stood 0.070 mm shallow round its circle). A 20 mm circle, flat depth
+/// 2: the trace is the circle `10 − 2 tan 7.5°` round its centre, every
+/// trace point is on it, and each chord's middle is no further inside it
+/// than the wall tolerance.
+#[test]
+fn narrow_bit_traces_an_arc_within_its_wall_tolerance() {
+    let mut p = project(vec![Polyline::circle(Point::new(10.0, 10.0), 10.0)]);
+    p.tools.retain(|t| t.id != ToolId::new("t2"));
+    p.tools.push(v_bit(15.0));
+    let op = VCarveOp {
+        flat_depth_mm: Some(F_MM),
+        step_over_fraction: Some(0.4),
+        ..carve_op(&p)
+    };
+    let (toolpath, _) = carve(&p, &op);
+    let slope = slope_of(15.0);
+    let centre = at(10.0, 10.0);
+    let trace_mm = 10.0 - F_MM * slope;
+    let wall_mm = p.flatten_tolerance_mm * slope / slope_of(60.0);
+    let on_trace = |q: Point| (q.distance_to(centre) - trace_mm).abs() <= 1e-6;
+    let chords: Vec<(Point, Point)> = floor_cuts(&toolpath)
+        .into_iter()
+        .filter(|&(a, b)| on_trace(a) && on_trace(b))
+        .collect();
+    assert!(chords.len() > 8, "the trace is cut: {chords:?}");
+    for (a, b) in chords {
+        let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+        let inside_mm = trace_mm - middle.distance_to(centre);
+        assert!(
+            inside_mm <= wall_mm + 1e-9,
+            "the trace's chord {a:?}–{b:?} runs {inside_mm:.4} mm inside its arc, past {wall_mm:.4}"
+        );
+    }
+}
