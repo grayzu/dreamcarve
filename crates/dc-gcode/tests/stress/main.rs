@@ -383,7 +383,10 @@ fn males_of_line_art_keep_each_lap_when_fitted() {
 /// own move, "would cut 0.0954 mm past a wall": a stay-down link 7 mm long
 /// between two medial chains on the band's floor, held to the cone at the
 /// start plane against the region's walls but not to the open edge, where
-/// the board stands to the stock top and the cone is wider.
+/// the board stands to the stock top and the cone is wider. The pair's
+/// seat is #484's (`KNOWN_CASES`): the female's groove leaves the plug
+/// 0.274 mm proud 23 mm from the near touch, as with every male of the
+/// design.
 #[test]
 fn male_of_line_art_0xb3_generates() {
     let outcome = reproduce(

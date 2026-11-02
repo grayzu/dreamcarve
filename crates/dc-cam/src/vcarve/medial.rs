@@ -289,8 +289,8 @@ pub(crate) fn runs(
 /// every chain whole), less the chains wholly on the cleared `floors`
 /// (step 6, #405; empty without a floor), then ordered from the shallowest
 /// chain end by nearest end, continued through shared nodes, linked
-/// tool-down where the link passes the cone test, and split by a retract
-/// elsewhere. With an edge only the chains a V wall at the band's edge
+/// tool-down where the link passes the cone test, inside `edge` too
+/// (#508), and split by a retract elsewhere. With an edge only the chains a V wall at the band's edge
 /// needs fail it, and chains on the floor far out, which the floor's
 /// cutting covers.
 pub(crate) fn runs_within(
@@ -357,10 +357,16 @@ pub(crate) fn runs_within(
         let from = position.filter(|_| current.is_some());
         // Continuing through a shared node: the tool is already there.
         let continues = from.is_some_and(|p| p.xy().distance_to(entry.xy()) <= EPS_MM);
+        // #508: a link is held to the open edge as the chains' moves are
+        // (`within_edge`). The walls' test is at the start plane, which on
+        // a male Inlay is below the stock top: a link on the band's floor
+        // that passes it can still take the wider cone the board feels past
+        // the band's edge.
         let links = !continues
             && from.is_some_and(|p| {
                 links_tool_down(walls, depth, p, entry)
                     && clear_path(walls, p, entry, tolerances.written_mm)
+                    && edge.is_none_or(|edge| edge.allows(p, entry))
             });
         if !(continues || links) {
             runs.extend(current.take());
