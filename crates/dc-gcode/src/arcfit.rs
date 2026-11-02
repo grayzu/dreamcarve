@@ -97,6 +97,10 @@ const MAX_STEP_RATIO: f64 = 4.0;
 /// closes on itself.
 const MIN_CHORD_RATIO: f64 = 0.15;
 
+/// A run whose chord is at most this fraction of the radius closes on
+/// itself: a whole turn.
+const CLOSED_CHORD_RATIO: f64 = 1e-6;
+
 /// How far around the rounded I and J the snap looks, in output quanta.
 const SNAP_SEARCH_STEPS: i32 = 2;
 
@@ -467,7 +471,7 @@ fn constrain_to_endpoints(
 ) -> Option<(Point, f64)> {
     let d = end - start;
     let chord2 = d.dot(d);
-    let tiny = radius_mm * 1e-6;
+    let tiny = radius_mm * CLOSED_CHORD_RATIO;
     if chord2 <= tiny * tiny {
         return None;
     }
@@ -480,8 +484,9 @@ fn constrain_to_endpoints(
 
 /// The gates of `validateArcFitPoints` for the export path: residual,
 /// step angle, step uniformity, total sweep, and chord ratio; and, not
-/// upstream's, two chord steps of one size at least (#213) and every move
-/// within the tolerance of the arc along its whole length (#226, #229).
+/// upstream's, two chord steps of one size at least (#213), every move
+/// within the tolerance of the arc along its whole length (#226, #229),
+/// and at most one turn (#502).
 fn gates_pass(
     points: &[Point],
     mids: &[Option<Point>],
@@ -569,8 +574,17 @@ fn gates_pass(
         return false;
     };
     let chord = first.distance_to(*last);
-    let closed = chord <= radius_mm * 1e-6;
-    closed || chord >= radius_mm * MIN_CHORD_RATIO
+    let closed = chord <= radius_mm * CLOSED_CHORD_RATIO;
+    if !closed && chord < radius_mm * MIN_CHORD_RATIO {
+        return false;
+    }
+    // 6. At most one turn (#502). `split_arc` takes the sweep from the
+    // run's ends, which give it only modulo a turn: a run that goes on
+    // round its circle past a full turn (a ring joined a few chords before
+    // the point it laps from) would be written as its last part alone and
+    // the lap before it never cut. A run that closes is one turn, not two.
+    let turns = total_sweep / TAU;
+    if closed { turns < 1.5 } else { turns < 1.0 }
 }
 
 /// The median of `values`, which it sorts; `None` if empty.
@@ -617,7 +631,11 @@ fn split_arc(start: Point3, end: Point3, centre: Point, clockwise: bool) -> Vec<
     } else if !clockwise && sweep < 0.0 {
         sweep += TAU;
     }
-    if sweep.abs() < SWEEP_EPS {
+    // A run that closes is the whole turn `gates_pass` let through as
+    // closed (#502): its ends may be a hair apart either way, and a hair
+    // past the start is not a hair-long arc.
+    let closed = start.xy().distance_to(end.xy()) <= radius_mm * CLOSED_CHORD_RATIO;
+    if closed || sweep.abs() < SWEEP_EPS {
         sweep = if clockwise { -TAU } else { TAU };
     }
     // A hair under the boundary is one segment, not two, when the fitted
@@ -1354,6 +1372,16 @@ mod tests {
     #[test]
     fn run_of_two_closed_turns_keeps_both() {
         assert_runs_turn_as_their_moves(&chords(2.0, 80, 0.0, 2.0 * TAU, 0.0));
+    }
+
+    /// #502: a ring that closes a hair past its start (its last vertex
+    /// 1e-7 mm on, within the closed run's 1e-6 · r) is one whole turn,
+    /// not the hair its ends give. Either way round.
+    #[test]
+    fn run_closing_a_hair_past_its_start_is_a_whole_turn() {
+        let past = TAU + 1e-8;
+        assert_runs_turn_as_their_moves(&chords(10.0, 72, 0.0, past, 0.0));
+        assert_runs_turn_as_their_moves(&chords(10.0, 72, 0.0, -past, 0.0));
     }
 
     #[test]
