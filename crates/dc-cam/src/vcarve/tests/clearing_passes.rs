@@ -634,3 +634,58 @@ fn rest_corners_after_a_pass_stay_on_the_floor() {
     let (runs, _) = runs_of(&p, &op);
     assert_eq!(runs.len(), 2, "the end mill's run and the V-bit's");
 }
+
+/// #482: a 40 mm square round two islands, the halves of a 20 mm square
+/// wall 4 mm thick, `[` and `]` with gaps 1 mm wide between them at the
+/// top and bottom. The V-bit's inset of 2 mm closes the gaps, so the
+/// region's floor is two pieces of one shape: the ring round the islands,
+/// and the 8 mm bay between them, which lies in the ring's island. The end
+/// mill's run cuts both, the ring first at each level (as a pocket inside
+/// an island is cut after the pocket round it), and does not fail with a
+/// containment cycle: the pieces are one shape, which is never ordered
+/// against itself.
+#[test]
+fn clearing_pass_cuts_a_bay_the_inset_closed_after_the_floor_round_it() {
+    let left = polygon(&[
+        (10.0, 10.0),
+        (19.5, 10.0),
+        (19.5, 14.0),
+        (14.0, 14.0),
+        (14.0, 26.0),
+        (19.5, 26.0),
+        (19.5, 30.0),
+        (10.0, 30.0),
+    ]);
+    let right = polygon(&[
+        (20.5, 10.0),
+        (30.0, 10.0),
+        (30.0, 30.0),
+        (20.5, 30.0),
+        (20.5, 26.0),
+        (26.0, 26.0),
+        (26.0, 14.0),
+        (20.5, 14.0),
+    ]);
+    let (p, op) = with_passes(
+        Some(vec![rect(40.0, 40.0), left, right]),
+        None,
+        vec![pass("t3")],
+    );
+    let (runs, _) = runs_of(&p, &op);
+    let run = clearing_run(&runs, "t3");
+    let in_bay = |q: Point| {
+        let (lo, hi) = (at(14.0, 14.0), at(26.0, 26.0));
+        (lo.x..=hi.x).contains(&q.x) && (lo.y..=hi.y).contains(&q.y)
+    };
+    for z_mm in [TOP_MM - 1.0, FLOOR_Z_MM] {
+        let cuts = cuts_at(run, z_mm);
+        let bay: Vec<usize> = (0..cuts.len()).filter(|&i| in_bay(cuts[i].1)).collect();
+        let ring: Vec<usize> = (0..cuts.len()).filter(|&i| !in_bay(cuts[i].1)).collect();
+        assert!(!bay.is_empty(), "the bay is cut at Z {z_mm}");
+        assert!(!ring.is_empty(), "the ring is cut at Z {z_mm}");
+        assert!(
+            ring.iter().max() < bay.iter().min(),
+            "the ring before the bay at Z {z_mm}: ring {ring:?}, bay {bay:?}"
+        );
+    }
+}

@@ -265,7 +265,6 @@ fn reproduce(family: &str, seed: u64, design: Design, kind: Kind) -> Outcome {
 /// profile 1) encloses itself through other shapes; no cut order
 /// exists", an internal-consistency error.
 #[test]
-#[ignore = "#482: a containment cycle on a male's line art"]
 fn male_of_line_art_with_rings_orders_its_cuts() {
     let outcome = reproduce(
         "line art",

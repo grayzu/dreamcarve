@@ -1973,6 +1973,36 @@ mod tests {
         );
     }
 
+    /// #482: a pocket inside an island is paired with the pocket round the
+    /// island when the two are different shapes, and not when they are one
+    /// (a clearing pass's floor pieces of one carved region, the V-bit's
+    /// inset having closed a bay into the island): `sequence` would read
+    /// that pair as a shape enclosing itself, a containment cycle.
+    #[test]
+    fn nested_pockets_never_pair_a_shape_with_itself() {
+        let shape = |profile| ShapeRef {
+            instance: InstanceId::new("i1"),
+            instance_name: "Design".to_owned(),
+            profile,
+        };
+        let contour = |x: f64, w: f64| {
+            Contour::new(Polyline::rect(Point::new(x, x), w, w)).expect("a square")
+        };
+        let (around, island, inside) =
+            (contour(0.0, 40.0), contour(10.0, 20.0), contour(14.0, 12.0));
+        let (regions, _) =
+            nest(vec![around.clone(), island.clone(), inside.clone()]).expect("nested");
+        assert_eq!(regions.len(), 2, "{regions:?}");
+        let two = [
+            (shape(0), around.clone()),
+            (shape(1), island.clone()),
+            (shape(2), inside.clone()),
+        ];
+        assert_eq!(nested_pockets(&regions, &two), vec![(shape(0), shape(2))]);
+        let one = [(shape(0), around), (shape(1), island), (shape(0), inside)];
+        assert_eq!(nested_pockets(&regions, &one), Vec::new());
+    }
+
     /// A 10 mm square inside a 30 mm circular island inside the rect is a
     /// pocket of its own (depth 2). Under full depth first every ring of
     /// it comes after every ring of the rect, which cuts the island's
