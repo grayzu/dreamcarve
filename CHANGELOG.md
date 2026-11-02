@@ -172,6 +172,11 @@ phases bump the patch number.
   run to it, and still refuses any cut whose tool passes the stock's
   edge. A band that stays on the stock exports the same program as
   before ([#495]).
+- **Documentation:** the Inlay chapter's new "Choosing a V-bit for an
+  inlay" recommends a 60° or 90° bit, which seats within about 0.05 mm,
+  and explains why 15° and 30° bits fit less closely: their plugs may
+  stand up to about 0.3 mm proud in sharp corners and tight features
+  until [#506] is fixed. The inlay quick start points to it ([#507]).
 
 ### Fixed
 
@@ -1018,4 +1023,6 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#479]: https://github.com/grayzu/dreamcarve/issues/479
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
+[#506]: https://github.com/grayzu/dreamcarve/issues/506
+[#507]: https://github.com/grayzu/dreamcarve/issues/507
 [#502]: https://github.com/grayzu/dreamcarve/issues/502
