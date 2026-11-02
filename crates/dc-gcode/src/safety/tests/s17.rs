@@ -1176,11 +1176,53 @@ fn sub_quantum_descents_export() {
 }
 
 /// #469: the eighth of #467's line-end regions exports through the whole
-/// safety pass. Its medial chain runs 0.3° off a wall of the wedge at the
-/// start plane; written to three decimals, its start is inside the wedge
-/// and the move crosses the wall 0.02 mm along, which S17 refuses.
+/// safety pass. Its medial chain ran 0.3° off a wall of the wedge at the
+/// start plane; written to three decimals, its start was inside the wedge
+/// and the move crossed the wall 0.02 mm along, which S17 refused. Since
+/// #465 the axis wraps round the wedge's tip and that chain is gone, and
+/// the generator keeps every tip path clear of the walls by what writing
+/// can move it (`sharp_corners_export_at_any_placement`).
 #[test]
-#[ignore = "#469: the chain beside the line end crosses the wall once written"]
 fn sub_quantum_descent_beside_a_line_end_exports() {
     export_line_end(20.0, 1.5, 6.0, 52.0, 3.0).unwrap();
+}
+
+/// #469: V-Carves of sharp corners, placed off the written grid, export
+/// through the whole safety pass, in millimetres and in inches. A chain
+/// from a corner's tip runs half the corner's angle off each wall; written
+/// to the program's places its start could move into the material and
+/// the move cross the wall a few hundredths along, which S17 refuses
+/// (before #469, 5 of the 48 carves in mm did, 2° and 3° corners, and 17
+/// in inches, 2°, 3° and 5°). The generator now
+/// keeps every tip path at least `quantum / √2` from the walls. Each
+/// region is a 20 mm wedge of angle `θ` closed by a 3 mm point, turned by
+/// `0.37 k` rad and moved by sub-micrometre steps with `k`.
+#[test]
+fn sharp_corners_export_at_any_placement() {
+    for units in [dc_project::Units::Mm, dc_project::Units::Inch] {
+        for angle_deg in [2.0_f64, 3.0, 5.0, 8.0] {
+            for k in 0..12 {
+                let dx = 10.0 + 0.002_639 * f64::from(k);
+                let dy = 10.0 + 0.003_065 * f64::from(k);
+                let (sin, cos) = (0.37 * f64::from(k)).sin_cos();
+                let turned = |x: f64, y: f64| (x * cos - y * sin + 40.0, x * sin + y * cos + 40.0);
+                let half = (angle_deg / 2.0).to_radians();
+                let wedge = [
+                    turned(0.0, 0.0),
+                    turned(20.0 * half.cos(), -20.0 * half.sin()),
+                    turned(20.0 * half.cos() + 3.0, 0.0),
+                    turned(20.0 * half.cos(), 20.0 * half.sin()),
+                ];
+                let mut project = drawn(&[(vec![polygon(&wedge)], (dx, dy))]);
+                project.display_units = units;
+                let op = carve_of(&project, "t5", |op| {
+                    op.flat_depth_mm = Some(1.0);
+                    op.step_over_fraction = Some(0.1);
+                });
+                if let Err(e) = export_carve(&project, &op) {
+                    panic!("{units:?}, a {angle_deg}° corner, placement {k}: {e}");
+                }
+            }
+        }
+    }
 }
