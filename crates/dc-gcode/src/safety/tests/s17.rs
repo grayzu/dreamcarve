@@ -1105,3 +1105,55 @@ fn upstream_rag_chord_through_the_r_fails_s17() {
     check_carve(&before, &project, &op).unwrap();
     export_carve(&project, &op).unwrap();
 }
+
+/// A `2h × h` rectangle with its corner at the origin and a thin wedge of
+/// material standing down from its top edge at `x0`: `len_mm` long,
+/// `half_deg` either side of its axis, tilted `tilt_deg` from straight
+/// down. The end of a drawn line that stops inside a region (#463's sweep).
+fn line_end_region(h: f64, x0: f64, len_mm: f64, half_deg: f64, tilt_deg: f64) -> Polyline {
+    let heading = (270.0 + tilt_deg).to_radians();
+    let tip = (x0 + len_mm * heading.cos(), h + len_mm * heading.sin());
+    let half_mm = len_mm * half_deg.to_radians().tan();
+    polygon(&[
+        (0.0, 0.0),
+        (2.0 * h, 0.0),
+        (2.0 * h, h),
+        (x0 + half_mm, h),
+        tip,
+        (x0 - half_mm, h),
+        (0.0, h),
+    ])
+}
+
+/// #467: the eight line-end regions of #463's sweep whose export S3
+/// refused (`cuts at 415.463 mm/min, which is not a rate of its tool`)
+/// export through the whole safety pass. Each is carved with the 60°
+/// V-bit, a flat floor and a 0.1 step-over. A medial chain's step there
+/// fell less than 0.001 mm at a feed scaled to the plunge rate; written to
+/// three decimals it did not fall, and its scaled feed was not a rate of
+/// its tool. As `(h, wedge length in medial steps of h / 160, half angle,
+/// tilt, flat depth)`.
+#[test]
+fn sub_quantum_descents_export() {
+    let cases = [
+        (6.0, 1.0, 20.0, 33.0, 0.5),
+        (6.0, 1.5, 11.0, 33.0, 3.0),
+        (6.0, 1.5, 11.0, 52.0, 3.0),
+        (6.0, 2.0, 11.0, 52.0, 3.0),
+        (6.0, 2.0, 20.0, 52.0, 3.0),
+        (10.0, 1.0, 20.0, 33.0, 0.5),
+        (10.0, 1.5, 11.0, 33.0, 0.5),
+        (20.0, 1.5, 6.0, 52.0, 3.0),
+    ];
+    for (h, steps, half_deg, tilt_deg, flat_mm) in cases {
+        let region = line_end_region(h, 0.77 * h, steps * h / 160.0, half_deg, tilt_deg);
+        let project = drawn(&[(vec![region], (10.0, 10.0))]);
+        let op = carve_of(&project, "t5", |op| {
+            op.flat_depth_mm = Some(flat_mm);
+            op.step_over_fraction = Some(0.1);
+        });
+        if let Err(e) = export_carve(&project, &op) {
+            panic!("h {h}, {steps} steps, {half_deg}°, tilted {tilt_deg}°, flat {flat_mm}: {e}");
+        }
+    }
+}
