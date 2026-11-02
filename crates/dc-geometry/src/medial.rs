@@ -39,7 +39,7 @@ mod grid;
 #[cfg(test)]
 mod tests;
 
-use crate::point::{Point, Vec2};
+use crate::point::{EPS_MM, Point, Vec2};
 use crate::polyline::Polyline;
 use crate::region::Region;
 use grid::{SegmentDistanceGrid, count_of};
@@ -893,7 +893,9 @@ fn drop_small_components(graph: &mut Graph, min_total_mm: f64) {
 /// one whose medial disc reaches the corner, and only one whose segment to
 /// the corner stays inside the region. With `sampled` (#452), the boundary's
 /// distance grid, the segment gets a node every step (upstream's has
-/// none).
+/// none), and no other corner's tip is a joint (#463: upstream's scores
+/// can pick the tip of the next vertex along a curve, which runs the tip's
+/// branch along the wall).
 fn extend_into_corners(
     graph: &mut Graph,
     corners: &[Corner],
@@ -906,6 +908,12 @@ fn extend_into_corners(
         let mut candidates: Vec<(usize, bool, f64)> = Vec::new();
         for (i, node) in graph.nodes.iter().enumerate() {
             if graph.degree(i) == 0 && count > 1 {
+                continue;
+            }
+            // #463: another corner's tip has no disc to reach this corner
+            // with; joined to it, the tip's branch runs along the wall
+            // between the two corners, a tip on the outline all the way.
+            if sampled.is_some() && node.clearance_mm <= EPS_MM {
                 continue;
             }
             let d = node.p - corner.p;

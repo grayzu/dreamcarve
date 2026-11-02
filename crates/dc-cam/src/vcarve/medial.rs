@@ -48,6 +48,13 @@
 //!   where it carves short of it between its points, a junction's above
 //!   all (`Fit::off_axis`), so the groove reaches every wall within
 //!   0.01 mm.
+//! - **The tip stays in the region (#463).** A straight stretch between
+//!   two medial nodes can cut across the tip of a thin wedge of material
+//!   (a drawn line that ends inside a region), and at the start plane,
+//!   where the cone is a point, the room test cannot see it. Fitting goes
+//!   round the vertex such a stretch cuts across, by the medial axis
+//!   point at it ([`Fit::around`]); a stretch that still leaves the
+//!   region is not cut ([`within_walls`]). Upstream does not check this.
 //! - **Every corner (#452, #456).** Every carve builds its axis to reach
 //!   every convex corner of its walls (`CornerReach::Every`), where
 //!   upstream's passes leave some with no branch.
@@ -282,7 +289,10 @@ pub(crate) fn runs_within(
                     .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
                     .collect();
                 let simple = simplify_chain(&points, tolerances.simplify_mm, walls, depth);
-                within_edge(fit_chain(&simple, walls, depth, &tolerances), edge)
+                within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
+                    .into_iter()
+                    .flat_map(|points| within_edge(points, edge))
+                    .collect::<Vec<_>>()
             })
             .map(|points| {
                 // #452: a chain deepened to its corners is cut off where
@@ -350,6 +360,44 @@ pub(crate) fn runs_within(
     }
     runs.extend(current);
     runs
+}
+
+/// The fitted chain `points` cut where a stretch's tip path still leaves
+/// the region between its ends (#463: [`Fit::around`] found no way round
+/// in its splits), in order. A tip outside the region cuts what the carve
+/// must keep, so the tool lifts over it instead; a piece left with one
+/// point is dropped, since a plunge at a fitted chain's point carves no
+/// more than the stretches through it. A chain that stays in is whole.
+fn within_walls(points: Vec<Point3>, walls: &Walls) -> Vec<Vec<Point3>> {
+    let leaves = |a: &Point3, b: &Point3| !walls.holds_path(a.xy(), b.xy(), walls.slack_mm());
+    if !points
+        .windows(2)
+        .any(|w| matches!(w, [a, b] if leaves(a, b)))
+    {
+        return vec![points];
+    }
+    let mut out = Vec::new();
+    let mut current: Vec<Point3> = Vec::new();
+    for pair in points.windows(2) {
+        let [a, b] = pair else {
+            continue;
+        };
+        if leaves(a, b) {
+            if current.len() > 1 {
+                out.push(std::mem::take(&mut current));
+            }
+            current.clear();
+        } else {
+            if current.is_empty() {
+                current.push(*a);
+            }
+            current.push(*b);
+        }
+    }
+    if current.len() > 1 {
+        out.push(current);
+    }
+    out
 }
 
 /// The stretches of chain `points` whose every move `edge` allows
@@ -856,7 +904,11 @@ impl Fit<'_> {
         let (walls, axis) = levels;
         if a.xy().distance_to(b.xy()) > EPS_MM {
             let fitted = (walls > 0)
-                .then(|| self.overcut(a, b).or_else(|| self.undercut(a, b)))
+                .then(|| {
+                    self.around(a, b)
+                        .or_else(|| self.overcut(a, b))
+                        .or_else(|| self.undercut(a, b))
+                })
                 .flatten();
             let split = fitted.map(|p| (p, (walls - 1, axis))).or_else(|| {
                 (axis > 0)
@@ -871,6 +923,40 @@ impl Fit<'_> {
             }
         }
         out.push(b);
+    }
+
+    /// Where the tip path `a`–`b` leaves the region between its ends (by
+    /// more than [`Walls::slack_mm`], the cone test's own allowance), the
+    /// medial axis point it should have gone round by, at its own depth
+    /// (#463). A chain's straight stretch can cut across a wall that bends
+    /// between its points, the tip of a line's end (a thin wedge of
+    /// material standing into the region) most of all: the Delaunay
+    /// dual's edges join circumcentres a step apart, and a wedge narrower
+    /// than the step passes between them. The room test cannot see that
+    /// where the cone is a point: at the start plane the room at a
+    /// crossing is 0, not less, so [`Fit::overcut`] would split the
+    /// stretch onto the walls either side of the wedge and keep the move
+    /// across it. Here the vertex the stretch cuts across
+    /// ([`Walls::excursion`]) is gone round: the largest disc inside the
+    /// walls tangent at it, its centre along the vertex's bisector into
+    /// the region ([`Walls::ball_radius_mm`]), has its centre on the axis,
+    /// with the disc's radius as its clearance.
+    fn around(&self, a: Point3, b: Point3) -> Option<Point3> {
+        let corner = self
+            .walls
+            .excursion(a.xy(), b.xy(), self.walls.slack_mm())?
+            .corner?;
+        let reach_mm = a.xy().distance_to(b.xy())
+            + self
+                .walls
+                .clearance_mm(a.xy())
+                .max(self.walls.clearance_mm(b.xy()));
+        let radius_mm = self
+            .walls
+            .ball_radius_mm(corner.p, corner.bisector, reach_mm);
+        let m = corner.p + corner.bisector * radius_mm;
+        (m.distance_to(a.xy()) > EPS_MM && m.distance_to(b.xy()) > EPS_MM)
+            .then(|| Point3::new(m.x, m.y, self.depth.z_mm(radius_mm)))
     }
 
     /// Where the cone along `a`–`b` reaches furthest past a wall, set to
@@ -914,7 +1000,13 @@ impl Fit<'_> {
             k += 1.0;
             let x = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
             let (near_mm, w) = self.walls.nearest(x)?;
-            if near_mm <= EPS_MM || floor_mm.is_some_and(|f| near_mm >= f) {
+            // #463: a point the stretch runs outside the walls at (within
+            // their slack) has its nearest wall behind it, and the disc
+            // from there would grow into the material.
+            if near_mm <= EPS_MM
+                || floor_mm.is_some_and(|f| near_mm >= f)
+                || !self.walls.holds(x, 0.0)
+            {
                 continue;
             }
             let u = (x - w) * (1.0 / near_mm);

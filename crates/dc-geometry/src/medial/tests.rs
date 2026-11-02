@@ -1192,3 +1192,53 @@ proptest! {
         }
     }
 }
+
+/// #463: no corner's tip is joined to another's. A 70 mm square whose top
+/// is a wave, `amp` high and `wave_mm` long, flattened every `every_mm`, as
+/// a traced drawing's curve is: near each inflection the vertices turn a
+/// few degrees into the region and stand a few hundredths beyond the axis,
+/// so each gets a tip (`CornerReach::Every`). Upstream's joint scores could
+/// join the next vertex's tip to the one before (a tip "aligned" with its
+/// bisector, at distance 0.12, scores better than the axis a step or more
+/// away), and the branch ran along the wall: a V-bit's tip on the outline
+/// all the way, which S17 refuses. On the maintainer's line-art eagle that
+/// was the next failure after the first. Every convex corner is still
+/// reached within 0.01 mm (#456).
+#[test]
+fn no_corner_tip_is_joined_to_another() {
+    for (amp_mm, wave_mm, every_mm) in [(1.0, 10.0, 0.15), (0.5, 5.0, 0.12), (1.0, 4.0, 0.12)] {
+        let mut outer = vec![Point::new(0.0, 0.0), Point::new(70.0, 0.0)];
+        let pieces = (70.0 / every_mm) as usize;
+        for k in (0..=pieces).rev() {
+            let x = k as f64 * every_mm;
+            outer.push(Point::new(x, 70.0 + amp_mm * (TAU * x / wave_mm).sin()));
+        }
+        let r = region(&outer, &[]);
+        let step_mm = resolution(&r).expect("a resolution").step_mm;
+        let graph = medial_axis_with(&r, step_mm, TOL, EVERY);
+        let case = format!("wave {amp_mm} × {wave_mm} mm every {every_mm} mm");
+        for (i, n) in graph.nodes.iter().enumerate() {
+            for &j in &graph.adjacency[i] {
+                let other = graph.nodes[j];
+                assert!(
+                    n.clearance_mm > 0.0 || other.clearance_mm > 0.0,
+                    "{case}: the tips at {:?} and {:?} are joined",
+                    n.p,
+                    other.p
+                );
+            }
+        }
+        for corner in convex_corners(&r, 0.0, TOL) {
+            let gap_mm = graph
+                .nodes
+                .iter()
+                .map(|n| n.p.distance_to(corner.p) - n.clearance_mm)
+                .fold(f64::INFINITY, f64::min);
+            assert!(
+                gap_mm <= 0.01,
+                "{case}: the corner at {:?} is {gap_mm:.4} mm from every medial disc",
+                corner.p
+            );
+        }
+    }
+}

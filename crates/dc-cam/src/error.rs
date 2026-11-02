@@ -846,8 +846,28 @@ pub enum CamError {
         y_mm: f64,
         /// Where, mm.
         z_mm: f64,
-        /// How far past the wall, mm.
+        /// How far past the wall, mm: always more than the flatten
+        /// tolerance the test allows, so the message shows it (#463).
         overlap_mm: f64,
+    },
+    /// A V-bit toolpath holds an arc move, which the generator-side cone
+    /// test (step 10) is not written for: a V toolpath is straight moves.
+    /// A defect in the generator, never in the user's project: the
+    /// toolpath is not returned (#463; it was `ConeOffMaterial` at 0 mm).
+    #[error(
+        "operation `{op}` has an arc move ending at ({x_mm:.3}, {y_mm:.3}, {z_mm:.3}) mm in {shape}, which its V-bit cone test does not take; no toolpath was produced"
+    )]
+    ConeArcMove {
+        /// The operation.
+        op: OperationId,
+        /// The region the arc ends in or nearest.
+        shape: Box<ShapeRef>,
+        /// Where the arc ends, mm, project space.
+        x_mm: f64,
+        /// Where, mm.
+        y_mm: f64,
+        /// Where, mm.
+        z_mm: f64,
     },
     /// One of an Inlay's values is unset (format 22, capability 45;
     /// validation's `operation_value_unset`): `depth_mm`, `glue_gap_mm` or

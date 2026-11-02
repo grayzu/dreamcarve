@@ -145,6 +145,18 @@ phases bump the patch number.
 
 ### Fixed
 
+- A V-Carve or Inlay of line art no longer stops at "would cut 0.0000 mm
+  past a wall". Where a drawn line ends inside a region, a thin wedge of
+  material narrower than the medial axis's sampling step, a straight cut
+  between two points of the medial line could cross the wedge's tip at
+  the stock top, where the V-bit's cone is a point and the cone test saw
+  no overlap; the generator's own check then refused the whole
+  toolpath, reading the distance at the move's end, where it is 0. The
+  carve now goes round such a tip on the medial line, a cut that would
+  still cross it is lifted over, and no corner's cut runs along a wall
+  to the next corner. A real violation is still refused, and the message
+  now gives the distance where the tip is farthest out, never 0
+  ([#463]).
 - A male Inlay without a clearing pass no longer fails export with "an arc
   in place of operation's straight moves that does not follow them". Round
   the band's V wall the arc fitter replaced a few moves a few thousandths
@@ -933,3 +945,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#453]: https://github.com/grayzu/dreamcarve/issues/453
 [#456]: https://github.com/grayzu/dreamcarve/issues/456
 [#457]: https://github.com/grayzu/dreamcarve/issues/457
+[#463]: https://github.com/grayzu/dreamcarve/issues/463
