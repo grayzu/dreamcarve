@@ -7008,6 +7008,109 @@ mod tests {
         }
     }
 
+    /// A cut along Y 10 at Z 3 to X 20, then `steps` straight cuts at
+    /// those X, then one on to X 30, and retract.
+    fn sub_quantum_steps_at(steps: &[f64]) -> Toolpath {
+        let mut moves = vec![
+            Move::rapid(Point3::new(10.0, 10.0, 11.0)),
+            Move::linear(Point3::new(10.0, 10.0, 3.0), 300.0),
+            Move::linear(Point3::new(20.0, 10.0, 3.0), 1000.0),
+        ];
+        for &x in steps {
+            moves.push(Move::linear(Point3::new(x, 10.0, 3.0), 1000.0));
+        }
+        moves.push(Move::linear(Point3::new(30.0, 10.0, 3.0), 1000.0));
+        moves.push(Move::rapid(Point3::new(30.0, 10.0, 11.0)));
+        Toolpath { moves }
+    }
+
+    /// The steps of #483 on a line: from X 20 to 20.0004 and back to
+    /// 19.9996, both written as nothing (they round to X20), then to
+    /// 20.0007, written `X20.001`. That line ends within one unit in the
+    /// last place of 20.0004 as well, so S6, taking the first move it
+    /// reaches, matched it to the step to 20.0004; from there 19.9996 is
+    /// 0.0014 mm off and no line follows for it.
+    const SUB_QUANTUM_STEPS: [f64; 3] = [20.0004, 19.9996, 20.0007];
+
+    /// #483: S6 matches a line to the toolpath move it was written for,
+    /// not the first move it ends within a unit in the last place of. A
+    /// V-Carve's sub-quantum steps ([`SUB_QUANTUM_STEPS`]) are written
+    /// as `X20.000` (the steps that round to it written as nothing) and
+    /// `X20.001`; the program reproduces its toolpath, and exports.
+    #[test]
+    fn line_after_sub_quantum_steps_matches_the_move_it_was_written_for() {
+        let (mut project, op, tool) = partless_fixture();
+        project.arc_fit_tolerance_mm = None;
+        let text = emit_one(
+            &project,
+            &op,
+            &tool,
+            sub_quantum_steps_at(&SUB_QUANTUM_STEPS),
+        )
+        .unwrap_or_else(|e| panic!("{e:?}"));
+        assert!(
+            text.contains("\nX20.000 F1000.000\nX20.001\nX30.000\n"),
+            "the steps are written as X20.001 alone:\n{text}"
+        );
+    }
+
+    /// #483: S6 still refuses a program that does not follow its
+    /// toolpath, however it matches lines to moves. With `X20.002` in
+    /// place of `X20.001`, the step to 20.0007 is 0.0013 mm off it and
+    /// 0.0007 mm from X20, so no line can stand for the cut on to X 30:
+    /// a mismatch at that move, as before.
+    #[test]
+    fn line_off_sub_quantum_steps_still_fails_s6() {
+        let program = |line: &str| {
+            format!(
+                "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX10 Y10\nG1 Z-3 F300\nX20 F1000\n{line}X30\nG0 Z5\nM5\n"
+            )
+        };
+        let toolpath = sub_quantum_steps_at(&SUB_QUANTUM_STEPS);
+        check_against_with(&program("X20.001\n"), &toolpath, None).unwrap();
+        let result = check_against_with(&program("X20.002\n"), &toolpath, None);
+        assert!(is_mismatch_at(&result, 6), "{result:?}");
+        let result = check_against_with(&program(""), &sub_quantum_steps_at(&[20.002]), None);
+        assert!(is_mismatch_at(&result, 3), "{result:?}");
+    }
+
+    /// #483: a fitted arc that ends at a toolpath vertex the arc's end is
+    /// within a unit in the last place of, where an earlier vertex is
+    /// too. [`chord_run`]'s quarter circle, its last vertex 0.0006 mm
+    /// short of (50, 60), then back along the circle to 0.002 mm short,
+    /// then at (50, 60), then a cut to (40, 60): one `G3` to (50, 60) for
+    /// all of them and a `G1` on. S6 ended the chain at the first vertex
+    /// near its end and found no line for the vertex 0.002 mm back; the
+    /// chain ends at the last.
+    #[test]
+    fn fitted_arc_ends_at_the_vertex_it_was_written_for() {
+        let mut toolpath = chord_run(32, FRAC_PI_2, None);
+        let retract = toolpath.moves.pop().unwrap();
+        let on = |short_mm: f64| {
+            let angle = FRAC_PI_2 - short_mm / 10.0;
+            Point3::new(50.0 + 10.0 * angle.cos(), 50.0 + 10.0 * angle.sin(), 5.0)
+        };
+        let last = toolpath.moves.len() - 1;
+        toolpath.moves[last].to = on(0.0006);
+        for to in [
+            on(0.002),
+            Point3::new(50.0, 60.0, 5.0),
+            Point3::new(40.0, 60.0, 5.0),
+        ] {
+            toolpath.moves.push(Move::linear(to, 1000.0));
+        }
+        toolpath
+            .moves
+            .push(Move::rapid(Point3::new(40.0, 60.0, retract.to.z)));
+        let text = chord_run_text("G3 X50 Y60 I-10 J0 F1000\nG1 X40\n");
+        check_against_with(&text, &toolpath, Some(0.01)).unwrap();
+        // The same arc ending 0.003 mm short of its last vertex, at the
+        // vertex 0.002 mm back, is not that vertex's arc: refused.
+        let text = chord_run_text("G3 X50.003 Y60 I-10 J0 F1000\nG1 X40\n");
+        let result = check_against_with(&text, &toolpath, Some(0.01));
+        assert!(result.is_err(), "{result:?}");
+    }
+
     /// #142: two abutting runs on different circles stay separate chains.
     /// A quarter of the radius 10 circle about (50, 50) from +X to
     /// (50, 60), then a quarter of the radius 15 circle about (50, 45) on

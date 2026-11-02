@@ -281,10 +281,15 @@ fn male_of_line_art_with_rings_orders_its_cuts() {
 
 /// #483 (found by the sweep): the V-Carve from a cleared start depth of
 /// line-art seed `0x54` (a near touch 0.0012 mm wide and a framed mesh;
-/// 15° bit, millimetre program) exports. The safety pass refuses it:
-/// "the program does not reproduce operation `o2` move 8697".
+/// 15° bit, millimetre program, arc fitting on) exports. The safety pass
+/// refused it: "the program does not reproduce operation `o2` move
+/// 8696". A fitted arc ends where three vertices and a 0.0007 mm spike
+/// between them round to one point, so the emitter writes nothing for
+/// them; S6 matched the arc's end to the first, the next line to the
+/// second, and found no line for the spike. About a minute in a release
+/// build, so it runs with the sweep.
 #[test]
-#[ignore = "#483: a written program that does not reproduce its toolpath"]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
 fn v_carve_of_line_art_reproduces_when_written() {
     let outcome = reproduce("line art", 0x54, designs::line_art(0x54), Kind::VCarveStart);
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
