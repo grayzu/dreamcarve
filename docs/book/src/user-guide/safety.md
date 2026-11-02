@@ -206,8 +206,11 @@ written. There are no safety warnings, only errors.
       width of its end mill stays inside the ring at every depth, since
       the carve has cleared the ring to the top and below the floor it
       cuts the board's base, which rule 1 bounds with the cut-out's own
-      `through_cut_allowance_mm`. Its tabs are held as a Profile's: no
-      plunge below a tab's top on the tab.
+      `through_cut_allowance_mm`. Its end mill's centre is also held to
+      the cut-out's path, worked out again from the project: the band's
+      edge inset by the end mill's radius, or by the V wall's foot plus
+      the radius. Its tabs are held as a Profile's: no plunge below a
+      tab's top on the tab.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus

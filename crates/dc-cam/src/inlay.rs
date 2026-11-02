@@ -42,7 +42,7 @@ use crate::vcarve::{
 };
 use crate::warning::Warning;
 use dc_geometry::{
-    Contour, EPS_MM, Polyline, Rect, Region, Transform, nearest_point, outer_offset, rounded_band,
+    Contour, EPS_MM, Polyline, Rect, Region, Transform, inset_outers, nearest_point, rounded_band,
     surround,
 };
 use dc_project::{
@@ -515,11 +515,14 @@ pub fn generate_inlay(
         toolpath,
     });
     // #443: the cut-out last, so the piece is freed only once carved.
-    if let (Some((cut_out, band)), Some(thickness_mm)) = (cut_out, project.stock.thickness_mm) {
-        let paths: Vec<Polyline> = cut_out_paths(&design, &band, project.flatten_tolerance_mm)
-            .into_iter()
-            .map(Contour::into_polyline)
-            .collect();
+    if let (Some((cut_out, band, diameter_mm)), Some(thickness_mm)) =
+        (cut_out, project.stock.thickness_mm)
+    {
+        let paths: Vec<Polyline> =
+            cut_out_paths(&design, &band, diameter_mm, project.flatten_tolerance_mm)
+                .into_iter()
+                .map(Contour::into_polyline)
+                .collect();
         let (cut_project, profile) = cut_out_profile(project, op, cut_out, &paths, thickness_mm);
         let (toolpath, cut_warnings) =
             generate_profile_below(&cut_project, &profile, values.engagement_mm())?;
@@ -534,7 +537,8 @@ pub fn generate_inlay(
 }
 
 /// The cut-out of `op` (#443), checked as validation checks it, with the
-/// male's band ([`dc_project::male_band`], #448): `None` without one.
+/// male's band ([`dc_project::male_band`], #448) and its tool's diameter,
+/// mm: `None` without one.
 ///
 /// # Errors
 ///
@@ -548,7 +552,7 @@ fn checked_cut_out<'o>(
     project: &Project,
     op: &'o InlayOp,
     values: Values,
-) -> Result<Option<(&'o InlayCutOut, MaleBand)>, CamError> {
+) -> Result<Option<(&'o InlayCutOut, MaleBand, f64)>, CamError> {
     let Some(cut_out) = &op.cut_out else {
         return Ok(None);
     };
@@ -595,25 +599,27 @@ fn checked_cut_out<'o>(
             needed_mm,
         });
     }
-    Ok(Some((cut_out, band)))
+    Ok(Some((cut_out, band, tool.diameter_mm)))
 }
 
-/// A male Inlay's cut-out paths (#443, #448; design "Inlay", step 6):
-/// the outermost outlines of its mirrored `design` grown by `c` and
-/// rounded by `R` ([`dc_geometry::outer_offset`]), where `c` is
-/// [`MaleBand::cut_out_offset_mm`] and `R` the band's
-/// `outline_rounding_mm`, so the tool centre runs in the middle of the
-/// band's flat floor: from the design grown by `P·tan(α/2)` out to the
-/// band's edge when it is open, `M`, or to `M − P·tan(α/2)` with a V wall.
-/// A hole of the design is not cut out: it stays in the plug.
+/// A male Inlay's cut-out paths for an end mill `diameter_mm` wide (#443,
+/// #448, #461; design "Inlay", step 6): the outer outlines of the band's
+/// edge `B` round its mirrored `design` ([`dc_geometry::rounded_band`],
+/// closed by the edge's rounding) inset by [`MaleBand::cut_out_inset_mm`]
+/// ([`dc_geometry::inset_outers`]), so the tool's edge runs along the
+/// outer edge of the band's flat floor: on `B` when the edge is open,
+/// `P·tan(α/2)` inside it, at the V wall's foot, otherwise. Above the
+/// floor it cuts only what the carve removed. A hole of the design is not
+/// cut out: it stays in the plug.
 #[must_use]
-pub fn cut_out_paths(design: &[Region], band: &MaleBand, tolerance_mm: f64) -> Vec<Contour> {
-    outer_offset(
-        design,
-        band.cut_out_offset_mm(),
-        band.outline_rounding_mm,
-        tolerance_mm,
-    )
+pub fn cut_out_paths(
+    design: &[Region],
+    band: &MaleBand,
+    diameter_mm: f64,
+    tolerance_mm: f64,
+) -> Vec<Contour> {
+    let edge = rounded_band(design, band.margin_mm, band.edge_rounding_mm, tolerance_mm);
+    inset_outers(&edge, band.cut_out_inset_mm(diameter_mm), tolerance_mm)
 }
 
 /// The On line Profile a male Inlay's cut-out is (#443), and a copy of

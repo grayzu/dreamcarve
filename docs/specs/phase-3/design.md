@@ -456,9 +456,9 @@ pub fn surround(regions: &[Region], margin_mm: f64, rounding_mm: f64, tolerance_
 /// band regions keep their outer edge and lose the design's outers grown
 /// by `inset_mm`; design holes are inset all round.
 pub fn surround_floor_regions(surround: &[Region], design: &[Region], inset_mm: f64, open_edge: bool, tolerance_mm: f64) -> Vec<Region>;
-/// The cut-out path (#443, #448): the outers grown by `distance_mm +
-/// rounding_mm`, united, inset by `rounding_mm`; the outer outlines.
-pub fn outer_offset(regions: &[Region], distance_mm: f64, rounding_mm: f64, tolerance_mm: f64) -> Vec<Contour>;
+/// The cut-out path (#443, #448, #461): `regions` (the band's edge `B`)
+/// inset as `floor_regions` insets them; the outer outlines.
+pub fn inset_outers(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Vec<Contour>;
 /// Whether a surround region lies inside a design outer (a design hole).
 pub fn is_design_hole(region: &Region, design: &[Region]) -> bool;
 impl Transform { pub fn mirror_x_about(x_mm: f64) -> Self; }
@@ -1358,23 +1358,31 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    mirrors the male's back, and checks that the carved discs of each
    toolpath touch (within 0.02 mm) the same outline at the same inset.
 6. **Cut-out** (male only, format 23, #443; Corbin's optional "Plug
-   Cutout"; moved by #448). With `s = tan(α/2)`, `P`, `M`, `R` and `r`
-   the cut-out end mill's radius, the band's flat floor ring runs from
-   the mirrored design grown by `P·s` out to `B` with an open edge, or to
-   `M − P·s` inside it with a V wall. The tool centre runs on the
-   mirrored design's **outermost** outlines grown by `c + R` and shrunk
-   by `R`, `((design outers) ⊕ (c + R)) ⊖ R` (`dc_geometry::outer_offset`:
-   with `R` 0 one closed path per outer outline, offsets that cross
-   united, an island's offset, inside its part's, dropped), with `c =
-   (M + P·s) / 2` with an open edge, the middle of the floor ring
-   (`InlayCutOutNoRoom` unless `M − P·s ≥ 2r`, naming `P·s + 2r`), and
-   `c = M / 2` with a V wall (`M − 2·P·s ≥ 2r`, naming `2·P·s + 2r`;
-   `MaleBand::cut_out_offset_mm`, `cut_out_margin_needed_mm`). Both keep
-   the cutter at least `r` inside the ring: `W = (X ⊕ (c + R)) ⊖ R`
-   contains `X ⊕ c`, and `W ⊕ r ⊆ (X ⊕ (c + r + R)) ⊖ R`, inside `B`
-   when `c + r ≤ M`. It is never at the band's outer edge, where a V wall
-   would leave a full-height knife edge on the freed piece, and design
-   holes are not cut out. The paths are cut by the Profile code as an On
+   Cutout"; moved by #448 and #461). With `s = tan(α/2)`, `P`, `M`, `X`
+   the mirrored design, `B` the band's edge (step 4, closed by `R'`) and
+   `r` the cut-out end mill's radius, the band's flat floor ring runs
+   from the plug's foot, `X ⊕ P·s`, out to `B` with an open edge, or to
+   the V wall's foot, `B ⊖ P·s`, with a V wall. The tool centre runs as
+   far out as the floor reaches, so that above the floor it cuts nothing
+   the carve did not remove: on `B ⊖ r` with an open edge, its outer
+   edge along the edge pass's upright wall; on `B ⊖ (P·s + r)` with a V
+   wall, its outer edge along the slope's foot, so the freed plug has no
+   knife edge (`MaleBand::cut_out_inset_mm`, `r` or `P·s + r`;
+   `dc_geometry::inset_outers` of `rounded_band(X, M, R')`: inset as
+   `floor_regions` insets, outers shrunk and holes grown, and only the
+   outers kept, so a hole of `B`, board no carve reached, is not cut
+   round; `inlay::cut_out_paths`). Before #461 it ran in the middle of
+   the floor, `c = (M + P·s) / 2` (open) or `M / 2` (V wall) out from
+   `X` closed by `c + R`, which left a strip of floor outside it; the
+   maintainer's preview (2026-11-01) asked for it as far out as it can go
+   without cutting more. **Room** is unchanged: `InlayCutOutNoRoom`
+   unless `M − P·s ≥ 2r` with an open edge (naming `P·s + 2r`) or `M −
+   2·P·s ≥ 2r` with a V wall (naming `2·P·s + 2r`;
+   `MaleBand::cut_out_margin_needed_mm`). Both keep the cutter at least
+   `r` outside the plug's foot: `B ⊇ X ⊕ M` (a closing only adds), so
+   every point of `B ⊖ i` is at least `M − i` from `X`, and `M − i − r ≥
+   P·s` is the condition. Design holes are not cut out. The paths are
+   cut by the Profile code as an On
    line Profile (`inlay::cut_out_profile`: the paths as one definition
    placed in place, climb, plunge entry, the cut-out's tool, tabs and
    allowance, depth `thickness + allowance`), with its passes starting at
@@ -1384,9 +1392,11 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    `RunLabel::CutOut(tool)`, the operation's last, after the V-bit's, so
    the piece is freed only once carved (`op1 (cut-out t2)`; with the
    clearing end mill the tool is fitted twice, and
-   `tool_change_avoidable` is expected). The star with the end mill's
-   clearing pass: `P·s = 1.155`, `c = 4.577`; without it the centre may
-   lie 2.74 to 5.26 mm out, `c = 4`.
+   `tool_change_avoidable` is expected). The star (`M` 8, `P·s` 1.155)
+   with the 3.175 mm end mill's clearing pass: the centre runs 1.588 mm
+   inside `B`, 6.41 mm out from the star where `B` is plain (4.577 mm
+   before #461); without it, 2.742 mm inside `B`, 5.26 mm out (4 mm
+   before).
 
 ### Bitmap import and storage (dc-import::bitmap, dc-project::bitmap)
 
@@ -1565,15 +1575,17 @@ it does for Pocket and Profile, and never from the toolpath.
   `dc_project::male_band` only: the mirrored targets, `surround` at `M`
   closed by `R'`, `surround_floor_regions` at `P·tan(α/2)` (out to `B`
   when the edge is open, #448) less noise, less the floors inside a
-  design outline (the design's holes). Its tabs are placed on the path
-  `outer_offset` at `c` rounded by `R` gives.
+  design outline (the design's holes).
   Every cut's tool-centre path lies in a ring at least `r` from its
   outlines, at any Z: above the floor the carve cleared the ring to the
   top; below it the cut-out cuts the board's base, which S1 bounds with
   the cut-out's own `through_cut_allowance_mm` (`Material::floor_mm`).
-  Its tabs are held as a Profile's (#337): the pass builds the On line
-  Profile itself on `dc_geometry::outer_offset` of the mirrored design at
-  `M / 2` and places its tab request by `dc_cam::placed_tabs::place`, the
+  And every point of it (its ends and middle, as an Engrave's are held)
+  lies on the cut-out's path within the slack (#461): the pass derives
+  the path itself, `inset_outers(rounded_band(design, M, R'),
+  MaleBand::cut_out_inset_mm(d))`, step 6. Its tabs are held as a
+  Profile's (#337): the pass builds the On line Profile itself on that
+  path and places its tab request by `dc_cam::placed_tabs::place`, the
   documented layout rule. It never calls a generator
   (`s17_uses_no_generator`).
 - **S18, countersink.** For a Drill whose cycle is a countersink: every
@@ -1707,7 +1719,7 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 ## Module layout
 
 ```
-crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, outer_offset, is_design_hole), transform.rs (+ mirror_x_about)}
+crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole), transform.rs (+ mirror_x_about)}
 crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v24_to_v25), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
@@ -1801,8 +1813,9 @@ for V operations.
 - `inlay::female_equals_a_flat_depth_v_carve` (acceptance 56, move for move).
 - `inlay::male_engagement_beyond_the_cone_is_an_error` (H4: `D 2.5, G 0.25, P 1.5`, 90° 6.35 mm bit → `VBitConeExceeded` naming 3.75 mm and 3.175 mm; the star's values pass), `inlay::male_shank_check_in_the_safety_pass_counts_from_the_stock_top` (H4, `safety::`).
 - `inlay::male_mirrors_about_the_targets_centre_line` (acceptance 57: the mirrored outlines; the note's X), `inlay::male_carves_the_surround_and_the_holes` (every cutting point in the band or the circle), `inlay::male_floor_is_at_depth_minus_gap_plus_plug` (nothing below −5), `inlay::male_flank_passes_through_the_outline_at_the_start_plane` (within 0.02), `inlay::female_and_male_walls_mate` (the fit property, `z` 0..3, within 0.02), `inlay::glue_gap_at_or_above_depth_is_an_error`, `inlay::thin_plug_base_warns_on_10_mm_stock_and_not_on_12`, `inlay::clearing_pass_clears_the_male_floor`, `inlay::surround_of_a_star_with_a_hole_has_the_hole_as_a_region`, `inlay::mirror_negates_bulges_and_keeps_areas` (arcs survive the mirror).
-- The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_path_is_half_the_margin_out_from_the_mirrored_outline` (every point 4 mm from the mirrored star within 0.01), `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_refuses_a_female_and_a_narrow_floor`; `validate::cut_out_on_a_female_is_an_error`, `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`; `carve::outer_offset_grows_only_the_outermost_outlines` (dc-geometry).
-- The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::outer_offset_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::rounded_cut_out_runs_mid_floor_ring` (every point `c` from the star closed by `c + R` within 0.01), `inlay::cut_out_no_room_uses_the_open_edge_rule`.
+- The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_refuses_a_female_and_a_narrow_floor`; `validate::cut_out_on_a_female_is_an_error`, `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`.
+- The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::inset_outers_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::cut_out_no_room`.
+- The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
@@ -1953,8 +1966,9 @@ Goal: the lettered inlay pair cut and fitted.
     added 2026-10-31 at the maintainer's request after previewing a
     lettered male): `InlayOp::outline_rounding_mm`, `v23_to_v24`,
     `inlay_outline_rounding`; the edge rule (`dc_project::male_band`), the
-    rounded band, the open edge and the cut-out in the middle of the
-    floor ring ("Algorithms → Inlay", steps 4 and 6), S17 against the
+    rounded band, the open edge and the cut-out in the floor ring
+    ("Algorithms → Inlay", steps 4 and 6; along its outer edge since
+    #461), S17 against the
     open edge and S9 on the open floor; the lettered pair rounded by
     10 mm. A user-drawn boundary is deferred to #449. Tests: the #448
     group of the test plan, `cli::lettered_inlay_female_and_male_export`,

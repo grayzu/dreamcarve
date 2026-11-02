@@ -566,8 +566,8 @@ fn assert_off(result: Result<(), ExportError>, line: usize) {
 /// #443, #461: the two shapes' male with the 90° bit, `P` 1 and a 6 mm
 /// margin, no clearing pass: its floor ring runs from 1 mm to 5 mm off the
 /// mirrored rectangle (X 46 to 76, Y 20 to 30), the band's V wall's foot,
-/// and the cut-out's path is the band's edge `B` (6 mm off) inset by `P·s
-/// + r` = 2.5875 mm: 3.4125 mm below the rectangle, Y 16.5875. A cut-out
+/// and the cut-out's path is the band's edge `B` (6 mm off) inset by
+/// `P·s + r` = 2.5875 mm: 3.4125 mm below the rectangle, Y 16.5875. A cut-out
 /// there, through the board, passes. One 3 mm below it, in the ring's
 /// middle, where the cut-out ran before #461, is off the path; 1.5 mm or
 /// 4.5 mm below it, its footprint crosses the plug's wall or the band's
@@ -633,8 +633,8 @@ fn cut_out_plunge_into_a_tab_fails() {
     let operation = Operation::Inlay(op.clone());
     assert_eq!(
         material::run_tab_spines(&project, &operation, &label, &tool).len(),
-        6,
-        "four round the rectangle; two round the square, whose path is too short for four"
+        7,
+        "four round the rectangle; three round the square, whose 45 mm path (#461) is too short for four"
     );
     // The tabs as placing the cut-out's request finds them.
     let design: Vec<dc_geometry::Contour> = [

@@ -754,8 +754,8 @@ pub enum Problem {
     /// (format 23, #443; #448): the floor ring, from the mirrored design
     /// grown by `P·tan(α/2)` out to the band's edge (`M` out when a
     /// clearing pass cuts the edge, `M − P·tan(α/2)` with a V-walled
-    /// edge), is narrower than the tool, so a cut-out in its middle would
-    /// cut into the plug's wall or the band's outer wall. An error.
+    /// edge), is narrower than the tool, so a cut-out along its outer edge
+    /// (#461) would cut into the plug's wall. An error.
     InlayCutOutNoRoom {
         /// The operation.
         operation: OperationId,
@@ -1532,7 +1532,7 @@ impl fmt::Display for Problem {
                 needed_mm,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, in the middle of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall or the band's outer wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
+                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
             ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
@@ -7295,8 +7295,8 @@ mod tests {
         }
     }
 
-    /// #443: the tool centre runs half the margin out, so the floor ring,
-    /// `M − 2·P·tan(α/2)` wide, must hold the tool's diameter. The star
+    /// #443, #461: with a V wall the floor ring, `M − 2·P·tan(α/2)` wide,
+    /// must hold the tool's diameter. The star
     /// with `margin_mm: 4` on the 60° bit (`P·s = 1.155`) leaves 1.69 mm
     /// for the 3.175 mm end mill: `inlay_cut_out_no_room`, at
     /// `margin_mm`, naming the margin needed, 2.309 + 3.175 = 5.484 mm.
@@ -7343,7 +7343,8 @@ mod tests {
 
     /// #448: with an open band edge the floor ring runs from the plug's
     /// foot, `P·tan(α/2)` out, to the band's edge, `M` out, and the cut-out
-    /// runs in its middle, so it needs `M ≥ P·tan(α/2) + d`. The star's
+    /// runs along its outer edge (#461), so it needs `M ≥ P·tan(α/2) + d`.
+    /// The star's
     /// values on the 60° bit (`P·s` = 1.155) with a 3.175 mm clearing pass
     /// `t3`, which opens the edge, and a 6.35 mm cut-out `t1`: an 8 mm
     /// margin has room (6.845 mm), which a V wall would not (it needs

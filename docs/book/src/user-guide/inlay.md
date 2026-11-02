@@ -284,26 +284,34 @@ Its program is named `… cut-out t2`.
 
 **Where it cuts.** The band's floor is flat between the plug's foot and
 the band's outer edge: at the floor, the V-bit's flank stands
-`plug_depth_mm × tan(α/2)` off the design on the plug's side. With an
-open edge the floor runs out to the edge itself, and the end mill's
-centre runs in its middle, `(margin_mm + plug_depth_mm × tan(α/2)) / 2`
-out from the mirrored design's outer outlines: 4.577 mm in the quick
-start. With a V-walled edge the floor stops `plug_depth_mm × tan(α/2)`
-inside the edge too, and the centre runs half `margin_mm` out. Either
-way it runs round each convex corner on an arc, and is rounded as the
-band is: grown by that distance plus `outline_rounding_mm`, then shrunk
-by `outline_rounding_mm`. It never runs at the band's outer edge: a
-V wall there would leave a sharp edge, the full height of the board,
-standing round the freed piece, and it would land on the female's
-surface. The piece
-it frees is the plug on its backing, with a rim of the band's floor
-round it, `plug_depth_mm` below the plug's start plane, which clears the
-female's surface by that much when the plug is seated. A hole in the
-design (the D's counter in the quick start) is never cut round: it stays
-in the plug.
+`plug_depth_mm × tan(α/2)` off the design on the plug's side. The
+cut-out runs as far out as the floor reaches, so above the floor it cuts
+nothing the carve left standing:
 
-**Room.** The floor ring must be at least the end mill's diameter wide;
-else `check` refuses it, `inlay_cut_out_no_room`, and names the margin
+- **With an open edge** the floor runs out to the band's edge itself,
+  which the edge pass cut upright, and the cut-out's cutter runs along
+  that wall: its centre is its radius inside the band's edge, 1.588 mm
+  for the quick start's 3.175 mm end mill, at least `margin_mm` less the
+  radius out from the mirrored design (6.412 mm there).
+- **With a V-walled edge** the floor stops at the wall's foot,
+  `plug_depth_mm × tan(α/2)` inside the band's edge, and the cutter runs
+  along that: its centre is `plug_depth_mm × tan(α/2)` plus its radius
+  inside the edge. It never reaches the slope, which would leave a sharp
+  edge, the full height of the board, standing round the freed piece,
+  and it would land on the female's surface.
+
+Either way it follows the band's edge, rounded as it is: round the
+design's convex corners on arcs, and over every dip and gap that
+`outline_rounding_mm` (or, with an open edge, the edge pass's radius)
+fills. The piece it frees is the plug on its backing, with a rim of the
+band's floor round it, `plug_depth_mm` below the plug's start plane,
+which clears the female's surface by that much when the plug is seated.
+A hole in the design (the D's counter in the quick start) is never cut
+round: it stays in the plug.
+
+**Room.** The floor ring must be at least the end mill's diameter wide,
+so the cutter running along its outer edge stays clear of the plug's
+wall; else `check` refuses it, `inlay_cut_out_no_room`, and names the margin
 needed. With an open edge it is `margin_mm − plug_depth_mm × tan(α/2)`
 wide; with a V wall, `margin_mm − 2 × plug_depth_mm × tan(α/2)`. With the
 60° bit and a 2 mm plug depth, a 6.35 mm cut-out needs a margin of at
@@ -425,9 +433,10 @@ band edge upright, the board beyond that edge stands to the stock top, so
 the V-bit's cone is also held inside the band right up to the stock top.
 The band, its rounding and which pass cuts its edge are worked out again
 from the project. A clearing pass is held as a Pocket of its floor. A
-male's cut-out is held to the band's flat floor ring,
-worked out again from the project: the end mill's whole cutter stays
-clear of both its edges at every depth, it goes no deeper than its own
+male's cut-out is held to the band's flat floor ring and to its own path
+along the ring's outer edge, both worked out again from the project: the
+end mill's centre stays on that path, its whole cutter stays clear of
+both the ring's edges at every depth, it goes no deeper than its own
 `through_cut_allowance_mm` below the board, and it never plunges into one
 of its tabs.
 
@@ -446,7 +455,7 @@ These stop `check` and `export`.
 | `v_bit_angle_range` | "tool … has an included angle of … degrees; …" | Fix the tool's `included_angle_deg`. |
 | `v_bit_cone_exceeded` | "operation … engages tool … … mm deep …"; on a male "… from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared)" | See [Choosing the bit](#choosing-the-bit). On a female it is at `depth_mm`, on a male at `plug_depth_mm`. |
 | `inlay_cut_out_needs_male` | "… is a female inlay with a cut_out; only the male's plug is cut out of its board …" | Set the female's `cut_out` to `null`. |
-| `inlay_cut_out_no_room` | "… cuts its plug out with tool …, … mm across, in the middle of the band's flat floor; with margin_mm … mm that floor is narrower than the tool … Raise margin_mm to at least … mm in both projects, or use a narrower end mill" | Raise `margin_mm` in both projects, or use a narrower end mill. |
+| `inlay_cut_out_no_room` | "… cuts its plug out with tool …, … mm across, along the outer edge of the band's flat floor; with margin_mm … mm that floor is narrower than the tool … Raise margin_mm to at least … mm in both projects, or use a narrower end mill" | Raise `margin_mm` in both projects, or use a narrower end mill. |
 | `cutter_not_flat` | "… cuts its plug's cut-out with tool …, a V-bit; …" at `cut_out.tool` | Give the cut-out a flat end mill. |
 
 The clearing errors (`clearing_needs_end_mill`, `clearing_dangling_tool`)

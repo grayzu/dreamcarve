@@ -55,7 +55,7 @@ pub struct MaleBand {
     /// `plug_depth_mm · tan(α/2)`, `P·s`: how far the plug's foot stands
     /// out from the design at the floor, mm.
     pub foot_mm: f64,
-    /// `outline_rounding_mm`, `R`, 0 when unset: the cut-out's rounding.
+    /// `outline_rounding_mm`, `R`, 0 when unset.
     pub outline_rounding_mm: f64,
     /// The band edge's rounding, `R'`, mm: `max(R, r)` of the edge pass
     /// when the edge is open, so its end mill reaches every inward corner;
@@ -81,21 +81,28 @@ impl MaleBand {
         self.edge_pass().is_some()
     }
 
-    /// How far out from the design the cut-out's tool centre runs, mm
-    /// (design step 6): the middle of the floor ring, `(M + P·s) / 2` with
-    /// an open edge, `M / 2` with a V wall, whose ring ends `P·s` inside
-    /// the band.
+    /// How far inside the band's edge `B` the centre of a cut-out
+    /// `diameter_mm` wide runs, mm (design step 6; #461): as far out as the
+    /// floor reaches, so the tool's edge runs along the floor's outer edge
+    /// and above the floor it cuts only what the carve removed. With an
+    /// open edge the floor reaches `B`, which the edge pass cuts upright:
+    /// the radius `r`. With a V wall the floor ends at the slope's foot,
+    /// `P·s` inside `B`: `P·s + r`, so the freed plug has no knife edge.
     #[must_use]
-    pub fn cut_out_offset_mm(&self) -> f64 {
+    pub fn cut_out_inset_mm(&self, diameter_mm: f64) -> f64 {
+        let radius_mm = diameter_mm / 2.0;
         if self.is_open() {
-            (self.margin_mm + self.foot_mm) / 2.0
+            radius_mm
         } else {
-            self.margin_mm / 2.0
+            self.foot_mm + radius_mm
         }
     }
 
     /// The least margin whose floor ring holds a cut-out `diameter_mm`
     /// wide, mm: `P·s + d` with an open edge, `2·P·s + d` with a V wall.
+    /// With it the cut-out's path ([`Self::cut_out_inset_mm`] inside the
+    /// band's edge, at least `M` out from the design) keeps the tool its
+    /// radius outside the plug's foot, the design grown by `P·s`.
     #[must_use]
     pub fn cut_out_margin_needed_mm(&self, diameter_mm: f64) -> f64 {
         if self.is_open() {
@@ -286,7 +293,9 @@ mod tests {
     /// #448: the band's outer edge is open when an edge pass fits and the
     /// V-bit's flank at the plug's foot, `(D − G + P)·s` wide at the stock
     /// top, stays inside the band: `M ≥ (D − G + 2P)·s`, 5.25 mm here.
-    /// Open, its rounding is `max(R, r)`; with a V wall it is `R`. A
+    /// Open, its rounding is `max(R, r)` and a cut-out's centre runs its
+    /// radius inside the edge (#461); with a V wall the rounding is `R` and
+    /// the centre runs `P·s` farther in, inside the slope's foot. A
     /// margin of 5 has room for the pass but not the flank: a V wall,
     /// naming the 5.25 mm needed; with no pass that fits, the margin that
     /// fits the narrowest; with no clearing, nothing.
@@ -299,7 +308,7 @@ mod tests {
         dc_geometry::assert_approx_eq!(band.foot_mm, 1.5, 1e-12);
         dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 0.0, 1e-12);
         dc_geometry::assert_approx_eq!(band.edge_rounding_mm, 3.175 / 2.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_offset_mm(), 3.75, 1e-12);
+        dc_geometry::assert_approx_eq!(band.cut_out_inset_mm(3.175), 3.175 / 2.0, 1e-12);
         dc_geometry::assert_approx_eq!(band.cut_out_margin_needed_mm(3.175), 4.675, 1e-12);
 
         let rounded = InlayOp {
@@ -323,7 +332,7 @@ mod tests {
         };
         dc_geometry::assert_approx_eq!(needed_mm, 5.25, 1e-12);
         dc_geometry::assert_approx_eq!(band.edge_rounding_mm, 0.0, 1e-12);
-        dc_geometry::assert_approx_eq!(band.cut_out_offset_mm(), 2.5, 1e-12);
+        dc_geometry::assert_approx_eq!(band.cut_out_inset_mm(1.0), 1.5 + 0.5, 1e-12);
         dc_geometry::assert_approx_eq!(band.cut_out_margin_needed_mm(1.0), 4.0, 1e-12);
 
         let (p, op) = male(&["t1"]);

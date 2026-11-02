@@ -157,53 +157,25 @@ pub fn is_design_hole(region: &Region, design: &[Region]) -> bool {
     })
 }
 
-/// The outermost outlines of `regions` grown by `distance_mm` and closed
-/// by `rounding_mm`: a male inlay's cut-out path
-/// (`docs/specs/phase-3/design.md`, "Algorithms → Inlay", step 6; #443,
-/// #448), `((outers) ⊕ (c + R)) ⊖ R`, which the generator cuts and the
-/// safety pass holds it to. Every region's outer is offset outward by
-/// `distance_mm + rounding_mm` with round joins; holes are never offset.
-/// With no rounding, of the offsets only those inside no other come back,
-/// counter-clockwise (mm, Y-up), in the order of `regions`: an island in a
-/// design hole, whose offset lies inside its part's, is not cut round.
-/// When the offsets lie apart they come back as they are and keep their
-/// arcs; when they touch or cross they are united with [`crate::union`],
-/// which flattens arcs within `tolerance_mm`, and the union's outers come
-/// back in its canonical order. With a rounding the union is inset by it
-/// ([`rounded_band`]) and its outers come back. Empty when `regions` is
-/// empty, `distance_mm` is not a positive finite number, or
-/// `rounding_mm` is not 0 or one.
+/// The outer outlines of `regions` inset by `inset_mm`: a male inlay's
+/// cut-out path (`docs/specs/phase-3/design.md`, "Algorithms → Inlay",
+/// step 6; #443, #448, #461), its band's edge `B` ([`rounded_band`]) inset
+/// by the cut-out's radius `r` with an open edge, or by `P·tan(α/2) + r`
+/// with a V wall, which the generator cuts and the safety pass holds it
+/// to. The regions are inset as [`floor_regions`] insets them (outers
+/// shrunk, holes grown, with round joins), so a stretch where a hole of
+/// `regions` comes within `2·inset_mm` of the outer is skirted, and every
+/// outline comes back at least `inset_mm` inside `regions`. Only the
+/// outers of the result come back, counter-clockwise (mm, Y-up), in its
+/// order: a hole of `B` (board no carve reached, ringed by the design) is
+/// not cut round. Empty when nothing is left, or when `inset_mm` is not
+/// a positive finite number.
 #[must_use]
-pub fn outer_offset(
-    regions: &[Region],
-    distance_mm: f64,
-    rounding_mm: f64,
-    tolerance_mm: f64,
-) -> Vec<Contour> {
-    if !(usable(distance_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
+pub fn inset_outers(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Vec<Contour> {
+    if !usable(inset_mm) {
         return Vec::new();
     }
-    if rounding_mm > 0.0 {
-        return rounded_band(regions, distance_mm, rounding_mm, tolerance_mm)
-            .into_iter()
-            .map(|r| r.outer().clone())
-            .collect();
-    }
-    let grown: Vec<Contour> = regions
-        .iter()
-        .flat_map(|r| offset(r.outer(), distance_mm))
-        .collect();
-    if let Ok((nested, warnings)) = nest(grown.clone())
-        && warnings.is_empty()
-    {
-        return nested
-            .into_iter()
-            .filter(|r| r.depth() == 0)
-            .map(|r| r.outer().clone())
-            .collect();
-    }
-    let subject: Vec<Region> = grown.into_iter().filter_map(single_region).collect();
-    union(&subject, &[], tolerance_mm)
+    floor_regions(regions, inset_mm, tolerance_mm)
         .into_iter()
         .map(|r| r.outer().clone())
         .collect()
@@ -453,55 +425,74 @@ mod tests {
         );
     }
 
-    /// #443: the star with its circle grown by 4 mm is one outline, the
-    /// star's offset, arcs kept round its tips; the circle, a hole, is not
-    /// grown. Two squares 6 mm apart grown by 4 mm cross, so they are
-    /// united into one outline; a square inside another's hole (an
-    /// island) is inside its part's offset and not returned.
+    /// #461: the star's 8 mm band (with its circle, a hole of the design,
+    /// which the band does not offset) inset by 2 mm is one outline,
+    /// counter-clockwise, every vertex 2 mm from the band's edge within
+    /// the tolerance and inside it, its tips 36 mm out. A band with a hole
+    /// of its own (a 40 mm square less a 20 mm one) comes back as its
+    /// outer alone, 3 mm in. Where its wall is 4 mm wide, inset by 3 mm,
+    /// the grown hole crosses the shrunk outer, and the outlines skirt the
+    /// hole, at least 3 mm from it. A zero or NaN inset is empty.
     #[test]
-    fn outer_offset_grows_only_the_outermost_outlines() {
+    fn inset_outers_runs_inside_the_band_edge() {
         let (design, _) =
             nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
-        let grown = outer_offset(&design, 4.0, 0.0, TOL);
-        assert_eq!(grown.len(), 1, "{grown:?}");
-        assert!(grown[0].is_ccw());
-        assert!(
-            grown[0]
-                .polyline()
-                .vertices()
-                .iter()
-                .any(|v| v.bulge != 0.0),
-            "the tips stay arcs"
-        );
-        let b = grown[0].polyline().bounds().expect("bounds");
+        let band = rounded_band(&design, 8.0, 0.0, TOL);
+        let path = inset_outers(&band, 2.0, TOL);
+        assert_eq!(path.len(), 1, "{path:?}");
+        assert!(path[0].is_ccw());
+        let edge: Vec<Polyline> = band
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .map(|c| c.polyline().clone())
+            .collect();
+        let gap_mm = |p: Point| {
+            edge.iter()
+                .filter_map(|o| crate::nearest_point(o, p))
+                .map(|n| n.gap_mm)
+                .fold(f64::INFINITY, f64::min)
+        };
+        for v in path[0].polyline().vertices() {
+            assert!(holds(&band, v.point(), 0.0), "{v:?} is outside the band");
+            let gap = gap_mm(v.point());
+            assert!((gap - 2.0).abs() <= TOL, "{v:?} is {gap} mm from the edge");
+        }
+        let b = path[0].polyline().bounds().expect("bounds");
         for v in [b.max.x, b.max.y, -b.min.x, -b.min.y] {
-            assert!((v - 34.0).abs() < 1e-9, "tips grow by 4 mm: {b:?}");
+            assert!((v - 36.0).abs() < TOL, "tips 36 mm out: {b:?}");
         }
 
-        let (pair, _) = nest(vec![
-            rect(0.0, 0.0, 10.0, 10.0),
-            rect(16.0, 0.0, 10.0, 10.0),
-        ])
-        .expect("squares nest");
-        let grown = outer_offset(&pair, 4.0, 0.0, TOL);
-        assert_eq!(grown.len(), 1, "united: {grown:?}");
-        let b = grown[0].polyline().bounds().expect("bounds");
-        assert!((b.min.x + 4.0).abs() < TOL && (b.max.x - 30.0).abs() < TOL);
-
-        let (island, _) = nest(vec![
+        let (ring, _) = nest(vec![
             rect(0.0, 0.0, 40.0, 40.0),
-            rect(5.0, 5.0, 30.0, 30.0),
-            rect(15.0, 15.0, 10.0, 10.0),
+            rect(10.0, 10.0, 20.0, 20.0),
         ])
         .expect("nests");
-        assert_eq!(island.len(), 2, "a ring and an island");
-        let grown = outer_offset(&island, 2.0, 0.0, TOL);
-        assert_eq!(grown.len(), 1, "{grown:?}");
-        let b = grown[0].polyline().bounds().expect("bounds");
-        assert!((b.min.x + 2.0).abs() < 1e-9 && (b.max.x - 42.0).abs() < 1e-9);
+        assert_eq!(ring.len(), 1, "{ring:?}");
+        assert_eq!(ring[0].holes().len(), 1);
+        let path = inset_outers(&ring, 3.0, TOL);
+        assert_eq!(path.len(), 1, "the outer alone: {path:?}");
+        let b = path[0].polyline().bounds().expect("bounds");
+        assert!((b.min.x - 3.0).abs() < 1e-9 && (b.max.x - 37.0).abs() < 1e-9);
 
-        assert!(outer_offset(&design, 0.0, 0.0, TOL).is_empty());
-        assert!(outer_offset(&design, f64::NAN, 0.0, TOL).is_empty());
+        // A wall 4 mm wide at the bottom: inset by 3 mm, the hole grown
+        // by 3 crosses the outer shrunk by 3, and the path goes round.
+        let (thin, _) = nest(vec![
+            rect(0.0, 0.0, 40.0, 40.0),
+            rect(10.0, 4.0, 20.0, 26.0),
+        ])
+        .expect("nests");
+        let path = inset_outers(&thin, 3.0, TOL);
+        assert!(!path.is_empty());
+        let hole = thin[0].holes()[0].polyline().clone();
+        for c in &path {
+            for v in c.polyline().vertices() {
+                let to_hole = crate::nearest_point(&hole, v.point()).expect("near").gap_mm;
+                assert!(to_hole >= 3.0 - TOL, "{v:?} is {to_hole} mm from the hole");
+            }
+        }
+
+        assert!(inset_outers(&band, 0.0, TOL).is_empty());
+        assert!(inset_outers(&band, f64::NAN, TOL).is_empty());
     }
 
     /// The surround's area is the margin offset's area minus the design's:
@@ -623,8 +614,7 @@ mod tests {
                 area_mm2(&rounded),
                 area_mm2(&plain)
             );
-            let (reach, _) =
-                nest(outer_offset(&design, 8.0 + rounding, 0.0, TOL)).expect("the reach nests");
+            let reach = rounded_band(&design, 8.0 + rounding, 0.0, TOL);
             for p in rounded
                 .iter()
                 .flat_map(|r| r.outer().polyline().vertices().iter().map(|v| v.point()))
@@ -728,18 +718,19 @@ mod tests {
         assert!((disc.area_mm2() - 25.0 * PI).abs() < TOL * 10.0 * PI);
     }
 
-    /// #448: the cut-out path rounds as the band does: two squares 6 mm
-    /// apart grown by 2 mm are two outlines, rounded by 5 mm one, across
-    /// the gap; with no rounding it is the plain offset.
+    /// #448, #461: the cut-out path rounds as the band does: two squares
+    /// 6 mm apart with a 2 mm margin, inset by 1 mm, are two outlines;
+    /// with the band rounded by 5 mm, which closes the gap, one, across it.
     #[test]
-    fn outer_offset_rounds_across_a_gap() {
+    fn inset_outers_rounds_across_a_gap() {
         let (pair, _) = nest(vec![
             rect(0.0, 0.0, 10.0, 10.0),
             rect(16.0, 0.0, 10.0, 10.0),
         ])
         .expect("squares nest");
-        assert_eq!(outer_offset(&pair, 2.0, 0.0, TOL).len(), 2);
-        let rounded = outer_offset(&pair, 2.0, 5.0, TOL);
+        let plain = rounded_band(&pair, 2.0, 0.0, TOL);
+        assert_eq!(inset_outers(&plain, 1.0, TOL).len(), 2);
+        let rounded = inset_outers(&rounded_band(&pair, 2.0, 5.0, TOL), 1.0, TOL);
         assert_eq!(rounded.len(), 1, "{rounded:?}");
         let (region, _) = nest(rounded).expect("nests");
         assert!(region[0].contains_point(Point::new(13.0, 5.0)));
