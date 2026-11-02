@@ -6,12 +6,12 @@
 //! constructions; security review M3): they live here so `dc-gcode`
 //! re-derives material without calling a generator.
 
-use crate::boolean::{difference, union};
+use crate::boolean::{difference, intersection, union};
 use crate::contour::Contour;
 use crate::distance::segment_distance_mm;
 use crate::offset::offset;
-use crate::point::{Point, Rect};
-use crate::polyline::{Polyline, Segment};
+use crate::point::{EPS_MM, Point, Rect};
+use crate::polyline::{Polyline, Segment, Vertex};
 use crate::region::{Region, nest};
 
 /// A carve's floor: each of `regions` inset by `inset_mm` (for a V-bit
@@ -188,6 +188,89 @@ pub fn inset_outers(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Vec
         .flat_map(|r| inset_region(r, inset_mm, tolerance_mm, Bays::Island))
         .map(|r| r.outer().clone())
         .collect()
+}
+
+/// A male inlay's band on the board (`docs/specs/phase-3/design.md`,
+/// "Algorithms → Inlay", step 4; #495): `band` ([`rounded_band`]) clipped
+/// to `board`, the stock's rectangle or that rectangle inset, with
+/// [`crate::intersection`] (polygonal within `tolerance_mm`, as the band
+/// is). `None` when every outline of `band` lies on `board` within
+/// [`EPS_MM`]: the band is then used as it is, so a band
+/// that stays on the board is unchanged.
+#[must_use]
+pub fn band_on_board(band: &[Region], board: Rect, tolerance_mm: f64) -> Option<Vec<Region>> {
+    let on_board = band
+        .iter()
+        .filter_map(|r| r.outer().polyline().bounds())
+        .all(|b| {
+            b.min.x >= board.min.x - EPS_MM
+                && b.min.y >= board.min.y - EPS_MM
+                && b.max.x <= board.max.x + EPS_MM
+                && b.max.y <= board.max.y + EPS_MM
+        });
+    if on_board {
+        return None;
+    }
+    let rect = Polyline::rect(board.min, board.width_mm(), board.height_mm());
+    let clip: Vec<Region> = Contour::new(rect)
+        .ok()
+        .and_then(single_region)
+        .into_iter()
+        .collect();
+    Some(intersection(band, &clip, tolerance_mm))
+}
+
+/// Each of `outlines` (closed) less its straight stretches that run along
+/// a side of `rect`, within `tolerance_mm` (#495): a male inlay's cut-out
+/// path on a band clipped to the board ([`band_on_board`]), inset by the
+/// cut-out's radius, runs along the board's edge inset by the same
+/// radius where the band was clipped; the board's own edge frees the plug
+/// there, so those stretches are dropped. An outline with no such stretch
+/// comes back whole and closed; one with some comes back as the open
+/// stretches between them, in its order, each from one side of `rect` to
+/// a side of `rect`, its arcs kept. An outline that runs only along
+/// `rect` gives nothing.
+#[must_use]
+pub fn without_rect_sides(outlines: &[Contour], rect: Rect, tolerance_mm: f64) -> Vec<Polyline> {
+    let on = |a: f64, b: f64| (a - b).abs() <= tolerance_mm;
+    let along = |s: &Segment| {
+        s.is_line()
+            && ((on(s.start.x, rect.min.x) && on(s.end.x, rect.min.x))
+                || (on(s.start.x, rect.max.x) && on(s.end.x, rect.max.x))
+                || (on(s.start.y, rect.min.y) && on(s.end.y, rect.min.y))
+                || (on(s.start.y, rect.max.y) && on(s.end.y, rect.max.y)))
+    };
+    let mut out = Vec::new();
+    for outline in outlines {
+        let polyline = outline.polyline();
+        let vertices = polyline.vertices();
+        let dropped: Vec<bool> = polyline.segments().map(|s| along(&s)).collect();
+        let Some(first) = dropped.iter().position(|&d| d) else {
+            out.push(polyline.clone());
+            continue;
+        };
+        // Walk once round from just after a dropped stretch, gathering the
+        // kept segments into open paths.
+        let n = vertices.len();
+        let mut current: Vec<Vertex> = Vec::new();
+        for k in 1..=n {
+            let i = (first + k) % n;
+            let (Some(&vertex), Some(&drop)) = (vertices.get(i), dropped.get(i)) else {
+                continue;
+            };
+            if drop {
+                // An open path ends at this vertex, where the dropped
+                // stretch starts.
+                if !current.is_empty() {
+                    current.push(Vertex::line(vertex.x, vertex.y));
+                    out.push(Polyline::new(std::mem::take(&mut current), false));
+                }
+            } else {
+                current.push(vertex);
+            }
+        }
+    }
+    out
 }
 
 /// Whether `mm` is a positive finite length.
@@ -886,6 +969,80 @@ mod tests {
                 "gap {gap}: the floor runs between the holes"
             );
         }
+    }
+
+    /// #495: a 10 mm square's 8 mm band on a board: on a 40 mm board with
+    /// the square in its middle the band stays on it, `None`; with the
+    /// square 2 mm from the board's left edge the band runs 6 mm past it
+    /// and is clipped there: its left edge on the board's, its area the
+    /// band's less the 6 mm strip past the edge (`26 × 6` less the two
+    /// corner pieces the band's round corners leave, `(4 − π)·8²/4` each,
+    /// within the flattening).
+    #[test]
+    fn band_on_board_clips_only_what_runs_past() {
+        let square = |x: f64| nest(vec![rect(x, 15.0, 10.0, 10.0)]).expect("nests").0;
+        let board = Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(40.0, 40.0),
+        };
+        let centred = rounded_band(&square(15.0), 8.0, 0.0, TOL);
+        assert_eq!(band_on_board(&centred, board, TOL), None);
+
+        let near = rounded_band(&square(2.0), 8.0, 0.0, TOL);
+        let clipped = band_on_board(&near, board, TOL).expect("clipped");
+        let b = clipped[0].outer().polyline().bounds().expect("bounds");
+        assert!(b.min.x.abs() < 1e-9, "{b:?}");
+        assert!((b.max.x - 20.0).abs() < TOL, "{b:?}");
+        let past = 26.0 * 6.0 - 2.0 * (4.0 - PI) * 16.0;
+        let arcs_mm = 2.0 * PI * 8.0;
+        assert!(
+            (area_mm2(&clipped) - (area_mm2(&near) - past)).abs() <= TOL * arcs_mm,
+            "{} vs {}",
+            area_mm2(&clipped),
+            area_mm2(&near) - past
+        );
+    }
+
+    /// #495: an outline loses its straight stretches along the rectangle's
+    /// sides and comes back as the open stretches between them. A 10 mm
+    /// square in the rectangle's corner loses its left and bottom sides:
+    /// one open path from (10, 0) round to (0, 10). A D whose arc's ends
+    /// both lie on the left side keeps the arc, which bulges into the
+    /// rectangle, and loses its straight side: one open path, the arc. An
+    /// outline that never runs along a side comes back closed.
+    #[test]
+    fn without_rect_sides_opens_outlines_along_the_board() {
+        let board = Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(20.0, 20.0),
+        };
+        let corner = rect(0.0, 0.0, 10.0, 10.0);
+        let paths = without_rect_sides(&[corner], board, TOL);
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        assert!(!paths[0].is_closed());
+        let points: Vec<(f64, f64)> = paths[0].vertices().iter().map(|v| (v.x, v.y)).collect();
+        assert_eq!(points, [(10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
+
+        // Counter-clockwise: up the left side, then the arc back down
+        // through (5, 10).
+        let d = Contour::new(Polyline::new(
+            vec![Vertex::line(0.0, 5.0), Vertex::new(0.0, 15.0, -1.0)],
+            true,
+        ))
+        .expect("a D");
+        let paths = without_rect_sides(&[d], board, TOL);
+        assert_eq!(paths.len(), 1, "{paths:?}");
+        let v = paths[0].vertices();
+        assert_eq!(v.len(), 2);
+        assert!(!paths[0].is_closed());
+        assert!(
+            (v[0].bulge.abs() - 1.0).abs() < 1e-12,
+            "the arc is kept: {v:?}"
+        );
+
+        let inside = rect(5.0, 5.0, 10.0, 10.0);
+        let paths = without_rect_sides(std::slice::from_ref(&inside), board, TOL);
+        assert_eq!(paths, [inside.polyline().clone()]);
     }
 
     /// #489: a C-shaped island, a 20 mm square wall 4 mm thick from

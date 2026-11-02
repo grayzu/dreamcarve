@@ -295,7 +295,23 @@ is no GUI in this phase.
      below the stock top. Otherwise the V-bit cuts the edge as a V wall,
      and with clearing passes `inlay_band_edge_v_wall` names the margin
      that would open it. Only the walls against the design mate with the
-     female; past the cut-out everything is waste. Its start plane is `depth_mm − glue_gap_mm` below
+     female; past the cut-out everything is waste. Where the band runs
+     past the board's edge it is **clipped to the board** (#495,
+     maintainer decision 2026-11-02: the band only gives the plug room,
+     and nothing outside it matters), and the generator warns
+     `inlay_band_clipped`, naming the edges and the narrowest band left.
+     With an open edge the end mill clears the floor to the board's edge,
+     its cutting edge on it and never past it, and the board's edge is
+     the plug's rim there; a V wall is cut the V-bit's radius inside the
+     board, since the stock-boundary rule (S7) holds a V-bit to its whole
+     radius. A band that stays on the board is unchanged. The design's
+     own cut is never clipped: where an edge clips the band, the design
+     must stand far enough from it for the V-bit along the plug's foot
+     (`plug_depth_mm · tan(α/2)` plus the V-bit's radius), the edge
+     pass's floor ring and the V-bit's flank (open edge), and the
+     cut-out's floor ring; else `check` refuses the male
+     (`InlayTooNearEdge`), naming the edge, the room needed, how far to
+     move the design and the stock that fits it centred. Its start plane is `depth_mm − glue_gap_mm` below
      the stock top and its flat depth `plug_depth_mm`, so the surround's
      floor is `depth_mm − glue_gap_mm + plug_depth_mm` deep. At the start
      plane the plug's walls pass exactly through the mirrored outline;
@@ -333,7 +349,12 @@ is no GUI in this phase.
      `through_cut_allowance_mm`, with `tabs` as a Profile's tab request
      (heights from the stock bottom; `null` for none). It is the
      operation's last tool run, after the V-bit's. Design holes are not
-     cut out. A floor narrower than the tool is `inlay_cut_out_no_room`,
+     cut out. Where an open band is clipped to the board (#495), the
+     stretches of that path the radius inside the board's edge are
+     dropped, as the board's own edge frees the plug there: the rest are
+     open paths from the board's edge to the board's edge, their ends the
+     radius inside it, so the kerf reaches the edge and the tool never
+     leaves the board, and the tabs go only on them. A floor narrower than the tool is `inlay_cut_out_no_room`,
      naming the margin needed; a cut-out on a female is
      `inlay_cut_out_needs_male`. Freed, the piece is the plug on its
      backing with a rim of floor round it, `plug_depth_mm` below the start
@@ -422,7 +443,8 @@ is no GUI in this phase.
  `countersink_needs_v_bit`, `countersink_mouth_exceeds_tool`,
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
- `inlay_male_mirrored`, `photo_lines_overlap`, `image_colour_converted`,
+ `inlay_male_mirrored`, `inlay_band_clipped` (#495),
+ `photo_lines_overlap`, `image_colour_converted`,
  `start_depth_mismatch`, `start_depth_uncleared`,
  `countersink_ignores_tool_width`. An error stops export
  and names the operation, shape, tool or field; a warning never does.
@@ -594,6 +616,15 @@ Numbering continues from phase 2's 47.
  path is its radius, 1.5875 mm, inside the band's edge (the star grown
  by 8 mm and closed by `max(R, 1.5875)`), within 0.01 mm (#461), and the
  walls still mate within 0.02 mm (with `outline_rounding_mm: 12`).
+ With the star 2 mm from the stock's left edge (#495), a 3.175 mm 60°
+ V-bit, a 1.5 mm end mill's clearing pass, `depth_mm: 2`,
+ `glue_gap_mm: 0.5` and `plug_depth_mm: 0.6`, the male's band runs 6 mm
+ past the edge and is clipped to it: `inlay_band_clipped` names the left
+ edge and 2 mm; no tool reaches past the stock; the end mill's centre
+ runs its radius inside the edge; a cut-out is open paths whose ends are
+ its radius inside the edge, its tabs on them; and the pair seats within
+ 0.05 mm. With the bench's 6.35 mm bits it is refused, the V-bit along
+ the plug's foot needing 4.33 mm there.
 58. **Bitmap and placement.** `init fixtures/photo/gradient.png --width  100` (a 64 × 32 pixel picture) writes a project with one bitmap, 100 ×
  50 mm at the origin, and one Photo V-Carve naming it; `--height 50`
  gives the same; both flags, or neither, is an error. `image add  plaque.dcv gradient.png --width 60 --at 20,30` adds a bitmap whose

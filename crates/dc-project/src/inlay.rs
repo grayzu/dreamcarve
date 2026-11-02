@@ -15,10 +15,15 @@
 //! P·s ≥ 2r`. The edge is **open** when one fits (the first, the **edge
 //! pass**) and the V-bit's flank at the plug's foot, `(D − G + P)·s` wide
 //! at the stock top, stays inside the band: `M ≥ (D − G + 2P)·s`.
+//!
+//! Where the band runs past the board's edge it is clipped to the board
+//! (#495, [`MaleBand::board`]): an open edge to the board itself, a V
+//! wall to the board less the V-bit's radius. The design must still
+//! leave the band's own room there ([`MaleBand::board_room_mm`]).
 
 use crate::ids::ToolId;
-use crate::model::{InlayOp, InlaySide, Project, ToolKind};
-use dc_geometry::EPS_MM;
+use crate::model::{InlayOp, InlaySide, Project, Stock, ToolKind};
+use dc_geometry::{EPS_MM, Point, Rect};
 
 /// The clearing pass that cuts a male Inlay's band edge upright (#448):
 /// the first whose end mill fits the band's floor ring.
@@ -63,6 +68,12 @@ pub struct MaleBand {
     pub edge_rounding_mm: f64,
     /// Open or a V wall.
     pub edge: BandEdge,
+    /// The V-bit's radius, `R_v`, mm: the stock-boundary rule (S7) holds
+    /// a V-bit to its full radius, wherever its cone reaches (#495).
+    pub v_bit_radius_mm: f64,
+    /// How far the V-bit's flank at the plug's foot reaches from the
+    /// design at the stock top, `(D − G + 2P)·s`, mm.
+    pub flank_mm: f64,
 }
 
 impl MaleBand {
@@ -111,18 +122,71 @@ impl MaleBand {
             2.0 * self.foot_mm + diameter_mm
         }
     }
+
+    /// How far inside the board's edge the band is clipped, mm (#495):
+    /// 0 with an open edge, whose end mill clears to the board's edge, its
+    /// cutting edge on it; the V-bit's radius `R_v` with a V wall, so the
+    /// V-bit, which runs down the wall to its top, keeps its full radius
+    /// on the board.
+    #[must_use]
+    pub fn board_inset_mm(&self) -> f64 {
+        if self.is_open() {
+            0.0
+        } else {
+            self.v_bit_radius_mm
+        }
+    }
+
+    /// The rectangle the band is clipped to (#495): `stock`'s, `[0,
+    /// width] × [0, height]`, inset by [`Self::board_inset_mm`].
+    #[must_use]
+    pub fn board(&self, stock: &Stock) -> Rect {
+        let inset_mm = self.board_inset_mm();
+        Rect {
+            min: Point::new(inset_mm, inset_mm),
+            max: Point::new(stock.width_mm - inset_mm, stock.height_mm - inset_mm),
+        }
+    }
+
+    /// The least distance, mm, from the design to a board edge that
+    /// clips the band (#495): the band left there must still hold what
+    /// the margin holds. The V-bit runs along the plug's foot, `P·s` out,
+    /// and keeps its full radius on the board: `P·s + R_v` (which holds
+    /// its flank too, as the cone check keeps `(D − G + P)·s ≤ R_v`). With
+    /// an open edge the edge pass's end mill fits the floor ring, `P·s +
+    /// 2r`, and the flank stays inside the band, `(D − G + 2P)·s`. A
+    /// cut-out `cut_out_diameter_mm` wide needs
+    /// [`Self::cut_out_margin_needed_mm`] of band, from the clipped edge,
+    /// [`Self::board_inset_mm`] inside the board's.
+    #[must_use]
+    pub fn board_room_mm(&self, cut_out_diameter_mm: Option<f64>) -> f64 {
+        let v_bit_mm = self.foot_mm + self.v_bit_radius_mm;
+        let band_mm = match &self.edge {
+            BandEdge::Open(pass) => (self.foot_mm + 2.0 * pass.radius_mm).max(self.flank_mm),
+            BandEdge::VWall { .. } => 0.0,
+        };
+        let cut_out_mm = cut_out_diameter_mm.map_or(0.0, |d| self.cut_out_margin_needed_mm(d));
+        v_bit_mm.max(self.board_inset_mm() + band_mm.max(cut_out_mm))
+    }
 }
 
 /// `tan(α/2)` of Inlay `op`'s V-bit, when it is one with an angle in (0°,
 /// 180°).
 fn slope_of(project: &Project, op: &InlayOp) -> Option<f64> {
+    v_bit_of(project, op).map(|(slope, _)| slope)
+}
+
+/// `tan(α/2)` of Inlay `op`'s V-bit, when it is one with an angle in (0°,
+/// 180°), and its radius, mm, as the tool gives it (`dc-cam` and the
+/// safety pass refuse a diameter that is not above 0 before they use it).
+fn v_bit_of(project: &Project, op: &InlayOp) -> Option<(f64, f64)> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return None;
     };
     let slope = (included_angle_deg.to_radians() / 2.0).tan();
     (included_angle_deg > 0.0 && included_angle_deg < 180.0 && slope.is_finite() && slope > 0.0)
-        .then_some(slope)
+        .then_some((slope, tool.diameter_mm / 2.0))
 }
 
 /// A positive finite length.
@@ -180,7 +244,7 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
     if op.side != InlaySide::Male {
         return None;
     }
-    let slope = slope_of(project, op)?;
+    let (slope, v_bit_radius_mm) = v_bit_of(project, op)?;
     let margin_mm = positive(op.margin_mm)?;
     let plug_depth_mm = positive(op.plug_depth_mm)?;
     let depth_mm = positive(op.depth_mm)?;
@@ -215,6 +279,8 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         outline_rounding_mm,
         edge_rounding_mm,
         edge,
+        v_bit_radius_mm,
+        flank_mm,
     })
 }
 
@@ -358,5 +424,39 @@ mod tests {
             ..op
         };
         assert_eq!(male_band(&p, &female), None);
+    }
+
+    /// #495: an open band is clipped to the stock itself, a V wall the
+    /// V-bit's radius inside it (the 90° bit `t2`, 6.35 mm across). The
+    /// room a clipping edge needs: the V-bit along the plug's foot with
+    /// its radius, `1.5 + 3.175`; with an open edge also the edge pass's
+    /// ring, `1.5 + 3.175`, and the flank, `(2.25 + 3)·1` = 5.25; a 1 mm
+    /// cut-out's ring, `1.5 + 1` open and `3.175 + 3 + 1` with a V wall.
+    #[test]
+    fn band_is_clipped_to_the_board() {
+        let (p, op) = male(&["t3"]);
+        let band = male_band(&p, &op).expect("a male band");
+        assert!(band.is_open());
+        dc_geometry::assert_approx_eq!(band.v_bit_radius_mm, 3.175, 1e-12);
+        dc_geometry::assert_approx_eq!(band.flank_mm, 5.25, 1e-12);
+        dc_geometry::assert_approx_eq!(band.board_inset_mm(), 0.0, 1e-12);
+        let board = band.board(&p.stock);
+        assert_eq!(board.min, dc_geometry::Point::new(0.0, 0.0));
+        assert_eq!(
+            board.max,
+            dc_geometry::Point::new(p.stock.width_mm, p.stock.height_mm)
+        );
+        dc_geometry::assert_approx_eq!(band.board_room_mm(None), 5.25, 1e-12);
+        dc_geometry::assert_approx_eq!(band.board_room_mm(Some(1.0)), 5.25, 1e-12);
+
+        let (p, op) = male(&[]);
+        let band = male_band(&p, &op).expect("a male band");
+        assert!(!band.is_open());
+        dc_geometry::assert_approx_eq!(band.board_inset_mm(), 3.175, 1e-12);
+        let board = band.board(&p.stock);
+        dc_geometry::assert_approx_eq!(board.min.x, 3.175, 1e-12);
+        dc_geometry::assert_approx_eq!(board.max.y, p.stock.height_mm - 3.175, 1e-12);
+        dc_geometry::assert_approx_eq!(band.board_room_mm(None), 4.675, 1e-12);
+        dc_geometry::assert_approx_eq!(band.board_room_mm(Some(1.0)), 7.175, 1e-12);
     }
 }

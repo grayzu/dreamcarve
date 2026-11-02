@@ -744,3 +744,124 @@ fn generated_cut_outs_pass() {
         assert_eq!(programs.len(), 3);
     }
 }
+
+// #495: a male band that runs past the board's edge is clipped to it.
+
+/// A 30 × 10 mm rectangle 2 mm from the right edge of `width_mm` × 50 mm
+/// stock (X 28 to 58, Y 20 to 30; a rectangle mirrors onto itself), with
+/// small bits, as the stock-boundary rule holds a V-bit to its full
+/// radius: `t6` a 60° V-bit 3.175 mm across, `t7` a 1.5 mm end mill.
+fn near_edge(width_mm: f64) -> Project {
+    let mut p = drawn(
+        vec![Polyline::rect(Point::new(28.0, 20.0), 30.0, 10.0)],
+        width_mm,
+        50.0,
+    );
+    p.tools.push(Tool {
+        id: ToolId::new("t6"),
+        name: "60° V-bit, 3.175 mm".into(),
+        cutter: ToolKind::VBit {
+            included_angle_deg: 60.0,
+        },
+        diameter_mm: 3.175,
+        ..tool_v_bit_90()
+    });
+    p.tools.push(Tool {
+        id: ToolId::new("t7"),
+        name: "1.5 mm end mill".into(),
+        diameter_mm: 1.5,
+        step_down_mm: Some(1.0),
+        ..tool_6_35_upcut()
+    });
+    p
+}
+
+/// The rectangle's male with `t6`: `plug_depth_mm` 0.6 (its floor 2.1 mm
+/// below the stock top), margin 8, `t7`'s clearing pass, and with
+/// `cut_out` a cut-out by `t7` with four tabs. Its band runs 6 mm past the
+/// right edge of 60 mm stock.
+fn near_male(cut_out: bool) -> InlayOp {
+    InlayOp {
+        clearing: vec![ClearingPass {
+            tool: ToolId::new("t7"),
+            ..edge_pass()
+        }],
+        cut_out: cut_out.then(|| dc_project::InlayCutOut {
+            tool: ToolId::new("t7"),
+            tabs: Some(four_tabs()),
+            through_cut_allowance_mm: 0.2,
+        }),
+        ..inlay(InlaySide::Male, "t6", 0.6, 8.0)
+    }
+}
+
+/// #495: the clipped band comes from the project's stock, never the
+/// generator. On 60 mm stock the rectangle's male, with and without a
+/// cut-out, passes the whole safety pass. A V-bit plunge to the floor 1
+/// mm from the right edge (X 59) keeps its cone in the surround at the
+/// start plane, but at the stock top it reaches 1.212 mm out, past the
+/// board, where the clipped band ends: S17 refuses it. The end mill's
+/// centre 0.5 mm from the edge reaches past the clipped floor: S9 refuses
+/// it. On 100 mm stock the band is not clipped, and both pass.
+#[test]
+fn clipped_band_is_derived_from_the_project() {
+    for cut_out in [false, true] {
+        export_inlay(&near_edge(60.0), &near_male(cut_out))
+            .unwrap_or_else(|e| panic!("cut-out {cut_out}: {e}"));
+    }
+    let op = near_male(false);
+    let v_bit = program_at(59.0, 24.0, "G1 Z-2.1 F300\nY26 F1000\n");
+    let end_mill = program_at(59.5, 24.0, "G1 Z-2.1 F300\nY26 F1000\n");
+    let clearing = RunLabel::Clearing(ToolId::new("t7"));
+    assert_cone_off(check_male(&v_bit, &near_edge(60.0), &op), 6);
+    assert_off(
+        check_run(&end_mill, &near_edge(60.0), &op, &clearing, "t7"),
+        6,
+    );
+    check_male(&v_bit, &near_edge(100.0), &op).unwrap();
+    check_run(&end_mill, &near_edge(100.0), &op, &clearing, "t7").unwrap();
+}
+
+/// #495: clipping never loosens the stock-boundary rule. The cut-out
+/// generated on 100 mm stock, a closed path round the band 7.25 mm out
+/// from the rectangle (X 65.25 on the right), written for the same male
+/// on 60 mm stock, cuts off the stock: S7 refuses it. And on 60 mm stock
+/// the cut-out's path is open where the board's edge frees the plug: a
+/// cut along the board's edge the end mill's radius inside it (X 59.25),
+/// where the closed path was dropped, is on the stock but off the path,
+/// and S9 refuses it.
+#[test]
+fn cut_out_off_the_stock_still_fails() {
+    let op = near_male(true);
+    let mut wide = near_edge(100.0);
+    wide.operations = vec![Operation::Inlay(op.clone())];
+    let (runs, _) = dc_cam::generate_inlay(&wide, &op).expect("the wide male generates");
+    let mut narrow = near_edge(60.0);
+    narrow.operations = vec![Operation::Inlay(op.clone())];
+    let ops: Vec<EmitOp> = runs
+        .into_iter()
+        .filter(|run| matches!(run.label, RunLabel::CutOut(_)))
+        .map(|run| EmitOp {
+            op: Operation::Inlay(op.clone()),
+            tool: narrow
+                .tools
+                .iter()
+                .find(|t| t.id == run.tool)
+                .cloned()
+                .expect("the run's tool"),
+            toolpath: run.toolpath,
+            holes: None,
+            label: run.label,
+        })
+        .collect();
+    assert_eq!(ops.len(), 1, "a cut-out run");
+    let result = emit_programs(&narrow, &ops, ProgramSplit::ProgramPerTool, DATE);
+    assert!(
+        matches!(result, Err(ExportError::OffStock { .. })),
+        "expected OffStock: {:?}",
+        result.err()
+    );
+    let label = RunLabel::CutOut(ToolId::new("t7"));
+    let along_the_edge = program_at(59.25, 22.0, "G1 Z-12.2 F300\nY28 F1000\n");
+    assert_off(check_run(&along_the_edge, &narrow, &op, &label, "t7"), 6);
+}

@@ -22,7 +22,9 @@
 //!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), flat
 //!   `plug_depth_mm` `P` below that, and its flank is engaged from the
 //!   stock top, since the plug above the start plane is never cleared
-//!   (security review H4).
+//!   (security review H4). A band that runs past the board's edge is
+//!   clipped to the board ([`MaleBand::board`], #495), and its cut-out
+//!   stops at the board's edge.
 //!
 //! The two mate: the female's pocket `h` below the stock top is the
 //! design inset by `h · tan(α/2)`, and the plug `h` above its start plane
@@ -36,14 +38,15 @@ mod tests;
 use crate::error::{CamError, ShapeRef};
 use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
+use crate::stock::StockEdge;
 use crate::vcarve::{
     self, Carve, Clearing, OpenEdge, Targets, carve_regions, carve_regions_then, checked_v_bit,
     clearing, floor::Floor,
 };
 use crate::warning::Warning;
 use dc_geometry::{
-    Contour, EPS_MM, Polyline, Rect, Region, Transform, inset_outers, nearest_point, rounded_band,
-    surround,
+    Contour, EPS_MM, Point, Polyline, Rect, Region, Transform, band_on_board, difference,
+    inset_outers, nearest_point, rounded_band, surround, without_rect_sides,
 };
 use dc_project::{
     BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
@@ -227,6 +230,100 @@ pub(crate) struct Side {
     pub band: Option<MaleBand>,
     /// The male's band edge when a clearing pass cuts it upright (#448).
     pub open_edge: Option<OpenEdge>,
+    /// Where the board's edge clips the male's band (#495); `None` when
+    /// the band stays on the board, and for the female.
+    pub clipped: Option<Clipped>,
+}
+
+/// Where the board's edge clips a male Inlay's band (#495; design "Inlay"
+/// step 4): the band `B` is clipped to [`MaleBand::board`], the stock's
+/// rectangle with an open edge, inset by the V-bit's radius with a V
+/// wall.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Clipped {
+    /// The stock edges `B` runs past (inset as [`MaleBand::board`] is),
+    /// each with the design's distance from the stock's edge there, mm, in
+    /// [`StockEdge::ALL`]'s order.
+    pub edges: Vec<(StockEdge, f64)>,
+    /// The mirrored design's bounds, mm.
+    pub design_bounds: Rect,
+    /// How far inside the stock's edge the band is clipped, mm
+    /// ([`MaleBand::board_inset_mm`]).
+    pub inset_mm: f64,
+}
+
+impl Clipped {
+    /// The edges `band`'s outlines run past on `board`, the design within
+    /// `design_bounds`; `None` when there are none.
+    fn of(
+        band: &[Region],
+        board: Rect,
+        inset_mm: f64,
+        design_bounds: Rect,
+        stock: &dc_project::Stock,
+    ) -> Option<Self> {
+        let reach = bounds_of(band.iter().map(Region::outer))?;
+        let edges: Vec<(StockEdge, f64)> = StockEdge::ALL
+            .into_iter()
+            .filter_map(|edge| {
+                let (past, distance_mm) = match edge {
+                    StockEdge::MinX => (board.min.x - reach.min.x, design_bounds.min.x),
+                    StockEdge::MaxX => (
+                        reach.max.x - board.max.x,
+                        stock.width_mm - design_bounds.max.x,
+                    ),
+                    StockEdge::MinY => (board.min.y - reach.min.y, design_bounds.min.y),
+                    StockEdge::MaxY => (
+                        reach.max.y - board.max.y,
+                        stock.height_mm - design_bounds.max.y,
+                    ),
+                };
+                (past > EPS_MM).then_some((edge, distance_mm))
+            })
+            .collect();
+        (!edges.is_empty()).then_some(Self {
+            edges,
+            design_bounds,
+            inset_mm,
+        })
+    }
+
+    /// The narrowest band left where it is clipped, mm: the least distance
+    /// from the design to a clipping edge, less [`Self::inset_mm`].
+    fn narrowest_mm(&self) -> f64 {
+        self.edges
+            .iter()
+            .map(|(_, d)| d - self.inset_mm)
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    /// [`CamError::InlayTooNearEdge`] for the first clipping edge nearer
+    /// the design than `needed_mm` ([`MaleBand::board_room_mm`]).
+    fn check_room(&self, op: &OperationId, needed_mm: f64) -> Result<(), CamError> {
+        let Some(&(edge, distance_mm)) = self.edges.iter().find(|(_, d)| d + EPS_MM < needed_mm)
+        else {
+            return Ok(());
+        };
+        let extent_mm = if edge.is_x() {
+            self.design_bounds.width_mm()
+        } else {
+            self.design_bounds.height_mm()
+        };
+        Err(CamError::InlayTooNearEdge {
+            op: op.clone(),
+            edge,
+            distance_mm,
+            needed_mm,
+            stock_mm: extent_mm + 2.0 * needed_mm,
+        })
+    }
+}
+
+/// The joint bounds of `contours`; `None` when there are none.
+fn bounds_of<'c>(contours: impl Iterator<Item = &'c Contour>) -> Option<Rect> {
+    contours
+        .filter_map(|c| c.polyline().bounds())
+        .reduce(|all, b| all.including(b.min).including(b.max))
 }
 
 /// The side `op` of `project` carves (design steps 2 to 4). Warnings of
@@ -267,6 +364,7 @@ fn side_of(
             design: Vec::new(),
             band: None,
             open_edge: None,
+            clipped: None,
         });
     };
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
@@ -276,9 +374,35 @@ fn side_of(
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
-    let regions = surround(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
+    let edge = rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
+    // #495: a band that runs past the board's edge is clipped to it.
+    let on_board = band.as_ref().and_then(|b| {
+        let board = b.board(&project.stock);
+        let clipped = band_on_board(&edge, board, tolerance_mm)?;
+        let design_bounds = bounds_of(design.regions.iter().map(Region::outer))?;
+        let at = Clipped::of(
+            &edge,
+            board,
+            b.board_inset_mm(),
+            design_bounds,
+            &project.stock,
+        )?;
+        Some((clipped, at))
+    });
+    let (regions, edge, clipped) = match on_board {
+        None => (
+            surround(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm),
+            edge,
+            None,
+        ),
+        Some((band, at)) => (
+            difference(&band, &design.regions, tolerance_mm),
+            band,
+            Some(at),
+        ),
+    };
     let open_edge = band.as_ref().filter(|b| b.is_open()).map(|_| OpenEdge {
-        band: rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm),
+        band: edge,
         design: design.regions.clone(),
         top_z_mm: thickness_mm,
     });
@@ -302,6 +426,7 @@ fn side_of(
         design: design.regions,
         band,
         open_edge,
+        clipped,
     })
 }
 
@@ -454,6 +579,18 @@ pub fn generate_inlay(
             });
         }
     }
+    // #495: where the board's edge clips the band, the design must still
+    // leave the band's room there.
+    if let (Some(clipped), Some(band)) = (&side.clipped, &side.band) {
+        let cut_out_diameter_mm = cut_out.as_ref().map(|(_, _, d)| *d);
+        clipped.check_room(&op.id, band.board_room_mm(cut_out_diameter_mm))?;
+        warnings.push(Warning::InlayBandClipped {
+            op: op.id.clone(),
+            edges: clipped.edges.iter().map(|(e, _)| *e).collect(),
+            open: band.is_open(),
+            narrowest_mm: clipped.narrowest_mm(),
+        });
+    }
     // #448: clearing passes that leave the band's edge a V wall.
     if let Some(BandEdge::VWall {
         margin_needed_mm: Some(margin_needed_mm),
@@ -518,11 +655,13 @@ pub fn generate_inlay(
     if let (Some((cut_out, band, diameter_mm)), Some(thickness_mm)) =
         (cut_out, project.stock.thickness_mm)
     {
-        let paths: Vec<Polyline> =
-            cut_out_paths(&design, &band, diameter_mm, project.flatten_tolerance_mm)
-                .into_iter()
-                .map(Contour::into_polyline)
-                .collect();
+        let paths = cut_out_paths(
+            &design,
+            &band,
+            diameter_mm,
+            band.board(&project.stock),
+            project.flatten_tolerance_mm,
+        );
         let (cut_project, profile) = cut_out_profile(project, op, cut_out, &paths, thickness_mm);
         let (toolpath, cut_warnings) =
             generate_profile_below(&cut_project, &profile, values.engagement_mm())?;
@@ -603,27 +742,52 @@ fn checked_cut_out<'o>(
 }
 
 /// A male Inlay's cut-out paths for an end mill `diameter_mm` wide (#443,
-/// #448, #461; design "Inlay", step 6): the outer outlines of the band's
-/// edge `B` round its mirrored `design` ([`dc_geometry::rounded_band`],
-/// closed by the edge's rounding) inset by [`MaleBand::cut_out_inset_mm`]
-/// ([`dc_geometry::inset_outers`]), so the tool's edge runs along the
-/// outer edge of the band's flat floor: on `B` when the edge is open,
-/// `P·tan(α/2)` inside it, at the V wall's foot, otherwise. Above the
-/// floor it cuts only what the carve removed. A hole of the design is not
-/// cut out: it stays in the plug.
+/// #448, #461, #495; design "Inlay", step 6): the outer outlines of the
+/// band's edge `B` round its mirrored `design`
+/// ([`dc_geometry::rounded_band`], closed by the edge's rounding, and
+/// clipped to `board`, [`MaleBand::board`], where it runs past it) inset
+/// by [`MaleBand::cut_out_inset_mm`] ([`dc_geometry::inset_outers`]), so
+/// the tool's edge runs along the outer edge of the band's flat floor: on
+/// `B` when the edge is open, `P·tan(α/2)` inside it, at the V wall's
+/// foot, otherwise. Above the floor it cuts only what the carve removed.
+/// A hole of the design is not cut out: it stays in the plug.
+///
+/// Where an open band is clipped to the board, the board's edge frees the
+/// plug, and the stretches that run along it, the tool's radius inside
+/// it, are dropped ([`dc_geometry::without_rect_sides`]): the rest are
+/// open paths from the board's edge to the board's edge, their ends the
+/// radius inside it. Every other path is closed.
 #[must_use]
 pub fn cut_out_paths(
     design: &[Region],
     band: &MaleBand,
     diameter_mm: f64,
+    board: Rect,
     tolerance_mm: f64,
-) -> Vec<Contour> {
+) -> Vec<Polyline> {
     let edge = rounded_band(design, band.margin_mm, band.edge_rounding_mm, tolerance_mm);
-    inset_outers(&edge, band.cut_out_inset_mm(diameter_mm), tolerance_mm)
+    let inset_mm = band.cut_out_inset_mm(diameter_mm);
+    let closed = |outlines: Vec<Contour>| -> Vec<Polyline> {
+        outlines.into_iter().map(Contour::into_polyline).collect()
+    };
+    let Some(clipped) = band_on_board(&edge, board, tolerance_mm) else {
+        return closed(inset_outers(&edge, inset_mm, tolerance_mm));
+    };
+    let outlines = inset_outers(&clipped, inset_mm, tolerance_mm);
+    if !band.is_open() {
+        return closed(outlines);
+    }
+    let within = Rect {
+        min: Point::new(board.min.x + inset_mm, board.min.y + inset_mm),
+        max: Point::new(board.max.x - inset_mm, board.max.y - inset_mm),
+    };
+    without_rect_sides(&outlines, within, tolerance_mm)
 }
 
 /// The On line Profile a male Inlay's cut-out is (#443), and a copy of
-/// `project` that holds it: `paths` (closed, project space) as the
+/// `project` that holds it: `paths` (project space; closed, or open from
+/// the board's edge to the board's edge where the band is clipped, #495)
+/// as the
 /// profiles of one definition placed in place, which the Profile targets
 /// with the cut-out's tool, tabs and through-cut allowance, through the
 /// stock `thickness_mm` thick, climb, plunging, with the Inlay's id,

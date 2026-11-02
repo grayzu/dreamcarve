@@ -230,6 +230,33 @@ every inward corner of it. A larger rounding costs a little end-mill
 time, not fit: only the waste grows. The female ignores the value; set it
 the same in both projects all the same, as `margin_mm`.
 
+**At the board's edge.** The band only gives the plug room, so when it
+runs past the stock (a board cut to the drawing's size, with a wide
+margin) it is clipped to the board, and `check` says so:
+
+```text
+warning: inlay_band_clipped: operation `op1`: its band runs past the stock's -X (left) and +Y (back) edges, so it is clipped to the board there and is 10 mm wide at its narrowest; the board's edge is the plug's rim there, and a cut-out stops at it
+```
+
+With an open edge the edge pass clears the floor right to the board's
+edge, its cutting edge on it and never past it, and the board's edge is
+the plug's rim there. With a V wall the V-bit runs down the wall to its
+top, and the safety rules hold a V-bit to its whole radius, so the band
+is clipped that radius inside the board, leaving a strip of board
+standing at the edge. Where the band stays on the board nothing changes.
+
+The plug itself is never clipped. Where an edge clips the band, the
+design must stand far enough from it for what the band holds there: the
+V-bit runs along the plug's foot, `plug_depth_mm × tan(α/2)` out from
+the design, and its whole radius must stay on the board; with an open
+edge the edge pass's end mill must fit between the foot and the edge;
+and a cut-out needs its floor as in [Room](#cutting-the-plug-free). If
+the design is nearer than that, `check` refuses the male, names the
+edge and the room it needs, and says how far to move the design or how
+big a board would fit it centred. With the quick start's bits (the 60°,
+6.35 mm V-bit, `plug_depth_mm` 2, the 3.175 mm end mill) that is 4.33
+mm; a design closer than about 4 mm to the edge needs a smaller V-bit.
+
 ### The mirror, and which way to flip the plug
 
 The plug is glued in face down, so the male cuts the design **mirrored
@@ -308,6 +335,14 @@ band's floor round it, `plug_depth_mm` below the plug's start plane,
 which clears the female's surface by that much when the plug is seated.
 A hole in the design (the D's counter in the quick start) is never cut
 round: it stays in the plug.
+
+Where the band is clipped to the board's edge (see **At the board's
+edge** above), the board's own edge frees the plug, so the cut-out stops
+there: it runs from the board's edge round the plug to the board's edge,
+its centre its radius inside the edge at each end, so its cut reaches
+the edge and the bit never leaves the board. Its tabs go only on those
+stretches. With a V-walled edge the band stops short of the board's edge
+and the cut-out goes all the way round, as above.
 
 **Room.** The floor ring must be at least the end mill's diameter wide,
 so the cutter running along its outer edge stays clear of the plug's
@@ -457,6 +492,7 @@ These stop `check` and `export`.
 | `inlay_cut_out_needs_male` | "… is a female inlay with a cut_out; only the male's plug is cut out of its board …" | Set the female's `cut_out` to `null`. |
 | `inlay_cut_out_no_room` | "… cuts its plug out with tool …, … mm across, along the outer edge of the band's flat floor; with margin_mm … mm that floor is narrower than the tool … Raise margin_mm to at least … mm in both projects, or use a narrower end mill" | Raise `margin_mm` in both projects, or use a narrower end mill. |
 | `cutter_not_flat` | "… cuts its plug's cut-out with tool …, a V-bit; …" at `cut_out.tool` | Give the cut-out a flat end mill. |
+| (none) | "operation …'s male design is … mm from the stock's … edge, which clips its band, but the band needs … mm there …; move the design at least … mm away from that edge, or make the stock at least … mm wide (or long) with the design centred" | Move the design, or use a bigger board, by at least what it says; or a smaller V-bit or end mill. See **At the board's edge** above. |
 
 The clearing errors (`clearing_needs_end_mill`, `clearing_dangling_tool`)
 are as a [V-Carve's](v-carve.md#errors). An Inlay has no start depth, so
@@ -471,6 +507,7 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 | `inlay_male_mirrored` | Every male Inlay, once: a note giving the mirror line. |
 | `inlay_plug_base_thin` | A male leaves less than 6 mm of board under its band. |
 | `inlay_band_edge_v_wall` | A male has clearing passes, but none fits its band's floor, so the V-bit cuts the band's outer edge as a sloped wall; it names the margin that would let a pass cut it upright. |
+| `inlay_band_clipped` | A male's band runs past the stock's edge, so it is clipped to the board there; it names the edges and the narrowest band left. |
 | `vcarve_target_open` | A target is an open path; it is skipped. |
 | `clearing_no_room`, `clearing_not_descending` | As for a [V-Carve](v-carve.md#warnings). |
 

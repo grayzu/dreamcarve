@@ -9,7 +9,7 @@ use dc_geometry::{GeometryError, Point3};
 use dc_project::{DefinitionId, InstanceId, OperationId, ToolId};
 use std::fmt;
 
-use crate::Overhang;
+use crate::{Overhang, StockEdge};
 
 /// Which rate a tool is missing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -943,6 +943,32 @@ pub enum CamError {
         /// The least margin with room, mm.
         needed_mm: f64,
     },
+    /// A male Inlay's band runs past a stock edge, which clips it (#495),
+    /// but its design is too near that edge for what the band holds there:
+    /// the V-bit along the plug's foot with its full radius on the board,
+    /// the edge pass's floor ring and the V-bit's flank with an open edge,
+    /// and the cut-out's floor ring ([`dc_project::MaleBand::board_room_mm`]).
+    /// The design's own cut is never clipped.
+    #[error(
+        "operation `{op}`'s male design is {distance_mm:.3} mm from the stock's {edge} edge, which clips its band, but the band needs {needed:.3} mm there (the V-bit along the plug's foot with its whole radius on the board, and the end mills' floor ring); move the design at least {shift:.3} mm away from that edge, or make the stock at least {stock:.3} mm {across} with the design centred",
+        needed = up_mm(*needed_mm),
+        shift = up_mm(needed_mm - distance_mm),
+        stock = up_mm(*stock_mm),
+        across = if edge.is_x() { "wide" } else { "long" }
+    )]
+    InlayTooNearEdge {
+        /// The Inlay.
+        op: OperationId,
+        /// The edge.
+        edge: StockEdge,
+        /// How far the design is from it, mm.
+        distance_mm: f64,
+        /// The least distance that fits, mm.
+        needed_mm: f64,
+        /// The stock's least width (an X edge) or length (a Y edge) that
+        /// fits the design centred, mm.
+        stock_mm: f64,
+    },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.
     #[error("shape {shape} encloses itself through other shapes; no cut order exists")]
@@ -957,6 +983,13 @@ pub enum CamError {
 
 /// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
 /// stock to leave: none without one.
+/// `mm` rounded up to the thousandth a message shows, so a length the
+/// user must reach is never shown short of it (#495); a value a hair
+/// above a thousandth stays on it.
+fn up_mm(mm: f64) -> f64 {
+    (mm * 1000.0 - 1e-6).ceil() / 1000.0
+}
+
 fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
     stock_to_leave_mm.map_or_else(String::new, |a| {
         format!(" and its {a} mm last pass stock to leave")

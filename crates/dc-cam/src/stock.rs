@@ -57,6 +57,42 @@ impl fmt::Display for Overhang {
     }
 }
 
+/// One edge of the stock rectangle (#495: the edges that clip a male
+/// Inlay's band, [`crate::Warning::InlayBandClipped`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum StockEdge {
+    /// The left edge, X = 0.
+    MinX,
+    /// The right edge, X = stock width.
+    MaxX,
+    /// The front edge, Y = 0.
+    MinY,
+    /// The back edge, Y = stock height.
+    MaxY,
+}
+
+impl StockEdge {
+    /// Every edge, in this order.
+    pub const ALL: [Self; 4] = [Self::MinX, Self::MaxX, Self::MinY, Self::MaxY];
+
+    /// Whether the edge runs along Y, so a distance to it is along X.
+    #[must_use]
+    pub const fn is_x(self) -> bool {
+        matches!(self, Self::MinX | Self::MaxX)
+    }
+}
+
+impl fmt::Display for StockEdge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::MinX => "-X (left)",
+            Self::MaxX => "+X (right)",
+            Self::MinY => "-Y (front)",
+            Self::MaxY => "+Y (back)",
+        })
+    }
+}
+
 /// An overhang up to this is rounding, not a cut off the stock. A cut
 /// that runs exactly along an edge stays on the stock.
 pub const OVERHANG_TOLERANCE_MM: f64 = EPS_MM;
