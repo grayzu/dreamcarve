@@ -27,7 +27,7 @@
 //!   stops at the board's edge.
 //!
 //! On both sides, parts of the design that come closer than
-//! [`INLAY_MERGE_MM`] are first merged into one shape ([`merge_near`];
+//! [`INLAY_MERGE_MM`] are first merged into one shape ([`merge_near_parts`];
 //! #479): no V-bit can carve the gap between them, so the female would
 //! leave a wall standing in it and the plug would stand proud on it.
 //!
