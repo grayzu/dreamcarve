@@ -15,6 +15,7 @@
 
 mod line_art;
 mod seat;
+mod traced;
 
 use super::*;
 use crate::heightfield::{Cutter, Heightfield};
