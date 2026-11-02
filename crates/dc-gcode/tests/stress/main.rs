@@ -251,70 +251,6 @@ fn sweep() {
     assert_none_failed(&all.into_inner().expect("the threads are done"));
 }
 
-/// #481 (found by the sweep): a V-Carve of a rotated 4.18 × 1.47 mm
-/// rectangle with a 0.42 mm circular hole 0.001 mm from its edge, with
-/// the 15° bit from the stock top (flat depth 3.611 mm, floor step-over
-/// 0.293), generates and passes `assert_run_safe`, and its program
-/// passes the safety pass. It fails S17 there: the written cone 0.007
-/// mm past the material, at Z 11.948, beside the pinch between the hole
-/// and the edge, narrower than the written precision allows a tip path
-/// (#469).
-#[test]
-#[ignore = "#481: S17 at export beside a pinch finer than the written precision"]
-fn v_carve_beside_a_hair_thin_pinch_passes_s17() {
-    use dc_geometry::{Point, Polyline, Vertex};
-    let rect = designs::closed(&[
-        Point::new(3.0466759807674237, 3.9289314157286848),
-        Point::new(0.0, 1.0720017271145235),
-        Point::new(1.0052377016041247, 0.0),
-        Point::new(4.0519136823715485, 2.8569296886141613),
-    ]);
-    let hole = Polyline::new(
-        vec![
-            Vertex::new(0.4744443774441627, 0.5675810359250852, 1.0),
-            Vertex::new(0.779202155064878, 0.8533585679688382, 1.0),
-        ],
-        true,
-    );
-    let mut c = case(
-        "line art",
-        0,
-        Design {
-            profiles: vec![rect, hole],
-            notes: Vec::new(),
-        },
-    );
-    c.project.instances[0].transform =
-        dc_geometry::Transform::translate(15.30403519021997, 15.30403519021997);
-    c.project.stock.width_mm = 34.65998406281149;
-    c.project.stock.height_mm = 34.537001796168624;
-    c.project.display_units = dc_project::Units::Mm;
-    c.project.arc_fit_tolerance_mm = None;
-    c.project.tools[0].cutter = dc_project::ToolKind::VBit {
-        included_angle_deg: 15.0,
-    };
-    c.angle_deg = 15.0;
-    c.label = "#481's design: 15° V-bit, Mm".into();
-    let carve_op = dc_project::VCarveOp {
-        id: dc_project::OperationId::new("o2"),
-        name: "V-Carve".into(),
-        enabled: true,
-        targets: vec![dc_project::InstanceId::new("i1")],
-        tool: dc_project::ToolId::new("t1"),
-        strategy: dc_project::VCarveStrategy::Medial,
-        clearing: Vec::new(),
-        flat_depth_mm: Some(3.6106976154393067),
-        start_depth_mm: 0.0,
-        start_plane_cleared_externally: false,
-        step_over_fraction: Some(0.2933158362312681),
-        machining_order: dc_project::MachiningOrder::FullDepthFirst,
-        through_cut_allowance_mm: 0.0,
-        safe_z_mm: 4.839984608265256,
-    };
-    c.ops = vec![(Kind::VCarveTop, dc_project::Operation::VCarve(carve_op))];
-    assert_none_failed(&carve(&c, Seats::None, true));
-}
-
 /// Carves `design` of `family` and `seed` with the operation `kind` of
 /// its case alone, every male seated: a sweep failure's reproduction.
 fn reproduce(family: &str, seed: u64, design: Design, kind: Kind) -> Outcome {
@@ -371,4 +307,23 @@ fn lettering_seats_beside_a_narrow_mouth() {
         "{:?}",
         outcome.failures
     );
+}
+
+/// #481 (found by the sweep): the V-Carve from the stock top of line-art
+/// seed `0x40`'s first motif, a crescent 5.03 mm across (arcs of bulge
+/// 0.790 and 0.643, so its horns are acute tips drawn with arcs), with the
+/// 15° bit (millimetre program, flat depth 4.9 mm), exports. The safety
+/// pass refuses it: "emitted line 55 takes operation `o2`'s V-bit 0.002 mm
+/// past the material it may cut", at Z 11.983, just below the stock top.
+/// The female of the same design fails the same way.
+#[test]
+#[ignore = "#481: S17 at export beside a pinch finer than the written precision"]
+fn v_carve_beside_a_hair_thin_pinch_passes_s17() {
+    let outcome = reproduce(
+        "line art",
+        0x40,
+        designs::line_art_keeping(0x40, &|k| k == 0),
+        Kind::VCarveTop,
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
