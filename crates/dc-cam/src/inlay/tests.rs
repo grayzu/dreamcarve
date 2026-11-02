@@ -1790,3 +1790,80 @@ fn star_seats_flush_with_narrow_bits() {
         );
     }
 }
+
+/// #489: a C-shaped design, a 20 mm square wall 4 mm thick with a mouth
+/// 1 mm wide in its right side, centred on [`CENTRE`]. The male's floor
+/// inset, `P · tan 30°` = 1.15 mm, closes the mouth, so the 12 mm bay
+/// inside the C is a floor piece of its own.
+fn closed_c_project() -> Project {
+    let c = polygon(&[
+        (-10.0, -10.0),
+        (10.0, -10.0),
+        (10.0, -0.5),
+        (6.0, -0.5),
+        (6.0, -6.0),
+        (-6.0, -6.0),
+        (-6.0, 6.0),
+        (6.0, 6.0),
+        (6.0, 0.5),
+        (10.0, 0.5),
+        (10.0, 10.0),
+        (-10.0, 10.0),
+    ]);
+    project_of(vec![c], CENTRE, 100.0, 100.0)
+}
+
+/// #489: the C-shaped design's plug seats within [`SEAT_MM`] (0.1 mm
+/// grid), with the V-bit's floor at step-over 0.1 and no clearing pass,
+/// and with the end mill's clearing pass. Before #489 the male's floor
+/// left out the bay inside the C (its grown island's inner loop was cut
+/// away with it), so the bay's wood stood above the surround's floor and
+/// held the plug up on the female's surface.
+#[test]
+fn closed_c_plug_seats_flush() {
+    let c = closed_c_project();
+    let fine = |side| InlayOp {
+        step_over_fraction: Some(0.1),
+        ..inlay(side)
+    };
+    let with_clearing = |side| InlayOp {
+        clearing: vec![clearing_pass()],
+        ..inlay(side)
+    };
+    let pairs = [
+        (
+            "no clearing",
+            fit_of(
+                &c,
+                &fine(InlaySide::Female),
+                &c,
+                &fine(InlaySide::Male),
+                0.1,
+            ),
+        ),
+        (
+            "clearing",
+            fit_of(
+                &c,
+                &with_clearing(InlaySide::Female),
+                &c,
+                &with_clearing(InlaySide::Male),
+                0.1,
+            ),
+        ),
+    ];
+    for (name, fit) in pairs {
+        println!(
+            "{name}: the plug stands {:.3} mm proud at {:?}; the male's share {:.3} mm at {:?}",
+            fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
+        );
+        assert!(
+            fit.is_flush(),
+            "{name}: the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?})",
+            fit.seat_mm,
+            fit.seat_at,
+            fit.male_mm,
+            fit.male_at
+        );
+    }
+}

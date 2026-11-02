@@ -843,4 +843,76 @@ mod tests {
             );
         }
     }
+
+    /// #489: a C-shaped island, a 20 mm square wall 4 mm thick from
+    /// (10, 10) with a mouth 1 mm wide in its right side, in a 40 mm square.
+    fn closed_c() -> Contour {
+        let points = [
+            (10.0, 10.0),
+            (30.0, 10.0),
+            (30.0, 19.5),
+            (26.0, 19.5),
+            (26.0, 14.0),
+            (14.0, 14.0),
+            (14.0, 26.0),
+            (26.0, 26.0),
+            (26.0, 20.5),
+            (30.0, 20.5),
+            (30.0, 30.0),
+            (10.0, 30.0),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        Contour::new(Polyline::new(vertices, true)).expect("a C")
+    }
+
+    /// #489: inset 2 mm, the C's island grows over its 1 mm mouth, and the
+    /// 12 mm bay inside it keeps a floor of its own: the bay shrunk to 8 ×
+    /// 8 mm, plus a lens `l = 2∫₀^½ (2 − √(4 − s²)) ds` ≈ 0.021 mm² where
+    /// it reaches toward the mouth past the round joins about the mouth's
+    /// corners. The floor round the island is the 36 mm square less the
+    /// 24 mm one with 2 mm round corners, less the same lens notched in
+    /// where the island's outside meets the mouth. Areas within 0.1 mm²
+    /// (arcs cut as chords within [`TOL`]). Alone (its grown island apart
+    /// from the outer) and with a 4 mm square 1 mm right of the C (their
+    /// grown islands merge, so the holes are cut with `difference`), the
+    /// bay is a floor. Before, the grown island's inner loop round the bay
+    /// was cut away as island too: the floor was 723.5 mm², the bay left
+    /// out.
+    #[test]
+    fn floor_keeps_the_bay_of_a_closed_c() {
+        let s: f64 = 0.5;
+        let integral = s / 2.0 * (4.0 - s * s).sqrt() + 2.0 * (s / 2.0).asin();
+        let lens = 2.0 * (2.0 * s - integral);
+        let bay = 64.0 + lens;
+        let round = 36.0 * 36.0 - (24.0 * 24.0 - (4.0 - PI) * 4.0 - lens);
+        let in_bay = Point::new(20.0, 20.0);
+        let (alone, _) = nest(vec![rect(0.0, 0.0, 40.0, 40.0), closed_c()]).expect("nests");
+        let floor = floor_regions(&alone, 2.0, TOL);
+        assert!(
+            (area_mm2(&floor) - (round + bay)).abs() < 0.1,
+            "{} mm², not {}",
+            area_mm2(&floor),
+            round + bay
+        );
+        let (beside, _) = nest(vec![
+            rect(0.0, 0.0, 40.0, 40.0),
+            closed_c(),
+            rect(31.0, 12.0, 4.0, 4.0),
+        ])
+        .expect("nests");
+        for (case, regions) in [("alone", alone), ("beside a square", beside)] {
+            let floor = floor_regions(&regions, 2.0, TOL);
+            let pieces: Vec<&Region> = floor.iter().filter(|r| r.contains_point(in_bay)).collect();
+            assert_eq!(pieces.len(), 1, "{case}: the bay is a floor: {floor:?}");
+            assert!(
+                (pieces[0].area_mm2() - bay).abs() < 0.1,
+                "{case}: the bay's floor is {} mm², not {bay}",
+                pieces[0].area_mm2()
+            );
+            assert!(
+                floor.iter().all(|r| r.outer().is_ccw()),
+                "{case}: outers stay counter-clockwise"
+            );
+        }
+    }
 }

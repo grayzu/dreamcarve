@@ -15,9 +15,11 @@ use super::floor::{F_MM, FLOOR_Z_MM, block_cuts, distance_to_cuts, floor_cuts, w
 use super::*;
 use crate::error::ClearingProblem;
 use crate::footprint::footprint_at;
+use crate::heightfield::Heightfield;
 use crate::pocket::generate_pocket;
 use crate::test_support::assert_run_safe;
-use dc_geometry::{area_mm2, difference, floor_regions};
+use crate::test_support::seat::cutter_of;
+use dc_geometry::{Rect, area_mm2, difference, floor_regions};
 use dc_project::{
     ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, Entry, Problem, WallPass, validate,
 };
@@ -686,6 +688,79 @@ fn clearing_pass_cuts_a_bay_the_inset_closed_after_the_floor_round_it() {
         assert!(
             ring.iter().max() < bay.iter().min(),
             "the ring before the bay at Z {z_mm}: ring {ring:?}, bay {bay:?}"
+        );
+    }
+}
+
+/// #489: a 40 mm square round one C-shaped island, a 20 mm square wall
+/// 4 mm thick with a mouth 1 mm wide in its right side. The V-bit's
+/// floor inset of 2 mm closes the mouth, and the 12 mm bay inside the C
+/// keeps an 8 mm floor of its own.
+fn closed_c() -> Vec<Polyline> {
+    let c = polygon(&[
+        (10.0, 10.0),
+        (30.0, 10.0),
+        (30.0, 19.5),
+        (26.0, 19.5),
+        (26.0, 14.0),
+        (14.0, 14.0),
+        (14.0, 26.0),
+        (26.0, 26.0),
+        (26.0, 20.5),
+        (30.0, 20.5),
+        (30.0, 30.0),
+        (10.0, 30.0),
+    ]);
+    vec![rect(40.0, 40.0), c]
+}
+
+/// #489: the V-Carve of [`closed_c`], the V-bit's floor at step-over 0.1,
+/// with no clearing pass and with the 3.175 mm end mill's, simulated as a
+/// heightfield (0.1 mm grid) over the bay inside the C, leaves nothing
+/// above the design's surface there: each cell at most `top − min(F, d /
+/// slope)` within 0.05 mm, `d` its distance to the walls as drawn. On the
+/// floor (`d ≥ F · slope`) the V-bit's rings may leave their ridges too,
+/// up to `0.59 s / slope` at a ring's convex corner for a step-over `s`
+/// (design, "V-Carve generator", step 6). Before #489 the floor left the
+/// bay out (the grown island's inner loop was cut away with it), so
+/// neither the V-bit nor the end mill cleared the bay's floor or traced
+/// its walls, and wood stood in it up to the stock top.
+#[test]
+fn closed_c_bay_is_cut() {
+    const STEP_MM: f64 = 0.1;
+    const TOLERANCE_MM: f64 = 0.05;
+    const STEP_OVER_FRACTION: f64 = 0.1;
+    let slope = slope_of(90.0);
+    let ridge_mm = 0.59 * (STEP_OVER_FRACTION * 2.0 * F_MM * slope) / slope;
+    for clearing in [Vec::new(), vec![pass("t3")]] {
+        let (p, op) = with_passes(Some(closed_c()), Some(STEP_OVER_FRACTION), clearing.clone());
+        let (runs, _) = runs_of(&p, &op);
+        let regions = regions_of(&with_op(&p, &op), &op);
+        let window = Rect {
+            min: at(14.0, 14.0),
+            max: at(26.0, 26.0),
+        };
+        let mut field = Heightfield::new(window, STEP_MM, TOP_MM, None);
+        field.cut_runs(&runs, |run| cutter_of(&p, run));
+        let (nx, ny) = field.size();
+        let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+        for j in 0..ny {
+            for i in 0..nx {
+                let q = field.cell(i, j);
+                let depth_mm = wall_distance(&regions, q) / slope;
+                let ridge_mm = if depth_mm >= F_MM { ridge_mm } else { 0.0 };
+                let over_mm = field.z_mm(i, j) - (TOP_MM - depth_mm.min(F_MM)) - ridge_mm;
+                if over_mm > worst.0 {
+                    worst = (over_mm, q);
+                }
+            }
+        }
+        assert!(
+            worst.0 <= TOLERANCE_MM,
+            "clearing {}: the bay keeps {:.3} mm of wood too much at {:?}",
+            !clearing.is_empty(),
+            worst.0,
+            worst.1
         );
     }
 }
