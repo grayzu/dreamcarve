@@ -980,7 +980,16 @@ orientation; DreamCarve's regions are normalised anyway.
    (the maintainer's eagle male stood 1.17 mm proud in a hole of the
    design). `offset` now takes such an offset again with finer
    tolerances (phase 1 design, `offset`;
-   `inlay::traced_hole_plug_seats_flush`). For each floor region:
+   `inlay::traced_hole_plug_seats_flush`). #489: an island shaped like a
+   C whose mouth is narrower than `2·F·slope` grows over the mouth, and
+   `offset` gives it back as two loops of one winding, its outline and an
+   inner one round the bay; each loop was cut away as island, so the bay
+   lost its floor and kept its wood (a C-shaped plug stood 3 mm proud).
+   A grown island's loops are nested, so the bay is a floor of its own;
+   so is the plug's foot grown with an open band edge
+   (`surround_floor_regions`). The male's cut-out (`inset_outers`) still
+   fills such a bay, as it does not cut round a hole of `B`. For each
+   floor region:
    - **Boundary trace**: the floor outline and each floor island as a
      closed `CutBlock` at `z = start_plane − F`, the tip exactly on the
      boundary so the flank meets the outline at the start plane. The

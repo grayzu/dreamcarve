@@ -22,6 +22,11 @@ use crate::region::{Region, nest};
 /// result is empty when nothing is left. Outers come back counter-clockwise
 /// and holes clockwise (mm, Y-up), in the order of `regions`.
 ///
+/// A hole shaped like a C whose mouth is narrower than `2·inset_mm` grows
+/// over its mouth; the bay inside it is a floor of its own, the points of
+/// the bay more than `inset_mm` from the hole, after the floors round the
+/// holes (#489).
+///
 /// When the grown holes lie apart inside the shrunk outer, the floors are
 /// built from the offsets directly and keep their arcs; when they touch or
 /// cross, the holes are cut with [`crate::difference`], which flattens
@@ -31,7 +36,7 @@ use crate::region::{Region, nest};
 pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
     regions
         .iter()
-        .flat_map(|r| inset_region(r, inset_mm, tolerance_mm))
+        .flat_map(|r| inset_region(r, inset_mm, tolerance_mm, Bays::Floor))
         .collect()
 }
 
@@ -65,7 +70,7 @@ pub fn rounded_band(
         return Vec::new();
     }
     let united = union(
-        &grown_outers(regions, margin_mm + rounding_mm),
+        &grown_outers(regions, margin_mm + rounding_mm, Bays::Island),
         &[],
         tolerance_mm,
     );
@@ -103,7 +108,7 @@ pub fn surround(
         return Vec::new();
     }
     let band = if rounding_mm == 0.0 {
-        grown_outers(regions, margin_mm)
+        grown_outers(regions, margin_mm, Bays::Island)
     } else {
         rounded_band(regions, margin_mm, rounding_mm, tolerance_mm)
     };
@@ -133,12 +138,12 @@ pub fn surround_floor_regions(
     if !open_edge {
         return floor_regions(surround, inset_mm, tolerance_mm);
     }
-    let foot = grown_outers(design, inset_mm);
+    let foot = grown_outers(design, inset_mm, Bays::Floor);
     surround
         .iter()
         .flat_map(|region| {
             if is_design_hole(region, design) {
-                inset_region(region, inset_mm, tolerance_mm)
+                inset_region(region, inset_mm, tolerance_mm, Bays::Floor)
             } else {
                 difference(std::slice::from_ref(region), &foot, tolerance_mm)
             }
@@ -178,8 +183,9 @@ pub fn inset_outers(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Vec
     if !usable(inset_mm) {
         return Vec::new();
     }
-    floor_regions(regions, inset_mm, tolerance_mm)
-        .into_iter()
+    regions
+        .iter()
+        .flat_map(|r| inset_region(r, inset_mm, tolerance_mm, Bays::Island))
         .map(|r| r.outer().clone())
         .collect()
 }
@@ -190,53 +196,91 @@ fn usable(mm: f64) -> bool {
 }
 
 /// Every region's outer offset outward by `distance_mm` with round joins,
-/// each the region it encloses; they may overlap.
-fn grown_outers(regions: &[Region], distance_mm: f64) -> Vec<Region> {
+/// as the regions it encloses, a bay it closes as `bays` says
+/// ([`grown_contour`]); they may overlap.
+fn grown_outers(regions: &[Region], distance_mm: f64, bays: Bays) -> Vec<Region> {
     regions
         .iter()
-        .flat_map(|r| offset(r.outer(), distance_mm))
-        .filter_map(single_region)
+        .flat_map(|r| grown_contour(r.outer(), distance_mm, bays))
         .collect()
 }
 
-/// [`floor_regions`] of one region.
-fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+/// What a contour grown outward ([`grown_contour`]) makes of a bay it
+/// closes (#489): a contour shaped like a C whose mouth is narrower than
+/// twice the distance grows over the mouth, and its offset comes back as
+/// two loops, its outline and an inner one round the bay.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Bays {
+    /// The bay is a hole of the grown contour: the points in it farther
+    /// than the distance from the contour, which a floor keeps.
+    Floor,
+    /// The bay is filled, as if the inner loop enclosed the contour too: a
+    /// cut-out path ([`inset_outers`]) goes round a region's edge, not
+    /// round a bay one of its holes closes, and a male's band
+    /// ([`rounded_band`], [`surround`]) covers a bay its design's outer
+    /// closes, so the male carves it.
+    Island,
+}
+
+/// [`floor_regions`] of one region, its holes' bays as `bays` says.
+fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64, bays: Bays) -> Vec<Region> {
     let outers = offset(region.outer(), -inset_mm);
     if outers.is_empty() {
         return Vec::new();
     }
-    // `offset` keeps a hole's clockwise winding and grows it for a
-    // positive delta.
-    let grown: Vec<Contour> = region
+    let grown: Vec<Region> = region
         .holes()
         .iter()
-        .flat_map(|hole| offset(hole, inset_mm))
+        .flat_map(|hole| grown_contour(hole, inset_mm, bays))
         .collect();
     if grown.is_empty() {
         return outers.into_iter().filter_map(single_region).collect();
     }
+    let hulls: Vec<Contour> = grown.iter().map(|r| r.outer().clone()).collect();
+    // Counter-clockwise, as `nest` gives back a region's outer.
+    let bay_loops: Vec<Contour> = grown
+        .iter()
+        .flat_map(|r| r.holes().iter().map(Contour::reversed))
+        .collect();
     let mut all = outers.clone();
-    all.extend(grown.iter().cloned());
+    all.extend(hulls.iter().cloned());
+    all.extend(bay_loops.iter().cloned());
     if let Some(Ok((nested, warnings))) = holes_stay_apart(region, inset_mm).then(|| nest(all)) {
         let holes: usize = nested.iter().map(|r| r.holes().len()).sum();
         // A grown hole that encloses the shrunk outer nests as the outer
-        // of an inverted annulus; only the shrunk outers may be outers.
+        // of an inverted annulus; only the shrunk outers may be outers, and
+        // the bays the grown holes enclose regions inside them.
         let clean = warnings.is_empty()
-            && nested.len() == outers.len()
-            && holes == grown.len()
-            && nested
-                .iter()
-                .all(|r| r.depth() == 0 && outers.contains(r.outer()));
+            && nested.len() == outers.len() + bay_loops.len()
+            && holes == hulls.len()
+            && nested.iter().all(|r| match r.depth() {
+                0 => outers.contains(r.outer()),
+                2 => bay_loops.contains(r.outer()),
+                _ => false,
+            });
         if clean {
             return nested;
         }
     }
     let subject: Vec<Region> = outers.into_iter().filter_map(single_region).collect();
-    let clip: Vec<Region> = grown
-        .iter()
-        .filter_map(|c| single_region(c.reversed()))
-        .collect();
-    difference(&subject, &clip, tolerance_mm)
+    difference(&subject, &grown, tolerance_mm)
+}
+
+/// The area `contour` (an outer or a hole) encloses, grown by
+/// `distance_mm` with round joins, as regions. A contour that grows over a
+/// bay's mouth comes back as one region whose holes are its bays with
+/// [`Bays::Floor`] (#489: before, each loop was a region of its own, so a
+/// floor lost the bay with the island round it), and as one region per
+/// loop with [`Bays::Island`]. `offset` gives every loop the contour's
+/// winding, so they are told apart by containment.
+fn grown_contour(contour: &Contour, distance_mm: f64, bays: Bays) -> Vec<Region> {
+    let loops = offset(contour, distance_mm);
+    if bays == Bays::Floor
+        && let Ok((regions, _)) = nest(loops.clone())
+    {
+        return regions;
+    }
+    loops.into_iter().filter_map(single_region).collect()
 }
 
 /// Whether `region`'s holes, grown by `inset_mm`, stay apart from each
@@ -840,6 +884,78 @@ mod tests {
             assert!(
                 !floor[0].contains_point(Point::new(50.0, 45.0)),
                 "gap {gap}: the floor runs between the holes"
+            );
+        }
+    }
+
+    /// #489: a C-shaped island, a 20 mm square wall 4 mm thick from
+    /// (10, 10) with a mouth 1 mm wide in its right side, in a 40 mm square.
+    fn closed_c() -> Contour {
+        let points = [
+            (10.0, 10.0),
+            (30.0, 10.0),
+            (30.0, 19.5),
+            (26.0, 19.5),
+            (26.0, 14.0),
+            (14.0, 14.0),
+            (14.0, 26.0),
+            (26.0, 26.0),
+            (26.0, 20.5),
+            (30.0, 20.5),
+            (30.0, 30.0),
+            (10.0, 30.0),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        Contour::new(Polyline::new(vertices, true)).expect("a C")
+    }
+
+    /// #489: inset 2 mm, the C's island grows over its 1 mm mouth, and the
+    /// 12 mm bay inside it keeps a floor of its own: the bay shrunk to 8 ×
+    /// 8 mm, plus a lens `l = 2∫₀^½ (2 − √(4 − s²)) ds` ≈ 0.021 mm² where
+    /// it reaches toward the mouth past the round joins about the mouth's
+    /// corners. The floor round the island is the 36 mm square less the
+    /// 24 mm one with 2 mm round corners, less the same lens notched in
+    /// where the island's outside meets the mouth. Areas within 0.1 mm²
+    /// (arcs cut as chords within [`TOL`]). Alone (its grown island apart
+    /// from the outer) and with a 4 mm square 1 mm right of the C (their
+    /// grown islands merge, so the holes are cut with `difference`), the
+    /// bay is a floor. Before, the grown island's inner loop round the bay
+    /// was cut away as island too: the floor was 723.5 mm², the bay left
+    /// out.
+    #[test]
+    fn floor_keeps_the_bay_of_a_closed_c() {
+        let s: f64 = 0.5;
+        let integral = s / 2.0 * (4.0 - s * s).sqrt() + 2.0 * (s / 2.0).asin();
+        let lens = 2.0 * (2.0 * s - integral);
+        let bay = 64.0 + lens;
+        let round = 36.0 * 36.0 - (24.0 * 24.0 - (4.0 - PI) * 4.0 - lens);
+        let in_bay = Point::new(20.0, 20.0);
+        let (alone, _) = nest(vec![rect(0.0, 0.0, 40.0, 40.0), closed_c()]).expect("nests");
+        let floor = floor_regions(&alone, 2.0, TOL);
+        assert!(
+            (area_mm2(&floor) - (round + bay)).abs() < 0.1,
+            "{} mm², not {}",
+            area_mm2(&floor),
+            round + bay
+        );
+        let (beside, _) = nest(vec![
+            rect(0.0, 0.0, 40.0, 40.0),
+            closed_c(),
+            rect(31.0, 12.0, 4.0, 4.0),
+        ])
+        .expect("nests");
+        for (case, regions) in [("alone", alone), ("beside a square", beside)] {
+            let floor = floor_regions(&regions, 2.0, TOL);
+            let pieces: Vec<&Region> = floor.iter().filter(|r| r.contains_point(in_bay)).collect();
+            assert_eq!(pieces.len(), 1, "{case}: the bay is a floor: {floor:?}");
+            assert!(
+                (pieces[0].area_mm2() - bay).abs() < 0.1,
+                "{case}: the bay's floor is {} mm², not {bay}",
+                pieces[0].area_mm2()
+            );
+            assert!(
+                floor.iter().all(|r| r.outer().is_ccw()),
+                "{case}: outers stay counter-clockwise"
             );
         }
     }
