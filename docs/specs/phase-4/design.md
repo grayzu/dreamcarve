@@ -444,8 +444,16 @@ time: `eframe`/`egui`/`egui_wgpu`/`egui_extras` (MIT/Apache-2.0; `wgpu`
 and `winit` through `eframe`, `default-features = false` plus `wgpu`,
 `default_fonts` off since fonts are bundled), `egui_kittest` (dev),
 `rfd` (MIT), `serde` and `toml` (already present), `png` (already present,
-for bitmaps on the Viewport), the fonts and icon set `experience.md`
-names. `NOTICE` gains the fonts and icons; `cargo deny` stays the gate.
+for bitmaps on the Viewport). Bundled assets, as `experience.md` names
+them: **Inter** (OFL 1.1, no Reserved Font Name,
+github.com/rsms/inter) as three static instances with tabular figures
+frozen in, since egui cannot select OpenType features; **JetBrains Mono**
+(OFL 1.1, github.com/JetBrains/JetBrainsMono) for codes, paths and
+G-code; **Lucide** (ISC, with the Feather-derived glyphs under MIT,
+github.com/lucide-icons/lucide) as its icon font. `NOTICE` gains all
+three with their copyright lines; `cargo deny` stays the gate. The eight
+operation-kind glyphs are DreamCarve's own, painter-drawn so they take
+the operation's colour.
 `docs/rust-guidelines.md`'s crate graph gains the new crates:
 
 ```
@@ -567,3 +575,5 @@ slice 15 for 3.4; nothing else waits for phase 3.
 | 2 | Snapshot images on Linux only, with the other two OSes running behaviour tests without image comparison? | Yes. Font rasterisation differs per OS and the egui authors recommend behaviour tests over image comparison; one snapshot pair (light, dark) documents the look and catches regressions where it is stable. |
 | 3 | `rfd` for native dialogs, or egui's own file browser? | `rfd`: native dialogs are what users expect and `DESKTOP_DESIGN.md` says the same. |
 | 4 | Stop cannot interrupt a running generator. Add a cancellation token to the long generators (V-Carve medial, pocket raster) in a later phase, or accept that Stop drops the result and lets the thread finish? | Accept for phase 4; note it in the chapter. A cancellation point in `dc-cam` is a phase 6 concern when simulation adds longer jobs. |
+| 5 | Operation palette (`experience.md`, "Operation colours"): four of the CLI's eight `--preview` colours sit at 2.2–2.6:1 on white, and the designer proposes darkened light-mode hexes for green, purple, orange, cyan and pink, plus a dark-mode set. Functional 73 says the app uses the same palette as `--preview`. Change `preview.rs`'s `PALETTE` to the proposed light set, so the CLI's SVG and the app agree, or keep the CLI's hexes in light mode? | Change `preview.rs` to the proposed light set in slice 16, same order, so there is one light table and acceptance 79 holds; the dark set is the app's alone, since the SVG is on white. The goldens do not contain the preview, so no bytes under test change; the quick-start pictures are regenerated once. |
+| 6 | macOS menu bar: egui's in-window menu bar on every platform, or a native `NSMenu` on macOS? | egui's on all three for phase 4: one implementation, one test path, every shortcut in one place. A native bar is phase 9 polish, where signing and bundle work already touch the macOS shell. |
