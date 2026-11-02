@@ -641,6 +641,8 @@ pub fn medial_axis_with(region: &Region, step_mm: f64, tolerance_mm: f64, reach:
 pub enum CornerReach { Upstream, Every { outer: bool, floor_inset_mm: Option<f64> } }
 pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> Vec<Corner>;  // arcs flattened as for medial_axis (#402)
 pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
+pub fn bottleneck_mm(graph: &MedialGraph) -> Option<f64>;  // #475
+pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64>;  // #475
 ```
 
 1. **Resolution** (`resolution.ts`): `step = max(short_span / 160,
@@ -649,6 +651,30 @@ pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
    `None` when the span is 0. `budget_limited` when the second term won.
    Scale-invariant by construction (the ported test
    `resolution_scales_with_short_span`).
+   **The narrowest feature (#475).** The shape step suits shapes whose
+   narrowest part is a fair fraction of their span, as letters' strokes
+   are; traced art can have parts a hundred times narrower than its
+   region. A node is the circumcentre of samples a step apart and stands
+   off the axis by about `step² / (8 · clearance)`: once the step passes
+   the clearance, the circle through two samples on one wall cannot touch
+   it, and the node lands near the nearer wall with the clearance it finds
+   there. A 50 mm region's step, 0.3125 mm, so missed the axis round a
+   spike's tip 0.2 mm from the wall, and the groove stopped short there
+   (the plug stood 0.087 mm proud on the synthetic spike, 0.19 mm on the
+   maintainer's traced eagle). `bottleneck_mm` is the graph's narrowest
+   bottleneck: the least clearance of a node joined to two or more others,
+   none nearer the boundary. Along a corner's branch the clearance falls
+   to the tip, a leaf, so corners are not bottlenecks; a node whose
+   clearance dips below all its neighbours' is where the region narrows
+   between walls that do not meet there, or, sampled too coarsely to see
+   such a place, a node off the axis close to a wall. `refined_step_mm`
+   is the step to sample again at when the bottleneck is narrower than the
+   step: its clearance, but no finer than the step over
+   `MAX_FEATURE_REFINEMENT` (4) nor the budget floor; `None` otherwise.
+   Still scale-invariant, and at most four times the samples
+   (`medial::refined_step_resolves_a_spike_beside_a_wall`,
+   `medial::refined_step_keeps_the_step_of_a_wide_shape`,
+   `medial::refined_step_is_bounded`).
 2. **Loops**: the region's outer and holes, arcs flattened at
    `tolerance_mm`, consecutive duplicates and an explicit closing vertex
    dropped (`cleanLoop`). A loop with fewer than three vertices is
@@ -792,7 +818,13 @@ orientation; DreamCarve's regions are normalised anyway.
    `VCarveNoMedialAxis`; `VCarveSamplingBudget` once when budget-limited.
    `medial_axis(region, step)`; if empty, retry at `max(budget_floor,
    step / 2)` up to twice (`MAX_AUTO_REFINEMENTS`); still empty warns
-   `VCarveNoMedialAxis` and skips. Then `toolpath.ts`'s pipeline:
+   `VCarveNoMedialAxis` and skips. Not upstream (#475): where the graph
+   has a bottleneck narrower than its step, it is built once more at
+   `refined_step_mm` (Medial axis, step 1), and the pipeline below uses
+   that step (`inlay::spike_in_a_large_region_seats_flush`). Of the
+   corpus only "Rag"'s "g" refines (0.073 → 0.018 mm, a node at the tip
+   of the tail's wedge); its program is 13% longer and still within the
+   golden's tolerance. Then `toolpath.ts`'s pipeline:
    - **Chains** (`extractChains`): maximal degree-2 paths between
      junctions or leaves, pure cycles (closed, first node repeated),
      isolated nodes as plunge points.
