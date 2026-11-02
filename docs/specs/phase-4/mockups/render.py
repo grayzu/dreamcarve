@@ -109,9 +109,9 @@ def section(s: Svg, x, y, w, title, open_=True):
     return y + 24
 
 
-def field_row(s: Svg, x, y, w, label, value="", unit="", placeholder=False, error=None, reset=False, label_w=138, help_=True):
-    """Label on the left, box on the right. Returns y of the next row."""
-    s.text(x, y + 14, label, size=11)
+def field_row(s: Svg, x, y, w, label, value="", unit="", placeholder=False, error=None, reset=False, label_w=138, help_=True, dim=False):
+    """Label on the left, box on the right. Returns y of the next row. `dim`: editable but greyed (used by the other Inlay side)."""
+    s.text(x, y + 14, label, size=11, fill=MUTED if dim else INK)
     if help_:
         s.circle(x + label_w - 14, y + 10, 5, stroke=LINE)
         s.text(x + label_w - 14, y + 13, "?", size=8, fill=MUTED, anchor="middle")
@@ -119,7 +119,7 @@ def field_row(s: Svg, x, y, w, label, value="", unit="", placeholder=False, erro
     bw = w - label_w - (18 if reset else 0)
     s.rect(bx, y, bw, 20, fill=WHITE, stroke=ERROR if error else LINE, rx=2)
     if value or placeholder:
-        s.text(bx + 6, y + 14, value, size=11, fill=MUTED if placeholder else INK, italic=placeholder)
+        s.text(bx + 6, y + 14, value, size=11, fill=MUTED if (placeholder or dim) else INK, italic=placeholder)
     if unit:
         s.text(bx + bw - 6, y + 14, unit, size=10, fill=MUTED, anchor="end")
     if reset:
@@ -131,15 +131,15 @@ def field_row(s: Svg, x, y, w, label, value="", unit="", placeholder=False, erro
     return ny
 
 
-def dropdown(s: Svg, x, y, w, label, value, label_w=138, help_=True, disabled=False, note=None):
-    s.text(x, y + 14, label, size=11, fill=MUTED if disabled else INK)
+def dropdown(s: Svg, x, y, w, label, value, label_w=138, help_=True, disabled=False, note=None, dim=False):
+    s.text(x, y + 14, label, size=11, fill=MUTED if (disabled or dim) else INK)
     if help_:
         s.circle(x + label_w - 14, y + 10, 5, stroke=LINE)
         s.text(x + label_w - 14, y + 13, "?", size=8, fill=MUTED, anchor="middle")
     bx = x + label_w
     bw = w - label_w
     s.rect(bx, y, bw, 20, fill=HEADER if disabled else WHITE, stroke=LINE, rx=2)
-    s.text(bx + 6, y + 14, value, size=11, fill=MUTED if disabled else INK)
+    s.text(bx + 6, y + 14, value, size=11, fill=MUTED if (disabled or dim) else INK)
     s.text(bx + bw - 8, y + 14, "▾", size=10, fill=MUTED, anchor="end")
     ny = y + 26
     if note:
@@ -871,8 +871,8 @@ def scene_operation_profile():
 
 
 def scene_operation_vcarve():
-    s = Svg(700, 860)
-    caption(s, "06 · Operation editor, V-Carve with clearing passes (capabilities 68, 70). The Inlay editor shares the Clearing group.")
+    s = Svg(720, 850)
+    caption(s, "06 · Operation editors: V-Carve with clearing passes (68, 70); Inlay with one set of values for both sides (68a), shown on the female.")
     x, w = 20, 330
     panel(s, x, 40, w, 800, "Lettering · V-Carve")
     yy = 72
@@ -918,36 +918,50 @@ def scene_operation_vcarve():
     s.text(x + 14, yy + 38, "deepest cut 2.5 mm · flat floor, cleared by T1 then T2", size=10, fill=MUTED)
     s.text(x + 14, yy + 54, "⚠ clearing_not_descending would show here if T2 were above T1", size=10, fill=WARN)
 
-    # Right: Inlay male, abbreviated.
+    # Right: Inlay, one set of values for both sides (capability 68a).
     x2 = 370
-    panel(s, x2, 40, w, 560, "DC · Inlay (male)")
+    panel(s, x2, 40, w, 790, "DC · Inlay")
     yy = 72
-    yy = section(s, x2, yy, w, "Strategy")
-    s.text(x2 + 8, yy + 14, "Side", size=11)
-    radio(s, x2 + 126, yy, "Female", on=False)
-    radio(s, x2 + 200, yy, "Male", on=True)
+    yy = section(s, x2, yy, w, "Side")
+    s.text(x2 + 8, yy + 14, "This project cuts the", size=11)
+    radio(s, x2 + 146, yy, "Female", on=True)
+    radio(s, x2 + 222, yy, "Male", on=False)
     yy += 26
-    s.text(x2 + 126, yy + 8, "Mirrored in place about the design's centre line;", size=9, fill=MUTED, italic=True)
-    s.text(x2 + 126, yy + 20, "inlay_male_mirrored at X = 55 mm.", size=9, fill=MUTED, italic=True)
-    yy += 28
-    yy = section(s, x2, yy, w, "Depth")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Inlay depth", "4", "mm")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Glue gap", "1", "mm")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Plug depth", "2", "mm")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Margin", "8", "mm")
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Outline rounding", "On")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Rounding radius", "10", "mm")
+    button(s, x2 + 146, yy, 160, "Make the male project…", h=20)
+    yy += 26
+    s.text(x2 + 146, yy + 6, "Save As <stem>-male.dcv, side flipped, thickness asked", size=9, fill=MUTED, italic=True)
+    yy += 18
+    yy = section(s, x2, yy, w, "Depth · one set for both sides")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Inlay depth (both)", "4", "mm")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Glue gap (male)", "1", "mm", dim=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Plug depth (male)", "2", "mm", dim=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Margin (male)", "8", "mm", dim=True)
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Outline rounding (male)", "On", dim=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Rounding radius (male)", "10", "mm", dim=True)
     yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0", "mm")
-    yy = section(s, x2, yy + 2, w, "Clearing passes", open_=False)
-    yy = section(s, x2, yy, w, "Cut-out")
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Cut-out", "On")
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Tool", "3.175 mm end mill (T2)")
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Tabs", "Count 4 · 6 × 3 mm rect")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0.2", "mm")
+    s.text(x2 + 8, yy + 4, "Dimmed: set here, used by the male.", size=9, fill=MUTED, italic=True)
+    yy += 14
+    s.rect(x2 + 8, yy, w - 16, 58, fill=PANEL, stroke=LINE)
+    s.text(x2 + 14, yy + 15, "Both sides share", size=10, weight="bold")
+    s.text(x2 + 14, yy + 30, "male start plane 3 mm · band floor 5 mm below the stock top", size=10, fill=MUTED)
+    s.text(x2 + 14, yy + 45, "flank engagement 5 mm > cone height 3.175 mm (90° bit)", size=10, fill=ERROR)
+    yy += 66
+    yy = section(s, x2, yy, w, "Clearing passes · both sides", open_=False)
+    yy = section(s, x2, yy, w, "Cut-out (male)")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Cut-out", "On", dim=True)
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Tool", "3.175 mm end mill (T2)", dim=True)
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Tabs", "Count 4 · 6 × 3 mm rect", dim=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0.2", "mm", dim=True)
     yy = section(s, x2, yy + 2, w, "Order", open_=False)
     yy = section(s, x2, yy, w, "Heights", open_=False)
-    s.text(x2 + 8, yy + 20, "On Female: Margin, Outline rounding and Cut-out are hidden;", size=10, fill=MUTED)
-    s.text(x2 + 8, yy + 34, "the female ignores them (capability 45).", size=10, fill=MUTED)
+    for i, ln in enumerate((
+        "Every field shows whichever side is chosen; the label says who",
+        "reads it. The female reads only the inlay depth. Male fields stay",
+        "editable on the female so the values are set once and travel",
+        "with the file. On Male the dimming swaps: nothing is female-only.",
+        "Mirroring: inlay_male_mirrored at X = 55 mm, in the Warnings panel.",
+    )):
+        s.text(x2 + 8, yy + 20 + i * 14, ln, size=10, fill=MUTED)
     return s.render("DreamCarve phase 4 wireframe: V-Carve and Inlay editors")
 
 

@@ -89,9 +89,29 @@ folder are app preferences, kept outside the project.
     project millimetres (or inches), generation state, and the warning and
     error counts, which open the **Warnings** panel as a drawer above the
     status bar. Side panels resize by dragging their dividers and collapse
-    to a strip; the layout is remembered between sessions. The window
-    follows the OS light or dark appearance. Minimum usable window:
-    1280 × 768.
+    to a strip; the layout is remembered between sessions in the app's
+    preferences file, `gui.toml` beside `config.toml` in the user config
+    directory (open question 11). The window follows the OS light or dark
+    appearance, so both palettes ship (open question 9). Minimum usable
+    window: 1280 × 768 with both side panels open at their minimum; below
+    that the side panels collapse to strips rather than the window
+    refusing (open question 12).
+50a. **Look and feel.** The app is a current desktop application, not a
+    dialog-box program (maintainer, 2026-11-02). Panels edit the project in
+    place: a change applies as it is made and is undone from the Edit menu,
+    never through OK/Cancel forms. Validation is inline, under the field
+    (60, 66). Modal windows are kept for the few things that are modal
+    (open, save, import, export, the Tool Library) and use the same panel
+    idiom inside. Flat controls with one icon set, a consistent spacing and
+    type scale, and light and dark palettes designed together, so the
+    toolpath colours read on both. No bevelled buttons, no tabbed
+    property sheets, no nested dialogs. The wireframes in `mockups/` fix
+    layout, labels and field names only; the visual design (palette, type,
+    icons, spacing, control styling) is the design spec's, settled before
+    the first GUI slice merges, with PureCutCNC's own interface as the
+    reference for the level of finish. Acceptance test 92's screenshots are
+    reviewed against it, and the quick start's screenshots come from the
+    shipped build.
 51. **Project lifecycle.** *New* makes an empty project with the phase 1
     defaults (100 × 100 mm stock, thickness unset, origin bottom-left and
     Z zero at the stock top, grblHAL at its latest version, no tools, no
@@ -99,8 +119,10 @@ folder are app preferences, kept outside the project.
     `init` does (capabilities 1, 20, 46): a stock sized round the drawing
     with its margin, the picture or the shapes placed as `init` places
     them, and, for a picture, one Photo V-Carve on it with `init`'s
-    defaults. Whether *New from drawing* also writes `init`'s placeholder
-    tool and Profile is open question 1. *Open* reads any `.dcv` the CLI
+    defaults. *New from drawing* adds the shapes and the stock only: no
+    placeholder tool and no Profile (open question 1, decided 2026-11-02),
+    since the empty Operations and Tools lists say what to do next (79) and
+    a tool with unset feeds is a trap the library picker avoids. *Open* reads any `.dcv` the CLI
     reads, migrates it, and lists migration notes and validation
     warnings in the Warnings panel. *Save* and *Save As…* write through the
     same serializer as the CLI, so a project opened and saved unchanged is
@@ -141,7 +163,8 @@ folder are app preferences, kept outside the project.
     or drop an `.svg` or `.dxf` on the window) adds the file's shapes to
     the open project as new feature instances, placed as drawn, with the
     drawing's origin at the stock's bottom-left corner, then selects them so
-    the user can move them (open question 2). The dialog shows the file,
+    the user can move them (open question 2, decided 2026-11-02). The
+    dialog shows the file,
     the shapes it holds (closed and open counts), and the importer's
     options: for DXF the units (read from the file, required when it has
     none, as `init --units` is), the join tolerance (default 0.01 mm) and
@@ -314,11 +337,37 @@ folder are app preferences, kept outside the project.
     | Bore | Depth: `depth_mm`, `pitch_mm` (tool's step-down), `stock_to_leave_mm`, `through_cut_allowance_mm`. Strategy: `direction`. Heights: `safe_z_mm`. |
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Inlay | Strategy: `side` (Female, Male). Depth: `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm` (male), `outline_rounding_mm` (male; off for `null`), `through_cut_allowance_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out (male): off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
+    | Inlay | Side: `side` (Female, Male). Depth, one set for both sides (68a): `depth_mm` (both), `glue_gap_mm` (male), `plug_depth_mm` (male), `margin_mm` (male), `outline_rounding_mm` (male; off for `null`), `through_cut_allowance_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out (male): off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `invert`. Strategy: `line_angle_deg`, `line_spacing_fraction` (as a percentage), `strategy` (Raster, Hatch), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.4 (format v25); its editor is a slice
-    of this phase that waits for it (open question 10).
+    of this phase that waits for it, and nothing else in the phase does
+    (open question 10, decided 2026-11-02).
+68a. **Inlay: one set of values for both sides** (`06-operation-vcarve.svg`;
+    maintainer decision 2026-11-02). An inlay is one design cut into two
+    boards from the same numbers (capability 45): the female reads only the
+    inlay depth, and the male reads the depth, glue gap, plug depth, margin,
+    rounding and cut-out, because its start plane is the depth less the glue
+    gap and its floor is that plus the plug depth. Nothing is ever
+    legitimately different between the two sides, and the file stores every
+    field whatever the side. So the editor shows **every Inlay field in one
+    list, in one order, whichever side is chosen**, and each label says who
+    reads it: *Inlay depth (both)*, *Glue gap (male)*, *Plug depth (male)*,
+    *Margin (male)*, *Outline rounding (male)*, *Cut-out (male)*. On a female
+    project the male fields stay editable, dimmed, with one note, "Set here,
+    used by the male", so the values are set once and travel with the file.
+    Under Depth a read-only line shows what both sides share and what bit
+    the bench (phase 3's 90° bit): the male's start plane, its band floor,
+    and the flank's engagement against the V-bit's cone height, red when it
+    exceeds it. One clearing list serves both sides. **Make the male
+    project…** on the editor and in the Project menu does the two-file step
+    the quick start does by hand: *Save As* with `-male` added to the name,
+    the side flipped, and the male board's thickness asked for (it must
+    leave a base under the band, `inlay_plug_base_thin`); the open project
+    is then the male. *Make the female project…* is the same command the
+    other way. Two projects, two stocks and two programs remain: each side
+    is one board, and `check` on one file still cannot see the other (open
+    question 13).
 69. **Tabs** (`08-tabs-on-canvas.svg`). A Profile's **Tab request** is
     edited in its Corners and tabs group: none, a count, or distances along
     each outline; width, height, shape (rect or smooth), on holes, avoid
@@ -367,8 +416,9 @@ folder are app preferences, kept outside the project.
     moves solid in the operation's colour, rapids thin grey dashed, start
     points as a bit-sized circle with a tick in the direction of the first
     cut, tab marks heavy, drill holes as bit-sized circles. Direction
-    arrows along cuts are a toggle. Pan with the middle button or
-    Space-drag, zoom with the wheel or pinch about the cursor, *Fit* (F) to
+    arrows along cuts are a toggle. Pan with the middle button, Space-drag
+    or a two-finger scroll on a trackpad (open question 8), zoom with the
+    wheel or pinch about the cursor, *Fit* (F) to
     the stock and shapes, *Zoom to selection* (Shift F), and a 1:1 button
     where the display's size is known. Clicking a toolpath selects its
     operation. The Viewport flips Y exactly once; every coordinate the
@@ -384,7 +434,8 @@ folder are app preferences, kept outside the project.
     only the selected operation*. Each operation's eye (65) hides or shows
     its toolpath; *Show all* and *Hide all* are in the panel. These are
     view settings: not in the file, not undoable, remembered between
-    sessions (open question 6 on the default mode).
+    sessions. By operation is the default because it matches `--preview`
+    and the quick-start pictures (open question 6, decided 2026-11-02).
 74. **Program extents.** A toggle draws the program's XY extents box in
     machine coordinates as `check` prints them (capability 4): the tool
     centre's box and, dashed outside it, the box widened by the largest
@@ -485,8 +536,9 @@ byte-identical output with the program's header date pinned (`--date`).
     byte-identical to the original after the CLI has migrated it to the
     current version. The history is empty after open.
 63. **New from drawing** (51). *New from drawing* on `fixtures/coaster.svg`
-    yields the project `dreamcarve init` writes for it, save for whatever
-    open question 1 decides about the placeholder tool and Profile.
+    yields the project `dreamcarve init` writes for it with the placeholder
+    tool and the Profile removed: same stock, same instances, same
+    post-processor, no tools, no operations (open question 1).
 64. **Import DXF** (55). Importing `fixtures/plaque.dxf` into an empty
     project adds the shapes `init` would, named by layer, selected, as one
     undo step; a DXF with no `$INSUNITS` disables *Import* until units are
@@ -549,10 +601,19 @@ byte-identical output with the program's header date pinned (`--date`).
     3.175 mm end mill writes the `clearing` list in that order; dragging
     the smaller above the larger shows `clearing_not_descending` under the
     list, as `check` reports it.
-76. **Inlay side** (68). Switching the star fixture's Inlay from female to
-    male redraws the toolpath mirrored, lists `inlay_male_mirrored` with
-    the same X the CLI prints, offers the margin, rounding and cut-out
-    fields, and hides them again on female.
+76. **Inlay, one set of values** (68, 68a). The lettered inlay fixture
+    opened as the female shows every Inlay field, the male ones dimmed and
+    labelled *(male)*, with the quick start's values in them; editing the
+    glue gap on the female writes the value to the file and changes no
+    toolpath. Switching the side to male redraws the toolpath mirrored,
+    lists `inlay_male_mirrored` with the same X the CLI prints, and un-dims
+    the male fields; the derived line shows the start plane, floor and
+    engagement the design spec computes, and turns red when the engagement
+    exceeds the cone height. *Make the male project…* on the female with a
+    thickness of 18 mm writes `<stem>-male.dcv` beside it with the side
+    flipped, that thickness, and every other field byte-identical, and the
+    window is now on the male; exporting both files gives the quick start's
+    committed programs.
 77. **Photo V-Carve** (56, 68). The gradient fixture with a Photo V-Carve
     at `init`'s defaults draws the grooves `--preview` draws; `check`'s
     groove count appears in the operation's status. Runs once phase 3.4
@@ -671,7 +732,9 @@ program on the bench grblHAL to close the loop. Record below.
   names, Tabs (placing and dragging), Tool library (the window, the
   picker), Post-processors (the Project panel), Configuration (app
   preferences and where they live), Warnings (the panel; "located at the
-  field" now means the editor).
+  field" now means the editor), Inlay (one set of values for both sides,
+  which side reads which, *Make the male project…* replacing the
+  Save-As-and-flip step).
 - `CONTEXT.md`: **Design Tree** (the list of a project's feature
   instances, tabs and pictures; avoid: layer panel, object list; PureCutCNC:
   FeatureTree), **Viewport** (the 2D view of the stock from above; avoid:
@@ -699,8 +762,9 @@ program on the bench grblHAL to close the loop. Record below.
 
 ## Open questions
 
-For the maintainer. Each has a recommendation; the decision is folded into
-the capability it names and the record stays here.
+Questions 1–12 were answered by the maintainer on 2026-11-02: every
+recommendation accepted. The decisions are folded into the capabilities
+they name, and the record stays here. Question 13 is open.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
@@ -716,6 +780,7 @@ the capability it names and the record stays here.
 | 10 | Phase 3.4 (Photo V-Carve, format v25) may land after phase 4 opens. Gate its editor as one slice on v25, or hold phase 4 for 3.5? | Gate the slice. Everything else in this phase is independent of it. |
 | 11 | Where app preferences live (layout, recent files, visibility, export folders): beside `config.toml` in the user config directory? | Yes, as `gui.toml` beside it, documented in the Configuration chapter. Never in the `.dcv`. |
 | 12 | Window and panel minimums (50): is 1280 × 768 the floor, or must the app work on a 1366 × 768 laptop with panels collapsed? | 1280 × 768 with both side panels open at their minimum; below that the panels collapse to strips rather than the window refusing. |
+| 13 | Inlay sibling check (68a): when `<stem>-male.dcv` sits beside the open female (or the other way round), should the Warnings panel compare the two files' shared Inlay values and the V-bit angle and warn when they differ? Two files cannot check each other today, and the chapter says so. | Yes, as a hint, read-only, by file name convention only, in a later slice of this phase once *Make the male project…* exists; never a blocker, never an edit to the other file. Open. |
 
 ## Mock-ups
 
@@ -734,7 +799,7 @@ frame.
 
 ![05 Operation editor: Profile](mockups/05-operation-profile.svg)
 
-![06 Operation editor: V-Carve and Inlay](mockups/06-operation-vcarve.svg)
+![06 Operation editor: V-Carve, and Inlay with one set of values for both sides](mockups/06-operation-vcarve.svg)
 
 ![07 Operation editors: Drill, Bore, Engrave, Photo V-Carve](mockups/07-operation-fields.svg)
 
