@@ -27,7 +27,7 @@
 //!   stops at the board's edge.
 //!
 //! On both sides, parts of the design that come closer than
-//! [`inlay_merge_mm`] are first merged into one shape ([`merge_near`];
+//! [`INLAY_MERGE_MM`] are first merged into one shape ([`merge_near`];
 //! #479): no V-bit can carve the gap between them, so the female would
 //! leave a wall standing in it and the plug would stand proud on it.
 //!
@@ -56,8 +56,8 @@ use dc_geometry::{
 };
 use dc_project::{
     BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
-    INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
-    OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy, inlay_merge_mm,
+    INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand,
+    Operation, OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy,
     male_band,
 };
 
@@ -457,7 +457,7 @@ fn side_of(
 }
 
 /// `design`, the targets of Inlay `op` resolved (the male's moved by its
-/// `mirror`), with the parts that come closer than [`inlay_merge_mm`]
+/// `mirror`), with the parts that come closer than [`INLAY_MERGE_MM`]
 /// merged into one shape ([`merge_near_parts`]; #479, design "Inlay",
 /// step 2), as the safety pass merges them. Each pair of outlines that
 /// come near warns [`Warning::InlayPartsMerged`] at the middle of their
@@ -471,7 +471,7 @@ fn merge_near(
     mirror: Option<Transform>,
     warnings: &mut Vec<Warning>,
 ) -> Targets {
-    let merge_mm = inlay_merge_mm(project);
+    let merge_mm = INLAY_MERGE_MM;
     let merged = merge_near_parts(&design.regions, merge_mm, project.flatten_tolerance_mm);
     if merged.near.is_empty() {
         return design;
@@ -610,7 +610,7 @@ pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp) -> Option<f64> {
 /// [`Warning::InlayMaleMirrored`] with the line's X, and
 /// [`Warning::InlayPlugBaseThin`] when less than
 /// [`INLAY_MIN_PLUG_BASE_MM`] of board is left under its floor. On either
-/// side, parts of the design closer than [`inlay_merge_mm`] are cut as one
+/// side, parts of the design closer than [`INLAY_MERGE_MM`] are cut as one
 /// shape, each pair warning [`Warning::InlayPartsMerged`] (#479).
 ///
 /// # Errors

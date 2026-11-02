@@ -362,10 +362,8 @@ is no GUI in this phase.
      plug is sawn free inside the band. Cutting the backing off after
      gluing stays the user's: a saw.
      **Parts that nearly touch** (added 2026-11-02 in #479, the
-     maintainer's decision): two parts of the design closer than a small
-     distance, at most 0.05 mm (twice the flatten tolerance plus `√2`
-     units in the program's last place, 0.0214 mm by default), are cut
-     as one shape on both sides, so the female cuts one pocket with no
+     maintainer's decision): two parts of the design closer than 0.05 mm
+     are cut as one shape on both sides, so the female cuts one pocket with no
      knife-edge wall between them and the male one plug with no groove,
      and `inlay_parts_merged` names the two shapes, the gap and where it
      is. A V-bit cannot carve such a gap: the female left the wall to

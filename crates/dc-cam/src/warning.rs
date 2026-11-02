@@ -217,7 +217,7 @@ pub enum WarningCode {
     /// there, and a cut-out stops at it.
     InlayBandClipped,
     /// Two parts of an Inlay's design come closer than the merge distance
-    /// ([`dc_project::inlay_merge_mm`]), so both sides cut them as one
+    /// ([`dc_project::INLAY_MERGE_MM`]), so both sides cut them as one
     /// shape, with no wall between them (#479).
     InlayPartsMerged,
 }
@@ -1806,7 +1806,7 @@ impl fmt::Display for Warning {
                 ..
             } => write!(
                 f,
-                "{first} and {second} come {} mm apart at ({}, {}) mm, closer than the {} mm a V-bit can carve between two parts, so both sides cut them as one shape, with no wall between them; draw them at least {} mm apart to keep them separate",
+                "{first} and {second} come {} mm apart at ({}, {}) mm, closer than the {} mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least {} mm apart to keep them separate",
                 rounded(*gap_mm, 4),
                 rounded(*x_mm, 3),
                 rounded(*y_mm, 3),
@@ -2573,9 +2573,9 @@ mod tests {
                     x_mm: 50.000_4,
                     y_mm: 55.0,
                     gap_mm: 0.001,
-                    merge_mm: 0.021_414_213_562_373_1,
+                    merge_mm: 0.05,
                 },
-                "`Shape` (instance `i1`, profile 2) and `Shape` (instance `i1`, profile 3) come 0.001 mm apart at (50, 55) mm, closer than the 0.0214 mm a V-bit can carve between two parts, so both sides cut them as one shape, with no wall between them; draw them at least 0.0214 mm apart to keep them separate",
+                "`Shape` (instance `i1`, profile 2) and `Shape` (instance `i1`, profile 3) come 0.001 mm apart at (50, 55) mm, closer than the 0.05 mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least 0.05 mm apart to keep them separate",
             ),
         ]
     }

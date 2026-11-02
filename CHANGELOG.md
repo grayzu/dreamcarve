@@ -213,16 +213,15 @@ phases bump the patch number.
   the safety pass refused it. A fitted run now turns at most once. The
   fixtures' programs are unchanged ([#502]).
 - An Inlay whose design has two parts that nearly touch now seats. Where
-  two parts came within about 0.02 mm of each other, no V-bit could
-  carve the gap: the female left a knife-edge wall standing between the
-  two pockets, the male cut no groove between the two parts of its plug,
-  and the plug stood up to `depth_mm − glue_gap_mm` proud on the wall
-  (3 mm on two squares 0.001 mm apart). Both sides now cut parts closer
-  than the merge distance as one shape, and warn `inlay_parts_merged`
-  with the two shapes, the gap and where it is. The distance is twice
-  the flatten tolerance plus 1.4 units in the program's last decimal
-  place, at most 0.05 mm: 0.0214 mm by default. Only the gap fills, and
-  the safety pass merges the design from the project the same way.
+  two parts came within a few hundredths of a millimetre of each other,
+  the V-bit could not carve the gap, or not the narrow wedge either side
+  of it: the female left a knife-edge wall standing between the two
+  pockets, the male cut no groove between the two parts of its plug, and
+  the plug stood up to `depth_mm − glue_gap_mm` proud on the wall (3 mm
+  on two squares 0.001 mm apart). Both sides now cut parts closer than
+  0.05 mm as one shape, and warn `inlay_parts_merged` with the two
+  shapes, the gap and where it is. Only the gap fills, and the safety
+  pass merges the design from the project the same way.
   Plain V-Carve and Pocket cut their parts as drawn, and the fixtures'
   programs are unchanged ([#479]).
 - A male Inlay without a clearing pass no longer fails export with "an arc

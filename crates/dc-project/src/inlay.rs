@@ -284,38 +284,25 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
     })
 }
 
-/// The most [`inlay_merge_mm`] is, mm (#479).
-pub const INLAY_MERGE_MAX_MM: f64 = 0.05;
-
 /// How close two parts of an Inlay's design may come before both sides
 /// cut them as one shape (#479; `docs/specs/phase-3/design.md`,
-/// "Algorithms → Inlay", step 2), mm: twice the project's flatten
-/// tolerance plus `√2` units in the last place the program writes, at
-/// most [`INLAY_MERGE_MAX_MM`]; 0.0214 mm with the default 0.01 mm
-/// tolerance and three places in millimetres.
+/// "Algorithms → Inlay", step 2), mm: 0.05, the most the maintainer
+/// allows. The generator, and the safety pass that re-derives the
+/// design, both use it.
 ///
-/// Each outline is carved as chords up to the flatten tolerance off it,
-/// so two outlines closer than twice the tolerance can meet in the
-/// chords the carve follows, and neither side can tell the gap from a
-/// touch: the stress tests' pinch, a circle beside a square, fails to
-/// seat with gaps up to 0.02 mm and seats from 0.0205 mm. And a V-bit's
-/// tip path keeps half a unit on each axis, `quantum / √2`, from either
-/// wall (#469), so a gap needs `√2 · quantum` more before a tip path fits
-/// in it: two squares fail to seat 0.0012 mm apart and seat 0.0015 mm
-/// apart. The generator, and the safety pass that re-derives the design,
-/// both call this. A tolerance that is not a positive finite number
-/// counts as 0.
-#[must_use]
-pub fn inlay_merge_mm(project: &Project) -> f64 {
-    let tolerance_mm = Some(project.flatten_tolerance_mm)
-        .filter(|t| t.is_finite() && *t > 0.0)
-        .unwrap_or(0.0);
-    let quantum_mm = project
-        .post_processor
-        .decimal_places
-        .quantum_mm(project.display_units);
-    (2.0 * tolerance_mm + std::f64::consts::SQRT_2 * quantum_mm).min(INLAY_MERGE_MAX_MM)
-}
+/// A gap narrower than twice the flatten tolerance plus `√2` units in the
+/// last place written (0.0214 mm by default) cannot be carved at all:
+/// each outline is carved as chords up to the tolerance off it, and a
+/// V-bit's tip path keeps `quantum / √2` from each wall (#469). But that
+/// distance is not enough. Near touches up to 0.044 mm wide still held
+/// the plug up to 1.6 mm proud, where the carve does not reach into the
+/// narrow wedge either side of the gap (the stress sweep's line art seed
+/// `0x32`, 0.0436 mm; a square's corner beside a circle, 0.022 to
+/// 0.035 mm), and merged at 0.0214 mm, the wedge the closing leaves past
+/// the fill was still too narrow at some gaps (the corner, 0.016 mm). At
+/// 0.05 mm every one of them, the issue's two squares and the circle
+/// beside the square seat at every gap tried.
+pub const INLAY_MERGE_MM: f64 = 0.05;
 
 #[cfg(test)]
 mod tests {
@@ -491,24 +478,5 @@ mod tests {
         dc_geometry::assert_approx_eq!(board.max.y, p.stock.height_mm - 3.175, 1e-12);
         dc_geometry::assert_approx_eq!(band.board_room_mm(None), 4.675, 1e-12);
         dc_geometry::assert_approx_eq!(band.board_room_mm(Some(1.0)), 7.175, 1e-12);
-    }
-
-    /// #479: the merge distance is twice the flatten tolerance plus `√2`
-    /// units in the last place written: 0.0214 mm by default (0.01 mm,
-    /// three places in mm), 0.0236 mm in inches (four places, 0.00254 mm),
-    /// 0.0114 mm at a 0.005 mm tolerance, and no more than 0.05 mm at a
-    /// 0.1 mm tolerance.
-    #[test]
-    fn inlay_merge_distance_is_derived_from_the_project() {
-        let mut p = sample_project();
-        let root_2 = std::f64::consts::SQRT_2;
-        dc_geometry::assert_approx_eq!(inlay_merge_mm(&p), 0.02 + root_2 * 0.001, 1e-12);
-        p.display_units = crate::model::Units::Inch;
-        dc_geometry::assert_approx_eq!(inlay_merge_mm(&p), 0.02 + root_2 * 0.00254, 1e-12);
-        p.display_units = crate::model::Units::Mm;
-        p.flatten_tolerance_mm = 0.005;
-        dc_geometry::assert_approx_eq!(inlay_merge_mm(&p), 0.01 + root_2 * 0.001, 1e-12);
-        p.flatten_tolerance_mm = 0.1;
-        dc_geometry::assert_approx_eq!(inlay_merge_mm(&p), INLAY_MERGE_MAX_MM, 1e-12);
     }
 }

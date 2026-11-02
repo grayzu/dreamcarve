@@ -229,7 +229,7 @@
 //!   V-bit's run to S17 and its clearing runs to its floor, with its
 //!   regions, start plane and floor re-derived from the project. On
 //!   either side the design's parts that come closer than
-//!   [`inlay_merge_mm`] are one shape ([`merge_near_parts`], #479), as the
+//!   [`INLAY_MERGE_MM`] are one shape ([`merge_near_parts`], #479), as the
 //!   generator merges them. The
 //!   female carves the targets' regions from the stock top, flat at
 //!   `depth_mm` `D`. The male carves the **surround** of its design: the
@@ -300,9 +300,9 @@ use dc_geometry::{
 };
 use dc_project::{
     ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlayOp, InlaySide, InstanceId, MaleBand, Operation, PostProcessor, ProfileOp,
-    Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp, cleared_start_plane,
-    inlay_merge_mm, male_band,
+    FeatureInstance, INLAY_MERGE_MM, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
+    PostProcessor, ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units,
+    VCarveOp, cleared_start_plane, male_band,
 };
 
 use crate::ExportError;
@@ -1189,15 +1189,10 @@ fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>>
 }
 
 /// An Inlay's `design` (nested) with the parts that come closer than
-/// [`inlay_merge_mm`] merged into one shape, as the generator merges them
+/// [`INLAY_MERGE_MM`] merged into one shape, as the generator merges them
 /// (#479; [`merge_near_parts`]).
 fn merged_design(project: &Project, design: Vec<Region>) -> Vec<Region> {
-    merge_near_parts(
-        &design,
-        inlay_merge_mm(project),
-        project.flatten_tolerance_mm,
-    )
-    .regions
+    merge_near_parts(&design, INLAY_MERGE_MM, project.flatten_tolerance_mm).regions
 }
 
 /// What a male Inlay's cut-out run is held to (#443, #448; module docs):

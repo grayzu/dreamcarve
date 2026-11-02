@@ -61,8 +61,11 @@ pub struct MergedParts {
 ///
 /// A group of near parts is closed with round joins by half the distance
 /// (`(X ⊕ r) ⊖ r`), and only the pieces the closing adds that lie against
-/// two of the group's outlines are kept: the gaps between the parts. The
-/// pieces against one outline, an inward corner rounded, are not, so the
+/// two of the group's outlines are kept: the gaps between the parts. Each
+/// is grown a little into the parts and held to the closing, so it
+/// overlaps them, and united with them; the slivers the booleans leave
+/// where outlines run a rounding error apart are dropped. The pieces
+/// against one outline, an inward corner rounded, are not kept, so the
 /// parts keep their shape everywhere but at the gap. Where the two
 /// outlines part, the closing ends the fill with an arc of radius `r`;
 /// its vertices off the parts are cut to the one farthest from them, so
@@ -301,26 +304,26 @@ fn merged(parts: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<Region> {
         .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
         .collect();
     let reach_mm = 2.0 * fine_mm;
-    // The closing less the pieces it adds against one outline only. The
-    // gaps stay as the closing joined them: united with the parts alone,
-    // a gap's piece meets them along edges that the booleans place a
-    // rounding error apart, and may not join them.
-    let corners: Vec<Region> = difference(&closed, parts, fine_mm)
+    // The pieces the closing adds against two outlines: the gaps. Each is
+    // grown by `fine_mm` into the parts, and held to the closing, so it
+    // overlaps them: one that only met them, along edges the booleans
+    // place a rounding error apart, might not join them.
+    let gaps: Vec<Region> = difference(&closed, parts, fine_mm)
         .into_iter()
         .filter(|piece| {
             let against = outlines
                 .iter()
                 .filter(|o| closer_than(piece.outer().polyline(), o.polyline(), reach_mm))
                 .count();
-            against < 2
+            against >= 2
         })
+        .flat_map(|piece| grown_contour(piece.outer(), fine_mm, Bays::Island))
         .collect();
-    let bridged = if corners.is_empty() {
-        closed
-    } else {
-        difference(&closed, &corners, fine_mm)
-    };
-    let united = union(&bridged, parts, fine_mm);
+    if gaps.is_empty() {
+        return parts.to_vec();
+    }
+    let bridges = crate::boolean::intersection(&gaps, &closed, fine_mm);
+    let united = without_slivers(&union(parts, &bridges, fine_mm), fine_mm);
     let flattened: Vec<Polyline> = outlines
         .iter()
         .map(|o| o.polyline().with_arcs_flattened(fine_mm))
@@ -328,10 +331,35 @@ fn merged(parts: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<Region> {
     sharpened(&united, &flattened).unwrap_or(united)
 }
 
+/// `regions` less the slivers the booleans leave where the closing's
+/// outline and the parts' run a rounding error apart: a region, or a
+/// hole, whose area is at most `fine_mm` times its outline's length (on
+/// average no more than `2·fine_mm` wide, far narrower than any gap the
+/// merge leaves open). Left in, a sliver hole is a wall inside the merged
+/// part that the carve must keep clear of.
+fn without_slivers(regions: &[Region], fine_mm: f64) -> Vec<Region> {
+    let real = |c: &Contour| c.signed_area_mm2().abs() > fine_mm * c.polyline().length_mm();
+    let contours: Vec<Contour> = regions
+        .iter()
+        .filter(|r| real(r.outer()))
+        .flat_map(|r| {
+            std::iter::once(r.outer().clone()).chain(r.holes().iter().filter(|h| real(h)).cloned())
+        })
+        .collect();
+    match crate::region::nest(contours) {
+        Ok((cleaned, _)) => cleaned,
+        Err(_) => regions.to_vec(),
+    }
+}
+
 /// How far a vertex of a merged outline may lie off the parts' outlines,
 /// as the booleans flattened them, and still be theirs, mm: well above
 /// the booleans' rounding, well below the closing's arc.
 const ON_PART_MM: f64 = 1e-5;
+
+/// The shortest edge a merged outline keeps, mm: a vertex nearer the one
+/// before goes.
+const MIN_EDGE_MM: f64 = 1e-4;
 
 /// `regions`, a group of parts merged, with each run of outline vertices
 /// off the parts' `outlines` (flattened as the booleans flattened them;
@@ -383,7 +411,24 @@ fn sharpened(regions: &[Region], outlines: &[Polyline]) -> Option<Vec<Region>> {
                     kept.push(v);
                 }
             }
-            contours.push(Contour::new(Polyline::new(kept, true)).ok()?);
+            let mut spaced: Vec<crate::polyline::Vertex> = Vec::with_capacity(kept.len());
+            for v in kept {
+                if spaced
+                    .last()
+                    .is_none_or(|l| l.point().distance_to(v.point()) > MIN_EDGE_MM)
+                {
+                    spaced.push(v);
+                }
+            }
+            while spaced.len() > 3
+                && spaced
+                    .first()
+                    .zip(spaced.last())
+                    .is_some_and(|(f, l)| f.point().distance_to(l.point()) <= MIN_EDGE_MM)
+            {
+                spaced.pop();
+            }
+            contours.push(Contour::new(Polyline::new(spaced, true)).ok()?);
         }
     }
     crate::region::nest(contours).ok().map(|(r, _)| r)
@@ -412,8 +457,8 @@ mod tests {
     use super::*;
     use crate::region::{area_mm2, nest};
 
-    /// The default merge distance: `2 · 0.01 + √2 · 0.001` mm.
-    const MERGE_MM: f64 = 0.021_414_213_562_373_1;
+    /// The merge distance, mm (`dc_project::INLAY_MERGE_MM`).
+    const MERGE_MM: f64 = 0.05;
     const TOL: f64 = crate::flatten::FLATTEN_TOLERANCE_DEFAULT_MM;
 
     fn rect(x: f64, y: f64, w: f64, h: f64) -> Contour {
@@ -519,13 +564,13 @@ mod tests {
         assert_eq!(off.len(), 2, "{off:?}");
         for p in off {
             assert!(p.x > -0.02 && p.x < 0.02, "{p:?}");
-            assert!(p.y.abs() > 0.2 && p.y.abs() < 0.4, "{p:?}");
+            assert!(p.y.abs() > 0.3 && p.y.abs() < 0.8, "{p:?}");
         }
     }
 
     /// An island 0.002 mm inside its hole's edge merges with the part
     /// round the hole: the gap fills, with the closing's fillets where the
-    /// island's sides meet it, a few hundred-thousandths of a mm². An
+    /// island's sides meet it, about a thousandth of a mm². An
     /// island well inside a hole, and the hole's own part 0.002 mm from
     /// the hole (the design's material between them), are left as they
     /// were.
@@ -545,7 +590,7 @@ mod tests {
         assert_eq!(merged.regions.len(), 2, "{merged:?}");
         assert_eq!(merged.sources, vec![vec![0, 1], vec![2]]);
         let expected = 800.0 - 100.0 - 179.98 + 16.0 + 4.0 * 0.002;
-        crate::assert_approx_eq!(area_mm2(&merged.regions[..1]), expected, 1e-3);
+        crate::assert_approx_eq!(area_mm2(&merged.regions[..1]), expected, 2e-3);
         assert_eq!(merged.regions[1], regions[2]);
     }
 

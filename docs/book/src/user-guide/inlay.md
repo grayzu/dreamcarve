@@ -458,13 +458,14 @@ glue_gap_mm`.
 
 So both sides cut two parts that come closer than the **merge
 distance** as one shape: the female cuts one pocket, the male one plug,
-and they still fit. The distance is twice the project's
-`flatten_tolerance_mm` plus 1.4 units in the program's last decimal
-place, never more than 0.05 mm: 0.0214 mm with the default 0.01 mm
-tolerance and a millimetre program. Curves are carved as short straight
-chords up to the tolerance off the drawn line, so two outlines closer
-than twice it can meet in the chords; and the V-bit's tip keeps half a
-unit in the last place from each wall. Each pair warns
+and they still fit. The distance is 0.05 mm. A gap of about 0.02 mm or
+less cannot be carved at all: curves are carved as short straight
+chords up to `flatten_tolerance_mm` off the drawn line, so two outlines
+closer than twice it can meet in the chords, and the V-bit's tip keeps
+half a unit in the last decimal place from each wall. A little wider,
+the V-bit still cannot reach far enough into the narrow wedge on either
+side of the gap, and the plug can stand up to 1.6 mm proud there; at
+0.05 mm it seats. Each pair warns
 `inlay_parts_merged`, naming the two shapes, the gap and where it is, as
 drawn, so the female and the male name the same place. Only the gap
 fills: both parts keep their shape everywhere else. Parts the merge

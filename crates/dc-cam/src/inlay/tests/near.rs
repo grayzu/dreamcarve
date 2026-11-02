@@ -60,7 +60,7 @@ fn male_of_parts_a_hair_apart_seats() {
 /// pockets, and the male cut no groove between the squares of its plug.
 /// A tip path must keep `quantum / √2` (0.0007 mm) from the walls (#469),
 /// which leaves no room in a gap this narrow; 0.0015 mm seated. The gap is
-/// under the merge distance (`dc_project::inlay_merge_mm`, 0.0214 mm), so
+/// under the merge distance (`dc_project::INLAY_MERGE_MM`, 0.05 mm), so
 /// both sides now cut the squares as one shape.
 #[test]
 fn male_of_parts_closer_than_the_written_precision_seats() {
@@ -86,7 +86,7 @@ fn male_of_parts_closer_than_the_written_precision_seats() {
 /// 2.062 mm (60°) and 1.191 mm (90°) proud at the pinch, where the male
 /// cut no groove, with gaps up to 0.02 mm, twice the flatten tolerance;
 /// from 0.0205 mm it seats (0.023 mm at 60°). The gap is under the merge
-/// distance (`dc_project::inlay_merge_mm`, 0.0214 mm), so both sides now
+/// distance (`dc_project::INLAY_MERGE_MM`, 0.05 mm), so both sides now
 /// cut the circle and the square as one shape.
 #[test]
 fn male_of_a_pinch_seats() {
@@ -104,13 +104,14 @@ fn male_of_a_pinch_seats() {
 /// #479: the circle and the square of [`male_of_a_pinch_seats`], merged,
 /// seat with the 60° bit at gaps across the merge distance. A gap's fill
 /// ends where the two outlines part, in a corner (`dc_geometry`'s
-/// `merging_ends_a_gap_in_a_corner`): ended by the closing's round arc, at
-/// gaps of 0.009 to 0.013 and 0.019 to 0.021 mm the male's V-bit left the
-/// narrow wedge beyond the arc uncut for half a millimetre, and the plug
-/// stood 0.9 to 2 mm proud.
+/// `merging_ends_a_gap_in_a_corner`): ended by the closing's round arc,
+/// with the merge distance at 0.0214 mm, at gaps of 0.009 to 0.013 and
+/// 0.019 to 0.021 mm the male's V-bit left the narrow wedge beyond the
+/// arc uncut for half a millimetre, and the plug stood 0.9 to 2 mm proud.
+/// 0.04 mm was not merged then, and seated.
 #[test]
 fn male_of_a_merged_pinch_seats_at_every_gap() {
-    for gap_mm in [0.01, 0.012, 0.02] {
+    for gap_mm in [0.01, 0.012, 0.02, 0.04] {
         let fit = pinch_fit(gap_mm, 60.0);
         assert!(
             fit.is_flush(),
@@ -121,9 +122,36 @@ fn male_of_a_merged_pinch_seats_at_every_gap() {
     }
 }
 
+/// #479: a 10 mm square whose corner points at a 3 mm circle `gap_mm`
+/// off it, the square turned 0.5 rad, seats with the 60° bit. With the
+/// merge distance at 0.0214 mm the plug stood 0.70 mm proud at 0.016 mm
+/// (merged: the wedge the closing left was too narrow for the carve to
+/// reach into) and 1.05 to 1.11 mm at 0.022 to 0.035 mm (not merged);
+/// 0.045 mm seated.
+#[test]
+fn male_of_a_corner_beside_a_curve_seats() {
+    for gap_mm in [0.016, 0.03] {
+        let (c, s) = (0.5_f64.cos(), 0.5_f64.sin());
+        let (x, y) = (gap_mm * c, gap_mm * s);
+        let square = polygon(&[
+            (x, y),
+            (x + 10.0 * s, y - 10.0 * c),
+            (x + 10.0 * s + 10.0 * c, y - 10.0 * c + 10.0 * s),
+            (x + 10.0 * c, y + 10.0 * s),
+        ]);
+        let circle = Polyline::circle(Point::new(-3.0 * c, -3.0 * s), 3.0);
+        let fit = pair_fit(vec![circle, square], 60.0);
+        assert!(
+            fit.is_flush(),
+            "{gap_mm} mm: the plug stands {:.3} mm proud at {:?}",
+            fit.seat_mm,
+            fit.seat_at
+        );
+    }
+}
+
 /// The fit of a 3 mm circle `gap_mm` from a 10 mm square with the
-/// V-bit of `angle_deg`, `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`,
-/// step-over 0.1, no clearing.
+/// V-bit of `angle_deg` ([`pair_fit`]).
 fn pinch_fit(gap_mm: f64, angle_deg: f64) -> Fit {
     let square = polygon(&[
         (gap_mm, -5.0),
@@ -131,12 +159,17 @@ fn pinch_fit(gap_mm: f64, angle_deg: f64) -> Fit {
         (10.0 + gap_mm, 5.0),
         (gap_mm, 5.0),
     ]);
-    let mut project = project_of(
+    pair_fit(
         vec![Polyline::circle(Point::new(-3.0, 0.0), 3.0), square],
-        CENTRE,
-        100.0,
-        100.0,
-    );
+        angle_deg,
+    )
+}
+
+/// The fit of `profiles` placed at [`CENTRE`] with the V-bit of
+/// `angle_deg`, `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`,
+/// step-over 0.1, no clearing.
+fn pair_fit(profiles: Vec<Polyline>, angle_deg: f64) -> Fit {
+    let mut project = project_of(profiles, CENTRE, 100.0, 100.0);
     project.tools[0] = v_bit(angle_deg);
     let cone_mm = 3.175 / (angle_deg / 2.0_f64).to_radians().tan();
     let depth_mm = (cone_mm / 2.0).min(4.0);
