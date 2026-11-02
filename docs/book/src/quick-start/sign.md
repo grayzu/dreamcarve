@@ -500,9 +500,9 @@ G54
 G0 Z15.000
 M3 S18000
 G4 P3.000
-X15.000 Y15.000
+X15.001 Y15.001
 Z1.000
-G1 Z0.000 F400.000
+G1 Z-0.001 F400.000
 X17.406 Y17.406 Z-2.406 F692.820
 X17.474 Y17.474 Z-2.474 F691.607
 X17.843 Y17.844 Z-2.500 F1200.000
@@ -511,13 +511,17 @@ Y69.831
 X17.843 Y82.156
 X17.474 Y82.526 Z-2.474
 X17.406 Y82.594 Z-2.406
-X15.000 Y85.000 Z0.000
+X15.001 Y84.999 Z-0.001
 G0 Z15.000
 ```
 
 The bit comes down over the background's bottom-left corner, (15, 15) in
 machine coordinates: a rapid to 1 mm above the board, then down to the
-surface at the plunge rate. From the corner it runs in along the corner's
+surface at the plunge rate. It starts a thousandth of a millimetre in
+from the corner and below the surface: writing each number to three
+places can move a point by up to 0.0007 mm, so DreamCarve keeps the tip
+at least that far from every wall, and a rounded start can never put a
+move across one. From the corner it runs in along the corner's
 diagonal, going down as it goes, to the flat depth at Z −2.5, about
 2.5 mm in from both walls. The feed of that move, 692.820 mm/min, is
 lowered so that the bit goes down no faster than its 400 mm/min plunge
