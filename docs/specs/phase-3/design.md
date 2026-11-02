@@ -672,6 +672,28 @@ pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
    `clearance · (1 + tolRatio)` has a second contact at least 60° from
    the nearest one (`hasContactSpread`), `tolRatio = 0.003 +
    (step / clearance)² / 8`.
+   **Round a feature (#465).** The spread test also drops the axis round
+   the tip of a thin wedge of material standing into a region (a drawn
+   line's end, a claw): there the axis is the curve equidistant from the
+   tip and the wall beyond it, both seen in one direction once the axis is
+   a little way out (from about 0.6 mm clearance for the line art's
+   0.375 mm wedge). That axis is the only one whose discs reach the wall
+   beside the wedge, so the groove stopped short of it and the line art's
+   plug stood 0.191 mm proud. With `CornerReach::Every` (step 11) a node
+   is also kept when the boundary has a second contact within the band
+   such that: the boundary between the two, the shorter way round, turns
+   by at least 60° in all (at the vertices between them, and at either
+   contact that is itself a vertex), and they lie on neither one edge nor
+   two edges that meet; the one stands out from the other's wall by more
+   than 0.01 mm (`r · (1 − cos θ)` for clearance `r` and spread `θ`); and
+   they are not both corners (vertices turning more than 50°). Between
+   two contacts of a spoke, on one gently turning curve, the boundary
+   turns by no more than the spread, so spokes are still dropped; round a
+   wedge it runs up the wedge's flank and round its tip. A corner is
+   reached by every node round it, so a node between two corners adds
+   nothing. `medial_axis` (upstream's reach) keeps upstream's test alone
+   (`medial::axis_wraps_round_a_line_end`,
+   `medial::feature_contacts_keep_no_flattening_spokes`).
 7. **Edges**: for each Delaunay half-edge pair whose two triangles both
    map to kept nodes, an edge, unless the edge's midpoint is outside the
    region (a reflex-corner cut).
@@ -892,7 +914,15 @@ orientation; DreamCarve's regions are normalised anyway.
    its depth is clamped (step 5), which is PureCutCNC's whole treatment.
    DreamCarve adds the floor (functional 39): `floor = floor_regions`
    (each region inset by `F · slope` with `offset`, round joins; islands
-   grow by the same). For each floor region:
+   grow by the same). #465: `cavalier_contours` can return such an inset
+   as open pieces, where a traced convex curve (its points a little off
+   any one circle) of radius about `F · slope` collapses to about a
+   point; `offset` dropped them, and with them the region's whole floor,
+   so nothing cut its walls farther than `F · slope` from the medial axis
+   (the maintainer's eagle male stood 1.17 mm proud in a hole of the
+   design). `offset` now takes such an offset again with finer
+   tolerances (phase 1 design, `offset`;
+   `inlay::traced_hole_plug_seats_flush`). For each floor region:
    - **Boundary trace**: the floor outline and each floor island as a
      closed `CutBlock` at `z = start_plane − F`, the tip exactly on the
      boundary so the flank meets the outline at the start plane. The

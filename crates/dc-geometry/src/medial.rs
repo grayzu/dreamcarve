@@ -35,6 +35,7 @@
 //! and [`CornerReach::Every`] reach every corner, which every carve uses
 //! (#456).
 
+mod feature;
 mod grid;
 #[cfg(test)]
 mod tests;
@@ -42,6 +43,7 @@ mod tests;
 use crate::point::{EPS_MM, Point, Vec2};
 use crate::polyline::Polyline;
 use crate::region::Region;
+use feature::{Boundary, SegmentTag, has_feature_contact};
 use grid::{SegmentDistanceGrid, count_of};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -333,15 +335,22 @@ fn edges(points: &[Point]) -> impl Iterator<Item = (Point, Point)> + '_ {
 
 /// Every edge of closed `points` split into `ceil(len / step)` equal
 /// pieces, original vertices kept so corners stay sharp (upstream's
-/// `resampleLoop`).
-fn resample_loop(points: &[Point], step_mm: f64) -> Vec<Point> {
+/// `resampleLoop`). Each point comes with where the piece it starts lies
+/// on loop `loop_index` (#465).
+fn resample_loop(points: &[Point], step_mm: f64, loop_index: usize) -> Vec<(Point, SegmentTag)> {
     let mut out = Vec::new();
     let next = points.iter().cycle().skip(1);
-    for (&a, &b) in points.iter().zip(next) {
+    for (edge, (&a, &b)) in points.iter().zip(next).enumerate() {
         let pieces = count_of((a.distance_to(b) / step_mm).ceil()).max(1);
         for k in 0..pieces {
             let t = k as f64 / pieces as f64;
-            out.push(a + (b - a) * t);
+            let tag = SegmentTag {
+                loop_index,
+                edge,
+                first: k == 0,
+                last: k + 1 == pieces,
+            };
+            out.push((a + (b - a) * t, tag));
         }
     }
     out
@@ -495,12 +504,14 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
     //    sample once.
     let mut samples: Vec<Point> = Vec::new();
     let mut segments: Vec<(Point, Point)> = Vec::new();
+    let mut tags: Vec<SegmentTag> = Vec::new();
     let mut seen: BTreeSet<(i64, i64)> = BTreeSet::new();
-    for l in &loops {
-        let resampled = resample_loop(l, step_mm);
+    for (index, l) in loops.iter().enumerate() {
+        let resampled = resample_loop(l, step_mm, index);
         let next = resampled.iter().cycle().skip(1);
-        for (&a, &b) in resampled.iter().zip(next) {
+        for (&(a, tag), &(b, _)) in resampled.iter().zip(next) {
             segments.push((a, b));
+            tags.push(tag);
             if seen.insert(point_key(a, KEY_SCALE)) {
                 samples.push(a);
             }
@@ -510,6 +521,7 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         return MedialGraph::default();
     }
     let grid = SegmentDistanceGrid::new(segments, step_mm * 2.0);
+    let boundary = Boundary::new(&loops, tags);
 
     // 2. Delaunay triangulation.
     let coords: Vec<delaunator::Point> = samples
@@ -551,7 +563,12 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
             continue;
         }
         let tol_ratio = 0.003 + (step_mm / clearance).powi(2) / 8.0;
-        if !grid.has_contact_spread(p, clearance, CONTACT_SPREAD_RAD, tol_ratio) {
+        // #465: with `CornerReach::Every`, also the axis round a feature
+        // whose contacts the spread test reads as one direction.
+        let kept = grid.has_contact_spread(p, clearance, CONTACT_SPREAD_RAD, tol_ratio)
+            || (reach != CornerReach::Upstream
+                && has_feature_contact(&grid, &boundary, p, clearance, tol_ratio));
+        if !kept {
             continue;
         }
         *slot = Some(nodes.len());

@@ -18,6 +18,19 @@ use crate::point::Point;
 /// size asked for, so a tiny step on a large shape stays bounded.
 const MAX_CELLS_PER_SIDE: f64 = 512.0;
 
+/// Where the boundary comes near a point ([`SegmentDistanceGrid::contacts`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct Contact {
+    /// The segment's point nearest the query point, mm.
+    pub q: Point,
+    /// Its distance from the query point, mm.
+    pub d: f64,
+    /// The segment's index in the grid's input.
+    pub segment: usize,
+    /// Where `q` lies along the segment, 0 at its start to 1 at its end.
+    pub t: f64,
+}
+
 /// A uniform grid over boundary segments, each at most a sampling step
 /// long, so a segment spans few cells. Queries expand ring by ring from the
 /// query point's cell and stop once no farther ring can do better.
@@ -88,6 +101,16 @@ impl SegmentDistanceGrid {
     /// the cells whose Chebyshev distance from it is `ring`, row by row,
     /// left to right, as upstream walks them.
     fn ring(&self, cc: usize, cr: usize, ring: usize) -> impl Iterator<Item = (Point, Point)> + '_ {
+        self.ring_indexed(cc, cr, ring).map(|(_, a, b)| (a, b))
+    }
+
+    /// [`Self::ring`], each segment with its index in the grid's input.
+    fn ring_indexed(
+        &self,
+        cc: usize,
+        cr: usize,
+        ring: usize,
+    ) -> impl Iterator<Item = (usize, Point, Point)> + '_ {
         let rows = cr.saturating_sub(ring)..=(cr + ring).min(self.rows.saturating_sub(1));
         rows.flat_map(move |r| {
             let edge_row = r + ring == cr || r == cr + ring;
@@ -103,7 +126,7 @@ impl SegmentDistanceGrid {
             cols.into_iter()
                 .filter_map(move |c| self.cells.get(r * self.cols + c))
                 .flatten()
-                .filter_map(|&s| self.segments.get(s).copied())
+                .filter_map(|&s| self.segments.get(s).map(|&(a, b)| (s, a, b)))
         })
     }
 
@@ -139,40 +162,60 @@ impl SegmentDistanceGrid {
         min_angle_rad: f64,
         tol_ratio: f64,
     ) -> bool {
+        let (contacts, nearest) = self.contacts(p, clearance_mm, tol_ratio);
+        let Some(nearest) = nearest.and_then(|i| contacts.get(i)) else {
+            return false;
+        };
+        let u = (nearest.q - p) * (1.0 / nearest.d);
+        let max_cos = min_angle_rad.cos();
+        contacts
+            .iter()
+            .filter(|c| c.d >= 1e-12)
+            .any(|c| (c.q - p).dot(u) / c.d <= max_cos)
+    }
+
+    /// The boundary within `clearance_mm · (1 + tol_ratio)` of `p`, one
+    /// [`Contact`] per segment that comes that near, in upstream's order,
+    /// and the index of the nearest (the first of equals); `None` when no
+    /// segment does.
+    pub(super) fn contacts(
+        &self,
+        p: Point,
+        clearance_mm: f64,
+        tol_ratio: f64,
+    ) -> (Vec<Contact>, Option<usize>) {
         let limit = clearance_mm * (1.0 + tol_ratio) + 1e-9;
         let (cc, cr) = (self.col(p.x), self.row(p.y));
         let max_ring = (self.cols + self.rows).min(count_of((limit / self.cell_mm).ceil()) + 1);
 
-        let mut contacts: Vec<(Point, f64)> = Vec::new();
-        let mut best: Option<(Point, f64)> = None;
+        let mut contacts: Vec<Contact> = Vec::new();
+        let mut best: Option<(usize, f64)> = None;
         for ring in 0..=max_ring {
-            for (a, b) in self.ring(cc, cr, ring) {
-                let q = closest_on_segment(p, a, b);
+            for (segment, a, b) in self.ring_indexed(cc, cr, ring) {
+                let (q, t) = closest_on_segment_at(p, a, b);
                 let d = q.distance_to(p);
                 if d > limit {
                     continue;
                 }
-                contacts.push((q, d));
                 if best.is_none_or(|(_, bd)| d < bd) {
-                    best = Some((q, d));
+                    best = Some((contacts.len(), d));
                 }
+                contacts.push(Contact { q, d, segment, t });
             }
         }
-        let Some((nearest, nearest_d)) = best else {
-            return false;
-        };
-        let u = (nearest - p) * (1.0 / nearest_d);
-        let max_cos = min_angle_rad.cos();
-        contacts
-            .iter()
-            .filter(|&&(_, d)| d >= 1e-12)
-            .any(|&(q, d)| (q - p).dot(u) / d <= max_cos)
+        (contacts, best.map(|(i, _)| i))
     }
 }
 
 /// The point of segment `a`–`b` nearest `p` (upstream's
 /// `closestPointOnSegment`, with its 1e-18 guard on a zero-length segment).
 fn closest_on_segment(p: Point, a: Point, b: Point) -> Point {
+    closest_on_segment_at(p, a, b).0
+}
+
+/// [`closest_on_segment`] and where it lies along the segment, 0 at `a` to
+/// 1 at `b`.
+fn closest_on_segment_at(p: Point, a: Point, b: Point) -> (Point, f64) {
     let ab = b - a;
     let len_sq = ab.dot(ab);
     let t = if len_sq > 1e-18 {
@@ -180,7 +223,7 @@ fn closest_on_segment(p: Point, a: Point, b: Point) -> Point {
     } else {
         0.0
     };
-    a + ab * t
+    (a + ab * t, t)
 }
 
 /// `v` floored and clamped to `0..len` (upstream's `clampCol`/`clampRow`).
