@@ -1381,8 +1381,9 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      within the bit's wall tolerance (`dc_geometry::surround_within`,
      `wall_tolerance_mm`; V-Carve generator, step 6; #478): drawn as
      chords within 0.01 mm the star's circle held the plug 0.072 mm proud
-     with the 15° bit. The safety pass re-derives the surround the same
-     way.
+     with the 15° bit. A band clipped to the board (#495) loses the
+     design the same way (`dc_geometry::difference_within`), and the
+     safety pass re-derives the surround the same way.
    - `Carve { regions: surround, start_plane: thickness − (D − G),
      engaged_from: thickness, flat_depth: Some(P), open_edge, … }`.
      **Open edge** (`vcarve::OpenEdge { band: B, design, top_z_mm }`):
