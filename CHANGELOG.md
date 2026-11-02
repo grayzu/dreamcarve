@@ -179,6 +179,14 @@ phases bump the patch number.
   the plugs as cut. Every offset is now checked against the area it must
   enclose and made again a finer way when it falls short; an offset that
   passes the check is used as before ([#466]).
+- A male Inlay of lettering with `outline_rounding_mm` and a clearing pass
+  no longer fails export with "would cut … mm² outside the material" when
+  one of the pass's rings comes within a few thousandths of a millimetre
+  of itself. The offset library grew such a ring without the loop round
+  its inside, so the check counted the plugs the ring runs round as cut,
+  though the toolpath stayed in the band. A grown offset is now also held
+  to the most area it can enclose, and made again a finer way when it
+  exceeds it. The fixtures' programs are unchanged ([#490]).
 - A male Inlay without a clearing pass no longer fails export with "an arc
   in place of operation's straight moves that does not follow them". Round
   the band's V wall the arc fitter replaced a few moves a few thousandths
@@ -970,3 +978,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#461]: https://github.com/grayzu/dreamcarve/issues/461
 [#463]: https://github.com/grayzu/dreamcarve/issues/463
 [#466]: https://github.com/grayzu/dreamcarve/issues/466
+[#490]: https://github.com/grayzu/dreamcarve/issues/490

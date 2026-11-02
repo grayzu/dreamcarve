@@ -338,3 +338,23 @@ fn v_carve_beside_a_hair_thin_pinch_passes_s17() {
     );
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
+
+/// #490 (found by the sweep): the male of lettering seed `0x44` ("Dm",
+/// "me", 60° bit, inch program) with `outline_rounding_mm` 5.53 and the
+/// end mill's clearing pass generates, and every program passes S1–S19.
+/// The pass's S9 check refused it, "would cut 1332.519 mm² outside the
+/// material": one ring of the band's floor comes within 8.5 µm of itself,
+/// and its swept band, the ring grown by the end mill's radius, came back
+/// from `dc_geometry::offset` without the loop round its inside, so the
+/// footprint covered the plugs the ring runs round. The toolpath itself
+/// stayed in the band.
+#[test]
+fn male_lettering_with_rounding_clears_inside_the_band() {
+    let outcome = reproduce(
+        "lettering",
+        0x44,
+        lettering::lettering(0x44),
+        Kind::MaleRounded,
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+}
