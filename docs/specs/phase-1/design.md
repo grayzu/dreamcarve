@@ -75,6 +75,10 @@ pub struct Region { outer: Contour, holes: Vec<Contour> }
 pub struct Transform(kurbo::Affine);
 
 pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_contours parallel_offset; +delta grows
+    // #465: an offset cavalier_contours returns as open pieces (a traced convex curve offset
+    // inward by about its radius) is taken again with position and distance tolerances of
+    // 1e-6, 1e-7, then 1e-8 mm (its defaults are 1e-5 and 1e-4), and the first that closes
+    // every piece is kept
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
     // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
     // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the

@@ -37,19 +37,24 @@ fn line_art_regions_carve() {
     }
 }
 
-/// #463's seat check on the line art, as [`plug_seats_flush`] reads its
-/// pairs (0.1 mm grid): the plug seats within [`SEAT_MM`]. It does not
-/// yet: beside the line end in cell A the female's groove stops short and
-/// the plug stands 0.191 mm proud (the contact-spread filter drops the
-/// medial axis where it wraps round the wedge's tip), and where two
-/// 0.5 mm ridges meet the male stands 0.059 mm proud (#465).
+/// #465: the seat check on the line art, as [`plug_seats_flush`] reads
+/// its pairs (0.1 mm grid): the plug seats within [`SEAT_MM`]. Before,
+/// beside the line ends in cells A and C and under E the female's groove
+/// stopped short and the plug stood up to 0.191 mm proud: round a
+/// wedge's tip the medial axis is the curve equidistant from the tip and
+/// the wall beyond, both seen in one direction a little way out, and the
+/// contact-spread filter dropped it (`medial::axis_wraps_round_a_line_end`).
+/// Where the 0.5 mm ridges meet, the male stands 0.024 mm proud.
 #[test]
-#[ignore = "the plug stands 0.191 mm proud by a line's end; #465"]
 fn line_art_plug_seats_flush() {
     let project = line_art_project();
     let female = line_art_inlay(InlaySide::Female);
     let male = line_art_inlay(InlaySide::Male);
     let fit = fit_of(&project, &female, &project, &male, 0.1);
+    println!(
+        "line art: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
+        fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
+    );
     assert!(
         fit.male_mm <= SEAT_MM,
         "the male stands {:.3} mm proud of the female's design at {:?}",

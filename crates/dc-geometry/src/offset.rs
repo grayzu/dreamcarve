@@ -10,7 +10,8 @@ use crate::contour::Contour;
 use crate::point::{EPS_MM, Point};
 use crate::polyline::{Polyline, Segment, Vertex};
 use cavalier_contours::polyline::{
-    PlineCreation, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex, pline_seg_intr,
+    PlineCreation, PlineOffsetOptions, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex,
+    pline_seg_intr,
 };
 
 pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
@@ -21,6 +22,16 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 /// negative delta gets smaller. Results keep the input's orientation, and
 /// corners become arcs (round joins). An inward offset can split a contour
 /// into several or consume it: an empty result means nothing is left.
+///
+/// #465: `cavalier_contours` can return an offset as open pieces, failing
+/// to close its loop: where a traced convex curve (its points a little off
+/// any one circle) is offset inward by about its radius, so the curve's
+/// offset collapses to about a point, and the slices there fall foul of
+/// its distance check at the default tolerances. An open piece is no
+/// contour, and dropped it took the whole loop with it (a male Inlay's
+/// hole lost its floor). Such an offset is taken again with finer
+/// tolerances (1e-6, then 1e-7, then 1e-8 mm), and the first that closes
+/// every piece is kept.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let ccw = contour.is_ccw();
@@ -28,13 +39,33 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     // cavalier_contours offsets to the left of travel for a positive value:
     // inward on a CCW contour, outward on a CW one.
     let cav_delta = if ccw { -delta_mm } else { delta_mm };
-    source
-        .parallel_offset(cav_delta)
+    let open = |pieces: &[CavPolyline]| pieces.iter().any(|p| !p.is_closed());
+    let mut pieces = source.parallel_offset(cav_delta);
+    if open(&pieces) {
+        let closed = RETRY_EPS_MM.iter().find_map(|&eps| {
+            let options = PlineOffsetOptions {
+                pos_equal_eps: eps,
+                offset_dist_eps: eps,
+                ..PlineOffsetOptions::new()
+            };
+            let again = source.parallel_offset_opt(cav_delta, &options);
+            (!open(&again)).then_some(again)
+        });
+        if let Some(closed) = closed {
+            pieces = closed;
+        }
+    }
+    pieces
         .iter()
         .filter_map(|p| Contour::oriented(from_cavalier(p)).ok())
         .map(|c| if ccw { c } else { c.reversed() })
         .collect()
 }
+
+/// The position and distance tolerances, mm, [`offset`] retries an offset
+/// with when `cavalier_contours` leaves it open at its defaults (1e-5 and
+/// 1e-4), finest last (#465).
+const RETRY_EPS_MM: [f64; 3] = [1e-6, 1e-7, 1e-8];
 
 /// Offsets the open path `path` sideways by `left_mm` (#207): positive
 /// moves it to the left of travel from its first vertex to its last, which

@@ -1242,3 +1242,102 @@ fn no_corner_tip_is_joined_to_another() {
         }
     }
 }
+
+/// A thin wedge of material `length_mm` long, `half_deg` either side of
+/// its axis, standing out of a wall at `base` toward `heading_deg` (a
+/// drawn line's end): its foot's two points and its tip, as `[left, tip,
+/// right]` looking along the heading.
+fn wedge(base: Point, heading_deg: f64, length_mm: f64, half_deg: f64) -> [Point; 3] {
+    let (sin, cos) = heading_deg.to_radians().sin_cos();
+    let half_mm = length_mm * half_deg.to_radians().tan();
+    let side = Vec2::new(-sin * half_mm, cos * half_mm);
+    [
+        base + side,
+        base + Vec2::new(cos, sin) * length_mm,
+        base + side * -1.0,
+    ]
+}
+
+/// How far `p` lies outside every medial disc of `graph`, mm.
+fn reach_gap_of(graph: &MedialGraph, p: Point) -> f64 {
+    graph
+        .nodes
+        .iter()
+        .map(|n| n.p.distance_to(p) - n.clearance_mm)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// #465: with [`CornerReach::Every`] the axis wraps round a line's end. A
+/// 12 mm square has a wedge 0.375 mm long, 6° either side, standing down
+/// from its top edge at 73° (the line art's cell A). Round the wedge's tip
+/// the axis is the curve equidistant from the tip and the top edge, both
+/// seen in one direction once it is a little way out, and the
+/// contact-spread filter dropped it from about 0.6 mm clearance on, so
+/// the top edge beside the wedge stood up to 0.073 mm beyond every medial
+/// disc. The top edge, sampled every 0.05 mm from 0.2 mm off the wedge's
+/// feet to 0.5 mm off the square's corners, is now reached within 0.02 mm
+/// by the nodes themselves (0.012 at worst; the carve's fitting puts its
+/// cuts on the axis between them). Upstream's reach ([`medial_axis`]) is
+/// unchanged.
+#[test]
+fn axis_wraps_round_a_line_end() {
+    let [left, tip, right] = wedge(Point::new(5.0, 12.0), -73.0, 0.375, 6.0);
+    let outer = vec![
+        Point::new(0.0, 0.0),
+        Point::new(12.0, 0.0),
+        Point::new(12.0, 12.0),
+        left,
+        tip,
+        right,
+        Point::new(0.0, 12.0),
+    ];
+    let r = region(&outer, &[]);
+    let step_mm = resolution(&r).expect("a resolution").step_mm;
+    let graph = medial_axis_with(&r, step_mm, TOL, EVERY);
+    let feet = left.x.min(right.x) - 0.2..=left.x.max(right.x) + 0.2;
+    let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+    for k in 0..=220 {
+        let x = 0.5 + 0.05 * f64::from(k);
+        if x > 11.5 || feet.contains(&x) {
+            continue;
+        }
+        let p = Point::new(x, 12.0);
+        let gap_mm = reach_gap_of(&graph, p);
+        if gap_mm > worst.0 {
+            worst = (gap_mm, p);
+        }
+    }
+    assert!(
+        worst.0 <= 0.02,
+        "the top edge at {:?} is {:.4} mm beyond every medial disc",
+        worst.1,
+        worst.0
+    );
+    assert_eq!(
+        medial_axis(&r, step_mm, TOL),
+        medial_axis_with(&r, step_mm, TOL, CornerReach::Upstream),
+        "upstream's reach is upstream's"
+    );
+}
+
+/// #465: the axis round a feature does not bring back the spokes curve
+/// flattening leaves. The lowercase "g" at 10 and 30 mm (as
+/// `lowercase_g_rejects_flattening_spokes_at_both_sizes`) with
+/// [`CornerReach::Every`] keeps at most 3 leaves that are not corner tips:
+/// a spoke would end in one. The glyph's curves turn one way between the
+/// contacts of a spoke's nodes, by less than the spread, so the feature
+/// rule keeps none of them.
+#[test]
+fn feature_contacts_keep_no_flattening_spokes() {
+    for (size, case) in [10, 30].iter().zip(fixture(G)) {
+        let shape = &case.regions[0].region;
+        let step_mm = resolution(shape).expect("a resolution").step_mm;
+        let graph = medial_axis_with(shape, step_mm, TOL, EVERY);
+        let tips = graph.nodes.iter().filter(|n| n.clearance_mm < 1e-9).count();
+        let leaves = leaf_count(&graph) - tips;
+        assert!(
+            leaves <= 3,
+            "g at {size} mm kept {leaves} non-corner leaves"
+        );
+    }
+}
