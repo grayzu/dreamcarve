@@ -1226,3 +1226,55 @@ fn sharp_corners_export_at_any_placement() {
         }
     }
 }
+
+/// #481: V-Carves of crescents, whose horns are acute tips drawn with
+/// arcs, export through the whole safety pass at any placement, in
+/// millimetres and in inches, with a 15° and a 30° bit. The generator
+/// kept its chains `quantum / √2` from the walls it measures, the arcs
+/// flattened to chords (#469); beside the crescent's inner arc, which
+/// bows into the region, a chord lies up to the flatten tolerance beyond
+/// the drawn wall, so a chain into a horn ran a ten-thousandth of a
+/// millimetre from the arc, and written to the program's places it
+/// crossed it (line-art seed `0x40`: "takes operation `o2`'s V-bit
+/// 0.002 mm past the material it may cut"). Each crescent is two arcs
+/// between horns 5 mm apart, of bulges `b` and `−0.8 b`, turned by
+/// `0.37 k` rad and moved by sub-micrometre steps with `k`.
+#[test]
+fn arc_horns_export_at_any_placement() {
+    let mut failures = Vec::new();
+    for units in [dc_project::Units::Mm, dc_project::Units::Inch] {
+        for (tool, angle_deg) in [("t6", 15.0), ("t7", 30.0)] {
+            for bulge in [0.79, 0.6, 0.4] {
+                for k in 0..12 {
+                    let dx = 10.0 + 0.002_639 * f64::from(k);
+                    let dy = 10.0 + 0.003_065 * f64::from(k);
+                    let (sin, cos) = (0.37 * f64::from(k)).sin_cos();
+                    let turned =
+                        |x: f64, y: f64| (x * cos - y * sin + 40.0, x * sin + y * cos + 40.0);
+                    let (p, q) = (turned(0.0, 0.0), turned(5.0, 0.0));
+                    let crescent = Polyline::new(
+                        vec![
+                            Vertex::new(p.0, p.1, bulge),
+                            Vertex::new(q.0, q.1, -0.8 * bulge),
+                        ],
+                        true,
+                    );
+                    let mut project = drawn(&[(vec![crescent], (dx, dy))]);
+                    project.display_units = units;
+                    project.tools.push(v_bit("t6", 15.0));
+                    project.tools.push(v_bit("t7", 30.0));
+                    let op = carve_of(&project, tool, |op| {
+                        op.flat_depth_mm = Some(4.0);
+                        op.step_over_fraction = Some(0.1);
+                    });
+                    if let Err(e) = export_carve(&project, &op) {
+                        failures.push(format!(
+                            "{units:?}, {angle_deg}°, bulge {bulge}, placement {k}: {e}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}

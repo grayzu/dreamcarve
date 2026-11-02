@@ -962,6 +962,51 @@ fn no_cut_is_nearer_a_wall_than_its_depth_allows() {
     }
 }
 
+/// #481: every tip path keeps [`written_mm`] from the walls as drawn,
+/// arcs as arcs, not only from the chords the generator flattens them to.
+/// A crescent's inner arc bows into the region, so its chords lie up to
+/// the flatten tolerance beyond it, and a chain into a horn kept
+/// `quantum / √2` from the chord ran 0.0001 mm from the arc; written to
+/// three places, it crossed it, which S17 refuses
+/// (`safety::arc_horns_export_at_any_placement`). The crescent is line-art
+/// seed `0x40`'s, horns 5.03 mm apart, bulges 0.790 and −0.643, carved
+/// with the 15° bit.
+#[test]
+fn tip_paths_keep_the_written_margin_from_drawn_arcs() {
+    let crescent = Polyline::new(
+        vec![Vertex::new(0.0, 0.0, 0.790), Vertex::new(5.03, 0.0, -0.643)],
+        true,
+    );
+    let mut p = project(vec![crescent]);
+    p.tools = vec![v_bit(15.0)];
+    let op = VCarveOp {
+        flat_depth_mm: Some(4.9),
+        ..carve_op(&p)
+    };
+    let (toolpath, _) = carve(&p, &op);
+    let walls: Vec<dc_geometry::Segment> = regions_of(&p, &op)
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .flat_map(|c| c.polyline().segments().collect::<Vec<_>>())
+        .collect();
+    let margin_mm = written_mm(&p);
+    for (a, b) in cuts(&toolpath) {
+        let path = dc_geometry::Segment {
+            start: a.xy(),
+            end: b.xy(),
+            bulge: 0.0,
+        };
+        let clear_mm = walls
+            .iter()
+            .map(|&w| dc_geometry::segment_distance_mm(path, w))
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            clear_mm >= margin_mm - 1e-9,
+            "the cut {a:?} to {b:?} runs {clear_mm} mm from a drawn wall, under {margin_mm}"
+        );
+    }
+}
+
 /// Acceptance 49: the triangle's carve meets at its incentre, inradius /
 /// tan 30° deep (the 0.4-scaled triangle: inradius 2.569 mm).
 #[test]
