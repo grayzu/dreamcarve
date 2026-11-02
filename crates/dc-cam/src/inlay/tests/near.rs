@@ -61,7 +61,6 @@ fn male_of_parts_a_hair_apart_seats() {
 /// A tip path must keep `quantum / √2` (0.0007 mm) from the walls (#469),
 /// which leaves no room in a gap this narrow; 0.0015 mm seats (0.048).
 #[test]
-#[ignore = "#479: the male leaves near touches uncut"]
 fn male_of_parts_closer_than_the_written_precision_seats() {
     let project = squares_project(0.001);
     let fit = fit_of(
@@ -87,7 +86,6 @@ fn male_of_parts_closer_than_the_written_precision_seats() {
 /// pinch is seven times the written-precision margin, so the medial
 /// sampling may miss it too.
 #[test]
-#[ignore = "#479: the male leaves near touches uncut"]
 fn male_of_a_pinch_seats() {
     for angle_deg in [60.0, 90.0] {
         let square = polygon(&[(0.005, -5.0), (10.005, -5.0), (10.005, 5.0), (0.005, 5.0)]);
@@ -121,4 +119,96 @@ fn male_of_a_pinch_seats() {
             fit.seat_at
         );
     }
+}
+
+/// The `inlay_parts_merged` warnings of `warnings`.
+fn merged_warnings(warnings: &[Warning]) -> Vec<&Warning> {
+    warnings
+        .iter()
+        .filter(|w| w.code().as_str() == "inlay_parts_merged")
+        .collect()
+}
+
+/// The design side `op` of `project` carves: the female's regions, the
+/// male's mirrored design.
+fn design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
+    let resolved = side(project, op, &mut Vec::new()).expect("the side resolves");
+    match op.side {
+        InlaySide::Female => resolved.targets.regions,
+        InlaySide::Male => resolved.design,
+    }
+}
+
+/// #479: parts of an Inlay's design closer than the merge distance are
+/// one shape on both sides. The squares 0.001 mm apart resolve to one
+/// region on each side, each side warns `inlay_parts_merged` once, and
+/// the female's pocket runs across the gap: 5 mm along the line between
+/// the squares, 5 mm from the pocket's walls, the V-bit carves the floor,
+/// not the wall the two pockets left there.
+#[test]
+fn parts_closer_than_the_merge_distance_merge_and_warn() {
+    let project = squares_project(0.001);
+    for side in [InlaySide::Female, InlaySide::Male] {
+        let op = squares_inlay(side);
+        assert_eq!(
+            design_of(&project, &op).len(),
+            1,
+            "{side:?}: the squares are one shape"
+        );
+        let (runs, warnings) = inlay_runs(&project, &op);
+        assert_eq!(
+            merged_warnings(&warnings).len(),
+            1,
+            "{side:?}: {warnings:?}"
+        );
+        if side == InlaySide::Female {
+            let z_mm = crate::heightfield::carved_z_mm(
+                main_run(&runs),
+                Point::new(CENTRE.0, CENTRE.1 + 5.0),
+                slope(),
+            );
+            assert!(
+                z_mm < THICKNESS_MM - 3.0,
+                "the gap is carved to {z_mm:.3} mm"
+            );
+        }
+    }
+}
+
+/// #479: parts 0.1 mm apart, wider than the merge distance, are not
+/// merged: the female keeps the ridge between the two pockets standing
+/// to the stock top, neither side warns `inlay_parts_merged`, and the
+/// pair seats within [`SEAT_MM`] (0.05 mm grid).
+#[test]
+fn parts_a_tenth_apart_are_not_merged() {
+    let project = squares_project(0.1);
+    let female = squares_inlay(InlaySide::Female);
+    let male = squares_inlay(InlaySide::Male);
+    for op in [&female, &male] {
+        assert_eq!(design_of(&project, op).len(), 2, "{:?}", op.side);
+        let (runs, warnings) = inlay_runs(&project, op);
+        assert!(
+            merged_warnings(&warnings).is_empty(),
+            "{:?}: {warnings:?}",
+            op.side
+        );
+        if op.side == InlaySide::Female {
+            let z_mm = crate::heightfield::carved_z_mm(
+                main_run(&runs),
+                Point::new(CENTRE.0, CENTRE.1 + 5.0),
+                slope(),
+            );
+            assert!(
+                z_mm >= THICKNESS_MM - 1e-6,
+                "the ridge is cut down to {z_mm:.4} mm"
+            );
+        }
+    }
+    let fit = fit_of(&project, &female, &project, &male, 0.05);
+    assert!(
+        fit.is_flush(),
+        "the plug stands {:.3} mm proud at {:?}",
+        fit.seat_mm,
+        fit.seat_at
+    );
 }

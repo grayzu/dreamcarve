@@ -903,3 +903,65 @@ fn cut_out_off_the_stock_still_fails() {
     let along_the_edge = program_at(59.25, 22.0, "G1 Z-12.2 F300\nY28 F1000\n");
     assert_off(check_run(&along_the_edge, &narrow, &op, &label, "t7"), 6);
 }
+
+// #479: an Inlay's parts closer than the merge distance are one shape.
+
+/// Two 10 mm squares `gap_mm` apart, side by side: X 10 to 20 and 20 +
+/// `gap_mm` to 30 + `gap_mm`, Y 20 to 30.
+fn near_squares(gap_mm: f64) -> Project {
+    drawn(
+        vec![
+            Polyline::rect(Point::new(10.0, 20.0), 10.0, 10.0),
+            Polyline::rect(Point::new(20.0 + gap_mm, 20.0), 10.0, 10.0),
+        ],
+        60.0,
+        60.0,
+    )
+}
+
+/// #479: the safety pass merges an Inlay's near parts as the generator
+/// does, from the project. On the female of two squares 0.001 mm apart, a
+/// cut 1 mm deep along the edge of the first, whose cone is 1 mm across
+/// at the stock top, runs over the gap into the second: in the merged
+/// design. With the squares 0.1 mm apart the wall between them stands to
+/// the stock top, and the same cut is off the material.
+#[test]
+fn female_holds_merged_parts_as_one_shape() {
+    let op = inlay(InlaySide::Female, "t2", 1.0, 3.0);
+    let cut = program_at(20.0, 25.0, "G1 Z-1 F300\nY26 F1000\n");
+    check_male(&cut, &near_squares(0.001), &op).unwrap();
+    assert_cone_off(check_male(&cut, &near_squares(0.1), &op), 6);
+}
+
+/// #479: the female and male of two squares 0.001 mm apart, and of a
+/// 3 mm circle 0.005 mm from a 10 mm square, generated, pass the whole
+/// safety pass with the 90° bit, with and without a clearing pass.
+#[test]
+fn generated_near_parts_pass_the_safety_pass() {
+    let pinch = drawn(
+        vec![
+            Polyline::circle(Point::new(17.0, 25.0), 3.0),
+            Polyline::rect(Point::new(20.005, 20.0), 10.0, 10.0),
+        ],
+        60.0,
+        60.0,
+    );
+    let pass = ClearingPass {
+        tool: ToolId::new("t3"),
+        strategy: ClearanceStrategy::Offset,
+        direction: CutDirection::Climb,
+        entry: Entry::Plunge,
+    };
+    for project in [near_squares(0.001), pinch] {
+        for side in [InlaySide::Female, InlaySide::Male] {
+            for clearing in [Vec::new(), vec![pass.clone()]] {
+                let op = InlayOp {
+                    clearing: clearing.clone(),
+                    ..inlay(side, "t2", 1.0, 6.0)
+                };
+                export_inlay(&project, &op)
+                    .unwrap_or_else(|e| panic!("{side:?} {clearing:?}: {e}"));
+            }
+        }
+    }
+}
