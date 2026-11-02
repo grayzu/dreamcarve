@@ -659,9 +659,15 @@ impl<'a> Emitter<'a, '_> {
     /// that far above the lowest Z a cut of the operation written so far
     /// ([`SequenceInput::cut_before`], then this toolpath) passed through
     /// `at` (within [`CLEARED_POINT_TOLERANCE_MM`]), whichever is lower.
+    /// A cut that falls as it runs counts at its highest Z within
+    /// [`CLEARED_POINT_TOLERANCE_MM`] of where it comes nearest `at`
+    /// ([`highest_cut_near`]): the safety pass finds that nearest point on
+    /// the cut as written, whose rounded ends and `at` move it along the
+    /// cut by up to a few units in the last place, and on a V-bit's steep
+    /// descent its Z with it (#464).
     fn rapid_floor_mm(&self, at: Point) -> f64 {
         let above_stock = self.input.stock_top_mm + ENTRY_CLEARANCE_MM;
-        let lowest = |moves: &[Move]| lowest_cut_through(moves, at, CLEARED_POINT_TOLERANCE_MM);
+        let lowest = |moves: &[Move]| highest_cut_near(moves, at, CLEARED_POINT_TOLERANCE_MM);
         [lowest(self.input.cut_before), lowest(&self.moves)]
             .into_iter()
             .flatten()
@@ -743,9 +749,43 @@ pub(crate) fn lowest_cut_through(moves: &[Move], at: Point, tolerance_mm: f64) -
     lowest
 }
 
+/// [`lowest_cut_through`], except that a straight move's Z is its highest
+/// within `tolerance_mm` along it of where it comes nearest `at`: the
+/// floor a rapid down to `at` stops [`ENTRY_CLEARANCE_MM`] above, robust
+/// to the numbers being rounded as written (#464: a rapid stopped 1 mm
+/// over the nearest point of a 15° V-bit's descent falling 4.4 mm per mm,
+/// and once rounded to three places that point was 0.002 mm higher, so
+/// S2 refused the rapid). A level cut's Z is the same.
+fn highest_cut_near(moves: &[Move], at: Point, tolerance_mm: f64) -> Option<f64> {
+    let mut lowest: Option<f64> = None;
+    let mut from: Option<Point3> = None;
+    for mv in moves {
+        if let Some(start) = from
+            && mv.is_cut()
+            && let Some(z) = cut_z_within(start, mv, at, tolerance_mm, tolerance_mm)
+        {
+            lowest = Some(lowest.map_or(z, |l| l.min(z)));
+        }
+        from = Some(mv.to);
+    }
+    lowest
+}
+
 /// The Z, mm, at which cutting move `mv` from `start` passes within
 /// `tolerance_mm` of `at` in XY, if it does.
 fn cut_z_near(start: Point3, mv: &Move, at: Point, tolerance_mm: f64) -> Option<f64> {
+    cut_z_within(start, mv, at, tolerance_mm, 0.0)
+}
+
+/// [`cut_z_near`], a straight move's Z taken as its highest within
+/// `along_mm` along it of the point nearest `at`.
+fn cut_z_within(
+    start: Point3,
+    mv: &Move,
+    at: Point,
+    tolerance_mm: f64,
+    along_mm: f64,
+) -> Option<f64> {
     let (a, b) = (start.xy(), mv.to.xy());
     let bulge = match mv.kind {
         MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
@@ -773,7 +813,9 @@ fn cut_z_near(start: Point3, mv: &Move, at: Point, tolerance_mm: f64) -> Option<
         // Straight down or up: the tool reached both ends' Z here.
         return Some(start.z.min(mv.to.z));
     };
-    Some(start.z + (mv.to.z - start.z) * t)
+    let z = |t: f64| start.z + (mv.to.z - start.z) * t.clamp(0.0, 1.0);
+    let dt = along_mm / length_sq.sqrt();
+    Some(z(t - dt).max(z(t + dt)))
 }
 
 fn distance_3d(a: Point3, b: Point3) -> f64 {
