@@ -35,6 +35,11 @@ const MAX_CELLS: f64 = 128.0;
 #[derive(Debug, Clone)]
 pub(crate) struct Walls {
     segments: Vec<(Point, Point)>,
+    /// For each segment, its loop's first segment and length: segment
+    /// `k` of a loop runs from the loop's vertex `k` to its vertex `k + 1`.
+    rings: Vec<(usize, usize)>,
+    /// The tolerance the arcs were flattened within, mm.
+    tolerance_mm: f64,
     loops: Vec<Polyline>,
     origin: Point,
     cell_mm: f64,
@@ -43,12 +48,35 @@ pub(crate) struct Walls {
     buckets: Vec<Vec<usize>>,
 }
 
+/// Where a straight tip path leaves the regions ([`Walls::excursion`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Excursion {
+    /// The point of the path farthest outside, as a fraction of the way
+    /// from its start.
+    pub t: f64,
+    /// How far outside the walls it is there, mm.
+    pub outside_mm: f64,
+    /// The wall vertex the path cuts across, when it leaves and comes back
+    /// through one loop ([`Walls::cut_corner`]).
+    pub corner: Option<Corner>,
+}
+
+/// A wall vertex a tip path cuts across ([`Walls::cut_corner`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Corner {
+    /// The vertex, mm.
+    pub p: Point,
+    /// The unit vector into the region that bisects the vertex.
+    pub bisector: Vec2,
+}
+
 impl Walls {
     /// The outers and holes of `regions`, arcs flattened to chords within
     /// `tolerance_mm` as the medial axis flattens them, consecutive
     /// duplicates dropped.
     pub(crate) fn new(regions: &[Region], tolerance_mm: f64) -> Self {
         let mut segments = Vec::new();
+        let mut rings = Vec::new();
         let mut loops = Vec::new();
         for region in regions {
             for contour in std::iter::once(region.outer()).chain(region.holes()) {
@@ -57,9 +85,11 @@ impl Walls {
                 if points.len() < 2 {
                     continue;
                 }
+                let first = segments.len();
                 let next = points.iter().cycle().skip(1);
                 for (&a, &b) in points.iter().zip(next) {
                     segments.push((a, b));
+                    rings.push((first, points.len()));
                 }
                 loops.push(Polyline::new(
                     points.iter().map(|p| Vertex::line(p.x, p.y)).collect(),
@@ -87,6 +117,8 @@ impl Walls {
         let rows = count_of(((max.y - min.y) / cell_mm).floor()) + 1;
         let mut walls = Self {
             segments,
+            rings,
+            tolerance_mm,
             loops,
             origin: min,
             cell_mm,
@@ -106,6 +138,15 @@ impl Walls {
             }
         }
         walls
+    }
+
+    /// How far a tip may stand outside these walls, mm: the flatten
+    /// tolerance they were built at (a chord near a concave arc lies up
+    /// to that far beyond the true wall) plus [`EPS_MM`]. The generator's
+    /// own cone test ([`crate::vcarve::cone_in_material`]) allows this
+    /// much, so fitting holds a chain's stretches to it too (#463).
+    pub(crate) fn slack_mm(&self) -> f64 {
+        self.tolerance_mm.max(0.0) + EPS_MM
     }
 
     /// The grid cell holding `p`, clamped to the grid.
@@ -252,42 +293,161 @@ impl Walls {
     /// passes within `slack_mm` of a wall's end), so a path that leaves
     /// through a vertex is caught as well as one that crosses an edge.
     pub(crate) fn holds_path(&self, a: Point, b: Point, slack_mm: f64) -> bool {
-        if !(self.holds(a, slack_mm) && self.holds(b, slack_mm)) {
-            return false;
+        self.excursion(a, b, slack_mm).is_none()
+    }
+
+    /// Where the straight tip path `a`–`b` first leaves the regions by
+    /// more than `slack_mm` ([`Walls::holds_path`]'s test), or `None` when
+    /// it stays in (#463). An end outside is the excursion itself. A
+    /// stretch outside between two crossings is read every 1/32 of its
+    /// length for the point farthest from the walls, so the distance is
+    /// what the path leaves by, not the 0 of the walls it crosses; and
+    /// when it leaves and comes back through one loop, the vertex it cuts
+    /// across is named ([`Walls::cut_corner`]).
+    pub(crate) fn excursion(&self, a: Point, b: Point, slack_mm: f64) -> Option<Excursion> {
+        for (t, p) in [(0.0, a), (1.0, b)] {
+            if !self.holds(p, slack_mm) {
+                return Some(Excursion {
+                    t,
+                    outside_mm: self.clearance_mm(p),
+                    corner: None,
+                });
+            }
         }
         let ab = b - a;
         let length_sq = ab.dot(ab);
         if length_sq <= EPS_MM * EPS_MM {
-            return true;
+            return None;
         }
         let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
         let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
-        let mut cuts = vec![0.0, 1.0];
-        for &(c, d) in self
-            .near(lo, hi, slack_mm)
-            .iter()
-            .filter_map(|&i| self.segments.get(i))
-        {
+        // Where the path meets a wall: its crossings, each with the
+        // segment crossed, and the feet of the wall ends within the slack
+        // of it.
+        let mut cuts: Vec<(f64, Option<usize>)> = vec![(0.0, None), (1.0, None)];
+        for index in self.near(lo, hi, slack_mm) {
+            let Some(&(c, d)) = self.segments.get(index) else {
+                continue;
+            };
             let cd = d - c;
             let denom = ab.cross(cd);
             if denom.abs() > 1e-12 {
                 let t = (c - a).cross(cd) / denom;
                 let u = (c - a).cross(ab) / denom;
                 if (-1e-9..=1.0 + 1e-9).contains(&u) && (0.0..=1.0).contains(&t) {
-                    cuts.push(t);
+                    cuts.push((t, Some(index)));
                 }
             }
             for end in [c, d] {
                 if point_segment(end, a, b) <= slack_mm {
-                    cuts.push(((end - a).dot(ab) / length_sq).clamp(0.0, 1.0));
+                    cuts.push((((end - a).dot(ab) / length_sq).clamp(0.0, 1.0), None));
                 }
             }
         }
-        cuts.sort_by(f64::total_cmp);
-        cuts.windows(2).all(|w| match w {
-            [s, t] if t - s > 1e-12 => self.holds(a + ab * ((s + t) / 2.0), slack_mm),
-            _ => true,
+        cuts.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let at = |t: f64| a + ab * t;
+        let mid = cuts.windows(2).find_map(|w| match w {
+            [(s, _), (t, _)] if t - s > 1e-12 && !self.holds(at((s + t) / 2.0), slack_mm) => {
+                Some((s + t) / 2.0)
+            }
+            _ => None,
+        })?;
+        // The crossings the path leaves by and comes back in by.
+        let exit = cuts
+            .iter()
+            .rev()
+            .find_map(|&(u, seg)| seg.filter(|_| u <= mid).map(|seg| (u, seg)));
+        let entry = cuts
+            .iter()
+            .find_map(|&(u, seg)| seg.filter(|_| u >= mid).map(|seg| (u, seg)));
+        let (t0, t1) = (exit.map_or(0.0, |e| e.0), entry.map_or(1.0, |e| e.0));
+        let (t, outside_mm) = (0..=32)
+            .map(|k| t0 + (t1 - t0) * f64::from(k) / 32.0)
+            .chain([mid])
+            .map(|u| (u, self.clearance_mm(at(u))))
+            .fold((mid, f64::NEG_INFINITY), |best, x| {
+                if x.1 > best.1 { x } else { best }
+            });
+        let corner = exit
+            .zip(entry)
+            .and_then(|((u0, i), (u1, j))| self.cut_corner(a, b, (at(u0), i), (at(u1), j)));
+        Some(Excursion {
+            t,
+            outside_mm,
+            corner,
         })
+    }
+
+    /// The wall vertex the path from `a` to `b` cuts across where it
+    /// leaves the regions at `exit` (the point and the segment crossed)
+    /// and comes back at `entry` through another segment of the same loop
+    /// (#463): of the loop's two ways between them, the one that closes
+    /// the smaller polygon with the path (outside an outer, the bay the
+    /// path crosses, not the region round it; in a hole, either side), and
+    /// on it the vertex farthest from the path's line, with the unit
+    /// vector that bisects the region's side of it (away from both its
+    /// walls; straight out from the path's line where they run straight
+    /// on). `None` when the two are on different loops or the same
+    /// segment.
+    fn cut_corner(
+        &self,
+        a: Point,
+        b: Point,
+        (x0, i): (Point, usize),
+        (x1, j): (Point, usize),
+    ) -> Option<Corner> {
+        let (&(first, len), &(first_j, _)) = (self.rings.get(i)?, self.rings.get(j)?);
+        if first != first_j || i == j || len == 0 {
+            return None;
+        }
+        let vertex = |k: usize| self.segments.get(first + k % len).map(|&(p, _)| p);
+        // Segment `k` ends at vertex `k + 1`: the way on from the exit
+        // visits vertices `i + 1 ..= j`, the way back `j + 1 ..= i`.
+        let way = |from: usize, to: usize| -> Vec<usize> {
+            let count = (to + len - from) % len;
+            (1..=count).map(|k| (from + k) % len).collect()
+        };
+        let area = |start: Point, ks: &[usize], end: Point| {
+            let ring: Vec<Point> = std::iter::once(start)
+                .chain(ks.iter().filter_map(|&k| vertex(k)))
+                .chain(std::iter::once(end))
+                .collect();
+            let next = ring.iter().cycle().skip(1);
+            ring.iter()
+                .zip(next)
+                .map(|(p, q)| p.x * q.y - q.x * p.y)
+                .sum::<f64>()
+                .abs()
+        };
+        let (i, j) = (i - first, j - first);
+        let on = way(i, j);
+        let back = way(j, i);
+        let chunk = if area(x0, &on, x1) <= area(x1, &back, x0) {
+            on
+        } else {
+            back
+        };
+        let ab = b - a;
+        let length = ab.length();
+        if length <= EPS_MM {
+            return None;
+        }
+        let (k, p) = chunk
+            .into_iter()
+            .filter_map(|k| vertex(k).map(|p| (k, p)))
+            .max_by(|x, y| (ab.cross(x.1 - a).abs()).total_cmp(&ab.cross(y.1 - a).abs()))?;
+        let (prev, next) = (vertex(k + len - 1)?, vertex(k + 1)?);
+        let foot = a + ab * ((p - a).dot(ab) / (length * length));
+        let out = (p - foot).normalized()?;
+        // The path cuts across `p`, so the region is on the far side of it
+        // from its two walls, which run back toward the path.
+        let bisector = match ((prev - p).normalized(), (next - p).normalized()) {
+            (Some(u), Some(v)) => Vec2::new(-u.x - v.x, -u.y - v.y).normalized(),
+            _ => None,
+        }
+        .filter(|w| w.dot(out) > 0.0)
+        .unwrap_or(out);
+        Some(Corner { p, bisector })
     }
 
     /// The least, along the straight move `a`–`b`, of the tip's distance

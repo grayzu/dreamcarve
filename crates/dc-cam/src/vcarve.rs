@@ -333,16 +333,17 @@ pub fn cone_in_material(
             });
         }
         let (tip_from, tip_to) = if vertical { (low, low) } else { (a, b) };
-        if !walls.holds_path(tip_from.xy(), tip_to.xy(), tol) {
-            let at = if walls.holds(tip_from.xy(), tol) {
-                tip_to
-            } else {
-                tip_from
-            };
+        // #463: the overlap is read where the tip is farthest outside, not
+        // at the crossings, where it is 0.
+        if let Some(out) = walls.excursion(tip_from.xy(), tip_to.xy(), tol) {
+            let at = Point3::new(
+                tip_from.x + (tip_to.x - tip_from.x) * out.t,
+                tip_from.y + (tip_to.y - tip_from.y) * out.t,
+                tip_from.z + (tip_to.z - tip_from.z) * out.t,
+            );
             return Err(ConeViolation::Wall {
                 at,
-                overlap_mm: walls.clearance_mm(at.xy())
-                    + (start_plane_z_mm - at.z).max(0.0) * slope,
+                overlap_mm: out.outside_mm + (start_plane_z_mm - at.z).max(0.0) * slope,
             });
         }
         let (room_mm, at) = walls.least_room(tip_from, tip_to, start_plane_z_mm, slope);
@@ -831,13 +832,12 @@ pub(crate) fn finish(
                 z_mm: at.z,
                 overlap_mm,
             },
-            ConeViolation::NotStraight { .. } => CamError::ConeOffMaterial {
+            ConeViolation::NotStraight { .. } => CamError::ConeArcMove {
                 op: op.clone(),
                 shape,
                 x_mm: at.x,
                 y_mm: at.y,
                 z_mm: at.z,
-                overlap_mm: 0.0,
             },
         }
     })?;

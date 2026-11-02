@@ -519,7 +519,9 @@ validation error, re-checked as every generator re-checks validation),
 `ConeOffMaterial { op, shape, x_mm, y_mm, z_mm, overlap_mm }` (the
 generator-side S17 result from `cone_in_material`, raised by the V
 generators on their own output before `sequence` returns it: a library
-crate never hands back a toolpath it has proven wrong).
+crate never hands back a toolpath it has proven wrong), `ConeArcMove {
+op, shape, x_mm, y_mm, z_mm }` (#463: an arc in a V toolpath, which that
+test is not written for).
 
 ### dc-gcode
 
@@ -714,7 +716,12 @@ pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
     the branch into the worst runs to the curve's centre and reaches the
     rest, so the end gets one tip, not one per vertex); and a tip more
     than a step from its joint gets a node every step on the way, at its
-    own clearance. `convex_corners` returns bisectors into the region.
+    own clearance. No other corner's tip is a joint (#463): upstream's
+    scores can pick the tip of the next vertex along a curve, 0.12 mm off
+    and "aligned" with the bisector, over the axis a step away, and the
+    branch then runs along the wall, a V-bit tip on the outline all the
+    way, which S17 refuses (`medial::no_corner_tip_is_joined_to_another`).
+    `convex_corners` returns bisectors into the region.
     `medial_axis` (upstream's reach) stays for the ported tests.
 12. **Finalise**: nodes with no edges are dropped; a graph with no edges
     keeps its deepest node alone; a graph whose extent is at most
@@ -822,6 +829,33 @@ orientation; DreamCarve's regions are normalised anyway.
      `floor_inset_mm` `F · slope`), so every convex corner of its walls
      is cut crisp (`vcarve::raised_text_corners_are_crisp`,
      `vcarve::female_corners_reach_the_tip`).
+     **The tip stays in the region (#463).** A stretch's tip path must
+     stay inside its region within `tol = flatten tolerance + EPS_MM`
+     (`Walls::slack_mm`), the allowance step 10's test gives the tip: the
+     walls are the flattened chords, which near a concave arc lie up to
+     the flatten tolerance beyond the true wall. A stretch between two
+     medial nodes can cut across the tip of a line that ends inside the
+     region (a thin wedge of material, narrower than the medial step, so
+     the Delaunay dual's edge passes it by), and at the start plane, where
+     the cone is a point, the room test above cannot see it: the room at
+     a crossing is 0, not less, so the old fit split the stretch onto the
+     walls either side of the wedge and kept the move across it at the
+     stock top ("would cut 0.0000 mm past a wall"). First, before the
+     cone, fitting finds where the stretch leaves the region by more than
+     `tol` (`Walls::excursion`): the crossings it leaves and comes back
+     by, and, when both are on one loop, the loop's way between them that
+     closes the smaller polygon with the stretch (outside an outer, the
+     bay it crosses; in a hole, either side), and on it the vertex
+     farthest from the stretch's line. That vertex is gone round: the
+     stretch is split at the centre of the largest disc inside the walls
+     tangent at it, along its bisector into the region
+     (`Walls::ball_radius_mm`), which is on the medial axis, at its own
+     depth (the walls' split budget). Second, the axis split above skips
+     a sample point outside the walls, whose nearest wall is behind it.
+     Last, a fitted stretch that still leaves the region is not cut: the
+     chain is split there and the tool lifts over it, as an open band
+     edge splits a chain (`vcarve::line_ends_carve`,
+     `vcarve::line_art_regions_carve`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
@@ -967,7 +1001,18 @@ orientation; DreamCarve's regions are normalised anyway.
     "Safety pass", with the vertical-descent exemption) and turns a
     violation into `CamError::ConeOffMaterial`: a library crate never
     hands back motion it can prove wrong. `assert_safe` runs the same
-    function in every generator test.
+    function in every generator test. Each limit allows `tol` (flatten
+    tolerance plus `EPS_MM`), so a cone that meets a wall exactly, or a
+    tip on an outline at a move's end, passes
+    (`vcarve::touching_a_wall_is_not_a_violation`). The overlap a
+    violation reports is read where it is worst: for a tip that leaves
+    the region, at the point of the move farthest outside the walls, not
+    at an end or a crossing, where it reads 0 (#463: "0.0000 mm"). Every
+    reported overlap is therefore more than `tol`, at least 0.01 mm,
+    and shows at the message's four decimals
+    (`vcarve::real_wall_violation_is_still_refused`). An arc move, which
+    no V toolpath has and the test is not written for, is
+    `CamError::ConeArcMove`, with no distance.
 
 ### Clearing passes (dc-cam::vcarve::clearing)
 
