@@ -683,7 +683,13 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    radius and `A` its stock to leave, read from the project (S14: never its
    toolpath). Its reachable area is `offset(inset_region(region, R + A),
    +R)` (what its tool of radius `R` swept along its tool-centre region
-   covers; PureCutCNC `generateAreaRestRegionDrafts`). What it left is
+   covers; PureCutCNC `generateAreaRestRegionDrafts`). (Changed in #493:
+   a tool-centre region shaped like a C whose mouth is narrower than `2R`,
+   as round an island the tool cannot pass, grows over the mouth, and
+   `offset` gives it back as two loops of one winding, its outline and one
+   round the bay. The loops are nested, so the bay, whose points the tool
+   never comes within `R` of, is a hole of the reach; before, it counted
+   as reached and the floor under the island kept its wood.) What it left is
    `inset_region(region, stock_to_leave) − reachable` (this operation's own
    stock to leave), less pieces thinner than twice the flatten tolerance
    (area under `tolerance × perimeter`, the noise rule below). The
