@@ -1147,7 +1147,14 @@ own. `vcarve::clearing::checked_tools(project, op)` checks the passes, and
    its grown islands by none, so no `pocket_island_too_close` is warned
    for them) and `reached_by` are the earlier passes as rest references.
    `generate_pocket` is that entry point after resolving and nesting its
-   targets, so phase 2's programs are unchanged.
+   targets, so phase 2's programs are unchanged. One carved region's
+   floor can be several pieces, one in another's island (#482: the inset
+   closes a bay's mouth). They share the region's shape, so no
+   containment pair orders them (`sequence` would read a shape paired
+   with itself as a containment cycle); the regions come in with each
+   shape's pieces together, shallowest first, and `sequence` cuts a
+   shape's blocks at a pass in that order, so a piece is still cut after
+   the piece round its island.
 4. The runs come back in list order followed by the V-bit run, each
    with its own tool. `export`'s `build` turns each run into an `EmitOp`
    (tool = the run's tool, `holes` `None`, `label` the run's);

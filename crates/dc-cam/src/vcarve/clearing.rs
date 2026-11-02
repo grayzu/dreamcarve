@@ -280,6 +280,15 @@ type Resolved = (Vec<Region>, Vec<(ShapeRef, Contour)>);
 /// pocket inside an island, each outer named by its carved region's shape.
 /// The holes are islands no shape names: the floor grows them by the
 /// V-bit's inset, so they are not the user's outlines.
+///
+/// One carved region's floor can be several pieces, one inside another's
+/// island (#482: the inset closes a bay's mouth, and the bay is a piece in
+/// the island the closed mouth makes). Its pieces share its shape, so
+/// `sequence` cuts them at a pass as one unit, in the order given here,
+/// and no containment pair orders them (`pocket::nested_pockets`): each
+/// shape's pieces come at its first one, shallowest first, so a piece is
+/// cut after the piece round its island as two shapes would be. Pieces of
+/// different shapes keep `nest`'s order.
 fn renest(floors: &[&(Region, &ShapeRef)]) -> Result<Resolved, CamError> {
     let shapes: Vec<(ShapeRef, Contour)> = floors
         .iter()
@@ -291,5 +300,58 @@ fn renest(floors: &[&(Region, &ShapeRef)]) -> Result<Resolved, CamError> {
         .chain(floors.iter().flat_map(|(f, _)| f.holes().iter().cloned()))
         .collect();
     let (regions, _) = nest(contours)?;
-    Ok((regions, shapes))
+    let shape_of = |r: &Region| shapes.get(r.outer_index()).map(|(s, _)| s);
+    let keys: Vec<(usize, usize)> = regions
+        .iter()
+        .map(|r| {
+            let first = regions
+                .iter()
+                .position(|o| shape_of(o) == shape_of(r))
+                .unwrap_or(0);
+            (first, r.depth())
+        })
+        .collect();
+    let mut keyed: Vec<((usize, usize), Region)> = keys.into_iter().zip(regions).collect();
+    keyed.sort_by_key(|(key, _)| *key);
+    Ok((keyed.into_iter().map(|(_, r)| r).collect(), shapes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dc_geometry::{Point, Polyline};
+    use dc_project::InstanceId;
+
+    fn shape(profile: usize) -> ShapeRef {
+        ShapeRef {
+            instance: InstanceId::new("i1"),
+            instance_name: "Design".to_owned(),
+            profile,
+        }
+    }
+
+    fn square(at_mm: f64, side_mm: f64) -> Contour {
+        Contour::new(Polyline::rect(Point::new(at_mm, at_mm), side_mm, side_mm)).expect("a square")
+    }
+
+    /// #482: a bay in a ring's island, both floor pieces of one shape and
+    /// the bay given first, comes back after the ring, so the Pocket code
+    /// cuts the ring first; pieces of two shapes keep `nest`'s order, the
+    /// bay first, and their containment pair orders them.
+    #[test]
+    fn renest_puts_a_piece_after_the_piece_round_its_island() {
+        let (ring, _) = nest(vec![square(0.0, 40.0), square(10.0, 20.0)]).expect("a ring");
+        let (bay, _) = nest(vec![square(14.0, 12.0)]).expect("a bay");
+        let (ring, bay) = (ring[0].clone(), bay[0].clone());
+        let depths = |floors: &[&(Region, &ShapeRef)]| -> Vec<usize> {
+            let (regions, _) = renest(floors).expect("nested");
+            regions.iter().map(Region::depth).collect()
+        };
+        let (one, other) = (shape(0), shape(1));
+        assert_eq!(
+            depths(&[&(bay.clone(), &one), &(ring.clone(), &one)]),
+            [0, 2]
+        );
+        assert_eq!(depths(&[&(bay, &other), &(ring, &one)]), [2, 0]);
+    }
 }
