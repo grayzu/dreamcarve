@@ -38,12 +38,11 @@
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
-//! What the sweep found is on #464. While #481 to #484 are open, the
-//! sweep still fails: S17 at export near the stock top with a 15° bit
-//! (#481), a containment cycle (#482), a written program that does not
-//! reproduce its toolpath (#483), and seat failures with 60° and 90° bits
-//! away from a near touch (#484). Their reproductions are the ignored
-//! tests at the end of this file and in dc-cam's inlay tests.
+//! What the sweep found is on #464. While #482 to #484 are open, the
+//! sweep still fails: a containment cycle (#482), a written program that
+//! does not reproduce its toolpath (#483), and seat failures with 60° and
+//! 90° bits away from a near touch (#484). Their reproductions are the
+//! ignored tests at the end of this file and in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,
@@ -315,9 +314,11 @@ fn lettering_seats_beside_a_narrow_mouth() {
 /// 15° bit (millimetre program, flat depth 4.9 mm), exports. The safety
 /// pass refuses it: "emitted line 55 takes operation `o2`'s V-bit 0.002 mm
 /// past the material it may cut", at Z 11.983, just below the stock top.
-/// The female of the same design fails the same way.
+/// The female of the same design fails the same way. The chain into a
+/// horn kept `quantum / √2` from the chords the inner arc is flattened to,
+/// which lie beyond that arc, so it ran 0.0001 mm from the arc as drawn,
+/// and written to three places it crossed it.
 #[test]
-#[ignore = "#481: S17 at export near the stock top with a 15° bit"]
 fn v_carve_beside_a_hair_thin_pinch_passes_s17() {
     let outcome = reproduce(
         "line art",

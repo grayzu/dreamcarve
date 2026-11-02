@@ -928,7 +928,14 @@ orientation; DreamCarve's regions are normalised anyway.
      sliver no wider than `w`. The 5° wedge's point is reached within
      0.016 mm, and the acute notch's plug seats within 0.028 mm, where it
      was 0.003 mm. S17 is unchanged
-     (`safety::sharp_corners_export_at_any_placement`).
+     (`safety::sharp_corners_export_at_any_placement`). The path keeps
+     `w` from the walls as drawn too, arcs as arcs, not only from the
+     chords it is fitted against (#481): beside an arc that bows into the
+     region a chord lies up to the flatten tolerance beyond the arc, and a
+     chain into a crescent's horn kept `w` from the chord ran 0.0001 mm
+     from the arc and, written, crossed it
+     (`safety::arc_horns_export_at_any_placement`,
+     `vcarve::tip_paths_keep_the_written_margin_from_drawn_arcs`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
