@@ -12,6 +12,7 @@ use dc_project::{CornerRelief, OperationId, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
+use crate::stock::StockEdge;
 
 /// What a [`Warning`] is about: one code per [`Warning`] variant, whose
 /// fields name the things involved.
@@ -211,6 +212,10 @@ pub enum WarningCode {
     /// at the stock top), so the band's outer edge is a V wall, cut by the
     /// V-bit, not the end mill's upright one (#448).
     InlayBandEdgeVWall,
+    /// A male Inlay's band runs past the board's edge and is clipped to
+    /// it (#495): with an open edge the board's edge is the plug's rim
+    /// there, and a cut-out stops at it.
+    InlayBandClipped,
 }
 
 impl WarningCode {
@@ -267,6 +272,7 @@ impl WarningCode {
             Self::InlayMaleMirrored => "inlay_male_mirrored",
             Self::InlayPlugBaseThin => "inlay_plug_base_thin",
             Self::InlayBandEdgeVWall => "inlay_band_edge_v_wall",
+            Self::InlayBandClipped => "inlay_band_clipped",
         }
     }
 }
@@ -913,6 +919,22 @@ pub enum Warning {
         /// mm ([`dc_project::BandEdge::VWall`]).
         margin_needed_mm: f64,
     },
+    /// [`WarningCode::InlayBandClipped`].
+    InlayBandClipped {
+        /// The male Inlay.
+        op: OperationId,
+        /// The stock edges that clip the band, in [`StockEdge::ALL`]'s
+        /// order.
+        edges: Vec<StockEdge>,
+        /// Whether the band's edge is open, so it is clipped to the
+        /// board's edge itself; a V wall is clipped the V-bit's radius
+        /// inside it.
+        open: bool,
+        /// The narrowest band left where it is clipped: the least distance
+        /// from the design to a clipping edge, less how far inside it the
+        /// band is clipped, mm.
+        narrowest_mm: f64,
+    },
 }
 
 impl Warning {
@@ -971,6 +993,7 @@ impl Warning {
             Self::InlayMaleMirrored { .. } => WarningCode::InlayMaleMirrored,
             Self::InlayPlugBaseThin { .. } => WarningCode::InlayPlugBaseThin,
             Self::InlayBandEdgeVWall { .. } => WarningCode::InlayBandEdgeVWall,
+            Self::InlayBandClipped { .. } => WarningCode::InlayBandClipped,
         }
     }
 
@@ -1018,7 +1041,8 @@ impl Warning {
             | Self::ClearingNotDescending { op, .. }
             | Self::InlayMaleMirrored { op, .. }
             | Self::InlayPlugBaseThin { op, .. }
-            | Self::InlayBandEdgeVWall { op, .. } => Some(op),
+            | Self::InlayBandEdgeVWall { op, .. }
+            | Self::InlayBandClipped { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1720,6 +1744,33 @@ impl fmt::Display for Warning {
                 "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least {} mm in both projects for the first clearing pass that fits to cut it",
                 mm(*margin_needed_mm)
             ),
+            Self::InlayBandClipped {
+                edges,
+                open,
+                narrowest_mm,
+                ..
+            } => {
+                let edges: Vec<String> = edges.iter().map(ToString::to_string).collect();
+                let (last, rest) = edges.split_last().map_or(("", &[][..]), |(l, r)| (l.as_str(), r));
+                let edges = if rest.is_empty() {
+                    format!("{last} edge")
+                } else {
+                    format!("{} and {last} edges", rest.join(", "))
+                };
+                if *open {
+                    write!(
+                        f,
+                        "its band runs past the stock's {edges}, so it is clipped to the board there and is {} mm wide at its narrowest; the board's edge is the plug's rim there, and a cut-out stops at it",
+                        mm(*narrowest_mm)
+                    )
+                } else {
+                    write!(
+                        f,
+                        "its band runs past the stock's {edges}, so its V wall is cut the V-bit's radius inside the board there, the band {} mm wide at its narrowest",
+                        mm(*narrowest_mm)
+                    )
+                }
+            }
         }
     }
 }
@@ -2451,6 +2502,24 @@ mod tests {
                 },
                 "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least 4.33 mm in both projects for the first clearing pass that fits to cut it",
             ),
+            (
+                Warning::InlayBandClipped {
+                    op: op(),
+                    edges: vec![StockEdge::MinX, StockEdge::MaxX, StockEdge::MaxY],
+                    open: true,
+                    narrowest_mm: 9.999_999_999,
+                },
+                "its band runs past the stock's -X (left), +X (right) and +Y (back) edges, so it is clipped to the board there and is 10 mm wide at its narrowest; the board's edge is the plug's rim there, and a cut-out stops at it",
+            ),
+            (
+                Warning::InlayBandClipped {
+                    op: op(),
+                    edges: vec![StockEdge::MinY],
+                    open: false,
+                    narrowest_mm: 2.5,
+                },
+                "its band runs past the stock's -Y (front) edge, so its V wall is cut the V-bit's radius inside the board there, the band 2.5 mm wide at its narrowest",
+            ),
         ]
     }
 
@@ -2514,7 +2583,8 @@ mod tests {
             C::ClearingNotDescending => C::InlayMaleMirrored,
             C::InlayMaleMirrored => C::InlayPlugBaseThin,
             C::InlayPlugBaseThin => C::InlayBandEdgeVWall,
-            C::InlayBandEdgeVWall => return None,
+            C::InlayBandEdgeVWall => C::InlayBandClipped,
+            C::InlayBandClipped => return None,
         })
     }
 
@@ -2551,7 +2621,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 49);
+        assert_eq!(count, 50);
     }
 
     #[test]

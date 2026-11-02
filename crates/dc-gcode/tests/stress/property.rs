@@ -120,6 +120,11 @@ pub fn explains(error: &CamError) -> bool {
             // floor ring: the user raises `margin_mm` (the message says
             // to what). The margin is drawn at random, so it can be short.
             | CamError::InlayCutOutNoRoom { .. }
+            // #495: the male's band runs past the stock, which clips it,
+            // but the design is too near that edge for the band's room
+            // there: the user moves the design or grows the stock (the
+            // message says by how much).
+            | CamError::InlayTooNearEdge { .. }
             // A cut-out's part is narrower than its end mill everywhere
             // (a tiny design): the user picks a smaller tool.
             | CamError::PartNarrowerThanTool { .. }
