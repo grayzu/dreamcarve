@@ -55,11 +55,15 @@ operations. The GUI toolkit and the architecture are the design spec's.
   to LinuxCNC and lists three programs in the order to run them with what
   to do before each. Alex opens the preview SVG too, out of habit; it shows
   what the canvas showed.
-- **Alex** makes the inlay pair. One project, the female; *Save As* to a
-  second file, switch the Inlay's side to male, and the canvas shows the
-  design mirrored with the band carved round it and the cut-out's tabs. The
-  Warnings panel carries `inlay_male_mirrored` with the mirror line's X, as
-  `check` did.
+- **Alex** makes the inlay pair from one project. They add an Inlay of the
+  two letters, type the depth, glue gap, plug depth and margin, and the
+  thickness of the plug board. The Viewport shows the female carve on the
+  stock and, beside it, the male board with the design mirrored, the band
+  carved round it and the cut-out's tabs. The Warnings panel carries
+  `inlay_male_mirrored` with the mirror line's X, as `check` does. Export
+  lists the programs under *Female board* and *Male board*. After the fit
+  test Alex changes the glue gap, unticks the female board in the export
+  dialog, and re-cuts the male alone.
 - **Jo** imports a DXF of six small parts drawn on three layers and takes
   only the `CUT` layer. The parts come in as drawn; Jo selects two, moves
   them off the clamps by dragging, rotates one 90° by typing the angle,
@@ -337,37 +341,33 @@ folder are app preferences, kept outside the project.
     | Bore | Depth: `depth_mm`, `pitch_mm` (tool's step-down), `stock_to_leave_mm`, `through_cut_allowance_mm`. Strategy: `direction`. Heights: `safe_z_mm`. |
     | Engrave | Depth: `depth_mm`, `step_down_mm` (tool's), `through_cut_allowance_mm`. Strategy: `alternate_direction`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | V-Carve | Depth: `flat_depth_mm` (off for `null`), `start_depth_mm`, `start_plane_cleared_externally`, `through_cut_allowance_mm`. Strategy: `strategy` (Medial; Offset with `step_over_mm` and `direction`), `step_over_fraction`, `clearing` (70). Order: `machining_order`. Heights: `safe_z_mm`. |
-    | Inlay | Side: `side` (Female, Male). Depth, one set for both sides (68a): `depth_mm` (both), `glue_gap_mm` (male), `plug_depth_mm` (male), `margin_mm` (male), `outline_rounding_mm` (male; off for `null`), `through_cut_allowance_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out (male): off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
+    | Inlay (format 25, #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `invert`. Strategy: `line_angle_deg`, `line_spacing_fraction` (as a percentage), `strategy` (Raster, Hatch), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
     Photo V-Carve lands with phase 3.4 (format v25); its editor is a slice
     of this phase that waits for it, and nothing else in the phase does
     (open question 10, decided 2026-11-02).
-68a. **Inlay: one set of values for both sides** (`06-operation-vcarve.svg`;
-    maintainer decision 2026-11-02). An inlay is one design cut into two
-    boards from the same numbers (capability 45): the female reads only the
-    inlay depth, and the male reads the depth, glue gap, plug depth, margin,
-    rounding and cut-out, because its start plane is the depth less the glue
-    gap and its floor is that plus the plug depth. Nothing is ever
-    legitimately different between the two sides, and the file stores every
-    field whatever the side. So the editor shows **every Inlay field in one
-    list, in one order, whichever side is chosen**, and each label says who
-    reads it: *Inlay depth (both)*, *Glue gap (male)*, *Plug depth (male)*,
-    *Margin (male)*, *Outline rounding (male)*, *Cut-out (male)*. On a female
-    project the male fields stay editable, dimmed, with one note, "Set here,
-    used by the male", so the values are set once and travel with the file.
-    Under Depth a read-only line shows what both sides share and what bit
-    the bench (phase 3's 90° bit): the male's start plane, its band floor,
-    and the flank's engagement against the V-bit's cone height, red when it
-    exceeds it. One clearing list serves both sides. **Make the male
-    project…** on the editor and in the Project menu does the two-file step
-    the quick start does by hand: *Save As* with `-male` added to the name,
-    the side flipped, and the male board's thickness asked for (it must
-    leave a base under the band, `inlay_plug_base_thin`); the open project
-    is then the male. *Make the female project…* is the same command the
-    other way. Two projects, two stocks and two programs remain: each side
-    is one board, and `check` on one file still cannot see the other (open
-    question 13).
+68a. **Inlay: both boards from one project** (`06-operation-vcarve.svg`;
+    maintainer decision 2026-11-02, engine and format change #498, which
+    lands before this editor's slice). An inlay is one design cut into two
+    boards from one set of numbers (capability 45), and since #498 one
+    project holds both: the female carve on the stock, and the male on the
+    Inlay's own **male board**, whose width and height default to the
+    stock's and whose thickness is its own. There is no side to choose.
+    The editor shows the Inlay's values once: inlay depth, glue gap, plug
+    depth, margin, outline rounding, through-cut allowance; then the
+    **Male board** group: width and height (placeholder *same as stock*),
+    thickness (required for the male to export; `inlay_male_board_unset`
+    under the field until it is set), and the derived base under the band,
+    red below 6 mm (`inlay_plug_base_thin`). Under Depth a read-only line
+    shows what the bench needs to see: the male's start plane, its band
+    floor, and the flank's engagement against the V-bit's cone height, red
+    when it exceeds it (phase 3's 90° bit caps it at 3.175 mm). One tool,
+    one clearing list and one cut-out serve both boards, so the same bit
+    angle on both sides is enforced by construction. The Viewport draws the
+    male board beside the stock (72). Export writes both boards' programs
+    (77); re-cutting the male alone after a fit adjustment is an export
+    choice, not a project setting.
 69. **Tabs** (`08-tabs-on-canvas.svg`). A Profile's **Tab request** is
     edited in its Corners and tabs group: none, a count, or distances along
     each outline; width, height, shape (rect or smooth), on holes, avoid
@@ -411,7 +411,12 @@ folder are app preferences, kept outside the project.
     the stock outline, a 10 mm grid that thins and coarsens with zoom, the
     origin crosshair, the park point, the shapes (closed solid, open
     dashed, selected highlighted, hidden absent, locked with a padlock at
-    their corner), the pictures, the placed tabs, and the toolpaths.
+    their corner), the pictures, the placed tabs, and the toolpaths. When
+    the project has an Inlay, the **male board** is drawn to the right of
+    the stock with a gap, as `--preview` draws it (#498): its own outline,
+    origin mark, the targets mirrored, and the male runs' toolpaths; its
+    shapes are not selectable, since they are the female's instances seen
+    from the other board, and clicking one selects the Inlay.
     Toolpaths draw as `--preview` draws them (capability 31): cutting
     moves solid in the operation's colour, rapids thin grey dashed, start
     points as a bit-sized circle with a tick in the direction of the first
@@ -476,7 +481,11 @@ folder are app preferences, kept outside the project.
     (`--preview`); then the **programs** it will write, one row per tool
     run (capability 3): file name, tool, operations, estimated time
     (capability 30) and extents (capability 4), with the step before each
-    (zero the tool, change to T2) as `export` prints them. Errors in the
+    (zero the tool, change to T2) as `export` prints them. With an Inlay
+    the rows are grouped under **Female board** and **Male board**, named
+    as #498 names them, and each board has a tick: unticking one exports
+    the other alone for this export (`--board`), not saved, which is how
+    the male is re-cut after a fit adjustment. Errors in the
     Warnings panel are listed and *Export* is disabled until they are
     fixed; warnings are listed and do not block. *Export* writes every file
     or none, as the CLI does (#71), and the result sheet shows the files,
@@ -522,7 +531,7 @@ folder are app preferences, kept outside the project.
 - Localisation beyond keyed strings; themes beyond following the OS.
 - Any change to toolpath generation, warnings or G-code: the engine is as
   phase 3 left it. A GUI slice that needs an engine change opens an issue
-  against the engine first.
+  against the engine first, as the Inlay editor did (#498, phase 3.3).
 
 ## Acceptance tests
 
@@ -601,19 +610,19 @@ byte-identical output with the program's header date pinned (`--date`).
     3.175 mm end mill writes the `clearing` list in that order; dragging
     the smaller above the larger shows `clearing_not_descending` under the
     list, as `check` reports it.
-76. **Inlay, one set of values** (68, 68a). The lettered inlay fixture
-    opened as the female shows every Inlay field, the male ones dimmed and
-    labelled *(male)*, with the quick start's values in them; editing the
-    glue gap on the female writes the value to the file and changes no
-    toolpath. Switching the side to male redraws the toolpath mirrored,
-    lists `inlay_male_mirrored` with the same X the CLI prints, and un-dims
-    the male fields; the derived line shows the start plane, floor and
-    engagement the design spec computes, and turns red when the engagement
-    exceeds the cone height. *Make the male project…* on the female with a
-    thickness of 18 mm writes `<stem>-male.dcv` beside it with the side
-    flipped, that thickness, and every other field byte-identical, and the
-    window is now on the male; exporting both files gives the quick start's
-    committed programs.
+76. **Inlay, both boards** (68, 68a, 72, 77). The lettered inlay fixture
+    (one file, #498) shows the Inlay's values once and a Male board group;
+    with the male thickness cleared, `inlay_male_board_unset` sits under
+    the field, the male board on the Viewport is empty, and the export
+    dialog lists the female board only. With it set to 18 mm the male
+    board shows the design mirrored with the band, floor rings, cut-out
+    and tabs as `--preview` draws them, `inlay_male_mirrored` lists the
+    same X the CLI prints, the derived line shows the start plane, floor
+    and engagement the design spec computes (red when the engagement
+    exceeds the cone height), and the export dialog lists both boards'
+    programs with the CLI's names. Unticking the female board exports the
+    male programs alone and leaves the file unchanged. Exporting both
+    gives the quick start's committed programs.
 77. **Photo V-Carve** (56, 68). The gradient fixture with a Photo V-Carve
     at `init`'s defaults draws the grooves `--preview` draws; `check`'s
     groove count appears in the operation's status. Runs once phase 3.4
@@ -732,9 +741,8 @@ program on the bench grblHAL to close the loop. Record below.
   names, Tabs (placing and dragging), Tool library (the window, the
   picker), Post-processors (the Project panel), Configuration (app
   preferences and where they live), Warnings (the panel; "located at the
-  field" now means the editor), Inlay (one set of values for both sides,
-  which side reads which, *Make the male project…* replacing the
-  Save-As-and-flip step).
+  field" now means the editor), Inlay (both boards from one project: the
+  male board, the per-board export tick; the two-file workflow gone).
 - `CONTEXT.md`: **Design Tree** (the list of a project's feature
   instances, tabs and pictures; avoid: layer panel, object list; PureCutCNC:
   FeatureTree), **Viewport** (the 2D view of the stock from above; avoid:
@@ -764,7 +772,8 @@ program on the bench grblHAL to close the loop. Record below.
 
 Questions 1–12 were answered by the maintainer on 2026-11-02: every
 recommendation accepted. The decisions are folded into the capabilities
-they name, and the record stays here. Question 13 is open.
+they name, and the record stays here. Question 13 was withdrawn the same
+day.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
@@ -780,7 +789,7 @@ they name, and the record stays here. Question 13 is open.
 | 10 | Phase 3.4 (Photo V-Carve, format v25) may land after phase 4 opens. Gate its editor as one slice on v25, or hold phase 4 for 3.5? | Gate the slice. Everything else in this phase is independent of it. |
 | 11 | Where app preferences live (layout, recent files, visibility, export folders): beside `config.toml` in the user config directory? | Yes, as `gui.toml` beside it, documented in the Configuration chapter. Never in the `.dcv`. |
 | 12 | Window and panel minimums (50): is 1280 × 768 the floor, or must the app work on a 1366 × 768 laptop with panels collapsed? | 1280 × 768 with both side panels open at their minimum; below that the panels collapse to strips rather than the window refusing. |
-| 13 | Inlay sibling check (68a): when `<stem>-male.dcv` sits beside the open female (or the other way round), should the Warnings panel compare the two files' shared Inlay values and the V-bit angle and warn when they differ? Two files cannot check each other today, and the chapter says so. | Yes, as a hint, read-only, by file name convention only, in a later slice of this phase once *Make the male project…* exists; never a blocker, never an edit to the other file. Open. |
+| 13 | Inlay sibling check: should the Warnings panel compare a `<stem>-male.dcv` beside the open female? | Withdrawn 2026-11-02: the maintainer asked why there was a side at all, and the answer was the file. #498 puts both boards in one project (68a), so there is nothing to compare. |
 
 ## Mock-ups
 
@@ -799,7 +808,7 @@ frame.
 
 ![05 Operation editor: Profile](mockups/05-operation-profile.svg)
 
-![06 Operation editor: V-Carve, and Inlay with one set of values for both sides](mockups/06-operation-vcarve.svg)
+![06 Operation editor: V-Carve, and Inlay with both boards from one project](mockups/06-operation-vcarve.svg)
 
 ![07 Operation editors: Drill, Bore, Engrave, Photo V-Carve](mockups/07-operation-fields.svg)
 

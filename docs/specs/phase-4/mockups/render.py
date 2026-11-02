@@ -871,8 +871,8 @@ def scene_operation_profile():
 
 
 def scene_operation_vcarve():
-    s = Svg(720, 850)
-    caption(s, "06 · Operation editors: V-Carve with clearing passes (68, 70); Inlay with one set of values for both sides (68a), shown on the female.")
+    s = Svg(720, 900)
+    caption(s, "06 · Operation editors: V-Carve with clearing passes (68, 70); Inlay with both boards from one project (68a, #498).")
     x, w = 20, 330
     panel(s, x, 40, w, 800, "Lettering · V-Carve")
     yy = 72
@@ -918,48 +918,50 @@ def scene_operation_vcarve():
     s.text(x + 14, yy + 38, "deepest cut 2.5 mm · flat floor, cleared by T1 then T2", size=10, fill=MUTED)
     s.text(x + 14, yy + 54, "⚠ clearing_not_descending would show here if T2 were above T1", size=10, fill=WARN)
 
-    # Right: Inlay, one set of values for both sides (capability 68a).
+    # Right: Inlay, both boards from one project (capability 68a, #498).
     x2 = 370
-    panel(s, x2, 40, w, 790, "DC · Inlay")
+    panel(s, x2, 40, w, 840, "DC · Inlay")
     yy = 72
-    yy = section(s, x2, yy, w, "Side")
-    s.text(x2 + 8, yy + 14, "This project cuts the", size=11)
-    radio(s, x2 + 146, yy, "Female", on=True)
-    radio(s, x2 + 222, yy, "Male", on=False)
-    yy += 26
-    button(s, x2 + 146, yy, 160, "Make the male project…", h=20)
-    yy += 26
-    s.text(x2 + 146, yy + 6, "Save As <stem>-male.dcv, side flipped, thickness asked", size=9, fill=MUTED, italic=True)
-    yy += 18
-    yy = section(s, x2, yy, w, "Depth · one set for both sides")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Inlay depth (both)", "4", "mm")
-    yy = field_row(s, x2 + 8, yy, w - 16, "Glue gap (male)", "1", "mm", dim=True)
-    yy = field_row(s, x2 + 8, yy, w - 16, "Plug depth (male)", "2", "mm", dim=True)
-    yy = field_row(s, x2 + 8, yy, w - 16, "Margin (male)", "8", "mm", dim=True)
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Outline rounding (male)", "On", dim=True)
-    yy = field_row(s, x2 + 8, yy, w - 16, "Rounding radius (male)", "10", "mm", dim=True)
-    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0", "mm")
-    s.text(x2 + 8, yy + 4, "Dimmed: set here, used by the male.", size=9, fill=MUTED, italic=True)
+    yy = section(s, x2, yy, w, "Identity", open_=False)
+    yy = section(s, x2, yy, w, "Targets", open_=False)
+    yy = section(s, x2, yy, w, "Tool")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "V-bit", "60° V-bit 6.35 mm (T1)")
+    s.text(x2 + 8 + 138, yy + 4, "one bit for both boards · cone height 5.5 mm", size=9, fill=MUTED, italic=True)
     yy += 14
+    yy = section(s, x2, yy, w, "Depth")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Inlay depth", "4", "mm")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Glue gap", "1", "mm")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Plug depth", "2", "mm")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Margin", "8", "mm")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Outline rounding", "On")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Rounding radius", "10", "mm")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0", "mm")
     s.rect(x2 + 8, yy, w - 16, 58, fill=PANEL, stroke=LINE)
-    s.text(x2 + 14, yy + 15, "Both sides share", size=10, weight="bold")
-    s.text(x2 + 14, yy + 30, "male start plane 3 mm · band floor 5 mm below the stock top", size=10, fill=MUTED)
-    s.text(x2 + 14, yy + 45, "flank engagement 5 mm > cone height 3.175 mm (90° bit)", size=10, fill=ERROR)
+    s.text(x2 + 14, yy + 15, "Derived", size=10, weight="bold")
+    s.text(x2 + 14, yy + 30, "male start plane 3 mm · band floor 5 mm below the board top", size=10, fill=MUTED)
+    s.text(x2 + 14, yy + 45, "flank engagement 5 mm of the 60° bit's 5.5 mm cone", size=10, fill=MUTED)
     yy += 66
-    yy = section(s, x2, yy, w, "Clearing passes · both sides", open_=False)
-    yy = section(s, x2, yy, w, "Cut-out (male)")
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Cut-out", "On", dim=True)
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Tool", "3.175 mm end mill (T2)", dim=True)
-    yy = dropdown(s, x2 + 8, yy, w - 16, "Tabs", "Count 4 · 6 × 3 mm rect", dim=True)
-    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0.2", "mm", dim=True)
+    yy = section(s, x2, yy, w, "Male board")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Width", "same as stock: 110", "mm", placeholder=True, reset=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Height", "same as stock: 80", "mm", placeholder=True, reset=True)
+    yy = field_row(s, x2 + 8, yy, w - 16, "Thickness", "18", "mm")
+    s.text(x2 + 8 + 138, yy + 2, "base under the band 13 mm (at least 6)", size=9, fill=MUTED, italic=True)
+    yy += 14
+    yy = section(s, x2, yy, w, "Clearing passes", open_=False)
+    yy = section(s, x2, yy, w, "Cut-out")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Cut-out", "On")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Tool", "3.175 mm end mill (T2)")
+    yy = dropdown(s, x2 + 8, yy, w - 16, "Tabs", "Count 4 · 6 × 3 mm rect")
+    yy = field_row(s, x2 + 8, yy, w - 16, "Through-cut allowance", "0.2", "mm")
     yy = section(s, x2, yy + 2, w, "Order", open_=False)
     yy = section(s, x2, yy, w, "Heights", open_=False)
     for i, ln in enumerate((
-        "Every field shows whichever side is chosen; the label says who",
-        "reads it. The female reads only the inlay depth. Male fields stay",
-        "editable on the female so the values are set once and travel",
-        "with the file. On Male the dimming swaps: nothing is female-only.",
-        "Mirroring: inlay_male_mirrored at X = 55 mm, in the Warnings panel.",
+        "No side to choose: one project cuts both boards (#498). The",
+        "female carve is on the stock; the male is on the Inlay's own",
+        "board, drawn beside the stock on the Viewport, design mirrored.",
+        "Export lists Female board and Male board; untick one to re-cut",
+        "the other alone. Thickness unset: inlay_male_board_unset here,",
+        "and the female still exports.",
     )):
         s.text(x2 + 8, yy + 20 + i * 14, ln, size=10, fill=MUTED)
     return s.render("DreamCarve phase 4 wireframe: V-Carve and Inlay editors")
