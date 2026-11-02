@@ -745,4 +745,54 @@ mod tests {
         );
         assert!(out.is_closed());
     }
+
+    /// #490: a Pocket ring 0.37 mm wide that comes within 8.5 µm of
+    /// itself, cut down from the clearing pass of lettering seed `0x44`'s
+    /// rounded male (1 819 vertices) to the 15 that still show the fault.
+    /// Grown by the 3.175 mm end mill's radius, as `dc_cam::footprint`
+    /// sweeps it, it closes round the triangle the ring runs about, so
+    /// the offset is an outline and a loop inside it. cavalier_contours
+    /// returns open pieces at its defaults and only the outline at 1e-6
+    /// mm, which enclosed more than the ring (`S > A`, all #466 asked of a
+    /// grown offset), so the swept band lost its inside and S9 refused
+    /// the clearing pass. The triangle's middle stays outside the grown
+    /// ring, and the grown ring gains no more than `L·t + π·t²`.
+    #[test]
+    fn grown_offset_of_a_ring_that_nearly_touches_itself_keeps_its_inside() {
+        let points = [
+            (35.384_650_469_217_16, 63.286_149_735_909_37),
+            (63.133_251_488_599_64, 65.514_059_777_718_44),
+            (67.883_413_374_814_85, 16.476_441_200_238_135),
+            (17.721_956_849_489_075, 59.827_237_840_157_416),
+            (32.736_379_862_222_535, 64.812_913_532_715_7),
+            (17.785_990_476_999_146, 59.978_601_212_960_15),
+            (17.540_629_864_129_883, 59.420_575_495_224_86),
+            (67.720_686_376_485_69, 16.503_064_687_710_67),
+            (68.160_596_132_669_31, 16.424_874_420_624_64),
+            (63.165_025_055_799_35, 65.517_991_955_738_92),
+            (45.939_591_944_608_55, 64.961_766_000_252_62),
+            (45.926_901_758_108, 64.947_422_202_092_07),
+            (45.902_668_357_286_316, 64.920_801_158_409_97),
+            (45.816_175_163_183_075, 64.829_196_389_180_08),
+            (45.375_199_139_509_064, 64.384_326_274_853_6),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        let ring = Contour::new(Polyline::new(vertices, true)).unwrap();
+        let radius_mm = 3.175 / 2.0;
+        let (grown, _) = crate::nest(offset(&ring, radius_mm)).unwrap();
+        let middle = Point::new(49.6, 47.3);
+        assert!(
+            grown.iter().all(|r| !r.contains_point(middle)),
+            "the grown ring covers the triangle's middle: {grown:?}"
+        );
+        let area_mm2 = ring.signed_area_mm2().abs();
+        let length_mm = ring.polyline().length_mm();
+        let most_mm2 =
+            area_mm2 + length_mm * radius_mm + std::f64::consts::PI * radius_mm * radius_mm;
+        let grown_mm2 = crate::area_mm2(&grown);
+        assert!(
+            grown_mm2 > area_mm2 && grown_mm2 <= most_mm2,
+            "grown {grown_mm2} mm², ring {area_mm2} mm², at most {most_mm2} mm²"
+        );
+    }
 }
