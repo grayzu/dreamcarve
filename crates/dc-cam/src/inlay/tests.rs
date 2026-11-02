@@ -13,6 +13,7 @@
 //! `margin_mm` 8, so the male's start plane is 3 mm below the stock top
 //! and its floor 5 mm below it.
 
+mod board;
 mod line_art;
 mod near;
 mod spike;
