@@ -28,7 +28,7 @@ use crate::sequence::{SequenceInput, sequence};
 use crate::tabs::LapRates;
 use crate::test_support::assert_safe;
 use crate::toolpath::{Move, MoveKind, Toolpath};
-use crate::vcarve::cone::Walls;
+use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::vcarve::medial::{Depth, Run, Tolerances};
 use crate::warning::WarningCode;
 use dc_geometry::medial::{MedialGraph, MedialNode};
@@ -455,6 +455,85 @@ fn links_use_the_clamped_disc() {
             .any(|(a, b)| (a.x - 2.0).abs() < 1e-6 && (b.x - 2.8).abs() < 1e-6),
         "a link bridged the gap at full depth: {full:?}"
     );
+}
+
+/// #508: a stay-down link between two chains keeps the cone inside an open
+/// band edge at the stock top, as the chains' own moves do (#448). A male
+/// Inlay's start plane is below the stock top, so a link that passes the
+/// cone test at the start plane, against the region's walls, can still
+/// reach past the band's edge with the wider cone the board above the
+/// start plane feels: line-art seed `0xb3`'s male ran a 7 mm link on its
+/// floor 0.095 mm past the edge, and step 10 refused it.
+///
+/// Two chains, (0, 0)–(1.5, 0) and (3.3, 0)–(4.8, 0), every node at
+/// clearance 1, slope 1, clamped at a 0.5 mm flat depth (Z 9.5 below a
+/// start plane at Z 10), in a bar from x −2 to 6 of half-width 1.5 with a
+/// notch whose tip
+/// stands 0.95 mm from the chains' line at x 2.4. At the start plane the
+/// link's 0.5 mm cone clears the notch by 0.45 mm; at a stock top of
+/// Z 10.6 its 1.1 mm cone crosses it by 0.15 mm, while each chain keeps
+/// 0.2 mm from it. The tool lifts between the chains.
+#[test]
+fn links_keep_the_cone_inside_an_open_edge() {
+    let nodes = [
+        (0.0, 0.0, 1.0),
+        (1.5, 0.0, 1.0),
+        (3.3, 0.0, 1.0),
+        (4.8, 0.0, 1.0),
+    ];
+    let adjacency: [&[usize]; 4] = [&[1], &[0], &[3], &[2]];
+    let chains = graph(&nodes, &adjacency);
+    let notched = {
+        let contour = Contour::new(polygon(&[
+            (-2.0, -1.5),
+            (6.0, -1.5),
+            (6.0, 1.5),
+            (2.45, 1.5),
+            (2.4, 0.95),
+            (2.35, 1.5),
+            (-2.0, 1.5),
+        ]))
+        .expect("a notched bar");
+        nest(vec![contour]).expect("one region").0
+    };
+    let depth = Depth {
+        start_plane_z_mm: 10.0,
+        flat_depth_mm: Some(0.5),
+        slope: 1.0,
+    };
+    let walls = Walls::new(&notched, 0.01);
+    let edge = OpenEdgeWalls {
+        walls: Walls::new(&notched, 0.01),
+        top_z_mm: 10.6,
+        slope: 1.0,
+    };
+    let no_simplifying = Tolerances {
+        simplify_mm: 0.0,
+        redundancy_mm: 0.0,
+        deepen_mm: None,
+        axis_mm: None,
+        written_mm: 0.0,
+    };
+    let link = (Point3::new(1.5, 0.0, 9.5), Point3::new(3.3, 0.0, 9.5));
+    assert!(
+        medial::links_tool_down(&walls, &depth, link.0, link.1),
+        "the region's walls alone let the link stay down"
+    );
+    assert!(!edge.allows(link.0, link.1), "the edge refuses the link");
+
+    let runs = medial::runs_within(&chains, &depth, no_simplifying, &walls, &[], Some(&edge));
+    assert_eq!(runs.len(), 2, "the tool lifts between the chains: {runs:?}");
+    for run in &runs {
+        let mut from = run.start;
+        for step in &run.steps {
+            assert!(
+                edge.allows(from, step.to),
+                "{from:?} to {:?} crosses the edge: {runs:?}",
+                step.to
+            );
+            from = step.to;
+        }
+    }
 }
 
 /// Step 10: the generator refuses a toolpath its own cone test fails. A

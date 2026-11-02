@@ -375,3 +375,22 @@ fn males_of_line_art_keep_each_lap_when_fitted() {
         assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
     }
 }
+
+/// #508 (found by the sweep): the male of line-art seed `0xb3` (a mesh,
+/// two spiky motifs and a near touch; 60° bit, millimetre program) with
+/// the end mill's clearing pass, its band's edge open, generates, every
+/// program passes S1–S19 and the pair seats. The generator refused its
+/// own move, "would cut 0.0954 mm past a wall": a stay-down link 7 mm long
+/// between two medial chains on the band's floor, held to the cone at the
+/// start plane against the region's walls but not to the open edge, where
+/// the board stands to the stock top and the cone is wider.
+#[test]
+fn male_of_line_art_0xb3_generates() {
+    let outcome = reproduce(
+        "line art",
+        0xb3,
+        designs::line_art(0xb3),
+        Kind::MaleOpenEdge,
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+}
