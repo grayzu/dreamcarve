@@ -365,7 +365,7 @@ fn side_of(
     let Some(margin_mm) = values.margin_mm else {
         let design = carve_regions(project, &op.id, &op.targets, warnings)?;
         return Ok(Side {
-            targets: merge_near(design, project, &op.id, None, warnings),
+            targets: merge_near(design, project, op, None, warnings),
             start_plane_z_mm,
             engaged_from_z_mm: thickness_mm,
             flat_depth_mm: values.flat_depth_mm(),
@@ -379,21 +379,14 @@ fn side_of(
     let mirror_x_mm = axis_x_mm(project, &op.id, &op.targets)?;
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
-    let design = merge_near(design, project, &op.id, mirror, warnings);
+    let design = merge_near(design, project, op, mirror, warnings);
     // #448: the band's edge, closed by `R'`, and whether it is open.
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
     // #478: the plug's outline within the V-bit's wall tolerance; the
     // band's edge within the project's.
-    let plug_tolerance_mm = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .and_then(|t| checked_v_bit(&op.id, t).ok())
-        .map_or(tolerance_mm, |bit| {
-            wall_tolerance_mm(tolerance_mm, bit.slope)
-        });
+    let plug_tolerance_mm = plug_tolerance_mm(project, op);
     let edge = rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
     // #495: a band that runs past the board's edge is clipped to it.
     let on_board = band.as_ref().and_then(|b| {
@@ -456,6 +449,22 @@ fn side_of(
     })
 }
 
+/// How near, mm, the plug's outline is drawn for Inlay `op` (#478): the
+/// project's flatten tolerance scaled for its V-bit
+/// ([`wall_tolerance_mm`]), or the tolerance itself when the tool is not a
+/// usable V-bit.
+fn plug_tolerance_mm(project: &Project, op: &InlayOp) -> f64 {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .and_then(|t| checked_v_bit(&op.id, t).ok())
+        .map_or(tolerance_mm, |bit| {
+            wall_tolerance_mm(tolerance_mm, bit.slope)
+        })
+}
+
 /// `design`, the targets of Inlay `op` resolved (the male's moved by its
 /// `mirror`), with the parts that come closer than [`INLAY_MERGE_MM`]
 /// merged into one shape ([`merge_near_parts`]; #479, design "Inlay",
@@ -464,15 +473,18 @@ fn side_of(
 /// gap as drawn: the male's point is mirrored back. A merged region is
 /// named by the shape of its first part, and the containment pairs follow
 /// the names, less those inside one merged region.
+///
+/// A merged group is drawn within the V-bit's wall tolerance (#478), as
+/// the plug's outline is.
 fn merge_near(
     design: Targets,
     project: &Project,
-    op: &OperationId,
+    op: &InlayOp,
     mirror: Option<Transform>,
     warnings: &mut Vec<Warning>,
 ) -> Targets {
     let merge_mm = INLAY_MERGE_MM;
-    let merged = merge_near_parts(&design.regions, merge_mm, project.flatten_tolerance_mm);
+    let merged = merge_near_parts(&design.regions, merge_mm, plug_tolerance_mm(project, op));
     if merged.near.is_empty() {
         return design;
     }
@@ -484,7 +496,7 @@ fn merge_near(
         // A mirror is its own inverse.
         let at = mirror.map_or(near.at, |m| m.apply(near.at));
         warnings.push(Warning::InlayPartsMerged {
-            op: op.clone(),
+            op: op.id.clone(),
             first,
             second,
             x_mm: at.x,

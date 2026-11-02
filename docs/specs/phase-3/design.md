@@ -1392,7 +1392,8 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    some gaps (the circle 0.009 to 0.013 and 0.019 to 0.021 mm from the
    square, with `d` at 0.0214 mm), and the plug stood 0.9 to 2 mm proud.
    The
-   group is flattened within `f`, the finer of `tol` and `d/8`, so the
+   group is flattened within `f`, the finer of the V-bit's wall tolerance
+   (`dc_geometry::wall_tolerance_mm`, #478) and `d/8`, so the
    flattening cannot reopen a gap `d` closes; regions with no near part
    keep their arcs, and a design with none is unchanged. Each pair of
    outlines warns `inlay_parts_merged` with the gap and its middle as

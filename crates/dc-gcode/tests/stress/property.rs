@@ -431,7 +431,8 @@ fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
         .map(|&(.., issue)| issue)
 }
 
-/// Seat failures of the CI tests' designs, each with the open issue it is filed under:
+/// Seat failures of the CI tests' designs, each with the open issue it
+/// is filed under:
 /// family, seed, operation, issue.
 const KNOWN_CASES: [(&str, u64, Kind, u32); 4] = [
     // #484: beside the last "e"'s mouth, 0.36 mm.

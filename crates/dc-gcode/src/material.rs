@@ -1022,7 +1022,7 @@ impl MaleGeometry {
     /// surround is the clipped band less the design.
     fn of(project: &Project, inlay: &InlayOp) -> Option<Self> {
         let band = male_band(project, inlay)?;
-        let design = male_design(project, &inlay.targets)?;
+        let design = male_design(project, inlay)?;
         let tolerance_mm = project.flatten_tolerance_mm;
         // #478: the plug's outline within the V-bit's wall tolerance, as
         // the generator draws it.
@@ -1096,7 +1096,7 @@ fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<(Cone, Option<MaleGe
     let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
     let (regions, start_depth_mm, flat_depth_mm, male) = match inlay.side {
         InlaySide::Female => (
-            merged_design(project, regions_of(project, &inlay.targets)?),
+            merged_design(project, inlay, regions_of(project, &inlay.targets)?),
             0.0,
             depth_mm,
             None,
@@ -1157,8 +1157,8 @@ fn male_band_on_board(
 /// included, [`Transform::mirror_x_about`]), nested, its near parts merged
 /// ([`merged_design`]). `None` when a target does not resolve or
 /// outlines cross.
-fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>> {
-    let closed: Vec<Polyline> = placed(project, targets)?
+fn male_design(project: &Project, inlay: &InlayOp) -> Option<Vec<Region>> {
+    let closed: Vec<Polyline> = placed(project, &inlay.targets)?
         .into_iter()
         .filter(Polyline::is_closed)
         .collect();
@@ -1185,14 +1185,19 @@ fn male_design(project: &Project, targets: &[InstanceId]) -> Option<Vec<Region>>
         None => Vec::new(),
     };
     let (design, _) = nest(contours).ok()?;
-    Some(merged_design(project, design))
+    Some(merged_design(project, inlay, design))
 }
 
-/// An Inlay's `design` (nested) with the parts that come closer than
-/// [`INLAY_MERGE_MM`] merged into one shape, as the generator merges them
-/// (#479; [`merge_near_parts`]).
-fn merged_design(project: &Project, design: Vec<Region>) -> Vec<Region> {
-    merge_near_parts(&design, INLAY_MERGE_MM, project.flatten_tolerance_mm).regions
+/// Inlay `inlay`'s `design` (nested) with the parts that come closer
+/// than [`INLAY_MERGE_MM`] merged into one shape, drawn within its V-bit's
+/// wall tolerance ([`wall_tolerance_mm`], #478), as the generator merges
+/// them (#479; [`merge_near_parts`]).
+fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Vec<Region> {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    let plug_tolerance_mm = v_bit_of(project, &inlay.tool).map_or(tolerance_mm, |(slope, _)| {
+        wall_tolerance_mm(tolerance_mm, slope)
+    });
+    merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions
 }
 
 /// What a male Inlay's cut-out run is held to (#443, #448; module docs):
