@@ -21,7 +21,9 @@
 //! the medial axis measured its clearances to.
 
 use dc_geometry::medial::point_in_loops;
-use dc_geometry::{EPS_MM, Point, Point3, Polyline, Region, Vec2, Vertex};
+use dc_geometry::{
+    EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, Vertex, segment_distance_mm,
+};
 
 /// Golden-section iterations per wall segment: 0.618⁸⁰ of a move's length
 /// is far below a nanometre for any move on the coordinate range.
@@ -38,6 +40,11 @@ pub(crate) struct Walls {
     /// For each segment, its loop's first segment and length: segment
     /// `k` of a loop runs from the loop's vertex `k` to its vertex `k + 1`.
     rings: Vec<(usize, usize)>,
+    /// The walls as drawn, arcs as arcs (#481).
+    drawn: Vec<Segment>,
+    /// For each segment, the drawn wall it is a chord of: an index into
+    /// `drawn`.
+    sources: Vec<usize>,
     /// The tolerance the arcs were flattened within, mm.
     tolerance_mm: f64,
     loops: Vec<Polyline>,
@@ -78,19 +85,46 @@ impl Walls {
         let mut segments = Vec::new();
         let mut rings = Vec::new();
         let mut loops = Vec::new();
+        let mut drawn = Vec::new();
+        let mut sources = Vec::new();
         for region in regions {
             for contour in std::iter::once(region.outer()).chain(region.holes()) {
-                let flat = contour.polyline().with_arcs_flattened(tolerance_mm);
-                let points = clean_loop(flat.vertices().iter().map(|v| v.point()));
+                // Each drawn segment flattened on its own, which gives the
+                // contour's flattened points (`with_arcs_flattened` takes
+                // each segment's start and its arc's inner points), each
+                // with the drawn segment its chord on stands for.
+                let mut flat = Vec::new();
+                for segment in contour.polyline().segments() {
+                    let source = drawn.len();
+                    drawn.push(segment);
+                    let alone = Polyline::new(
+                        vec![
+                            Vertex::new(segment.start.x, segment.start.y, segment.bulge),
+                            Vertex::line(segment.end.x, segment.end.y),
+                        ],
+                        false,
+                    )
+                    .with_arcs_flattened(tolerance_mm);
+                    let points = alone.vertices();
+                    flat.extend(
+                        points
+                            .iter()
+                            .take(points.len().saturating_sub(1))
+                            .map(|v| (v.point(), source)),
+                    );
+                }
+                let points = clean_loop(flat);
                 if points.len() < 2 {
                     continue;
                 }
                 let first = segments.len();
                 let next = points.iter().cycle().skip(1);
-                for (&a, &b) in points.iter().zip(next) {
+                for (&(a, source), &(b, _)) in points.iter().zip(next) {
                     segments.push((a, b));
                     rings.push((first, points.len()));
+                    sources.push(source);
                 }
+                let points: Vec<Point> = points.into_iter().map(|(p, _)| p).collect();
                 loops.push(Polyline::new(
                     points.iter().map(|p| Vertex::line(p.x, p.y)).collect(),
                     true,
@@ -118,6 +152,8 @@ impl Walls {
         let mut walls = Self {
             segments,
             rings,
+            drawn,
+            sources,
             tolerance_mm,
             loops,
             origin: min,
@@ -277,15 +313,38 @@ impl Walls {
 
     /// How near the straight tip path `a`–`b` comes to a wall, mm, among
     /// the walls within `reach_mm` of it (#469): 0 where it meets one;
-    /// `reach_mm` or more when none is nearer.
+    /// `reach_mm` or more when none is nearer. The walls are the chords
+    /// and also the arcs as drawn (#481): S17 holds the written path to
+    /// the drawn outline, and beside an arc that bows into the region its
+    /// chords lie up to the flatten tolerance beyond it, so a path clear of
+    /// them can come within a hair of the arc and, once written, cross it.
     pub(crate) fn path_clearance_mm(&self, a: Point, b: Point, reach_mm: f64) -> f64 {
         let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
         let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
-        self.near(lo, hi, reach_mm)
-            .into_iter()
-            .filter_map(|i| self.segments.get(i))
+        // An arc lies within the flatten tolerance of its chords, so the
+        // chords that far nearer find every arc within reach.
+        let near = self.near(lo, hi, reach_mm + self.tolerance_mm.max(0.0));
+        let to_chords = near
+            .iter()
+            .filter_map(|&i| self.segments.get(i))
             .map(|&(c, d)| segment_distance(a, b, c, d))
-            .fold(reach_mm, f64::min)
+            .fold(reach_mm, f64::min);
+        let mut arcs: Vec<usize> = near
+            .iter()
+            .filter_map(|&i| self.sources.get(i).copied())
+            .filter(|&s| self.drawn.get(s).is_some_and(|w| w.bulge != 0.0))
+            .collect();
+        arcs.sort_unstable();
+        arcs.dedup();
+        let path = Segment {
+            start: a,
+            end: b,
+            bulge: 0.0,
+        };
+        arcs.into_iter()
+            .filter_map(|s| self.drawn.get(s))
+            .map(|&arc| segment_distance_mm(path, arc))
+            .fold(to_chords, f64::min)
     }
 
     /// Whether `p` lies inside the regions by the even-odd rule, or within
@@ -596,16 +655,21 @@ pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
 }
 
 /// `points` without consecutive duplicates or an explicit closing vertex,
-/// as the medial axis cleans its loops.
-fn clean_loop(points: impl Iterator<Item = Point>) -> Vec<Point> {
-    let mut out: Vec<Point> = Vec::new();
-    for p in points {
-        if out.last().is_some_and(|q| q.distance_to(p) < 1e-9) {
+/// as the medial axis cleans its loops. Each point carries the drawn wall
+/// its chord on stands for; a point kept for a dropped duplicate takes the
+/// duplicate's, since the chord from it is now the duplicate's.
+fn clean_loop(points: Vec<(Point, usize)>) -> Vec<(Point, usize)> {
+    let mut out: Vec<(Point, usize)> = Vec::new();
+    for (p, source) in points {
+        if let Some(last) = out.last_mut()
+            && last.0.distance_to(p) < 1e-9
+        {
+            last.1 = source;
             continue;
         }
-        out.push(p);
+        out.push((p, source));
     }
-    while let (Some(&first), Some(&last)) = (out.first(), out.last()) {
+    while let (Some(&(first, _)), Some(&(last, _))) = (out.first(), out.last()) {
         if out.len() >= 2 && first.distance_to(last) < 1e-9 {
             out.pop();
         } else {

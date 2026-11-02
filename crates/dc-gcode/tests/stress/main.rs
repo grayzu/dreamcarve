@@ -38,12 +38,11 @@
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
-//! What the sweep found is on #464. While #481 to #484 are open, the
-//! sweep still fails: S17 at export near the stock top with a 15° bit
-//! (#481), a containment cycle (#482), a written program that does not
-//! reproduce its toolpath (#483), and seat failures with 60° and 90° bits
-//! away from a near touch (#484). Their reproductions are the ignored
-//! tests at the end of this file and in dc-cam's inlay tests.
+//! What the sweep found is on #464. While #482 to #484 are open, the
+//! sweep still fails: a containment cycle (#482), a written program that
+//! does not reproduce its toolpath (#483), and seat failures with 60° and
+//! 90° bits away from a near touch (#484). Their reproductions are the
+//! ignored tests at the end of this file and in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,
