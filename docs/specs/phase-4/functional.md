@@ -218,7 +218,7 @@ folder are app preferences, kept outside the project.
     definition, so phase 5's shape editing will edit both. *Delete* removes
     the instance from every operation's targets as well as from the tree;
     when an operation is left with no targets the Warnings panel says so
-    (`no_targets`, a new code), and the operation stays, disabled-looking
+    (`operation_has_no_targets`, as validation reports it today), and the operation stays, disabled-looking
     but enabled, until the user fixes or deletes it. A definition no
     instance uses is dropped from the file on save. Placed tabs on a
     deleted instance go with it.
@@ -568,7 +568,7 @@ byte-identical output with the program's header date pinned (`--date`).
     definition id; the file holds one definition and two instances; moving
     one leaves the other.
 68. **Delete a target** (59). Deleting the plaque's panel instance removes
-    it from the Pocket's targets, leaves the Pocket with `no_targets` in
+    it from the Pocket's targets, leaves the Pocket with `operation_has_no_targets` in
     the Warnings panel, and removes the panel's placed tabs; undo restores
     all three.
 69. **Stock, origin, heights** (60, 61). Setting the stock, origin presets
