@@ -1760,9 +1760,10 @@ fn plug_seats_flush() {
 /// step-over 0.1. The seat grows as `1 / tan(α/2)`: 0.018 mm with the
 /// 90° bit and 0.031 with the 60°, but 0.066 with the 30° and 0.140 with
 /// the 15°, a fixed 0.018 mm off the wall turned into height by the
-/// cone.
+/// cone: the circle's arcs drawn as chords within the flatten tolerance,
+/// 0.009 mm on each side (the female's floor trace and the male's plug
+/// outline).
 #[test]
-#[ignore = "#478: the seat error grows as 1/tan(α/2)"]
 fn star_seats_flush_with_narrow_bits() {
     for angle_deg in [15.0, 30.0] {
         let mut star = star_project(THICKNESS_MM);
