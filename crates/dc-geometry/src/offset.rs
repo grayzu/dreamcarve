@@ -13,6 +13,7 @@ use cavalier_contours::polyline::{
     PlineCreation, PlineOffsetOptions, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex,
     pline_seg_intr,
 };
+use std::f64::consts::{PI, TAU};
 
 pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 
@@ -39,6 +40,11 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 ///   outlines; an island a ring tree grows vanished, or a ring's swept
 ///   band lost its inside. A result is checked against the area any offset
 ///   by `δ` of a contour of area `A` and length `L` encloses (`plausible`).
+/// - #490: grown round a contour that comes within micrometres of itself
+///   (a Pocket ring whose two sides nearly meet), it can return the outline
+///   without the loop inside it where it closes round a gap, or that loop
+///   alone. A grown result is held to at most `A + L·δ + π·δ²` too, its
+///   inside loops counted as holes.
 ///
 /// The retries, in order: both tolerances at 1e-6, 1e-7, then 1e-8 mm
 /// (`RETRY_EPS_MM`); the position tolerance alone at 1e-8 mm
@@ -53,7 +59,7 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let defaults = PlineOffsetOptions::default();
     let source = contour.polyline();
     let first = offset_with(source, ccw, delta_mm, &defaults);
-    if first.closed && plausible(contour, delta_mm, &first.contours) {
+    if first.closed && plausible(contour, delta_mm, &first) {
         return first.contours;
     }
     let both = |eps: f64| PlineOffsetOptions {
@@ -82,7 +88,7 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         if !out.closed {
             continue;
         }
-        if plausible(contour, delta_mm, &out.contours) {
+        if plausible(contour, delta_mm, &out) {
             return out.contours;
         }
         if closed.is_none() {
@@ -175,6 +181,9 @@ struct Offset {
     contours: Vec<Contour>,
     /// Whether every piece `cavalier_contours` returned was closed.
     closed: bool,
+    /// The area the pieces enclose, mm², less that of the loops inside
+    /// them: what [`plausible`] holds a grown offset to.
+    net_mm2: f64,
 }
 
 /// `polyline`, counter-clockwise when `ccw`, offset by `delta_mm` with
@@ -190,32 +199,51 @@ fn offset_with(
     // inward on a CCW contour, outward on a CW one.
     let cav_delta = if ccw { -delta_mm } else { delta_mm };
     let pieces = source.parallel_offset_opt(cav_delta, options);
+    let mut contours = Vec::with_capacity(pieces.len());
+    let mut net_mm2 = 0.0;
+    for piece in &pieces {
+        let Ok(contour) = Contour::oriented(from_cavalier(piece)) else {
+            continue;
+        };
+        // A piece runs the source's way round, a loop inside a grown
+        // outline the other way.
+        net_mm2 += if ccw { piece.area() } else { -piece.area() };
+        contours.push(if ccw { contour } else { contour.reversed() });
+    }
     Offset {
         closed: pieces.iter().all(PlineSource::is_closed),
-        contours: pieces
-            .iter()
-            .filter_map(|p| Contour::oriented(from_cavalier(p)).ok())
-            .map(|c| if ccw { c } else { c.reversed() })
-            .collect(),
+        contours,
+        net_mm2,
     }
 }
 
-/// Whether `out` can be `contour` offset by `delta_mm`, by the area its
-/// pieces enclose, `S`, against the contour's area `A` and length `L`.
-/// Grown, the contour encloses more than before, so `S > A` (pieces
-/// inside the grown outline, where it closes round a gap, only add to
-/// `S`). Shrunk by `t`, it loses no more than the points within `t` of
-/// the line, which cover at most `L·t` since each inner parallel curve is
-/// no longer than the line, and the pieces lie apart inside it: `A − L·t
-/// ≤ S ≤ A`. Each bound has [`EPS_MM`] of length's slack.
-fn plausible(contour: &Contour, delta_mm: f64, out: &[Contour]) -> bool {
+/// Whether `out` can be `contour` offset by `delta_mm`, by the area it
+/// encloses against the contour's area `A` and length `L`, each bound with
+/// [`EPS_MM`] of length's slack.
+///
+/// - Grown by `t`, the result is the contour's points and those within
+///   `t` of it, so its area `N`, the pieces' less the loops inside them
+///   where the outline closes round a gap, is more than `A` and at most
+///   `A + L·t + π·t²`: the outer parallel set of a connected plane region
+///   gains no more than that (Sz.-Nagy's inequality; equal for a convex
+///   region). #490: an offset that dropped such an inside loop (or kept
+///   only it) enclosed more than `A`, all #466 asked, but far more than
+///   the upper bound.
+/// - Shrunk by `t`, it loses no more than the points within `t` of the
+///   line, which cover at most `L·t` since each inner parallel curve is no
+///   longer than the line, and the pieces lie apart inside it: `A − L·t ≤
+///   S ≤ A`, `S` the area the pieces enclose.
+fn plausible(contour: &Contour, delta_mm: f64, out: &Offset) -> bool {
     let area_mm2 = contour.signed_area_mm2().abs();
-    let slack_mm2 = EPS_MM * contour.polyline().length_mm();
-    let enclosed_mm2: f64 = out.iter().map(|c| c.signed_area_mm2().abs()).sum();
+    let length_mm = contour.polyline().length_mm();
     if delta_mm > 0.0 {
-        enclosed_mm2 > area_mm2 - slack_mm2
+        let gained_mm2 = length_mm * delta_mm + PI * delta_mm * delta_mm;
+        let slack_mm2 = EPS_MM * (length_mm + TAU * delta_mm);
+        out.net_mm2 > area_mm2 - slack_mm2 && out.net_mm2 <= area_mm2 + gained_mm2 + slack_mm2
     } else if delta_mm < 0.0 {
-        let lost_mm2 = contour.polyline().length_mm() * -delta_mm;
+        let slack_mm2 = EPS_MM * length_mm;
+        let enclosed_mm2: f64 = out.contours.iter().map(|c| c.signed_area_mm2().abs()).sum();
+        let lost_mm2 = length_mm * -delta_mm;
         enclosed_mm2 >= area_mm2 - lost_mm2 - slack_mm2 && enclosed_mm2 <= area_mm2 + slack_mm2
     } else {
         true
@@ -692,18 +720,77 @@ mod tests {
         let rect = rect_100x50();
         for delta_mm in [3.0, -3.0, -24.0, -25.0, -30.0] {
             assert!(
-                plausible(&rect, delta_mm, &offset(&rect, delta_mm)),
+                plausible(&rect, delta_mm, &attempt(&rect, delta_mm)),
                 "{delta_mm}"
             );
         }
         // A / L = 5000 / 300: shrunk by less, something is always left.
-        assert!(!plausible(&rect, 3.0, &[]));
-        assert!(!plausible(&rect, -16.0, &[]));
-        assert!(plausible(&rect, -17.0, &[]));
-        let grown = offset(&rect, 3.0);
+        assert!(!plausible(&rect, 3.0, &nothing()));
+        assert!(!plausible(&rect, -16.0, &nothing()));
+        assert!(plausible(&rect, -17.0, &nothing()));
+        let grown = attempt(&rect, 3.0);
         assert!(!plausible(&rect, -3.0, &grown));
-        let shrunk = offset(&rect, -3.0);
+        let shrunk = attempt(&rect, -3.0);
         assert!(!plausible(&rect, 3.0, &shrunk));
+    }
+
+    /// `contour` offset by `delta_mm` at cavalier_contours' defaults, as
+    /// [`offset`] first tries it.
+    fn attempt(contour: &Contour, delta_mm: f64) -> Offset {
+        let defaults = PlineOffsetOptions::default();
+        offset_with(contour.polyline(), contour.is_ccw(), delta_mm, &defaults)
+    }
+
+    /// An offset of no pieces.
+    fn nothing() -> Offset {
+        Offset {
+            contours: Vec::new(),
+            closed: true,
+            net_mm2: 0.0,
+        }
+    }
+
+    /// #490: a square ribbon 40 mm across and 0.4 mm wide, cut by a slit
+    /// 0.01 mm wide, grown by 1.5875 mm closes round the slit: an outline
+    /// and a loop inside it, about 568 mm² between them, within `A + L·t +
+    /// π·t²` (64 + 508 + 8 mm²; the convex corners' arcs are the `π·t²`).
+    /// `plausible` takes it, and refuses the outline alone (about
+    /// 1 860 mm²) or the loop alone (about 1 300 mm²), though each encloses
+    /// more than the ribbon, all #466 asked of a grown offset.
+    #[test]
+    fn plausible_refuses_a_grown_offset_without_its_inside_loop() {
+        let points = [
+            (20.005, 0.0),
+            (40.0, 0.0),
+            (40.0, 40.0),
+            (0.0, 40.0),
+            (0.0, 0.0),
+            (19.995, 0.0),
+            (19.995, 0.4),
+            (0.4, 0.4),
+            (0.4, 39.6),
+            (39.6, 39.6),
+            (39.6, 0.4),
+            (20.005, 0.4),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        let ribbon = Contour::new(Polyline::new(vertices, true)).unwrap();
+        let radius_mm = 1.5875;
+        let grown = attempt(&ribbon, radius_mm);
+        assert_eq!(grown.contours.len(), 2, "{:?}", grown.contours);
+        assert!(plausible(&ribbon, radius_mm, &grown), "{}", grown.net_mm2);
+        for piece in &grown.contours {
+            let alone = Offset {
+                contours: vec![piece.clone()],
+                closed: true,
+                net_mm2: piece.signed_area_mm2().abs(),
+            };
+            assert!(
+                !plausible(&ribbon, radius_mm, &alone),
+                "{} mm² alone",
+                alone.net_mm2
+            );
+        }
     }
 
     /// #466: `decimated` drops the vertices it can lose within its

@@ -83,7 +83,10 @@ pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_con
     // to A); one that fails (nothing, or slivers, for a ring of many tiny round-join arcs) is
     // taken again the same way, then with the position tolerance alone at 1e-8 mm, then on the
     // contour rid of redundant vertices, then on it moved by at most 0.1, then 1 µm; the first
-    // closed, plausible result is kept
+    // closed, plausible result is kept. #490: grown by t, the result must also enclose at
+    // most A + L·t + π·t² (Sz.-Nagy's bound on a connected region's outer parallel set), the
+    // loops inside its outline counted as holes; a ring that nearly touches itself grew to its
+    // outline alone, or the inside loop alone, which enclosed more than A
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
     // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
     // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the
