@@ -23,49 +23,212 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 /// corners become arcs (round joins). An inward offset can split a contour
 /// into several or consume it: an empty result means nothing is left.
 ///
-/// #465: `cavalier_contours` can return an offset as open pieces, failing
-/// to close its loop: where a traced convex curve (its points a little off
-/// any one circle) is offset inward by about its radius, so the curve's
-/// offset collapses to about a point, and the slices there fall foul of
-/// its distance check at the default tolerances. An open piece is no
-/// contour, and dropped it took the whole loop with it (a male Inlay's
-/// hole lost its floor). Such an offset is taken again with finer
-/// tolerances (1e-6, then 1e-7, then 1e-8 mm), and the first that closes
-/// every piece is kept.
+/// `cavalier_contours` sometimes gets an offset wrong at its default
+/// tolerances (1e-5 mm for positions, 1e-4 mm for distances), and an
+/// offset is then made again until one is right:
+///
+/// - #465: it can return open pieces, failing to close a loop, where a
+///   traced convex curve (its points a little off any one circle) is
+///   offset inward by about its radius, so the curve's offset collapses to
+///   about a point and the slices there fall foul of its distance check.
+///   An open piece is no contour, and dropped it took the whole loop with
+///   it (a male Inlay's hole lost its floor).
+/// - #466: it can return nothing, or slivers, for an offset that cannot be
+///   empty, on a contour of long runs of very short round-join arcs, as a
+///   Pocket's rings become after many step-overs round curved, flattened
+///   outlines; an island a ring tree grows vanished, or a ring's swept
+///   band lost its inside. A result is checked against the area any offset
+///   by `δ` of a contour of area `A` and length `L` encloses (`plausible`).
+///
+/// The retries, in order: both tolerances at 1e-6, 1e-7, then 1e-8 mm
+/// (`RETRY_EPS_MM`); the position tolerance alone at 1e-8 mm
+/// (`FINE_POS_EQUAL_EPS_MM`); the contour rid of its redundant vertices;
+/// the contour moved by at most 0.1, then 1 µm (`DECIMATE_MM`,
+/// `decimated`). The first result that is closed and plausible is kept,
+/// else the first closed one, else the first. A closed, plausible first
+/// result, the usual case, is returned as it was.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let ccw = contour.is_ccw();
-    let source = to_cavalier(contour.polyline());
-    // cavalier_contours offsets to the left of travel for a positive value:
-    // inward on a CCW contour, outward on a CW one.
-    let cav_delta = if ccw { -delta_mm } else { delta_mm };
-    let open = |pieces: &[CavPolyline]| pieces.iter().any(|p| !p.is_closed());
-    let mut pieces = source.parallel_offset(cav_delta);
-    if open(&pieces) {
-        let closed = RETRY_EPS_MM.iter().find_map(|&eps| {
-            let options = PlineOffsetOptions {
-                pos_equal_eps: eps,
-                offset_dist_eps: eps,
-                ..PlineOffsetOptions::new()
-            };
-            let again = source.parallel_offset_opt(cav_delta, &options);
-            (!open(&again)).then_some(again)
-        });
-        if let Some(closed) = closed {
-            pieces = closed;
+    let defaults = PlineOffsetOptions::default();
+    let source = contour.polyline();
+    let first = offset_with(source, ccw, delta_mm, &defaults);
+    if first.closed && plausible(contour, delta_mm, &first.contours) {
+        return first.contours;
+    }
+    let both = |eps: f64| PlineOffsetOptions {
+        pos_equal_eps: eps,
+        offset_dist_eps: eps,
+        ..PlineOffsetOptions::default()
+    };
+    let fine = PlineOffsetOptions {
+        pos_equal_eps: FINE_POS_EQUAL_EPS_MM,
+        ..PlineOffsetOptions::default()
+    };
+    let mut retries: Vec<(Polyline, PlineOffsetOptions<f64>)> = RETRY_EPS_MM
+        .iter()
+        .map(|&eps| (source.clone(), both(eps)))
+        .collect();
+    retries.push((source.clone(), fine));
+    if let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps) {
+        retries.push((from_cavalier(&p), PlineOffsetOptions::default()));
+    }
+    let decimations =
+        DECIMATE_MM.map(|eps_mm| (decimated(source, eps_mm), PlineOffsetOptions::default()));
+    retries.extend(decimations);
+    let mut closed: Option<Vec<Contour>> = None;
+    for (polyline, options) in &retries {
+        let out = offset_with(polyline, ccw, delta_mm, options);
+        if !out.closed {
+            continue;
+        }
+        if plausible(contour, delta_mm, &out.contours) {
+            return out.contours;
+        }
+        if closed.is_none() {
+            closed = Some(out.contours);
         }
     }
-    pieces
-        .iter()
-        .filter_map(|p| Contour::oriented(from_cavalier(p)).ok())
-        .map(|c| if ccw { c } else { c.reversed() })
-        .collect()
+    match closed {
+        Some(contours) if !first.closed => contours,
+        _ => first.contours,
+    }
 }
 
 /// The position and distance tolerances, mm, [`offset`] retries an offset
-/// with when `cavalier_contours` leaves it open at its defaults (1e-5 and
+/// with when `cavalier_contours` gets it wrong at its defaults (1e-5 and
 /// 1e-4), finest last (#465).
 const RETRY_EPS_MM: [f64; 3] = [1e-6, 1e-7, 1e-8];
+
+/// The position tolerance, mm, of [`offset`]'s next retry, the distance
+/// tolerance at its default (#466): small enough to keep apart the ends
+/// of round-join arcs a micrometre long, and far above f64's rounding at a
+/// few metres.
+const FINE_POS_EQUAL_EPS_MM: f64 = 1e-8;
+
+/// How far, mm, [`offset`]'s last retries let the contour move: a tenth of
+/// a micrometre, then one, far below any machine's resolution and the
+/// flatten tolerance (#466).
+const DECIMATE_MM: [f64; 2] = [1e-4, 1e-3];
+
+/// The closed `polyline` with every vertex dropped that it can lose while
+/// moving no more than `eps_mm`: arcs whose sagitta is under `eps_mm`
+/// become lines, and runs of lines whose inner vertices all lie within
+/// `eps_mm` of the line from the run's first vertex to its last become
+/// that line. Its first vertex stays.
+fn decimated(polyline: &Polyline, eps_mm: f64) -> Polyline {
+    let vertices: Vec<Vertex> = polyline
+        .segments()
+        .map(|s| {
+            let sagitta_mm = s.bulge.abs() * s.start.distance_to(s.end) / 2.0;
+            let bulge = if sagitta_mm < eps_mm { 0.0 } else { s.bulge };
+            Vertex::new(s.start.x, s.start.y, bulge)
+        })
+        .collect();
+    let n = vertices.len();
+    let mut kept: Vec<Vertex> = Vec::with_capacity(n);
+    let mut i = 0;
+    while i < n {
+        let Some(&anchor) = vertices.get(i) else {
+            break;
+        };
+        kept.push(anchor);
+        if anchor.bulge != 0.0 {
+            i += 1;
+            continue;
+        }
+        // Extend the line from `anchor` over vertices `i + 1 .. j` while
+        // every one of them stays within `eps_mm` of it.
+        let mut j = i + 1;
+        while j < n {
+            let (Some(inner), Some(end)) =
+                (vertices.get(j), vertices.get(j + 1).or(vertices.first()))
+            else {
+                break;
+            };
+            if inner.bulge != 0.0 {
+                break;
+            }
+            let chord = Segment {
+                start: anchor.point(),
+                end: end.point(),
+                bulge: 0.0,
+            };
+            let fits = vertices
+                .get(i + 1..=j)
+                .unwrap_or(&[])
+                .iter()
+                .all(|v| crate::point_segment_distance_mm(chord, v.point()) <= eps_mm);
+            if !fits {
+                break;
+            }
+            j += 1;
+        }
+        i = j;
+    }
+    Polyline::new(kept, true)
+}
+
+/// One try of [`offset`].
+struct Offset {
+    /// The closed pieces, as [`offset`] returns them.
+    contours: Vec<Contour>,
+    /// Whether every piece `cavalier_contours` returned was closed.
+    closed: bool,
+}
+
+/// `polyline`, counter-clockwise when `ccw`, offset by `delta_mm` with
+/// `cavalier_contours`' options `options`.
+fn offset_with(
+    polyline: &Polyline,
+    ccw: bool,
+    delta_mm: f64,
+    options: &PlineOffsetOptions<f64>,
+) -> Offset {
+    let source = to_cavalier(polyline);
+    // cavalier_contours offsets to the left of travel for a positive value:
+    // inward on a CCW contour, outward on a CW one.
+    let cav_delta = if ccw { -delta_mm } else { delta_mm };
+    let pieces = source.parallel_offset_opt(cav_delta, options);
+    Offset {
+        closed: pieces.iter().all(PlineSource::is_closed),
+        contours: pieces
+            .iter()
+            .filter_map(|p| Contour::oriented(from_cavalier(p)).ok())
+            .map(|c| if ccw { c } else { c.reversed() })
+            .collect(),
+    }
+}
+
+/// Whether `out` can be `contour` offset by `delta_mm`, by the area its
+/// pieces enclose, `S`, against the contour's area `A` and length `L`.
+/// Grown, the contour encloses more than before, so `S > A` (pieces
+/// inside the grown outline, where it closes round a gap, only add to
+/// `S`). Shrunk by `t`, it loses no more than the points within `t` of
+/// the line, which cover at most `L·t` since each inner parallel curve is
+/// no longer than the line, and the pieces lie apart inside it: `A − L·t
+/// ≤ S ≤ A`. Each bound has [`EPS_MM`] of length's slack.
+fn plausible(contour: &Contour, delta_mm: f64, out: &[Contour]) -> bool {
+    let area_mm2 = contour.signed_area_mm2().abs();
+    let slack_mm2 = EPS_MM * contour.polyline().length_mm();
+    let enclosed_mm2: f64 = out.iter().map(|c| c.signed_area_mm2().abs()).sum();
+    if delta_mm > 0.0 {
+        enclosed_mm2 > area_mm2 - slack_mm2
+    } else if delta_mm < 0.0 {
+        let lost_mm2 = contour.polyline().length_mm() * -delta_mm;
+        enclosed_mm2 >= area_mm2 - lost_mm2 - slack_mm2 && enclosed_mm2 <= area_mm2 + slack_mm2
+    } else {
+        true
+    }
+}
+
+/// Whether `contour` offset inward by `inset_mm` can be empty: the points
+/// inside a closed line of length `L` and within `t` of it cover at most
+/// `L·t`, since each inner parallel curve is no longer than the line, so
+/// an area above `L · inset_mm` always keeps a point farther in.
+fn could_vanish(contour: &Contour, inset_mm: f64) -> bool {
+    contour.signed_area_mm2().abs() <= contour.polyline().length_mm() * inset_mm
+}
 
 /// Offsets the open path `path` sideways by `left_mm` (#207): positive
 /// moves it to the left of travel from its first vertex to its last, which
@@ -171,16 +334,12 @@ fn crossings(s: Segment, t: Segment) -> Vec<Point> {
 /// contour offset inward by `inset_mm` is empty (#223, a part a bit of
 /// radius `inset_mm` cut on its line removes whole).
 ///
-/// The points inside a closed line of length `L` and within `t` of it
-/// cover at most `L·t`: each inner parallel curve is no longer than the
-/// line itself. So an area above `L · inset_mm` always keeps a point
-/// farther in, and only a smaller one is offset to find out, which keeps a
-/// large outline of many chords from being offset at all.
+/// An area above `L · inset_mm` always keeps a point farther in
+/// (`could_vanish`), and only a smaller one is offset to find out, which
+/// keeps a large outline of many chords from being offset at all.
 #[must_use]
 pub fn inset_is_empty(contour: &Contour, inset_mm: f64) -> bool {
-    let area_mm2 = contour.signed_area_mm2().abs();
-    if inset_mm.is_nan() || inset_mm <= 0.0 || area_mm2 > contour.polyline().length_mm() * inset_mm
-    {
+    if inset_mm.is_nan() || inset_mm <= 0.0 || !could_vanish(contour, inset_mm) {
         return false;
     }
     offset(contour, -inset_mm).is_empty()
@@ -521,5 +680,69 @@ mod tests {
                 assert_eq!(grown[0].contains_point(p), expected, "{p:?} at {d} mm");
             }
         }
+    }
+
+    /// #466: `plausible` takes the true offsets of a 100 × 50 rectangle
+    /// (grown, shrunk, shrunk to nothing at 25 mm or more) and refuses
+    /// what cavalier_contours returns when it fails: nothing for a grown
+    /// contour or one shrunk by less than `A / L`, or a shrunk contour
+    /// larger than the source.
+    #[test]
+    fn plausible_offsets_keep_to_the_area_bounds() {
+        let rect = rect_100x50();
+        for delta_mm in [3.0, -3.0, -24.0, -25.0, -30.0] {
+            assert!(
+                plausible(&rect, delta_mm, &offset(&rect, delta_mm)),
+                "{delta_mm}"
+            );
+        }
+        // A / L = 5000 / 300: shrunk by less, something is always left.
+        assert!(!plausible(&rect, 3.0, &[]));
+        assert!(!plausible(&rect, -16.0, &[]));
+        assert!(plausible(&rect, -17.0, &[]));
+        let grown = offset(&rect, 3.0);
+        assert!(!plausible(&rect, -3.0, &grown));
+        let shrunk = offset(&rect, -3.0);
+        assert!(!plausible(&rect, 3.0, &shrunk));
+    }
+
+    /// #466: `decimated` drops the vertices it can lose within its
+    /// distance: collinear ones, a 0.5 µm jog, and an arc of 0.1 µm sagitta
+    /// (made a line); it keeps a 5 µm jog, an arc of 5 µm sagitta and every
+    /// corner.
+    #[test]
+    fn decimation_drops_only_what_moves_less_than_its_distance() {
+        // An arc of chord `c` and bulge `b` has sagitta `b · c / 2`.
+        let polyline = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(10.0, 0.0),
+                Vertex::line(20.0, 0.000_5),
+                Vertex::new(30.0, 0.0, 0.000_02),
+                Vertex::line(40.0, 0.0),
+                Vertex::line(40.0, 10.0),
+                Vertex::line(30.0, 10.005),
+                Vertex::new(20.0, 10.0, 0.001),
+                Vertex::line(10.0, 10.0),
+                Vertex::line(0.0, 10.0),
+            ],
+            true,
+        );
+        let out = decimated(&polyline, 1e-3);
+        let kept: Vec<(f64, f64, f64)> =
+            out.vertices().iter().map(|v| (v.x, v.y, v.bulge)).collect();
+        assert_eq!(
+            kept,
+            vec![
+                (0.0, 0.0, 0.0),
+                (40.0, 0.0, 0.0),
+                (40.0, 10.0, 0.0),
+                (30.0, 10.005, 0.0),
+                (20.0, 10.0, 0.001),
+                (10.0, 10.0, 0.0),
+                (0.0, 10.0, 0.0),
+            ]
+        );
+        assert!(out.is_closed());
     }
 }

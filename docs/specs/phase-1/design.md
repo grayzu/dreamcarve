@@ -78,7 +78,12 @@ pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_con
     // #465: an offset cavalier_contours returns as open pieces (a traced convex curve offset
     // inward by about its radius) is taken again with position and distance tolerances of
     // 1e-6, 1e-7, then 1e-8 mm (its defaults are 1e-5 and 1e-4), and the first that closes
-    // every piece is kept
+    // every piece is kept. #466: a result is also checked against the area any offset by δ of
+    // a contour of area A and length L encloses (grown: more than A; shrunk by t: from A − L·t
+    // to A); one that fails (nothing, or slivers, for a ring of many tiny round-join arcs) is
+    // taken again the same way, then with the position tolerance alone at 1e-8 mm, then on the
+    // contour rid of redundant vertices, then on it moved by at most 0.1, then 1 µm; the first
+    // closed, plausible result is kept
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
     // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
     // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the

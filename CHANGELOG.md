@@ -157,6 +157,16 @@ phases bump the patch number.
   to the next corner. A real violation is still refused, and the message
   now gives the distance where the tip is farthest out, never 0
   ([#463]).
+- A male Inlay of several shapes with a large `outline_rounding_mm` and a
+  clearing pass no longer fails export with "would cut … mm² outside the
+  material". Where the rounding closes the band over wide gaps, the
+  clearing pass's rings step round the plugs many times and gather long
+  runs of tiny arcs, and the offset library sometimes returned nothing for
+  them: a plug the rings must go round vanished from a ring, which would
+  have cut into it, or the check's swept area lost its inside and counted
+  the plugs as cut. Every offset is now checked against the area it must
+  enclose and made again a finer way when it falls short; an offset that
+  passes the check is used as before ([#466]).
 - A male Inlay without a clearing pass no longer fails export with "an arc
   in place of operation's straight moves that does not follow them". Round
   the band's V wall the arc fitter replaced a few moves a few thousandths
@@ -946,3 +956,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#456]: https://github.com/grayzu/dreamcarve/issues/456
 [#457]: https://github.com/grayzu/dreamcarve/issues/457
 [#463]: https://github.com/grayzu/dreamcarve/issues/463
+[#466]: https://github.com/grayzu/dreamcarve/issues/466
