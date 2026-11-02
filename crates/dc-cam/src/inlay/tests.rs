@@ -1497,6 +1497,48 @@ fn cut_out_no_room_uses_the_open_edge_rule() {
     }
 }
 
+/// #466: a male of several curved shapes apart, its 16 mm margin rounded
+/// by 25 mm so the band closes over the gaps between them, with the end
+/// mill's clearing pass ramping in. Its clearing run is a Pocket of the
+/// band's floor round the plugs, whose rings step out from the plugs and
+/// in from the band's edge until they meet; they gather many short
+/// round-join arcs, which `dc_geometry::offset` (cavalier_contours) once
+/// lost: the island a ring grows vanished, so a ring ran over the plugs,
+/// or the loop the footprint is swept from had no inside, so S9 counted
+/// the plugs as cut. Every run generates and passes `assert_run_safe`, and
+/// below the start plane the end mill's centre stays outside the plugs,
+/// its radius beyond the floor's edge (the plugs' outlines grown by `P ·
+/// tan 30°`), within the flatten tolerance.
+#[test]
+fn rounded_male_over_wide_gaps_clears_only_the_band() {
+    let project = dc_project::test_support::blobs_project();
+    let op = dc_project::test_support::blobs_male_inlay();
+    let (runs, _) = inlay_runs(&project, &op);
+    let clearing = runs
+        .iter()
+        .find(|r| r.label == RunLabel::Clearing(ToolId::new("t2")))
+        .expect("a clearing run");
+    let p = with_op(&project, Operation::Inlay(op.clone()));
+    let design = side(&p, &op, &mut Vec::new())
+        .expect("the male resolves")
+        .design;
+    let edges = outlines(&design);
+    let start_plane_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM);
+    let clear_mm = END_MILL_RADIUS_MM + PLUG_DEPTH_MM * slope() - p.flatten_tolerance_mm;
+    let mut cuts = 0;
+    for q in cut_points(&clearing.toolpath) {
+        if q.z < start_plane_z_mm - 1e-6 {
+            cuts += 1;
+            let gap_mm = distance_to(&edges, q.xy());
+            assert!(
+                !in_regions(&design, q.xy(), 0.0) && gap_mm >= clear_mm,
+                "{q:?} is {gap_mm:.3} mm from a plug, not {clear_mm:.3}"
+            );
+        }
+    }
+    assert!(cuts > 0, "the clearing run cuts the band's floor");
+}
+
 /// #452: the acute-notch design's outline, centred at the origin: a Λ 20
 /// mm wide and 40 mm tall whose legs are split by a notch from (0, 12)
 /// down to the foot, 2.8 mm wide there, so its walls meet at 5.0°. In the

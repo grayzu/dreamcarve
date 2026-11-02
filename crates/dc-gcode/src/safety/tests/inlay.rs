@@ -315,6 +315,22 @@ fn generated_line_art_passes_the_safety_pass() {
     assert_eq!(programs.len(), 1);
 }
 
+/// `inlay::rounded_male_over_wide_gaps_clears_only_the_band`, through the
+/// whole safety pass (#466): the male of several curved shapes apart
+/// (`dc_project::test_support::blobs_project`), its 16 mm margin rounded
+/// by 25 mm, with the end mill's clearing pass. Both programs pass S1–S19.
+/// Before #466 it did not generate: its clearing run "would cut 737 mm²
+/// outside the material".
+#[test]
+fn generated_rounded_male_passes_the_safety_pass() {
+    let programs = export_inlay(
+        &dc_project::test_support::blobs_project(),
+        &dc_project::test_support::blobs_male_inlay(),
+    )
+    .unwrap_or_else(|e| panic!("the rounded male: {e}"));
+    assert_eq!(programs.len(), 2, "the end mill's and the V-bit's");
+}
+
 // #448: the male's band with an open, rounded outer edge.
 
 /// A clearing pass with the 3.175 mm end mill `t3`, which fits the two

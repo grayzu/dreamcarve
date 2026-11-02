@@ -474,6 +474,66 @@ pub fn line_art_inlay(side: InlaySide) -> InlayOp {
     }
 }
 
+/// A closed blob of `vertices` straight edges round `centre`, its radius
+/// `radius_mm · (1 + wobble · sin(lobes · θ))` at angle `θ`: a curved
+/// outline flattened to chords, as a traced drawing gives one.
+fn blob(centre: (f64, f64), radius_mm: f64, wobble: f64, lobes: f64, vertices: u32) -> Polyline {
+    let points: Vec<(f64, f64)> = (0..vertices)
+        .map(|i| {
+            let angle = f64::from(i) / f64::from(vertices) * std::f64::consts::TAU;
+            let r = radius_mm * (1.0 + wobble * (lobes * angle).sin());
+            (centre.0 + r * angle.cos(), centre.1 + r * angle.sin())
+        })
+        .collect();
+    closed(&points)
+}
+
+/// A synthetic design of four curved shapes apart (#466): a six-lobed
+/// blob 22 mm across and three small ones round it, 8 to 18 mm off it,
+/// each outline 120 chords. Placed at (25, 25) as instance `i1` on 100 ×
+/// 100 × 12 mm stock, with [`line_art_project`]'s tools: a 60° 6.35 mm
+/// V-bit `t1` (floor step-over 0.1) and a 3.175 mm end mill `t2`; no
+/// operations.
+pub fn blobs_project() -> Project {
+    let mut project = line_art_project();
+    project.name = "Blobs".into();
+    project.stock = Stock {
+        width_mm: 100.0,
+        height_mm: 100.0,
+        thickness_mm: Some(12.0),
+    };
+    let design = FeatureDefinition {
+        id: DefinitionId::new("d1"),
+        name: "Blobs".into(),
+        profiles: vec![
+            blob((32.0, 25.0), 11.0, 0.05, 6.0, 120),
+            blob((12.0, 37.0), 4.5, 0.2, 2.0, 120),
+            blob((6.0, 11.0), 4.0, 0.1, 2.0, 120),
+            blob((45.0, 5.0), 4.0, 0.07, 4.0, 120),
+        ],
+    };
+    project.definitions = BTreeMap::from([(design.id.clone(), design)]);
+    if let Some(instance) = project.instances.first_mut() {
+        instance.name = "Blobs".into();
+        instance.transform = Transform::translate(25.0, 25.0);
+    }
+    project
+}
+
+/// The male Inlay `o1` of [`blobs_project`]'s design (#466): as
+/// [`line_art_inlay`] (`depth_mm` 4, `glue_gap_mm` 1, `plug_depth_mm` 2,
+/// the end mill's clearing pass ramping in at 15°), with a 16 mm margin
+/// whose outline is rounded by 25 mm, so the band closes over the gaps
+/// between the shapes.
+pub fn blobs_male_inlay() -> InlayOp {
+    InlayOp {
+        name: "Blobs".into(),
+        margin_mm: Some(16.0),
+        outline_rounding_mm: Some(25.0),
+        ..line_art_inlay(InlaySide::Male)
+    }
+}
+
 /// A plain medial V-Carve `o2` of [`line_art_project`]'s design with its
 /// V-bit: a 1.5 mm flat depth at step-over 0.1, no clearing.
 pub fn line_art_v_carve() -> VCarveOp {
