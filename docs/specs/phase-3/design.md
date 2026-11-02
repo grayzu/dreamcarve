@@ -878,6 +878,25 @@ orientation; DreamCarve's regions are normalised anyway.
      chain is split there and the tool lifts over it, as an open band
      edge splits a chain (`vcarve::line_ends_carve`,
      `vcarve::line_art_regions_carve`).
+     **Clear of the walls as written (#469).** The program writes each
+     number to its places, which can move a point by up to `w = quantum /
+     √2` (half a unit in the last place on each axis: 0.0007 mm at three
+     millimetre places, 0.0018 mm at four inch places). A tip path nearer
+     a wall than `w` can then cross it, and S17 refuses a written move
+     that meets an outline away from its ends. A chain from a sharp
+     corner's tip runs half the corner's angle off each wall, so a start
+     rounded into the material put a 2° to 5° corner's first move across
+     a wall a few hundredths along; one beside a line end ran 0.3° off its
+     flank. So after fitting, a stretch whose tip path comes within `w`
+     of a wall keeps only its parts from where the path is `w` clear at
+     either end, along the stretch at its own Z, and a stretch nearer only
+     between its ends is not cut; a stay-down link must keep `w` clear
+     too. A corner's groove therefore stops where its tip is `w` from both
+     walls, `w / sin(θ/2)` short of a corner of angle `θ`, leaving a
+     sliver no wider than `w`. The 5° wedge's point is reached within
+     0.016 mm, and the acute notch's plug seats within 0.028 mm, where it
+     was 0.003 mm. S17 is unchanged
+     (`safety::sharp_corners_export_at_any_placement`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else

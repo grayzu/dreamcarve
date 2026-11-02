@@ -161,6 +161,12 @@ pub(crate) struct Tolerances {
     /// between its points before it is split on the axis (#457); `None`
     /// fits to the walls alone.
     pub axis_mm: Option<f64>,
+    /// How far a point may move when the program writes it, mm (#469):
+    /// half a unit in the last written place on each axis, so `quantum /
+    /// √2`. A tip path that comes nearer a wall than this may cross it as
+    /// written, so none is cut ([`clear_of_walls`]); 0 cuts every fitted
+    /// stretch as it is.
+    pub written_mm: f64,
 }
 
 impl Tolerances {
@@ -171,6 +177,7 @@ impl Tolerances {
             redundancy_mm: REDUNDANCY_STEPS * step_mm,
             deepen_mm: None,
             axis_mm: Some(EDGE_MM),
+            written_mm: 0.0,
         }
     }
 }
@@ -292,6 +299,7 @@ pub(crate) fn runs_within(
                 within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
                     .into_iter()
                     .flat_map(|points| within_edge(points, edge))
+                    .flat_map(|points| clear_of_walls(points, walls, tolerances.written_mm))
                     .collect::<Vec<_>>()
             })
             .map(|points| {
@@ -334,7 +342,11 @@ pub(crate) fn runs_within(
         let from = position.filter(|_| current.is_some());
         // Continuing through a shared node: the tool is already there.
         let continues = from.is_some_and(|p| p.xy().distance_to(entry.xy()) <= EPS_MM);
-        let links = !continues && from.is_some_and(|p| links_tool_down(walls, depth, p, entry));
+        let links = !continues
+            && from.is_some_and(|p| {
+                links_tool_down(walls, depth, p, entry)
+                    && clear_path(walls, p, entry, tolerances.written_mm)
+            });
         if !(continues || links) {
             runs.extend(current.take());
             current = Some(Run {
@@ -398,6 +410,106 @@ fn within_walls(points: Vec<Point3>, walls: &Walls) -> Vec<Vec<Point3>> {
         out.push(current);
     }
     out
+}
+
+/// Whether the tip path `a`–`b` keeps at least `margin_mm` from every
+/// wall (#469); every path does with no margin.
+fn clear_path(walls: &Walls, a: Point3, b: Point3, margin_mm: f64) -> bool {
+    margin_mm <= 0.0 || walls.path_clearance_mm(a.xy(), b.xy(), margin_mm) >= margin_mm
+}
+
+/// The fitted chain `points` cut to the stretches whose tip path keeps at
+/// least `margin_mm` from every wall, how far the program may move a
+/// point when it writes it (#469; [`Tolerances::written_mm`]), in order.
+/// Written, a tip path nearer a wall than that can cross it: a chain from
+/// a sharp corner's tip runs a few degrees off each wall, one beside a
+/// line end can run a fraction of a degree off its flank, and rounding
+/// its start into the material carries the move across the wall a few
+/// hundredths along, which S17 refuses. A stretch nearer at one end keeps
+/// its part from where it is clear on, along the stretch at its own Z, so
+/// a corner's groove stops where the tip is `margin_mm` from both walls
+/// (`margin_mm / sin(θ/2)` short of a corner of angle θ); one nearer only
+/// between its ends is not cut. A lone point is kept when it is clear.
+fn clear_of_walls(points: Vec<Point3>, walls: &Walls, margin_mm: f64) -> Vec<Vec<Point3>> {
+    if margin_mm <= 0.0 {
+        return vec![points];
+    }
+    if let [p] = points[..] {
+        return if clear_path(walls, p, p, margin_mm) {
+            vec![points]
+        } else {
+            Vec::new()
+        };
+    }
+    if points
+        .windows(2)
+        .all(|w| matches!(w, &[a, b] if clear_path(walls, a, b, margin_mm)))
+    {
+        return vec![points];
+    }
+    let at = |a: Point3, b: Point3, t: f64| {
+        Point3::new(
+            a.x + (b.x - a.x) * t,
+            a.y + (b.y - a.y) * t,
+            a.z + (b.z - a.z) * t,
+        )
+    };
+    let mut out = Vec::new();
+    let mut current: Vec<Point3> = Vec::new();
+    for pair in points.windows(2) {
+        let &[a, b] = pair else {
+            continue;
+        };
+        if clear_path(walls, a, b, margin_mm) {
+            if current.is_empty() {
+                current.push(a);
+            }
+            current.push(b);
+            continue;
+        }
+        // The stretch's clear part at its start, which ends the piece.
+        if !current.is_empty() || clear_path(walls, a, a, margin_mm) {
+            let t = clear_reach(|t| clear_path(walls, a, at(a, b, t), margin_mm));
+            if t > 0.0 && a.xy().distance_to(at(a, b, t).xy()) > EPS_MM {
+                if current.is_empty() {
+                    current.push(a);
+                }
+                current.push(at(a, b, t));
+            }
+        }
+        if current.len() > 1 {
+            out.push(std::mem::take(&mut current));
+        }
+        current.clear();
+        // Its clear part at its end, which starts the next.
+        if clear_path(walls, b, b, margin_mm) {
+            let t = clear_reach(|t| clear_path(walls, at(b, a, t), b, margin_mm));
+            if t > 0.0 && b.xy().distance_to(at(b, a, t).xy()) > EPS_MM {
+                current.push(at(b, a, t));
+                current.push(b);
+            }
+        }
+    }
+    if current.len() > 1 {
+        out.push(current);
+    }
+    out
+}
+
+/// The largest `t` in [0, 1] for which `clear(t)` holds, by bisection, `clear`
+/// being true up to some `t` and false beyond it (a stretch's part from one
+/// end); 0 when it holds nowhere past 0.
+fn clear_reach(clear: impl Fn(f64) -> bool) -> f64 {
+    let (mut lo, mut hi) = (0.0, 1.0);
+    for _ in 0..40 {
+        let mid = (lo + hi) / 2.0;
+        if clear(mid) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    lo
 }
 
 /// The stretches of chain `points` whose every move `edge` allows
