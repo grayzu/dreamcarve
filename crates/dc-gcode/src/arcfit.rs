@@ -1293,6 +1293,69 @@ mod tests {
         }
     }
 
+    /// The angle `moves` turn about the origin from `from`, radians,
+    /// counter-clockwise positive.
+    fn turned_rad(from: Point3, moves: &[Move]) -> f64 {
+        let mut at = from.xy().y.atan2(from.xy().x);
+        let mut turned = 0.0;
+        for mv in moves {
+            let to = mv.to.y.atan2(mv.to.x);
+            turned += (to - at + PI).rem_euclid(TAU) - PI;
+            at = to;
+        }
+        turned
+    }
+
+    /// The angle `arc` turns as the controller reads it, radians,
+    /// counter-clockwise positive: at most a turn, and a whole turn where
+    /// it ends where it starts.
+    fn arc_turn_rad(arc: &SubArc) -> f64 {
+        let a0 = (arc.start.y - arc.centre.y).atan2(arc.start.x - arc.centre.x);
+        let a1 = (arc.end.y - arc.centre.y).atan2(arc.end.x - arc.centre.x);
+        let turn = if arc.clockwise { a0 - a1 } else { a1 - a0 }.rem_euclid(TAU);
+        let turn = if turn < 1e-9 { TAU } else { turn };
+        if arc.clockwise { -turn } else { turn }
+    }
+
+    /// Fails unless every fitted run's sub-arcs turn as far as the moves
+    /// they replace.
+    fn assert_runs_turn_as_their_moves(moves: &[Move]) {
+        let fitted = fit(moves, TOL);
+        assert!(runs_of(&fitted) > 0, "{fitted:?}");
+        for f in &fitted {
+            let Fitted::Arc(run) = f else { continue };
+            let arcs: f64 = run.arcs.iter().map(arc_turn_rad).sum();
+            let moves = turned_rad(run.arcs[0].start, &run.fallback);
+            assert!(
+                (arcs - moves).abs() < 1e-6,
+                "the arcs turn {:.1}°, their moves {:.1}°: {run:?}",
+                arcs.to_degrees(),
+                moves.to_degrees()
+            );
+        }
+    }
+
+    /// #502: a run that goes on round its circle past a full turn (a
+    /// male Inlay's V-bit joins a ring of its band three chords before the
+    /// point it laps from, then cuts the whole ring) keeps every lap. A
+    /// sub-arc takes its sweep from its ends, modulo a turn, so one run
+    /// over all 80 chords was written as its last 34° alone and the lap
+    /// before them was never cut. Either way round.
+    #[test]
+    fn run_past_a_full_turn_keeps_its_lap() {
+        let past = TAU + 0.6;
+        assert_runs_turn_as_their_moves(&chords(10.0, 80, 0.0, past, 0.0));
+        assert_runs_turn_as_their_moves(&chords(10.0, 80, 0.0, -past, 0.0));
+    }
+
+    /// #502: a run that closes after two turns (80 chords of a 2 mm
+    /// circle, each within the tolerance of it) is two turns, not the one
+    /// a closed run's ends give.
+    #[test]
+    fn run_of_two_closed_turns_keeps_both() {
+        assert_runs_turn_as_their_moves(&chords(2.0, 80, 0.0, 2.0 * TAU, 0.0));
+    }
+
     #[test]
     fn clockwise_is_g2() {
         let moves = chords(10.0, 72, 0.0, -TAU, 0.0);

@@ -283,3 +283,32 @@ fn rounded_band_edge_v_wall_exports() {
     }
     assert!(fitted > 0, "no run was fitted");
 }
+
+/// The program for `chord_run(90, 405°)` as the emitter writes it fitted:
+/// the lap as four quarter turns back to (60, 50), then 45° on.
+const LAP_AND_ON_TEXT: &str = "G3 X50 Y60 I-10 J0 F1000\nX40 Y50 I0 J-10\nX50 Y40 I10 J0\n\
+     X60 Y50 I0 J10\nX57.071 Y57.071 I-10.002 J-0.001\n";
+
+/// #502: 90 chords of the 10 mm circle round from (60, 50) past a full
+/// turn to 45°, every vertex on the circle. The program that writes them
+/// as one `G3` to the run's end, as the fitter did, cuts 45° and skips
+/// the lap before: S6 refuses it. Written lap and all, it passes, and the
+/// emitter writes it so.
+#[test]
+fn fitted_run_past_a_full_turn_keeps_its_lap() {
+    let toolpath = chord_run(90, TAU + std::f64::consts::FRAC_PI_4, None);
+    let text = chord_run_text("G3 X57.071 Y57.071 I-10 J0 F1000\n");
+    let result = check_against_with(&text, &toolpath, Some(ARC_FIT_MM));
+    assert!(
+        is_mismatch_at(&result, 12),
+        "the lap is skipped: {result:?}"
+    );
+
+    let text = chord_run_text(LAP_AND_ON_TEXT);
+    check_against_with(&text, &toolpath, Some(ARC_FIT_MM)).unwrap();
+
+    let (project, op, tool) = partless_fixture();
+    let program = emit_one(&project, &op, &tool, toolpath).unwrap_or_else(|e| panic!("{e}"));
+    let arcs = program.lines().filter(|l| l.contains(" I")).count();
+    assert_eq!(arcs, 5, "the lap and 45° on, fitted:\n{program}");
+}
