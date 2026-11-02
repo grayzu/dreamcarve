@@ -2664,7 +2664,11 @@ impl<'a> Writer<'a> {
     /// fastest feed in the last written place, rounded down, that does
     /// not (#325). Rounded coordinates can make a short cut steeper than
     /// the toolpath's, and a rounded feed faster; only here are both
-    /// known. With the start not known, S10 has nothing to judge.
+    /// known. A cut that falls less than a unit in the last place may be
+    /// written at the Z the controller holds, so it does not fall; it is
+    /// then a level cut to S3, and is written as one
+    /// ([`Self::written_level_feed_mm_min`], #467). With the start not
+    /// known, S10 has nothing to judge.
     fn written_feed_mm_min(
         &self,
         kind: MotionKind,
@@ -2678,6 +2682,11 @@ impl<'a> Writer<'a> {
         ) else {
             return Ok(feed_mm_min);
         };
+        // The line writes no Z word, as `motion_line` decides it.
+        let z_text = self.number(to.z)?;
+        if self.axes[2].as_ref().is_some_and(|e| e.text == z_text) {
+            return self.written_level_feed_mm_min(feed_mm_min, plunge_mm_min);
+        }
         let from = MachinePosition {
             x: Some(x),
             y: Some(y),
@@ -2762,6 +2771,33 @@ impl<'a> Writer<'a> {
         }
         let quantum = self.quantum();
         Ok(self.written((units / quantum).floor() * quantum)? * mm_per_unit)
+    }
+
+    /// The feed, mm/min, of a cut the toolpath holds to the plunge rate
+    /// `plunge_mm_min` but that is written at the Z the controller holds
+    /// (#467: a V-Carve chain's step falling 0.0007 mm, written to three
+    /// decimals). As written it does not fall, so S3 takes it as a level
+    /// cut, and S10 does not judge it; the next falling cut starts from
+    /// the written Z and is judged with this one's fall. Its feed, scaled
+    /// between the plunge rate and the cutting feed for a fall the program
+    /// does not make, is not a rate of its tool, so it is written at the
+    /// plunge rate: the fastest of the tool's rates no faster than the
+    /// toolpath holds it. A cut at the cutting feed, or slower than the
+    /// plunge rate, is written as any level cut
+    /// ([`Self::level_feed_mm_min`]).
+    fn written_level_feed_mm_min(
+        &self,
+        feed_mm_min: f64,
+        plunge_mm_min: f64,
+    ) -> Result<f64, ExportError> {
+        let scaled = feed_mm_min > plunge_mm_min * (1.0 + HELD_TO_PLUNGE_RELATIVE)
+            && self
+                .cut_feed_mm_min
+                .is_some_and(|cut| feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE));
+        if scaled {
+            return Ok(plunge_mm_min);
+        }
+        self.level_feed_mm_min(feed_mm_min)
     }
 
     /// `value`, output units, as the controller reads it once written.

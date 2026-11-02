@@ -745,7 +745,14 @@ recomputing the slope of every descending `G1` with XY motion. Changed in
 #325: nothing above the plunge rate is allowed for rounding, and the
 emitter rounds the feed of a cut the toolpath holds to the plunge rate
 down until its rate, from the written coordinates and feed, is at most
-the plunge rate.
+the plunge rate. Changed in #467: such a cut that falls less than a unit
+in the last written place may be written at the Z the controller already
+holds. As written it does not fall, so S3 judges it as a level cut, and
+the emitter writes it at the plunge rate, the fastest of the tool's rates
+no faster than the toolpath's. The next cut starts from the written Z,
+and S10 judges it from the written numbers. (A V-Carve chain's step
+falling 0.0007 mm at 415 mm/min was written level at that feed, which is
+not one of its tool's rates, and S3 refused the export.)
 - **S11 Canned cycles mean what the plain moves mean.** When a program uses
 `G81`/`G82`/`G83`/`G73`, the safety pass expands each cycle line into the
 motion the controller performs (per that controller's documentation,
