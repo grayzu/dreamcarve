@@ -38,11 +38,11 @@
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
-//! What the sweep found is on #464. While #482 to #484 are open, the
-//! sweep still fails: a containment cycle (#482), a written program that
-//! does not reproduce its toolpath (#483), and seat failures with 60° and
-//! 90° bits away from a near touch (#484). Their reproductions are the
-//! ignored tests at the end of this file and in dc-cam's inlay tests.
+//! What the sweep found is on #464. While #483 and #484 are open, the
+//! sweep still fails: a written program that does not reproduce its
+//! toolpath (#483), and seat failures with 60° and 90° bits away from a
+//! near touch (#484). Their reproductions are the ignored tests at the
+//! end of this file and in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,
@@ -261,9 +261,13 @@ fn reproduce(family: &str, seed: u64, design: Design, kind: Kind) -> Outcome {
 /// #482 (found by the sweep): the male of line-art seed `0x34`'s first
 /// motif (a 13 mm square of line art with two rings, butt and round line
 /// ends; 30° bit, inch program) with the end mill's clearing pass, its
-/// band's edge open, generates. It fails "shape `Design` (instance `i1`,
-/// profile 1) encloses itself through other shapes; no cut order
-/// exists", an internal-consistency error.
+/// band's edge open, generates. The V-bit's inset closes the mouth of a
+/// bay of the band, which becomes a piece in the island of the band's
+/// floor, so the
+/// clearing pass's floor is two pieces of the band's one shape, one in
+/// the other's island; the pass paired the shape with itself and failed
+/// "shape `Design` (instance `i1`, profile 1) encloses itself through
+/// other shapes; no cut order exists".
 #[test]
 fn male_of_line_art_with_rings_orders_its_cuts() {
     let outcome = reproduce(

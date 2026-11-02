@@ -854,6 +854,14 @@ fn starting_at(path: &Polyline, start: Point) -> Polyline {
 /// depth 2 or more) is cut after the pocket that holds the island, so each
 /// pair is `(pocket around, pocket inside)`. Pockets free nothing, so this
 /// orders the work only; it is the design's "after the island".
+///
+/// Two pockets of one shape are never paired (#482): `sequence` cuts a
+/// shape's blocks at a pass as one unit, in generator order, and would
+/// read the pair as the shape enclosing itself, a containment cycle. A
+/// user's Pocket names every region by its own outline, so this happens
+/// only for a clearing pass, whose floor pieces of one carved region
+/// share its shape (`vcarve::clearing` puts a piece after the
+/// piece round its island).
 fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(ShapeRef, ShapeRef)> {
     let mut pairs = Vec::new();
     for region in regions {
@@ -870,7 +878,9 @@ fn nested_pockets(regions: &[Region], shapes: &[(ShapeRef, Contour)]) -> Vec<(Sh
             .iter()
             .filter(|r| r.depth() == parent_depth)
             .find(|r| r.holes().iter().any(|h| contour_contains(h, probe.point())));
-        if let Some(outer) = around.and_then(|r| outer_shape(r, shapes)) {
+        if let Some(outer) = around.and_then(|r| outer_shape(r, shapes))
+            && outer != inner
+        {
             pairs.push((outer.clone(), inner.clone()));
         }
     }
