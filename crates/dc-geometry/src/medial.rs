@@ -273,6 +273,66 @@ pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> 
     )
 }
 
+/// The narrowest bottleneck of `graph`, mm: the least clearance of a node
+/// joined to two or more others, none of them nearer the boundary (#475).
+/// Along a corner's branch the clearance falls to the tip, a leaf; a
+/// node whose clearance dips below all its neighbours' is where the
+/// region narrows between two walls that do not meet there (a channel, a
+/// spike's tip beside a wall), or, sampled too coarsely to see such a
+/// place, a node off the axis close to a wall. `None` when there is no
+/// such node. Feeds [`refined_step_mm`].
+#[must_use]
+pub fn bottleneck_mm(graph: &MedialGraph) -> Option<f64> {
+    graph
+        .nodes
+        .iter()
+        .zip(&graph.adjacency)
+        .filter(|&(node, adjacent)| {
+            node.clearance_mm > 0.0
+                && adjacent.len() >= 2
+                && adjacent.iter().all(|&j| {
+                    graph
+                        .nodes
+                        .get(j)
+                        .is_some_and(|n| n.clearance_mm >= node.clearance_mm)
+                })
+        })
+        .map(|(node, _)| node.clearance_mm)
+        .min_by(f64::total_cmp)
+}
+
+/// How many times finer than [`resolution`]'s shape step a region may be
+/// sampled to resolve its narrowest bottleneck (#475).
+pub const MAX_FEATURE_REFINEMENT: f64 = 4.0;
+
+/// The step to sample a region at again, mm, when its medial `graph`,
+/// sampled every `resolved.step_mm`, has a bottleneck narrower than the
+/// step ([`bottleneck_mm`]); `None` when it has none, or the step cannot
+/// get finer (#475). The step follows the bottleneck's clearance, but no
+/// finer than the shape step over [`MAX_FEATURE_REFINEMENT`] nor the
+/// sample budget's floor.
+///
+/// A node is a Delaunay circumcentre of boundary samples a step apart,
+/// which stands off the axis by about `step² / (8 · clearance)`: once the
+/// step passes the clearance the circle through two samples on one wall
+/// cannot touch it, and the node lands near the nearer wall with the
+/// clearance it finds there. A 50 mm region's step, `50 / 160` =
+/// 0.31 mm, then misses a spike's tip 0.2 mm from its wall and the groove
+/// stops short round it (#475: the plug stood 0.087 mm proud on the
+/// synthetic spike and 0.19 mm on a traced eagle). The shape step suits
+/// shapes whose narrowest part is a fair fraction of their span, as
+/// letters' strokes are; traced art can have parts a hundred times
+/// narrower than the region they are in.
+#[must_use]
+pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64> {
+    let narrowest_mm = bottleneck_mm(graph)?;
+    let step_mm = resolved.step_mm;
+    let refined_mm = narrowest_mm
+        .max(step_mm / MAX_FEATURE_REFINEMENT)
+        .max(resolved.budget_floor_mm);
+    (refined_mm < step_mm).then_some(refined_mm)
+}
+
 /// True when `p` is inside `loops` by the even-odd rule: inside an outer
 /// and not inside a hole in it, whatever the windings. Arcs are read as
 /// their chords; flatten first where that matters. A point exactly on an

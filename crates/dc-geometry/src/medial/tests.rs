@@ -1341,3 +1341,108 @@ fn feature_contacts_keep_no_flattening_spokes() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Bottlenecks (#475)
+// ---------------------------------------------------------------------------
+
+/// A `side_mm` square centred on the origin with a hole in it: a spike
+/// 6 mm long, 0.6 mm wide at its foot and closed by a point 2 mm beyond
+/// it, its tip `gap_mm` from the square's left wall and its axis
+/// `tilt_deg` from the X axis (the inlay's `spike_project`).
+fn spike_region(side_mm: f64, gap_mm: f64, tilt_deg: f64) -> (Region, Point) {
+    let half = side_mm / 2.0;
+    let (sin, cos) = tilt_deg.to_radians().sin_cos();
+    let tip = Point::new(-half + gap_mm, 0.0);
+    let along = Vec2::new(cos, sin);
+    let foot = tip + along * 6.0;
+    let across = Vec2::new(-sin, cos) * 0.3;
+    let spike = vec![tip, foot + across * -1.0, foot + along * 2.0, foot + across];
+    let square = rect_loop(-half, -half, side_mm, side_mm);
+    (region(&square, &[spike]), tip)
+}
+
+/// #475: a 50 mm square's step, 0.3125 mm, is coarser than the 0.2 mm
+/// between a spike's tip and the wall, and the axis round the tip is a
+/// few nodes off it: the wall beside the tip stands 0.085 mm beyond every
+/// medial disc. The graph has a bottleneck narrower than the step, so the
+/// step is refined, to the bottleneck's clearance (no finer than a
+/// quarter of the step), and there the nodes reach that wall within
+/// 0.02 mm.
+#[test]
+fn refined_step_resolves_a_spike_beside_a_wall() {
+    let (r, tip) = spike_region(50.0, 0.2, 60.0);
+    let resolved = resolution(&r).expect("a resolution");
+    assert!((resolved.step_mm - 0.3125).abs() < 1e-9);
+    let coarse = medial_axis_with(&r, resolved.step_mm, TOL, EVERY);
+    let narrowest_mm = bottleneck_mm(&coarse).expect("a bottleneck");
+    assert!(
+        narrowest_mm < resolved.step_mm,
+        "the bottleneck {narrowest_mm:.4} mm is narrower than the step"
+    );
+    let refined_mm = refined_step_mm(&resolved, &coarse).expect("a finer step");
+    assert!(
+        refined_mm >= resolved.step_mm / MAX_FEATURE_REFINEMENT - 1e-12
+            && refined_mm <= narrowest_mm.max(resolved.step_mm / MAX_FEATURE_REFINEMENT) + 1e-12,
+        "refined to {refined_mm:.4} mm"
+    );
+    let wall = Point::new(tip.x - 0.2, tip.y);
+    let coarse_gap_mm = reach_gap_of(&coarse, wall);
+    assert!(
+        coarse_gap_mm > 0.05,
+        "at the shape's step the wall stands {coarse_gap_mm:.4} mm beyond every disc"
+    );
+    let fine = medial_axis_with(&r, refined_mm, TOL, EVERY);
+    let fine_gap_mm = reach_gap_of(&fine, wall);
+    println!(
+        "step {:.4} mm: the wall stands {coarse_gap_mm:.4} mm beyond; bottleneck {narrowest_mm:.4} mm, step {refined_mm:.4} mm: {fine_gap_mm:.4} mm",
+        resolved.step_mm
+    );
+    assert!(
+        fine_gap_mm <= 0.02,
+        "at {refined_mm:.4} mm the wall stands {fine_gap_mm:.4} mm beyond every disc"
+    );
+}
+
+/// #475: a shape whose narrowest part is many steps wide keeps its step:
+/// a rectangle's spine and a ring's cycle have no bottleneck narrower
+/// than the step, and a 50 mm square with the spike's tip 5 mm from the
+/// wall neither.
+#[test]
+fn refined_step_keeps_the_step_of_a_wide_shape() {
+    let ring = region(
+        &regular_polygon(0.0, 0.0, 20.0, 64),
+        &[regular_polygon(0.0, 0.0, 10.0, 64)],
+    );
+    let (far, _) = spike_region(50.0, 5.0, 60.0);
+    for (name, r) in [
+        ("rectangle", region(&rect_loop(0.0, 0.0, 20.0, 10.0), &[])),
+        ("ring", ring),
+        ("far spike", far),
+    ] {
+        let resolved = resolution(&r).expect("a resolution");
+        let graph = medial_axis_with(&r, resolved.step_mm, TOL, EVERY);
+        assert_eq!(refined_step_mm(&resolved, &graph), None, "{name}");
+    }
+}
+
+/// #475: however narrow the bottleneck, the step is refined no further
+/// than a quarter of the shape step: the spike's tip 0.01 mm from the
+/// wall gets 0.3125 / 4 mm. A budget-limited step is not refined.
+#[test]
+fn refined_step_is_bounded() {
+    let (r, _) = spike_region(50.0, 0.01, 60.0);
+    let resolved = resolution(&r).expect("a resolution");
+    let graph = medial_axis_with(&r, resolved.step_mm, TOL, EVERY);
+    let refined_mm = refined_step_mm(&resolved, &graph).expect("a finer step");
+    assert!(
+        (refined_mm - resolved.step_mm / MAX_FEATURE_REFINEMENT).abs() < 1e-12,
+        "refined to {refined_mm:.4} mm"
+    );
+    let limited = Resolution {
+        budget_floor_mm: resolved.step_mm,
+        budget_limited: true,
+        ..resolved
+    };
+    assert_eq!(refined_step_mm(&limited, &graph), None);
+}

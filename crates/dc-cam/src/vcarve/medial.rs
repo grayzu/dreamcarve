@@ -72,7 +72,9 @@ use crate::tabs::LapRates;
 use crate::toolpath::Move;
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::warning::Warning;
-use dc_geometry::medial::{CornerReach, MedialGraph, medial_axis_with, resolution};
+use dc_geometry::medial::{
+    CornerReach, MedialGraph, Resolution, medial_axis_with, refined_step_mm, resolution,
+};
 use dc_geometry::{EPS_MM, Point, Point3, Region};
 use dc_project::OperationId;
 use std::collections::BTreeSet;
@@ -203,11 +205,12 @@ pub(crate) struct Step {
 }
 
 /// The medial graph of `region`, at its automatic resolution, refined up
-/// to [`MAX_AUTO_REFINEMENTS`] times while empty, with the step it was
-/// built at, carried into the region's sharp corners as `reach` says
-/// (#452). Warns [`Warning::VCarveSamplingBudget`] once per operation
-/// (`budget_warned`) and [`Warning::VCarveNoMedialAxis`] when there is no
-/// graph, then gives `None`.
+/// to [`MAX_AUTO_REFINEMENTS`] times while empty, then once more where it
+/// has a bottleneck narrower than its step ([`refined_step_mm`], #475),
+/// with the step it was built at, carried into the region's sharp corners
+/// as `reach` says (#452). Warns [`Warning::VCarveSamplingBudget`] once
+/// per operation (`budget_warned`) and [`Warning::VCarveNoMedialAxis`]
+/// when there is no graph, then gives `None`.
 pub(crate) fn region_graph(
     region: &Region,
     tolerance_mm: f64,
@@ -250,6 +253,18 @@ pub(crate) fn region_graph(
     if graph.nodes.is_empty() {
         warnings.push(no_axis());
         return None;
+    }
+    // #475: a bottleneck narrower than the step is not resolved; sample
+    // again at its width.
+    let sampled = Resolution {
+        step_mm,
+        ..resolved
+    };
+    if let Some(refined_mm) = refined_step_mm(&sampled, &graph) {
+        let refined = medial_axis_with(region, refined_mm, tolerance_mm, reach);
+        if !refined.nodes.is_empty() {
+            return Some((refined, refined_mm));
+        }
     }
     Some((graph, step_mm))
 }
