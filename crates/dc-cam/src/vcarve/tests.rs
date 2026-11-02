@@ -19,6 +19,7 @@
 mod clearing_passes;
 mod corners;
 mod floor;
+mod line_ends;
 mod walls;
 
 use super::*;

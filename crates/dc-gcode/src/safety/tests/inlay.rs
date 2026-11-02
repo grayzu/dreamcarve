@@ -22,7 +22,9 @@ use crate::emit::{EmitOp, ProgramSplit, emit_programs};
 use crate::parse::{CycleModel, parse_program_with};
 use dc_cam::RunLabel;
 use dc_geometry::{Polyline, Transform, Vertex};
-use dc_project::test_support::{tool_6_35_upcut, tool_v_bit_90};
+use dc_project::test_support::{
+    line_art_inlay, line_art_project, line_art_v_carve, tool_6_35_upcut, tool_v_bit_90,
+};
 use dc_project::{
     ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
     FeatureInstance, InlayOp, InlaySide, InstanceId, MachiningOrder, OperationId, Stock, ToolId,
@@ -266,6 +268,51 @@ fn generated_inlays_pass_s17() {
         let programs = export_inlay(&project, &op).unwrap_or_else(|e| panic!("{op:?}: {e}"));
         assert_eq!(programs.len(), 2);
     }
+}
+
+/// `vcarve::line_art_regions_carve`, through the whole safety pass (#463):
+/// the line-art design (`dc_project::test_support::line_art_project`:
+/// ridges of 0.2, 0.5 and 1 mm, small enclosed regions, lines that end
+/// inside a region) carved as a female and a male Inlay, each with its
+/// clearing pass, and as a plain V-Carve with a flat floor. Every program
+/// passes S1–S19. Before #463 none generated: "would cut 0.0000 mm past a
+/// wall", a chain's stretch across the tip of a line's end at the stock
+/// top.
+#[test]
+fn generated_line_art_passes_the_safety_pass() {
+    let project = line_art_project();
+    for side in [InlaySide::Female, InlaySide::Male] {
+        let programs = export_inlay(&project, &line_art_inlay(side))
+            .unwrap_or_else(|e| panic!("the {side:?} line art: {e}"));
+        assert_eq!(
+            programs.len(),
+            2,
+            "{side:?}: the V-bit's and the end mill's"
+        );
+    }
+    let carve = line_art_v_carve();
+    let mut project = project;
+    project.operations = vec![Operation::VCarve(carve.clone())];
+    let (runs, _) = dc_cam::generate_vcarve(&project, &carve)
+        .unwrap_or_else(|e| panic!("the line art's V-Carve generates: {e}\n{e:?}"));
+    let ops: Vec<EmitOp> = runs
+        .into_iter()
+        .map(|run| EmitOp {
+            op: Operation::VCarve(carve.clone()),
+            tool: project
+                .tools
+                .iter()
+                .find(|t| t.id == run.tool)
+                .cloned()
+                .expect("the run's tool"),
+            toolpath: run.toolpath,
+            holes: None,
+            label: run.label,
+        })
+        .collect();
+    let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE)
+        .unwrap_or_else(|e| panic!("the line art's V-Carve: {e}"));
+    assert_eq!(programs.len(), 1);
 }
 
 // #448: the male's band with an open, rounded outer edge.
