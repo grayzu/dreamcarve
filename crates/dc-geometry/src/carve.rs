@@ -8,7 +8,10 @@
 
 use crate::boolean::{difference, union};
 use crate::contour::Contour;
+use crate::distance::segment_distance_mm;
 use crate::offset::offset;
+use crate::point::{Point, Rect};
+use crate::polyline::{Polyline, Segment};
 use crate::region::{Region, nest};
 
 /// A carve's floor: each of `regions` inset by `inset_mm` (for a V-bit
@@ -214,7 +217,7 @@ fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region
     }
     let mut all = outers.clone();
     all.extend(grown.iter().cloned());
-    if let Ok((nested, warnings)) = nest(all) {
+    if let Some(Ok((nested, warnings))) = holes_stay_apart(region, inset_mm).then(|| nest(all)) {
         let holes: usize = nested.iter().map(|r| r.holes().len()).sum();
         // A grown hole that encloses the shrunk outer nests as the outer
         // of an inverted annulus; only the shrunk outers may be outers.
@@ -234,6 +237,69 @@ fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region
         .filter_map(|c| single_region(c.reversed()))
         .collect();
     difference(&subject, &clip, tolerance_mm)
+}
+
+/// Whether `region`'s holes, grown by `inset_mm`, stay apart from each
+/// other and from its outer shrunk by `inset_mm`: no hole comes within
+/// `2·inset_mm` of another or of the outer. Offsets with round joins are
+/// the points within `inset_mm` of a line, so two grown holes share area
+/// exactly where their holes come that near. [`nest`] judges the same by
+/// the area the offsets share, which `cavalier_contours` misses where two
+/// grown holes' round corners nearly coincide and their straight sides
+/// run on one line (#464: two holes 0.001 mm apart, each grown by more
+/// than the gap, came back as two holes overlapping by 2.3 mm, and the
+/// floor between them was cut inside the design).
+fn holes_stay_apart(region: &Region, inset_mm: f64) -> bool {
+    let reach_mm = 2.0 * inset_mm;
+    let outer = region.outer().polyline();
+    let holes: Vec<&Polyline> = region.holes().iter().map(Contour::polyline).collect();
+    holes.iter().enumerate().all(|(i, hole)| {
+        !closer_than(hole, outer, reach_mm)
+            && holes
+                .iter()
+                .take(i)
+                .all(|other| !closer_than(hole, other, reach_mm))
+    })
+}
+
+/// Whether `a` comes within `reach_mm` of `b` anywhere, following arcs.
+/// Only segments whose boxes come that near are measured.
+fn closer_than(a: &Polyline, b: &Polyline, reach_mm: f64) -> bool {
+    let near = |p: &Rect, q: &Rect| {
+        p.min.x - reach_mm <= q.max.x
+            && q.min.x - reach_mm <= p.max.x
+            && p.min.y - reach_mm <= q.max.y
+            && q.min.y - reach_mm <= p.max.y
+    };
+    let Some(a_box) = a.bounds() else {
+        return false;
+    };
+    let candidates: Vec<(Segment, Rect)> = b
+        .segments()
+        .map(|t| (t, segment_box(t)))
+        .filter(|(_, t_box)| near(&a_box, t_box))
+        .collect();
+    a.segments().any(|s| {
+        let s_box = segment_box(s);
+        candidates
+            .iter()
+            .any(|(t, t_box)| near(&s_box, t_box) && segment_distance_mm(s, *t) < reach_mm)
+    })
+}
+
+/// A box holding `segment`: its ends' for a line, its whole circle's for
+/// an arc.
+fn segment_box(segment: Segment) -> Rect {
+    match segment.arc() {
+        Some(arc) => {
+            let (c, r) = (arc.centre, arc.radius_mm);
+            Rect {
+                min: Point::new(c.x - r, c.y - r),
+                max: Point::new(c.x + r, c.y + r),
+            }
+        }
+        None => Rect::from_point(segment.start).including(segment.end),
+    }
 }
 
 /// The region `contour` alone encloses.
@@ -734,5 +800,47 @@ mod tests {
         assert_eq!(rounded.len(), 1, "{rounded:?}");
         let (region, _) = nest(rounded).expect("nests");
         assert!(region[0].contains_point(Point::new(13.0, 5.0)));
+    }
+
+    /// #464: two holes a hair apart, 0.001 and 0.003 mm, each grown by
+    /// more than the gap (2·tan 30°, a 60° bit's floor inset at a 2 mm
+    /// flat depth), share area, so the floor keeps one hole, their union
+    /// grown: a rounded rectangle `(20 + g + 2i) × (10 + 2i)` with corners
+    /// of radius `i`, out of the plate shrunk to `(60 − 2i) × (30 − 2i)`.
+    /// The union's arcs are cut as chords within [`TOL`], so the area is
+    /// held to 0.1 mm². Before, `nest` judged the grown holes apart
+    /// (cavalier's boolean missed their nearly coincident round corners,
+    /// whose straight sides run on one line) and the floor kept both, 2.3
+    /// mm deep in each other, its area short by their overlap, 27 mm²; the
+    /// male inlay of two squares that near cut its floor inside them.
+    #[test]
+    fn floor_of_holes_a_hair_apart_merges_them() {
+        let i = 2.0 * (PI / 6.0).tan();
+        for gap in [0.001, 0.003] {
+            let (plate, _) = nest(vec![
+                rect(20.0, 30.0, 60.0, 30.0),
+                rect(40.0 - gap / 2.0, 40.0, 10.0, 10.0),
+                rect(50.0 + gap / 2.0, 40.0, 10.0, 10.0),
+            ])
+            .expect("plate nests");
+            let floor = floor_regions(&plate, i, TOL);
+            assert_eq!(floor.len(), 1, "gap {gap}: {floor:?}");
+            assert_eq!(
+                floor[0].holes().len(),
+                1,
+                "gap {gap}: the grown holes merge"
+            );
+            let union = (20.0 + gap + 2.0 * i) * (10.0 + 2.0 * i) - (4.0 - PI) * i * i;
+            let expected = (60.0 - 2.0 * i) * (30.0 - 2.0 * i) - union;
+            assert!(
+                (floor[0].area_mm2() - expected).abs() < 0.1,
+                "gap {gap}: {} mm², not {expected}",
+                floor[0].area_mm2()
+            );
+            assert!(
+                !floor[0].contains_point(Point::new(50.0, 45.0)),
+                "gap {gap}: the floor runs between the holes"
+            );
+        }
     }
 }

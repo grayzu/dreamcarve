@@ -12,6 +12,8 @@
     reason = "a test assertion helper reports failure by panicking"
 )]
 
+pub mod seat;
+
 use crate::entry::CLEARED_POINT_TOLERANCE_MM;
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::lowest_cut_through;

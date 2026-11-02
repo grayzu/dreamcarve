@@ -11,6 +11,7 @@
 //! they were given in.
 
 use crate::contour::Contour;
+use crate::point::{EPS_MM, Point};
 use crate::polyline::{Polyline, Vertex};
 use crate::region::{Region, nest_unchecked};
 use i_overlay::core::fill_rule::FillRule;
@@ -78,16 +79,20 @@ fn to_shapes(regions: &[Region], tolerance_mm: f64) -> Shapes<[f64; 2]> {
 }
 
 /// Rebuilds regions from i_overlay's output. Every output ring is a simple
-/// polygon, so the self-intersection test is skipped; rings of zero area
-/// (rounding noise) are dropped. Rings are made canonical and sorted
-/// before nesting, so the regions, and the holes within each, come out in
-/// an order that depends only on the shapes.
+/// polygon once its spikes are gone ([`without_spikes`]), so the
+/// self-intersection test is skipped; rings of zero area (rounding noise)
+/// are dropped. Rings are made canonical and sorted before nesting, so the
+/// regions, and the holes within each, come out in an order that depends
+/// only on the shapes.
 fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
     let mut contours: Vec<Contour> = shapes
         .into_iter()
         .flatten()
         .filter_map(|ring| {
-            let vertices = ring.iter().map(|p| Vertex::line(p[0], p[1])).collect();
+            let vertices = without_spikes(&ring)
+                .into_iter()
+                .map(|p| Vertex::line(p[0], p[1]))
+                .collect();
             Contour::oriented(canonical_start(Polyline::new(vertices, true))).ok()
         })
         .collect();
@@ -99,6 +104,48 @@ fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
         })
     });
     nest_unchecked(contours)
+}
+
+/// `ring` (closed) less its spikes: a vertex where the ring runs out and
+/// straight back along itself, within [`EPS_MM`], encloses nothing, and
+/// goes; so does a vertex repeated. i_overlay leaves such a spike where a
+/// clip's edge runs along a subject's edge a rounding error off it (#464:
+/// a V-Carve floor less what its clearing pass reached, the reach's sides
+/// on the floor's, gave a corner piece a spike the length of a side, and
+/// the V-bit's rings round it cut 0.15 mm past the wall). Removing one can
+/// make another, so the walk backs up after each.
+fn without_spikes(ring: &[[f64; 2]]) -> Vec<[f64; 2]> {
+    let point = |p: [f64; 2]| Point::new(p[0], p[1]);
+    // `b` between `a` and `c` is a spike, or `b` repeats `a`.
+    let spike = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        let (a, b, c) = (point(a), point(b), point(c));
+        let (ab, bc) = (b - a, c - b);
+        let length = ab.length();
+        length <= EPS_MM || (ab.dot(bc) < 0.0 && (ab.cross(c - a) / length).abs() <= EPS_MM)
+    };
+    let mut out: Vec<[f64; 2]> = Vec::with_capacity(ring.len());
+    for &p in ring {
+        out.push(p);
+        while let [.., a, b, c] = out[..] {
+            if !spike(a, b, c) {
+                break;
+            }
+            out.truncate(out.len() - 2);
+            out.push(c);
+        }
+    }
+    // The seam: the last vertices and the first. A triangle left with a
+    // spike has no area and is dropped by the caller.
+    while let [first, second, .., y, z] = out[..] {
+        if spike(y, z, first) {
+            out.pop();
+        } else if spike(z, first, second) {
+            out.remove(0);
+        } else {
+            break;
+        }
+    }
+    out
 }
 
 /// The lowest-then-leftmost vertex of `contour` as a totally ordered key
@@ -476,5 +523,57 @@ mod tests {
         let gap = difference(&[target], &covered, TOL_MM);
         assert_eq!(gap.len(), 1);
         assert_approx_eq!(area_mm2(&gap), 5.0 * 50.0, 1e-6);
+    }
+
+    /// #464: a floor less what an end mill reached of it, the reach's
+    /// straight sides on the floor's own, leaves the four corner pieces
+    /// the end mill's radius rounds off, each a simple polygon. The floor
+    /// is a rotated 5.1 × 7.9 mm rectangle (a stress test's, the 90°
+    /// V-bit's floor inset 0.432 mm, `crate::floor_regions`); the reach is
+    /// the floor shrunk and grown back by the 3.175 mm end mill's radius,
+    /// so its sides lie on the floor's a rounding error off. Before,
+    /// i_overlay's ring for one corner ran out along a whole side and
+    /// straight back, a spike the V-bit's rings followed 0.15 mm past the
+    /// wall. Each piece is now a contour that does not touch itself
+    /// ([`Contour::new`]) of area `r²(1 − π/4)`, within the 0.03 mm² the
+    /// arc's chords take off it.
+    #[test]
+    fn difference_along_a_shared_side_leaves_no_spike() {
+        let rect = Polyline::new(
+            [
+                (4.425300346927401, 9.415043038727124),
+                (0.0, 6.875014947617232),
+                (3.9461120657884816, 0.0),
+                (8.371412412715882, 2.5400280911098916),
+            ]
+            .iter()
+            .map(|&(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let floor = crate::floor_regions(&[region_of(vec![rect])], 0.4319889717051823, TOL_MM);
+        assert_eq!(floor.len(), 1);
+        let r = 3.175 / 2.0;
+        let centre = crate::floor_regions(&floor, r, TOL_MM);
+        let reach: Vec<Region> = centre
+            .iter()
+            .flat_map(|c| crate::offset(c.outer(), r))
+            .map(|c| region_of(vec![c.into_polyline()]))
+            .collect();
+        let pieces = difference(&floor, &reach, TOL_MM);
+        assert_eq!(pieces.len(), 4, "{pieces:?}");
+        let corner_mm2 = r * r * (1.0 - PI / 4.0);
+        for piece in &pieces {
+            let outline = piece.outer().polyline().clone();
+            assert!(
+                Contour::new(outline.clone()).is_ok(),
+                "a piece touches itself: {outline:?}"
+            );
+            assert!(
+                (piece.area_mm2() - corner_mm2).abs() < 0.03,
+                "{} mm², not {corner_mm2}",
+                piece.area_mm2()
+            );
+        }
     }
 }
