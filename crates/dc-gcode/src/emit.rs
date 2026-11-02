@@ -2664,7 +2664,11 @@ impl<'a> Writer<'a> {
     /// fastest feed in the last written place, rounded down, that does
     /// not (#325). Rounded coordinates can make a short cut steeper than
     /// the toolpath's, and a rounded feed faster; only here are both
-    /// known. With the start not known, S10 has nothing to judge.
+    /// known. A cut that falls less than a unit in the last place may be
+    /// written at the Z the controller holds, so it does not fall; it is
+    /// then a level cut to S3, and is written as one
+    /// ([`Self::written_level_feed_mm_min`], #467). With the start not
+    /// known, S10 has nothing to judge.
     fn written_feed_mm_min(
         &self,
         kind: MotionKind,
@@ -2678,6 +2682,11 @@ impl<'a> Writer<'a> {
         ) else {
             return Ok(feed_mm_min);
         };
+        // The line writes no Z word, as `motion_line` decides it.
+        let z_text = self.number(to.z)?;
+        if self.axes[2].as_ref().is_some_and(|e| e.text == z_text) {
+            return self.written_level_feed_mm_min(feed_mm_min, plunge_mm_min);
+        }
         let from = MachinePosition {
             x: Some(x),
             y: Some(y),
@@ -2762,6 +2771,33 @@ impl<'a> Writer<'a> {
         }
         let quantum = self.quantum();
         Ok(self.written((units / quantum).floor() * quantum)? * mm_per_unit)
+    }
+
+    /// The feed, mm/min, of a cut the toolpath holds to the plunge rate
+    /// `plunge_mm_min` but that is written at the Z the controller holds
+    /// (#467: a V-Carve chain's step falling 0.0007 mm, written to three
+    /// decimals). As written it does not fall, so S3 takes it as a level
+    /// cut, and S10 does not judge it; the next falling cut starts from
+    /// the written Z and is judged with this one's fall. Its feed, scaled
+    /// between the plunge rate and the cutting feed for a fall the program
+    /// does not make, is not a rate of its tool, so it is written at the
+    /// plunge rate: the fastest of the tool's rates no faster than the
+    /// toolpath holds it. A cut at the cutting feed, or slower than the
+    /// plunge rate, is written as any level cut
+    /// ([`Self::level_feed_mm_min`]).
+    fn written_level_feed_mm_min(
+        &self,
+        feed_mm_min: f64,
+        plunge_mm_min: f64,
+    ) -> Result<f64, ExportError> {
+        let scaled = feed_mm_min > plunge_mm_min * (1.0 + HELD_TO_PLUNGE_RELATIVE)
+            && self
+                .cut_feed_mm_min
+                .is_some_and(|cut| feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE));
+        if scaled {
+            return Ok(plunge_mm_min);
+        }
+        self.level_feed_mm_min(feed_mm_min)
     }
 
     /// `value`, output units, as the controller reads it once written.
@@ -3674,6 +3710,114 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Falls, mm, of [`sub_quantum_steps`]' first steps: every one less
+    /// than a unit in the last place of a millimetre program (0.001 mm)
+    /// or an inch one (0.0001 in, 0.00254 mm).
+    const SUB_QUANTUM_DROPS_MM: [f64; 4] = [0.0002, 0.0004, 0.0006, 0.0008];
+    /// Runs, mm, of [`sub_quantum_steps`]' first steps.
+    const SUB_QUANTUM_RUNS_MM: [f64; 3] = [0.0001, 0.0003, 0.0007];
+
+    /// #467: per fall and run, in the waste right of the sample part, a
+    /// V-Carve chain's start as `dc_cam`'s medial generator cuts it: a
+    /// rapid over it at safe Z, a straight plunge to 0.1 µm under the
+    /// stock top at `plunge_mm_min`, a step falling that little over that
+    /// run, then one falling 0.3 mm over 0.5 mm, each at the feed scaled to
+    /// the plunge rate (`min(feed, plunge × length / drop)`, from the
+    /// unrounded ends), a level cut at the feed, and a rapid out.
+    fn sub_quantum_steps(feed_mm_min: f64, plunge_mm_min: f64) -> Toolpath {
+        let scaled = |from: Point3, to: Point3| {
+            let (run_mm, drop_mm) = (from.xy().distance_to(to.xy()), from.z - to.z);
+            feed_mm_min.min(plunge_mm_min * run_mm.hypot(drop_mm) / drop_mm)
+        };
+        let mut moves = Vec::new();
+        let mut k = 0.0_f64;
+        for drop_mm in SUB_QUANTUM_DROPS_MM {
+            for run_mm in SUB_QUANTUM_RUNS_MM {
+                let heading = 0.7 * k;
+                let (cos, sin) = (heading.cos(), heading.sin());
+                let start = Point3::new(68.000_37 + 0.4 * k, 9.000_29 + 1.1 * k, 6.0 - 0.000_1);
+                let step = Point3::new(
+                    start.x + run_mm * cos,
+                    start.y + run_mm * sin,
+                    start.z - drop_mm,
+                );
+                let down = Point3::new(step.x + 0.5 * cos, step.y + 0.5 * sin, step.z - 0.3);
+                let level = Point3::new(down.x + 2.0, down.y, down.z);
+                moves.push(Move::rapid(Point3::new(start.x, start.y, 11.0)));
+                moves.push(Move::linear(start, plunge_mm_min));
+                moves.push(Move::linear(step, scaled(start, step)));
+                moves.push(Move::linear(down, scaled(step, down)));
+                moves.push(Move::linear(level, feed_mm_min));
+                moves.push(Move::rapid(Point3::new(level.x, level.y, 11.0)));
+                k += 1.0;
+            }
+        }
+        Toolpath { moves }
+    }
+
+    /// #467: a cut that falls less than a unit in the last written place
+    /// at a feed scaled to the plunge rate exports on every bundled
+    /// post-processor, in mm and inches. Written level, it carries one of
+    /// its tool's rates (S3), and every falling cut, read from the text
+    /// alone, falls no faster than the plunge rate (S10).
+    #[test]
+    fn sub_quantum_descent_is_written_at_a_tool_rate() {
+        let (feed_mm_min, plunge_mm_min) = (1000.0, 300.0);
+        let mut written_level = 0;
+        for definition in dc_project::latest_definitions().unwrap() {
+            for units in [Units::Mm, Units::Inch] {
+                let mut project = project_with(definition.id);
+                project.display_units = units;
+                let mut ops = ops_for(&project);
+                ops[0].tool.feed_mm_min = Some(feed_mm_min);
+                ops[0].tool.plunge_mm_min = Some(plunge_mm_min);
+                ops[0].toolpath = sub_quantum_steps(feed_mm_min, plunge_mm_min);
+                let text = emit(&project, &ops, DATE)
+                    .unwrap_or_else(|e| panic!("{} {units:?}: {e}", definition.id))
+                    .0
+                    .text;
+                let mm_per_unit = match units {
+                    Units::Mm => 1.0,
+                    Units::Inch => 25.4,
+                };
+                for m in parse_motion(&text).unwrap() {
+                    if m.kind != MotionKind::Linear {
+                        continue;
+                    }
+                    let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
+                        (m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z)
+                    else {
+                        continue;
+                    };
+                    let feed = m.feed.unwrap() * mm_per_unit;
+                    let (run, drop) = ((tx - fx).hypot(ty - fy) * mm_per_unit, fz - tz);
+                    if drop > 0.0 {
+                        let rate = feed * (drop * mm_per_unit) / run.hypot(drop * mm_per_unit);
+                        assert!(
+                            rate <= plunge_mm_min,
+                            "{} {units:?}: line {} falls at {rate} mm/min",
+                            definition.id,
+                            m.line
+                        );
+                    } else if run > 0.0 {
+                        assert!(
+                            [feed_mm_min, plunge_mm_min]
+                                .iter()
+                                .any(|rate| (rate - feed).abs() <= 0.01),
+                            "{} {units:?}: level line {} at {feed} mm/min",
+                            definition.id,
+                            m.line
+                        );
+                        if run < 0.01 {
+                            written_level += 1;
+                        }
+                    }
+                }
+            }
+        }
+        assert!(written_level > 0, "no step was written level");
     }
 
     /// UCCNC has no `G20`/`G21` (#164): an inch project's program has no
