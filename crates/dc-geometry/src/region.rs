@@ -358,9 +358,12 @@ fn with_ccw(contour: Contour, ccw: bool) -> Contour {
 /// that is off `outer`'s boundary must lie inside `outer`.
 fn encloses(outer: (&Contour, f64), inner: (&Contour, f64)) -> bool {
     let ((outer, outer_mm2), (inner, inner_mm2)) = (outer, inner);
-    if inner_mm2 >= outer_mm2 {
-        return false;
-    }
+    inner_mm2 < outer_mm2 && lies_inside(inner, outer)
+}
+
+/// True when `inner` lies inside `outer`, the two not crossing: its first
+/// segment midpoint that is off `outer`'s boundary is inside `outer`.
+pub(crate) fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
     inner
         .polyline()
         .segments()

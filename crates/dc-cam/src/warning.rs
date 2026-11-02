@@ -216,6 +216,10 @@ pub enum WarningCode {
     /// it (#495): with an open edge the board's edge is the plug's rim
     /// there, and a cut-out stops at it.
     InlayBandClipped,
+    /// Two parts of an Inlay's design come closer than the merge distance
+    /// ([`dc_project::inlay_merge_mm`]), so both sides cut them as one
+    /// shape, with no wall between them (#479).
+    InlayPartsMerged,
 }
 
 impl WarningCode {
@@ -273,6 +277,7 @@ impl WarningCode {
             Self::InlayPlugBaseThin => "inlay_plug_base_thin",
             Self::InlayBandEdgeVWall => "inlay_band_edge_v_wall",
             Self::InlayBandClipped => "inlay_band_clipped",
+            Self::InlayPartsMerged => "inlay_parts_merged",
         }
     }
 }
@@ -935,6 +940,24 @@ pub enum Warning {
         /// band is clipped, mm.
         narrowest_mm: f64,
     },
+    /// [`WarningCode::InlayPartsMerged`].
+    InlayPartsMerged {
+        /// The Inlay.
+        op: OperationId,
+        /// The one shape.
+        first: ShapeRef,
+        /// The other.
+        second: ShapeRef,
+        /// Where they come nearest, the middle of the gap, mm, as drawn
+        /// (the male's design before its mirror).
+        x_mm: f64,
+        /// See `x_mm`.
+        y_mm: f64,
+        /// The gap there, mm.
+        gap_mm: f64,
+        /// The merge distance, mm.
+        merge_mm: f64,
+    },
 }
 
 impl Warning {
@@ -994,6 +1017,7 @@ impl Warning {
             Self::InlayPlugBaseThin { .. } => WarningCode::InlayPlugBaseThin,
             Self::InlayBandEdgeVWall { .. } => WarningCode::InlayBandEdgeVWall,
             Self::InlayBandClipped { .. } => WarningCode::InlayBandClipped,
+            Self::InlayPartsMerged { .. } => WarningCode::InlayPartsMerged,
         }
     }
 
@@ -1042,7 +1066,8 @@ impl Warning {
             | Self::InlayMaleMirrored { op, .. }
             | Self::InlayPlugBaseThin { op, .. }
             | Self::InlayBandEdgeVWall { op, .. }
-            | Self::InlayBandClipped { op, .. } => Some(op),
+            | Self::InlayBandClipped { op, .. }
+            | Self::InlayPartsMerged { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1771,6 +1796,23 @@ impl fmt::Display for Warning {
                     )
                 }
             }
+            Self::InlayPartsMerged {
+                first,
+                second,
+                x_mm,
+                y_mm,
+                gap_mm,
+                merge_mm,
+                ..
+            } => write!(
+                f,
+                "{first} and {second} come {} mm apart at ({}, {}) mm, closer than the {} mm a V-bit can carve between two parts, so both sides cut them as one shape, with no wall between them; draw them at least {} mm apart to keep them separate",
+                rounded(*gap_mm, 4),
+                rounded(*x_mm, 3),
+                rounded(*y_mm, 3),
+                rounded(*merge_mm, 4),
+                rounded(*merge_mm, 4)
+            ),
         }
     }
 }
@@ -2520,6 +2562,21 @@ mod tests {
                 },
                 "its band runs past the stock's -Y (front) edge, so its V wall is cut the V-bit's radius inside the board there, the band 2.5 mm wide at its narrowest",
             ),
+            (
+                Warning::InlayPartsMerged {
+                    op: op(),
+                    first: shape(),
+                    second: ShapeRef {
+                        profile: 3,
+                        ..shape()
+                    },
+                    x_mm: 50.000_4,
+                    y_mm: 55.0,
+                    gap_mm: 0.001,
+                    merge_mm: 0.021_414_213_562_373_1,
+                },
+                "`Shape` (instance `i1`, profile 2) and `Shape` (instance `i1`, profile 3) come 0.001 mm apart at (50, 55) mm, closer than the 0.0214 mm a V-bit can carve between two parts, so both sides cut them as one shape, with no wall between them; draw them at least 0.0214 mm apart to keep them separate",
+            ),
         ]
     }
 
@@ -2584,7 +2641,8 @@ mod tests {
             C::InlayMaleMirrored => C::InlayPlugBaseThin,
             C::InlayPlugBaseThin => C::InlayBandEdgeVWall,
             C::InlayBandEdgeVWall => C::InlayBandClipped,
-            C::InlayBandClipped => return None,
+            C::InlayBandClipped => C::InlayPartsMerged,
+            C::InlayPartsMerged => return None,
         })
     }
 
@@ -2621,7 +2679,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 50);
+        assert_eq!(count, 51);
     }
 
     #[test]

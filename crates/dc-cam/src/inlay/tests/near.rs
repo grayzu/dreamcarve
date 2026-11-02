@@ -55,11 +55,13 @@ fn male_of_parts_a_hair_apart_seats() {
 }
 
 /// #479 (found by #464): two squares 0.001 mm apart seat within
-/// [`SEAT_MM`] (0.05 mm grid). The plug stands its whole height, 3 mm,
-/// proud on the gap: the female leaves the wall between the squares'
-/// pockets, and the male cuts no groove between the squares of its plug.
+/// [`SEAT_MM`] (0.05 mm grid). The plug stood its whole height, 3 mm,
+/// proud on the gap: the female left the wall between the squares'
+/// pockets, and the male cut no groove between the squares of its plug.
 /// A tip path must keep `quantum / √2` (0.0007 mm) from the walls (#469),
-/// which leaves no room in a gap this narrow; 0.0015 mm seats (0.048).
+/// which leaves no room in a gap this narrow; 0.0015 mm seated. The gap is
+/// under the merge distance (`dc_project::inlay_merge_mm`, 0.0214 mm), so
+/// both sides now cut the squares as one shape.
 #[test]
 fn male_of_parts_closer_than_the_written_precision_seats() {
     let project = squares_project(0.001);
@@ -80,38 +82,16 @@ fn male_of_parts_closer_than_the_written_precision_seats() {
 
 /// #479 (found by #464): a 3 mm circle 0.005 mm from a 10 mm square
 /// seats within [`SEAT_MM`] (0.05 mm grid) with the 60° and 90° bits,
-/// `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`. The plug stands
+/// `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`. The plug stood
 /// 2.062 mm (60°) and 1.191 mm (90°) proud at the pinch, where the male
-/// cuts no groove; 0.0158 mm and more seat (0.012 to 0.022 mm). The
-/// pinch is seven times the written-precision margin, so the medial
-/// sampling may miss it too.
+/// cut no groove, with gaps up to 0.02 mm, twice the flatten tolerance;
+/// from 0.0205 mm it seats (0.023 mm at 60°). The gap is under the merge
+/// distance (`dc_project::inlay_merge_mm`, 0.0214 mm), so both sides now
+/// cut the circle and the square as one shape.
 #[test]
 fn male_of_a_pinch_seats() {
     for angle_deg in [60.0, 90.0] {
-        let square = polygon(&[(0.005, -5.0), (10.005, -5.0), (10.005, 5.0), (0.005, 5.0)]);
-        let mut project = project_of(
-            vec![Polyline::circle(Point::new(-3.0, 0.0), 3.0), square],
-            CENTRE,
-            100.0,
-            100.0,
-        );
-        project.tools[0] = v_bit(angle_deg);
-        let cone_mm = 3.175 / (angle_deg / 2.0_f64).to_radians().tan();
-        let depth_mm = (cone_mm / 2.0).min(4.0);
-        let side = |side| InlayOp {
-            step_over_fraction: Some(0.1),
-            depth_mm: Some(depth_mm),
-            glue_gap_mm: Some(depth_mm / 4.0),
-            plug_depth_mm: Some(0.4 * depth_mm),
-            ..inlay(side)
-        };
-        let fit = fit_of(
-            &project,
-            &side(InlaySide::Female),
-            &project,
-            &side(InlaySide::Male),
-            0.05,
-        );
+        let fit = pinch_fit(0.005, angle_deg);
         assert!(
             fit.is_flush(),
             "{angle_deg}°: the plug stands {:.3} mm proud at {:?}",
@@ -119,6 +99,61 @@ fn male_of_a_pinch_seats() {
             fit.seat_at
         );
     }
+}
+
+/// #479: the circle and the square of [`male_of_a_pinch_seats`], merged,
+/// seat with the 60° bit at gaps across the merge distance. A gap's fill
+/// ends where the two outlines part, in a corner (`dc_geometry`'s
+/// `merging_ends_a_gap_in_a_corner`): ended by the closing's round arc, at
+/// gaps of 0.009 to 0.013 and 0.019 to 0.021 mm the male's V-bit left the
+/// narrow wedge beyond the arc uncut for half a millimetre, and the plug
+/// stood 0.9 to 2 mm proud.
+#[test]
+fn male_of_a_merged_pinch_seats_at_every_gap() {
+    for gap_mm in [0.01, 0.012, 0.02] {
+        let fit = pinch_fit(gap_mm, 60.0);
+        assert!(
+            fit.is_flush(),
+            "{gap_mm} mm: the plug stands {:.3} mm proud at {:?}",
+            fit.seat_mm,
+            fit.seat_at
+        );
+    }
+}
+
+/// The fit of a 3 mm circle `gap_mm` from a 10 mm square with the
+/// V-bit of `angle_deg`, `D = min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`,
+/// step-over 0.1, no clearing.
+fn pinch_fit(gap_mm: f64, angle_deg: f64) -> Fit {
+    let square = polygon(&[
+        (gap_mm, -5.0),
+        (10.0 + gap_mm, -5.0),
+        (10.0 + gap_mm, 5.0),
+        (gap_mm, 5.0),
+    ]);
+    let mut project = project_of(
+        vec![Polyline::circle(Point::new(-3.0, 0.0), 3.0), square],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    project.tools[0] = v_bit(angle_deg);
+    let cone_mm = 3.175 / (angle_deg / 2.0_f64).to_radians().tan();
+    let depth_mm = (cone_mm / 2.0).min(4.0);
+    let side = |side| InlayOp {
+        step_over_fraction: Some(0.1),
+        depth_mm: Some(depth_mm),
+        glue_gap_mm: Some(depth_mm / 4.0),
+        plug_depth_mm: Some(0.4 * depth_mm),
+        ..inlay(side)
+    };
+    fit_of(
+        &project,
+        &side(InlaySide::Female),
+        &project,
+        &side(InlaySide::Male),
+        0.05,
+    )
 }
 
 /// The `inlay_parts_merged` warnings of `warnings`.

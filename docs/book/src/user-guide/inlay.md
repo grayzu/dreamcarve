@@ -446,6 +446,36 @@ into the notch right to its tip, at every angle, so the plug's wall there
 leans back exactly as the pocket's does. Wood left standing in a notch
 would hold the whole plug up.
 
+### Parts that nearly touch
+
+Two parts of a design that come within a hair of each other, such as
+letters whose serifs almost meet or a motif whose point stops just short
+of a frame, leave a gap no V-bit can carve. The female would leave a
+knife-edge wall standing to the top of the board between the two
+pockets, the male would cut no groove between the two parts of its plug,
+and the plug would stand proud on that wall by up to `depth_mm −
+glue_gap_mm`.
+
+So both sides cut two parts that come closer than the **merge
+distance** as one shape: the female cuts one pocket, the male one plug,
+and they still fit. The distance is twice the project's
+`flatten_tolerance_mm` plus 1.4 units in the program's last decimal
+place, never more than 0.05 mm: 0.0214 mm with the default 0.01 mm
+tolerance and a millimetre program. Curves are carved as short straight
+chords up to the tolerance off the drawn line, so two outlines closer
+than twice it can meet in the chords; and the V-bit's tip keeps half a
+unit in the last place from each wall. Each pair warns
+`inlay_parts_merged`, naming the two shapes, the gap and where it is, as
+drawn, so the female and the male name the same place. Only the gap
+fills: both parts keep their shape everywhere else. Parts the merge
+distance or more apart are cut as drawn, with the wall between them;
+0.1 mm apart, the pair seats as any other. A plain V-Carve or Pocket
+never merges parts.
+
+If the parts are meant to touch, nothing needs doing. If they are meant
+to stay apart, move them at least the distance the warning gives apart
+in the drawing, in both projects.
+
 ## Gluing and planing
 
 1. Spread glue on the plug's walls and in the pocket. The gap under the
@@ -461,8 +491,8 @@ would hold the whole plug up.
 
 Every Inlay program passes the [safety](safety.md) rules, including rule
 14 (S17), which holds the V-bit's cone to its side's own material: the
-design for the female; the surround (the band and the design's holes) for
-the male, with the start plane `depth_mm − glue_gap_mm` below the top and
+design for the female, its near parts merged as the generator merges
+them; the surround (the band and the design's holes) for the male, with the start plane `depth_mm − glue_gap_mm` below the top and
 the flank engaged from the stock top. When a clearing pass cuts the male's
 band edge upright, the board beyond that edge stands to the stock top, so
 the V-bit's cone is also held inside the band right up to the stock top.
@@ -508,6 +538,7 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 | `inlay_plug_base_thin` | A male leaves less than 6 mm of board under its band. |
 | `inlay_band_edge_v_wall` | A male has clearing passes, but none fits its band's floor, so the V-bit cuts the band's outer edge as a sloped wall; it names the margin that would let a pass cut it upright. |
 | `inlay_band_clipped` | A male's band runs past the stock's edge, so it is clipped to the board there; it names the edges and the narrowest band left. |
+| `inlay_parts_merged` | Either side: two parts of the design come closer than the merge distance, so both sides cut them as one shape ([Parts that nearly touch](#parts-that-nearly-touch)). |
 | `vcarve_target_open` | A target is an open path; it is skipped. |
 | `clearing_no_room`, `clearing_not_descending` | As for a [V-Carve](v-carve.md#warnings). |
 

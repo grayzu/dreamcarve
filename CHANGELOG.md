@@ -212,6 +212,19 @@ phases bump the patch number.
   would have cut the last part of the run and skipped the lap before it;
   the safety pass refused it. A fitted run now turns at most once. The
   fixtures' programs are unchanged ([#502]).
+- An Inlay whose design has two parts that nearly touch now seats. Where
+  two parts came within about 0.02 mm of each other, no V-bit could
+  carve the gap: the female left a knife-edge wall standing between the
+  two pockets, the male cut no groove between the two parts of its plug,
+  and the plug stood up to `depth_mm − glue_gap_mm` proud on the wall
+  (3 mm on two squares 0.001 mm apart). Both sides now cut parts closer
+  than the merge distance as one shape, and warn `inlay_parts_merged`
+  with the two shapes, the gap and where it is. The distance is twice
+  the flatten tolerance plus 1.4 units in the program's last decimal
+  place, at most 0.05 mm: 0.0214 mm by default. Only the gap fills, and
+  the safety pass merges the design from the project the same way.
+  Plain V-Carve and Pocket cut their parts as drawn, and the fixtures'
+  programs are unchanged ([#479]).
 - A male Inlay without a clearing pass no longer fails export with "an arc
   in place of operation's straight moves that does not follow them". Round
   the band's V wall the arc fitter replaced a few moves a few thousandths
@@ -1003,6 +1016,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#461]: https://github.com/grayzu/dreamcarve/issues/461
 [#463]: https://github.com/grayzu/dreamcarve/issues/463
 [#466]: https://github.com/grayzu/dreamcarve/issues/466
+[#479]: https://github.com/grayzu/dreamcarve/issues/479
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
 [#502]: https://github.com/grayzu/dreamcarve/issues/502

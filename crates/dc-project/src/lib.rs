@@ -27,7 +27,9 @@ pub mod test_support;
 pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
-pub use inlay::{BandEdge, EdgePass, MaleBand, edge_pass, male_band};
+pub use inlay::{
+    BandEdge, EdgePass, INLAY_MERGE_MAX_MM, MaleBand, edge_pass, inlay_merge_mm, male_band,
+};
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, migrate};
 pub use model::{
