@@ -556,7 +556,14 @@ Inputs: project, op. Output: toolpath in project space.
    turn (changed in the property-test fixes of #225–#235: an offset ring
    began 0.0017 mm before the end of a round corner, and the arc piece
    left, shorter than a unit of a 4-place inch program, was written as
-   nothing and failed S6),
+   nothing and failed S6); the program passes if some matching of its
+   lines to the moves by these rules takes them all, searched depth
+   first from the matching that takes each move the first way the rules
+   allow, the error that of the matching that went furthest (changed in
+   #483: three V-Carve vertices and a 0.0007 mm spike between them round
+   to one point and are written as nothing, the next line ends within a
+   unit of the first of them as well, and S6, matching it there, found
+   no line for the spike),
    S7 (every cutting move, mapped back to project space with its arc
    extremes and widened by its operation's tool radius, stays in the stock
    rectangle within one unit in the last written place:

@@ -211,7 +211,11 @@ Clamps. Text. Stock from a shape (stock is rectangular).
   more than the flatten tolerance. A move to where the tool already is may
   be written as nothing. The only other motion in an operation is a
   retract straight up before its first move or after its last. Points
-  compare within one unit in the last written decimal place (#60).
+  compare within one unit in the last written decimal place (#60). Where
+  a line ends within that of more than one move, the program passes if
+  any matching of lines to moves by these rules takes them all (changed
+  in #483: S6 matched each line to the first move it reached, and
+  refused a V-Carve whose sub-quantum steps rounded to one point).
 - **S7** The cut stays on the stock (#62). Each operation's swept XY
   extent, its cutting moves (arcs to their bulge) widened by its tool's
   radius, lies inside the stock rectangle `[0, width] × [0, height]`. A

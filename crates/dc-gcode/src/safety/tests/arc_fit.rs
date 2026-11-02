@@ -79,6 +79,48 @@ fn fitted_arc_on_a_circle_within_the_allowance_passes_s12() {
     check_against_with(SMALL_CIRCLE_TEXT, &toolpath, Some(ARC_FIT_MM)).unwrap();
 }
 
+/// The tip of #483's V-Carve (line-art seed `0x54`, moves 34212 to
+/// 34221 of its toolpath, at Z 5 here): the cut runs up to a point and
+/// back, every vertex within 0.004 mm of the tip.
+const TIP_VERTICES: [(f64, f64); 10] = [
+    (38.429_168_512_231_19, 29.035_595_599_917_7),
+    (38.428_448_830_849_01, 29.041_009_743_122_39),
+    (38.428_403_846_331_36, 29.041_348_160_408_9),
+    (38.428_367_179_692_17, 29.041_687_579_654_39),
+    (38.428_328_191_019_11, 29.042_048_493_724_64),
+    (38.428_009_666_297_82, 29.041_874_355_189_58),
+    (38.427_710_075_733_33, 29.041_710_568_021_64),
+    (38.427_406_555_743_13, 29.041_554_182_733_81),
+    (38.422_551_086_873_92, 29.039_052_456_583_29),
+    (38.422_247_582_084_2, 29.038_896_079_127_33),
+];
+
+/// #483: a fitted chain whose last piece is shorter than a unit in the
+/// last place passes S12. The emitter fits the tip ([`TIP_VERTICES`]) as
+/// three `G3` pieces about centres 0.001 to 0.003 mm away, the last one
+/// 0.0014 mm long, as the exported program had them. The vertex at the
+/// chain's end is also within a unit of the joint before the last piece,
+/// so #453's rule kept it on the piece before: the walk never reached
+/// the last piece, ran on past the chain's end, and S12 refused the
+/// chain. The pieces lie within 0.004 mm of the tip's moves.
+#[test]
+fn fitted_chain_ending_in_a_piece_shorter_than_a_unit_passes_s12() {
+    let [(x0, y0), rest @ ..] = TIP_VERTICES;
+    let mut moves = vec![
+        Move::rapid(Point3::new(x0, y0, 11.0)),
+        Move::linear(Point3::new(x0, y0, 5.0), 300.0),
+    ];
+    for (x, y) in rest {
+        moves.push(Move::linear(Point3::new(x, y, 5.0), 1000.0));
+    }
+    moves.push(Move::rapid(Point3::new(38.422, 29.039, 11.0)));
+    let toolpath = Toolpath { moves };
+    let text = "G21 G90\nG54\nG0 Z5\nM3 S18000\nG4 P3\nX38.429 Y29.036\nG1 Z-1 F300\n\
+        X38.428 Y29.041 F1000\nG3 X38.429 Y29.042 I0 J0.001\nX38.428 Y29.042 I-0.001 J-0.003\n\
+        X38.427 I0 J-0.003\nG1 X38.423 Y29.039\nX38.422\nG0 Z5\nM5\n";
+    check_against_with(text, &toolpath, Some(ARC_FIT_MM)).unwrap();
+}
+
 /// #453: S12 still refuses a fitted arc that does not follow its moves,
 /// on the small circle as on any other. With the 67.5° vertex 0.05 mm off
 /// the circle, five times the tolerance, the same two pieces are refused.

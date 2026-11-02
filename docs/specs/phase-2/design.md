@@ -2416,7 +2416,13 @@ shallow arcs) when:
   piece, the walk never reached the chain's end, and S12 refused a
   0.008 mm-radius run on a male Inlay's V wall that lay within
   0.002 mm of its moves; the fitter's own check places vertices the same
-  way);
+  way). A vertex within one unit in the last place of the chain's end,
+  where every piece after the one it is on starts and ends within a unit
+  of it, ends the chain (changed in #483: a V-Carve's tip fitted as three
+  pieces about centres 0.001 to 0.003 mm away, the last 0.0014 mm long,
+  left the end vertex at a joint, where the rule above kept it on the
+  piece before, and S12 refused the chain). More than one vertex may end
+  a chain; S6 tries each, nearest first;
 - the direction matches the sign of the vertices' turn.
 
 A wrong arc in place of a deep toolpath arc stays `MotionMismatch`. A
