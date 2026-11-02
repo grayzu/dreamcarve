@@ -38,11 +38,10 @@
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
-//! What the sweep found is on #464. While #483 and #484 are open, the
-//! sweep still fails: a written program that does not reproduce its
-//! toolpath (#483), and seat failures with 60° and 90° bits away from a
-//! near touch (#484). Their reproductions are the ignored tests at the
-//! end of this file and in dc-cam's inlay tests.
+//! What the sweep found is on #464. While #484 is open, the sweep still
+//! fails: seat failures with 60° and 90° bits away from a near touch
+//! (#484). Their reproductions are the ignored tests at the end of this
+//! file and in dc-cam's inlay tests.
 
 #![allow(
     clippy::panic,
@@ -286,8 +285,11 @@ fn male_of_line_art_with_rings_orders_its_cuts() {
 /// 8696". A fitted arc ends where three vertices and a 0.0007 mm spike
 /// between them round to one point, so the emitter writes nothing for
 /// them; S6 matched the arc's end to the first, the next line to the
-/// second, and found no line for the spike. About a minute in a release
-/// build, so it runs with the sweep.
+/// second, and found no line for the spike. Further on, S12 refused a
+/// chain fitted to a tip on a circle 0.003 mm across, whose last piece is
+/// shorter than a unit in the last place. About four minutes in a
+/// release build, far too long for the debug test run, so it runs with
+/// the sweep.
 #[test]
 #[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
 fn v_carve_of_line_art_reproduces_when_written() {

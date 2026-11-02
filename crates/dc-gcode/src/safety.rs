@@ -35,6 +35,7 @@
 //! operation's own material, worked out from the project
 //! ([`crate::material`]).
 
+use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::ops::Range;
 
@@ -1422,6 +1423,15 @@ fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
 /// one unit in the last place of it, it sweeps at most 90°, and it turns
 /// the way the vertices do; see [`match_fitted_arc`]. Any other arc in
 /// place of straight moves is [`ExportError::ArcFitViolation`].
+///
+/// The program reproduces the toolpath when some matching of its lines to
+/// the moves by these rules takes every move and every line (#483).
+/// Within one unit in the last place a line may end at more than one
+/// move: sub-quantum steps that round to one point, or a fitted arc's end
+/// near several vertices. The first matching tried takes, at each move,
+/// the first way the rules allow; where that fails, the others are tried
+/// in turn ([`Matching::search`]). The error is that of the matching that
+/// went furthest.
 fn check_reproduces(
     span: &OpSpan<'_>,
     blocks: &[Block],
@@ -1437,10 +1447,6 @@ fn check_reproduces(
         .filter_map(|(index, b)| Some((index, b.motion.as_ref()?)))
         .map(|(index, mv)| ReadMove::new(mv, index, post, transform))
         .collect();
-    let mismatch = |index| ExportError::MotionMismatch {
-        op: span.op.id().clone(),
-        index,
-    };
     // The span's dwells, a canned cycle's included: block index and
     // seconds. Blocks, not lines: a cycle's moves and dwell share its line.
     let dwells: Vec<(usize, f64)> = blocks
@@ -1459,18 +1465,123 @@ fn check_reproduces(
     let reentry_gap_mm = canned
         .then(|| CycleModel::of(post).reentry_gap_mm)
         .flatten();
-    // Where the last straight cut of the toolpath ended, in XY.
-    let mut last_cut: Option<Point> = None;
-    let mut next_dwell = 0;
-    let mut cursor = motions
-        .iter()
-        .position(|m| !is_retract(m.mv))
-        .unwrap_or(motions.len());
-    let mut previous: Option<Point3> = None;
-    let moves = &span.toolpath.moves;
-    let mut index = 0;
-    while let Some(mv) = moves.get(index) {
-        let rest = motions.get(cursor..).unwrap_or_default();
+    Matching {
+        op: span.op,
+        moves: &span.toolpath.moves,
+        motions: &motions,
+        dwells: &dwells,
+        canned,
+        reentry_gap_mm,
+        transform,
+        tolerances,
+    }
+    .search()
+}
+
+/// S6's matching of one span's toolpath moves to its motion lines
+/// ([`check_reproduces`]).
+struct Matching<'m, 'a> {
+    op: &'m Operation,
+    moves: &'m [Move],
+    motions: &'m [ReadMove<'a>],
+    /// The span's dwells: block index and seconds.
+    dwells: &'m [(usize, f64)],
+    /// A Drill written as canned cycles.
+    canned: bool,
+    /// S11: how far a canned cycle backs off for a re-entry.
+    reentry_gap_mm: Option<f64>,
+    transform: &'m MachineTransform,
+    tolerances: Tolerances,
+}
+
+/// How far a [`Matching`] has gone.
+#[derive(Debug, Clone, Copy)]
+struct Place {
+    /// The next toolpath move to match.
+    index: usize,
+    /// The next motion line, in the span's motions.
+    cursor: usize,
+    /// The first of the span's dwells a toolpath dwell may still take.
+    next_dwell: usize,
+    /// Where the last straight cut matched ended, in XY.
+    last_cut: Option<Point>,
+}
+
+impl Place {
+    /// The place as a set key: equal for places the matching goes on from
+    /// alike.
+    fn key(&self) -> (usize, usize, usize, Option<(u64, u64)>) {
+        (
+            self.index,
+            self.cursor,
+            self.next_dwell,
+            self.last_cut.map(|p| (p.x.to_bits(), p.y.to_bits())),
+        )
+    }
+}
+
+/// One way to match toolpath moves from a [`Place`]: `lines` motion lines
+/// for `covered` moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Step {
+    lines: usize,
+    covered: usize,
+    /// For a toolpath dwell, the index after the dwell it takes.
+    next_dwell: Option<usize>,
+}
+
+impl Step {
+    /// `lines` lines for one move.
+    fn one(lines: usize) -> Self {
+        Self {
+            lines,
+            covered: 1,
+            next_dwell: None,
+        }
+    }
+
+    /// `lines` lines for a fitted run of `covered` moves.
+    fn run((lines, covered): (usize, usize)) -> Self {
+        Self {
+            lines,
+            covered,
+            next_dwell: None,
+        }
+    }
+}
+
+/// A place a [`Matching`] went on from, with the step it took and, once
+/// it has come back, the steps it has still to try, last first.
+struct Choice {
+    at: Place,
+    taken: Step,
+    others: Option<Vec<Step>>,
+}
+
+/// What a [`Matching`] sees at a place.
+struct View<'r, 'a> {
+    /// The motion lines not yet matched.
+    rest: &'r [ReadMove<'a>],
+    /// One unit in the last written place, mm.
+    tolerance_mm: f64,
+    /// The controller is at the move's end already.
+    already_there: bool,
+    /// The end of the toolpath move before.
+    previous: Option<Point3>,
+}
+
+impl<'a> Matching<'_, 'a> {
+    fn mismatch(&self, index: usize) -> ExportError {
+        ExportError::MotionMismatch {
+            op: self.op.id().clone(),
+            index,
+        }
+    }
+
+    /// What the matching sees at `at`, about to match `mv`.
+    fn view(&self, at: &Place, mv: &Move) -> View<'_, 'a> {
+        let motions = self.motions;
+        let rest = motions.get(at.cursor..).unwrap_or_default();
         // Where the controller is before `rest`.
         let here = rest
             .first()
@@ -1479,68 +1590,186 @@ fn check_reproduces(
             .first()
             .or(motions.last())
             .map_or(EPS_MM, |m| m.tolerance_mm);
-        let already_there = here.is_some_and(|h| near(h, mv.to, tolerance_mm));
+        View {
+            rest,
+            tolerance_mm,
+            already_there: here.is_some_and(|h| near(h, mv.to, tolerance_mm)),
+            previous: at
+                .index
+                .checked_sub(1)
+                .and_then(|i| self.moves.get(i))
+                .map(|m| m.to),
+        }
+    }
+
+    /// `Ok` if some matching of the lines to the moves takes them all;
+    /// else the error of the matching that went furthest along the
+    /// toolpath (of those, the first tried).
+    ///
+    /// A depth-first search over [`Place`]s: from each it takes the first
+    /// step [`Self::first_step`] allows; where none is allowed, it goes
+    /// back to the last place it went on from and tries the next of
+    /// [`Self::other_steps`] there. Every step takes a move, so no place
+    /// comes twice on one path, and a place met again on another path has
+    /// failed already: each place is tried once. A program the first
+    /// matching takes is checked as it was before #483.
+    fn search(&self) -> Result<(), ExportError> {
+        let mut at = Place {
+            index: 0,
+            cursor: self
+                .motions
+                .iter()
+                .position(|m| !is_retract(m.mv))
+                .unwrap_or(self.motions.len()),
+            next_dwell: 0,
+            last_cut: None,
+        };
+        let mut choices: Vec<Choice> = Vec::new();
+        let mut tried = HashSet::new();
+        // The furthest failure: the move, and why.
+        let mut furthest: Option<(usize, ExportError)> = None;
+        loop {
+            let failed = if !tried.insert(at.key()) {
+                // Failed from here already, on another path.
+                None
+            } else if let Some(mv) = self.moves.get(at.index) {
+                match self.first_step(&at, mv) {
+                    Ok(step) => {
+                        choices.push(Choice {
+                            at,
+                            taken: step,
+                            others: None,
+                        });
+                        at = self.advance(&at, step);
+                        continue;
+                    }
+                    Err(error) => Some(error),
+                }
+            } else if self.finished(&at) {
+                return Ok(());
+            } else {
+                Some(self.mismatch(self.moves.len()))
+            };
+            if let Some(error) = failed
+                && furthest.as_ref().is_none_or(|(index, _)| at.index > *index)
+            {
+                furthest = Some((at.index, error));
+            }
+            // Back to the last place with a step still to try.
+            at = loop {
+                let Some(choice) = choices.last_mut() else {
+                    return Err(furthest.map_or_else(|| self.mismatch(at.index), |(_, e)| e));
+                };
+                let others = choice.others.get_or_insert_with(|| {
+                    let mut others = self
+                        .moves
+                        .get(choice.at.index)
+                        .map(|mv| self.other_steps(&choice.at, mv, choice.taken))
+                        .unwrap_or_default();
+                    others.reverse();
+                    others
+                });
+                if let Some(step) = others.pop() {
+                    break self.advance(&choice.at, step);
+                }
+                choices.pop();
+            };
+        }
+    }
+
+    /// Whether every line after `at`, which has taken every move, is a
+    /// retract.
+    fn finished(&self, at: &Place) -> bool {
+        self.motions
+            .get(at.cursor..)
+            .unwrap_or_default()
+            .iter()
+            .all(|m| is_retract(m.mv))
+    }
+
+    /// Where `step` from `at` leads.
+    fn advance(&self, at: &Place, step: Step) -> Place {
+        let straight = self
+            .moves
+            .get(at.index)
+            .filter(|mv| step.covered == 1 && mv.kind == MoveKind::Linear);
+        Place {
+            index: at.index + step.covered,
+            cursor: at.cursor + step.lines,
+            next_dwell: step.next_dwell.unwrap_or(at.next_dwell),
+            last_cut: straight.map_or(at.last_cut, |mv| Some(mv.to.xy())),
+        }
+    }
+
+    /// The first way the rules allow to match `mv`, the move at `at`, and
+    /// what follows it; else why there is none.
+    fn first_step(&self, at: &Place, mv: &Move) -> Result<Step, ExportError> {
+        let View {
+            rest,
+            tolerance_mm,
+            already_there,
+            previous,
+        } = self.view(at, mv);
+        let index = at.index;
         // Inside a hole: in Z alone, where the last cut was.
         let in_hole = || {
-            let at = |p: Point| p.distance_to(mv.to.xy()) <= tolerance_mm;
-            previous.is_some_and(|p| at(p.xy())) && last_cut.is_some_and(at)
+            let on = |p: Point| p.distance_to(mv.to.xy()) <= tolerance_mm;
+            previous.is_some_and(|p| on(p.xy())) && at.last_cut.is_some_and(on)
         };
         let consumed = match mv.kind {
             MoveKind::Rapid => match_rapid(rest, mv.to, already_there)
                 .or_else(|| {
-                    let gap_mm = reentry_gap_mm.filter(|_| in_hole())?;
+                    let gap_mm = self.reentry_gap_mm.filter(|_| in_hole())?;
                     match_in_hole_rapid(rest, mv.to, gap_mm)
                 })
                 .or_else(|| {
                     // #305: a cycle from the clearance height goes through
                     // safe Z without stopping.
-                    canned
-                        .then(|| match_rapid_on_the_way(rest, mv.to, moves.get(index + 1)))
+                    self.canned
+                        .then(|| match_rapid_on_the_way(rest, mv.to, self.moves.get(index + 1)))
                         .flatten()
-                }),
+                })
+                .map(Step::one),
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
-                let after = cursor
+                let after = at
+                    .cursor
                     .checked_sub(1)
-                    .and_then(|i| motions.get(i))
+                    .and_then(|i| self.motions.get(i))
                     .map(|m| m.block);
                 let before = rest.first().map_or(usize::MAX, |m| m.block);
-                let found = dwells
+                self.dwells
                     .iter()
                     .enumerate()
-                    .skip(next_dwell)
+                    .skip(at.next_dwell)
                     .find(|(_, (block, s))| {
                         after.is_none_or(|a| *block > a)
                             && *block < before
                             && (s - seconds).abs() <= DWELL_TOLERANCE_S
                     })
-                    .map(|(i, _)| i);
-                found.map(|i| {
-                    next_dwell = i + 1;
-                    0
-                })
+                    .map(|(i, _)| Step {
+                        next_dwell: Some(i + 1),
+                        ..Step::one(0)
+                    })
             }
-            MoveKind::Linear => match_linear(rest, mv.to, already_there),
+            MoveKind::Linear => match_linear(rest, mv.to, already_there).map(Step::one),
             MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
                 let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
                 match previous.map(|start| ToolpathArc::new(start, mv.to, centre, clockwise)) {
-                    Some(Some(arc)) => match_arc(rest, &arc, transform, tolerances.flatten_mm),
+                    Some(Some(arc)) => {
+                        match_arc(rest, &arc, self.transform, self.tolerances.flatten_mm)
+                    }
                     // Too small to be an arc: `emit` writes a straight cut.
                     Some(None) => match_linear(rest, mv.to, already_there),
                     // `emit` cannot write an arc without a start.
                     None => None,
                 }
+                .map(Step::one)
             }
         };
-        if let Some(consumed) = consumed {
-            cursor += consumed;
-            previous = Some(mv.to);
-            if mv.kind == MoveKind::Linear {
-                last_cut = Some(mv.to.xy());
-            }
-            index += 1;
-            continue;
+        if let Some(step) = consumed {
+            return Ok(step);
         }
         // S12: an arc where the toolpath has straight moves (or a shallow
         // corner arc a run may take as its chord).
@@ -1548,41 +1777,88 @@ fn check_reproduces(
             let fitted = rest
                 .first()
                 .filter(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
-            let (Some(read), Some(arc_fit_mm)) = (fitted, tolerances.arc_fit_mm) else {
-                return Err(mismatch(index));
+            let (Some(read), Some(arc_fit_mm)) = (fitted, self.tolerances.arc_fit_mm) else {
+                return Err(self.mismatch(index));
             };
             if !run_eligible(previous, mv, arc_fit_mm) {
-                return Err(mismatch(index));
+                return Err(self.mismatch(index));
             }
-            match_fitted_arc(rest, moves, index, previous, transform, arc_fit_mm).ok_or_else(|| {
-                ExportError::ArcFitViolation {
-                    op: span.op.id().clone(),
+            let ends = match_fitted_arc(
+                rest,
+                self.moves,
+                index,
+                previous,
+                self.transform,
+                arc_fit_mm,
+                FittedEnds::First,
+            );
+            ends.first()
+                .map(|&end| Step::run(end))
+                .ok_or_else(|| ExportError::ArcFitViolation {
+                    op: self.op.id().clone(),
                     line: read.mv.line,
-                }
-            })
+                })
         })();
-        let (lines, covered) = match fitted {
-            Ok(fitted) => fitted,
+        match fitted {
+            Ok(step) => Ok(step),
             // An arc of at most a half turn that ends where the controller
             // already is lies wholly within the rounding of it: `emit`
             // writes it as nothing, as it does such a straight move. Tried
             // last, so a fitted run that takes the arc is matched first.
-            Err(_) if already_there && written_as_nothing(previous, mv) => (0, 1),
-            Err(error) => return Err(error),
-        };
-        cursor += lines;
-        index += covered;
-        previous = moves.get(index.wrapping_sub(1)).map(|m| m.to);
+            Err(_) if already_there && written_as_nothing(previous, mv) => Ok(Step::one(0)),
+            Err(error) => Err(error),
+        }
     }
-    if motions
-        .get(cursor..)
-        .unwrap_or_default()
-        .iter()
-        .all(|m| is_retract(m.mv))
-    {
-        Ok(())
-    } else {
-        Err(mismatch(span.toolpath.moves.len()))
+
+    /// The ways other than `taken` the rules allow to match `mv`, the move
+    /// at `at`, and what follows it (#483), in the order to try them: by
+    /// no lines, where the controller is already at its end and `emit`
+    /// writes nothing for such a move; then a fitted arc here, to each
+    /// vertex it may end at, nearest first.
+    fn other_steps(&self, at: &Place, mv: &Move, taken: Step) -> Vec<Step> {
+        let View {
+            rest,
+            already_there,
+            previous,
+            ..
+        } = self.view(at, mv);
+        let mut steps = Vec::new();
+        let nothing = already_there
+            && match mv.kind {
+                MoveKind::Rapid | MoveKind::Linear => true,
+                MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                    let clockwise = matches!(mv.kind, MoveKind::ArcCw { .. });
+                    // Too small to be an arc, so a straight cut, or within
+                    // the rounding of where the controller is.
+                    previous.is_some_and(|start| {
+                        ToolpathArc::new(start, mv.to, centre, clockwise).is_none()
+                    }) || written_as_nothing(previous, mv)
+                }
+                MoveKind::Dwell { .. } => false,
+            };
+        if nothing {
+            steps.push(Step::one(0));
+        }
+        let arc_next = rest
+            .first()
+            .is_some_and(|read| matches!(read.mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw));
+        if let Some(arc_fit_mm) = self.tolerances.arc_fit_mm
+            && arc_next
+            && run_eligible(previous, mv, arc_fit_mm)
+        {
+            let ends = match_fitted_arc(
+                rest,
+                self.moves,
+                at.index,
+                previous,
+                self.transform,
+                arc_fit_mm,
+                FittedEnds::All,
+            );
+            steps.extend(ends.into_iter().map(Step::run));
+        }
+        steps.retain(|step| *step != taken);
+        steps
     }
 }
 
@@ -1825,8 +2101,18 @@ fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
     }
 }
 
+/// Which ends of a fitted run [`match_fitted_arc`] finds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FittedEnds {
+    /// The nearest only.
+    First,
+    /// Every one, nearest first (#483).
+    All,
+}
+
 /// S12: how many lines of `rest` and how many toolpath moves from `index`
-/// a fitted run accounts for, if the lines may stand for the moves.
+/// a fitted run accounts for, if the lines may stand for the moves: for
+/// each vertex the run may end at, nearest first (`ends`), or none.
 ///
 /// The lines are a chain of consecutive arc moves about one centre, one
 /// way, each sweeping at most 90°, the first starting at `previous`, the
@@ -1843,6 +2129,10 @@ fn run_eligible(previous: Option<Point3>, mv: &Move, arc_fit_mm: f64) -> bool {
 /// it, which the vertices alone never show. The chain may stop short of its last
 /// line where the toolpath goes on with a move a run cannot take, if the
 /// line before ends at the vertex there.
+///
+/// More than one vertex may end the chain: every vertex within a unit in
+/// the last place of its end, the walk going on past each (#483: the
+/// fitter's run ended at a vertex after one that rounds to its end too).
 fn match_fitted_arc(
     rest: &[ReadMove<'_>],
     moves: &[Move],
@@ -1850,7 +2140,32 @@ fn match_fitted_arc(
     previous: Option<Point3>,
     transform: &MachineTransform,
     arc_fit_mm: f64,
-) -> Option<(usize, usize)> {
+    ends: FittedEnds,
+) -> Vec<(usize, usize)> {
+    let mut found = Vec::new();
+    walk_fitted_arc(
+        rest, moves, index, previous, transform, arc_fit_mm, ends, &mut found,
+    );
+    found
+}
+
+/// [`match_fitted_arc`]'s walk: adds each end it finds to `found`, and
+/// stops at the first when `ends` asks for it, or where the chain cannot
+/// go on (`None`).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "match_fitted_arc's arguments and its result"
+)]
+fn walk_fitted_arc(
+    rest: &[ReadMove<'_>],
+    moves: &[Move],
+    index: usize,
+    previous: Option<Point3>,
+    transform: &MachineTransform,
+    arc_fit_mm: f64,
+    ends: FittedEnds,
+    found: &mut Vec<(usize, usize)>,
+) -> Option<()> {
     let start = previous?;
     let first = rest.first()?;
     let tolerance_mm = first.tolerance_mm;
@@ -1899,19 +2214,31 @@ fn match_fitted_arc(
     let mut vertex = start;
     let mut cross = 0.0;
     let mut covered = 0;
-    let done =
-        |piece: usize, covered: usize, vertex: Point3, cross: f64| -> Option<(usize, usize)> {
-            let current = pieces.get(piece)?;
-            let turns_with = if clockwise { cross < 0.0 } else { cross > 0.0 };
-            (near(vertex, current.end, tolerance_mm) && turns_with && covered >= MIN_RUN_CHORDS)
-                .then_some((piece + 1, covered))
-        };
+    // Adds the end at `vertex`, if the chain may end there; `None` once
+    // the walk is to stop.
+    let mut end_here = |piece: usize, covered: usize, vertex: Point3, cross: f64| -> Option<()> {
+        let current = pieces.get(piece)?;
+        let turns_with = if clockwise { cross < 0.0 } else { cross > 0.0 };
+        let end = (piece + 1, covered);
+        if near(vertex, current.end, tolerance_mm)
+            && turns_with
+            && covered >= MIN_RUN_CHORDS
+            && found.last() != Some(&end)
+        {
+            found.push(end);
+            if ends == FittedEnds::First {
+                return None;
+            }
+        }
+        Some(())
+    };
     for mv in moves.get(index..)? {
         if !run_eligible(Some(vertex), mv, arc_fit_mm) || !approx_eq(mv.to.z, start.z, tolerance_mm)
         {
             // The toolpath goes on with a move no run takes: the chain
             // must end at the vertex before it.
-            return done(piece, covered, vertex, cross);
+            end_here(piece, covered, vertex, cross);
+            return None;
         }
         let midpoint = match mv.kind {
             MoveKind::ArcCw { centre: c } | MoveKind::ArcCcw { centre: c } => {
@@ -1973,11 +2300,26 @@ fn match_fitted_arc(
         cross += (vertex.xy() - centre).cross(mv.to.xy() - centre);
         covered += 1;
         vertex = mv.to;
-        if piece + 1 == pieces.len() && near(vertex, chain_end(&pieces)?, tolerance_mm) {
-            return done(piece, covered, vertex, cross);
+        // On the last piece; or, on a circle so small that its last
+        // pieces are within a unit in the last place (#483: a V-Carve's
+        // tip fitted on a circle 0.003 mm across), where every piece after
+        // this one starts and ends within a unit of the vertex. #453 keeps
+        // a vertex at a joint on the piece before it, so such a vertex
+        // never reached the last piece. Those pieces lie within the
+        // allowance of the vertex: each sweeps at most 90°, so no point of
+        // one is further from its start than its chord, a unit or two.
+        let last = pieces.len().saturating_sub(1);
+        let at_last = piece == last
+            || pieces.get(piece + 1..).is_some_and(|after| {
+                after.iter().all(|p| {
+                    near(p.start, vertex, tolerance_mm) && near(p.end, vertex, tolerance_mm)
+                })
+            });
+        if at_last && near(vertex, chain_end(&pieces)?, tolerance_mm) {
+            end_here(last, covered, vertex, cross)?;
         }
     }
-    done(piece, covered, vertex, cross)
+    end_here(piece, covered, vertex, cross)
 }
 
 /// Where the last piece of `pieces` ends.
