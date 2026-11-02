@@ -154,6 +154,24 @@ phases bump the patch number.
   no release has shipped it. The quick start's cut-out runs 6.412 mm out
   from the letters where it ran 4.577 mm, and takes 1 min 19 s where it
   took 1 min 17 s ([#461]).
+- **A male Inlay's band is clipped to the stock.** A male whose band ran
+  past the stock's edge was refused ("cuts off the stock"), as was every
+  male on stock cut to the drawing's size with a wide margin. The band
+  only gives the plug room, so it is now clipped to the board: with an
+  end mill's upright edge the clearing pass clears to the board's edge,
+  its cutting edge on it and never past it, and the board's edge is the
+  plug's rim there; a V wall is cut the V-bit's radius inside the board.
+  A cut-out stops at the board's edge, as open paths from edge to edge
+  whose ends are the end mill's radius inside it, with its tabs on them.
+  `inlay_band_clipped` names the edges and the narrowest band left. The
+  design's own cut is never clipped: a design too near an edge for the
+  V-bit along the plug's foot (its whole radius stays on the board), the
+  edge pass or the cut-out is refused, naming the edge, the room needed,
+  how far to move the design and the stock that would fit it. The safety
+  pass works the clipped band out again from the project and holds every
+  run to it, and still refuses any cut whose tool passes the stock's
+  edge. A band that stays on the stock exports the same program as
+  before ([#495]).
 
 ### Fixed
 
@@ -979,3 +997,4 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#463]: https://github.com/grayzu/dreamcarve/issues/463
 [#466]: https://github.com/grayzu/dreamcarve/issues/466
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
+[#495]: https://github.com/grayzu/dreamcarve/issues/495

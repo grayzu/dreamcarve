@@ -502,7 +502,10 @@ instance_name, profile, mouth_mm, hole_mm)`, `InlayMaleMirrored (op,
 axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `InlayBandEdgeVWall (op, margin_needed_mm)`
 (#448: a male with clearing passes none of which can cut its band's edge;
-the least margin, `max(P·s + d_min, (D − G + 2P)·s)`, that would let one), `PhotoLinesOverlap (op, fraction)`. New
+the least margin, `max(P·s + d_min, (D − G + 2P)·s)`, that would let one),
+`InlayBandClipped (op, edges: Vec<StockEdge>, open, narrowest_mm)` (#495:
+a male band that runs past the stock, clipped to it; the edges, whether the
+edge is open, and the band left at its narrowest), `PhotoLinesOverlap (op, fraction)`. New
 `CamError`s: `VCarveNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkDiameterPositive { op, diameter_mm }`,
@@ -512,7 +515,9 @@ depth; #425),
 `VBitAngleRange { tool, tool_id, angle_deg }`, `VBitConeExceeded { op,
 instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason: ClearingProblem }` (the validation reasons, re-checked: `NoFlatDepth`, `NotEndMill { cutter }`, `UnknownTool`), `CountersinkMouthExceedsTool
 { op, mouth_mm, tool_mm }`, `InlayGlueGap { op, glue_gap_mm, depth_mm }`,
-`InlayMargin { op, margin_mm }`, `PhotoBitmapUnknown { op, bitmap }`,
+`InlayMargin { op, margin_mm }`, `InlayTooNearEdge { op, edge, distance_mm,
+needed_mm, stock_mm }` (#495: a male's design too near a stock edge that
+clips its band; "Algorithms → Inlay", step 4), `PhotoBitmapUnknown { op, bitmap }`,
 `PhotoSetting { op, field, value }`, `BitmapDecode { bitmap, reason }`,
 `StartDepthUncleared { op, start_depth_mm }` (the generator's form of the
 validation error, re-checked as every generator re-checks validation),
@@ -1386,6 +1391,44 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      plus the floor's ring short of the edge, and the plain offset copied
      every notch of the design (the dip over an M, the pinches between
      letters). A user-drawn boundary is #449.
+   - **Clipped to the board** (#495; maintainer decision 2026-11-02: the
+     band only gives the plug room, and nothing outside it matters).
+     Where `B` runs past the stock rectangle it is clipped to the board,
+     `B ∩ board` (`dc_geometry::band_on_board`, an intersection, flattened
+     within the tolerance as `B` is), and the surround is the clipped band
+     less the design. The board is `MaleBand::board`: the stock's `[0, W]
+     × [0, H]` with an open edge, so the edge pass clears the floor to the
+     board's edge, its end mill's edge on it and never past it (S7 allows
+     a cut exactly along an edge); and that rectangle inset by the V-bit's
+     radius `R_v` with a V wall, since the V-bit runs down the wall to its
+     top and S7 holds it to its full radius. Where `B` stays on the board
+     (its outlines within `EPS_MM` of it) nothing changes: the surround and
+     the open edge are built exactly as before, so every unclipped program
+     is byte for byte the same (`inlay::unclipped_band_is_unchanged`). The
+     generator warns `inlay_band_clipped`, naming the edges `B` runs past
+     and the narrowest band left: the least distance from the design to a
+     clipping edge, less the inset. With an open edge the plug's rim there
+     is the board's edge. The open edge's `B` (the V-bit's cone at the
+     stock top, the floor's outer edge) is the clipped band. The design's
+     own cut is never clipped: where a stock edge clips the band, the
+     design must stand far enough from it for what the band holds there
+     (`MaleBand::board_room_mm`), else `InlayTooNearEdge` names the edge, the
+     distance, the room needed, the move away from the edge that fits and the stock length
+     along that axis that fits the design centred (both rounded up to
+     the thousandth shown). The room is the most of: the V-bit along the
+     plug's foot with its whole radius on the board, `P·s + R_v` (which
+     holds its flank as well, since the cone check keeps `(D − G + P)·s ≤
+     R_v`); with an open edge, the edge pass's floor ring `P·s + 2r` and
+     the flank `(D − G + 2P)·s`; and with a cut-out, `R_v` (a V wall only)
+     plus its floor ring, `MaleBand::cut_out_margin_needed_mm`. The rule
+     is the band's own with `M` replaced by the band left. The issue's
+     example, a design 2 mm from the edge, needs a V-bit under 4 mm
+     across with the bench's angles, since S7 reads a V-bit's whole
+     radius; the bench's 6.35 mm 60° bit needs 4.33 mm at `P` 2. Found on
+     the maintainer's eagle male: its stock is the drawing's size, 10 mm
+     round the design, with `M` 16 and `R` 25, so `B` ran 6 mm past every
+     edge and export failed with "cuts off the stock"; clipped, it
+     exports.
    - **Every corner of the plug (#452).** The male's flank is engaged
      from the stock top, so wood stands above its start plane wherever
      its carve does not reach: a corner of the surround the medial axis
@@ -1452,6 +1495,23 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    inside `B`, 6.41 mm out from the star where `B` is plain (4.577 mm
    before #461); without it, 2.742 mm inside `B`, 5.26 mm out (4 mm
    before).
+
+   **On a clipped band** (#495). The path is the clipped band's outers
+   inset as above, `(B ∩ board) ⊖ i`, which is `(B ⊖ i) ∩ (board ⊖ i)`:
+   the unclipped path where it stays on the board, and stretches along
+   the board inset by `i` where it does not. With an open edge (`i = r`,
+   the board the stock itself) those stretches run the radius inside the
+   board's edge, where the board's own edge frees the plug, so they are
+   dropped (`dc_geometry::without_rect_sides`): the rest are open paths
+   from the board's edge to the board's edge, through the stock, their
+   ends the radius inside it, so the kerf reaches the edge and the tool
+   never leaves the board. They are cut by the same On line Profile,
+   which cuts open paths as drawn (#175), its plunge entry at a path's
+   start; its tabs go only on those paths, laid from each path's start
+   as an open path's are (an open path may have none). With a V wall the
+   band is clipped `R_v` inside the board and the board stands beyond
+   it, so the path stays closed and frees the plug from it. Room as
+   step 4.
 
 ### Bitmap import and storage (dc-import::bitmap, dc-project::bitmap)
 
@@ -1555,8 +1615,9 @@ it does for Pocket and Profile, and never from the toolpath.
   project (targets nested; the male's surround by
   `dc_geometry::surround` on the targets mirrored by
   `Transform::mirror_x_about` the targets' bounding-box centre, closed by
-  `R'` from `dc_project::male_band`, all pure geometry, never a
-  generator; a Photo's footprint rectangle), and
+  `R'` from `dc_project::male_band`, and clipped to `MaleBand::board` of
+  the project's stock where it runs past it, #495, all pure geometry,
+  never a generator; a Photo's footprint rectangle), and
   `engaged_from` as the generator derives it: the stock top, or the
   start plane when `dc_project::cleared_start_plane` finds an enabled Pocket,
   or an enabled V-Carve's flat floor (#426), at that depth (the pass re-runs that derivation from the project; it is
@@ -1638,7 +1699,11 @@ it does for Pocket and Profile, and never from the toolpath.
   And every point of it (its ends and middle, as an Engrave's are held)
   lies on the cut-out's path within the slack (#461): the pass derives
   the path itself, `inset_outers(rounded_band(design, M, R'),
-  MaleBand::cut_out_inset_mm(d))`, step 6. Its tabs are held as a
+  MaleBand::cut_out_inset_mm(d))`, step 6, on the band clipped to the
+  board where it runs past it, and with an open edge less its stretches
+  along the board's edge (#495). Clipping never loosens S7: a cut-out
+  whose tool passes the board's edge is still refused
+  (`safety::cut_out_off_the_stock_still_fails`). Its tabs are held as a
   Profile's (#337): the pass builds the On line Profile itself on that
   path and places its tab request by `dc_cam::placed_tabs::place`, the
   documented layout rule. It never calls a generator
@@ -1871,6 +1936,7 @@ for V operations.
 - The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_refuses_a_female_and_a_narrow_floor`; `validate::cut_out_on_a_female_is_an_error`, `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`.
 - The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::inset_outers_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::cut_out_no_room`.
 - The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
+- The band and the cut-out clipped to the stock (#495): `inlay::band_is_clipped_to_the_stock` (a star 2 mm from the left edge, `M` 8, a 3.175 mm 60° V-bit and a 1.5 mm end mill: no run's tool past the stock, the clearing floor out to the board's edge, `inlay_band_clipped` naming the left edge and 2 mm), `inlay::v_wall_band_is_clipped_inside_the_board` (clipped `R_v` inside it), `inlay::cut_out_runs_edge_to_edge_when_clipped` (open paths, their ends `r` inside the edge, every cut on them and on the stock, the tabs on them), `inlay::clipped_male_still_seats` (`plug_seats_flush`'s 0.05 mm), `inlay::design_too_near_the_edge_is_explained` (the bench's bits: `InlayTooNearEdge`, 4.330 mm needed), `inlay::unclipped_band_is_unchanged` (the tutorial's "DC" and the star: the surround and `B` as before, the same runs on stock ten times the size), `carve::band_on_board_clips_only_what_runs_past`, `carve::without_rect_sides_opens_outlines_along_the_board` (dc-geometry), `inlay::band_is_clipped_to_the_board` (dc-project); `safety::clipped_band_is_derived_from_the_project` (S17 and S9 refuse past the clipped band on 60 mm stock and pass on 100 mm), `safety::cut_out_off_the_stock_still_fails` (the unclipped cut-out on the narrow stock fails S7; a cut along the dropped stretch fails S9).
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
@@ -2030,6 +2096,12 @@ Goal: the lettered inlay pair cut and fitted.
     `cli::lettered_inlay_fits_its_board`,
     `cli::v23_project_exports_the_same_program`,
     `quick_start::inlay_pair_chapter_runs`. [20b]
+20d. **The male band clipped to the stock** (#495, maintainer decision
+    2026-11-02, found on the maintainer's eagle male): the band and the
+    cut-out clipped to the board, `inlay_band_clipped`,
+    `InlayTooNearEdge` ("Algorithms → Inlay", steps 4 and 6), S17 and S9
+    on the clipped band. No format change. Tests: the #495 group of the
+    test plan. [20c]
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 

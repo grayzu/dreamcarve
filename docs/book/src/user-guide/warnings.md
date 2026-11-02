@@ -79,6 +79,7 @@ Printed after the operation's id: `warning: <code>: operation `op1`: …`.
 | `clearing_no_room` | "its clearing pass with tool … (… mm) can reach none of the floor the passes before it left, so it cuts nothing" | A V-Carve's clearing pass is too wide for the carve's floor, or comes after a pass with a narrower end mill, which already reached everything it can. The pass has no program of its own; remove it, or list the passes largest end mill first ([V-Carve: clearing passes](v-carve.md#clearing-passes)). |
 | `inlay_male_mirrored` | "it is a male inlay, so its design is cut mirrored about X = … mm, the middle of its targets, to seat face down in the female" | A note, once per male Inlay: the plug is glued face down into the female, so the male cuts the design mirrored left to right about the vertical line through the middle of its targets' bounding box. Draw the design as it should read in the female; do not mirror it yourself. Turn the plug over left to right to fit it ([Inlay: the mirror](inlay.md#the-mirror-and-which-way-to-flip-the-plug)). |
 | `inlay_band_edge_v_wall` | "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least … mm in both projects for the first clearing pass that fits to cut it" | A male Inlay's clearing pass cuts the band's outer edge upright when its end mill fits the band's flat floor, `margin_mm − plug_depth_mm · tan(α/2)` wide, and the V-bit's flank at the plug's foot stays inside the band. None does, so the V-bit cuts the edge as a sloped wall, as without clearing passes, and the cut-out (if any) runs along the V wall's foot. The program is still cut; raise `margin_mm` as the message says, in both projects, or use a narrower end mill ([Inlay: the band's edge](inlay.md#the-bands-outer-edge)). |
+| `inlay_band_clipped` | "its band runs past the stock's … edge(s), so it is clipped to the board there and is … mm wide at its narrowest; the board's edge is the plug's rim there, and a cut-out stops at it", or with a V wall "…, so its V wall is cut the V-bit's radius inside the board there, the band … mm wide at its narrowest" | A male Inlay's band, `margin_mm` round the design, runs past the stock: the board is smaller than the design and its band. The band only gives the plug room, so it is clipped to the board, and the program is cut. With an end mill's upright edge the clearing pass clears to the board's edge and a cut-out stops at it; with a V wall the band stops the V-bit's radius short of it. Nothing to do, unless you want the whole band: use a bigger board ([Inlay: at the board's edge](inlay.md#the-bands-outer-edge)). |
 
 ## Export
 
@@ -159,6 +160,16 @@ the stock top, since the plug above its start plane is never cleared.
 | `inlay_cut_out_needs_male` | A female Inlay has a `cut_out` (format 23): "… is a female inlay with a cut_out; only the male's plug is cut out of its board". At `cut_out`. |
 | `inlay_cut_out_no_room` | A male Inlay's cut-out tool is wider than the band's flat floor, `margin_mm − plug_depth_mm × tan(α/2)` when a clearing pass cuts the band's outer edge, `margin_mm − 2 × plug_depth_mm × tan(α/2)` when the V-bit does: "… that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least … mm". At `margin_mm`. |
 | `cutter_not_flat` | A male Inlay's cut-out tool is not a flat end mill: "… cuts its plug's cut-out with tool …". At `cut_out.tool`. |
+
+Export also stops when a male's band runs past a stock edge, which
+clips it, but the design is too near that edge for what the band holds
+there: "operation …'s male design is … mm from the stock's … edge, which
+clips its band, but the band needs … mm there (the V-bit along the
+plug's foot with its whole radius on the board, and the end mills' floor
+ring); move the design at least … mm away from that edge, or make the
+stock at least … mm wide with the design centred". It has no code: it
+comes from the toolpath, not the project's values. Move the design, or
+use a bigger board or smaller bits.
 
 [Inlay: errors](inlay.md#errors) gives each message and what to do, and
 [Inlay: choosing the bit](inlay.md#choosing-the-bit) what to change when
