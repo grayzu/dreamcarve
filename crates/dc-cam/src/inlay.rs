@@ -45,8 +45,9 @@ use crate::vcarve::{
 };
 use crate::warning::Warning;
 use dc_geometry::{
-    Contour, EPS_MM, Point, Polyline, Rect, Region, Transform, band_on_board, difference,
-    inset_outers, nearest_point, rounded_band, surround, without_rect_sides,
+    Contour, EPS_MM, Point, Polyline, Rect, Region, Transform, band_on_board, difference_within,
+    inset_outers, nearest_point, rounded_band, surround_within, wall_tolerance_mm,
+    without_rect_sides,
 };
 use dc_project::{
     BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
@@ -374,6 +375,16 @@ fn side_of(
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
+    // #478: the plug's outline within the V-bit's wall tolerance; the
+    // band's edge within the project's.
+    let plug_tolerance_mm = project
+        .tools
+        .iter()
+        .find(|t| t.id == op.tool)
+        .and_then(|t| checked_v_bit(&op.id, t).ok())
+        .map_or(tolerance_mm, |bit| {
+            wall_tolerance_mm(tolerance_mm, bit.slope)
+        });
     let edge = rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
     // #495: a band that runs past the board's edge is clipped to it.
     let on_board = band.as_ref().and_then(|b| {
@@ -391,12 +402,18 @@ fn side_of(
     });
     let (regions, edge, clipped) = match on_board {
         None => (
-            surround(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm),
+            surround_within(
+                &design.regions,
+                margin_mm,
+                edge_rounding_mm,
+                tolerance_mm,
+                plug_tolerance_mm,
+            ),
             edge,
             None,
         ),
         Some((band, at)) => (
-            difference(&band, &design.regions, tolerance_mm),
+            difference_within(&band, &design.regions, tolerance_mm, plug_tolerance_mm),
             band,
             Some(at),
         ),

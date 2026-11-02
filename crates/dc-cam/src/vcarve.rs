@@ -45,6 +45,7 @@ use cone::{OpenEdgeWalls, Walls};
 use dc_geometry::medial::CornerReach;
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point3, Region, floor_regions, is_design_hole, nest,
+    wall_tolerance_mm,
 };
 use dc_project::{
     InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp, VCarveStrategy,
@@ -423,6 +424,8 @@ pub fn blocks(
     };
     let flat = Floor::of(carve, bit.slope);
     let tolerance_mm = project.flatten_tolerance_mm;
+    // #478: the walls' arcs, where the cone turns their error into height.
+    let wall_tolerance_mm = wall_tolerance_mm(tolerance_mm, bit.slope);
     // #469: how far the program may move a point it writes, half a unit in
     // its last place on each axis.
     let written_mm = project
@@ -516,6 +519,7 @@ pub fn blocks(
                     rates,
                     safe_z_mm,
                     tolerance_mm,
+                    wall_tolerance_mm,
                 };
                 out.extend(floor::blocks(
                     flat,
@@ -581,6 +585,7 @@ pub fn blocks(
                 rates,
                 safe_z_mm,
                 tolerance_mm,
+                wall_tolerance_mm,
             };
             out.extend(floor::blocks_open(
                 flat,

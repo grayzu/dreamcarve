@@ -270,6 +270,44 @@ fn generated_inlays_pass_s17() {
     }
 }
 
+/// #478: with the bench's narrow bits, 15° and 30°, the generator draws
+/// the plug's arcs and the floor's trace finer than the flatten tolerance
+/// (`dc_geometry::wall_tolerance_mm`), and the safety pass re-derives the
+/// male's surround as finely. The small star's female and male, its
+/// circle a hole of the design, each with and without the end mill's
+/// clearing pass, pass the whole safety pass.
+#[test]
+fn narrow_bit_inlays_pass_the_safety_pass() {
+    let pass = ClearingPass {
+        tool: ToolId::new("t3"),
+        strategy: ClearanceStrategy::Offset,
+        direction: CutDirection::Climb,
+        entry: Entry::Plunge,
+    };
+    for angle_deg in [15.0, 30.0] {
+        let mut star = small_star();
+        star.tools.push(Tool {
+            id: ToolId::new("t6"),
+            name: format!("{angle_deg}° V-bit"),
+            cutter: ToolKind::VBit {
+                included_angle_deg: angle_deg,
+            },
+            ..tool_v_bit_90()
+        });
+        for side in [InlaySide::Female, InlaySide::Male] {
+            for clearing in [Vec::new(), vec![pass.clone()]] {
+                let op = InlayOp {
+                    clearing: clearing.clone(),
+                    ..inlay(side, "t6", 1.0, 4.0)
+                };
+                let programs = export_inlay(&star, &op)
+                    .unwrap_or_else(|e| panic!("{angle_deg}° {side:?} {clearing:?}: {e}"));
+                assert_eq!(programs.len(), 1 + clearing.len(), "{side:?}");
+            }
+        }
+    }
+}
+
 /// `vcarve::line_art_regions_carve`, through the whole safety pass (#463):
 /// the line-art design (`dc_project::test_support::line_art_project`:
 /// ridges of 0.2, 0.5 and 1 mm, small enclosed regions, lines that end

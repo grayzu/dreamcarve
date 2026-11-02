@@ -6,13 +6,36 @@
 //! constructions; security review M3): they live here so `dc-gcode`
 //! re-derives material without calling a generator.
 
-use crate::boolean::{difference, intersection, union};
+use crate::boolean::{difference, difference_within, intersection, union};
 use crate::contour::Contour;
 use crate::distance::segment_distance_mm;
 use crate::offset::offset;
 use crate::point::{EPS_MM, Point, Rect};
 use crate::polyline::{Polyline, Segment, Vertex};
 use crate::region::{Region, nest};
+
+/// The slope, `tan(α/2)`, of the steepest V-bit whose walls are drawn
+/// within the whole flatten tolerance ([`wall_tolerance_mm`]; #478): the
+/// 60° bit's, the inlay test part's and most of the corpus's: `tan 30°`
+/// rounded down, so that bit's own slope, however computed, is not below
+/// it.
+const WALL_REFERENCE_SLOPE: f64 = 0.577_350_269_189_625;
+
+/// How near, mm, a carve with a V-bit of slope `slope` (`tan(α/2)`) draws
+/// the arcs of the walls it cuts (#478): the flatten tolerance
+/// `tolerance_mm`, scaled down for a bit steeper than the 60° bit by its
+/// slope over that one's. An arc drawn as lines a distance `e` inside its
+/// wall stops the cut `e` short of it, and the cone turns that into height
+/// at `1 / slope`: the 15° bit's flank rises 7.6 mm per mm, so the
+/// flatten tolerance's 0.01 mm held a star's inlay plug 0.140 mm proud
+/// where the 60° bit's held it 0.031 mm. Scaled, a wall stands no further
+/// off its true surface, measured up the flank, than the 60° bit's
+/// (`tolerance_mm / tan 30°`) whatever the bit, and a 60° or wider bit's
+/// walls are drawn as before. `slope` is positive and finite.
+#[must_use]
+pub fn wall_tolerance_mm(tolerance_mm: f64, slope: f64) -> f64 {
+    tolerance_mm * (slope / WALL_REFERENCE_SLOPE).min(1.0)
+}
 
 /// A carve's floor: each of `regions` inset by `inset_mm` (for a V-bit
 /// carve with a flat depth `F`, `F · tan(α/2)`, the groove's half-width at
@@ -104,6 +127,24 @@ pub fn surround(
     rounding_mm: f64,
     tolerance_mm: f64,
 ) -> Vec<Region> {
+    surround_within(regions, margin_mm, rounding_mm, tolerance_mm, tolerance_mm)
+}
+
+/// [`surround`] with the design's outlines, which are the plug's,
+/// flattened within `design_tolerance_mm`, and the band's edge within
+/// `tolerance_mm` (#478). A V-bit carve's walls stand `1 / tan(α/2)`
+/// higher off true per mm they lie off it, so a steep bit wants the
+/// plug's outline nearer its arcs; the band's edge is not the plug's and
+/// keeps the coarser tolerance, so the floor's rings that step in from it
+/// keep their few vertices. Empty as [`surround`] is.
+#[must_use]
+pub fn surround_within(
+    regions: &[Region],
+    margin_mm: f64,
+    rounding_mm: f64,
+    tolerance_mm: f64,
+    design_tolerance_mm: f64,
+) -> Vec<Region> {
     if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
     }
@@ -112,7 +153,7 @@ pub fn surround(
     } else {
         rounded_band(regions, margin_mm, rounding_mm, tolerance_mm)
     };
-    difference(&band, regions, tolerance_mm)
+    difference_within(&band, regions, tolerance_mm, design_tolerance_mm)
 }
 
 /// The floor of a male inlay's surround, flat `inset_mm` (`P·tan(α/2)`)
@@ -1115,5 +1156,87 @@ mod tests {
                 "{case}: outers stay counter-clockwise"
             );
         }
+    }
+
+    /// #478: a 60° bit or a wider one draws its walls within the flatten
+    /// tolerance; a steeper one within it scaled by its slope over the
+    /// 60° bit's, so its walls stand no further off true up the flank.
+    #[test]
+    fn wall_tolerance_scales_with_the_slope_below_the_60_degree_bit() {
+        let slope = |angle_deg: f64| (angle_deg.to_radians() / 2.0).tan();
+        for angle_deg in [60.0, 90.0, 120.0] {
+            assert!(
+                (wall_tolerance_mm(TOL, slope(angle_deg)) - TOL).abs() <= 1e-15,
+                "{angle_deg}°"
+            );
+        }
+        for angle_deg in [15.0, 30.0, 45.0] {
+            let wall_mm = wall_tolerance_mm(TOL, slope(angle_deg));
+            assert!(
+                (wall_mm / slope(angle_deg) - TOL / slope(60.0)).abs() <= 1e-12,
+                "{angle_deg}°: {wall_mm} mm stands {} mm up the flank",
+                wall_mm / slope(angle_deg)
+            );
+        }
+    }
+
+    /// The largest distance, mm, by which an edge of `contour` runs inside
+    /// the circle of `radius_mm` about `centre` (its sagitta), and the
+    /// largest distance of a vertex off that circle.
+    fn off_circle(contour: &Contour, centre: Point, radius_mm: f64) -> (f64, f64) {
+        let vertices = contour.polyline().vertices();
+        let mut sagitta_mm: f64 = 0.0;
+        let mut vertex_mm: f64 = 0.0;
+        for (k, a) in vertices.iter().enumerate() {
+            let b = vertices[(k + 1) % vertices.len()];
+            let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            sagitta_mm = sagitta_mm.max(radius_mm - middle.distance_to(centre));
+            vertex_mm = vertex_mm.max((a.point().distance_to(centre) - radius_mm).abs());
+        }
+        (sagitta_mm, vertex_mm)
+    }
+
+    /// #478: `surround_within` flattens the design's arcs, the plug's
+    /// outline, within its own tolerance and the band's within the
+    /// coarser one. The star with its 12 mm circle, an 8 mm margin closed
+    /// by a 20 mm rounding: the circle region's chords run no more than
+    /// the design's tolerance inside the circle; the band's edge keeps the
+    /// vertices `surround` gives it; with one tolerance it is `surround`.
+    #[test]
+    fn surround_within_draws_the_design_finer() {
+        let (design, _) =
+            nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("star nests");
+        let fine_mm = TOL / 8.0;
+        let coarse = surround(&design, 8.0, 20.0, TOL);
+        let fine = surround_within(&design, 8.0, 20.0, TOL, fine_mm);
+        assert_eq!(surround_within(&design, 8.0, 20.0, TOL, TOL), coarse);
+        let disc = |s: &[Region]| {
+            s.iter()
+                .find(|r| r.holes().is_empty())
+                .expect("the circle is a region of its own")
+                .outer()
+                .clone()
+        };
+        let band = |s: &[Region]| {
+            s.iter()
+                .find(|r| r.holes().len() == 1)
+                .expect("the band")
+                .outer()
+                .polyline()
+                .vertices()
+                .len()
+        };
+        let (sagitta_mm, vertex_mm) = off_circle(&disc(&fine), Point::new(0.0, 0.0), 6.0);
+        assert!(
+            sagitta_mm <= fine_mm + 1e-5,
+            "{sagitta_mm} inside the circle"
+        );
+        assert!(vertex_mm <= 1e-5, "a vertex {vertex_mm} off the circle");
+        let (coarse_mm, _) = off_circle(&disc(&coarse), Point::new(0.0, 0.0), 6.0);
+        assert!(
+            coarse_mm > fine_mm,
+            "{coarse_mm}: the coarse circle is coarser"
+        );
+        assert_eq!(band(&fine), band(&coarse), "the band's edge as before");
     }
 }

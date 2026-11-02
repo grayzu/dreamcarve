@@ -1000,6 +1000,16 @@ orientation; DreamCarve's regions are normalised anyway.
      boundary so the flank meets the outline at the start plane. The
      medial chains clamped at `F` run inside it; the trace is what makes
      the wall a clean slope. Direction: as a Pocket wall pass, climb.
+     **Its arcs within the bit's wall tolerance (#478).** An arc of the
+     trace drawn as lines `e` inside it stops the flank `e` short of the
+     wall, and the cone turns that into height at `1 / tan(α/2)`: with the
+     flatten tolerance's 0.01 mm the bench's 15° bit left a star's female
+     0.070 mm shallow round its circle, the 30° 0.035. The trace's arcs are
+     drawn within `dc_geometry::wall_tolerance_mm`, the flatten tolerance
+     times `min(1, tan(α/2) / tan 30°)`, so a wall stands no further off
+     true up the flank than the 60° bit's, whatever the bit; a 60° or
+     wider bit's trace is drawn as before. The rings inside the trace keep
+     the flatten tolerance (`vcarve::narrow_bit_traces_an_arc_within_its_wall_tolerance`).
    - **V-bit floor**: the floor region minus what the clearing passes
      reach (step 7), cleared as `pocket::rings` clears a tool-centre
      region (the floor region is one, for a tool of radius `F · slope`,
@@ -1367,7 +1377,12 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      `design_mirrored` (every region, so a hole in the design is carved:
      `difference` with the design's regions, which subtracts their outers
      and adds back their holes, with walls on every side). Tolerance the
-     project's.
+     project's for the band's edge; the design's outlines, the plug's,
+     within the bit's wall tolerance (`dc_geometry::surround_within`,
+     `wall_tolerance_mm`; V-Carve generator, step 6; #478): drawn as
+     chords within 0.01 mm the star's circle held the plug 0.072 mm proud
+     with the 15° bit. The safety pass re-derives the surround the same
+     way.
    - `Carve { regions: surround, start_plane: thickness − (D − G),
      engaged_from: thickness, flat_depth: Some(P), open_edge, … }`.
      **Open edge** (`vcarve::OpenEdge { band: B, design, top_z_mm }`):

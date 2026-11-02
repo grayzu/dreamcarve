@@ -71,8 +71,6 @@ pub struct Case {
     /// The family's name.
     pub family: String,
     pub seed: u64,
-    /// The V-bit's included angle, degrees.
-    pub angle_deg: f64,
     pub project: Project,
     pub ops: Vec<(Kind, Operation)>,
 }
@@ -390,7 +388,6 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         label,
         family: family.to_owned(),
         seed,
-        angle_deg,
         project,
         ops,
     }
@@ -474,12 +471,6 @@ fn known_issue(case: &Case, kind: Kind, at: Point, near: &[Point]) -> Option<u32
         .find(|&&(family, seed, k, _)| case.family == family && case.seed == seed && k == kind)
     {
         return Some(issue);
-    }
-    // #478: with a 15° or 30° bit the seat error, a fixed 0.018 mm off
-    // the walls turned into height by the cone, is 0.066 to 0.140 mm
-    // even on the star test part.
-    if case.angle_deg < 45.0 {
-        return Some(478);
     }
     // #479: where two outlines nearly touch, the male cuts no groove
     // between them, and the plug stands up to its whole height there.

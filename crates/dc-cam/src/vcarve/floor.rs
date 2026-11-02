@@ -155,6 +155,12 @@ pub(crate) struct FloorCut<'a> {
     pub safe_z_mm: f64,
     /// The project's flatten tolerance, mm.
     pub tolerance_mm: f64,
+    /// How near the boundary trace draws the arcs it runs along, mm
+    /// ([`super::wall_tolerance_mm`]; #478): the trace is where the flank
+    /// meets the walls, and the cone turns its distance off them into
+    /// height. The rings inside it, whose grooves the trace's walls stand
+    /// beyond, keep `tolerance_mm`.
+    pub wall_tolerance_mm: f64,
 }
 
 /// The blocks that cut `floors` (from [`Floor::regions`] of one region) at
@@ -267,7 +273,13 @@ pub(crate) fn blocks_open(
                 out.extend(rings_clearing(&piece, floor, cut, anchor)?);
             }
             for ring in rings_of(region, 0, anchor, |_| true) {
-                out.push(ring_block(ring, Some(region), floor, cut));
+                out.push(ring_block(
+                    ring,
+                    Some(region),
+                    floor,
+                    cut,
+                    cut.wall_tolerance_mm,
+                ));
             }
             continue;
         };
@@ -288,7 +300,7 @@ pub(crate) fn blocks_open(
                 .map(|r| (r, distance_to_loops(r, ring.start)))
                 .min_by(|a, b| a.1.total_cmp(&b.1))
                 .map(|(r, _)| r);
-            out.push(ring_block(ring, cleared, floor, cut));
+            out.push(ring_block(ring, cleared, floor, cut, cut.wall_tolerance_mm));
         }
     }
     if let Some(last) = out.last() {
@@ -340,12 +352,25 @@ fn rings_clearing(
             let mut from = Some(ring.start);
             for centre in residual_regions(&node.region, &[], stepover_mm / 2.0, cut.tolerance_mm) {
                 for centre_ring in rings_of(&centre, ring.node, &mut from, |_| true) {
-                    out.push(ring_block(centre_ring, Some(&centre), floor, cut));
+                    out.push(ring_block(
+                        centre_ring,
+                        Some(&centre),
+                        floor,
+                        cut,
+                        cut.tolerance_mm,
+                    ));
                 }
             }
         }
         let cleared = node.region.clone();
-        out.push(ring_block(ring, Some(&cleared), floor, cut));
+        // The root's rings run along the floor's outline (the boundary
+        // trace, with no clearing pass) or a piece's.
+        let tolerance_mm = if ring.node == 0 {
+            cut.wall_tolerance_mm
+        } else {
+            cut.tolerance_mm
+        };
+        out.push(ring_block(ring, Some(&cleared), floor, cut, tolerance_mm));
     }
     if let Some(last) = out.last() {
         *anchor = Some(last.exit);
@@ -397,12 +422,18 @@ fn rings_of(
 }
 
 /// One ring as a closed lap at the floor's Z: climb, from its start, arcs
-/// flattened to the floor's side ([`flatten_inside`]), every move at the
-/// feed.
-fn ring_block(ring: Ring, cleared: Option<&Region>, floor: &Floor, cut: &FloorCut<'_>) -> CutBlock {
+/// flattened to the floor's side within `tolerance_mm`
+/// ([`flatten_inside`]), every move at the feed.
+fn ring_block(
+    ring: Ring,
+    cleared: Option<&Region>,
+    floor: &Floor,
+    cut: &FloorCut<'_>,
+    tolerance_mm: f64,
+) -> CutBlock {
     let start = ring.start;
     let path = ring_path(ring, CutDirection::Climb);
-    let points = flatten_inside(&path, cut.tolerance_mm);
+    let points = flatten_inside(&path, tolerance_mm);
     let z_mm = floor.z_mm;
     let mut exit = start;
     let cuts = points
