@@ -6837,10 +6837,36 @@ mod tests {
         p
     }
 
+    /// Gives `inlay` a male board the size of [`inlay_project`]'s 19 mm
+    /// stock, so its male is cut and checked too (#498).
+    fn on_male_board(inlay: &mut crate::model::InlayOp) {
+        inlay.male_board = crate::model::MaleBoard {
+            width_mm: None,
+            height_mm: None,
+            thickness_mm: Some(19.0),
+        };
+    }
+
+    /// Which boards [`inlay_project`]'s Inlay cuts in a test (#498): the
+    /// female alone, its male board unset, or both.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Cut {
+        FemaleOnly,
+        Both,
+    }
+
+    /// Sets which boards `inlay` cuts.
+    fn cuts(inlay: &mut crate::model::InlayOp, cut: Cut) {
+        match cut {
+            Cut::FemaleOnly => inlay.male_board = crate::model::MaleBoard::default(),
+            Cut::Both => on_male_board(inlay),
+        }
+    }
+
     /// The star test part's values (functional spec, "Inlay pair"): `D 4,
-    /// G 1, P 2`, margin 8, on `side`.
-    fn star(inlay: &mut crate::model::InlayOp, side: crate::model::InlaySide) {
-        inlay.side = side;
+    /// G 1, P 2`, margin 8, cutting `cut`.
+    fn star(inlay: &mut crate::model::InlayOp, cut: Cut) {
+        cuts(inlay, cut);
         inlay.depth_mm = Some(4.0);
         inlay.glue_gap_mm = Some(1.0);
         inlay.plug_depth_mm = Some(2.0);
@@ -7197,7 +7223,7 @@ mod tests {
     fn cut_out_project(edit: impl FnOnce(&mut crate::model::InlayOp)) -> Project {
         use crate::model::{InlayCutOut, TabPlacement, TabShape, TabSpec};
         let mut p = inlay_project(|inlay| {
-            inlay.side = crate::model::InlaySide::Male;
+            on_male_board(inlay);
             inlay.cut_out = Some(InlayCutOut {
                 tool: ToolId::new("t3"),
                 tabs: Some(TabSpec {
@@ -7228,30 +7254,142 @@ mod tests {
         assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
     }
 
-    /// #443: only the male has a band to cut the plug out of; a female's
-    /// pocket is in the board it stays in. A cut-out on a female is
-    /// `inlay_cut_out_needs_male`, at `cut_out`, an error.
+    /// #498: every Inlay has a male, so a cut-out needs no side: an Inlay
+    /// with a cut-out whose male board is not measured yet is valid (its
+    /// male is not cut until it is, and the female ignores the cut-out),
+    /// and so is one with a measured board. `inlay_cut_out_needs_male` is
+    /// gone.
     #[test]
-    fn cut_out_on_a_female_is_an_error() {
-        let p = cut_out_project(|inlay| inlay.side = crate::model::InlaySide::Female);
+    fn cut_out_no_longer_needs_a_side() {
+        let unmeasured = cut_out_project(|inlay| {
+            inlay.male_board = crate::model::MaleBoard::default();
+        });
+        assert_eq!(validate(&unmeasured), vec![]);
+        assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
+    }
+
+    /// #498: a male board's width and height, when set, are its size,
+    /// above 0; `inlay_male_board_size`, an error, at the field. `null`
+    /// is the stock's.
+    #[test]
+    fn male_board_size_must_be_positive() {
+        for field in ["width_mm", "height_mm"] {
+            for value_mm in [0.0, -10.0] {
+                let p = inlay_project(|inlay| {
+                    on_male_board(inlay);
+                    match field {
+                        "width_mm" => inlay.male_board.width_mm = Some(value_mm),
+                        _ => inlay.male_board.height_mm = Some(value_mm),
+                    }
+                });
+                let problems = validate(&p);
+                assert_eq!(
+                    problems,
+                    vec![Problem::InlayMaleBoardSize {
+                        operation: OperationId::new("o7"),
+                        name: "Inlay".into(),
+                        field,
+                        value_mm,
+                    }],
+                    "{field} {value_mm}"
+                );
+                assert_eq!(problems[0].severity(), Severity::Error);
+                assert_eq!(problems[0].code(), "inlay_male_board_size");
+                assert_eq!(
+                    problems[0].field(),
+                    Some(format!("operations[o7].male_board.{field}"))
+                );
+                let message = problems[0].to_string();
+                assert!(message.contains(field), "{message}");
+            }
+            let p = inlay_project(|inlay| {
+                on_male_board(inlay);
+                match field {
+                    "width_mm" => inlay.male_board.width_mm = Some(60.0),
+                    _ => inlay.male_board.height_mm = Some(60.0),
+                }
+            });
+            assert_eq!(validate(&p), vec![], "{field} 60");
+        }
+    }
+
+    /// #498: a male board's thickness, when set, is above 0;
+    /// `inlay_male_board_thickness`, an error, at the field. Unset, the
+    /// male is not cut (the generator's `inlay_male_board_unset`), and the
+    /// project is valid.
+    #[test]
+    fn male_board_thickness_must_be_positive() {
+        for thickness_mm in [0.0, -6.0] {
+            let p = inlay_project(|inlay| {
+                inlay.male_board.thickness_mm = Some(thickness_mm);
+            });
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::InlayMaleBoardThickness {
+                    operation: OperationId::new("o7"),
+                    name: "Inlay".into(),
+                    thickness_mm,
+                }],
+                "{thickness_mm}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+            assert_eq!(problems[0].code(), "inlay_male_board_thickness");
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("operations[o7].male_board.thickness_mm")
+            );
+        }
+        assert_eq!(
+            validate(&inlay_project(|inlay| {
+                inlay.male_board.thickness_mm = None;
+            })),
+            vec![]
+        );
+    }
+
+    /// #498: two enabled Inlays of one project cut their males on the one
+    /// male board, so their boards must agree; a later one whose board
+    /// differs is `inlay_male_boards_differ`, an error, at its
+    /// `male_board`. A disabled Inlay cuts nothing and does not count.
+    #[test]
+    fn inlays_share_one_male_board() {
+        let mut p = inlay_project(on_male_board);
+        let Some(Operation::Inlay(first)) = p.operations.last().cloned() else {
+            panic!("an inlay");
+        };
+        let mut second = crate::model::InlayOp {
+            id: OperationId::new("o8"),
+            name: "Second".into(),
+            ..first
+        };
+        p.operations.push(Operation::Inlay(second.clone()));
+        assert_eq!(validate(&p), vec![], "the same board");
+        second.male_board.thickness_mm = Some(12.0);
+        *p.operations.last_mut().unwrap() = Operation::Inlay(second.clone());
         let problems = validate(&p);
         assert_eq!(
             problems,
-            vec![Problem::InlayCutOutNeedsMale {
-                operation: OperationId::new("o7"),
-                name: "Inlay".into(),
+            vec![Problem::InlayMaleBoardsDiffer {
+                operation: OperationId::new("o8"),
+                name: "Second".into(),
+                first: OperationId::new("o7"),
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
-        assert_eq!(problems[0].code(), "inlay_cut_out_needs_male");
+        assert_eq!(problems[0].code(), "inlay_male_boards_differ");
         assert_eq!(
             problems[0].field().as_deref(),
-            Some("operations[o7].cut_out")
+            Some("operations[o8].male_board")
         );
+        second.enabled = false;
+        *p.operations.last_mut().unwrap() = Operation::Inlay(second);
         assert!(
-            problems[0].to_string().contains("female"),
-            "{}",
-            problems[0]
+            validate(&p)
+                .iter()
+                .all(|problem| problem.code() != "inlay_male_boards_differ"),
+            "{:?}",
+            validate(&p)
         );
     }
 

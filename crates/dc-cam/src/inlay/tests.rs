@@ -14,6 +14,7 @@
 //! and its floor 5 mm below it.
 
 mod board;
+mod boards;
 mod line_art;
 mod near;
 mod seats;
@@ -33,8 +34,8 @@ use dc_geometry::{
 };
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
-    ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlaySide, MachiningOrder, Operation, OperationId, Stock, Tool, ToolId,
+    Board, ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, MachiningOrder, MaleBoard, Operation, OperationId, Stock, Tool, ToolId,
     ToolKind, VCarveOp, VCarveStrategy,
 };
 use std::collections::BTreeMap;
@@ -149,15 +150,27 @@ fn star_project(thickness_mm: f64) -> Project {
     p
 }
 
-/// The star part's Inlay `o1` of `i1` with `t1`, side `side`, no clearing.
-fn inlay(side: InlaySide) -> InlayOp {
+/// The star part's Inlay `o1` of `i1` with `t1`, no clearing, for the
+/// tests of one board (#498): on [`Board::Male`] its male board is
+/// measured, the stock's size and [`THICKNESS_MM`] thick (a version 24
+/// male file's, migrated); on [`Board::Female`] it is unset, so only the
+/// female is cut. [`inlay_runs`] cuts an op on the board [`board_of`]
+/// says; [`fit_of`] and the tests of both boards cut both.
+fn inlay(side: Board) -> InlayOp {
     InlayOp {
         id: OperationId::new("o1"),
         name: "Star".into(),
         enabled: true,
         targets: vec![InstanceId::new("i1")],
         tool: ToolId::new("t1"),
-        side,
+        male_board: match side {
+            Board::Female => MaleBoard::default(),
+            Board::Male => MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(THICKNESS_MM),
+            },
+        },
         depth_mm: Some(DEPTH_MM),
         glue_gap_mm: Some(GLUE_GAP_MM),
         plug_depth_mm: Some(PLUG_DEPTH_MM),
@@ -189,21 +202,51 @@ fn with_op(project: &Project, op: Operation) -> Project {
     p
 }
 
-/// The generator's result for `op` in `project` (which gains `op`).
+/// The board a one-board test cuts `op` on ([`inlay`]): the male when its
+/// male board is measured, else the female.
+fn board_of(op: &InlayOp) -> Board {
+    if op.male_board.thickness_mm.is_some() {
+        Board::Male
+    } else {
+        Board::Female
+    }
+}
+
+/// The generator's result for `op` in `project` (which gains `op`) on the
+/// board [`board_of`] says.
 fn try_inlay(project: &Project, op: &InlayOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
-    generate_inlay(&with_op(project, Operation::Inlay(op.clone())), op)
+    generate_inlay_board(
+        &with_op(project, Operation::Inlay(op.clone())),
+        op,
+        board_of(op),
+    )
 }
 
 /// [`try_inlay`], which must succeed; every run passes `assert_run_safe`,
-/// the cone test included.
+/// the cone test included, on its own board.
 fn inlay_runs(project: &Project, op: &InlayOp) -> (Vec<ToolRun>, Vec<Warning>) {
+    let p = with_op(project, Operation::Inlay(op.clone()));
+    let (runs, warnings) = generate_inlay_board(&p, op, board_of(op))
+        .unwrap_or_else(|e| panic!("the inlay generates: {e}\n{e:?}"));
+    for run in &runs {
+        assert_run_safe(run, &p, &Operation::Inlay(op.clone()));
+    }
+    (runs, warnings)
+}
+
+/// Both boards of `op` in `project` (which gains `op`), from
+/// [`generate_inlay`], which must succeed; every run passes
+/// `assert_run_safe` on its own board. The female's runs, then the
+/// male's, and the warnings.
+fn both_boards(project: &Project, op: &InlayOp) -> (Vec<ToolRun>, Vec<ToolRun>, Vec<Warning>) {
     let p = with_op(project, Operation::Inlay(op.clone()));
     let (runs, warnings) =
         generate_inlay(&p, op).unwrap_or_else(|e| panic!("the inlay generates: {e}\n{e:?}"));
     for run in &runs {
         assert_run_safe(run, &p, &Operation::Inlay(op.clone()));
     }
-    (runs, warnings)
+    let (female, male) = runs.into_iter().partition(|r| r.board == Board::Female);
+    (female, male, warnings)
 }
 
 /// The V-bit's own run of `runs`.
@@ -217,12 +260,12 @@ fn main_run(runs: &[ToolRun]) -> &Toolpath {
 
 /// The star part's female and male, generated once for the tests that
 /// only read them.
-fn star_side(side: InlaySide) -> &'static (Vec<ToolRun>, Vec<Warning>) {
+fn star_side(side: Board) -> &'static (Vec<ToolRun>, Vec<Warning>) {
     static FEMALE: OnceLock<(Vec<ToolRun>, Vec<Warning>)> = OnceLock::new();
     static MALE: OnceLock<(Vec<ToolRun>, Vec<Warning>)> = OnceLock::new();
     let cell = match side {
-        InlaySide::Female => &FEMALE,
-        InlaySide::Male => &MALE,
+        Board::Female => &FEMALE,
+        Board::Male => &MALE,
     };
     cell.get_or_init(|| inlay_runs(&star_project(THICKNESS_MM), &inlay(side)))
 }
@@ -550,15 +593,15 @@ fn male_flank_passes_through_the_outline_at_the_start_plane() {
 /// depth `h` stop that far short of each outline point, the male's reach
 /// that far past it. The star is symmetric about its mirror line, so the
 /// triangle and square of `male_mirrors_about_the_targets_centre_line`,
-/// which the mirror moves, are checked too (`D − G` = 1.5 mm there).
+/// which the mirror moves, are checked too (`D − G` = 1.5 mm there). Each
+/// pair is one Inlay's two boards, from one project (#498).
 #[test]
 fn female_and_male_walls_mate() {
-    let (female, _) = star_side(InlaySide::Female);
-    let (male, warnings) = star_side(InlaySide::Male);
+    let (female, male, warnings) = both_boards(&star_project(THICKNESS_MM), &inlay(Board::Male));
     let star = walls_mate(
-        main_run(female),
-        main_run(male),
-        mirror_axis(warnings),
+        main_run(&female),
+        main_run(&male),
+        mirror_axis(&warnings),
         &star_samples(),
         DEPTH_MM - GLUE_GAP_MM,
     );
@@ -566,11 +609,11 @@ fn female_and_male_walls_mate() {
     let open = InlayOp {
         clearing: vec![clearing_pass()],
         outline_rounding_mm: Some(12.0),
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     };
-    let (open_male, open_warnings) = inlay_runs(&star_project(THICKNESS_MM), &open);
+    let (open_female, open_male, open_warnings) = both_boards(&star_project(THICKNESS_MM), &open);
     let rounded = walls_mate(
-        main_run(female),
+        main_run(&open_female),
         main_run(&open_male),
         mirror_axis(&open_warnings),
         &star_samples(),
@@ -578,15 +621,14 @@ fn female_and_male_walls_mate() {
     );
 
     let pair = two_shapes();
-    let op = |side| InlayOp {
+    let op = InlayOp {
         depth_mm: Some(2.0),
         glue_gap_mm: Some(0.5),
         plug_depth_mm: Some(1.0),
         margin_mm: Some(3.0),
-        ..inlay(side)
+        ..inlay(Board::Male)
     };
-    let (female, _) = inlay_runs(&pair, &op(InlaySide::Female));
-    let (male, warnings) = inlay_runs(&pair, &op(InlaySide::Male));
+    let (female, male, warnings) = both_boards(&pair, &op);
     let corners = [
         vec![(10.0, 10.0), (40.0, 10.0), (10.0, 30.0)],
         vec![(70.0, 10.0), (76.0, 10.0), (76.0, 16.0), (70.0, 16.0)],
@@ -1641,29 +1683,24 @@ fn male_carves_to_the_tip_of_an_acute_notch() {
     }
 }
 
-/// The fit of `female` (in `female_project`) and `male` (in
-/// `male_project`), each generated and held to `assert_run_safe`:
-/// [`fit`], cells `step_mm` apart.
-fn fit_of(
-    female_project: &Project,
-    female: &InlayOp,
-    male_project: &Project,
-    male: &InlayOp,
-    step_mm: f64,
-) -> Fit {
-    let (female_runs, _) = inlay_runs(female_project, female);
-    let (male_runs, _) = inlay_runs(male_project, male);
-    let female_project = with_op(female_project, Operation::Inlay(female.clone()));
-    let male_project = with_op(male_project, Operation::Inlay(male.clone()));
+/// The fit of the two boards of Inlay `op` in `project` (#498: one
+/// project; its male board measured), both generated by
+/// [`generate_inlay`] and held to `assert_run_safe`: [`fit`], cells
+/// `step_mm` apart.
+fn fit_of(project: &Project, op: &InlayOp, step_mm: f64) -> Fit {
+    assert_eq!(board_of(op), Board::Male, "the male board is measured");
+    let (female, male, _) = both_boards(project, op);
+    let runs: Vec<ToolRun> = female.into_iter().chain(male).collect();
     fit(
-        (&female_project, female, &female_runs),
-        (&male_project, male, &male_runs),
+        &with_op(project, Operation::Inlay(op.clone())),
+        op,
+        &runs,
         step_mm,
     )
 }
 
 /// The project and the Inlay of a tutorial fixture
-/// (`tests/fixtures/dc-female.dcv`, `dc-male.dcv`; #446).
+/// (`tests/fixtures/dc.dcv`, #446, one file since #498).
 fn fixture(text: &str) -> (Project, InlayOp) {
     let project = dc_project::load(text.as_bytes())
         .expect("the fixture loads")
@@ -1693,47 +1730,25 @@ fn fixture(text: &str) -> (Project, InlayOp) {
 /// the V-bit's floor rings at the step-over the user guide asks for, 0.1;
 /// 0.2 mm grid) and the acute notch with a clearing pass (0.1 mm grid).
 /// Before #452 the notch's male left a fin of full-height wood in the
-/// notch and stood 3 mm proud.
+/// notch and stood 3 mm proud. Since #498 each pair is one Inlay's two
+/// boards, from one project: the tutorial's is `tests/fixtures/dc.dcv`.
 #[test]
 fn plug_seats_flush() {
-    let (dc_female, dc_female_op) =
-        fixture(include_str!("../../../../tests/fixtures/dc-female.dcv"));
-    let (dc_male, dc_male_op) = fixture(include_str!("../../../../tests/fixtures/dc-male.dcv"));
+    let (dc, dc_op) = fixture(include_str!("../../../../tests/fixtures/dc.dcv"));
     let star = star_project(THICKNESS_MM);
-    let fine = |side| InlayOp {
+    let fine = InlayOp {
         step_over_fraction: Some(0.1),
-        ..inlay(side)
+        ..inlay(Board::Male)
     };
     let notch = notch_project();
-    let with_clearing = |side| InlayOp {
+    let with_clearing = InlayOp {
         clearing: vec![clearing_pass()],
-        ..inlay(side)
+        ..inlay(Board::Male)
     };
     let pairs = [
-        (
-            "DC",
-            fit_of(&dc_female, &dc_female_op, &dc_male, &dc_male_op, 0.2),
-        ),
-        (
-            "star",
-            fit_of(
-                &star,
-                &fine(InlaySide::Female),
-                &star,
-                &fine(InlaySide::Male),
-                0.2,
-            ),
-        ),
-        (
-            "notch",
-            fit_of(
-                &notch,
-                &with_clearing(InlaySide::Female),
-                &notch,
-                &with_clearing(InlaySide::Male),
-                0.1,
-            ),
-        ),
+        ("DC", fit_of(&dc, &dc_op, 0.2)),
+        ("star", fit_of(&star, &fine, 0.2)),
+        ("notch", fit_of(&notch, &with_clearing, 0.1)),
     ];
     for (name, fit) in pairs {
         println!(

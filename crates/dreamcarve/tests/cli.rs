@@ -7057,6 +7057,437 @@ fn lettered_male_is_the_mirror_of_the_female() {
     );
 }
 
+// ── #498: one-file Inlay, both boards from one project ──
+
+/// The `.nc` files in `dir`, sorted.
+fn programs_in(dir: &Path) -> Vec<String> {
+    let mut written: Vec<String> = std::fs::read_dir(dir)
+        .expect("dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    written.sort();
+    written
+}
+
+/// The version 24 (and, for the star, version 23) inlay pair projects of
+/// `tests/fixtures/inlay-migration/`, each one side of a pair as format 24
+/// wrote it, and the programs the build before #498 exported from them,
+/// renamed as `export` names them now (`tests/expected/inlay-migration/`).
+fn inlay_migration_fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/inlay-migration")
+        .join(name)
+}
+
+/// The committed program `name` of `tests/expected/inlay-migration/`.
+fn inlay_migration_expected(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/expected/inlay-migration")
+        .join(name);
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// #498: a version 24 male project (`dc-male.dcv`, and the star's
+/// version 23 `star-male.dcv`), migrated, cuts its male on a male board
+/// the size of its stock, so it exports the male programs the build
+/// before #498 exported, byte for byte, now named `<stem>-male-<k>-T<n>`.
+/// The migrated file also cuts the female on its stock, as
+/// `<stem>-female-<k>-T<n>`; `check` notes that, naming the operation, and
+/// says to run only the male programs. The programs were exported by the
+/// build before #498 (`tests/expected/inlay-migration/README.md`).
+#[test]
+fn v24_male_project_exports_the_same_male_programs() {
+    for (stem, male_programs) in [
+        ("dc-male", ["1-T2", "2-T1", "3-T2"]),
+        ("star-male", ["1-T2", "2-T1", "3-T2"]),
+    ] {
+        let dir = work_dir(&format!(
+            "v24_male_project_exports_the_same_male_programs_{stem}"
+        ));
+        let dcv = format!("{stem}.dcv");
+        std::fs::copy(inlay_migration_fixture(&dcv), dir.join(&dcv)).expect("fixture copied");
+        let out = run(&dir, &["export", &dcv, "--date", FIXED_DATE]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "{stem}: {report}");
+        let written = programs_in(&dir);
+        for k in male_programs {
+            let name = format!("{stem}-male-{k}.nc");
+            let program = std::fs::read_to_string(dir.join(&name))
+                .unwrap_or_else(|e| panic!("{stem}: {name}: {e}\n{written:?}"));
+            assert!(
+                program == inlay_migration_expected(&name),
+                "{stem}: {name} differs from the program before #498"
+            );
+        }
+        assert_eq!(
+            written
+                .iter()
+                .filter(|n| n.starts_with(&format!("{stem}-male-")))
+                .count(),
+            male_programs.len(),
+            "{stem}: {written:?}"
+        );
+        assert!(
+            written
+                .iter()
+                .any(|n| n.starts_with(&format!("{stem}-female-"))),
+            "{stem}: the migrated file cuts the female on its stock too: {written:?}"
+        );
+        assert!(
+            report.contains("note: "),
+            "{stem}: export notes the migration: {report}"
+        );
+
+        let project = load_file(&dir.join(&dcv)).project;
+        let inlay = the_inlay(&project);
+        assert_eq!(
+            inlay.male_board,
+            dc_project::MaleBoard {
+                width_mm: Some(project.stock.width_mm),
+                height_mm: Some(project.stock.height_mm),
+                thickness_mm: project.stock.thickness_mm,
+            },
+            "{stem}: the male board is the stock"
+        );
+
+        let out = run(&dir, &["check", &dcv]);
+        let checked = stdout(&out);
+        assert_eq!(out.status.code(), Some(0), "{stem}: {checked}");
+        let note = checked
+            .lines()
+            .find(|l| l.contains("note: "))
+            .unwrap_or_else(|| panic!("{stem}: check notes the migration: {checked}"));
+        assert!(note.contains("op1"), "{stem}: {note}");
+        assert!(note.contains("female"), "{stem}: {note}");
+        assert!(note.contains("male programs"), "{stem}: {note}");
+    }
+}
+
+/// #498: a version 24 female project (`dc-female.dcv`, and the star's
+/// version 23 `star-female.dcv`), migrated, has a male board with nothing
+/// set, so its male is not cut: it exports the female programs the build
+/// before #498 exported, byte for byte, named `<stem>-female-<k>-T<n>`,
+/// and nothing else, with the warning `inlay_male_board_unset` located at
+/// the male board's thickness. Nothing is noted: nothing it cuts changed.
+#[test]
+fn v24_female_project_exports_the_same_female_programs() {
+    for stem in ["dc-female", "star-female"] {
+        let dir = work_dir(&format!(
+            "v24_female_project_exports_the_same_female_programs_{stem}"
+        ));
+        let dcv = format!("{stem}.dcv");
+        std::fs::copy(inlay_migration_fixture(&dcv), dir.join(&dcv)).expect("fixture copied");
+        let out = run(&dir, &["export", &dcv, "--date", FIXED_DATE]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "{stem}: {report}");
+        let want = [
+            format!("{stem}-female-1-T2.nc"),
+            format!("{stem}-female-2-T1.nc"),
+        ];
+        assert_eq!(programs_in(&dir), want, "{stem}: {report}");
+        for name in &want {
+            let program = std::fs::read_to_string(dir.join(name)).expect("program written");
+            assert!(
+                program == inlay_migration_expected(name),
+                "{stem}: {name} differs from the program before #498"
+            );
+        }
+        let unset = report
+            .lines()
+            .find(|l| l.contains("inlay_male_board_unset"))
+            .unwrap_or_else(|| panic!("{stem}: {report}"));
+        // Located at the male board's thickness: `<file>:<line>:<col>:`.
+        assert!(
+            unset.starts_with(&format!("{dcv}:")),
+            "{stem}: located: {unset}"
+        );
+        assert!(!report.contains("note: "), "{stem}: {report}");
+        assert!(!report.contains("inlay_male_mirrored"), "{stem}: {report}");
+    }
+}
+
+/// #498: `export` and `check` group a project's programs by board.
+mod export {
+    use super::*;
+
+    /// The one-file tutorial project `tests/fixtures/dc.dcv` exports both
+    /// boards: `dc-female-1-T2.nc` and `dc-female-2-T1.nc` on the stock,
+    /// then `dc-male-1-T2.nc`, `dc-male-2-T1.nc` and `dc-male-3-T2.nc` on
+    /// the male board, `k` counting from 1 within each board. They are
+    /// printed under **Female board** then **Male board**, each in run
+    /// order, and the first of each board sets work zero (X, Y and Z),
+    /// the board being a new setup. Each program is byte for byte the one
+    /// the two-file pair exported before #498 (the female's and the
+    /// male's, `tests/expected/inlay-migration/`), so one file cuts what
+    /// the pair did. The mirror is noted once.
+    #[test]
+    fn programs_are_grouped_by_board() {
+        let dir = work_dir("export_programs_are_grouped_by_board");
+        copy_fixture(&dir, "dc.dcv", "dc.dcv");
+        let out = run(&dir, &["export", "dc.dcv", "--date", FIXED_DATE]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "{report}");
+        let female = ["dc-female-1-T2.nc", "dc-female-2-T1.nc"];
+        let male = ["dc-male-1-T2.nc", "dc-male-2-T1.nc", "dc-male-3-T2.nc"];
+        let mut want: Vec<String> = female
+            .iter()
+            .chain(&male)
+            .map(|s| (*s).to_owned())
+            .collect();
+        want.sort();
+        assert_eq!(programs_in(&dir), want, "{report}");
+        for (names, was) in [
+            (&female[..], "dc-female-female"),
+            (&male[..], "dc-male-male"),
+        ] {
+            for name in names {
+                let program = std::fs::read_to_string(dir.join(name)).expect("program written");
+                let k = name.split_once('-').map(|(_, rest)| rest).expect("a name");
+                let k = k.split_once('-').map(|(_, rest)| rest).expect("a name");
+                let expected = inlay_migration_expected(&format!("{was}-{k}"));
+                assert!(program == expected, "{name} differs from {was}-{k}");
+            }
+        }
+        let report = stdout(&out);
+        let at = |what: &str| {
+            report
+                .find(what)
+                .unwrap_or_else(|| panic!("{what:?} not printed: {report}"))
+        };
+        let order = [
+            at("Female board"),
+            at("  1. dc-female-1-T2.nc"),
+            at("  2. dc-female-2-T1.nc"),
+            at("Male board"),
+            at("  1. dc-male-1-T2.nc"),
+            at("  2. dc-male-2-T1.nc"),
+            at("  3. dc-male-3-T2.nc"),
+        ];
+        assert!(order.is_sorted(), "{order:?}: {report}");
+        let set_zero: Vec<&str> = report
+            .lines()
+            .filter(|l| l.contains("set work zero (X, Y and Z)"))
+            .collect();
+        assert_eq!(set_zero.len(), 2, "one per board: {report}");
+        assert!(set_zero[0].contains("dc-female-1-T2.nc"), "{report}");
+        assert!(set_zero[1].contains("dc-male-1-T2.nc"), "{report}");
+        let all = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(all.matches("inlay_male_mirrored").count(), 1, "{all}");
+
+        let out = run(&dir, &["check", "dc.dcv"]);
+        let checked = stdout(&out);
+        assert_eq!(out.status.code(), Some(0), "{checked}");
+        let order = [
+            checked.find("Female board").expect("female board"),
+            checked.find("dc-female-1-T2").expect("program 1"),
+            checked.find("Male board").expect("male board"),
+            checked.find("dc-male-3-T2").expect("program 3"),
+        ];
+        assert!(order.is_sorted(), "{checked}");
+    }
+
+    /// #498: `--board male` exports the male board's programs only, the
+    /// re-cut-the-male case, with the same names and bytes as the full
+    /// export; `--board female` the female's only. The flag is not saved:
+    /// the project file is unchanged. A board with no programs (the male
+    /// of a project with no Inlay) is an error, and nothing is written.
+    #[test]
+    fn board_flag_exports_one_board() {
+        let dir = work_dir("export_board_flag_exports_one_board");
+        copy_fixture(&dir, "dc.dcv", "dc.dcv");
+        let before = std::fs::read(dir.join("dc.dcv")).expect("dcv readable");
+        let out = run(
+            &dir,
+            &["export", "dc.dcv", "--board", "male", "--date", FIXED_DATE],
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(
+            programs_in(&dir),
+            ["dc-male-1-T2.nc", "dc-male-2-T1.nc", "dc-male-3-T2.nc"]
+        );
+        for k in ["1-T2", "2-T1", "3-T2"] {
+            let program = std::fs::read_to_string(dir.join(format!("dc-male-{k}.nc")))
+                .expect("program written");
+            assert!(program == inlay_migration_expected(&format!("dc-male-male-{k}.nc")));
+        }
+        let report = stdout(&out);
+        assert!(report.contains("Male board"), "{report}");
+        assert!(!report.contains("Female board"), "{report}");
+        assert_eq!(
+            std::fs::read(dir.join("dc.dcv")).expect("dcv readable"),
+            before,
+            "the flag is not saved"
+        );
+
+        let dir = work_dir("export_board_flag_exports_one_board_female");
+        copy_fixture(&dir, "dc.dcv", "dc.dcv");
+        let out = run(
+            &dir,
+            &[
+                "export", "dc.dcv", "--board", "female", "--date", FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(
+            programs_in(&dir),
+            ["dc-female-1-T2.nc", "dc-female-2-T1.nc"]
+        );
+
+        let dir = work_dir("export_board_flag_exports_one_board_none");
+        two_tool_coaster(&dir);
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "coaster.dcv",
+                "--board",
+                "male",
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+        assert!(stderr(&out).contains("male board"), "{}", stderr(&out));
+        assert!(programs_in(&dir).is_empty());
+    }
+
+    /// #498: every male run of every Inlay in a project is on the one male
+    /// board, in operation order, after the female board's programs. The
+    /// tutorial project with a copy of its Inlay, `op2`, cuts four female
+    /// programs (each Inlay's clearing pass and V-bit) and five male ones:
+    /// `op1`'s clearing pass, V-bit, then its cut-out and `op2`'s clearing
+    /// pass in one program (the same end mill, one after the other), then
+    /// `op2`'s V-bit and cut-out. The mirror is noted once per Inlay.
+    #[test]
+    fn two_inlays_share_one_male_board() {
+        let dir = work_dir("export_two_inlays_share_one_male_board");
+        let dcv = copy_fixture(&dir, "dc.dcv", "dc.dcv");
+        let mut project = load_file(&dcv).project;
+        let mut second = the_inlay(&project).clone();
+        second.id = dc_project::OperationId::new("op2");
+        second.name = "DC again".into();
+        project.operations.push(Operation::Inlay(second));
+        std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+        let out = run(&dir, &["export", "dc.dcv", "--date", FIXED_DATE]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(0), "{report}");
+        let mut want = vec![
+            "dc-female-1-T2.nc",
+            "dc-female-2-T1.nc",
+            "dc-female-3-T2.nc",
+            "dc-female-4-T1.nc",
+            "dc-male-1-T2.nc",
+            "dc-male-2-T1.nc",
+            "dc-male-3-T2.nc",
+            "dc-male-4-T1.nc",
+            "dc-male-5-T2.nc",
+        ];
+        want.sort_unstable();
+        assert_eq!(programs_in(&dir), want, "{report}");
+        let comments = |name: &str| {
+            operation_comments(&std::fs::read_to_string(dir.join(name)).expect("program"))
+        };
+        assert_eq!(
+            comments("dc-male-3-T2.nc"),
+            [
+                "( Operation 1: DC cut-out t2 )",
+                "( Operation 2: DC again clearing t2 )"
+            ]
+        );
+        assert_eq!(
+            comments("dc-male-5-T2.nc"),
+            ["( Operation 2: DC again cut-out t2 )"]
+        );
+        assert_eq!(report.matches("inlay_male_mirrored").count(), 2, "{report}");
+    }
+
+    /// #498: a project with no Inlay names its programs as before: the
+    /// two-tool coaster writes `coaster-1-T1.nc` and `coaster-2-T2.nc`,
+    /// and prints no board.
+    #[test]
+    fn no_inlay_keeps_todays_names() {
+        let dir = work_dir("export_no_inlay_keeps_todays_names");
+        two_tool_coaster(&dir);
+        let out = run(&dir, &["export", "coaster.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        assert_eq!(programs_in(&dir), ["coaster-1-T1.nc", "coaster-2-T2.nc"]);
+        let report = stdout(&out);
+        assert!(!report.contains("board"), "{report}");
+        assert!(report.contains("  1. coaster-1-T1.nc"), "{report}");
+    }
+}
+
+/// #498: the preview of a project with an Inlay.
+mod preview {
+    use super::*;
+
+    /// #498: `--preview` draws the male board beside the stock, to its
+    /// right with a 10 mm gap, the same height from the same bottom edge:
+    /// the picture widens to `W + 10 + W_male`. The male board has its
+    /// own outline (`male-board`), its own origin mark and the stock its
+    /// own (`origin`, two, each at its board's bottom-left for the
+    /// tutorial's bottom-left origin), and its mirrored shapes
+    /// (`male-shape`, the two letters' outlines, the D's counter
+    /// included). The male's runs are drawn on it: every point of its
+    /// cuts lies right of the gap.
+    #[test]
+    fn male_board_drawn_beside_the_stock() {
+        let dir = work_dir("preview_male_board_drawn_beside_the_stock");
+        let dcv = copy_fixture(&dir, "dc.dcv", "dc.dcv");
+        let out = run(
+            &dir,
+            &[
+                "export",
+                "dc.dcv",
+                "--preview",
+                "preview.svg",
+                "--date",
+                FIXED_DATE,
+            ],
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+        let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+        let project = load_file(&dcv).project;
+        let (width, height) = (project.stock.width_mm, project.stock.height_mm);
+        let gap = 10.0;
+        let total = width + gap + width;
+        assert!(
+            svg.contains(&format!(" viewBox=\"0 0 {total:.3} {height:.3}\"")),
+            "{svg}"
+        );
+        let boards = svg_elements(&svg, "male-board");
+        assert_eq!(boards.len(), 1, "{svg}");
+        assert_eq!(svg_attr(boards[0], "x"), format!("{:.3}", width + gap));
+        assert_eq!(svg_attr(boards[0], "width"), format!("{width:.3}"));
+        let origins = svg_elements(&svg, "origin");
+        assert_eq!(origins.len(), 2, "{svg}");
+        let centres: Vec<(f64, f64)> = origins
+            .iter()
+            .map(|o| {
+                (
+                    svg_attr(o, "cx").parse().expect("cx"),
+                    svg_attr(o, "cy").parse().expect("cy"),
+                )
+            })
+            .collect();
+        assert_eq!(centres, [(0.0, height), (width + gap, height)], "{svg}");
+        assert_eq!(svg_elements(&svg, "male-shape").len(), 3, "{svg}");
+        let male_cuts: Vec<(f64, f64)> = svg
+            .split("<g id=")
+            .filter(|g| g.contains("class=\"operation male\""))
+            .flat_map(|g| svg_elements(g, "cut"))
+            .flat_map(|cut| svg_path_points(svg_attr(cut, "d")))
+            .collect();
+        assert!(male_cuts.len() > 100, "{}", male_cuts.len());
+        assert!(
+            male_cuts.iter().all(|p| p.0 > width + gap - 1e-9),
+            "a male cut is drawn off its board"
+        );
+    }
+}
+
 /// #125, acceptance test 34's export half: the finished plaque project
 /// built from `plaque.dxf` (`tests/fixtures/plaque.dcv`, the quick start's
 /// result) and from `plaque.svg` (`tests/fixtures/plaque-svg.dcv`, the

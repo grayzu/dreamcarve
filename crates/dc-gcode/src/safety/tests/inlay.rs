@@ -92,17 +92,26 @@ fn two_shapes() -> Project {
     )
 }
 
-/// An Inlay `o1` of `i1` with `tool`: `side`, `depth_mm` 2, `glue_gap_mm`
-/// 0.5 (start plane 1.5 mm below the stock top), `plug_depth_mm` `plug`,
-/// `margin_mm` `margin`.
-fn inlay(side: InlaySide, tool: &str, plug_mm: f64, margin_mm: f64) -> InlayOp {
+/// An Inlay `o1` of `i1` with `tool`, for the tests of one board (#498):
+/// on [`Board::Male`] its male board is measured, the stock's size and
+/// 12 mm thick (a version 24 male file's, migrated), on [`Board::Female`]
+/// unset; `depth_mm` 2, `glue_gap_mm` 0.5 (start plane 1.5 mm below the
+/// stock top), `plug_depth_mm` `plug`, `margin_mm` `margin`.
+pub(super) fn inlay(side: Board, tool: &str, plug_mm: f64, margin_mm: f64) -> InlayOp {
     InlayOp {
         id: OperationId::new("o1"),
         name: "Inlay".into(),
         enabled: true,
         targets: vec![InstanceId::new("i1")],
         tool: ToolId::new(tool),
-        side,
+        male_board: match side {
+            Board::Female => MaleBoard::default(),
+            Board::Male => MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(12.0),
+            },
+        },
         depth_mm: Some(2.0),
         glue_gap_mm: Some(0.5),
         plug_depth_mm: Some(plug_mm),
@@ -192,7 +201,7 @@ fn export_inlay(project: &Project, op: &InlayOp) -> Result<Vec<String>, ExportEr
 
 /// The inlay test part's star at half size, 30 mm tip to tip, with a
 /// 6 mm circle in its middle, centred at (30, 30) on 60 × 60 mm stock.
-fn small_star() -> Project {
+pub(super) fn small_star() -> Project {
     let inner = 6.0 * std::f64::consts::FRAC_1_SQRT_2;
     let points = [
         (15.0, 0.0),

@@ -1469,6 +1469,98 @@ mod tests {
         assert!(err.contains("outline_rounding_mm"), "{err}");
     }
 
+    /// Format 25 (#498): an Inlay's `male_board` saves right after `tool`,
+    /// in the place `side` held, as `{ "width_mm", "height_mm",
+    /// "thickness_mm" }`, each a length or `null`, and loads back the
+    /// same; a length may carry its unit; every field is required, `null`
+    /// included; and `side` is no longer a field.
+    #[test]
+    fn inlay_male_board_round_trips() {
+        use crate::model::MaleBoard;
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            male_board: MaleBoard {
+                width_mm: Some(80.0),
+                height_mm: None,
+                thickness_mm: Some(8.0),
+            },
+            ..sample_inlay()
+        }));
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            ..sample_inlay()
+        }));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            value["operations"][1]["male_board"],
+            json!({ "width_mm": 80.0, "height_mm": null, "thickness_mm": 8.0 })
+        );
+        assert_eq!(
+            value["operations"][2]["male_board"],
+            json!({ "width_mm": null, "height_mm": null, "thickness_mm": null })
+        );
+        let keys: Vec<&str> = value["operations"][1]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = keys.iter().position(|k| *k == "tool").unwrap();
+        assert_eq!(keys.get(at + 1), Some(&"male_board"));
+        assert!(!keys.contains(&"side"), "{keys:?}");
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+
+        let inch = text.replacen("\"thickness_mm\": 8.0", "\"thickness_mm\": \"0.5 in\"", 1);
+        assert_ne!(inch, text, "fixture layout changed:\n{text}");
+        let Some(Operation::Inlay(inlay)) = load(inch.as_bytes())
+            .unwrap()
+            .project
+            .operations
+            .get(1)
+            .cloned()
+        else {
+            panic!("an inlay");
+        };
+        dc_geometry::assert_approx_eq!(inlay.male_board.thickness_mm.unwrap(), 12.7, 1e-9);
+
+        for (broken, named) in [
+            (text.replacen("\"height_mm\": null,", "", 1), "height_mm"),
+            (
+                text.replacen(
+                    "\"tool\": \"t2\",",
+                    "\"tool\": \"t2\",\n      \"side\": \"male\",",
+                    1,
+                ),
+                "side",
+            ),
+        ] {
+            assert_ne!(broken, text, "fixture layout changed:\n{text}");
+            let err = load(broken.as_bytes()).unwrap_err().to_string();
+            assert!(err.contains(named), "{named}: {err}");
+        }
+    }
+
+    /// The format chain after #498: format 25 is the one-file Inlay, so the
+    /// Photo V-Carve of sub-phase 3.4 is format 26. A version 25 file
+    /// cannot hold a `photo_v_carve` operation (this build has no such
+    /// kind) nor `bitmaps`; the 3.4 slice adds both behind a bump to 26.
+    #[test]
+    fn photo_v_carve_is_format_26() {
+        assert_eq!(crate::CURRENT_VERSION, 25);
+        let text = save(&sample_project()).unwrap();
+        let photo = text.replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
+        assert_ne!(photo, text, "fixture layout changed:\n{text}");
+        let err = load(photo.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("photo_v_carve"), "{err}");
+        let bitmaps = text.replacen("\"tabs\": [", "\"bitmaps\": [],\n  \"tabs\": [", 1);
+        assert_ne!(bitmaps, text, "fixture layout changed:\n{text}");
+        let err = load(bitmaps.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("bitmaps"), "{err}");
+    }
+
     /// Format 20: the V-Carve strategy is externally tagged, like a drill
     /// cycle: `"medial"`, or `{ "offset": { … } }` with its step-over and
     /// direction, which a length with its unit may give.

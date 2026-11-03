@@ -3062,4 +3062,185 @@ mod tests {
         let root = serde_json::to_value(sample_project()).unwrap();
         assert_eq!(migrate(root.clone(), CURRENT_VERSION).unwrap(), root);
     }
+
+    // Version 24 → 25 (#498): one-file Inlay, both boards from one project.
+
+    const V24_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v24/sample.dcv");
+
+    #[test]
+    fn version_24_fixture_loads() {
+        let text = std::str::from_utf8(V24_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 24,"), "a version 24 file");
+        let loaded = load(V24_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![], "no Inlay, nothing to note");
+    }
+
+    /// The sample root at version 24 with one Inlay `inlay` (written at
+    /// the current version, then given `side` in place of its
+    /// `male_board`).
+    fn v24_root_with_inlay(inlay: &crate::model::InlayOp, side: &str) -> Value {
+        let mut root = sample_root_at(24);
+        let mut op = serde_json::to_value(Operation::Inlay(inlay.clone())).unwrap();
+        let fields = std::mem::take(op.as_object_mut().unwrap());
+        let mut old = Map::new();
+        for (k, v) in fields {
+            if k == "male_board" {
+                old.insert("side".into(), json!(side));
+            } else {
+                old.insert(k, v);
+            }
+        }
+        root["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(Value::Object(old));
+        root
+    }
+
+    /// Format 25 (#498): a version 24 female Inlay gains an unset male
+    /// board, `{ "width_mm": null, "height_mm": null, "thickness_mm":
+    /// null }`, in the place its `side` held, after `tool`; nothing else
+    /// changes and the keys keep their order. Its male is not cut until
+    /// the user measures the male board, so the file exports the female
+    /// programs it did. A female is not noted.
+    #[test]
+    fn v24_to_v25_female_gets_an_unset_male_board() {
+        use crate::model::{InlayOp, MaleBoard};
+        use crate::test_support::sample_inlay;
+        let female = InlayOp {
+            male_board: MaleBoard::default(),
+            ..sample_inlay()
+        };
+        let root = v24_root_with_inlay(&female, "female");
+        let mut expected = sample_root_at(CURRENT_VERSION);
+        expected["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(female.clone())).unwrap());
+        let inlay = &expected["operations"][1];
+        assert_eq!(
+            inlay["male_board"],
+            json!({ "width_mm": null, "height_mm": null, "thickness_mm": null })
+        );
+        let keys: Vec<&str> = inlay
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = keys.iter().position(|k| *k == "tool").unwrap();
+        assert_eq!(keys.get(at + 1), Some(&"male_board"));
+        assert!(!keys.contains(&"side"), "{keys:?}");
+
+        let (migrated, notes) = migrate_with_notes(root, 24).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+        assert_eq!(notes, vec![]);
+
+        // A version 24 Inlay that already has a male board is not one.
+        let mut bad = sample_root_at(24);
+        bad["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(female)).unwrap());
+        let err = migrate(bad, 24).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 24, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Format 25 (#498): a version 24 male Inlay gains a male board the
+    /// size of the stock, its width, height and thickness, so its male
+    /// programs are cut on the same board as before, byte for byte; the
+    /// project keeps its stock, on which the female is now cut too. The
+    /// migration notes it, naming the operation, so `check` can say that
+    /// the file now also cuts the female. A side that is neither is
+    /// refused, and so is a male whose stock has no width.
+    #[test]
+    fn v24_to_v25_male_gets_the_stock_as_its_male_board() {
+        use crate::model::{InlayCutOut, InlayOp, MaleBoard};
+        use crate::test_support::sample_inlay;
+        let stock = sample_project().stock;
+        let male = InlayOp {
+            male_board: MaleBoard {
+                width_mm: Some(stock.width_mm),
+                height_mm: Some(stock.height_mm),
+                thickness_mm: stock.thickness_mm,
+            },
+            cut_out: Some(InlayCutOut {
+                tool: crate::ids::ToolId::new("t1"),
+                tabs: None,
+                through_cut_allowance_mm: 0.2,
+            }),
+            ..sample_inlay()
+        };
+        let root = v24_root_with_inlay(&male, "male");
+        let mut expected = sample_root_at(CURRENT_VERSION);
+        expected["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(male.clone())).unwrap());
+        assert_eq!(
+            expected["operations"][1]["male_board"],
+            json!({ "width_mm": 100.0, "height_mm": 100.0, "thickness_mm": 6.0 })
+        );
+        let (migrated, notes) = migrate_with_notes(root.clone(), 24).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(migrated["stock"], expected["stock"], "the stock is kept");
+        assert_eq!(
+            notes,
+            vec![MigrationNote::MaleInlayGainsFemale {
+                operation: male.id.clone(),
+                name: male.name.clone(),
+            }]
+        );
+        let text = notes[0].to_string();
+        assert!(text.contains("female"), "{text}");
+        assert!(text.contains("male programs"), "{text}");
+
+        // An unset stock thickness carries over as an unset male one.
+        let mut unmeasured = root.clone();
+        unmeasured["stock"]["thickness_mm"] = Value::Null;
+        let (migrated, _) = migrate_with_notes(unmeasured, 24).unwrap();
+        assert_eq!(
+            migrated["operations"][1]["male_board"],
+            json!({ "width_mm": 100.0, "height_mm": 100.0, "thickness_mm": null })
+        );
+
+        for (field, value) in [("side", json!("both")), ("side", Value::Null)] {
+            let mut bad = root.clone();
+            bad["operations"][1][field] = value;
+            let err = migrate(bad, 24).unwrap_err();
+            assert!(
+                matches!(err, LoadError::Migration { from: 24, .. }),
+                "{err:?}"
+            );
+        }
+        let mut no_stock = root;
+        no_stock["stock"]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("width_mm");
+        let err = migrate(no_stock, 24).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 24, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// A version 24 reader refuses a version 25 file as newer (ADR-0002).
+    #[test]
+    fn version_25_is_newer_than_24() {
+        assert_eq!(CURRENT_VERSION, 25);
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
 }
