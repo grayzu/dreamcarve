@@ -70,6 +70,14 @@ pub const ARC_RADIUS_GROSS_MM: f64 = 0.5;
 /// Between the two, the disagreement may be this fraction of the radius.
 pub const ARC_RADIUS_RELATIVE: f64 = 0.001;
 
+/// The smallest radius an arc is written with, in units of the last
+/// written place (#506): 0.005 mm at three millimetre places. A V-Carve
+/// chain round a tip a few thousandths across is fitted with arcs whose
+/// radius is a unit or two, whose I and J round to the same units; the
+/// safety pass could not match such a written arc to its moves
+/// (`ArcFitViolation`, line art `0x54`). Its moves are written instead.
+pub const MIN_ARC_RADIUS_QUANTA: f64 = 5.0;
+
 /// Most points one fit considers: the greedy window. A 5° flattener gives
 /// 73 points for a full circle, so this preserves that path while bounding
 /// the search on a long non-circular polyline.
@@ -741,6 +749,12 @@ pub fn resolve_emitted_arc(
         accepted: false,
         delta_r_mm: f64::INFINITY,
     };
+    // #506: an arc a few units across is not written: its centre, start
+    // and end are rounded to the same units, so its words describe a
+    // different arc. Its moves are written instead.
+    if opts.quantum > 0.0 && raw_i.hypot(raw_j) < MIN_ARC_RADIUS_QUANTA * opts.quantum {
+        return rejected;
+    }
     let (Some(sx), Some(sy), Some(tx), Some(ty)) = (
         format(previous_emitted.x),
         format(previous_emitted.y),
@@ -1954,6 +1968,33 @@ mod tests {
             }
         }
         worst
+    }
+
+    /// #506 (line art `0x54`'s V-Carve from a cleared start depth, 15°
+    /// bit): an arc whose radius is a few units in the last place is not
+    /// written, so its run falls back to its moves. A V-Carve chain round
+    /// a tip a few thousandths across was fitted as `G3` pieces of radius
+    /// 0.002 mm, `I0.002 J0.000`; centre, start and end all round to the
+    /// same units, and the safety pass could not match the written arc to
+    /// its moves (`ArcFitViolation`). A quarter arc of radius 2 units is
+    /// refused, one of 10 units still written.
+    #[test]
+    fn arc_a_few_units_across_is_not_written() {
+        let opts = mm3_opts(ArcFormat::Ij);
+        let tiny = resolve_emitted_arc(
+            Point::new(10.002, 10.002),
+            Point::new(10.002, 10.0),
+            Point::new(10.0, 10.0),
+            &opts,
+        );
+        assert!(!tiny.accepted, "{tiny:?}");
+        let small = resolve_emitted_arc(
+            Point::new(10.010, 10.010),
+            Point::new(10.010, 10.0),
+            Point::new(10.0, 10.0),
+            &opts,
+        );
+        assert!(small.accepted, "{small:?}");
     }
 
     #[test]

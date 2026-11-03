@@ -34,7 +34,10 @@
 //! and seed, which [`designs::line_art`] or [`lettering::lettering`]
 //! redraw, and [`designs::line_art_keeping`] narrows to a motif. Seat
 //! failures of an open issue are reported as known
-//! (`property::known_issue`), not failed. No regression file is written:
+//! (`property::known_issue`), not failed, and so is a 15° or 30° bit's in
+//! an inch program by a corner too sharp for its written places, the
+//! limit the maintainer accepted on #438 (`property::inch_sharp_corner`).
+//! No regression file is written:
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
 //!
@@ -468,4 +471,52 @@ fn lettering_outline_near_itself_is_merged() {
         outcome.failures,
         outcome.known
     );
+}
+
+/// #438 (the maintainer's decision on #499's limit): a narrow bit's seat
+/// failure in an inch program is excused only near a corner sharper than
+/// the written margin lets it seat ([`property::inch_sharp_corner`]). A
+/// 10° wedge 20 mm long, under the 15° bit's 24.8°: a binding cell
+/// 0.05 mm from its tip is excused; one 5 mm in along it is not, nor is
+/// the cell by the tip in a millimetre program or with the 60° bit.
+#[test]
+fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
+    let half = 5.0_f64.to_radians().tan() * 20.0;
+    let wedge = dc_geometry::Polyline::new(
+        vec![
+            dc_geometry::Vertex::line(0.0, 0.0),
+            dc_geometry::Vertex::line(20.0, -half),
+            dc_geometry::Vertex::line(20.0, half),
+        ],
+        true,
+    );
+    let design = Design {
+        profiles: vec![wedge],
+        notes: Vec::new(),
+    };
+    let with = |units: dc_project::Units, angle_deg: f64| {
+        let mut c = case("line art", 0, design.clone());
+        c.project.display_units = units;
+        c.project.tools[0].cutter = dc_project::ToolKind::VBit {
+            included_angle_deg: angle_deg,
+        };
+        c
+    };
+    let female = |c: &property::Case| match c.ops.iter().find(|(k, _)| *k == Kind::Female) {
+        Some((_, dc_project::Operation::Inlay(op))) => op.clone(),
+        _ => panic!("the case has a female"),
+    };
+    let inch = with(dc_project::Units::Inch, 15.0);
+    let place = |p: dc_geometry::Point| inch.project.instances[0].transform.apply(p);
+    let (by_tip, far) = (
+        place(dc_geometry::Point::new(0.05, 0.0)),
+        place(dc_geometry::Point::new(5.0, 0.0)),
+    );
+    let excused = |c: &property::Case, at| property::inch_sharp_corner(c, &female(c), at);
+    assert!(excused(&inch, by_tip).is_some(), "by the tip");
+    assert!(excused(&inch, far).is_none(), "5 mm in");
+    let mm = with(dc_project::Units::Mm, 15.0);
+    assert!(excused(&mm, by_tip).is_none(), "in millimetres");
+    let wide = with(dc_project::Units::Inch, 60.0);
+    assert!(excused(&wide, by_tip).is_none(), "with the 60° bit");
 }

@@ -1505,3 +1505,42 @@ fn uncleared_start_depth_is_refused_and_acknowledged_counts_toward_the_cone() {
     let (toolpath, _) = carve(&p, &op);
     assert_approx_eq!(TOP_MM - min_z(&toolpath), 5.0, 1e-6);
 }
+
+/// #506 (lettering `0xa`'s male, 15° bit): fitting splits a stretch
+/// shorter than its sampling step where it runs off the medial axis
+/// (#457, [`Tolerances::axis_mm`]). A bar 0.06 mm wide and a chain of one
+/// stretch 0.04 mm long, 0.02 mm off the bar's axis at its own depth
+/// (clearance 0.01, where the axis has 0.03): its cone stops 0.04 mm short
+/// of the far wall, so fitting must split it on the axis. The fit read a
+/// stretch every 0.05 mm short of its ends, so one shorter than that was
+/// read nowhere and cut as it was. In lettering `0xa`'s 16° notch, two
+/// such stretches into the tip ran along one wall, and the plug kept the
+/// wood against the other: 0.158 mm proud.
+#[test]
+fn fitting_splits_a_short_stretch_off_the_axis() {
+    let region = bar(0.0, 1.0, 0.03);
+    let g = graph(&[(0.40, -0.02, 0.01), (0.44, -0.02, 0.01)], &[&[1], &[0]]);
+    let depth = Depth {
+        start_plane_z_mm: 10.0,
+        flat_depth_mm: None,
+        slope: slope_of(60.0),
+    };
+    let walls = Walls::new(std::slice::from_ref(&region), 0.01);
+    let tolerances = Tolerances {
+        simplify_mm: 0.0,
+        redundancy_mm: 0.0,
+        deepen_mm: None,
+        axis_mm: Some(medial::EDGE_MM),
+        written_mm: 0.0,
+        grid: None,
+    };
+    let runs = medial::runs(&g, &depth, tolerances, &walls, &[]);
+    let points: Vec<Point3> = runs
+        .iter()
+        .flat_map(|r| std::iter::once(r.start).chain(r.steps.iter().map(|s| s.to)))
+        .collect();
+    assert!(
+        points.iter().any(|p| p.y.abs() < 0.005),
+        "no point on the axis: {points:?}"
+    );
+}
