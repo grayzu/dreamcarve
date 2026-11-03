@@ -824,6 +824,38 @@ mod tests {
         );
     }
 
+    /// #484: four 4 × 4 mm parts at the corners of a 24 mm square, margin
+    /// 9 mm: the margins overlap side by side and ring round the middle,
+    /// 11.3 mm from every part, without covering it. The band, plain
+    /// or rounded, and the surround have no hole there: the board the
+    /// parts ring round is band too, which the male cuts, so it cannot
+    /// stand inside the band's floor and hold the plug up.
+    #[test]
+    fn band_fills_the_board_its_parts_ring_round() {
+        let parts: Vec<Contour> = [(-12.0, -12.0), (8.0, -12.0), (8.0, 8.0), (-12.0, 8.0)]
+            .iter()
+            .map(|&(x, y)| rect(x, y, 4.0, 4.0))
+            .collect();
+        let (design, _) = nest(parts).expect("the parts nest");
+        let middle = Point::new(0.0, 0.0);
+        for rounding_mm in [0.0, 2.0] {
+            let band = rounded_band(&design, 9.0, rounding_mm, TOL);
+            assert!(
+                band.iter().all(|r| r.holes().is_empty()),
+                "rounding {rounding_mm}: the band has a hole: {band:?}"
+            );
+            assert!(
+                band.iter().any(|r| r.contains_point(middle)),
+                "rounding {rounding_mm}: the band misses the middle"
+            );
+            let around = surround(&design, 9.0, rounding_mm, TOL);
+            assert!(
+                around.iter().any(|r| r.contains_point(middle)),
+                "rounding {rounding_mm}: the surround misses the middle"
+            );
+        }
+    }
+
     /// #448: rounding only adds: every outline point of the plain band
     /// lies in the rounded band, whose area is at least the plain one's;
     /// and the rounded band reaches no farther than the design grown by

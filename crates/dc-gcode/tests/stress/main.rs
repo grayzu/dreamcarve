@@ -299,10 +299,10 @@ fn v_carve_of_line_art_reproduces_when_written() {
 
 /// #484 (found by the stress tests): the pair of small lettering seed
 /// `0x4641000` ("ere", 90° bit) with the male's V wall seats within
-/// 0.05 mm. The plug stands 0.36 mm proud beside the last "e"'s lower
-/// terminal, where the male's surround narrows into the letter's mouth.
+/// 0.05 mm. When #484 was filed the plug stood 0.36 mm proud beside the
+/// last "e"'s lower terminal, where the male's surround narrows into the
+/// letter's mouth; the fixes merged since (#478 to #505) seat it.
 #[test]
-#[ignore = "#484: the plug stands proud at 60° and 90° away from a near touch"]
 fn lettering_seats_beside_a_narrow_mouth() {
     let seed = 0x0464_1000;
     let outcome = reproduce(
