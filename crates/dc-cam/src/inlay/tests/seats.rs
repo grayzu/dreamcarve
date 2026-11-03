@@ -355,3 +355,42 @@ fn obtuse_corner_groove_runs_to_the_floor() {
     );
     assert_seats("125° corner, 15° bit", &project, side);
 }
+
+/// #515: a C, a 10 mm square round an 6 mm bay, whose mouth is a slit
+/// 0.02 mm wide from the bay to its right side: one outline comes within
+/// 0.02 mm of itself across the outside. Its plug seats, and both sides
+/// warn `inlay_parts_merged` naming the C alone. #479 merged two parts
+/// that near; one outline that near itself was cut as drawn, and the
+/// female's wall across the slit, which the male could not groove, held
+/// the plug up. Merged, the slit closes and the bay is a hole.
+#[test]
+fn self_near_touch_is_merged_and_seats() {
+    let project = project_of(
+        vec![polygon(&[
+            (-5.0, -5.0),
+            (5.0, -5.0),
+            (5.0, -0.01),
+            (3.0, -0.01),
+            (3.0, -3.0),
+            (-3.0, -3.0),
+            (-3.0, 3.0),
+            (3.0, 3.0),
+            (3.0, 0.01),
+            (5.0, 0.01),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+        ])],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    assert_seats("C with a slit mouth", &project, fine);
+    for side in [InlaySide::Female, InlaySide::Male] {
+        let (_, warnings) = inlay_runs(&project, &fine(side));
+        let merged: Vec<&Warning> = warnings
+            .iter()
+            .filter(|w| w.code().as_str() == "inlay_parts_merged")
+            .collect();
+        assert_eq!(merged.len(), 1, "{side:?}: {warnings:?}");
+    }
+}

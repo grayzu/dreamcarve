@@ -576,6 +576,66 @@ mod tests {
         nest(contours).expect("it nests").0
     }
 
+    fn polygon(points: &[(f64, f64)]) -> Contour {
+        Contour::new(Polyline::new(
+            points
+                .iter()
+                .map(|&(x, y)| crate::polyline::Vertex::line(x, y))
+                .collect(),
+            true,
+        ))
+        .expect("a polygon")
+    }
+
+    /// #515: a C, a 10 mm square round a 6 mm bay whose mouth is a slit
+    /// 0.02 mm wide, comes that near itself across the outside. It is
+    /// merged, reported once as a pair of its outline with itself, in the
+    /// slit: the slit closes, so the bay is a hole of a 10 mm square, and
+    /// the region's area grows by the slit's alone. A 6° notch 3 mm deep
+    /// cut into a square, its flanks as near each other at its tip, is left
+    /// as drawn: the closing fills its tip, one stretch of the outline.
+    #[test]
+    fn outline_near_itself_merges_and_a_notch_does_not() {
+        let c = polygon(&[
+            (-5.0, -5.0),
+            (5.0, -5.0),
+            (5.0, -0.01),
+            (3.0, -0.01),
+            (3.0, -3.0),
+            (-3.0, -3.0),
+            (-3.0, 3.0),
+            (3.0, 3.0),
+            (3.0, 0.01),
+            (5.0, 0.01),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+        ]);
+        let merged = merge_near_parts(&nested(vec![c]), MERGE_MM, TOL);
+        assert_eq!(merged.near.len(), 1, "{:?}", merged.near);
+        let near = &merged.near[0];
+        assert_eq!((near.first, near.second), (0, 0));
+        crate::assert_approx_eq!(near.gap_mm, 0.02, 1e-9);
+        assert!((3.0 - 1e-9..=5.0).contains(&near.at.x), "{near:?}");
+        assert_eq!(merged.regions.len(), 1, "{merged:?}");
+        assert_eq!(merged.regions[0].holes().len(), 1, "the bay is a hole");
+        crate::assert_approx_eq!(merged.regions[0].area_mm2(), 100.0 - 36.0, 1e-3);
+
+        let tip = 3.0 * (3.0_f64).to_radians().tan();
+        let notched = polygon(&[
+            (-5.0, -5.0),
+            (5.0, -5.0),
+            (5.0, -tip),
+            (2.0, 0.0),
+            (5.0, tip),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+        ]);
+        let regions = nested(vec![notched]);
+        let merged = merge_near_parts(&regions, MERGE_MM, TOL);
+        assert!(merged.near.is_empty(), "{:?}", merged.near);
+        assert_eq!(merged.regions, regions);
+    }
+
     /// Two 10 mm squares 0.001 mm apart merge into one 20.001 × 10 mm
     /// region, reported once, in the middle of the gap; their corners
     /// stay sharp. 0.1 mm apart they are left as they were.
