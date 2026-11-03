@@ -1794,6 +1794,71 @@ fn star_seats_flush_with_narrow_bits() {
     }
 }
 
+/// The female and male of the 5° notch ([`notch_project`]) carved with a
+/// V-bit of `angle_deg`, the star test's depths scaled to its cone (`D =
+/// min(cone / 2, 4)`, `G = D / 4`, `P = 0.4 D`, the floor at step-over
+/// 0.1, no clearing), in a program of `units`, the design turned by
+/// `turn_rad` about its centre and moved by `(dx, dy)` mm.
+fn notch_pair(
+    angle_deg: f64,
+    units: dc_project::Units,
+    turn_rad: f64,
+    (dx, dy): (f64, f64),
+) -> (Project, InlayOp, InlayOp) {
+    let mut notch = notch_project();
+    notch.display_units = units;
+    notch.instances[0].transform =
+        Transform::rotate(turn_rad).then(Transform::translate(CENTRE.0 + dx, CENTRE.1 + dy));
+    notch.tools[0] = v_bit(angle_deg);
+    let cone_mm = 3.175 / (angle_deg / 2.0_f64).to_radians().tan();
+    let depth_mm = (cone_mm / 2.0).min(4.0);
+    let side = |side| InlayOp {
+        step_over_fraction: Some(0.1),
+        depth_mm: Some(depth_mm),
+        glue_gap_mm: Some(depth_mm / 4.0),
+        plug_depth_mm: Some(0.4 * depth_mm),
+        ..inlay(side)
+    };
+    (notch, side(InlaySide::Female), side(InlaySide::Male))
+}
+
+/// #499: the 5° notch seats within [`SEAT_MM`] (0.1 mm grid) with the
+/// bench's narrow bits. The written-precision margin (#469) stopped the
+/// male's groove where its tip was `w = quantum / √2` from both walls,
+/// `w / sin 2.5°` from the notch's tip, and the plug kept wood there
+/// `w (1/sin 2.5° − 1) / tan(α/2)` above its start plane: 0.0155 mm
+/// sideways, which held it 0.124 mm up with the 15° bit and 0.064 with
+/// the 30° in a millimetre program. The groove now runs on to the grid
+/// point nearest the tip from which the move as written stays inside.
+/// The notch as drawn, whose tip is on the millimetre grid; turned off
+/// the grid (0.37 rad, moved 0.26 by 0.31 µm), 0.123 and 0.066 mm before;
+/// and turned so in an inch program with the 60° bit, 0.070 mm before
+/// (four inch places write to 0.00254 mm).
+#[test]
+fn notch_seats_flush_with_narrow_bits() {
+    let mm = dc_project::Units::Mm;
+    let off = (0.37, (0.000_263_9, 0.000_306_5));
+    let cases = [
+        (15.0, mm, (0.0, (0.0, 0.0))),
+        (30.0, mm, (0.0, (0.0, 0.0))),
+        (15.0, mm, off),
+        (30.0, mm, off),
+        (60.0, dc_project::Units::Inch, off),
+    ];
+    let mut failures = Vec::new();
+    for (angle_deg, units, (turn_rad, at)) in cases {
+        let (notch, female, male) = notch_pair(angle_deg, units, turn_rad, at);
+        let fit = fit_of(&notch, &female, &notch, &male, 0.1);
+        if !fit.is_flush() {
+            failures.push(format!(
+                "{angle_deg}°, {units:?}, turned {turn_rad}: the plug stands {:.3} mm proud at {:?} (the male's share {:.3})",
+                fit.seat_mm, fit.seat_at, fit.male_mm
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
 /// #489: a C-shaped design, a 20 mm square wall 4 mm thick with a mouth
 /// 1 mm wide in its right side, centred on [`CENTRE`]. The male's floor
 /// inset, `P · tan 30°` = 1.15 mm, closes the mouth, so the 12 mm bay

@@ -8,7 +8,7 @@
 //! `δ` of it.
 
 use super::*;
-use crate::heightfield::cone_low_mm;
+use crate::heightfield::{carved_z_mm, cone_low_mm};
 
 /// How near the groove must come to every wall, mm (#457).
 const REACH_MM: f64 = 0.01;
@@ -184,6 +184,66 @@ fn groove_reaches_the_walls() {
                 worst.0,
                 worst.1
             ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #499: a groove into a sharp corner runs on from where the written
+/// margin stops it to a point of the grid the program writes on, nearer
+/// the corner, written exactly. The margin keeps the tip `quantum / √2`
+/// from both walls (#469), which stops it `w / sin(θ/2)` from the tip of
+/// a corner of angle `θ` and leaves wood there `w (1/sin(θ/2) − 1)` across
+/// at the start plane: how far the cone stops short of the tip, which a
+/// male Inlay's plug turns into height. The 5° wedge, turned and moved by
+/// sub-micrometre steps with `k` (the first placement puts its tip on the
+/// millimetre grid), carved with the 60° bit, in millimetres and inches:
+/// the cone stops short of the tip by less than the margin left, by
+/// nothing where the tip is on the grid, and the cut nearest the tip
+/// starts on the grid.
+#[test]
+fn corner_groove_runs_on_to_the_written_grid() {
+    let half = 2.5_f64.to_radians();
+    let mut failures = Vec::new();
+    for units in [dc_project::Units::Mm, dc_project::Units::Inch] {
+        for k in 0..6 {
+            let kf = f64::from(k);
+            let (sin, cos) = (0.37 * kf).sin_cos();
+            let (dx, dy) = (10.0 + 0.002_639 * kf, 10.0 + 0.003_065 * kf);
+            let turned = |x: f64, y: f64| (x * cos - y * sin + dx, x * sin + y * cos + dy);
+            let length = 30.0;
+            let corners = [
+                turned(0.0, 0.0),
+                turned(length, -length * half.tan()),
+                turned(length, length * half.tan()),
+            ];
+            let mut p = project(vec![polygon(&corners)]);
+            p.display_units = units;
+            let (toolpath, _) = carve(&p, &carve_op(&p));
+            let tip = Point::new(AT.0 + corners[0].0, AT.1 + corners[0].1);
+            let slope = slope_of(60.0);
+            let short_mm = (carved_z_mm(&toolpath, tip, slope) - TOP_MM) * slope;
+            let w = written_mm(&p);
+            let margin_left_mm = w * (1.0 / half.sin() - 1.0);
+            let quantum_mm = w * std::f64::consts::SQRT_2;
+            // The program writes from the stock's bottom-left corner.
+            assert_eq!(p.origin.xy, dc_project::OriginXy::BottomLeft);
+            let origin = Point::new(0.0, 0.0);
+            let off_grid = |v: f64| (v / quantum_mm - (v / quantum_mm).round()).abs();
+            let nearest = cut_points(&toolpath)
+                .into_iter()
+                .min_by(|a, b| a.xy().distance_to(tip).total_cmp(&b.xy().distance_to(tip)))
+                .expect("the carve cuts");
+            let on_grid =
+                off_grid(nearest.x - origin.x) < 1e-6 && off_grid(nearest.y - origin.y) < 1e-6;
+            let tip_on_grid =
+                off_grid(tip.x - origin.x) < 1e-6 && off_grid(tip.y - origin.y) < 1e-6;
+            let limit_mm = if tip_on_grid { 1e-6 } else { margin_left_mm };
+            if short_mm >= limit_mm || !on_grid {
+                failures.push(format!(
+                    "{units:?}, placement {k}: the cone stops {short_mm:.4} mm short of the tip (the margin leaves {margin_left_mm:.4}); the nearest cut point {nearest:?} is on the grid: {on_grid}"
+                ));
+            }
         }
     }
     assert!(failures.is_empty(), "{failures:#?}");

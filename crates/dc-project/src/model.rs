@@ -23,7 +23,7 @@
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
 use crate::units_input;
-use dc_geometry::{Polyline, Transform};
+use dc_geometry::{Point, Polyline, Transform};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -195,6 +195,22 @@ pub enum OriginXy {
         #[serde(deserialize_with = "units_input::mm")]
         y_mm: f64,
     },
+}
+
+impl OriginXy {
+    /// Where this work zero is in project space on `stock`, mm (Y-up):
+    /// the point a program's X0 Y0 is written from.
+    #[must_use]
+    pub fn point_mm(&self, stock: &Stock) -> Point {
+        match *self {
+            Self::BottomLeft => Point::new(0.0, 0.0),
+            Self::BottomRight => Point::new(stock.width_mm, 0.0),
+            Self::TopLeft => Point::new(0.0, stock.height_mm),
+            Self::TopRight => Point::new(stock.width_mm, stock.height_mm),
+            Self::Centre => Point::new(stock.width_mm / 2.0, stock.height_mm / 2.0),
+            Self::Custom { x_mm, y_mm } => Point::new(x_mm, y_mm),
+        }
+    }
 }
 
 /// Z work zero.

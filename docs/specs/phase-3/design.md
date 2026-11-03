@@ -968,6 +968,26 @@ orientation; DreamCarve's regions are normalised anyway.
      from the arc and, written, crossed it
      (`safety::arc_horns_export_at_any_placement`,
      `vcarve::tip_paths_keep_the_written_margin_from_drawn_arcs`).
+     **Corner starts on the written grid (#499).** Above its start plane
+     a male Inlay's plug keeps the wood a corner's groove stops short of:
+     `w (1/sin(θ/2) − 1) / tan(α/2)` high, 0.124 mm with the 15° bit in
+     the 5° notch. A point on the grid the program writes on (the machine
+     origin, `OriginXy::point_mm`, then whole units of the last place) is
+     written exactly, so where the margin cuts a chain's end back, the
+     chain starts instead at the grid point `g` near the end that leaves
+     the least wood there, `|end − g| − clearance(g)`, among those whose
+     move to the margin's point stays inside as written: a fraction `t`
+     along, the path keeps `t · w` from every wall, chords and arcs as
+     drawn, since that point may move by `w` (`vcarve::written`). The
+     move also passes the cone test, and an open band edge's. No written
+     move crosses a wall, and S17 is unchanged. The grid limits it: a
+     5° corner is `q / 11` wide `q` from its tip, so the nearest grid
+     point inside can be several units in. The notch seats within
+     0.05 mm with every bench bit in a millimetre program, and with the
+     60° and 90° bits in a four-place inch program; the 30° and 15° bits
+     can still stand 0.08 and 0.16 mm proud there in inches
+     (`inlay::notch_seats_flush_with_narrow_bits`,
+     `vcarve::corner_groove_runs_on_to_the_written_grid`).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
