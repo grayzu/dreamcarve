@@ -55,6 +55,9 @@
 //!   round the vertex such a stretch cuts across, by the medial axis
 //!   point at it ([`Fit::around`]); a stretch that still leaves the
 //!   region is not cut ([`within_walls`]). Upstream does not check this.
+//! - **Redundant leaves on the carved edge (#484).** A leaf chain is
+//!   dropped as redundant only when the discs left reach within
+//!   [`EDGE_MM`] of its own, not upstream's three quarters of a step.
 //! - **Every corner (#452, #456).** Every carve builds its axis to reach
 //!   every convex corner of its walls (`CornerReach::Every`), where
 //!   upstream's passes leave some with no branch.
@@ -94,7 +97,11 @@ pub(crate) const SIMPLIFY_STEPS: f64 = 0.25;
 pub(crate) const EDGE_MM: f64 = 0.005;
 
 /// Redundant-leaf tolerance, in medial steps (upstream's
-/// `redundancyTolerance: resolution * 0.75`).
+/// `redundancyTolerance: resolution * 0.75`), at most [`EDGE_MM`] (#484):
+/// a leaf chain dropped as redundant reaches up to the tolerance beyond
+/// the discs left, so the groove stops that short of a wall, and a coarse
+/// step (a wide male band's, 0.2 mm and more) left a plug's wall
+/// `0.75 · step / tan(α/2)` too high.
 pub(crate) const REDUNDANCY_STEPS: f64 = 0.75;
 
 /// Passes of redundant-leaf pruning at most (upstream's four).
@@ -176,7 +183,7 @@ impl Tolerances {
     pub(crate) fn at_step(step_mm: f64) -> Self {
         Self {
             simplify_mm: (SIMPLIFY_STEPS * step_mm).min(EDGE_MM),
-            redundancy_mm: REDUNDANCY_STEPS * step_mm,
+            redundancy_mm: (REDUNDANCY_STEPS * step_mm).min(EDGE_MM),
             deepen_mm: None,
             axis_mm: Some(EDGE_MM),
             written_mm: 0.0,

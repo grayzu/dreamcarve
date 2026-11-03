@@ -16,6 +16,7 @@
 mod board;
 mod line_art;
 mod near;
+mod seats;
 mod spike;
 mod traced;
 

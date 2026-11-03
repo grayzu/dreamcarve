@@ -73,7 +73,8 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
 /// narrower than about `2R` fill; nothing reaches farther than the design
 /// grown by `M + R`, and no more than the plain band where it is convex.
 /// With `rounding_mm` 0 it is the union of the margin offsets exactly.
-/// Holes of the design are never offset.
+/// Holes of the design are never offset. The band has no holes
+/// (#484): board the margins ring round is band too.
 ///
 /// The union is [`crate::union`], so the result is polygonal: arcs are
 /// flattened to chords within `tolerance_mm`. Outers come back
@@ -92,15 +93,30 @@ pub fn rounded_band(
     if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
     }
-    let united = union(
+    let united = filled(union(
         &grown_outers(regions, margin_mm + rounding_mm, Bays::Island),
         &[],
         tolerance_mm,
-    );
+    ));
     if rounding_mm == 0.0 {
         return united;
     }
     floor_regions(&united, rounding_mm, tolerance_mm)
+}
+
+/// `regions` with their holes filled: each outer alone (#484). A hole of
+/// the margins' union is board the design's parts ring round, farther than
+/// the margin from all of them; no part lies in it, since each part's own
+/// margin covers it. Left out of the band, it stood to the stock top
+/// inside the band's floor, and held the plug off the female's surface.
+fn filled(regions: Vec<Region>) -> Vec<Region> {
+    if regions.iter().all(|r| r.holes().is_empty()) {
+        return regions;
+    }
+    regions
+        .into_iter()
+        .filter_map(|r| single_region(r.outer().clone()))
+        .collect()
 }
 
 /// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
@@ -149,7 +165,17 @@ pub fn surround_within(
         return Vec::new();
     }
     let band = if rounding_mm == 0.0 {
-        grown_outers(regions, margin_mm, Bays::Island)
+        let mut grown = grown_outers(regions, margin_mm, Bays::Island);
+        // #484: the board the margins ring round is band too
+        // ([`filled`]), added as regions of its own, which the difference
+        // fills with the rest.
+        let rings: Vec<Region> = union(&grown, &[], tolerance_mm)
+            .iter()
+            .flat_map(|r| r.holes().iter().map(Contour::reversed))
+            .filter_map(single_region)
+            .collect();
+        grown.extend(rings);
+        grown
     } else {
         rounded_band(regions, margin_mm, rounding_mm, tolerance_mm)
     };
@@ -822,6 +848,38 @@ mod tests {
             rounded_band(&design, 8.0, 0.0, TOL),
             union(&grown, &[], TOL)
         );
+    }
+
+    /// #484: four 4 × 4 mm parts at the corners of a 24 mm square, margin
+    /// 9 mm: the margins overlap side by side and ring round the middle,
+    /// 11.3 mm from every part, without covering it. The band, plain
+    /// or rounded, and the surround have no hole there: the board the
+    /// parts ring round is band too, which the male cuts, so it cannot
+    /// stand inside the band's floor and hold the plug up.
+    #[test]
+    fn band_fills_the_board_its_parts_ring_round() {
+        let parts: Vec<Contour> = [(-12.0, -12.0), (8.0, -12.0), (8.0, 8.0), (-12.0, 8.0)]
+            .iter()
+            .map(|&(x, y)| rect(x, y, 4.0, 4.0))
+            .collect();
+        let (design, _) = nest(parts).expect("the parts nest");
+        let middle = Point::new(0.0, 0.0);
+        for rounding_mm in [0.0, 2.0] {
+            let band = rounded_band(&design, 9.0, rounding_mm, TOL);
+            assert!(
+                band.iter().all(|r| r.holes().is_empty()),
+                "rounding {rounding_mm}: the band has a hole: {band:?}"
+            );
+            assert!(
+                band.iter().any(|r| r.contains_point(middle)),
+                "rounding {rounding_mm}: the band misses the middle"
+            );
+            let around = surround(&design, 9.0, rounding_mm, TOL);
+            assert!(
+                around.iter().any(|r| r.contains_point(middle)),
+                "rounding {rounding_mm}: the surround misses the middle"
+            );
+        }
     }
 
     /// #448: rounding only adds: every outline point of the plain band
