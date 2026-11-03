@@ -160,9 +160,9 @@ bit and a design with very sharp points, set `display_units` to `"mm"`
 before you export.
 
 Apart from that limit, corners, sharp or obtuse, seat with every bit.
-Some other tight features still don't. With the 30° bit most plugs seat within 0.05 mm,
-and some stand up to about 0.15 mm proud. With the 15° bit, expect
-0.05 to 0.4 mm. In both cases the excess comes where a line ends inside
+Some other tight features still don't. With the 30° bit most plugs seat
+within 0.05 mm, and some stand up to about 0.15 mm proud. With the 15°
+bit, expect 0.05 to 0.4 mm. In both cases the excess comes where a line ends inside
 the design, where a curve narrows, or where two parts nearly touch:
 there the plug's walls meet the pocket's before they do elsewhere
 ([#506](https://github.com/grayzu/dreamcarve/issues/506)). A few designs
