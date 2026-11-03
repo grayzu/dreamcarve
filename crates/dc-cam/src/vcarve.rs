@@ -530,7 +530,7 @@ pub fn blocks(
             }
             continue;
         }
-        let Some((graph, step_mm)) = medial::region_graph(
+        let Some((mut graph, step_mm)) = medial::region_graph(
             region,
             tolerance_mm,
             carve.corner_reach(region, bit.slope),
@@ -541,6 +541,32 @@ pub fn blocks(
         ) else {
             continue;
         };
+        // #506: the walls the chains are fitted to, and the nodes' depths,
+        // are drawn within the wall tolerance. Chords lie inside an arc, so
+        // at the project's a thin ring's groove ran up to that far off
+        // true, which the cone turns into height. The medial axis keeps
+        // the project's: sampled finer, a thin strip's nodes zig-zag.
+        let walls = Walls::new(std::slice::from_ref(region), wall_tolerance_mm);
+        // Each node beside an arc is moved onto the axis of these walls, the
+        // largest disc tangent at its nearest wall point through it, when
+        // that is within the project's tolerance, the most the chords put
+        // it off; each node's clearance is read from them. A straight wall
+        // is drawn alike at both tolerances, so its nodes stay as sampled.
+        for node in graph.nodes.iter_mut().filter(|n| n.clearance_mm > 0.0) {
+            node.clearance_mm = walls.clearance_mm(node.p);
+            if let Some((near_mm, w)) = walls.nearest(node.p)
+                && near_mm > EPS_MM
+                && walls.arc_within(node.p, near_mm + tolerance_mm)
+            {
+                let u = (node.p - w) * (1.0 / near_mm);
+                let radius_mm = walls.ball_radius_mm(w, u, near_mm + tolerance_mm);
+                let m = w + u * radius_mm;
+                if m.distance_to(node.p) <= tolerance_mm {
+                    node.p = m;
+                    node.clearance_mm = radius_mm;
+                }
+            }
+        }
         // Step 3: the deepest point, from the widest node, engages the
         // flank from `engaged_from`; below the cone the shank cuts.
         let widest_mm = graph
@@ -560,7 +586,6 @@ pub fn blocks(
         let floors = flat
             .map(|f| f.regions_of(carve, region, wall_tolerance_mm))
             .unwrap_or_default();
-        let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
         let runs = medial::runs_within(
             &graph,
             &depth,

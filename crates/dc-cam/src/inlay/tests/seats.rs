@@ -394,3 +394,35 @@ fn self_near_touch_is_merged_and_seats() {
         assert_eq!(merged.len(), 1, "{side:?}: {warnings:?}");
     }
 }
+
+/// #506 (small line art `0x4640000` and line art `0x42`'s rings, 15°
+/// bit): a ring 0.068 mm wide between two concentric circles seats within
+/// [`SEAT_MM`], depths scaled to the bit's cone as the star's. The medial
+/// strategy measured its fitting walls and its chain points' depths
+/// against the circles flattened to chords within the project's
+/// tolerance, 0.01 mm. Chords lie inside both circles, so to the fit the
+/// ring stood up to the tolerance nearer the centre than drawn, and the
+/// groove ran shifted that way: shallow against the outer circle by about
+/// 0.009 mm, which the 15° bit's cone turns into 0.067 mm. The walls are
+/// now drawn within the wall tolerance (#478), which scales with the bit.
+#[test]
+fn thin_ring_seats_with_a_narrow_bit() {
+    let mut project = project_of(
+        vec![
+            Polyline::circle(Point::new(0.0, 0.0), 1.528),
+            Polyline::circle(Point::new(0.0, 0.0), 1.4605),
+        ],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    project.tools[0] = v_bit(15.0);
+    let cone_mm = 3.175 / 7.5_f64.to_radians().tan();
+    let depth_mm = (cone_mm / 2.0).min(4.0);
+    assert_seats("thin ring, 15° bit", &project, |side| InlayOp {
+        depth_mm: Some(depth_mm),
+        glue_gap_mm: Some(depth_mm / 4.0),
+        plug_depth_mm: Some(0.4 * depth_mm),
+        ..fine(side)
+    });
+}

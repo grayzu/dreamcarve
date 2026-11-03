@@ -1072,6 +1072,16 @@ fn tip_paths_keep_the_written_margin_from_drawn_arcs() {
         .flat_map(|c| c.polyline().segments().collect::<Vec<_>>())
         .collect();
     let margin_mm = written_mm(&p);
+    // #499: a corner's groove may start on the written grid, where a point
+    // is written exactly; a cut from or to one keeps inside the drawn walls
+    // rather than the margin (its move as written is held to the walls by
+    // `vcarve::walls::corner_groove_runs_on_to_the_written_grid` and S17).
+    assert_eq!(p.origin.xy, dc_project::OriginXy::BottomLeft);
+    let quantum_mm = margin_mm * std::f64::consts::SQRT_2;
+    let on_grid = |q: Point3| {
+        let off = |v: f64| (v / quantum_mm - (v / quantum_mm).round()).abs();
+        off(q.x) < 1e-6 && off(q.y) < 1e-6
+    };
     for (a, b) in cuts(&toolpath) {
         let path = dc_geometry::Segment {
             start: a.xy(),
@@ -1082,9 +1092,14 @@ fn tip_paths_keep_the_written_margin_from_drawn_arcs() {
             .iter()
             .map(|&w| dc_geometry::segment_distance_mm(path, w))
             .fold(f64::INFINITY, f64::min);
+        let needed_mm = if on_grid(a) || on_grid(b) {
+            0.0
+        } else {
+            margin_mm
+        };
         assert!(
-            clear_mm >= margin_mm - 1e-9,
-            "the cut {a:?} to {b:?} runs {clear_mm} mm from a drawn wall, under {margin_mm}"
+            clear_mm >= needed_mm - 1e-9,
+            "the cut {a:?} to {b:?} runs {clear_mm} mm from a drawn wall, under {needed_mm}"
         );
     }
 }
