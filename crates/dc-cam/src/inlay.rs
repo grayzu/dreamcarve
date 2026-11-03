@@ -485,7 +485,7 @@ fn merge_near(
 ) -> Targets {
     let merge_mm = INLAY_MERGE_MM;
     let merged = merge_near_parts(&design.regions, merge_mm, plug_tolerance_mm(project, op));
-    if merged.near.is_empty() {
+    if merged.near.is_empty() && merged.filled.is_empty() {
         return design;
     }
     let shape_of = |index: usize| design.contours.get(index).map(|(s, _)| s.clone());
@@ -502,6 +502,20 @@ fn merge_near(
             x_mm: at.x,
             y_mm: at.y,
             gap_mm: near.gap_mm,
+            merge_mm,
+        });
+    }
+    for filled in &merged.filled {
+        let Some(hole) = shape_of(filled.index) else {
+            continue;
+        };
+        let at = mirror.map_or(filled.at, |m| m.apply(filled.at));
+        warnings.push(Warning::InlayHoleFilled {
+            op: op.id.clone(),
+            hole,
+            x_mm: at.x,
+            y_mm: at.y,
+            width_mm: filled.width_mm,
             merge_mm,
         });
     }

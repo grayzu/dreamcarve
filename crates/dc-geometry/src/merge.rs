@@ -48,6 +48,23 @@ pub struct MergedParts {
     pub sources: Vec<Vec<usize>>,
     /// Every pair of outlines that come near, in input order.
     pub near: Vec<NearParts>,
+    /// The holes filled (#511): each narrower than the merge distance
+    /// everywhere, in input order.
+    pub filled: Vec<FilledHole>,
+}
+
+/// A hole of a design narrower than the merge distance everywhere, filled
+/// ([`merge_near_parts`], #511): the design's material on either side of it
+/// comes closer than the distance, as near parts do across a gap.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FilledHole {
+    /// The hole's input position ([`Region::hole_indices`]).
+    pub index: usize,
+    /// The middle of its box, mm.
+    pub at: Point,
+    /// Its width, mm: twice its area over its perimeter, which for a
+    /// sliver is its mean width.
+    pub width_mm: f64,
 }
 
 /// `regions` (nested by [`crate::nest`]) with every two parts that come
@@ -78,20 +95,24 @@ pub struct MergedParts {
 /// polygonal, its arcs flattened within `tolerance_mm` or an eighth of
 /// the distance, whichever is finer, so the flattening cannot open a gap
 /// the distance closes; regions with no near part keep their arcs.
+///
+/// First, a hole narrower than `distance_mm` all along that holds no other
+/// region is filled (#511; [`MergedParts::filled`]): the design's material
+/// either side of it comes that near across it.
 /// Nothing is merged when `distance_mm` is not a positive finite number.
 #[must_use]
 pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64) -> MergedParts {
-    let unchanged = || MergedParts {
-        regions: regions.to_vec(),
-        sources: (0..regions.len()).map(|k| vec![k]).collect(),
-        near: Vec::new(),
-    };
     if !(distance_mm.is_finite() && distance_mm > 0.0) {
-        return unchanged();
+        return unchanged_of(regions);
     }
+    let (filled_regions, filled) = fill_thin_holes(regions, distance_mm, tolerance_mm);
+    let regions = filled_regions.as_slice();
     let near = near_parts(regions, distance_mm);
     if near.is_empty() {
-        return unchanged();
+        return MergedParts {
+            filled,
+            ..unchanged_of(regions)
+        };
     }
     // Which region each input outline belongs to.
     let region_of = |index: usize| {
@@ -117,6 +138,7 @@ pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64)
         regions: Vec::new(),
         sources: Vec::new(),
         near,
+        filled,
     };
     for k in 0..regions.len() {
         let first = root(&mut group, k);
@@ -141,6 +163,91 @@ pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64)
         }
     }
     out
+}
+
+/// `regions` as they are, each its own source.
+fn unchanged_of(regions: &[Region]) -> MergedParts {
+    MergedParts {
+        regions: regions.to_vec(),
+        sources: (0..regions.len()).map(|k| vec![k]).collect(),
+        near: Vec::new(),
+        filled: Vec::new(),
+    }
+}
+
+/// `regions` with every hole narrower than `distance_mm` everywhere
+/// filled (#511), and the holes filled: a hole whose own area, inset by
+/// half the distance, is empty, and that holds no other region (an island
+/// in it keeps its hole). A V-bit cannot carve such a sliver: the female
+/// leaves a wall to the stock top there no wider than the hole, the
+/// male's groove keeps half a written unit from each wall and is dropped,
+/// and the wall holds the plug up. Filled, both sides carve the shape as
+/// one, as near parts are merged across a gap.
+fn fill_thin_holes(
+    regions: &[Region],
+    distance_mm: f64,
+    tolerance_mm: f64,
+) -> (Vec<Region>, Vec<FilledHole>) {
+    let mut filled = Vec::new();
+    let out = regions
+        .iter()
+        .map(|region| {
+            let drop: Vec<usize> = region
+                .holes()
+                .iter()
+                .enumerate()
+                .filter(|(_, hole)| {
+                    let Some(inside) = single_region(hole.reversed()) else {
+                        return false;
+                    };
+                    let thin = floor_regions(
+                        std::slice::from_ref(&inside),
+                        distance_mm / 2.0,
+                        tolerance_mm,
+                    )
+                    .is_empty();
+                    let holds_a_region = regions.iter().any(|r| {
+                        r != region
+                            && r.outer()
+                                .polyline()
+                                .vertices()
+                                .first()
+                                .is_some_and(|v| inside.contains_point(v.point()))
+                    });
+                    thin && !holds_a_region
+                })
+                .map(|(k, _)| k)
+                .collect();
+            for &k in &drop {
+                let (Some(hole), Some(&index)) =
+                    (region.holes().get(k), region.hole_indices().get(k))
+                else {
+                    continue;
+                };
+                let polyline = hole.polyline();
+                let perimeter_mm = polyline.length_mm();
+                let at = polyline.bounds().map_or(Point::new(0.0, 0.0), |b| {
+                    Point::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0)
+                });
+                filled.push(FilledHole {
+                    index,
+                    at,
+                    width_mm: if perimeter_mm > 0.0 {
+                        2.0 * hole.signed_area_mm2().abs() / perimeter_mm
+                    } else {
+                        0.0
+                    },
+                });
+            }
+            if drop.is_empty() {
+                region.clone()
+            } else {
+                region.without_holes(&drop)
+            }
+        })
+        .collect();
+    filled.sort_by_key(|h| h.index);
+    (out, filled)
 }
 
 /// The group `k` is in: the first region of it, following `group` to a
