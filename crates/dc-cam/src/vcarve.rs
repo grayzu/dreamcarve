@@ -216,16 +216,28 @@ pub fn cone_height_mm(tool: &Tool) -> Option<f64> {
     v_bit(tool).map(|bit| bit.cone_mm)
 }
 
-/// The height, mm, of the ridges the V-bit leaves between its floor rings
-/// in `op` (`docs/specs/phase-3/design.md`, "V-Carve generator", step 6):
-/// two grooves `s` apart at the flat depth leave a ridge `s / (2 tan(α/2))`
-/// high, which with `s = step_over_fraction · 2 F tan(α/2)` is
-/// `step_over_fraction · F`. `None` when the carve has no floor for the
-/// V-bit to clear: no flat depth, no usable V-bit or step-over fraction,
-/// or no region wide enough.
+/// The heights, mm, of the ridges the V-bit leaves on its floor
+/// (`docs/specs/phase-3/design.md`, "V-Carve generator", step 6; #522).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FloorRidges {
+    /// Between two rings: two grooves `s` apart at the flat depth leave a
+    /// ridge `s / (2 tan(α/2))` high, which with `s = step_over_fraction ·
+    /// 2 F tan(α/2)` is `step_over_fraction · F`.
+    pub straight_mm: f64,
+    /// At the rings' corners: `straight_mm / sin(θ/2)` for the sharpest
+    /// convex corner θ of any ring, where the next ring's corner stands
+    /// `s / sin(θ/2)` back along the bisector, and never more than twice
+    /// `straight_mm`, since every point of the floor lies within one
+    /// step-over of a ring. `straight_mm` when no ring has a corner.
+    pub corner_mm: f64,
+}
+
+/// The ridges the V-bit leaves on the floor of `op`: [`FloorRidges`].
+/// `None` when the carve has no floor for the V-bit to clear: no flat
+/// depth, no usable V-bit or step-over fraction, or no region wide enough.
 #[must_use]
-pub fn floor_ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
-    floor::ridge_height_mm(project, op)
+pub fn floor_ridges(project: &Project, op: &VCarveOp) -> Option<FloorRidges> {
+    floor::ridges_of_carve(project, op)
 }
 
 /// A usable V-bit's slope and cone.

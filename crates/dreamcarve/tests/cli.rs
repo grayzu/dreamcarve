@@ -1932,7 +1932,8 @@ fn check_refuses_an_uncleared_start_depth() {
 
 /// Design step 6 (#405): `check` on a V-Carve with a flat depth states the
 /// height of the ridges the V-bit leaves between its floor rings,
-/// `step_over_fraction · F` (the bit's 0.4 × 2 mm), with the hint; a carve
+/// `step_over_fraction · F` (the bit's 0.4 × 2 mm), and (#522) at the
+/// rings' right-angled corners, that over sin 45°, with the hint; a carve
 /// with no flat depth states none.
 #[test]
 fn v_carve_check_reports_the_floor_ridges() {
@@ -1982,7 +1983,7 @@ fn v_carve_check_reports_the_floor_ridges() {
     );
     assert!(
         stdout(&out).contains(
-            "V-bit floor ridges 0.800 mm; a clearing pass or a smaller step_over_fraction flattens them"
+            "V-bit floor ridges 0.800 mm along the rings and up to 1.131 mm at their corners; a clearing pass or a smaller step_over_fraction flattens them"
         ),
         "{}",
         stdout(&out)
@@ -2069,7 +2070,9 @@ fn preview_legend_names_clearing_runs() {
     assert!(report.contains("Wrote preview"), "{report}");
     // The V-bit's floor ridges stand only where the pass does not reach.
     assert!(
-        report.contains("V-bit floor ridges 0.800 mm where no clearing pass reaches."),
+        report.contains(
+            "V-bit floor ridges 0.800 mm along the rings and up to 1.131 mm at their corners where no clearing pass reaches."
+        ),
         "{report}"
     );
     let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");

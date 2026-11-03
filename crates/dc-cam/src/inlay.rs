@@ -57,8 +57,8 @@ use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::stock::StockEdge;
 use crate::vcarve::{
-    self, Carve, Clearing, OpenEdge, Targets, carve_regions, carve_regions_then, checked_v_bit,
-    clearing, floor::Floor,
+    self, Carve, Clearing, FloorRidges, OpenEdge, Targets, carve_regions, carve_regions_then,
+    checked_v_bit, clearing, floor::Floor,
 };
 use crate::warning::Warning;
 use dc_geometry::{
@@ -619,13 +619,13 @@ fn bordering_shape(region: &Region, design: &Targets) -> ShapeRef {
         )
 }
 
-/// The height, mm, of the ridges the V-bit leaves between its floor rings
-/// on `board` of Inlay `op`, `step_over_fraction · F` as for a V-Carve
-/// ([`vcarve::floor_ridge_height_mm`]); `None` when that board has no
-/// floor wide enough, no usable V-bit or step-over, or does not resolve
-/// (the male's, while its board is not measured).
+/// The ridges the V-bit leaves on the floor of `board` of Inlay `op`,
+/// along its rings and at their corners, as for a V-Carve
+/// ([`vcarve::floor_ridges`]; #522); `None` when that board has no floor
+/// wide enough, no usable V-bit or step-over, or does not resolve (the
+/// male's, while its board is not measured).
 #[must_use]
-pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp, board: Board) -> Option<f64> {
+pub fn floor_ridges(project: &Project, op: &InlayOp, board: Board) -> Option<FloorRidges> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
     let bit = checked_v_bit(&op.id, tool).ok()?;
     let fraction = op
@@ -638,13 +638,11 @@ pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp, board: Board) -> O
         inset_mm: side.flat_depth_mm * bit.slope,
         step_over_fraction: Some(fraction),
     };
-    let tolerance_mm = project.flatten_tolerance_mm;
-    let has_floor = side
-        .targets
-        .regions
-        .iter()
-        .any(|r| !floor.regions(r, tolerance_mm).is_empty());
-    has_floor.then_some(fraction * side.flat_depth_mm)
+    floor.ridges(
+        &side.targets.regions,
+        side.flat_depth_mm,
+        project.flatten_tolerance_mm,
+    )
 }
 
 /// Generates both boards of the Inlay `op` in `project` (#498): the

@@ -200,7 +200,7 @@ fn v_bit_floor_covers_the_floor_region() {
 
 /// Step 6: between two grooves `s` apart the ridge is `s / (2 tan(α/2))`
 /// high, `step_over_fraction · F`: 0.8 mm at 0.4 and 0.2 mm at 0.1 for
-/// acceptance 50, which `floor_ridge_height_mm` reports for `check`. On
+/// acceptance 50, which `floor_ridges` reports for `check`. On
 /// the floor's cross-section through the middle the ridges left are no
 /// higher (the distance to the nearest groove over tan 45°). No flat
 /// depth, no step-over, or no region wide enough for a floor: nothing to
@@ -209,7 +209,9 @@ fn v_bit_floor_covers_the_floor_region() {
 fn floor_ridge_height_is_reported() {
     for (fraction, ridge_mm) in [(0.4, 0.8), (0.1, 0.2)] {
         let (p, op) = acceptance_50(Some(fraction));
-        let reported = floor_ridge_height_mm(&with_op(&p, &op), &op).expect("a floor");
+        let reported = floor_ridges(&with_op(&p, &op), &op)
+            .expect("a floor")
+            .straight_mm;
         assert_approx_eq!(reported, ridge_mm, 1e-9);
         let (toolpath, _) = carve(&p, &op);
         let floor = floor_cuts(&toolpath);
@@ -228,24 +230,86 @@ fn floor_ridge_height_is_reported() {
         flat_depth_mm: None,
         ..op.clone()
     };
-    assert_eq!(
-        floor_ridge_height_mm(&with_op(&p, &no_flat), &no_flat),
-        None
-    );
+    assert_eq!(floor_ridges(&with_op(&p, &no_flat), &no_flat), None);
     let mut no_step_over = p.clone();
     for tool in &mut no_step_over.tools {
         tool.step_over_fraction = None;
     }
-    assert_eq!(
-        floor_ridge_height_mm(&with_op(&no_step_over, &op), &op),
-        None
-    );
+    assert_eq!(floor_ridges(&with_op(&no_step_over, &op), &op), None);
     // A 2 mm wide bar: half-width 1 mm, under F · tan 45° = 2 mm.
     let (narrow, narrow_op) = with_90(vec![rect(20.0, 2.0)], None);
     assert_eq!(
-        floor_ridge_height_mm(&with_op(&narrow, &narrow_op), &narrow_op),
+        floor_ridges(&with_op(&narrow, &narrow_op), &narrow_op),
         None
     );
+}
+
+/// #522: the corner ridge is the straight-run ridge over `sin(θ/2)` for the
+/// sharpest convex corner θ of the floor's rings, at most twice it. At
+/// step-over 0.1 and `F` 2 the straight-run ridge is 0.2 mm: acceptance
+/// 50's rectangle (90°) reports 0.2 / sin 45°; a regular pentagon (108°)
+/// 0.2 / sin 54°; a right triangle with a 30° corner the cap, 0.4; a
+/// circle, whose rings have no corner, 0.2. On each, the floor's points
+/// stand no higher than the corner ridge: the distance to the nearest cut
+/// at the floor over tan 45°.
+#[test]
+fn corner_ridge_is_reported_at_the_rings_sharpest_corner() {
+    let pentagon: Vec<(f64, f64)> = (0..5)
+        .map(|k| {
+            let a = std::f64::consts::TAU * f64::from(k) / 5.0 + 0.3;
+            (12.0 + 10.0 * a.cos(), 12.0 + 10.0 * a.sin())
+        })
+        .collect();
+    let cases = [
+        (
+            "rectangle",
+            rect(30.0, 10.0),
+            0.2 / 45f64.to_radians().sin(),
+        ),
+        (
+            "pentagon",
+            polygon(&pentagon),
+            0.2 / 54f64.to_radians().sin(),
+        ),
+        (
+            "30° triangle",
+            polygon(&[(0.0, 0.0), (30.0, 0.0), (0.0, 17.32)]),
+            0.4,
+        ),
+        (
+            "circle",
+            Polyline::circle(Point::new(10.0, 10.0), 10.0),
+            0.2,
+        ),
+    ];
+    for (name, shape, corner_mm) in cases {
+        let (p, op) = with_90(vec![shape], Some(0.1));
+        let ridges = floor_ridges(&with_op(&p, &op), &op).expect("a floor");
+        assert_approx_eq!(ridges.straight_mm, 0.2, 1e-9);
+        assert!(
+            (ridges.corner_mm - corner_mm).abs() <= 1e-3,
+            "{name}: corner ridge {} mm, not {corner_mm}",
+            ridges.corner_mm
+        );
+        let (toolpath, _) = carve(&p, &op);
+        let floor = floor_cuts(&toolpath);
+        let regions = regions_of(&with_op(&p, &op), &op);
+        for i in 0..=60 {
+            for j in 0..=60 {
+                let q = at(f64::from(i) * 0.5, f64::from(j) * 0.5);
+                if !regions.iter().any(|r| r.contains_point(q))
+                    || wall_distance(&regions, q) < F_MM * slope_of(90.0) + 0.05
+                {
+                    continue;
+                }
+                let height_mm = distance_to_cuts(&floor, q) / slope_of(90.0);
+                assert!(
+                    height_mm <= ridges.corner_mm + 0.02,
+                    "{name}: a ridge {height_mm} mm high at {q:?}"
+                );
+            }
+        }
+    }
 }
 
 /// Step 6: medial chains that lie wholly inside the cleared floor are
