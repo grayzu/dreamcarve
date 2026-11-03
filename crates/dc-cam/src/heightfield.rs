@@ -101,6 +101,12 @@ impl Heightfield {
         self.z_mm[j * self.nx + i]
     }
 
+    /// Sets the height of cell `(i, j)`, mm: a test's own field.
+    #[cfg(test)]
+    pub(crate) fn set_z_mm(&mut self, i: usize, j: usize, z_mm: f64) {
+        self.z_mm[j * self.nx + i] = z_mm;
+    }
+
     /// Cell `(i, j)`'s centre in the grid's frame.
     pub(crate) fn cell(&self, i: usize, j: usize) -> Point {
         Point::new(
