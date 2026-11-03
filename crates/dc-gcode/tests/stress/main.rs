@@ -520,3 +520,27 @@ fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
     let wide = with(dc_project::Units::Inch, 60.0);
     assert!(excused(&wide, by_tip).is_none(), "with the 60° bit");
 }
+
+/// #506 (found by the sweep): the male of lettering seed `0x2d` (15° bit,
+/// millimetre program) with a V wall seats within 0.05 mm. A letter's
+/// curve leaves the male's surround a bay whose last medial node, 0.239 mm
+/// from the walls, leaves part of the bay's wall 0.009 mm beyond its disc.
+/// The medial axis gives a convex vertex no disc reaches a tip of its own,
+/// but only beyond a fixed slack of 0.01 mm, which the 15° bit's cone
+/// turns into 0.076 mm: the plug stood 0.069 mm proud on the bay's wood.
+/// The slack now scales with the bit, as the wall tolerance does (#478).
+#[test]
+fn lettering_curve_bay_seats_with_a_narrow_bit() {
+    let outcome = reproduce(
+        "lettering",
+        0x2d,
+        lettering::lettering(0x2d),
+        Kind::MaleVWall,
+    );
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}

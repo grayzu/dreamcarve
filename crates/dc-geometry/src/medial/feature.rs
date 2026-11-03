@@ -20,7 +20,7 @@
 //! wall by `r · (1 − cos θ)` for a node of clearance `r` and spread `θ`.
 
 use super::grid::{Contact, SegmentDistanceGrid};
-use super::{CONTACT_SPREAD_RAD, CORNER_ANGLE_RAD, REACH_SLACK_MM};
+use super::{CONTACT_SPREAD_RAD, CORNER_ANGLE_RAD};
 use crate::point::Point;
 
 /// Where one sampled boundary segment lies: its loop, and the flattened
@@ -174,7 +174,8 @@ fn vertex_turns(points: &[Point]) -> Vec<f64> {
 /// band of [`SegmentDistanceGrid::contacts`], such that the boundary
 /// between it and the nearest turns by at least [`CONTACT_SPREAD_RAD`]
 /// ([`Boundary::turn`]), the nearer of the two stands out from the
-/// other's wall by more than [`REACH_SLACK_MM`] (`r · (1 − cos θ)` for
+/// other's wall by more than `slack_mm` (the reach's slack, at most
+/// [`super::REACH_SLACK_MM`]; `r · (1 − cos θ)` for
 /// spread `θ`), and the two are not both corners. Two corners are reached
 /// by every node round each; a wall point beside a feature only by the
 /// node this keeps.
@@ -184,6 +185,7 @@ pub(super) fn has_feature_contact(
     p: Point,
     clearance_mm: f64,
     tol_ratio: f64,
+    slack_mm: f64,
 ) -> bool {
     let (contacts, nearest) = grid.contacts(p, clearance_mm, tol_ratio);
     let Some(nearest) = nearest.and_then(|i| contacts.get(i)) else {
@@ -196,7 +198,7 @@ pub(super) fn has_feature_contact(
     let nearest_corner = boundary.is_corner(nearest);
     contacts.iter().filter(|c| c.d >= 1e-12).any(|c| {
         let cos = ((c.q - p).dot(u) / c.d).clamp(-1.0, 1.0);
-        clearance_mm * (1.0 - cos) > REACH_SLACK_MM
+        clearance_mm * (1.0 - cos) > slack_mm
             && !(nearest_corner && boundary.is_corner(c))
             && boundary
                 .turn(nearest, c)
