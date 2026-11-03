@@ -319,6 +319,7 @@ fn runs_of(
         deepen_mm: None,
         axis_mm: None,
         written_mm: 0.0,
+        grid: None,
     };
     medial::runs(graph, &depth, no_simplifying, &walls, &[])
 }
@@ -513,6 +514,7 @@ fn links_keep_the_cone_inside_an_open_edge() {
         deepen_mm: None,
         axis_mm: None,
         written_mm: 0.0,
+        grid: None,
     };
     let link = (Point3::new(1.5, 0.0, 9.5), Point3::new(3.3, 0.0, 9.5));
     assert!(
@@ -579,6 +581,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
         deepen_mm: None,
         axis_mm: None,
         written_mm: 0.0,
+        grid: None,
     };
     let blocks: Vec<CutBlock> = medial::runs(&chain, &depth, no_simplifying, &walls, &[])
         .iter()

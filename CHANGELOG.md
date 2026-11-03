@@ -240,6 +240,18 @@ phases bump the patch number.
   more exactly, so an arc no longer strays a few hundred-thousandths of a
   millimetre past the arc-fit tolerance; a few arcs of other programs
   change where they did ([#453]).
+- An Inlay's plug now seats in sharp corners with narrow bits. To keep
+  every written move inside the walls, a V-Carve's groove into a corner
+  stopped where the bit's tip was half a unit of the program's last place
+  from both walls, which is far short of the tip in a corner a few
+  degrees wide; the plug kept that wood and stood 0.124 mm proud in a 5°
+  notch with the 15° bit. The groove now runs on to a point the program
+  writes exactly, as near the corner as one lies, wherever the move from
+  there stays inside as written. The 5° notch seats within 0.05 mm with
+  every bench bit in millimetres; in a four-place inch program the 15°
+  and 30° bits can still stand up to 0.16 and 0.08 mm proud at so sharp
+  a corner. A program's corners start nearer their tips, so the sign
+  quick start's background now starts at its corner ([#499]).
 
 ## [0.2.0] - 2026-10-27
 
@@ -1023,6 +1035,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#479]: https://github.com/grayzu/dreamcarve/issues/479
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
+[#499]: https://github.com/grayzu/dreamcarve/issues/499
 [#506]: https://github.com/grayzu/dreamcarve/issues/506
 [#507]: https://github.com/grayzu/dreamcarve/issues/507
 [#502]: https://github.com/grayzu/dreamcarve/issues/502
