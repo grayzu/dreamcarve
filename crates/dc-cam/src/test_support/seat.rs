@@ -43,7 +43,8 @@ pub(crate) struct SeatCell {
 /// The plug's cells, seated on the female (#452). `female` and `male`
 /// share one grid, the male's mirrored. The plug is every cell not joined
 /// to the grid's border through male wood standing above the start plane
-/// (by more than [`FLOOR_SLACK_MM`]): the band's floor rings the plug, and
+/// (by more than [`FLOOR_SLACK_MM`]), cell to cell through sides or
+/// corners (#501): the band's floor rings the plug, and
 /// the board beyond it, V wall and all, falls away when the piece is cut
 /// out. Wood left above the start plane in the band but joined to the
 /// plug is part of it, as it would bind. The plug's start plane stops the
@@ -68,11 +69,22 @@ pub(crate) fn seat(
         }
     }
     while let Some((i, j)) = queue.pop_front() {
+        // #501: through the corners too. A ridge of the board thinner than
+        // a cell that runs across the grid has cells that touch only at
+        // their corners; joined through the sides alone it falls apart
+        // into cells counted as plug. The band, a margin wide and cut to
+        // its floor, keeps the plug's wood from ever coming that near the
+        // board's.
+        let (west, south) = (i.wrapping_sub(1), j.wrapping_sub(1));
         let neighbours = [
-            (i.wrapping_sub(1), j),
+            (west, j),
             (i + 1, j),
-            (i, j.wrapping_sub(1)),
+            (i, south),
             (i, j + 1),
+            (west, south),
+            (i + 1, south),
+            (west, j + 1),
+            (i + 1, j + 1),
         ];
         for (a, b) in neighbours {
             if a < nx && b < ny && !outside[b * nx + a] && standing(a, b) {
