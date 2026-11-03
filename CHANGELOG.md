@@ -179,8 +179,8 @@ phases bump the patch number.
   until [#506] is fixed. The inlay quick start points to it ([#507]).
 - **Documentation:** the Inlay chapter's narrow-bit note now says how
   far 15° and 30° plugs stand proud after the fixes since: under about
-  0.1 and 0.2 mm in millimetre programs, more at a hairline point in an
-  inch program and where an outline nearly touches itself ([#501]).
+  0.1 and 0.2 mm in millimetre programs, and more at a hairline point in
+  an inch program ([#501]).
 
 ### Fixed
 

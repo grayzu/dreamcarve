@@ -168,13 +168,10 @@ bit, expect 0.05 to 0.2 mm. In both cases the excess comes where a line
 ends inside the design, where a curve narrows, or where two parts
 nearly touch: there the plug's walls meet the pocket's before they do
 elsewhere ([#506](https://github.com/grayzu/dreamcarve/issues/506)).
-Where an outline comes within a few hundredths of a millimetre of
-itself across the outside, the plug can stand much further proud, with
-any bit, until [#515](https://github.com/grayzu/dreamcarve/issues/515)
-is fixed. If you use a narrow bit, plan for it: press the plug home with
-a clamp and flat cauls, so that the wood gives where the walls meet
-first, and keep `glue_gap_mm` at 1 mm or more, so that the plug has room
-under it to go down.
+If you use a narrow bit, plan for it: press the plug home with a clamp
+and flat cauls, so that the wood gives where the walls meet first, and
+keep `glue_gap_mm` at 1 mm or more, so that the plug has room under it
+to go down.
 
 ## Two projects from one drawing
 
