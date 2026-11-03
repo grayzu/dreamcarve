@@ -547,8 +547,23 @@ pub fn blocks(
         // true, which the cone turns into height. The medial axis keeps
         // the project's: sampled finer, a thin strip's nodes zig-zag.
         let walls = Walls::new(std::slice::from_ref(region), wall_tolerance_mm);
+        // Each node is moved onto the axis of these walls, the largest disc
+        // tangent at its nearest wall point through it, when that is within
+        // the project's tolerance, the most the chords put it off; with its
+        // clearance read from them.
         for node in graph.nodes.iter_mut().filter(|n| n.clearance_mm > 0.0) {
             node.clearance_mm = walls.clearance_mm(node.p);
+            if let Some((near_mm, w)) = walls.nearest(node.p)
+                && near_mm > EPS_MM
+            {
+                let u = (node.p - w) * (1.0 / near_mm);
+                let radius_mm = walls.ball_radius_mm(w, u, near_mm + tolerance_mm);
+                let m = w + u * radius_mm;
+                if m.distance_to(node.p) <= tolerance_mm {
+                    node.p = m;
+                    node.clearance_mm = radius_mm;
+                }
+            }
         }
         // Step 3: the deepest point, from the widest node, engages the
         // flank from `engaged_from`; below the cone the shank cuts.
