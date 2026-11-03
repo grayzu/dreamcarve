@@ -293,3 +293,65 @@ fn pinched_design_seats_flush() {
     );
     assert_seats("pinch", &project, fine);
 }
+
+/// A pentagon whose corner at the origin is 125° (it turns 55°), as line
+/// art `0x34`'s: walls 6 mm long at 62.5° either side of its bisector,
+/// which points along −X, closed by a 12 mm wide end. Its other corners
+/// are 117.5° and 90°.
+fn obtuse_corner() -> Polyline {
+    let (sin, cos) = 62.5_f64.to_radians().sin_cos();
+    polygon(&[
+        (0.0, 0.0),
+        (-6.0 * cos, 6.0 * sin),
+        (-12.0, 6.0 * sin),
+        (-12.0, -6.0 * sin),
+        (-6.0 * cos, -6.0 * sin),
+    ])
+}
+
+/// #500 (line art `0x34`): the female's groove into a 125° corner runs
+/// from the corner's tip along its bisector to the floor, and the plug
+/// seats within [`SEAT_MM`] with the 15° bit (depths scaled to its cone
+/// as the star's: `D` 4, `G` 1, `P` 1.6). Along the bisector, every
+/// point's V surface, `s · sin 62.5° / tan 7.5°` deep at `s` from the
+/// tip, is cut to within 0.01 mm sideways, up to where the floor (inset
+/// `D · tan 7.5°`) begins. The corner turns between 50° and 60°: sharp,
+/// so it gets a tip, but its walls' contacts are closer than the
+/// contact-spread filter keeps all along its branch but for a stub at the
+/// tip, and the tip joined the stub, so the bisector from the stub to the
+/// axis was never cut: on line art `0x34`, 0.31 mm of it, which left the
+/// female 0.025 mm shallow sideways at every bit and the plug 0.188 mm
+/// proud with the 15° bit. #484's heptagon is the same cause with the
+/// 60° bit.
+#[test]
+fn obtuse_corner_groove_runs_to_the_floor() {
+    let mut project = project_of(vec![obtuse_corner()], CENTRE, 100.0, 100.0);
+    project.tools[0] = v_bit(15.0);
+    let slope = 7.5_f64.to_radians().tan();
+    let half_sin = 62.5_f64.to_radians().sin();
+    let side = |side| InlayOp {
+        depth_mm: Some(4.0),
+        glue_gap_mm: Some(1.0),
+        plug_depth_mm: Some(1.6),
+        ..fine(side)
+    };
+    let (runs, _) = inlay_runs(&project, &side(InlaySide::Female));
+    let floor_s_mm = 4.0 * slope / half_sin;
+    let mut short = Vec::new();
+    let mut s = 0.02;
+    while s < floor_s_mm {
+        let q = Point::new(CENTRE.0 - s, CENTRE.1);
+        let true_z_mm = THICKNESS_MM - s * half_sin / slope;
+        let carved_z_mm = crate::heightfield::carved_z_mm(main_run(&runs), q, slope);
+        let short_mm = (carved_z_mm - true_z_mm) * slope;
+        if short_mm > 0.01 {
+            short.push(format!("{s:.2} mm in: {short_mm:.4} mm short"));
+        }
+        s += 0.02;
+    }
+    assert!(
+        short.is_empty(),
+        "the groove stops short of the bisector: {short:#?}"
+    );
+    assert_seats("125° corner, 15° bit", &project, side);
+}

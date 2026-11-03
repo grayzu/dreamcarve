@@ -434,7 +434,7 @@ fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
 /// Seat failures of the CI tests' designs, each with the open issue it
 /// is filed under:
 /// family, seed, operation, issue.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 3] = [
+const KNOWN_CASES: [(&str, u64, Kind, u32); 2] = [
     // #501: with the 15° bit, 0.067 mm 4.6 mm from the near touch #479
     // merges (0.051 mm, the male's share, at the merged gap itself).
     // #479's rule hid it: before the merge the near touch held the plug
@@ -443,9 +443,6 @@ const KNOWN_CASES: [(&str, u64, Kind, u32); 3] = [
     // #501: inside a curve of the "a", 0.015 mm sideways at every bit,
     // 0.057 mm with the 30° bit.
     ("small lettering", 0x0464_1001, Kind::MaleOpenEdge, 501),
-    // #500: the female's groove stops 0.025 mm into a 125° corner,
-    // 0.092 mm with the 30° bit.
-    ("line art", 0x34, Kind::MaleOpenEdge, 500),
 ];
 
 /// The validation problems a valid design may still raise with the

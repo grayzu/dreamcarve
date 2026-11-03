@@ -266,7 +266,10 @@ fn reproduce(family: &str, seed: u64, design: Design, kind: Kind) -> Outcome {
 /// clearing pass's floor is two pieces of the band's one shape, one in
 /// the other's island; the pass paired the shape with itself and failed
 /// "shape `Design` (instance `i1`, profile 1) encloses itself through
-/// other shapes; no cut order exists".
+/// other shapes; no cut order exists". The pair also seats (#500): the
+/// female's groove into the motif's 125° corner stopped 0.025 mm in, at
+/// a stub of the corner's branch, and left the plug 0.092 mm proud; since
+/// #484 the branch runs on to the axis.
 #[test]
 fn male_of_line_art_with_rings_orders_its_cuts() {
     let outcome = reproduce(
