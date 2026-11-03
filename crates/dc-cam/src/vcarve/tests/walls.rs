@@ -248,3 +248,49 @@ fn corner_groove_runs_on_to_the_written_grid() {
     }
     assert!(failures.is_empty(), "{failures:#?}");
 }
+
+/// #506 (line art `0x36`'s male, 15° bit): a region only a little wider
+/// than the groove at the flat depth is carved to its walls. A circle
+/// whose radius is the 15° bit's floor inset, `F · tan 7.5°`, and 0.014 mm
+/// more: its floor is a circle of radius 0.014 mm, which the Pocket noise
+/// rule at the project's flatten tolerance (a piece thinner than twice
+/// 0.01 mm) dropped as covered by the medial chains. But the chains clamp
+/// at the flat depth, where their cone reaches `F · tan 7.5°`, so the
+/// groove stopped 0.014 mm short of the wall, which is 0.014 / tan 7.5° =
+/// 0.11 mm in height: a mesh's small holes held its plug 0.12 mm up. The
+/// floor's noise rule now uses the wall tolerance (#478), which scales
+/// with the bit.
+#[test]
+fn region_a_hair_wider_than_the_floor_groove_reaches_its_walls() {
+    let flat_mm = 2.0;
+    let slope = slope_of(15.0);
+    let radius_mm = flat_mm * slope + 0.014;
+    let mut p = project(vec![Polyline::circle(Point::new(1.0, 1.0), radius_mm)]);
+    for t in &mut p.tools {
+        if t.id == ToolId::new("t2") {
+            t.cutter = ToolKind::VBit {
+                included_angle_deg: 15.0,
+            };
+        }
+    }
+    let op = VCarveOp {
+        flat_depth_mm: Some(flat_mm),
+        step_over_fraction: Some(0.1),
+        ..carve_op(&p)
+    };
+    let (toolpath, _) = carve(&p, &op);
+    let regions = regions_of(&with_op(&p, &op), &op);
+    let (missed, count) = missed_walls(
+        &toolpath,
+        &regions,
+        TOP_MM,
+        slope,
+        (p.flatten_tolerance_mm, written_mm(&p)),
+    );
+    assert!(count > 10, "{count} wall points");
+    assert!(
+        missed.is_empty(),
+        "{} of {count} wall points missed: {missed:?}",
+        missed.len()
+    );
+}
