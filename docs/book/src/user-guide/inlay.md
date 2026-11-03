@@ -148,18 +148,27 @@ of the pocket's, the plug seats higher or lower by that error times
 | 30° | 3.7 |
 | 15° | 7.6 |
 
-Very sharp corners, under about 10°, have a limit of their own: the
-program's decimal places. A program writes each point to its places, so
-the bit can only start its cut into a corner at a point it can write
-exactly, and in a corner a few degrees wide the nearest such point may
-be some way from the tip. In a millimetre program (three places) that
-costs a plug at most about 0.04 mm at a 5° corner with the 15° bit. In
-an inch program (four places, 0.00254 mm) it can cost the 30° bit up to
-about 0.08 mm and the 15° bit up to about 0.16 mm there, and more at a
-point sharper still: where two overlapping letters leave a counter
-ending in a hairline spike, the 30° bit's plug stood 0.37 mm proud. In
-millimetres the same plug seats. So for a narrow bit and a design with
-very sharp points, set `display_units` to `"mm"` before you export.
+**Export narrow-bit inlays in millimetres.** An inch program has a
+limit at very sharp corners that a millimetre program does not, and
+DreamCarve accepts it rather than working round it. A program writes
+each point to its decimal places, so the bit can only start its cut into
+a corner at a point the program can write exactly. A millimetre program
+writes to 0.001 mm and an inch program to 0.0001 in (0.00254 mm). In a
+corner a few degrees wide, the nearest such point can be some way from
+the tip, and the plug keeps the wood the bit cannot reach:
+
+- **In millimetres** every bench bit seats within 0.05 mm, a 5° corner
+  included.
+- **In inches**, with a 15° or 30° bit, a corner sharper than about 25°
+  (15° bit) or 14° (30° bit) can hold the plug up: by up to about
+  0.16 mm with the 15° bit and 0.08 mm with the 30° at a 5° corner, and
+  more at a point sharper still. Where two overlapping letters left a
+  counter ending in a hairline spike, a 30° bit's plug stood 0.37 mm
+  proud in inches and seated in millimetres. The 60° and 90° bits are
+  far less sensitive: in inches they seat within 0.05 mm at a 5° corner.
+
+So for an inlay with a 15° or 30° bit, set the project's `display_units`
+to `"mm"` before you export, whatever units you design in.
 
 Apart from that limit, corners, sharp or obtuse, seat with every bit.
 Some other tight features still don't. With the 30° bit most plugs seat
