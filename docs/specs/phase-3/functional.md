@@ -369,7 +369,9 @@ is no GUI in this phase.
      is. A V-bit cannot carve such a gap: the female left the wall to
      the stock top, the male no groove, and the plug stood up to
      `depth_mm − glue_gap_mm` proud on it. Plain V-Carve and Pocket cut
-     their parts as drawn. A hole of the design narrower than 0.05 mm all
+     their parts as drawn. One outline that comes that near itself across
+     the outside is merged across the gap the same way (#515). A hole of
+     the design narrower than 0.05 mm all
      along is filled on both sides the same way, and `inlay_hole_filled`
      names it, its width and where it is (#511).
 

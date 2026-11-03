@@ -1476,6 +1476,19 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    drawn. The male merges its mirrored design, the same rule on the same
    shapes. A gap of `d` or more is left as drawn: two squares 0.1 mm
    apart keep the ridge between the female's pockets, and the pair seats.
+   One outline that comes within `d` of itself across the outside is
+   merged the same way (#515): two stretches of it at least `8·d` apart
+   along it whose gap's middle lies outside the region, where the
+   region's own closing adds a piece against both stretches, two separate
+   runs of the outline; a piece that fills a notch's tip or rounds an
+   inward corner touches one run and is not kept, and a fold across the
+   design itself (a thin web of it) is never one, as the closing only
+   adds outside. Lettering `0xaf`'s "m" and "e" overlap, so they are one
+   outline, which comes 0.02 mm from itself between the "m"'s leg and the
+   "e"'s curve; its male stood 1.263 mm proud
+   (`stress::lettering_outline_near_itself_is_merged`,
+   `inlay::self_near_touch_is_merged_and_seats`). It warns
+   `inlay_parts_merged` with the shape as both parts, worded for one.
    A hole narrower than `d` all along (its own area inset by `d/2` is
    empty) that holds no other region is filled, the same thing the other
    way round (#511): a hairline where two overlapping letters leave a

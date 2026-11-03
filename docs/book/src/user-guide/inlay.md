@@ -516,6 +516,11 @@ distance or more apart are cut as drawn, with the wall between them;
 0.1 mm apart, the pair seats as any other. A plain V-Carve or Pocket
 never merges parts.
 
+One outline that comes that near itself across the outside, where two
+overlapping letters became one shape, is merged across the gap the same
+way, and `inlay_parts_merged` names the shape once ("… comes within …
+mm of itself at …").
+
 A hole of the design narrower than the merge distance all along, a
 hairline where two overlapping letters leave a sliver, is the same
 thing the other way round: the female would leave a wall that thin

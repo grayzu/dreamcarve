@@ -356,7 +356,7 @@ fn obtuse_corner_groove_runs_to_the_floor() {
     assert_seats("125° corner, 15° bit", &project, side);
 }
 
-/// #515: a C, a 10 mm square round an 6 mm bay, whose mouth is a slit
+/// #515: a C, a 10 mm square round a 6 mm bay, whose mouth is a slit
 /// 0.02 mm wide from the bay to its right side: one outline comes within
 /// 0.02 mm of itself across the outside. Its plug seats, and both sides
 /// warn `inlay_parts_merged` naming the C alone. #479 merged two parts

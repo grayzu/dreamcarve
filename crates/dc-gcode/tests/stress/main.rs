@@ -425,9 +425,9 @@ fn lettering_male_cuts_the_channel_between_two_feet() {
 }
 
 /// #515 (found by the sweep): the male of lettering seed `0xaf` (60° bit)
-/// with a V wall seats within 0.05 mm. Its "n" and "e" overlap, so they
+/// with a V wall seats within 0.05 mm. Its "m" and "e" overlap, so they
 /// are one outline, which comes 0.02 mm from itself across the outside
-/// between the "n"'s leg and the "e"'s curve, leaving two acute curved
+/// between the "m"'s leg and the "e"'s curve, leaving two acute curved
 /// bays either side; #479 merges two parts that near, not one outline,
 /// and the male's groove stopped short in the bays: the plug stood
 /// 1.263 mm proud, 0.430 after #511.
