@@ -530,7 +530,7 @@ pub fn blocks(
             }
             continue;
         }
-        let Some((graph, step_mm)) = medial::region_graph(
+        let Some((mut graph, step_mm)) = medial::region_graph(
             region,
             tolerance_mm,
             carve.corner_reach(region, bit.slope),
@@ -541,6 +541,15 @@ pub fn blocks(
         ) else {
             continue;
         };
+        // #506: the walls the chains are fitted to, and the nodes' depths,
+        // are drawn within the wall tolerance. Chords lie inside an arc, so
+        // at the project's a thin ring's groove ran up to that far off
+        // true, which the cone turns into height. The medial axis keeps
+        // the project's: sampled finer, a thin strip's nodes zig-zag.
+        let walls = Walls::new(std::slice::from_ref(region), wall_tolerance_mm);
+        for node in graph.nodes.iter_mut().filter(|n| n.clearance_mm > 0.0) {
+            node.clearance_mm = walls.clearance_mm(node.p);
+        }
         // Step 3: the deepest point, from the widest node, engages the
         // flank from `engaged_from`; below the cone the shank cuts.
         let widest_mm = graph
@@ -560,12 +569,6 @@ pub fn blocks(
         let floors = flat
             .map(|f| f.regions_of(carve, region, wall_tolerance_mm))
             .unwrap_or_default();
-        // #506: the walls the chains are fitted to, and their points' depths
-        // read from, are drawn within the wall tolerance. Chords lie inside
-        // an arc, so at the project's a thin ring's groove ran up to that far
-        // off true, which the cone turns into height. The medial axis keeps
-        // the project's: sampled finer, a thin strip's nodes zig-zag.
-        let walls = Walls::new(std::slice::from_ref(region), wall_tolerance_mm);
         let runs = medial::runs_within(
             &graph,
             &depth,

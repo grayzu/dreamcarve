@@ -308,9 +308,8 @@ pub(crate) fn runs(
 }
 
 /// The runs that carve one region from its medial `graph`: chains
-/// ([`extract_chains`]) less the redundant leaves, each node at the depth
-/// of its clearance to `walls` (#506), simplified and fitted to `walls`,
-/// each cut to the stretches whose moves
+/// ([`extract_chains`]) less the redundant leaves, each node at its depth,
+/// simplified and fitted to `walls`, each cut to the stretches whose moves
 /// keep the cone inside `edge` at the stock top (#448: a male Inlay's open
 /// band edge, beyond which the board stands full height; `None` keeps
 /// every chain whole), less the chains wholly on the cleared `floors`
@@ -335,17 +334,7 @@ pub(crate) fn runs_within(
                 let points: Vec<Point3> = chain
                     .iter()
                     .filter_map(|&i| graph.nodes.get(i))
-                    .map(|n| {
-                        // #506: each point's depth from its clearance to
-                        // `walls`, which may be drawn finer than the axis
-                        // was sampled against; a corner's tip stays at 0.
-                        let clearance_mm = if n.clearance_mm > 0.0 {
-                            walls.clearance_mm(n.p)
-                        } else {
-                            0.0
-                        };
-                        Point3::new(n.p.x, n.p.y, depth.z_mm(clearance_mm))
-                    })
+                    .map(|n| Point3::new(n.p.x, n.p.y, depth.z_mm(n.clearance_mm)))
                     .collect();
                 let simple = simplify_chain(&points, tolerances.simplify_mm, walls, depth);
                 within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
