@@ -14,7 +14,7 @@ use dc_cam::test_support::assert_run_safe;
 use dc_cam::test_support::seat::{SEAT_MM, fit};
 use dc_cam::{CamError, ToolRun, generate_inlay, generate_vcarve};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
-use dc_geometry::Transform;
+use dc_geometry::{Point, Transform};
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
     ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
@@ -448,6 +448,97 @@ const KNOWN_CASES: [(&str, u64, Kind, u32); 1] = [
 /// [`CamError::InlayCutOutNoRoom`], which validation reports first.
 const EXPLAINED_PROBLEMS: [&str; 1] = ["inlay_cut_out_no_room"];
 
+/// The seat check's grid step, mm, as [`carve`] reads every pair.
+const SEAT_GRID_MM: f64 = 0.1;
+
+/// The accepted limit of a four-place inch program at a very sharp corner
+/// (#499; accepted by the maintainer on #438): a description of the
+/// corner when `case` is an inch program with a narrow bit and its pair's
+/// binding cell `seat_at` (the female's frame) lies where such a corner
+/// can hold the plug up; `None` otherwise, when the failure is a failure.
+///
+/// A program writes every point to its places, which can move it by `w =
+/// quantum / √2` (0.0018 mm at four inch places). So a groove into a
+/// corner of angle `θ` stops where its tip is `w` from both walls (#469),
+/// `w / sin(θ/2)` from the tip, unless a point the program writes exactly
+/// lies nearer inside (#499's grid start, which the grid's coarseness
+/// cannot promise). Above its start plane the plug keeps the wood beyond:
+/// `w (1/sin(θ/2) − 1)` sideways, `1 / tan(α/2)` times that in height.
+/// That stays within [`SEAT_MM`] for every corner exactly when `θ ≥ N` with
+///
+/// `N = 2 asin(w / (SEAT_MM · tan(α/2) + w))`,
+///
+/// 24.8° for the 15° bit and 13.6° for the 30° (6.7° and 4.0° for the 60°
+/// and 90°). The decision excuses the narrow bits in inch programs only:
+/// millimetre programs, on a grid 2.54 times finer that #499's grid start
+/// reaches into a 5° corner, are held to [`SEAT_MM`] everywhere, and so
+/// are the 60° and 90° bits. A corner sharper than `N` is a vertex of the
+/// design (as drawn, arcs
+/// flattened at the project's tolerance) whose two edges meet at less
+/// than `N` on either side: a point of the design, or a notch in it.
+///
+/// The cell that binds need not be at the tip. The plug's flank all down
+/// the side of an uncut tip stands proud by the same height, up to the
+/// plug's top, `D − G` above its start plane, which lies `(D − G) ·
+/// tan(α/2)` out from the outline (lettering `0x4f`'s bound 0.7 mm from
+/// its hairline point). So the cell must lie within that, the margin's
+/// stop `w / sin(θ/2)`, and one cell's diagonal of such a corner.
+pub fn inch_sharp_corner(case: &Case, female: &InlayOp, seat_at: Point) -> Option<String> {
+    let project = &case.project;
+    if project.display_units != Units::Inch {
+        return None;
+    }
+    let ToolKind::VBit { included_angle_deg } = project.tools.first()?.cutter else {
+        return None;
+    };
+    if included_angle_deg > 30.0 {
+        return None;
+    }
+    let slope = (included_angle_deg / 2.0).to_radians().tan();
+    let w_mm = project
+        .post_processor
+        .decimal_places
+        .quantum_mm(Units::Inch)
+        * std::f64::consts::FRAC_1_SQRT_2;
+    let sharpest_rad = 2.0 * (w_mm / (SEAT_MM * slope + w_mm)).asin();
+    let plug_mm = female.depth_mm? - female.glue_gap_mm?;
+    let instance = project.instances.first()?;
+    let profiles = &project.definitions.get(&instance.definition)?.profiles;
+    for profile in profiles {
+        let placed = instance
+            .transform
+            .apply_polyline(profile)
+            .ok()?
+            .with_arcs_flattened(project.flatten_tolerance_mm);
+        let points: Vec<Point> = placed.vertices().iter().map(|v| v.point()).collect();
+        let n = points.len();
+        for (k, &p) in points.iter().enumerate() {
+            let (prev, next) = (points[(k + n - 1) % n], points[(k + 1) % n]);
+            let (a, b) = (prev - p, next - p);
+            let (la, lb) = (a.length(), b.length());
+            if la <= 0.0 || lb <= 0.0 {
+                continue;
+            }
+            let angle_rad = (a.dot(b) / (la * lb)).clamp(-1.0, 1.0).acos();
+            if angle_rad >= sharpest_rad {
+                continue;
+            }
+            let reach_mm = plug_mm * slope
+                + w_mm / (angle_rad / 2.0).sin()
+                + SEAT_GRID_MM * std::f64::consts::SQRT_2;
+            if p.distance_to(seat_at) <= reach_mm {
+                return Some(format!(
+                    "a {:.1}° corner at {p:?}, {:.3} mm from the binding cell (sharper than {:.1}°, within {reach_mm:.3} mm)",
+                    angle_rad.to_degrees(),
+                    p.distance_to(seat_at),
+                    sharpest_rad.to_degrees()
+                ));
+            }
+        }
+    }
+    None
+}
+
 /// Generates and checks every operation of `case`; with `full` false,
 /// only generation is tried and only the generator refusing its own move
 /// is a failure (`generator_never_refuses_its_own_move`). With
@@ -598,11 +689,16 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                     "the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?}); at most {SEAT_MM}",
                     f.seat_mm, f.seat_at, f.male_mm, f.male_at
                 );
-                match known_issue(case, *kind) {
-                    Some(issue) => out
+                let limit = inch_sharp_corner(case, &female_op, f.seat_at);
+                match (known_issue(case, *kind), limit) {
+                    (Some(issue), _) => out
                         .known
                         .push(format!("#{issue}: {kind:?} of {}\n  {what}", case.label)),
-                    None => fail(&mut out, *kind, what),
+                    (None, Some(corner)) => out.known.push(format!(
+                        "inch limit (#438): {kind:?} of {}\n  {what}\n  {corner}",
+                        case.label
+                    )),
+                    (None, None) => fail(&mut out, *kind, what),
                 }
             }
             Err(p) => fail(
