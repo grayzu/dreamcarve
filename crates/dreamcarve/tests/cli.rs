@@ -7084,6 +7084,52 @@ fn inlay_migration_expected(name: &str) -> String {
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
 }
 
+/// Asserts `program` is the committed program `name` of
+/// `tests/expected/inlay-migration/`, which `what` names in the message.
+/// The programs were exported on macOS, where they must match byte for
+/// byte. Elsewhere the platform's maths library may round a sine or an
+/// arc's end differently in the last bit, so a written number may differ
+/// by one unit in its last place (0.001 mm): there every line must be the
+/// same but for such numbers, the same words in the same order. The first
+/// line that differs more is named.
+fn assert_inlay_migration_program(program: &str, name: &str, what: &str) {
+    let expected = inlay_migration_expected(name);
+    if program == expected {
+        return;
+    }
+    let first_difference = || {
+        let (a, b): (Vec<&str>, Vec<&str>) =
+            (program.lines().collect(), expected.lines().collect());
+        if a.len() != b.len() {
+            return Some(format!("{} lines, not {}", a.len(), b.len()));
+        }
+        a.iter().zip(&b).enumerate().find_map(|(k, (x, y))| {
+            let (wx, wy): (Vec<&str>, Vec<&str>) = (
+                x.split_whitespace().collect(),
+                y.split_whitespace().collect(),
+            );
+            let close = wx.len() == wy.len()
+                && wx.iter().zip(&wy).all(|(p, q)| {
+                    p == q || {
+                        let (lp, np) = p.split_at(p.len().min(1));
+                        let (lq, nq) = q.split_at(q.len().min(1));
+                        lp == lq
+                            && matches!(
+                                (np.parse::<f64>(), nq.parse::<f64>()),
+                                (Ok(u), Ok(v)) if (u - v).abs() <= 0.0011
+                            )
+                    }
+                });
+            (!close).then(|| format!("line {}: `{x}`, not `{y}`", k + 1))
+        })
+    };
+    match first_difference() {
+        None if !cfg!(target_os = "macos") => {}
+        None => panic!("{what}: {name} differs from the program before #498 in its last places"),
+        Some(at) => panic!("{what}: {name} differs from the program before #498: {at}"),
+    }
+}
+
 /// #498: a version 24 male project (`dc-male.dcv`, and the star's
 /// version 23 `star-male.dcv`), migrated, cuts its male on a male board
 /// the size of its stock, so it exports the male programs the build
@@ -7111,10 +7157,7 @@ fn v24_male_project_exports_the_same_male_programs() {
             let name = format!("{stem}-male-{k}.nc");
             let program = std::fs::read_to_string(dir.join(&name))
                 .unwrap_or_else(|e| panic!("{stem}: {name}: {e}\n{written:?}"));
-            assert!(
-                program == inlay_migration_expected(&name),
-                "{stem}: {name} differs from the program before #498"
-            );
+            assert_inlay_migration_program(&program, &name, stem);
         }
         assert_eq!(
             written
@@ -7184,10 +7227,7 @@ fn v24_female_project_exports_the_same_female_programs() {
         assert_eq!(programs_in(&dir), want, "{stem}: {report}");
         for name in &want {
             let program = std::fs::read_to_string(dir.join(name)).expect("program written");
-            assert!(
-                program == inlay_migration_expected(name),
-                "{stem}: {name} differs from the program before #498"
-            );
+            assert_inlay_migration_program(&program, name, stem);
         }
         let unset = report
             .lines()
@@ -7252,8 +7292,7 @@ mod export {
                 let program = std::fs::read_to_string(dir.join(name)).expect("program written");
                 let k = name.split_once('-').map(|(_, rest)| rest).expect("a name");
                 let k = k.split_once('-').map(|(_, rest)| rest).expect("a name");
-                let expected = inlay_migration_expected(&format!("{was}-{k}"));
-                assert!(program == expected, "{name} differs from {was}-{k}");
+                assert_inlay_migration_program(&program, &format!("{was}-{k}"), name);
             }
         }
         let report = stdout(&out);
@@ -7316,7 +7355,11 @@ mod export {
         for k in ["1-T2", "2-T1", "3-T2"] {
             let program = std::fs::read_to_string(dir.join(format!("dc-male-{k}.nc")))
                 .expect("program written");
-            assert!(program == inlay_migration_expected(&format!("dc-male-male-{k}.nc")));
+            assert_inlay_migration_program(
+                &program,
+                &format!("dc-male-male-{k}.nc"),
+                "--board male",
+            );
         }
         let report = stdout(&out);
         assert!(report.contains("Male board"), "{report}");
