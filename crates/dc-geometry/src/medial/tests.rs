@@ -614,6 +614,7 @@ fn notched_island_region() -> Region {
 const EVERY: CornerReach = CornerReach::Every {
     outer: true,
     floor_inset_mm: None,
+    reach_slack_mm: REACH_SLACK_MM,
 };
 
 /// #452: an island's convex corner's bisector points into the region
@@ -720,6 +721,7 @@ fn every_corner_reaches_an_obtuse_corner() {
             CornerReach::Every {
                 outer: true,
                 floor_inset_mm: Some(inset_mm),
+                reach_slack_mm: REACH_SLACK_MM,
             },
         )
     };

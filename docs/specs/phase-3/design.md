@@ -788,7 +788,11 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
     `along · sin(θ/2)` within a step) is not a spur; every bisector
     points into the region; any other convex corner no medial disc, nor
     the floor's trace `floor_inset_mm` in (a corner turning `τ` is within
-    `d (1 / cos(τ/2) − 1)` of it), reaches within 0.01 mm gets a tip too,
+    `d (1 / cos(τ/2) − 1)` of it), reaches within its slack
+    `reach_slack_mm` gets a tip too (0.01 mm for a 60° bit or wider;
+    #506: scaled below that as the wall tolerance is, since the cone turns
+    a sliver `g` wide into `g / tan(α/2)` of height, 0.076 mm at 0.01 mm
+    with the 15° bit),
     worst first, each tip's branch counted before the next is chosen
     (#456: a round stroke end the contact-spread filter cut the axis
     short of has every flattened vertex a few hundredths beyond the axis;

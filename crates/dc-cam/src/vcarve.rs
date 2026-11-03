@@ -43,7 +43,7 @@ use crate::stock::{stock_overhang, swept_bounds};
 use crate::toolpath::{MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
-use dc_geometry::medial::CornerReach;
+use dc_geometry::medial::{CornerReach, REACH_SLACK_MM};
 use dc_geometry::{
     Contour, EPS_MM, GeometryWarning, Point3, Region, floor_regions, is_design_hole, nest,
     wall_tolerance_mm,
@@ -123,6 +123,9 @@ impl Carve<'_> {
                 .as_ref()
                 .is_none_or(|design| is_design_hole(region, design)),
             floor_inset_mm: self.flat_depth_mm.map(|f| f * slope),
+            // #506: a corner left that far beyond every disc stands
+            // `gap / tan(α/2)` high, so the slack scales with the bit.
+            reach_slack_mm: wall_tolerance_mm(REACH_SLACK_MM, slope),
         }
     }
 

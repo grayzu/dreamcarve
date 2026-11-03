@@ -139,6 +139,12 @@ pub enum CornerReach {
         /// floor's edge cuts to the walls but for `d · (1 / cos(τ/2) − 1)`
         /// at a corner turning `τ`, where the floor reaches that corner.
         floor_inset_mm: Option<f64>,
+        /// How far beyond every medial disc a corner may stand and still
+        /// count as reached, mm (#506): [`REACH_SLACK_MM`] for a 60° bit or
+        /// wider, less for a narrower one, whose cone turns the sliver left
+        /// into `gap / tan(α/2)` of height (the carve passes
+        /// [`crate::wall_tolerance_mm`] of it).
+        reach_slack_mm: f64,
     },
 }
 
@@ -151,8 +157,17 @@ impl CornerReach {
         }
     }
 
-    /// Whether the floor's trace reaches `corner` within
-    /// [`REACH_SLACK_MM`]: the floor's own corner, `d / cos(τ/2)` along the
+    /// How far beyond every medial disc a corner may stand and count as
+    /// reached, mm.
+    fn slack_mm(self) -> f64 {
+        match self {
+            Self::Upstream => REACH_SLACK_MM,
+            Self::Every { reach_slack_mm, .. } => reach_slack_mm,
+        }
+    }
+
+    /// Whether the floor's trace reaches `corner` within the reach's
+    /// slack ([`CornerReach::slack_mm`]): the floor's own corner, `d / cos(τ/2)` along the
     /// bisector, is that close to the inset `d` beyond it, and the floor
     /// is there, its clearance (from `grid`) at least `d`.
     fn floor_covers(self, corner: &Corner, grid: &SegmentDistanceGrid) -> bool {
@@ -164,8 +179,9 @@ impl CornerReach {
             return false;
         };
         let out_mm = inset_mm / (corner.turn_rad / 2.0).cos();
-        out_mm - inset_mm <= REACH_SLACK_MM
-            && grid.distance_to(corner.p + corner.bisector * out_mm) >= inset_mm - REACH_SLACK_MM
+        let slack_mm = self.slack_mm();
+        out_mm - inset_mm <= slack_mm
+            && grid.distance_to(corner.p + corner.bisector * out_mm) >= inset_mm - slack_mm
     }
 }
 
@@ -181,8 +197,9 @@ const PRUNE_FACTOR: f64 = 1.5;
 /// gets a tip too, mm (#452). The contact-spread filter drops the branch
 /// into a corner wider than 120°, and upstream gives no corner under 50°
 /// a tip, so such a corner can stand that far beyond the carve; above its
-/// start plane a male Inlay keeps that sliver, `gap / tan(α/2)` high.
-const REACH_SLACK_MM: f64 = 0.01;
+/// start plane a male Inlay keeps that sliver, `gap / tan(α/2)` high, so
+/// a carve scales it with its bit ([`CornerReach::Every`], #506).
+pub const REACH_SLACK_MM: f64 = 0.01;
 
 /// How long a chain from a leaf to a junction must be, in steps, not to be
 /// a spur ([`long_dead_ends`], #511): the shortest of the sweep's broken
@@ -274,6 +291,7 @@ pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> 
         CornerReach::Every {
             outer: true,
             floor_inset_mm: None,
+            reach_slack_mm: REACH_SLACK_MM,
         },
     )
 }
@@ -649,17 +667,23 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         // whose contacts the spread test reads as one direction.
         let kept = grid.has_contact_spread(p, clearance, CONTACT_SPREAD_RAD, tol_ratio)
             || (reach != CornerReach::Upstream
-                && (has_feature_contact(&grid, &boundary, p, clearance, tol_ratio)
-                    || narrow_spread.iter().any(|c| {
-                        on_corner_branch(
-                            MedialNode {
-                                p,
-                                clearance_mm: clearance,
-                            },
-                            c,
-                            step_mm,
-                        )
-                    })));
+                && (has_feature_contact(
+                    &grid,
+                    &boundary,
+                    p,
+                    clearance,
+                    tol_ratio,
+                    reach.slack_mm(),
+                ) || narrow_spread.iter().any(|c| {
+                    on_corner_branch(
+                        MedialNode {
+                            p,
+                            clearance_mm: clearance,
+                        },
+                        c,
+                        step_mm,
+                    )
+                })));
         if !kept {
             continue;
         }
@@ -723,7 +747,15 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
     }
     let sampled = (reach != CornerReach::Upstream).then_some(&grid);
     extend_into_corners(&mut graph, &sharp, &loops, step_mm, sampled);
-    reach_blunt_corners(&mut graph, &blunt, &loops, step_mm, &grid, &pruned);
+    reach_blunt_corners(
+        &mut graph,
+        &blunt,
+        &loops,
+        step_mm,
+        &grid,
+        &pruned,
+        reach.slack_mm(),
+    );
     finalize(graph, step_mm)
 }
 
@@ -760,7 +792,7 @@ fn lone_node(graph: &Graph) -> Option<usize> {
 }
 
 /// Gives a tip to each of `corners` (no sharper than [`CORNER_ANGLE_RAD`])
-/// that no medial disc reaches within [`REACH_SLACK_MM`] (#452, #456),
+/// that no medial disc reaches within `slack_mm` (#452, #456, #506),
 /// worst first, each tip's own branch counted before the next is chosen.
 /// Where a curve's flattened vertices all stand a little beyond the axis
 /// (a round stroke end the contact-spread filter cut the axis short of),
@@ -783,6 +815,7 @@ fn reach_blunt_corners(
     step_mm: f64,
     grid: &SegmentDistanceGrid,
     pruned: &BTreeMap<usize, usize>,
+    slack_mm: f64,
 ) {
     let mut gaps: Vec<f64> = corners
         .iter()
@@ -792,7 +825,7 @@ fn reach_blunt_corners(
         let worst = gaps
             .iter()
             .enumerate()
-            .filter(|&(_, &gap)| gap > REACH_SLACK_MM)
+            .filter(|&(_, &gap)| gap > slack_mm)
             .fold(None, |best: Option<(usize, f64)>, (i, &gap)| {
                 if best.is_none_or(|(_, g)| gap > g) {
                     Some((i, gap))
@@ -804,7 +837,7 @@ fn reach_blunt_corners(
             break;
         };
         if let Some(corner) = corners.get(i)
-            && let Some(restored) = restore_pruned(graph, pruned, corner.p)
+            && let Some(restored) = restore_pruned(graph, pruned, corner.p, slack_mm)
         {
             for (gap, corner) in gaps.iter_mut().zip(corners) {
                 for &k in &restored {
@@ -834,7 +867,7 @@ fn reach_blunt_corners(
 }
 
 /// Puts back the branch of the pruned node whose disc comes nearest `p`,
-/// when one reaches it within [`REACH_SLACK_MM`]: the node and each node
+/// when one reaches it within `slack_mm`: the node and each node
 /// it was unlinked from in turn (`pruned`, from [`prune_spurs`]), up to a
 /// node still in the graph. The nodes put back; `None` when no pruned disc
 /// reaches `p`, or its branch no longer leads to the graph.
@@ -842,6 +875,7 @@ fn restore_pruned(
     graph: &mut Graph,
     pruned: &BTreeMap<usize, usize>,
     p: Point,
+    slack_mm: f64,
 ) -> Option<Vec<usize>> {
     let mut best: Option<(usize, f64)> = None;
     for &k in pruned.keys() {
@@ -849,7 +883,7 @@ fn restore_pruned(
             continue;
         };
         let gap = n.p.distance_to(p) - n.clearance_mm;
-        if gap <= REACH_SLACK_MM && best.is_none_or(|(_, g)| gap < g) {
+        if gap <= slack_mm && best.is_none_or(|(_, g)| gap < g) {
             best = Some((k, gap));
         }
     }
