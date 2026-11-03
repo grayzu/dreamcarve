@@ -74,7 +74,7 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
 /// grown by `M + R`, and no more than the plain band where it is convex.
 /// With `rounding_mm` 0 it is the union of the margin offsets exactly.
 /// Holes of the design are never offset. The band has no holes
-/// ([`filled`], #484): board the margins ring round is band too.
+/// (#484): board the margins ring round is band too.
 ///
 /// The union is [`crate::union`], so the result is polygonal: arcs are
 /// flattened to chords within `tolerance_mm`. Outers come back
