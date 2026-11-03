@@ -48,7 +48,7 @@ use dc_geometry::{
     nearest_point, surround_floor_regions,
 };
 use dc_project::{CutDirection, OperationId, Project, Tool, VCarveOp};
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 
 /// How far, in step-overs, a ring node with children may leave a point
 /// from its own ring and from its children before the point gets a centre
@@ -630,10 +630,62 @@ impl Floor {
             return None;
         }
         let straight_mm = fraction * flat_depth_mm;
-        let corner_mm = straight_mm;
+        let stepover_mm = fraction * 2.0 * self.inset_mm;
+        // The sharpest convex corner of any ring; none is a straight
+        // angle, and a tree too large to build counts as no angle at all,
+        // which the cap then holds.
+        let sharpest_rad = floors
+            .into_iter()
+            .map(|floor| {
+                RingTree::build(floor, stepover_mm, self.inset_mm, tolerance_mm, MAX_RINGS).map_or(
+                    0.0,
+                    |tree| {
+                        tree.nodes
+                            .iter()
+                            .flat_map(|n| std::iter::once(n.region.outer()).chain(n.region.holes()))
+                            .map(sharpest_convex_corner_rad)
+                            .fold(PI, f64::min)
+                    },
+                )
+            })
+            .fold(PI, f64::min);
+        let corner_mm = (straight_mm / (sharpest_rad / 2.0).sin()).min(2.0 * straight_mm);
         Some(FloorRidges {
             straight_mm,
-            corner_mm,
+            corner_mm: if corner_mm.is_finite() {
+                corner_mm
+            } else {
+                2.0 * straight_mm
+            },
         })
     }
+}
+
+/// The interior angle, radians, of the sharpest convex corner of
+/// `contour`, a ring of a region (its interior on the left, ADR-0001):
+/// where the tangent turns left between two segments, by `φ`, the corner
+/// is `π − φ`. `π` when it has none: an arc's ends meet the next segment
+/// tangent, and a curve flattened to short lines turns by little at each.
+fn sharpest_convex_corner_rad(contour: &Contour) -> f64 {
+    let segments: Vec<Segment> = contour
+        .polyline()
+        .segments()
+        .filter(|s| s.length_mm() > EPS_MM)
+        .collect();
+    let turns = segments
+        .iter()
+        .zip(segments.iter().cycle().skip(1))
+        .take(if segments.len() < 2 {
+            0
+        } else {
+            segments.len()
+        });
+    turns
+        .filter_map(|(before, after)| {
+            let (_, incoming) = before.point_at(before.length_mm())?;
+            let (_, outgoing) = after.point_at(0.0)?;
+            let turn_rad = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
+            (turn_rad > 0.0).then_some(PI - turn_rad)
+        })
+        .fold(PI, f64::min)
 }

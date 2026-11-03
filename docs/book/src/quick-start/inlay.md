@@ -251,7 +251,7 @@ One **Inlay** operation describes both boards with the same values:
 | `margin_mm` | 8 | The male's band reaches 8 mm beyond the letters (Corbin's "Plug Stock Offset"). |
 | `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. |
 | `clearing` | `t2` | The end mill clears the flat floor first, on both boards; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
-| `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth. |
+| `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth, and a fifth at most where they turn a corner: under the glue gap. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |
 | `cut_out` | `t2`, four tabs | The male's last pass cuts the plug free of its board (below). |
 
@@ -290,7 +290,7 @@ dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used 
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 dc.dcv:80:76: warning: inlay_male_board_unset: operation `op1` (male board): its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too
 warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
 Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
 Program dc-female-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
@@ -342,8 +342,8 @@ warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in
 warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
 warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
-Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm along the rings and up to 0.400 mm at their corners where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
 Program dc-female-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
@@ -460,8 +460,8 @@ dc-male-3-T2.nc (218 lines):
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated male board time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated total time: 9 min 26 s (cutting 9 min 11 s, dwells 15 s); 3.0 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
-Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm along the rings and up to 0.400 mm at their corners where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 ```
 
 The programs are listed by board, each board a setup of its own: you
