@@ -32,6 +32,10 @@ const SEARCH_ITERATIONS: usize = 80;
 /// Cells a side of the wall grid at most.
 const MAX_CELLS: f64 = 128.0;
 
+/// Pieces [`Walls::widening_clearance_holds`] holds a path to a drawn arc
+/// in.
+const WIDENING_PIECES: u32 = 16;
+
 /// The straight wall segments of a set of regions, bucketed in a uniform
 /// grid, with the flattened loops for the even-odd inside test.
 #[derive(Debug, Clone)]
@@ -345,6 +349,52 @@ impl Walls {
             .filter_map(|s| self.drawn.get(s))
             .map(|&arc| segment_distance_mm(path, arc))
             .fold(to_chords, f64::min)
+    }
+
+    /// Whether the straight tip path from `g` to `q` keeps, a fraction `t`
+    /// of the way along, at least `t · margin_mm` from every wall, chords
+    /// and arcs as drawn (#499). With `q` inside the regions, that holds
+    /// exactly when the path from `g` as written to anywhere within
+    /// `margin_mm` of `q` stays inside: `g` written exactly (a point of
+    /// the program's grid), `q` moved by rounding. A `g` outside fails,
+    /// since its path crosses a wall; one on a wall passes when the path
+    /// leaves it at once.
+    ///
+    /// Against the chords it is the exact cone test with a cone that
+    /// widens from 0 at `g` to `margin_mm` at `q`
+    /// ([`Walls::least_room`]). An arc is held to it piecewise: each of
+    /// [`WIDENING_PIECES`] pieces keeps from the arc the margin at the
+    /// piece's far end, which asks a little more than the exact test.
+    pub(crate) fn widening_clearance_holds(&self, g: Point, q: Point, margin_mm: f64) -> bool {
+        let at = |z: f64, p: Point| Point3::new(p.x, p.y, z);
+        if self.least_room(at(0.0, g), at(-margin_mm, q), 0.0, 1.0).0 < -EPS_MM {
+            return false;
+        }
+        let lo = Point::new(g.x.min(q.x), g.y.min(q.y));
+        let hi = Point::new(g.x.max(q.x), g.y.max(q.y));
+        let mut arcs: Vec<usize> = self
+            .near(lo, hi, margin_mm + self.tolerance_mm.max(0.0))
+            .iter()
+            .filter_map(|&i| self.sources.get(i).copied())
+            .filter(|&s| self.drawn.get(s).is_some_and(|w| w.bulge != 0.0))
+            .collect();
+        arcs.sort_unstable();
+        arcs.dedup();
+        let along = |t: f64| g + (q - g) * t;
+        let pieces = f64::from(WIDENING_PIECES);
+        arcs.into_iter()
+            .filter_map(|s| self.drawn.get(s))
+            .all(|&arc| {
+                (0..WIDENING_PIECES).all(|k| {
+                    let (t0, t1) = (f64::from(k) / pieces, f64::from(k + 1) / pieces);
+                    let piece = Segment {
+                        start: along(t0),
+                        end: along(t1),
+                        bulge: 0.0,
+                    };
+                    segment_distance_mm(piece, arc) >= t1 * margin_mm - EPS_MM
+                })
+            })
     }
 
     /// Whether `p` lies inside the regions by the even-odd rule, or within

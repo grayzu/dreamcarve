@@ -74,6 +74,7 @@ use crate::error::ShapeRef;
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
+use crate::vcarve::written::{Snap, WrittenGrid, snapped_ends};
 use crate::warning::Warning;
 use dc_geometry::medial::{
     CornerReach, MedialGraph, Resolution, medial_axis_with, refined_step_mm, resolution,
@@ -176,6 +177,11 @@ pub(crate) struct Tolerances {
     /// written, so none is cut ([`clear_of_walls`]); 0 cuts every fitted
     /// stretch as it is.
     pub written_mm: f64,
+    /// The grid the program writes on (#499), whose margin is
+    /// `written_mm`: a chain end the margin cuts back starts on it
+    /// instead, where the move from there is inside as written
+    /// ([`snapped_ends`]). `None` leaves the margin's cut.
+    pub grid: Option<WrittenGrid>,
 }
 
 impl Tolerances {
@@ -187,6 +193,7 @@ impl Tolerances {
             deepen_mm: None,
             axis_mm: Some(EDGE_MM),
             written_mm: 0.0,
+            grid: None,
         }
     }
 }
@@ -321,7 +328,24 @@ pub(crate) fn runs_within(
                 within_walls(fit_chain(&simple, walls, depth, &tolerances), walls)
                     .into_iter()
                     .flat_map(|points| within_edge(points, edge))
-                    .flat_map(|points| clear_of_walls(points, walls, tolerances.written_mm))
+                    .flat_map(|points| {
+                        let ends = (points.first().copied(), points.last().copied());
+                        let pieces = clear_of_walls(points, walls, tolerances.written_mm);
+                        // #499: an end the margin cut back starts on the
+                        // written grid, as near the corner as it can.
+                        match tolerances.grid {
+                            Some(grid) => {
+                                let snap = Snap {
+                                    walls,
+                                    depth,
+                                    grid,
+                                    edge,
+                                };
+                                snapped_ends(ends.0, ends.1, pieces, &snap)
+                            }
+                            None => pieces,
+                        }
+                    })
                     .collect::<Vec<_>>()
             })
             .map(|points| {
@@ -456,8 +480,10 @@ fn clear_path(walls: &Walls, a: Point3, b: Point3, margin_mm: f64) -> bool {
 /// hundredths along, which S17 refuses. A stretch nearer at one end keeps
 /// its part from where it is clear on, along the stretch at its own Z, so
 /// a corner's groove stops where the tip is `margin_mm` from both walls
-/// (`margin_mm / sin(θ/2)` short of a corner of angle θ); one nearer only
-/// between its ends is not cut. A lone point is kept when it is clear.
+/// (`margin_mm / sin(θ/2)` short of a corner of angle θ; with the written
+/// grid, [`snapped_ends`] then runs it on to a grid point nearer
+/// the corner, #499); one nearer only between its ends is not cut. A lone
+/// point is kept when it is clear.
 fn clear_of_walls(points: Vec<Point3>, walls: &Walls, margin_mm: f64) -> Vec<Vec<Point3>> {
     if margin_mm <= 0.0 {
         return vec![points];

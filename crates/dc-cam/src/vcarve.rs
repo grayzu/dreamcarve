@@ -31,6 +31,7 @@ pub(crate) mod medial;
 mod offset;
 #[cfg(test)]
 mod tests;
+mod written;
 
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
@@ -53,6 +54,7 @@ use dc_project::{
 };
 use floor::{Floor, FloorCut, OpenFloor};
 use medial::{Depth, Tolerances};
+use written::WrittenGrid;
 
 /// What a V-bit carve is, independent of which operation asked for it:
 /// V-Carve builds one from its targets, an Inlay one per side
@@ -427,12 +429,9 @@ pub fn blocks(
     // #478: the walls' arcs, where the cone turns their error into height.
     let wall_tolerance_mm = wall_tolerance_mm(tolerance_mm, bit.slope);
     // #469: how far the program may move a point it writes, half a unit in
-    // its last place on each axis.
-    let written_mm = project
-        .post_processor
-        .decimal_places
-        .quantum_mm(project.display_units)
-        * std::f64::consts::FRAC_1_SQRT_2;
+    // its last place on each axis; #499: the grid it writes on.
+    let grid = WrittenGrid::of(project);
+    let written_mm = grid.margin_mm();
     // #448: the open edge, as the medial chains and the floor see it.
     let edge_walls = carve.open_edge.as_ref().map(|edge| OpenEdgeWalls {
         walls: Walls::new(&edge.band, tolerance_mm),
@@ -564,6 +563,7 @@ pub fn blocks(
             &depth,
             Tolerances {
                 written_mm,
+                grid: Some(grid),
                 ..carve.tolerances(step_mm)
             },
             &walls,

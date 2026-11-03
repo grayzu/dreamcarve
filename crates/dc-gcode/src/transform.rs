@@ -21,7 +21,7 @@
 //! covers both bundled definitions.
 
 use dc_geometry::Point3;
-use dc_project::{Axis, CoordinateSystem, OriginXy, OriginZ, PostProcessor, Project, Units};
+use dc_project::{Axis, CoordinateSystem, OriginZ, PostProcessor, Project, Units};
 
 use crate::ExportError;
 
@@ -103,20 +103,15 @@ impl MachineTransform {
             return Err(invalid(&post.id, axes));
         }
         let stock = &project.stock;
-        let (ox, oy) = match project.origin.xy {
-            OriginXy::BottomLeft => (0.0, 0.0),
-            OriginXy::BottomRight => (stock.width_mm, 0.0),
-            OriginXy::TopLeft => (0.0, stock.height_mm),
-            OriginXy::TopRight => (stock.width_mm, stock.height_mm),
-            OriginXy::Centre => (stock.width_mm / 2.0, stock.height_mm / 2.0),
-            OriginXy::Custom { x_mm, y_mm } => (x_mm, y_mm),
-        };
+        // The generator snaps a V-Carve corner's start to the grid this
+        // origin writes on (#499), so both read it from one place.
+        let xy = project.origin.xy.point_mm(stock);
         let oz = match project.origin.z {
             OriginZ::StockTop => stock.thickness_mm.ok_or(ExportError::MissingThickness)?,
             OriginZ::StockBottom => 0.0,
         };
         Ok(Self {
-            origin_mm: Point3::new(ox, oy, oz),
+            origin_mm: Point3::new(xy.x, xy.y, oz),
             x,
             y,
             z,
