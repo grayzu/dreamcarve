@@ -43,7 +43,8 @@ pub(crate) struct SeatCell {
 /// The plug's cells, seated on the female (#452). `female` and `male`
 /// share one grid, the male's mirrored. The plug is every cell not joined
 /// to the grid's border through male wood standing above the start plane
-/// (by more than [`FLOOR_SLACK_MM`]): the band's floor rings the plug, and
+/// (by more than [`FLOOR_SLACK_MM`]), cell to cell through sides or
+/// corners (#501): the band's floor rings the plug, and
 /// the board beyond it, V wall and all, falls away when the piece is cut
 /// out. Wood left above the start plane in the band but joined to the
 /// plug is part of it, as it would bind. The plug's start plane stops the
@@ -68,11 +69,22 @@ pub(crate) fn seat(
         }
     }
     while let Some((i, j)) = queue.pop_front() {
+        // #501: through the corners too. A ridge of the board thinner than
+        // a cell that runs across the grid has cells that touch only at
+        // their corners; joined through the sides alone it falls apart
+        // into cells counted as plug. The band, a margin wide and cut to
+        // its floor, keeps the plug's wood from ever coming that near the
+        // board's.
+        let (west, south) = (i.wrapping_sub(1), j.wrapping_sub(1));
         let neighbours = [
-            (i.wrapping_sub(1), j),
+            (west, j),
             (i + 1, j),
-            (i, j.wrapping_sub(1)),
+            (i, south),
             (i, j + 1),
+            (west, south),
+            (i + 1, south),
+            (west, j + 1),
+            (i + 1, j + 1),
         ];
         for (a, b) in neighbours {
             if a < nx && b < ny && !outside[b * nx + a] && standing(a, b) {
@@ -236,5 +248,64 @@ pub fn fit(
         seat_at: worst.at,
         male_mm: male_share.0,
         male_at: male_share.1,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #501 (line art `0x30`'s V-wall male, 15° bit): a thin ridge of the
+    /// board standing in the band is part of the board, not the plug, when
+    /// it runs at 45° to the grid. A sliver of board 0.13 to 0.3 mm wide
+    /// pokes in from the band's outer edge, and the V wall cuts it down
+    /// from both sides to a ridge up to 0.8 mm above the start plane; on a
+    /// 0.1 mm grid its cells touch only at their corners. The flood fill
+    /// that finds the board joined cells through their sides alone, so it
+    /// cut the ridge into single cells and counted each as plug: the plug
+    /// stood 0.332 mm proud on a ridge that falls away with the board (on
+    /// a 0.05 mm grid, whose cells join along it, it seated within
+    /// 0.073 mm). Here a 20 × 20 grid has board along its left and bottom
+    /// edges, a diagonal ridge 0.5 mm above the start plane running in
+    /// from the corner, and a plug of four cells 0.02 mm up. The seat is
+    /// the plug's 0.02 mm.
+    #[test]
+    fn diagonal_ridge_of_the_board_is_not_plug() {
+        let bounds = Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(1.9, 1.9),
+        };
+        let (top_mm, start_mm, floor_mm) = (10.0, 7.0, 6.5);
+        let female = Heightfield::new(bounds, 0.1, top_mm, None);
+        let mut male = Heightfield::new(bounds, 0.1, top_mm, None);
+        let (nx, ny) = male.size();
+        for j in 0..ny {
+            for i in 0..nx {
+                let board = i == 0 || j == 0;
+                let ridge = i == j && i < 9;
+                let plug = (14..16).contains(&i) && (14..16).contains(&j);
+                let z_mm = if board {
+                    top_mm
+                } else if ridge {
+                    start_mm + 0.5
+                } else if plug {
+                    start_mm + 0.02
+                } else {
+                    floor_mm
+                };
+                male.set_z_mm(i, j, z_mm);
+            }
+        }
+        let cells = seat(&female, &male, start_mm);
+        let worst = cells
+            .iter()
+            .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))
+            .expect("the plug has cells");
+        assert!(
+            (worst.need_mm - 0.02).abs() < 1e-9,
+            "the plug stands {:.3} mm proud at {:?}",
+            worst.need_mm,
+            worst.at
+        );
     }
 }

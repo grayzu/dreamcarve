@@ -177,6 +177,10 @@ phases bump the patch number.
   and explains why 15° and 30° bits fit less closely: their plugs may
   stand up to about 0.3 mm proud in sharp corners and tight features
   until [#506] is fixed. The inlay quick start points to it ([#507]).
+- **Documentation:** the Inlay chapter's narrow-bit note now says how
+  far 15° and 30° plugs stand proud after the fixes since: under about
+  0.1 and 0.2 mm in millimetre programs, and more at a hairline point in
+  an inch program ([#501]).
 
 ### Fixed
 
@@ -1044,6 +1048,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
 [#499]: https://github.com/grayzu/dreamcarve/issues/499
 [#500]: https://github.com/grayzu/dreamcarve/issues/500
+[#501]: https://github.com/grayzu/dreamcarve/issues/501
 [#506]: https://github.com/grayzu/dreamcarve/issues/506
 [#507]: https://github.com/grayzu/dreamcarve/issues/507
 [#502]: https://github.com/grayzu/dreamcarve/issues/502

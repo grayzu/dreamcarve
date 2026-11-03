@@ -155,22 +155,23 @@ exactly, and in a corner a few degrees wide the nearest such point may
 be some way from the tip. In a millimetre program (three places) that
 costs a plug at most about 0.04 mm at a 5° corner with the 15° bit. In
 an inch program (four places, 0.00254 mm) it can cost the 30° bit up to
-about 0.08 mm and the 15° bit up to about 0.16 mm there. So for a narrow
-bit and a design with very sharp points, set `display_units` to `"mm"`
-before you export.
+about 0.08 mm and the 15° bit up to about 0.16 mm there, and more at a
+point sharper still: where two overlapping letters leave a counter
+ending in a hairline spike, the 30° bit's plug stood 0.37 mm proud. In
+millimetres the same plug seats. So for a narrow bit and a design with
+very sharp points, set `display_units` to `"mm"` before you export.
 
 Apart from that limit, corners, sharp or obtuse, seat with every bit.
 Some other tight features still don't. With the 30° bit most plugs seat
-within 0.05 mm, and some stand up to about 0.15 mm proud. With the 15°
-bit, expect 0.05 to 0.4 mm. In both cases the excess comes where a line ends inside
-the design, where a curve narrows, or where two parts nearly touch:
-there the plug's walls meet the pocket's before they do elsewhere
-([#506](https://github.com/grayzu/dreamcarve/issues/506)). A few designs
-with such features stand more than 0.3 mm proud with either bit
-([#501](https://github.com/grayzu/dreamcarve/issues/501)). If you use
-one, plan for it: press the plug home with a clamp and flat cauls, so
-that the wood gives where the walls meet first, and keep `glue_gap_mm`
-at 1 mm or more, so that the plug has room under it to go down.
+within 0.05 mm, and some stand up to about 0.1 mm proud. With the 15°
+bit, expect 0.05 to 0.2 mm. In both cases the excess comes where a line
+ends inside the design, where a curve narrows, or where two parts
+nearly touch: there the plug's walls meet the pocket's before they do
+elsewhere ([#506](https://github.com/grayzu/dreamcarve/issues/506)).
+If you use a narrow bit, plan for it: press the plug home with a clamp
+and flat cauls, so that the wood gives where the walls meet first, and
+keep `glue_gap_mm` at 1 mm or more, so that the plug has room under it
+to go down.
 
 ## Two projects from one drawing
 
