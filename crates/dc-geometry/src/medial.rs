@@ -184,6 +184,11 @@ const PRUNE_FACTOR: f64 = 1.5;
 /// start plane a male Inlay keeps that sliver, `gap / tan(α/2)` high.
 const REACH_SLACK_MM: f64 = 0.01;
 
+/// How long a chain from a leaf to a junction must be, in steps, not to be
+/// a spur ([`long_dead_ends`], #511): the shortest of the sweep's broken
+/// channels was about six steps long.
+const DEAD_END_STEPS: f64 = 5.0;
+
 /// Passes of spur pruning at most.
 const MAX_PRUNE_ITERATIONS: usize = 32;
 
@@ -689,7 +694,13 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
     }
 
     let mut graph = contract_micro_clusters(&nodes, &graph_edges, step_mm * 0.75);
-    let pruned = prune_spurs(&mut graph, step_mm * PRUNE_FACTOR, &spared, step_mm);
+    let pruned = prune_spurs(
+        &mut graph,
+        step_mm * PRUNE_FACTOR,
+        &spared,
+        step_mm,
+        reach != CornerReach::Upstream,
+    );
     drop_small_components(&mut graph, step_mm * 4.0);
     // Every sharp corner gets a tip; on a loop `reach` reaches, so does
     // every other convex corner no medial disc, nor the floor's trace,
@@ -721,14 +732,31 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
 /// one reaches it.
 fn reach_gap_mm(graph: &Graph, p: Point, from: usize) -> f64 {
     let lone = graph.nodes.len() <= 1;
+    let dot = lone_node(graph);
     graph
         .nodes
         .iter()
         .enumerate()
         .skip(from)
-        .filter(|&(i, _)| lone || graph.degree(i) > 0)
+        .filter(|&(i, _)| lone || graph.degree(i) > 0 || dot == Some(i))
         .map(|(_, n)| n.p.distance_to(p) - n.clearance_mm)
         .fold(f64::INFINITY, f64::min)
+}
+
+/// The node a graph with no edge comes to, its deepest (the first, as
+/// [`finalize`] keeps it alone, a dot); `None` when the graph has an edge.
+/// A corner's tip may join it (#511): a regular octagon's corners turn
+/// 45°, the contact-spread filter drops every spoke, and the axis is its
+/// middle alone, which no tip could join, so its carve was a plunge.
+fn lone_node(graph: &Graph) -> Option<usize> {
+    if (0..graph.nodes.len()).any(|i| graph.degree(i) > 0) {
+        return None;
+    }
+    (0..graph.nodes.len()).reduce(|best, i| {
+        let deeper = graph.node(i).map_or(0.0, |n| n.clearance_mm)
+            > graph.node(best).map_or(0.0, |n| n.clearance_mm);
+        if deeper { i } else { best }
+    })
 }
 
 /// Gives a tip to each of `corners` (no sharper than [`CORNER_ANGLE_RAD`])
@@ -942,17 +970,29 @@ fn contract_micro_clusters(
 /// branch of one of `spared` ([`on_corner_branch`], within `step_mm`) is
 /// kept; upstream spares none. Gives back each node removed, with the
 /// junction it was unlinked from (#484: [`reach_blunt_corners`] puts a
-/// branch back where its disc reaches a corner nothing else does).
+/// branch back where its disc reaches a corner nothing else does). With
+/// `keep_dead_ends` (`CornerReach::Every`), no node of a chain longer than
+/// [`DEAD_END_STEPS`] from a leaf to a junction is pruned
+/// ([`long_dead_ends`], #511); upstream unzips it.
 fn prune_spurs(
     graph: &mut Graph,
     max_len_mm: f64,
     spared: &[Corner],
     step_mm: f64,
+    keep_dead_ends: bool,
 ) -> BTreeMap<usize, usize> {
     let mut pruned = BTreeMap::new();
+    let kept = if keep_dead_ends {
+        long_dead_ends(graph, DEAD_END_STEPS * step_mm)
+    } else {
+        BTreeSet::new()
+    };
     for _ in 0..MAX_PRUNE_ITERATIONS {
         let mut removed = 0;
         for leaf in 0..graph.adjacency.len() {
+            if kept.contains(&leaf) {
+                continue;
+            }
             let junction = match graph.adjacency.get(leaf) {
                 Some(set) if set.len() == 1 => set.first().copied(),
                 _ => None,
@@ -979,6 +1019,47 @@ fn prune_spurs(
         }
     }
     pruned
+}
+
+/// The nodes of every chain from a leaf to the first node not of degree
+/// two that is longer than `min_len_mm` (#511): a stretch of axis, not a
+/// spur. A spur is a node or two off a junction; a longer dead end is axis
+/// the sampling broke (a channel between two corners of a male's band
+/// whose exit, between two corners on one baseline, has no circumcentre),
+/// that runs into a wedge narrower than the step (a pinch), or that ends
+/// at a round end's centre. Spur pruning unzipped such a chain up to
+/// [`MAX_PRUNE_ITERATIONS`] nodes, and its walls stood that far from any
+/// groove.
+fn long_dead_ends(graph: &Graph, min_len_mm: f64) -> BTreeSet<usize> {
+    let mut out = BTreeSet::new();
+    for leaf in 0..graph.adjacency.len() {
+        if graph.degree(leaf) != 1 {
+            continue;
+        }
+        let mut chain = vec![leaf];
+        let mut prev = leaf;
+        let mut current = graph.adjacency.get(leaf).and_then(|a| a.first().copied());
+        let mut len = 0.0;
+        while let Some(c) = current {
+            if let (Some(a), Some(b)) = (graph.node(prev), graph.node(c)) {
+                len += a.p.distance_to(b.p);
+            }
+            if graph.degree(c) != 2 || chain.len() > graph.nodes.len() {
+                break;
+            }
+            chain.push(c);
+            let next = graph
+                .adjacency
+                .get(c)
+                .and_then(|a| a.iter().copied().find(|&n| n != prev));
+            prev = c;
+            current = next;
+        }
+        if len > min_len_mm {
+            out.extend(chain);
+        }
+    }
+    out
 }
 
 /// True when `node` is on the straight branch of the medial axis into
@@ -1077,9 +1158,10 @@ fn extend_into_corners(
 ) {
     for corner in corners {
         let count = graph.nodes.len();
+        let dot = lone_node(graph);
         let mut candidates: Vec<(usize, bool, f64)> = Vec::new();
         for (i, node) in graph.nodes.iter().enumerate() {
-            if graph.degree(i) == 0 && count > 1 {
+            if graph.degree(i) == 0 && count > 1 && dot != Some(i) {
                 continue;
             }
             // #463: another corner's tip has no disc to reach this corner

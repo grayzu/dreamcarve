@@ -511,6 +511,13 @@ distance or more apart are cut as drawn, with the wall between them;
 0.1 mm apart, the pair seats as any other. A plain V-Carve or Pocket
 never merges parts.
 
+A hole of the design narrower than the merge distance all along, a
+hairline where two overlapping letters leave a sliver, is the same
+thing the other way round: the female would leave a wall that thin
+standing to the stock top, and the male could cut no groove for it.
+Both sides cut it as part of the shape round it, and warn
+`inlay_hole_filled` with its width and where it is.
+
 If the parts are meant to touch, nothing needs doing. If they are meant
 to stay apart, move them at least the distance the warning gives apart
 in the drawing, in both projects.
@@ -578,6 +585,7 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 | `inlay_band_edge_v_wall` | A male has clearing passes, but none fits its band's floor, so the V-bit cuts the band's outer edge as a sloped wall; it names the margin that would let a pass cut it upright. |
 | `inlay_band_clipped` | A male's band runs past the stock's edge, so it is clipped to the board there; it names the edges and the narrowest band left. |
 | `inlay_parts_merged` | Either side: two parts of the design come closer than the merge distance, so both sides cut them as one shape ([Parts that nearly touch](#parts-that-nearly-touch)). |
+| `inlay_hole_filled` | Either side: a hole of the design is narrower than the merge distance everywhere, so both sides cut it as part of the shape round it ([Parts that nearly touch](#parts-that-nearly-touch)). |
 | `vcarve_target_open` | A target is an open path; it is skipped. |
 | `clearing_no_room`, `clearing_not_descending` | As for a [V-Carve](v-carve.md#warnings). |
 

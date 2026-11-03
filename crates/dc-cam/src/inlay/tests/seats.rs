@@ -225,3 +225,71 @@ fn fillet_in_a_wide_band_seats_flush() {
         ..fine(side)
     });
 }
+
+/// #511 (line art `0x59`): a regular octagon 8 mm across, whose corners
+/// turn 45°, under the 50° a sharp corner turns. Its plug seats. The
+/// contact-spread filter drops every spoke, so the axis is one node with
+/// no edge, and a blunt corner's tip joined no node that had none: the
+/// carve was a plunge at the middle, and the corners stood short.
+#[test]
+fn octagon_plug_seats_flush() {
+    let project = project_of(vec![regular(8, 4.0)], CENTRE, 100.0, 100.0);
+    assert_seats("octagon", &project, fine);
+}
+
+/// #511 (lettering `0x6f`): a 10 mm square with a slit 3 µm wide and 2 mm
+/// long, in an inch program (half a unit in the last written place is
+/// 0.0018 mm). Its plug seats, and both sides warn `inlay_hole_filled`.
+/// No V-bit carves such a sliver: the female left a wall to the stock top
+/// round it, the male's groove keeps half a written unit from each wall
+/// and was dropped, and the plug stood 3 mm proud. A hole narrower than
+/// the merge distance everywhere is filled, as near parts are merged.
+#[test]
+fn hairline_hole_is_filled_and_seats() {
+    let mut project = project_of(
+        vec![
+            polygon(&[(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]),
+            polygon(&[
+                (-1.0, -0.0015),
+                (1.0, -0.0015),
+                (1.0, 0.0015),
+                (-1.0, 0.0015),
+            ]),
+        ],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    project.display_units = dc_project::Units::Inch;
+    assert_seats("hairline hole", &project, fine);
+    for side in [InlaySide::Female, InlaySide::Male] {
+        let (_, warnings) = inlay_runs(&project, &fine(side));
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.code().as_str() == "inlay_hole_filled"),
+            "{side:?}: {warnings:?}"
+        );
+    }
+}
+
+/// #511 (line art `0x17`): a 10 mm square with a hole of radius 2 mm 3 µm
+/// from its right side, so the design pinches to 3 µm between them. Its
+/// plug seats. Either side of the pinch the region is a wedge between the
+/// side and the circle, narrower than the medial step for a millimetre or
+/// more; its axis ran there as a chain whose clearance falls slower than
+/// spur pruning asks, which unzipped it, and the female's groove stopped
+/// that far short of the pinch.
+#[test]
+fn pinched_design_seats_flush() {
+    let project = project_of(
+        vec![
+            polygon(&[(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0)]),
+            Polyline::circle(Point::new(5.0 - 0.003 - 2.0, 0.0), 2.0),
+        ],
+        CENTRE,
+        100.0,
+        100.0,
+    );
+    assert_seats("pinch", &project, fine);
+}

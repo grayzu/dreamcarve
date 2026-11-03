@@ -369,7 +369,9 @@ is no GUI in this phase.
      is. A V-bit cannot carve such a gap: the female left the wall to
      the stock top, the male no groove, and the plug stood up to
      `depth_mm − glue_gap_mm` proud on it. Plain V-Carve and Pocket cut
-     their parts as drawn.
+     their parts as drawn. A hole of the design narrower than 0.05 mm all
+     along is filled on both sides the same way, and `inlay_hole_filled`
+     names it, its width and where it is (#511).
 
 ### Photo V-Carve
 
@@ -453,7 +455,7 @@ is no GUI in this phase.
  `countersink_mouth_not_wider_than_hole`,
  `inlay_glue_gap_not_below_depth`, `inlay_plug_base_thin`,
  `inlay_male_mirrored`, `inlay_band_clipped` (#495),
- `inlay_parts_merged` (#479), `photo_lines_overlap`, `image_colour_converted`,
+ `inlay_parts_merged` (#479), `inlay_hole_filled` (#511), `photo_lines_overlap`, `image_colour_converted`,
  `start_depth_mismatch`, `start_depth_uncleared`,
  `countersink_ignores_tool_width`. An error stops export
  and names the operation, shape, tool or field; a warning never does.

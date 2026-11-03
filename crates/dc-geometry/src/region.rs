@@ -57,6 +57,25 @@ impl Region {
         &self.hole_indices
     }
 
+    /// The region with the holes at `drop` (positions in
+    /// [`Region::holes`]) filled, the rest and the input positions kept.
+    pub(crate) fn without_holes(&self, drop: &[usize]) -> Self {
+        let keep = |k: &usize| !drop.contains(k);
+        Self {
+            outer: self.outer.clone(),
+            outer_index: self.outer_index,
+            holes: (0..self.holes.len())
+                .filter(keep)
+                .filter_map(|k| self.holes.get(k).cloned())
+                .collect(),
+            hole_indices: (0..self.hole_indices.len())
+                .filter(keep)
+                .filter_map(|k| self.hole_indices.get(k).copied())
+                .collect(),
+            depth: self.depth,
+        }
+    }
+
     /// How many input contours enclose [`Region::outer`]: 0 for a part
     /// inside nothing, 2 for an island in a hole of a depth-0 part, and so
     /// on (always even). A region that encloses another has a smaller depth.

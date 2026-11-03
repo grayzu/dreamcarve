@@ -220,6 +220,10 @@ pub enum WarningCode {
     /// ([`dc_project::INLAY_MERGE_MM`]), so both sides cut them as one
     /// shape, with no wall between them (#479).
     InlayPartsMerged,
+    /// A hole of an Inlay's design is narrower than the merge distance
+    /// everywhere, so both sides cut it as part of the shape round it, with
+    /// no wall there (#511).
+    InlayHoleFilled,
 }
 
 impl WarningCode {
@@ -278,6 +282,7 @@ impl WarningCode {
             Self::InlayBandEdgeVWall => "inlay_band_edge_v_wall",
             Self::InlayBandClipped => "inlay_band_clipped",
             Self::InlayPartsMerged => "inlay_parts_merged",
+            Self::InlayHoleFilled => "inlay_hole_filled",
         }
     }
 }
@@ -958,6 +963,22 @@ pub enum Warning {
         /// The merge distance, mm.
         merge_mm: f64,
     },
+    /// [`WarningCode::InlayHoleFilled`].
+    InlayHoleFilled {
+        /// The Inlay.
+        op: OperationId,
+        /// The hole.
+        hole: ShapeRef,
+        /// The middle of the hole's box, mm, as drawn (the male's design
+        /// before its mirror).
+        x_mm: f64,
+        /// See `x_mm`.
+        y_mm: f64,
+        /// The hole's mean width, mm.
+        width_mm: f64,
+        /// The merge distance, mm.
+        merge_mm: f64,
+    },
 }
 
 impl Warning {
@@ -1018,6 +1039,7 @@ impl Warning {
             Self::InlayBandEdgeVWall { .. } => WarningCode::InlayBandEdgeVWall,
             Self::InlayBandClipped { .. } => WarningCode::InlayBandClipped,
             Self::InlayPartsMerged { .. } => WarningCode::InlayPartsMerged,
+            Self::InlayHoleFilled { .. } => WarningCode::InlayHoleFilled,
         }
     }
 
@@ -1067,7 +1089,8 @@ impl Warning {
             | Self::InlayPlugBaseThin { op, .. }
             | Self::InlayBandEdgeVWall { op, .. }
             | Self::InlayBandClipped { op, .. }
-            | Self::InlayPartsMerged { op, .. } => Some(op),
+            | Self::InlayPartsMerged { op, .. }
+            | Self::InlayHoleFilled { op, .. } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1808,6 +1831,22 @@ impl fmt::Display for Warning {
                 f,
                 "{first} and {second} come {} mm apart at ({}, {}) mm, closer than the {} mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least {} mm apart to keep them separate",
                 rounded(*gap_mm, 4),
+                rounded(*x_mm, 3),
+                rounded(*y_mm, 3),
+                rounded(*merge_mm, 4),
+                rounded(*merge_mm, 4)
+            ),
+            Self::InlayHoleFilled {
+                hole,
+                x_mm,
+                y_mm,
+                width_mm,
+                merge_mm,
+                ..
+            } => write!(
+                f,
+                "{hole} is a hole about {} mm wide at ({}, {}) mm, narrower everywhere than the {} mm an inlay keeps between two parts, so both sides cut it as part of the shape round it, with no wall there; draw it at least {} mm wide to keep it",
+                rounded(*width_mm, 4),
                 rounded(*x_mm, 3),
                 rounded(*y_mm, 3),
                 rounded(*merge_mm, 4),
@@ -2577,6 +2616,17 @@ mod tests {
                 },
                 "`Shape` (instance `i1`, profile 2) and `Shape` (instance `i1`, profile 3) come 0.001 mm apart at (50, 55) mm, closer than the 0.05 mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least 0.05 mm apart to keep them separate",
             ),
+            (
+                Warning::InlayHoleFilled {
+                    op: op(),
+                    hole: shape(),
+                    x_mm: 50.0,
+                    y_mm: 55.000_4,
+                    width_mm: 0.004,
+                    merge_mm: 0.05,
+                },
+                "`Shape` (instance `i1`, profile 2) is a hole about 0.004 mm wide at (50, 55) mm, narrower everywhere than the 0.05 mm an inlay keeps between two parts, so both sides cut it as part of the shape round it, with no wall there; draw it at least 0.05 mm wide to keep it",
+            ),
         ]
     }
 
@@ -2642,7 +2692,8 @@ mod tests {
             C::InlayPlugBaseThin => C::InlayBandEdgeVWall,
             C::InlayBandEdgeVWall => C::InlayBandClipped,
             C::InlayBandClipped => C::InlayPartsMerged,
-            C::InlayPartsMerged => return None,
+            C::InlayPartsMerged => C::InlayHoleFilled,
+            C::InlayHoleFilled => return None,
         })
     }
 
@@ -2679,7 +2730,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 51);
+        assert_eq!(count, 52);
     }
 
     #[test]
