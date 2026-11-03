@@ -35,7 +35,9 @@ pub struct NearParts {
     pub gap_mm: f64,
 }
 
-/// A design with its near parts merged ([`merge_near_parts`]).
+/// A design with its near parts merged ([`merge_near_parts`]). A pair
+/// whose `first` and `second` are one outline is an outline that comes
+/// near itself across the outside (#515).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MergedParts {
     /// The regions: each region with no near part as it was given, and
@@ -107,7 +109,12 @@ pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64)
     }
     let (filled_regions, filled) = fill_thin_holes(regions, distance_mm, tolerance_mm);
     let regions = filled_regions.as_slice();
-    let near = near_parts(regions, distance_mm);
+    let fine_mm = if tolerance_mm.is_finite() && tolerance_mm > 0.0 {
+        tolerance_mm.min(distance_mm / 8.0)
+    } else {
+        distance_mm / 8.0
+    };
+    let near = near_parts(regions, distance_mm, fine_mm);
     if near.is_empty() {
         return MergedParts {
             filled,
@@ -129,11 +136,6 @@ pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64)
             }
         }
     }
-    let fine_mm = if tolerance_mm.is_finite() && tolerance_mm > 0.0 {
-        tolerance_mm.min(distance_mm / 8.0)
-    } else {
-        distance_mm / 8.0
-    };
     let mut out = MergedParts {
         regions: Vec::new(),
         sources: Vec::new(),
@@ -152,7 +154,11 @@ pub fn merge_near_parts(regions: &[Region], distance_mm: f64, tolerance_mm: f64)
             .iter()
             .filter_map(|&m| regions.get(m).cloned())
             .collect();
-        if parts.len() < 2 {
+        let folds = out
+            .near
+            .iter()
+            .any(|n| n.first == n.second && region_of(n.first) == Some(k));
+        if parts.len() < 2 && !folds {
             out.regions.extend(parts);
             out.sources.push(members);
             continue;
@@ -280,8 +286,11 @@ struct Outline<'r> {
 
 /// The pairs of `regions`' outlines that come closer than `distance_mm`,
 /// and further than [`EPS_MM`], across a gap outside the design
-/// ([`merge_near_parts`]).
-fn near_parts(regions: &[Region], distance_mm: f64) -> Vec<NearParts> {
+/// ([`merge_near_parts`]), and each outline that comes that near itself
+/// across such a gap, as a pair of it with itself (#515): one that folds
+/// back ([`folds_back`]) where its region's closing, within `fine_mm`,
+/// bridges two stretches of it ([`merged`]).
+fn near_parts(regions: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<NearParts> {
     let outlines: Vec<Outline<'_>> = regions
         .iter()
         .enumerate()
@@ -355,8 +364,137 @@ fn near_parts(regions: &[Region], distance_mm: f64) -> Vec<NearParts> {
             }
         }
     }
+    // #515: an outline that comes near itself across the outside, where
+    // closing the gap would bridge two separate stretches of it.
+    for o in &outlines {
+        let Some(region) = regions.get(o.region) else {
+            continue;
+        };
+        let outside = |at: Point| !region.contains_point(at);
+        let Some((p, q)) = folds_back(o.contour, distance_mm, &outside) else {
+            continue;
+        };
+        let at = Point::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0);
+        if merged(std::slice::from_ref(region), distance_mm, fine_mm).as_slice()
+            == std::slice::from_ref(region)
+        {
+            continue;
+        }
+        near.push(NearParts {
+            first: o.index,
+            second: o.index,
+            at,
+            gap_mm: p.distance_to(q),
+        });
+    }
     near.sort_by_key(|n| (n.first, n.second));
     near
+}
+
+/// How far apart along an outline, in merge distances, two of its
+/// stretches must lie for [`folds_back`] to read them as two (#515): two
+/// stretches of a curve tighter than the merge distance, or either side of
+/// an inward corner, lie nearer.
+const FOLD_STEPS: f64 = 8.0;
+
+/// The nearest points of two stretches of `contour` closer than
+/// `distance_mm` (and further than [`EPS_MM`]) that lie at least
+/// [`FOLD_STEPS`] merge distances apart along it, the shorter way round,
+/// with the middle of the gap between them `outside` the design: the
+/// outline folds back on itself there (#515), across a gap or up a narrow
+/// notch, which [`merged`] tells apart. A fold across the design itself, a
+/// thin web of it, is never one. `None` when it nowhere does.
+fn folds_back(
+    contour: &Contour,
+    distance_mm: f64,
+    outside: &dyn Fn(Point) -> bool,
+) -> Option<(Point, Point)> {
+    let segments: Vec<Segment> = contour.polyline().segments().collect();
+    let length_of = |t: &Segment| {
+        t.arc().map_or(t.start.distance_to(t.end), |a| {
+            a.radius_mm * a.sweep_rad.abs()
+        })
+    };
+    let mut along = Vec::with_capacity(segments.len());
+    let mut total_mm = 0.0;
+    for t in &segments {
+        along.push(total_mm);
+        total_mm += length_of(t);
+    }
+    let apart_mm = FOLD_STEPS * distance_mm;
+    if total_mm < 2.0 * apart_mm {
+        return None;
+    }
+    let mut order: Vec<(usize, Rect)> = segments
+        .iter()
+        .enumerate()
+        .map(|(i, &t)| (i, segment_box(t)))
+        .collect();
+    order.sort_by(|a, b| a.1.min.x.total_cmp(&b.1.min.x));
+    let mut best: Option<(f64, Segment, Segment)> = None;
+    for (k, &(i, a_box)) in order.iter().enumerate() {
+        for &(j, b_box) in order.iter().skip(k + 1) {
+            if b_box.min.x > a_box.max.x + distance_mm {
+                break;
+            }
+            if !boxes_within(Some(a_box), Some(b_box), distance_mm) {
+                continue;
+            }
+            let (Some(&ai), Some(&aj)) = (along.get(i), along.get(j)) else {
+                continue;
+            };
+            let gap_along = (ai - aj).abs();
+            if gap_along.min(total_mm - gap_along) < apart_mm {
+                continue;
+            }
+            let (Some(&s), Some(&t)) = (segments.get(i), segments.get(j)) else {
+                continue;
+            };
+            let gap_mm = segment_distance_mm(s, t);
+            if gap_mm > EPS_MM && gap_mm < distance_mm && best.is_none_or(|(b, ..)| gap_mm < b) {
+                let (p, q) = closest_points(s, t);
+                if outside(Point::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)) {
+                    best = Some((gap_mm, s, t));
+                }
+            }
+        }
+    }
+    best.map(|(_, s, t)| closest_points(s, t))
+}
+
+/// How many separate stretches of `outline` lie within `reach_mm` of
+/// `piece`, round the loop (#515): one where a piece fills an inward corner
+/// or a notch's tip, two where it bridges a gap between two stretches.
+fn stretches_touched(outline: &Polyline, piece: &Polyline, reach_mm: f64) -> usize {
+    let Some(piece_box) = piece.bounds() else {
+        return 0;
+    };
+    let near = |t: Segment| {
+        boxes_within(Some(segment_box(t)), Some(piece_box), reach_mm) && {
+            let edge = Polyline::new(
+                vec![
+                    crate::polyline::Vertex {
+                        bulge: t.bulge,
+                        ..crate::polyline::Vertex::line(t.start.x, t.start.y)
+                    },
+                    crate::polyline::Vertex::line(t.end.x, t.end.y),
+                ],
+                false,
+            );
+            crate::distance::distance_mm(&edge, piece) < reach_mm
+        }
+    };
+    let touching: Vec<bool> = outline.segments().map(near).collect();
+    let n = touching.len();
+    if touching.iter().all(|&t| t) {
+        return 1;
+    }
+    (0..n)
+        .filter(|&i| {
+            touching.get(i).copied().unwrap_or(false)
+                && !touching.get((i + n - 1) % n).copied().unwrap_or(false)
+        })
+        .count()
 }
 
 /// Whether boxes `a` and `b` come within `reach_mm` of each other.
@@ -418,11 +556,16 @@ fn merged(parts: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<Region> {
     let gaps: Vec<Region> = difference(&closed, parts, fine_mm)
         .into_iter()
         .filter(|piece| {
-            let against = outlines
+            let against: Vec<&&Contour> = outlines
                 .iter()
                 .filter(|o| closer_than(piece.outer().polyline(), o.polyline(), reach_mm))
-                .count();
-            against >= 2
+                .collect();
+            // #515: or two stretches of one outline, a gap it comes near
+            // itself across.
+            against.len() >= 2
+                || against.first().is_some_and(|o| {
+                    stretches_touched(o.polyline(), piece.outer().polyline(), reach_mm) >= 2
+                })
         })
         .flat_map(|piece| grown_contour(piece.outer(), fine_mm, Bays::Island))
         .collect();
@@ -574,6 +717,66 @@ mod tests {
 
     fn nested(contours: Vec<Contour>) -> Vec<Region> {
         nest(contours).expect("it nests").0
+    }
+
+    fn polygon(points: &[(f64, f64)]) -> Contour {
+        Contour::new(Polyline::new(
+            points
+                .iter()
+                .map(|&(x, y)| crate::polyline::Vertex::line(x, y))
+                .collect(),
+            true,
+        ))
+        .expect("a polygon")
+    }
+
+    /// #515: a C, a 10 mm square round a 6 mm bay whose mouth is a slit
+    /// 0.02 mm wide, comes that near itself across the outside. It is
+    /// merged, reported once as a pair of its outline with itself, in the
+    /// slit: the slit closes, so the bay is a hole of a 10 mm square, and
+    /// the region's area grows by the slit's alone. A 6° notch 3 mm deep
+    /// cut into a square, its flanks as near each other at its tip, is left
+    /// as drawn: the closing fills its tip, one stretch of the outline.
+    #[test]
+    fn outline_near_itself_merges_and_a_notch_does_not() {
+        let c = polygon(&[
+            (-5.0, -5.0),
+            (5.0, -5.0),
+            (5.0, -0.01),
+            (3.0, -0.01),
+            (3.0, -3.0),
+            (-3.0, -3.0),
+            (-3.0, 3.0),
+            (3.0, 3.0),
+            (3.0, 0.01),
+            (5.0, 0.01),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+        ]);
+        let merged = merge_near_parts(&nested(vec![c]), MERGE_MM, TOL);
+        assert_eq!(merged.near.len(), 1, "{:?}", merged.near);
+        let near = &merged.near[0];
+        assert_eq!((near.first, near.second), (0, 0));
+        crate::assert_approx_eq!(near.gap_mm, 0.02, 1e-9);
+        assert!((3.0 - 1e-9..=5.0).contains(&near.at.x), "{near:?}");
+        assert_eq!(merged.regions.len(), 1, "{merged:?}");
+        assert_eq!(merged.regions[0].holes().len(), 1, "the bay is a hole");
+        crate::assert_approx_eq!(merged.regions[0].area_mm2(), 100.0 - 36.0, 1e-3);
+
+        let tip = 3.0 * (3.0_f64).to_radians().tan();
+        let notched = polygon(&[
+            (-5.0, -5.0),
+            (5.0, -5.0),
+            (5.0, -tip),
+            (2.0, 0.0),
+            (5.0, tip),
+            (5.0, 5.0),
+            (-5.0, 5.0),
+        ]);
+        let regions = nested(vec![notched]);
+        let merged = merge_near_parts(&regions, MERGE_MM, TOL);
+        assert!(merged.near.is_empty(), "{:?}", merged.near);
+        assert_eq!(merged.regions, regions);
     }
 
     /// Two 10 mm squares 0.001 mm apart merge into one 20.001 × 10 mm

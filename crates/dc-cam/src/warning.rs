@@ -1827,6 +1827,23 @@ impl fmt::Display for Warning {
                 gap_mm,
                 merge_mm,
                 ..
+            } if first == second => write!(
+                f,
+                "{first} comes within {} mm of itself at ({}, {}) mm, closer than the {} mm an inlay keeps between two parts, so both sides close the gap there, with no wall in it; draw it at least {} mm open to keep it",
+                rounded(*gap_mm, 4),
+                rounded(*x_mm, 3),
+                rounded(*y_mm, 3),
+                rounded(*merge_mm, 4),
+                rounded(*merge_mm, 4)
+            ),
+            Self::InlayPartsMerged {
+                first,
+                second,
+                x_mm,
+                y_mm,
+                gap_mm,
+                merge_mm,
+                ..
             } => write!(
                 f,
                 "{first} and {second} come {} mm apart at ({}, {}) mm, closer than the {} mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least {} mm apart to keep them separate",
@@ -2615,6 +2632,18 @@ mod tests {
                     merge_mm: 0.05,
                 },
                 "`Shape` (instance `i1`, profile 2) and `Shape` (instance `i1`, profile 3) come 0.001 mm apart at (50, 55) mm, closer than the 0.05 mm an inlay keeps between two parts, so both sides cut them as one shape, with no wall between them; draw them at least 0.05 mm apart to keep them separate",
+            ),
+            (
+                Warning::InlayPartsMerged {
+                    op: op(),
+                    first: shape(),
+                    second: shape(),
+                    x_mm: 50.0,
+                    y_mm: 55.0,
+                    gap_mm: 0.02,
+                    merge_mm: 0.05,
+                },
+                "`Shape` (instance `i1`, profile 2) comes within 0.02 mm of itself at (50, 55) mm, closer than the 0.05 mm an inlay keeps between two parts, so both sides close the gap there, with no wall in it; draw it at least 0.05 mm open to keep it",
             ),
             (
                 Warning::InlayHoleFilled {
