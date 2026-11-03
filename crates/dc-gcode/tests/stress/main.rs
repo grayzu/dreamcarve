@@ -401,6 +401,29 @@ fn male_of_line_art_0xb3_generates() {
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
 
+/// #513 (found by the sweep): the male cut-out of lettering seed `0xc0`
+/// ("CrC", 90° bit, millimetre program, V-walled band) generates, every
+/// program passes S1–S19 and the pair seats within 0.05 mm. Its cut-out
+/// path, the band's edge shrunk by 2.382 mm, crossed itself: where one of
+/// the edge's chords beside a "C" is 0.052 mm long, cavalier_contours
+/// left a spike 0.0007 mm long in the inset, and the Profile refused it,
+/// "the outline crosses itself". `dc_geometry::offset` drops such spikes.
+#[test]
+fn male_cut_out_of_lettering_0xc0_generates() {
+    let outcome = reproduce(
+        "lettering",
+        0xc0,
+        lettering::lettering(0xc0),
+        Kind::MaleCutOut,
+    );
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}
+
 /// #511 (found by the sweep): the male of lettering seed `0x47` ("mm",
 /// 60° bit, millimetre program) with a V wall seats within 0.05 mm. Two
 /// serif feet leave a channel 0.44 mm wide in the band; its exit, between

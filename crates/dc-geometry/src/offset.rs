@@ -8,7 +8,7 @@
 
 use crate::contour::Contour;
 use crate::point::{EPS_MM, Point};
-use crate::polyline::{Polyline, Segment, Vertex};
+use crate::polyline::{Polyline, Segment, Vertex, without_spikes};
 use cavalier_contours::polyline::{
     PlineCreation, PlineOffsetOptions, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex,
     pline_seg_intr,
@@ -53,6 +53,12 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 /// `decimated`). The first result that is closed and plausible is kept,
 /// else the first closed one, else the first. A closed, plausible first
 /// result, the usual case, is returned as it was.
+///
+/// Every piece loses its spikes first (`without_spikes`; #513): shrunk
+/// past a short side, `cavalier_contours` can trim the side's offset away
+/// but leave a spike where it was, the loop running to a point and
+/// straight back, which meets itself. A spike encloses nothing, so the
+/// area tests see the same piece.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let ccw = contour.is_ccw();
@@ -202,7 +208,10 @@ fn offset_with(
     let mut contours = Vec::with_capacity(pieces.len());
     let mut net_mm2 = 0.0;
     for piece in &pieces {
-        let Ok(contour) = Contour::oriented(from_cavalier(piece)) else {
+        // #513: a piece can run out to a point and straight back where a
+        // short side's offset was trimmed away; the spike encloses nothing.
+        let vertices = without_spikes(from_cavalier(piece).vertices().iter().copied());
+        let Ok(contour) = Contour::oriented(Polyline::new(vertices, true)) else {
             continue;
         };
         // A piece runs the source's way round, a loop inside a grown
@@ -881,5 +890,38 @@ mod tests {
             grown_mm2 > area_mm2 && grown_mm2 <= most_mm2,
             "grown {grown_mm2} mm², ring {area_mm2} mm², at most {most_mm2} mm²"
         );
+    }
+
+    /// The part of #513's male band (lettering seed `0xc0`, 90° bit) its
+    /// cut-out path crossed itself on: a side drawn as chords, one of them
+    /// 0.052 mm long and turning 1.2° from the next, shrunk by 2.382 mm
+    /// (the V wall's `P·tan(α/2)` plus the end mill's radius).
+    /// cavalier_contours trims the short chord's offset away but leaves a
+    /// spike where it was: the loop runs to a point, 0.0007 mm on and
+    /// straight back, so it meets itself and the Profile refused it, "the
+    /// outline crosses itself". Every piece is a contour that does not.
+    #[test]
+    fn inward_offset_past_a_short_chord_leaves_no_spike() {
+        let ring = Contour::new(Polyline::new(
+            [
+                (14.919_361_683_171_466, 34.656_471_247_386_08),
+                (14.895_567_151_349_262, 28.453_857_118_796_45),
+                (14.895_206_543_248_37, 28.401_987_428_378_206),
+                (14.902_096_363_347_248, 27.910_923_714_350_8),
+                (18.386_662_217_419_82, 19.666_971_499_632_936),
+                (33.527_074_786_465_84, 14.744_692_618_559_938),
+            ]
+            .iter()
+            .map(|&(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        ))
+        .unwrap();
+        let inset = offset(&ring, -2.382_169_110_610_073_3);
+        assert_eq!(inset.len(), 1, "{inset:?}");
+        for piece in inset {
+            let checked = Contour::new(piece.polyline().clone());
+            assert!(checked.is_ok(), "{checked:?}: {piece:?}");
+        }
     }
 }

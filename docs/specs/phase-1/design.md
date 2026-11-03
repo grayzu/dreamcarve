@@ -86,7 +86,11 @@ pub fn offset(c: &Contour, delta_mm: f64) -> Vec<Contour>;       // cavalier_con
     // closed, plausible result is kept. #490: grown by t, the result must also enclose at
     // most A + L·t + π·t² (Sz.-Nagy's bound on a connected region's outer parallel set), the
     // loops inside its outline counted as holes; a ring that nearly touches itself grew to its
-    // outline alone, or the inside loop alone, which enclosed more than A
+    // outline alone, or the inside loop alone, which enclosed more than A. #513: every piece
+    // loses its spikes (a vertex between two lines where the loop runs out and straight back,
+    // within EPS_MM, and repeated vertices), as boolean output does: shrunk past a short side
+    // (0.052 mm, turning 1.2°), cavalier_contours trimmed its offset away but left a spike
+    // 0.0007 mm long, so a male inlay's cut-out path met itself and the Profile refused it
 pub fn flatten(path: &kurbo::BezPath, tolerance_mm: f64) -> Vec<Polyline>;
     // within tolerance_mm of the curve: kurbo is asked for half of it, as the SVG importer's
     // per-curve flattening is (changed in #225: kurbo's own bound is approximate, and at the
