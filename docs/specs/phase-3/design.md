@@ -886,7 +886,13 @@ orientation; DreamCarve's regions are normalised anyway.
      a wide male band (step 0.2 mm and more) a short branch into a fillet
      went, and the plug's wall stood `0.75 · step / tan(α/2)` too high
      (#484, `inlay::fillet_in_a_wide_band_seats_flush`). The cap is the
-     carved edge's (simplify, below).
+     carved edge's (simplify, below). That edge allowance, 0.005 mm, is
+     for a 60° bit or wider; a narrower bit scales it as the wall
+     tolerance (#478, #506), since the cone turns it into
+     `0.005 / tan(α/2)` of height: 0.038 mm with the 15° bit, which held
+     line art `0x55`'s plug proud (`stress::line_art_seats_with_the_edge_allowance_scaled`).
+     The cap, the simplify tolerance and the fit's off-axis tolerance
+     below all take the scaled value.
    - **Depth** per node: `d = min(clearance / slope, F)`; `z = start_plane
      − d`. The carved disc radius at the start plane is `d · slope`
      (the clamped value, never the raw clearance: upstream's gouge fix).
