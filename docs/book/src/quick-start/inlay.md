@@ -1,26 +1,30 @@
 # An inlay pair
 
-This chapter takes one drawing, the monogram "DC" (for DreamCarve), to two
-projects and five G-code programs, and then to dark letters inlaid in a
+This chapter takes one drawing, the monogram "DC" (for DreamCarve), to one
+project and five G-code programs, and then to dark letters inlaid in a
 light board. It is the V-bit inlay method Corbin's Workshop documents for
 cutting boards ([Inlay](../user-guide/inlay.md) says more), done with two
-boards:
+boards cut from one project:
 
-- the **female** board, the light one, gets a **pocket** the shape of the
-  letters, 4 mm deep, with walls sloping at the V-bit's angle. The D's
-  counter, the hole in the middle of the D, is an island: it stays
-  standing in the pocket;
-- the **male** board, the dark one, gets a **plug**: the letters,
-  mirrored, so that they read as a reversed "DC", standing 5 mm proud of
-  a flat band carved round them, with walls sloping the other way, and a
-  hole where the D's counter is. The band's outer edge is an upright
-  wall the end mill cuts, its inward curves rounded off; the end mill
-  then cuts the plug free of the board, on a rim of the band. Turned over, the plug fits the pocket:
-  its walls meet the pocket's walls, and its face stops 1 mm short of the
-  pocket's floor, which leaves room for glue.
+- the **female** board, the light one, is the project's stock. It gets a
+  **pocket** the shape of the letters, 4 mm deep, with walls sloping at
+  the V-bit's angle. The D's counter, the hole in the middle of the D, is
+  an island: it stays standing in the pocket;
+- the **male** board, the dark one, is the Inlay's **male board**. It gets
+  a **plug**: the letters, mirrored, so that they read as a reversed
+  "DC", standing 5 mm proud of a flat band carved round them, with walls
+  sloping the other way, and a hole where the D's counter is. The band's
+  outer edge is an upright wall the end mill cuts, its inward curves
+  rounded off; the end mill then cuts the plug free of the board, on a
+  rim of the band. Turned over, the plug fits the pocket: its walls meet
+  the pocket's walls, and its face stops 1 mm short of the pocket's
+  floor, which leaves room for glue.
 
 You glue the plug into the pocket, saw off what is left of the dark board
 above the light one's surface, and plane the board flat.
+
+One operation describes both boards with one set of numbers, so they
+always agree: change the fit, and both boards' programs follow.
 
 You use two bits: a 60° 6.35 mm (1/4") V-bit and a 3.175 mm (1/8") end
 mill. If you have not done [A V-carved sign from SVG
@@ -44,8 +48,8 @@ not work for you, that is a bug.
   the male: maple and walnut, say, or oak and walnut. Any pair works; the
   plug shows best dark in a light board. A 60° 6.35 mm V-bit, a
   3.175 mm two-flute upcut end mill with at least 14.2 mm of flute (see
-  [step 6](#6-make-the-second-project-the-male)), a router controlled by
-  grblHAL, and a spoilboard.
+  [step 5](#5-paste-the-operation)), a router controlled by grblHAL, and
+  a spoilboard.
 - For the glue-up: wood glue, a clamp or a press with two flat cauls, a
   bandsaw, and a hand plane or a sander.
 
@@ -69,41 +73,29 @@ frame, the stock is 110 × 80 mm with the letters at its centre, and the
 male's band, which reaches 8 mm beyond the letters, keeps more than 10 mm
 of board at every edge.
 
-## 2. Create the two projects
+## 2. Create the project
 
-An inlay is two projects made from the same drawing, one for each board.
-Make both now, naming each with `-o`:
+One project cuts both boards. Make it, naming it with `-o`:
 
 <!-- doc-test: run -->
 ```sh
-dreamcarve init dc-inlay.svg -o dc-female.dcv
-dreamcarve init dc-inlay.svg -o dc-male.dcv
+dreamcarve init dc-inlay.svg -o dc.dcv
 ```
 
 ```text
 Imported 3 shape(s) from dc-inlay.svg: page units mm, 1 user unit = 1.0000 mm.
-Wrote dc-female.dcv: stock 110.00 × 80.00 mm, post-processor grblhal, 3 shape(s) targeted by Profile.
+Wrote dc.dcv: stock 110.00 × 80.00 mm, post-processor grblhal, 3 shape(s) targeted by Profile.
 Values to set; export refuses until every one is set:
-dc-female.dcv:10:21: stock.thickness_mm is not set (mm)
-dc-female.dcv:31:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-dc-female.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-dc-female.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-dc-female.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-dc-female.dcv:51:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit dc-female.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check dc-female.dcv`.
-Imported 3 shape(s) from dc-inlay.svg: page units mm, 1 user unit = 1.0000 mm.
-Wrote dc-male.dcv: stock 110.00 × 80.00 mm, post-processor grblhal, 3 shape(s) targeted by Profile.
-Values to set; export refuses until every one is set:
-dc-male.dcv:10:21: stock.thickness_mm is not set (mm)
-dc-male.dcv:31:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
-dc-male.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
-dc-male.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
-dc-male.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
-dc-male.dcv:51:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
-Next: edit dc-male.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check dc-male.dcv`.
+dc.dcv:10:21: stock.thickness_mm is not set (mm)
+dc.dcv:31:22: tools[t1].feed_mm_min is not set (mm/min) for tool `Set me`
+dc.dcv:32:24: tools[t1].plunge_mm_min is not set (mm/min) for tool `Set me`
+dc.dcv:33:14: tools[t1].rpm is not set (RPM) for tool `Set me`
+dc.dcv:34:23: tools[t1].step_down_mm is not set (mm) for tool `Set me`
+dc.dcv:51:19: operations[op1].depth_mm is not set (mm) for operation `Profile`
+Next: edit dc.dcv and replace each `null` listed above. To cut through, `depth_mm` is the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check dc.dcv`.
 ```
 
-Both projects have the same shapes, with the same ids:
+The project has three shapes:
 
 | Id | Name | What it is |
 | --- | --- | --- |
@@ -164,23 +156,21 @@ Save this as `my-tools.json` in the folder:
 
 The end mill is the sign's 3.175 mm end mill, T2 on the machine. The
 V-bit is a 60° bit, T1. Its **cone height**, the depth at which its sides
-reach their full 6.35 mm, is 5.5 mm, and the deepest either side of this
-inlay goes is 5 mm (see [Choosing the bit](../user-guide/inlay.md#choosing-the-bit)).
+reach their full 6.35 mm, is 5.5 mm, and the deepest either board of
+this inlay is cut is 5 mm, on the male board (see [Choosing the bit](../user-guide/inlay.md#choosing-the-bit)).
 Use a 60° or 90° bit for inlays: narrower bits fit less closely, as
 [Choosing a V-bit for an inlay](../user-guide/inlay.md#choosing-a-v-bit-for-an-inlay)
 explains.
 
 Add the file's tools to your library, list it, and copy both tools into
-both projects:
+the project:
 
 <!-- doc-test: run -->
 ```sh
 dreamcarve tools import my-tools.json
 dreamcarve tools list
-dreamcarve tools add dc-female.dcv lt1
-dreamcarve tools add dc-female.dcv lt2
-dreamcarve tools add dc-male.dcv lt1
-dreamcarve tools add dc-male.dcv lt2
+dreamcarve tools add dc.dcv lt1
+dreamcarve tools add dc.dcv lt2
 ```
 
 ```text
@@ -190,44 +180,37 @@ dreamcarve tools add dc-male.dcv lt2
 ID   NAME                 VENDOR  PRODUCT  CUTTER     DIAMETER_MM  FEED_MM_MIN  PLUNGE_MM_MIN  RPM    NUMBER  SOURCE
 lt1  1/8 end mill         -       -        end mill   3.175        1000         300            18000  2       -
 lt2  1/4 60 degree V-bit  -       -        V-bit 60°  6.35         1000         300            18000  1       -
-Added `1/8 end mill` (lt1) to dc-female.dcv as tool t2.
-Added `1/4 60 degree V-bit` (lt2) to dc-female.dcv as tool t3.
-Added `1/8 end mill` (lt1) to dc-male.dcv as tool t2.
-Added `1/4 60 degree V-bit` (lt2) to dc-male.dcv as tool t3.
+Added `1/8 end mill` (lt1) to dc.dcv as tool t2.
+Added `1/4 60 degree V-bit` (lt2) to dc.dcv as tool t3.
 ```
 
 The library gives each tool it imports the next free id. If your library
 already has tools (from the earlier chapters), `import` says the end mill
 is already present and the ids differ: use the ids `tools list` shows.
-Each project now has `t1` ("Set me", unused), `t2` (the end mill) and
+The project now has `t1` ("Set me", unused), `t2` (the end mill) and
 `t3` (the V-bit).
 
-## 4. Set the material
+## 4. Set the female board
 
-Measure each board with calipers and set its own thickness: the light
-board's in `dc-female.dcv`, the dark board's in `dc-male.dcv`. This
-chapter uses 12 mm for both; boards sold as 12 mm are rarely exactly
-that, so measure yours and set what you measure. In each file, change the
-stock's `thickness_mm` line to:
+The project's stock is the female board, the light one. Measure it with
+calipers and set its thickness: change the stock's `thickness_mm` line
+to:
 
-<!-- doc-test: edit dc-female.dcv dc-male.dcv -->
+<!-- doc-test: edit dc.dcv -->
 ```json
 "thickness_mm": 12.0,
 ```
 
-The male's thickness matters most: the plug's surround is cut 5 mm deep,
-and the board under it holds the plug together until the glue dries. A
-male board under 11 mm leaves less than 6 mm, and `check` warns
-`inlay_plug_base_thin`. The cut-out also goes through the board by its
-thickness: set too thin, it leaves the plug attached; set too thick, it
-cuts deeper into the spoilboard.
+This chapter uses 12 mm; boards sold as 12 mm are rarely exactly that,
+so measure yours and set what you measure. The male board gets its own
+thickness in [step 6](#6-set-the-male-board).
 
-## 5. Paste the operation into both projects
+## 5. Paste the operation
 
-In both files, replace the whole `"operations"` block, from
-`"operations": [` down to its closing `],`, with this, and save:
+Replace the whole `"operations"` block, from `"operations": [` down to
+its closing `],`, with this, and save:
 
-<!-- doc-test: paste dc-female.dcv dc-male.dcv operations -->
+<!-- doc-test: paste dc.dcv operations -->
 ```json
 "operations": [
   {
@@ -237,7 +220,7 @@ In both files, replace the whole `"operations"` block, from
     "enabled": true,
     "targets": [ "i1", "i2" ],
     "tool": "t3",
-    "side": "female",
+    "male_board": { "width_mm": null, "height_mm": null, "thickness_mm": null },
     "depth_mm": 4.0,
     "glue_gap_mm": 1.0,
     "plug_depth_mm": 2.0,
@@ -250,44 +233,27 @@ In both files, replace the whole `"operations"` block, from
     "machining_order": "full_depth_first",
     "through_cut_allowance_mm": 0.0,
     "safe_z_mm": 10.0,
-    "cut_out": null
+    "cut_out": { "tool": "t2", "tabs": { "placement": { "kind": "count", "count": 4 }, "width_mm": 6.0, "height_mm": 3.0, "shape": "rect", "on_holes": false, "avoid_corners": true }, "through_cut_allowance_mm": 0.2 }
   }
 ],
 ```
 
-One **Inlay** operation describes both sides with the same four values;
-`side` says which one the project cuts.
+One **Inlay** operation describes both boards with the same values:
 
 | Field | Value | What it does here |
 | --- | --- | --- |
 | `targets` | `i1`, `i2` | The two letters. The D's counter, inside the D, is an island in the pocket, and a hole in the plug. |
-| `tool` | `t3` | The 60° V-bit. Both sides must use the same angle. |
+| `tool` | `t3` | The 60° V-bit, on both boards. |
+| `male_board` | all `null` | The male board: its width and height `null` are the stock's, 110 × 80 mm, sharing its front-left corner; its thickness is its own, set in the next step. Until it is set, only the female is cut. |
 | `depth_mm` | 4 | The pocket is 4 mm deep (Corbin's "Inlay Depth"). |
 | `glue_gap_mm` | 1 | The plug's face stops 1 mm above the pocket's floor (Corbin's "Inlay Fit Adjustment"). It is the value you change to adjust the fit. |
 | `plug_depth_mm` | 2 | The male's flat band is cut 2 mm deeper than the plug's walls need, so the seated plug's backing stands 2 mm clear of the female, room to saw it off. |
-| `margin_mm` | 8 | The male's band reaches 8 mm beyond the letters (Corbin's "Plug Stock Offset"). The female ignores it. |
-| `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. The female ignores it. |
-| `clearing` | `t2` | The end mill clears the flat floor first, on either side; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
+| `margin_mm` | 8 | The male's band reaches 8 mm beyond the letters (Corbin's "Plug Stock Offset"). |
+| `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. |
+| `clearing` | `t2` | The end mill clears the flat floor first, on both boards; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
 | `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |
-| `cut_out` | `null` | No cut-out here; the male gets one in the next step. |
-
-See [Inlay](../user-guide/inlay.md) for every setting.
-
-## 6. Make the second project the male
-
-In `dc-male.dcv`, change the operation's `side` and `cut_out` lines
-to:
-
-<!-- doc-test: edit dc-male.dcv -->
-```json
-"side": "male",
-"cut_out": { "tool": "t2", "tabs": { "placement": { "kind": "count", "count": 4 }, "width_mm": 6.0, "height_mm": 3.0, "shape": "rect", "on_holes": false, "avoid_corners": true }, "through_cut_allowance_mm": 0.2 }
-```
-
-`side` is the only difference that changes what is carved. Everything
-else, the drawing and the four values, must stay the same in both:
-change a value in one, change it in the other.
+| `cut_out` | `t2`, four tabs | The male's last pass cuts the plug free of its board (below). |
 
 The **cut-out** is the male's last pass: the end mill (`t2`) cuts the
 plug free of its board, so you need not saw it out. It runs along the
@@ -295,94 +261,146 @@ outer edge of the band's flat floor, its cutter's edge on the band's
 upright outer edge, so it cuts nothing the carve left standing: its
 centre runs 1.588 mm (its radius) inside that edge, at least 6.412 mm
 out from the mirrored letters and rounded as the band is, from the
-floor 5 mm down through the board and 0.2 mm into the spoilboard
-(`through_cut_allowance_mm`). Four **tabs**, 6 mm
-long and 3 mm tall from the bottom of the board, hold the plug in place
-until you cut them. Only the male has a cut-out; on the female it is an
-error.
+floor 5 mm down through the male board and 0.2 mm into the spoilboard
+(`through_cut_allowance_mm`). Four **tabs**, 6 mm long and 3 mm tall
+from the bottom of the board, hold the plug in place until you cut
+them. The female ignores the cut-out: its pocket stays in its board.
 
 **Check the end mill's flute length.** The cut-out goes through the
-board, so the end mill's flutes must be at least the board's thickness
-plus the through-cut allowance plus 2 mm long: 12 + 0.2 + 2 = 14.2 mm
-here. Many 1/8 in end mills have only 12.7 mm (1/2 in) of flute. If
-yours is shorter, use one with longer flutes for the cut-out; or a
-6.35 mm end mill, which the 8 mm band still holds (it needs `margin_mm`
-at least 7.505 while the 3.175 mm end mill clears the floor: see
-[Cutting the plug free](../user-guide/inlay.md#cutting-the-plug-free));
+male board, so the end mill's flutes must be at least the board's
+thickness plus the through-cut allowance plus 2 mm long: 12 + 0.2 + 2 =
+14.2 mm here. Many 1/8 in end mills have only 12.7 mm (1/2 in) of
+flute. If yours is shorter, use one with longer flutes for the cut-out;
+or a 6.35 mm end mill, which the 8 mm band still holds (it needs
+`margin_mm` at least 7.505 while the 3.175 mm end mill clears the floor:
+see [Cutting the plug free](../user-guide/inlay.md#cutting-the-plug-free));
 or set `"cut_out": null` and saw the plug free.
 
-## 7. Check the projects
+See [Inlay](../user-guide/inlay.md) for every setting.
+
+Check the project:
 
 <!-- doc-test: run -->
 ```sh
-dreamcarve check dc-female.dcv
-dreamcarve check dc-male.dcv
+dreamcarve check dc.dcv
 ```
 
 ```text
-dc-female.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
+dc.dcv:80:76: warning: inlay_male_board_unset: operation `op1` (male board): its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too
 warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
-Program 1 (T2):
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
+Program dc-female-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Program 2 (T1):
-  Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
-    The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
+Program dc-female-2-T1.nc (T1):
+  Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.001..60.000, Z -4.000..10.000
+    The cutter's edge reaches X 15.144..94.268, Y 16.826..63.175; keep clamps outside that.
   Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated total time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female.dcv: 0 error(s), 3 warning(s)
-dc-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
+dc.dcv: 0 error(s), 4 warning(s)
+```
+
+The female board is ready; the male is not cut yet. `inlay_male_board_unset`
+points at the male board's thickness, the one value left to set.
+
+## 6. Set the male board
+
+Measure the male board, the dark one, and set its thickness. Change the
+operation's `male_board` line to:
+
+<!-- doc-test: edit dc.dcv -->
+```json
+"male_board": { "width_mm": null, "height_mm": null, "thickness_mm": 12.0 },
+```
+
+The male board's thickness matters most: the plug's surround is cut
+5 mm deep, and the board under it holds the plug together until the
+glue dries. A male board under 11 mm leaves less than 6 mm, and `check`
+warns `inlay_plug_base_thin`. The cut-out also goes through the board by
+its thickness: set too thin, it leaves the plug attached; set too thick,
+it cuts deeper into the spoilboard.
+
+The male board shares the stock's front-left corner and, with `width_mm`
+and `height_mm` left `null`, its size. If your dark board is smaller or
+larger, set its size too: the male's band is clipped to the board where
+it runs past it, as long as the letters leave the band room there.
+
+## 7. Check the project
+
+<!-- doc-test: run -->
+```sh
+dreamcarve check dc.dcv
+```
+
+```text
+dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
+warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
-Program 1 (T2):
+warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
+Program dc-female-1-T2.nc (T2):
+  Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
+    The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
+  Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Program dc-female-2-T1.nc (T1):
+  Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.001..60.000, Z -4.000..10.000
+    The cutter's edge reaches X 15.144..94.268, Y 16.826..63.175; keep clamps outside that.
+  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Male board, 110.000 mm × 80.000 mm × 12.000 mm:
+Program dc-male-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
   Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Program 2 (T1):
+Program dc-male-2-T1.nc (T1):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
   Estimated time: 56 s (cutting 53 s, dwells 3 s); 605 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Program 3 (T2):
+Program dc-male-3-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male.dcv: 0 error(s), 3 warning(s)
+Estimated total time: 9 min 26 s (cutting 9 min 11 s, dwells 15 s); 3.0 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc.dcv: 0 error(s), 5 warning(s)
 ```
 
 No errors. The warnings:
 
-- `unused_tool`, in both: the "Set me" tool `init` made. Delete its
-  block from `"tools"` if you like.
-- `entry_fallback`, in the female: the end mill's clearing pass ramps
-  into the floor at 15°, but the C's stroke is too narrow for a ramp at
-  4 mm deep, so there it plunges straight down at the plunge rate, which
-  a 3.175 mm upcut end mill does well. The male's band is wide enough
-  everywhere, so it ramps. Ignore it here.
-- `inlay_male_mirrored`, in the male: a note, not a problem. The plug is
-  glued in face down, so the male cuts the letters mirrored left to right,
-  about the vertical line X = 55 mm through the middle of the monogram:
-  it carves a reversed "DC", the C on the left and the D on the right,
-  both facing left. Draw the design as it should read in the finished
-  board; never mirror it yourself.
-- `tool_change_avoidable`, in the male: the end mill clears the floor
-  first and cuts the plug out last, with the V-bit between, so you fit it
-  twice. That order is required: the plug must stay in its board until
-  it is carved. Ignore it here.
+- `unused_tool`: the "Set me" tool `init` made. Delete its block from
+  `"tools"` if you like.
+- `entry_fallback`, on the female board: the end mill's clearing pass
+  ramps into the floor at 15°, but the C's stroke is too narrow for a
+  ramp at 4 mm deep, so there it plunges straight down at the plunge
+  rate, which a 3.175 mm upcut end mill does well. The male's band is
+  wide enough everywhere, so it ramps. Ignore it here.
+- `inlay_male_mirrored`, on the male board: a note, not a problem. The
+  plug is glued in face down, so the male cuts the letters mirrored left
+  to right, about the vertical line X = 55 mm through the middle of the
+  monogram: it carves a reversed "DC", the C on the left and the D on
+  the right, both facing left. Draw the design as it should read in the
+  finished board; never mirror it yourself.
+- `tool_change_avoidable`, on the male board: the end mill clears the
+  floor first and cuts the plug out last, with the V-bit between, so you
+  fit it twice. That order is required: the plug must stay in its board
+  until it is carved. Ignore it here.
+- `arc_fit_fallback`, on the female board: one short run of the floor's
+  centre rings is written as straight moves; it cuts the same.
 
-The Inlay lines give each side's depths:
+The Inlay lines give each board's depths:
 
 - the **female** pocket is 4 mm deep, with a flat floor;
 - the **male**'s plug is cut from its **start plane**, 3 mm below the
-  board's top (`depth_mm − glue_gap_mm`): there, the plug's walls pass
-  exactly through the mirrored letters. Above it, they slope in at 30°
-  from the vertical, as the pocket's walls do going down. The band round
-  the plug is cut flat 2 mm deeper (`plug_depth_mm`), 5 mm below the top
-  in all.
+  male board's top (`depth_mm − glue_gap_mm`): there, the plug's walls
+  pass exactly through the mirrored letters. Above it, they slope in at
+  30° from the vertical, as the pocket's walls do going down. The band
+  round the plug is cut flat 2 mm deeper (`plug_depth_mm`), 5 mm below
+  the top in all.
 
 Turned over, the plug enters the pocket 3 mm, until its walls meet the
 pocket's, and its face stops 1 mm short of the 4 mm floor: the glue gap.
@@ -392,45 +410,42 @@ The band is then 2 mm above the female's surface.
 
 <!-- doc-test: run -->
 ```sh
-dreamcarve export dc-female.dcv
-dreamcarve export dc-male.dcv
+dreamcarve export dc.dcv
 ```
 
 ```text
-dc-female.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
+warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
+warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
 warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Wrote 2 programs; run them in this order:
+Wrote 5 programs; run them in this order:
+Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
   1. dc-female-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
   2. dc-female-2-T1.nc  Before you start: fit T1 1/4 60 degree V-bit and set Z zero with it. Keep X and Y zero.
-This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
-If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
-Post-processor grblhal.
-  op1 (clearing t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 4.000 mm deep
-  op1 `DC`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 4.000 mm deep
-dc-female-1-T2.nc (137 lines):
-  Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
-    The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
-  Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female-2-T1.nc (1173 lines):
-  Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
-    The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
-  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
-dc-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
-warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
-warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-Wrote 3 programs; run them in this order:
+Male board, 110.000 mm × 80.000 mm × 12.000 mm:
   1. dc-male-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
   2. dc-male-2-T1.nc  Before you start: fit T1 1/4 60 degree V-bit and set Z zero with it. Keep X and Y zero.
   3. dc-male-3-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
 This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.
 If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL's G50 does not clear a scale that leaves X at 1, such as G51 Z-1.
 Post-processor grblhal.
-  op1 (clearing t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 5.000 mm deep
-  op1 `DC`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 5.000 mm deep
-  op1 (cut-out t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 12.200 mm deep
+  op1 (clearing t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 4.000 mm deep
+  op1 `DC`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 4.000 mm deep
+  op1 (clearing t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 5.000 mm deep on the male board
+  op1 `DC`: tool `t3` (1/4 60 degree V-bit), 2 target(s), 5.000 mm deep on the male board
+  op1 (cut-out t2) `DC`: tool `t2` (1/8 end mill), 2 target(s), 12.200 mm deep on the male board
+Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
+dc-female-1-T2.nc (137 lines):
+  Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
+    The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
+  Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-female-2-T1.nc (1211 lines):
+  Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.001..60.000, Z -4.000..10.000
+    The cutter's edge reaches X 15.144..94.268, Y 16.826..63.175; keep clamps outside that.
+  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated female board time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Male board, 110.000 mm × 80.000 mm × 12.000 mm:
 dc-male-1-T2.nc (8822 lines):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
@@ -443,14 +458,18 @@ dc-male-3-T2.nc (218 lines):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Estimated male board time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 9 min 26 s (cutting 9 min 11 s, dwells 15 s); 3.0 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 ```
 
-Each **tool run** is a program: on either side the end mill's clearing
-pass first, then the V-bit, and on the male the end mill's cut-out last.
-The female takes about a minute and a half of cutting, the male about
-seven and a half minutes, not counting rapids or tool changes.
+The programs are listed by board, each board a setup of its own: you
+set work zero again on the male board with its first program. Each
+**tool run** is a program: on either board the end mill's clearing pass
+first, then the V-bit, and on the male the end mill's cut-out last. The
+female takes about a minute and a half of cutting, the male about seven
+and a half minutes, not counting rapids or tool changes.
 
 | Program | Bit | What it cuts |
 | --- | --- | --- |
@@ -460,15 +479,18 @@ seven and a half minutes, not counting rapids or tool changes.
 | `dc-male-2-T1.nc` | 60° V-bit | The plug's walls, the narrow gap between the letters, and the floor's corners by the plug's foot |
 | `dc-male-3-T2.nc` | 3.175 mm end mill | The cut-out: round both letters along the band's outer edge, about 6.4 mm out from them, from the floor through the board, leaving four tabs 3 mm tall |
 
-Each program passed the safety checks before it was written, including
-the one that holds the V-bit's whole cone, not just its tip, to the
-material its side may cut: the letters for the female, the band round the
-mirrored letters for the male ([Safety](../user-guide/safety.md), rule 14).
-The V-bit is also held clear of the band's outer edge: beyond it the
-board stands to its full height, so no part of the bit's cone may cross
-that edge below the top. The cut-out is held to its path along the
-band's outer edge, its whole cutter on the band's flat floor, clear of
-the plug's wall and inside the band's edge, and round its tabs.
+Each program passed the safety checks before it was written, each
+against its own board: the female's against the stock, the male's
+against the male board, its thickness and its size. They include the one
+that holds the V-bit's whole cone, not just its tip, to the material its
+board may cut: the letters for the female, the band round the mirrored
+letters for the male ([Safety](../user-guide/safety.md), rule 14). The
+V-bit is also held clear of the band's outer edge: beyond it the board
+stands to its full height, so no part of the bit's cone may cross that
+edge below the top. The cut-out is held to its path along the band's
+outer edge, its whole cutter on the band's flat floor, clear of the
+plug's wall and inside the band's edge, and round its tabs, and to the
+male board's bottom less its 0.2 mm allowance.
 
 ## 9. Read the programs
 
@@ -634,10 +656,35 @@ in the band helps).
 
 - **A gap at the top, all round,** with the plug's backing still clear
   of the light board: the plug's face is on the pocket's floor before its
-  walls meet. Raise `glue_gap_mm` in both projects, by 0.25 mm at a time,
-  and cut a new male. The female does not change.
+  walls meet. Raise `glue_gap_mm` by 0.25 mm at a time, and cut a new
+  male. The female does not change.
 - **The plug will not go in**, or its backing stops well above the 2 mm:
   lower `glue_gap_mm`, by 0.25 mm at a time, and cut a new male.
+
+`glue_gap_mm` changes only the male, so after changing it re-export the
+male board's programs alone, on a new dark board, with `--board male`:
+
+<!-- doc-test: run -->
+```sh
+dreamcarve export dc.dcv --board male
+```
+
+```text
+dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
+warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
+warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
+Wrote 3 programs; run them in this order:
+Male board, 110.000 mm × 80.000 mm × 12.000 mm:
+  1. dc-male-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
+  2. dc-male-2-T1.nc  Before you start: fit T1 1/4 60 degree V-bit and set Z zero with it. Keep X and Y zero.
+  3. dc-male-3-T2.nc  Before you start: fit T2 1/8 end mill and set Z zero with it. Keep X and Y zero.
+```
+
+(The output goes on with the male's summary, as in step 8.) The female's
+programs are left as they were, and the project file is not changed:
+`--board` is for this export only. Because one operation describes both
+boards, the new male is cut with the same depth, plug depth, margin and
+bit as the pocket it must fit.
 
 [Inlay: the fit](../user-guide/inlay.md#the-fit) says why. Once you
 have the value for a bit and a wood, write it down: it holds for later
@@ -690,8 +737,9 @@ are Inkscape's) so that DreamCarve sees the outlines you mean:
 - **Do not mirror the design yourself.** The male mirrors it; mirrored
   twice, the plug would not fit.
 
-Then follow this chapter with your own file: `init` it twice, paste the
-same operation, and set each board's measured thickness.
+Then follow this chapter with your own file: `init` it, paste the
+operation, and set each board's measured thickness, the stock's and
+the male board's.
 
 ## Next steps
 

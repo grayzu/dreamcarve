@@ -34,7 +34,7 @@ use std::process::ExitCode;
 
 use dc_cam::{
     CamError, RunLabel, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave,
-    generate_inlay, generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
+    generate_inlay_board, generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::format::format_number;
 use dc_gcode::transform::mm_per_unit;
@@ -43,7 +43,7 @@ use dc_gcode::{
     machine_lift_limits_note, scaling_note,
 };
 use dc_project::{
-    DrillCycle, DrillOp, InlaySide, Operation, OperationId, PostProcessorRef, Project, ResetReason,
+    Board, DrillCycle, DrillOp, Operation, OperationId, PostProcessorRef, Project, ResetReason,
     SettingReset, Severity, SourceMap, ToolChangeMode, ToolId, Units, validate,
 };
 
@@ -106,6 +106,9 @@ pub struct ProjectFile<'a> {
     /// Whether the post-processor in the file was replaced (`--post`), so
     /// its fields' positions no longer match what was checked.
     post_replaced: bool,
+    /// What migrating the file changed that the user should hear about
+    /// (#498), printed as `note:` lines.
+    pub notes: Vec<String>,
 }
 
 impl ProjectFile<'_> {
@@ -145,8 +148,22 @@ pub struct Built {
 /// emits the programs, collecting every error and warning on the way.
 /// `split` is how a multi-tool project is divided into programs (the
 /// project's mode, or an `export` flag); `date` fills each program
-/// header's `{date}`.
+/// header's `{date}`. Both boards are built (#498): [`build_board`] builds
+/// one.
 pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
+    build_board(project, split, date, None)
+}
+
+/// [`build`], of the programs of `board` alone when it is given (#498,
+/// `export --board`): the stock's (every operation but an Inlay's male),
+/// or the male board's (every Inlay's male). A board with no programs is
+/// an error.
+pub fn build_board(
+    project: &Project,
+    split: ProgramSplit,
+    date: &str,
+    board: Option<Board>,
+) -> Built {
     let mut findings = Findings::default();
     for problem in validate(project) {
         let severity = problem.severity();
@@ -183,6 +200,17 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             )));
             continue;
         };
+        // Format 22 (#436): an Inlay's board is a carve, so its runs are a
+        // V-Carve's: its clearing passes', then its V-bit's; #498: both
+        // boards, each generated and reported on its own.
+        if let Operation::Inlay(op) = operation {
+            inlay_boards(project, operation, op, board, &mut findings, &mut ops);
+            continue;
+        }
+        // Every other operation cuts the stock.
+        if board == Some(Board::Male) {
+            continue;
+        }
         let plain =
             |toolpath: Toolpath| vec![EmitOp::from((operation.clone(), tool.clone(), toolpath))];
         let generated = match operation {
@@ -209,14 +237,8 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                     .collect::<Result<Vec<_>, _>>()
                     .map(|runs| (runs, w))
             }),
-            // Format 22 (#436): an Inlay side is a carve, so its runs are a
-            // V-Carve's: its clearing passes', then its V-bit's.
-            Operation::Inlay(op) => generate_inlay(project, op).and_then(|(runs, w)| {
-                runs.into_iter()
-                    .map(|run| run_op(project, operation, run))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(|runs| (runs, w))
-            }),
+            // Generated above, board by board.
+            Operation::Inlay(_) => continue,
         };
         match generated {
             Ok((runs, warnings)) => {
@@ -246,9 +268,10 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
     // takes each operation's own run: a carve's clearing runs cut inside
     // its targets before it, as intended (design "Clearing passes", step
     // 5), and the tool-change hint counts them from the project.
+    // #498: it reads the stock; an Inlay's male is cut on its own board.
     let generated: Vec<(&Operation, &Toolpath)> = ops
         .iter()
-        .filter(|entry| entry.label == RunLabel::Main)
+        .filter(|entry| entry.label == RunLabel::Main && entry.board == Board::Female)
         .map(|entry| (&entry.op, &entry.toolpath))
         .collect();
     // #105: a placed tab no enabled Profile cuts round holds nothing.
@@ -265,6 +288,19 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
             ..Finding::coded(w.code().as_str(), message)
         }
     }));
+    if let Some(board) = board
+        && findings.errors.is_empty()
+        && ops.is_empty()
+    {
+        findings.errors.push(Finding::plain(format!(
+            "nothing is cut on the {} board{}",
+            board.as_str(),
+            match board {
+                Board::Female => "",
+                Board::Male => ": no enabled Inlay cuts its male (set its male_board.thickness_mm)",
+            }
+        )));
+    }
     if !findings.errors.is_empty() {
         // An operation did not generate.
         return Built {
@@ -295,6 +331,84 @@ pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
                 generated: Some(ops),
             }
         }
+    }
+}
+
+/// Generates Inlay `op` (the enabled `operation`) of `project` on each
+/// board (#498): both, or `only` that one, female first, appending its
+/// runs to `ops` (each tagged with its board) and its findings to
+/// `findings`. A male board's warning names the board; its
+/// `inlay_parts_merged` and `inlay_hole_filled`, the female's design
+/// mirrored, and any warning the female already gave, are left out, as
+/// [`dc_cam::generate_inlay`] leaves them. `inlay_male_board_unset` is located at
+/// the male board's thickness.
+fn inlay_boards(
+    project: &Project,
+    operation: &Operation,
+    op: &dc_project::InlayOp,
+    only: Option<Board>,
+    findings: &mut Findings,
+    ops: &mut Vec<EmitOp>,
+) {
+    let boards = match only {
+        Some(board) => vec![board],
+        None => vec![Board::Female, Board::Male],
+    };
+    let mut female_warnings: Vec<dc_cam::Warning> = Vec::new();
+    let female_cut = boards.contains(&Board::Female);
+    for board in boards {
+        let generated = generate_inlay_board(project, op, board).and_then(|(runs, w)| {
+            runs.into_iter()
+                .map(|run| run_op(project, operation, run))
+                .collect::<Result<Vec<_>, _>>()
+                .map(|runs| (runs, w))
+        });
+        let (runs, warnings) = match generated {
+            Ok(generated) => generated,
+            Err(e) => {
+                let message = match board {
+                    Board::Female => e.to_string(),
+                    Board::Male => format!("{e} (on the male board)"),
+                };
+                findings.errors.push(Finding::plain(message));
+                continue;
+            }
+        };
+        for w in &warnings {
+            // Validation reports `clearing_not_descending` (#406) and
+            // `inlay_plug_base_thin` (#434): once.
+            let reported = matches!(
+                w,
+                dc_cam::Warning::ClearingNotDescending { .. }
+                    | dc_cam::Warning::InlayPlugBaseThin { .. }
+            );
+            let repeats = board == Board::Male
+                && (female_warnings.contains(w)
+                    || (female_cut
+                        && matches!(
+                            w,
+                            dc_cam::Warning::InlayPartsMerged { .. }
+                                | dc_cam::Warning::InlayHoleFilled { .. }
+                        )));
+            if reported || repeats {
+                continue;
+            }
+            let on = match board {
+                Board::Female => String::new(),
+                Board::Male => " (male board)".to_owned(),
+            };
+            findings.warnings.push(Finding {
+                field: w.field(),
+                ..Finding::coded(
+                    w.code().as_str(),
+                    format!("operation `{}`{on}: {w}", operation.id()),
+                )
+            });
+        }
+        if board == Board::Female {
+            female_warnings = warnings;
+        }
+        ops.extend(runs);
     }
 }
 
@@ -336,6 +450,7 @@ fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<Emit
         toolpath: run.toolpath,
         holes: None,
         label: run.label,
+        board: run.board,
     })
 }
 
@@ -344,31 +459,134 @@ fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<Emit
 /// it for a carve, whose depth follows its shapes); `None` when it cuts
 /// nothing or the stock has no thickness. A male Inlay's cut-out (#443)
 /// is not the carve: it goes through the board, and its line says so.
+/// An Inlay's female's runs only: its male's are on their own board
+/// ([`deepest_cut_on_mm`]).
 pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId) -> Option<f64> {
+    deepest_cut_on_mm(project, generated, op, Board::Female)
+}
+
+/// [`deepest_cut_mm`] on `board` (#498), mm below that board's top:
+/// `project` is the project as given, its male board resolved for an
+/// Inlay's male runs.
+pub fn deepest_cut_on_mm(
+    project: &Project,
+    generated: &[EmitOp],
+    op: &OperationId,
+    board: Board,
+) -> Option<f64> {
     generated
         .iter()
-        .filter(|e| e.op.id() == op && !matches!(e.label, RunLabel::CutOut(_)))
-        .filter_map(|e| deepest_mm(project, &e.toolpath))
+        .filter(|e| e.op.id() == op && e.board == board && !matches!(e.label, RunLabel::CutOut(_)))
+        .filter_map(|e| deepest_mm(&on_board(project, e), &e.toolpath))
         .reduce(f64::max)
+}
+
+/// `project` as entry `entry`'s board cuts it (#498): itself, or on the
+/// male board of `entry`'s Inlay.
+fn on_board<'p>(project: &'p Project, entry: &EmitOp) -> std::borrow::Cow<'p, Project> {
+    match (&entry.op, entry.board) {
+        (Operation::Inlay(inlay), Board::Male) => {
+            std::borrow::Cow::Owned(project.on_male_board(inlay))
+        }
+        _ => std::borrow::Cow::Borrowed(project),
+    }
+}
+
+/// The line of Inlay `inlay`'s `board` for [`describe_carves`] (#498),
+/// when `generated` cuts it: its deepest cut below the board's top, the
+/// female's flat floor or the male's start plane and floor, its floor
+/// ridges, and on the male its band's upright edge and its cut-out.
+fn describe_inlay(
+    project: &Project,
+    generated: &[EmitOp],
+    inlay: &dc_project::InlayOp,
+    board: Board,
+) -> Option<String> {
+    let deepest = deepest_cut_on_mm(project, generated, &inlay.id, board)?;
+    // Validation refuses an unset value, so an exported one is set.
+    let length =
+        |mm: Option<f64>| mm.map_or_else(|| "?".to_owned(), |mm| describe_length(project, mm));
+    let (top, mut floor) = match board {
+        Board::Female => (
+            "the stock top",
+            format!("a flat floor at depth_mm {}", length(inlay.depth_mm)),
+        ),
+        Board::Male => (
+            "the male board's top",
+            format!(
+                "the plug's start plane {} below the male board's top and the surround's flat floor plug_depth_mm {} below that",
+                length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
+                length(inlay.plug_depth_mm)
+            ),
+        ),
+    };
+    if let Some(ridge_mm) = dc_cam::inlay::floor_ridge_height_mm(project, inlay, board) {
+        let ridges = describe_length(project, ridge_mm);
+        if inlay.clearing.is_empty() {
+            floor.push_str(&format!(
+                "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
+            ));
+        } else {
+            floor.push_str(&format!(
+                "; V-bit floor ridges {ridges} where no clearing pass reaches"
+            ));
+        }
+    }
+    let band = (board == Board::Male)
+        .then(|| dc_project::male_band(project, inlay))
+        .flatten();
+    // #448: the end mill's upright edge, and its rounding.
+    if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
+        let rounding = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
+        floor.push_str(&format!(
+            "; clearing pass `{}` cuts the band's outer edge upright, its inward curves rounded to {}",
+            pass.tool,
+            describe_length(project, rounding)
+        ));
+    }
+    // #443, #461: where the cut-out frees the plug, and how deep.
+    if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
+        && let Some(tool) = project.tools.iter().find(|t| t.id == cut_out.tool)
+        && generated
+            .iter()
+            .any(|e| e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_)))
+    {
+        let inset_mm = band.cut_out_inset_mm(tool.diameter_mm);
+        floor.push_str(&format!(
+            "; the cut-out frees the plug along the floor's outer edge, its centre {} inside the band's edge and at least {} out from the design, through the board to {} below it",
+            describe_length(project, inset_mm),
+            describe_length(project, band.margin_mm - inset_mm),
+            describe_length(project, cut_out.through_cut_allowance_mm)
+        ));
+    }
+    Some(format!(
+        "Inlay {} `{}` ({} board): deepest cut {} below {top}, {floor}.",
+        inlay.id,
+        inlay.name,
+        board.as_str(),
+        describe_length(project, deepest)
+    ))
 }
 
 /// One line per enabled V-Carve or Inlay of `generated`, for `check` and
 /// `export`: its deepest cut, whether it has a flat depth (capability 39)
 /// and, when the V-bit cuts a floor, the height of the ridges it leaves
-/// (design step 6) and whether clearing passes cut the rest. An Inlay's
-/// line names its side, and a male's its start plane, `depth_mm −
-/// glue_gap_mm` below the stock top (#436); its mirror line is the
-/// `inlay_male_mirrored` warning's. A male with a cut-out says where it
-/// runs and how far through the board (#443); its deepest cut is the
-/// carve's, not the cut-out's.
+/// (design step 6) and whether clearing passes cut the rest. An Inlay has
+/// a line per board it cuts (#498): the female's, and the male's with its
+/// start plane, `depth_mm − glue_gap_mm` below the male board's top
+/// (#436); its mirror line is the `inlay_male_mirrored` warning's. A male
+/// with a cut-out says where it runs and how far through the board
+/// (#443); its deepest cut is the carve's, not the cut-out's.
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     project
         .operations
         .iter()
         .filter(|op| op.enabled())
-        .filter_map(|op| match op {
+        .flat_map(|op| match op {
             Operation::VCarve(carve) => {
-                let deepest = deepest_cut_mm(project, generated, &carve.id)?;
+                let Some(deepest) = deepest_cut_mm(project, generated, &carve.id) else {
+                    return Vec::new();
+                };
                 let mut floor = carve.flat_depth_mm.map_or_else(
                     || "no flat depth".to_owned(),
                     |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
@@ -387,82 +605,19 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                         ));
                     }
                 }
-                Some(format!(
+                vec![format!(
                     "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
                     carve.id,
                     carve.name,
                     describe_length(project, deepest)
-                ))
+                )]
             }
-            Operation::Inlay(inlay) => {
-                let deepest = deepest_cut_mm(project, generated, &inlay.id)?;
-                // Validation refuses an unset value, so an exported one is
-                // set.
-                let length = |mm: Option<f64>| {
-                    mm.map_or_else(|| "?".to_owned(), |mm| describe_length(project, mm))
-                };
-                let (side, mut floor) = match inlay.side {
-                    InlaySide::Female => (
-                        "female",
-                        format!("a flat floor at depth_mm {}", length(inlay.depth_mm)),
-                    ),
-                    InlaySide::Male => (
-                        "male",
-                        format!(
-                            "the plug's start plane {} below the stock top and the surround's flat floor plug_depth_mm {} below that",
-                            length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
-                            length(inlay.plug_depth_mm)
-                        ),
-                    ),
-                };
-                if let Some(ridge_mm) = dc_cam::inlay::floor_ridge_height_mm(project, inlay) {
-                    let ridges = describe_length(project, ridge_mm);
-                    if inlay.clearing.is_empty() {
-                        floor.push_str(&format!(
-                            "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
-                        ));
-                    } else {
-                        floor.push_str(&format!(
-                            "; V-bit floor ridges {ridges} where no clearing pass reaches"
-                        ));
-                    }
-                }
-                let band = dc_project::male_band(project, inlay);
-                // #448: the end mill's upright edge, and its rounding.
-                if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
-                    let rounding = band
-                        .as_ref()
-                        .map_or(0.0, |b| b.edge_rounding_mm);
-                    floor.push_str(&format!(
-                        "; clearing pass `{}` cuts the band's outer edge upright, its inward curves rounded to {}",
-                        pass.tool,
-                        describe_length(project, rounding)
-                    ));
-                }
-                // #443, #461: where the cut-out frees the plug, and how
-                // deep.
-                if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
-                    && let Some(tool) = project.tools.iter().find(|t| t.id == cut_out.tool)
-                    && generated.iter().any(|e| {
-                        e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_))
-                    })
-                {
-                    let inset_mm = band.cut_out_inset_mm(tool.diameter_mm);
-                    floor.push_str(&format!(
-                        "; the cut-out frees the plug along the floor's outer edge, its centre {} inside the band's edge and at least {} out from the design, through the board to {} below it",
-                        describe_length(project, inset_mm),
-                        describe_length(project, band.margin_mm - inset_mm),
-                        describe_length(project, cut_out.through_cut_allowance_mm)
-                    ));
-                }
-                Some(format!(
-                    "Inlay {} `{}` ({side}): deepest cut {} below the stock top, {floor}.",
-                    inlay.id,
-                    inlay.name,
-                    describe_length(project, deepest)
-                ))
-            }
-            _ => None,
+            // #498: one line per board it cuts.
+            Operation::Inlay(inlay) => [Board::Female, Board::Male]
+                .into_iter()
+                .filter_map(|board| describe_inlay(project, generated, inlay, board))
+                .collect(),
+            _ => Vec::new(),
         })
         .collect()
 }
@@ -499,8 +654,7 @@ fn describe_export_warning(warning: &ExportWarning) -> String {
 /// stale. The file comes back to locate [`build`]'s findings in.
 pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> {
     let bytes = read_file(path)?;
-    let project = dc_project::load(&bytes)
-        .map(|loaded| loaded.project)
+    let loaded = dc_project::load(&bytes)
         .map_err(|e| Failure::error(format!("cannot load {}: {e}", path.display())))?;
     let map = std::str::from_utf8(&bytes)
         .ok()
@@ -509,8 +663,9 @@ pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> 
         path,
         map,
         post_replaced: false,
+        notes: loaded.notes.iter().map(ToString::to_string).collect(),
     };
-    Ok((project, file))
+    Ok((loaded.project, file))
 }
 
 /// Runs `export`.
@@ -552,7 +707,10 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         programs,
         findings,
         generated,
-    } = build(&project, args.split(), &date);
+    } = build_board(&project, args.split(), &date, args.board.map(Board::from));
+    for note in &file.notes {
+        errln!("{}: note: {note}", file.path.display());
+    }
     for warning in &findings.warnings {
         errln!("{}", file.describe("warning", warning));
     }
@@ -566,7 +724,8 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         )));
     }
 
-    let outputs = output_paths(args.output.as_deref(), &args.dcv, &programs)?;
+    let boards = by_board(&project);
+    let outputs = output_paths(args.output.as_deref(), &args.dcv, &programs, boards)?;
     if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
             "refusing to write the program over the project file {}",
@@ -613,7 +772,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let estimates = Estimates::new(&project, &programs, estimate_settings);
     let generated = generated.unwrap_or_default();
     match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) => report(
+        ([program], [output]) if !boards => report(
             &project,
             program,
             output,
@@ -650,6 +809,7 @@ pub fn preview_svg(project: &Project, generated: &[EmitOp]) -> String {
             label: &entry.label,
             tool: &entry.tool,
             toolpath: &entry.toolpath,
+            board: entry.board,
         })
         .collect();
     preview::render(project, &ops)
@@ -765,6 +925,24 @@ impl Estimates {
         }
     }
 
+    /// The `<label>: …` line over the programs `ks` (#498: one board's);
+    /// `None` when `ks` is empty.
+    pub fn total_of(&self, ks: &[usize], label: &str) -> Option<String> {
+        if ks.is_empty() {
+            return None;
+        }
+        let total = ks.iter().try_fold(Estimate::default(), |sum, &k| {
+            self.per_program
+                .get(k)
+                .and_then(|e| e.as_ref().ok())
+                .map(|e| sum + *e)
+        });
+        Some(match total {
+            Some(total) => describe_estimate(label, &total, &self.settings),
+            None => format!("{label}: not available."),
+        })
+    }
+
     /// The `Estimated total time: …` line over every program, when there
     /// is more than one.
     pub fn total_line(&self) -> Option<String> {
@@ -853,15 +1031,29 @@ fn distance(mm: f64) -> String {
     }
 }
 
+/// Whether `project`'s programs are named and listed by board (#498): it
+/// has an enabled Inlay, whose female is cut on the stock and whose male
+/// on its male board.
+pub fn by_board(project: &Project) -> bool {
+    project
+        .operations
+        .iter()
+        .any(|op| matches!(op, Operation::Inlay(inlay) if inlay.enabled))
+}
+
 /// Where each program of the project `dcv` goes. One program goes to
 /// `output` (`-o`), or to the project's path with the post-processor's
 /// extension. Programs of tool runs (#95) go beside it, named
 /// `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place, `<n>` its tool's
-/// number, `<stem>` and `<ext>` those of that one path.
+/// number, `<stem>` and `<ext>` those of that one path. With `boards`
+/// (#498, [`by_board`]) every program is named after its board,
+/// `<stem>-female-<k>-T<n>.<ext>` and `<stem>-male-<k>-T<n>.<ext>`, `<k>`
+/// counting from 1 within each board, however many there are.
 pub fn output_paths(
     output: Option<&Path>,
     dcv: &Path,
     programs: &[Program],
+    boards: bool,
 ) -> Result<Vec<PathBuf>, Failure> {
     let single = match (output, programs.first()) {
         (Some(path), _) => path.to_path_buf(),
@@ -870,7 +1062,7 @@ pub fn output_paths(
         (None, Some(program)) => dcv.with_extension(&program.extension),
         (None, None) => dcv.to_path_buf(),
     };
-    if programs.len() < 2 {
+    if programs.len() < 2 && !boards {
         return Ok(vec![single]);
     }
     let stem = single
@@ -881,7 +1073,21 @@ pub fn output_paths(
         .enumerate()
         .map(|(k, program)| {
             let mut name = OsString::from(stem);
-            name.push(format!("-{}-T{}", k + 1, program.first_tool.number));
+            if boards {
+                let k = programs
+                    .iter()
+                    .take(k)
+                    .filter(|p| p.board == program.board)
+                    .count();
+                name.push(format!(
+                    "-{}-{}-T{}",
+                    program.board.as_str(),
+                    k + 1,
+                    program.first_tool.number
+                ));
+            } else {
+                name.push(format!("-{}-T{}", k + 1, program.first_tool.number));
+            }
             if let Some(extension) = single.extension() {
                 name.push(".");
                 name.push(extension);
@@ -989,8 +1195,21 @@ fn report_runs(
     estimates: &Estimates,
     generated: &[EmitOp],
 ) -> Result<(), Failure> {
-    outln!("Wrote {} programs; run them in this order:", programs.len())?;
-    for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
+    let boards = by_board(project);
+    if programs.len() == 1 {
+        outln!("Wrote 1 program:")?;
+    } else {
+        outln!("Wrote {} programs; run them in this order:", programs.len())?;
+    }
+    let mut k = 0;
+    let mut board = None;
+    for (program, output) in programs.iter().zip(outputs) {
+        // #498: each board is its own setup, its programs counted afresh.
+        if boards && board != Some(program.board) {
+            board = Some(program.board);
+            k = 0;
+            outln!("{}", board_heading(project, program.board))?;
+        }
         let tool = &program.first_tool;
         let fit = format!("fit T{}{}", tool.number, name_suffix(&tool.name));
         // The first program sets work zero; a later one keeps X and Y and
@@ -1000,11 +1219,8 @@ fn report_runs(
         } else {
             format!("{fit} and set Z zero with it. Keep X and Y zero.")
         };
-        outln!(
-            "  {}. {}  Before you start: {before}",
-            k + 1,
-            output.display()
-        )?;
+        k += 1;
+        outln!("  {k}. {}  Before you start: {before}", output.display())?;
     }
     // #283: every program of the export ends with the same lift.
     if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
@@ -1017,7 +1233,16 @@ fn report_runs(
     report_scaling(project)?;
     outln!("Post-processor {}.", project.post_processor.id)?;
     report_post_and_operations(project, args, switched, generated)?;
+    let mut board = None;
     for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
+        // #498: each board's programs together, with the board's total.
+        if boards && board != Some(program.board) {
+            if let Some(done) = board {
+                report_board_total(programs, estimates, done)?;
+            }
+            board = Some(program.board);
+            outln!("{}", board_heading(project, program.board))?;
+        }
         outln!(
             "{} ({} lines):",
             output.display(),
@@ -1029,8 +1254,55 @@ fn report_runs(
         outln!("  {}", estimates.program_line(k))?;
         report_pauses(program, "  ")?;
     }
+    if let Some(done) = board {
+        report_board_total(programs, estimates, done)?;
+    }
     if let Some(total) = estimates.total_line() {
         outln!("{total}")?;
+    }
+    Ok(())
+}
+
+/// The heading of `board`'s programs (#498): `Female board, the stock,
+/// 110.000 mm × 80.000 mm × 12.000 mm:`, or the male board's the same,
+/// its size as the project's male board resolves it.
+pub fn board_heading(project: &Project, board: Board) -> String {
+    let (name, stock) = match board {
+        Board::Female => ("Female board, the stock", Some(project.stock.clone())),
+        Board::Male => ("Male board", project.male_board().map(|(_, stock)| stock)),
+    };
+    match stock {
+        Some(stock) => format!(
+            "{name}, {} × {} × {}:",
+            describe_length(project, stock.width_mm),
+            describe_length(project, stock.height_mm),
+            stock
+                .thickness_mm
+                .map_or_else(|| "?".to_owned(), |t| describe_length(project, t)),
+        ),
+        None => format!("{name}:"),
+    }
+}
+
+/// Prints the estimated time of `board`'s programs, when it has more than
+/// one and they are not all of the export (#498).
+fn report_board_total(
+    programs: &[Program],
+    estimates: &Estimates,
+    board: Board,
+) -> Result<(), Failure> {
+    let ks: Vec<usize> = programs
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.board == board)
+        .map(|(k, _)| k)
+        .collect();
+    if ks.len() > 1
+        && ks.len() < programs.len()
+        && let Some(line) =
+            estimates.total_of(&ks, &format!("Estimated {} board time", board.as_str()))
+    {
+        outln!("{line}")?;
     }
     Ok(())
 }
@@ -1105,12 +1377,17 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
     };
     let mut lines = Vec::new();
     let run_line = |op: &Operation, run: &EmitOp| {
-        let depth = deepest_mm(project, &run.toolpath).map_or_else(
+        // #498: a male Inlay's run is as deep below its male board's top.
+        let depth = deepest_mm(&on_board(project, run), &run.toolpath).map_or_else(
             || "? mm deep".to_owned(),
             |d| format!("{} deep", describe_length(project, d)),
         );
+        let on = match run.board {
+            Board::Female => "",
+            Board::Male => " on the male board",
+        };
         format!(
-            "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
+            "{} `{}`: tool `{}` ({}), {} target(s), {depth}{on}",
             run.label.naming(op.id().as_str()),
             op.name(),
             run.tool.id,
@@ -1119,6 +1396,21 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
         )
     };
     for op in project.operations.iter().filter(|op| op.enabled()) {
+        // #498: an Inlay's runs, board by board, each as it is cut.
+        if matches!(op, Operation::Inlay(_)) {
+            lines.extend(
+                generated
+                    .iter()
+                    .filter(|e| e.op.id() == op.id() && e.board == Board::Female)
+                    .chain(
+                        generated
+                            .iter()
+                            .filter(|e| e.op.id() == op.id() && e.board == Board::Male),
+                    )
+                    .map(|run| run_line(op, run)),
+            );
+            continue;
+        }
         // Design "Clearing passes", step 4: a carve's clearing runs are cut
         // before it, each to the carve's floor.
         for run in generated

@@ -224,6 +224,7 @@ mod tests {
                 z: None,
             },
             machine_lift: None,
+            board: dc_project::Board::Female,
         }
     }
 

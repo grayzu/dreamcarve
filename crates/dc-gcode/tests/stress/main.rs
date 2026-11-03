@@ -159,8 +159,9 @@ fn designs_are_valid() {
 /// The property over [`CI_CASES`] small line-art designs: female and the
 /// four males (V wall, open edge, rounded, cut-out), V-Carve from the
 /// stock top and from a cleared start depth, each carving safely through
-/// S1–S19 or refused with an allowed error; one female–male pair per
-/// design seats within 0.05 mm, or fails as an open issue does.
+/// S1–S19 or refused with an allowed error; one male case per design
+/// (#498: one Inlay, both boards) seats within 0.05 mm, or fails as an
+/// open issue does.
 #[test]
 fn line_art_designs_carve_or_explain() {
     assert_none_failed(&run(
@@ -201,7 +202,8 @@ fn generator_never_refuses_its_own_move() {
 }
 
 /// The large sweep: `STRESS_CASES` full-size designs of each family from
-/// `STRESS_SEED`, every male seated on the female, on every core. Prints
+/// `STRESS_SEED`, every male case's two boards seated (#498), on every
+/// core. Prints
 /// each design's failures as it finishes, then the cases run, the known
 /// issues' seat failures and the failures found.
 #[test]

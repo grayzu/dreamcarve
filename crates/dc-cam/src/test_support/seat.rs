@@ -15,7 +15,7 @@
 use crate::heightfield::{Cutter, Heightfield};
 use crate::run::{RunLabel, ToolRun};
 use dc_geometry::{Point, Polyline, Rect, Region, nearest_point};
-use dc_project::{InlayOp, Project, ToolKind};
+use dc_project::{Board, InlayOp, Project, ToolKind};
 use std::collections::VecDeque;
 
 /// How far the plug may stand proud of its female, mm: from the male's
@@ -183,22 +183,32 @@ pub(crate) fn inset_mm(design: &[Region], p: Point) -> f64 {
     }
 }
 
-/// The fit of the female `female` and the male `male`, from the runs each
-/// generated (`female_runs` in `female_project`, `male_runs` in
-/// `male_project`; each project holds its operation): both sides' runs
-/// simulated as heightfields ([`seat`]), cells `step_mm` apart, over the
-/// design's box grown by the margin and 2 mm, the male mirrored as it
-/// seats.
-pub fn fit(
-    (female_project, female, female_runs): (&Project, &InlayOp, &[ToolRun]),
-    (male_project, male, male_runs): (&Project, &InlayOp, &[ToolRun]),
-    step_mm: f64,
-) -> Fit {
-    let resolve = |project: &Project, op: &InlayOp| {
-        crate::inlay::side(project, op, &mut Vec::new()).expect("the side resolves")
+/// The fit of Inlay `op`'s two boards in `project` (which holds it), from
+/// the runs it generated, both boards' (#498: one project; the female's
+/// runs on the stock, the male's on its male board, told apart by
+/// [`ToolRun::board`]): both boards' runs simulated as heightfields
+/// ([`seat`]), cells `step_mm` apart, over the design's box grown by the
+/// margin and 2 mm, the male mirrored as it seats. The two boards share
+/// their bottom-left corner, so their cells line up.
+pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> Fit {
+    let female_runs: Vec<ToolRun> = runs
+        .iter()
+        .filter(|r| r.board == Board::Female)
+        .cloned()
+        .collect();
+    let male_runs: Vec<ToolRun> = runs
+        .iter()
+        .filter(|r| r.board == Board::Male)
+        .cloned()
+        .collect();
+    let (female_project, female, female_runs) = (project, op, female_runs.as_slice());
+    let male_project = &project.on_male_board(op);
+    let (male, male_runs) = (op, male_runs.as_slice());
+    let resolve = |board: Board| {
+        crate::inlay::side(project, op, board, &mut Vec::new()).expect("the board resolves")
     };
-    let female_side = resolve(female_project, female);
-    let male_side = resolve(male_project, male);
+    let female_side = resolve(Board::Female);
+    let male_side = resolve(Board::Male);
     // The mirror is about the middle of the design's box, so the mirrored
     // design's box is the design's.
     let mut bounds: Option<Rect> = None;

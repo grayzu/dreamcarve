@@ -2525,6 +2525,7 @@ mod tests {
                     label: RunLabel::Main,
                     tool: op.tool.clone(),
                     toolpath,
+                    board: dc_project::Board::Female,
                 },
                 Cutter::Flat {
                     radius_mm: diameter_mm / 2.0,

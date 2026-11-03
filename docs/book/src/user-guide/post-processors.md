@@ -265,6 +265,17 @@ or the name given with `-o`: `-o out/job.nc` writes `out/job-1-T1.nc`,
 `out/job-2-T2.nc`, … A project with one tool writes one program, named as
 before (`coaster.nc`).
 
+**Programs by board.** A project with an enabled
+[Inlay](inlay.md#programs) cuts on two boards, the stock (the female
+board) and the Inlay's male board, so its programs are split by board
+first, the stock's before the male board's, and each is named after its
+board: `<stem>-female-<k>-T<n>.<ext>` and `<stem>-male-<k>-T<n>.<ext>`,
+`<k>` counting from 1 on each board. The board stays in the name even
+when a board has one program, and even with `"m6"`, which writes one
+program per board. `export` lists them under a heading for each board,
+and each board's first program says to set work zero again. `--board
+female` or `--board male` writes one board's programs only.
+
 Each program is complete on its own, exactly as a one-tool project exports:
 header, rise to safe Z, spindle start (or the pause to switch the router
 on), cuts, end. It has no `M6` and no `M61`, passes the safety check on its
@@ -339,7 +350,7 @@ changing the project file:
 | Flag | Export of more than one tool |
 | --- | --- |
 | `--programs-per-tool` | One program per tool run, whatever the project says. |
-| `--one-program` | One program with `T<n> M6` tool changes, whatever the project says. On a post-processor without `M6` (every one but grblHAL) it is an error, and nothing is written. |
+| `--one-program` | One program with `T<n> M6` tool changes, whatever the project says (one per board with an Inlay). On a post-processor without `M6` (every one but grblHAL) it is an error, and nothing is written. |
 
 They contradict each other, so giving both is a usage error. The flags are
 not saved: to change the project, edit `tool_change_mode`.

@@ -476,6 +476,7 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                         toolpath: run.toolpath,
                         holes: None,
                         label: run.label,
+                        board: run.board,
                     });
                 }
                 continue;
@@ -504,6 +505,7 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                         toolpath: run.toolpath,
                         holes: None,
                         label: run.label,
+                        board: run.board,
                     });
                 }
                 continue;

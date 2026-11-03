@@ -92,7 +92,7 @@ fn check_run(
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(project, op, label, tool);
+    let material = Material::of_run(project, op, label, tool, dc_project::Board::Female);
     let tabs = material::tab_spines(project, op);
     let toolpath = Toolpath::default();
     let span = OpSpan {
@@ -632,6 +632,7 @@ fn export_carve(project: &Project, op: &VCarveOp) -> Result<Vec<String>, ExportE
             toolpath: run.toolpath,
             holes: None,
             label: run.label,
+            board: run.board,
         })
         .collect();
     let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE)?;
@@ -1052,7 +1053,13 @@ fn s17_check_is_fast_on_the_sign() {
         moves += blocks.iter().filter(|b| b.motion.is_some()).count();
         let operation = Operation::VCarve(op.clone());
         let tool = tool_of(&project, op.tool.as_str());
-        let material = Material::of_run(&project, &operation, &RunLabel::Main, &tool);
+        let material = Material::of_run(
+            &project,
+            &operation,
+            &RunLabel::Main,
+            &tool,
+            dc_project::Board::Female,
+        );
         let toolpath = Toolpath::default();
         let span = OpSpan {
             op: &operation,

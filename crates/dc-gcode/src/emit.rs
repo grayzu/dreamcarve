@@ -74,8 +74,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use dc_cam::{CannedKind, DrillHole, DrillToolpath, FeedField, Move, MoveKind, RunLabel, Toolpath};
 use dc_geometry::{EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Point, Point3};
 use dc_project::{
-    ArcFormat, CannedCycles, DwellUnits, Operation, OperationId, ParkXy, PostProcessor, Project,
-    RetractMode, SpindleControl, Tool, ToolChangeMode, ToolId, Units, is_m6_line,
+    ArcFormat, Board, CannedCycles, DwellUnits, Operation, OperationId, ParkXy, PostProcessor,
+    Project, RetractMode, SpindleControl, Tool, ToolChangeMode, ToolId, Units, is_m6_line,
 };
 
 use crate::ExportError;
@@ -111,6 +111,9 @@ pub struct Program {
     /// units (`-5.000 mm`), when it has any (#283). They need a homed
     /// machine, which a caller tells the user.
     pub machine_lift: Option<String>,
+    /// The board the program cuts (#498): the stock, or an Inlay's male
+    /// board. Its origin, extents and safety checks are that board's.
+    pub board: Board,
 }
 
 /// The tool a program starts with.
@@ -311,6 +314,11 @@ pub struct EmitOp {
     /// (`docs/specs/phase-3/design.md`, "dc-gcode"): [`RunLabel::Main`]
     /// for every operation but a carve's clearing pass (#406).
     pub label: RunLabel,
+    /// The board the run cuts (#498): [`Board::Female`], the stock, for
+    /// every run but an Inlay male's, which is on the Inlay's male board.
+    /// Its toolpath is in that board's project space, and the safety pass
+    /// holds it to that board.
+    pub board: Board,
 }
 
 impl EmitOp {
@@ -323,6 +331,7 @@ impl EmitOp {
             toolpath: drilled.toolpath,
             holes: Some(drilled.holes),
             label: RunLabel::Main,
+            board: Board::Female,
         }
     }
 }
@@ -336,6 +345,7 @@ impl From<(Operation, Tool, Toolpath)> for EmitOp {
             toolpath,
             holes: None,
             label: RunLabel::Main,
+            board: Board::Female,
         }
     }
 }
@@ -374,12 +384,22 @@ pub enum ProgramSplit {
 /// - `"m6"` (or [`ProgramSplit::OneProgram`]): the one program [`emit`]
 ///   writes, with `T<n> M6` at each tool change.
 ///
+/// Each board is a setup of its own (#498): the entries on the stock
+/// ([`Board::Female`]) are emitted first, as above, then those on the
+/// male board ([`Board::Male`], an Inlay's male), as above again, each
+/// male program emitted and checked by the safety pass against the
+/// project on the male board ([`Project::on_male_board`]): its origin,
+/// its thickness (S1), its rectangle (S7) and its top (S17). Every
+/// [`Program`] says its board.
+///
 /// Warnings are those of every program, disabled operations once.
 ///
 /// # Errors
 ///
 /// [`ExportError::OneProgramNeedsM6`] for [`ProgramSplit::OneProgram`] on
 /// a definition whose tool change has no `M6`, before anything is emitted.
+/// [`ExportError::NotOnMaleBoard`] or [`ExportError::MaleBoardsDiffer`] for
+/// male board entries with no one male board to hold them to.
 /// Otherwise as for [`emit`]; the first program that fails fails the whole
 /// call, so a caller never has some of the programs.
 pub fn emit_programs(
@@ -407,25 +427,89 @@ pub fn emit_programs(
     // borrowed and stays as it is, so the flag is never saved.
     post.tool_change.mode = mode;
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let runs: Vec<&[&EmitOp]> = match mode {
-        ToolChangeMode::M6 => vec![enabled.as_slice()],
-        ToolChangeMode::SeparatePrograms => {
-            enabled.chunk_by(|a, b| a.tool.id == b.tool.id).collect()
+    let mut programs = Vec::new();
+    // #498: each board is its own setup, so its own run of programs: the
+    // stock's (every operation's runs but an Inlay male's) first, then the
+    // male board's, each in the order given.
+    for board in [Board::Female, Board::Male] {
+        let on_board: Vec<&EmitOp> = enabled
+            .iter()
+            .copied()
+            .filter(|e| e.board == board)
+            .collect();
+        if on_board.is_empty() {
+            continue;
         }
-    };
-    let mut programs = Vec::with_capacity(runs.len());
-    for run in runs {
-        let (program, run_warnings) = emit_enabled(project, &post, run, date)?;
-        // Every program of the export has the same units: say so once.
-        for warning in run_warnings {
-            let about_units = matches!(warning, ExportWarning::UnitsSetByController { .. });
-            if !(about_units && warnings.contains(&warning)) {
-                warnings.push(warning);
+        let board_project = board_project(project, &on_board)?;
+        let runs: Vec<&[&EmitOp]> = match mode {
+            ToolChangeMode::M6 => vec![on_board.as_slice()],
+            ToolChangeMode::SeparatePrograms => {
+                on_board.chunk_by(|a, b| a.tool.id == b.tool.id).collect()
             }
+        };
+        for run in runs {
+            let (program, run_warnings) = emit_enabled(&board_project, &post, run, date)?;
+            // Every program of the export has the same units: say so once.
+            for warning in run_warnings {
+                let about_units = matches!(warning, ExportWarning::UnitsSetByController { .. });
+                if !(about_units && warnings.contains(&warning)) {
+                    warnings.push(warning);
+                }
+            }
+            programs.push(program);
         }
-        programs.push(program);
     }
     Ok((programs, warnings))
+}
+
+/// The project the entries `on_board`, all of one board, are cut in
+/// (#498): `project` itself for the stock, and for the male board
+/// `project` on the male board of their Inlays
+/// ([`Project::on_male_board`]), which must be one board. The emitter does
+/// not trust its caller: a male board entry of an operation that is no
+/// Inlay, or of an Inlay whose male board has no thickness, is refused,
+/// and so are two Inlays whose male boards differ.
+///
+/// # Errors
+///
+/// [`ExportError::NotOnMaleBoard`] and [`ExportError::MaleBoardsDiffer`].
+fn board_project<'p>(
+    project: &'p Project,
+    on_board: &[&EmitOp],
+) -> Result<std::borrow::Cow<'p, Project>, ExportError> {
+    let Some(first) = on_board.first() else {
+        return Ok(std::borrow::Cow::Borrowed(project));
+    };
+    if first.board == Board::Female {
+        return Ok(std::borrow::Cow::Borrowed(project));
+    }
+    let mut male: Option<(&OperationId, Project)> = None;
+    for entry in on_board {
+        let Operation::Inlay(inlay) = &entry.op else {
+            return Err(ExportError::NotOnMaleBoard {
+                op: entry.op.id().clone(),
+            });
+        };
+        if !inlay.cuts_male() {
+            return Err(ExportError::NotOnMaleBoard {
+                op: inlay.id.clone(),
+            });
+        }
+        match &male {
+            None => male = Some((&inlay.id, project.on_male_board(inlay))),
+            Some((first, board)) => {
+                if inlay.male_board.stock(&project.stock) != board.stock {
+                    return Err(ExportError::MaleBoardsDiffer {
+                        op: inlay.id.clone(),
+                        first: (*first).clone(),
+                    });
+                }
+            }
+        }
+    }
+    Ok(male.map_or(std::borrow::Cow::Borrowed(project), |(_, p)| {
+        std::borrow::Cow::Owned(p)
+    }))
 }
 
 /// Emits one program for the enabled operations in `ops`, each with its
@@ -468,7 +552,16 @@ pub(crate) fn emit_with(
     date: &str,
 ) -> Result<(Program, Vec<ExportWarning>), ExportError> {
     let (enabled, mut warnings) = enabled_ops(ops)?;
-    let (program, emitted) = emit_enabled(project, post, &enabled, date)?;
+    // #498: one program is cut on one board.
+    if let Some(first) = enabled.first()
+        && let Some(other) = enabled.iter().find(|e| e.board != first.board)
+    {
+        return Err(ExportError::BoardsMixed {
+            op: other.op.id().clone(),
+        });
+    }
+    let board_project = board_project(project, &enabled)?;
+    let (program, emitted) = emit_enabled(&board_project, post, &enabled, date)?;
     warnings.extend(emitted);
     Ok((program, warnings))
 }
@@ -906,13 +999,17 @@ fn emit_enabled(
     let materials: Vec<Material> = planned
         .iter()
         .zip(enabled)
-        .map(|(&(op, tool, ..), entry)| Material::of_run(project, op, &entry.label, tool))
+        .map(|(&(op, tool, ..), entry)| {
+            Material::of_run(project, op, &entry.label, tool, entry.board)
+        })
         .collect();
     // #337: and the tabs each must leave standing, a cut-out's too.
     let tabs: Vec<Vec<TabSpine>> = planned
         .iter()
         .zip(enabled)
-        .map(|(&(op, tool, ..), entry)| material::run_tab_spines(project, op, &entry.label, tool))
+        .map(|(&(op, tool, ..), entry)| {
+            material::run_tab_spines(project, op, &entry.label, tool, entry.board)
+        })
         .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
@@ -952,6 +1049,7 @@ fn emit_enabled(
             first_tool,
             extents,
             machine_lift,
+            board: enabled.first().map_or(Board::Female, |e| e.board),
         },
         warnings,
     ))
@@ -4112,6 +4210,7 @@ mod tests {
                 toolpath: run.toolpath,
                 holes: None,
                 label: run.label,
+                board: run.board,
             })
             .collect();
         assert_eq!(ops[0].label, RunLabel::Clearing(ToolId::new("t1")));

@@ -1112,21 +1112,20 @@ fn v_carved_sign_chapter_runs() {
 }
 
 /// The inlay quick start (`docs/book/src/quick-start/inlay.md`, #437,
-/// lettered in #446) run as written on `tests/fixtures/dc-inlay.svg`, the
-/// monogram "DC": every command exits as the chapter says, the tool
-/// library file, the hand edits and the pasted operation apply to both
-/// projects, every excerpt is in the program it names, and the two
-/// projects are the committed `tests/fixtures/dc-female.dcv` and
-/// `dc-male.dcv`, which `cli::lettered_inlay_female_and_male_export`,
-/// `cli::lettered_inlay_fits_its_board` and
-/// `cli::lettered_male_is_the_mirror_of_the_female` export. Each
-/// side exports its programs listed in run order: the 3.175 mm end mill's
-/// clearing pass (T2), then the 60° V-bit (T1), and on the male the end
-/// mill's cut-out last (T2, #443). Each passes the rules a user can check
-/// on the program alone; `export` has already held it to S1–S18. The male
-/// prints `inlay_male_mirrored`, the female does not. The pasted operation
-/// rounds the male's band by 10 mm (#448), and the chapter says the
-/// band's outer edge is the end mill's.
+/// lettered in #446, one project since #498) run as written on
+/// `tests/fixtures/dc-inlay.svg`, the monogram "DC": every command exits
+/// as the chapter says, the tool library file, the hand edits and the
+/// pasted operation apply, every excerpt is in the program it names, and
+/// the project is the committed `tests/fixtures/dc.dcv`, which the `cli`
+/// tests export. The one project exports both boards' programs, listed
+/// in run order under **Female board** and **Male board**: on each the
+/// 3.175 mm end mill's clearing pass (T2), then the 60° V-bit (T1), and on
+/// the male the end mill's cut-out last (T2, #443). The chapter re-exports
+/// the male alone with `--board male` after a glue-gap change. Each
+/// program passes the rules a user can check on the program alone;
+/// `export` has already held it to S1–S19. The male's mirror is noted
+/// once. The pasted operation rounds the male's band by 10 mm (#448),
+/// and the chapter says the band's outer edge is the end mill's.
 #[test]
 fn inlay_pair_chapter_runs() {
     let run = Run {
@@ -1153,24 +1152,23 @@ fn inlay_pair_chapter_runs() {
     ] {
         assert!(has, "{INLAY} has no `{what}` step");
     }
-    assert!(
-        text.contains("\"outline_rounding_mm\": 10.0,"),
-        "{INLAY} pastes the band's rounding"
-    );
-    assert!(
-        text.contains("outer edge"),
-        "{INLAY} says where the band's outer edge is cut"
-    );
+    for (needle, what) in [
+        (
+            "\"outline_rounding_mm\": 10.0,",
+            "pastes the band's rounding",
+        ),
+        ("outer edge", "says where the band's outer edge is cut"),
+        ("\"male_board\"", "sets the male board"),
+        ("--board male", "re-exports the male alone"),
+    ] {
+        assert!(text.contains(needle), "{INLAY} {what}");
+    }
     let dir = run_chapter("inlay_pair_chapter_runs", &run);
 
-    for stem in ["dc-female", "dc-male"] {
-        let name = format!("{stem}.dcv");
-        let fixture = format!("tests/fixtures/{name}");
-        let built = std::fs::read_to_string(dir.join(&name)).expect("project written");
-        let committed =
-            std::fs::read_to_string(repo_root().join(&fixture)).expect("fixture readable");
-        assert_same_project(&built, &committed, &fixture, &dir.join(&name));
-    }
+    let fixture = "tests/fixtures/dc.dcv";
+    let built = std::fs::read_to_string(dir.join("dc.dcv")).expect("project written");
+    let committed = std::fs::read_to_string(repo_root().join(fixture)).expect("fixture readable");
+    assert_same_project(&built, &committed, fixture, &dir.join("dc.dcv"));
 
     let mut programs: Vec<String> = std::fs::read_dir(&dir)
         .expect("work dir readable")
@@ -1201,45 +1199,50 @@ fn inlay_pair_chapter_runs() {
         spindle: "M3 S18000",
         cone_half_angle_deg: None,
     };
-    for stem in ["dc-female", "dc-male"] {
-        let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
-            .current_dir(&dir)
-            .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
-            .args(["export", &format!("{stem}.dcv")])
-            .output()
-            .expect("binary runs");
-        let report = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+    let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
+        .current_dir(&dir)
+        .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
+        .args(["export", "dc.dcv"])
+        .output()
+        .expect("binary runs");
+    let report = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    let female = ["dc-female-1-T2.nc", "dc-female-2-T1.nc"];
+    let male = ["dc-male-1-T2.nc", "dc-male-2-T1.nc", "dc-male-3-T2.nc"];
+    let mut at = vec![
+        report
+            .find("Female board")
+            .expect("the female board listed"),
+    ];
+    for (k, name) in female.iter().enumerate() {
+        at.push(
+            report
+                .find(&format!("{}. {name}", k + 1))
+                .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1)),
         );
-        assert_eq!(out.status.code(), Some(0), "{report}");
-        let mut names = vec![format!("{stem}-1-T2.nc"), format!("{stem}-2-T1.nc")];
-        if stem == "dc-male" {
-            names.push(format!("{stem}-3-T2.nc"));
-        }
-        let at: Vec<usize> = names
-            .iter()
-            .enumerate()
-            .map(|(k, name)| {
-                report
-                    .find(&format!("{}. {name}", k + 1))
-                    .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1))
-            })
-            .collect();
-        assert!(at.is_sorted(), "{report}");
-        assert_eq!(
-            report.contains("inlay_male_mirrored"),
-            stem == "dc-male",
-            "{report}"
+    }
+    at.push(report.find("Male board").expect("the male board listed"));
+    for (k, name) in male.iter().enumerate() {
+        at.push(
+            report
+                .find(&format!("{}. {name}", k + 1))
+                .unwrap_or_else(|| panic!("{name} listed as program {}: {report}", k + 1)),
         );
-        let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
-        assert_program_safe(&names[0], &read(&names[0]), &limits(300.0, 1000.0, 1.5875));
-        let v_bit = Limits {
-            cone_half_angle_deg: Some(30.0),
-            ..limits(300.0, 1000.0, 3.175)
-        };
-        assert_program_safe(&names[1], &read(&names[1]), &v_bit);
+    }
+    assert!(at.is_sorted(), "{report}");
+    assert_eq!(report.matches("inlay_male_mirrored").count(), 1, "{report}");
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+    let v_bit = Limits {
+        cone_half_angle_deg: Some(30.0),
+        ..limits(300.0, 1000.0, 3.175)
+    };
+    for names in [&female[..], &male[..]] {
+        assert_program_safe(names[0], &read(names[0]), &limits(300.0, 1000.0, 1.5875));
+        assert_program_safe(names[1], &read(names[1]), &v_bit);
         if let Some(cut_out) = names.get(2) {
             assert_program_safe(cut_out, &read(cut_out), &limits(300.0, 1000.0, 1.5875));
         }

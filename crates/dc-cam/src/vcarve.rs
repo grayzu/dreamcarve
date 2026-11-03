@@ -789,6 +789,7 @@ pub fn generate_vcarve(
         label: RunLabel::Main,
         tool: tool.id.clone(),
         toolpath,
+        board: dc_project::Board::Female,
     });
     Ok((runs, warnings))
 }

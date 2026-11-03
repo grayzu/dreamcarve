@@ -24,7 +24,7 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::{FloorKind, Warning};
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{ClearedPlane, DrillCycle, InlaySide, Operation, OperationId, Project, ToolId};
+use dc_project::{Board, ClearedPlane, DrillCycle, Operation, OperationId, Project, ToolId};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -373,9 +373,9 @@ fn lies_inside(inner: &Contour, outer: &Contour) -> bool {
 /// in project space, in target then profile order: every closed profile
 /// (none for a Left or Right Profile, which skips them, #207), and the
 /// open paths an Engrave or an On line, Left or Right Profile cuts along
-/// or beside (#175, #206, #207). A male Inlay cuts round its design
-/// mirrored about its targets' centre line ([`crate::inlay::male_mirror`],
-/// #436), so its closed profiles are mirrored too. Other operations skip
+/// or beside (#175, #206, #207). An Inlay's female is cut on the stock
+/// as drawn; its male, mirrored, is cut on its own board (#498), which
+/// this check does not read. Other operations skip
 /// open paths, so they are left out, as are
 /// open paths with no length and anything validation already rejects (a
 /// missing instance or definition, a degenerate outline): this check only
@@ -400,16 +400,6 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         | Operation::VCarve(_)
         | Operation::Inlay(_) => true,
     };
-    // #436: a male Inlay cuts the mirror of what is drawn.
-    let mirror = match op {
-        Operation::Inlay(inlay) if inlay.side == InlaySide::Male => {
-            match crate::inlay::male_mirror(project, &inlay.targets) {
-                Ok(mirror) => Some(mirror),
-                Err(_) => return Vec::new(),
-            }
-        }
-        _ => None,
-    };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
         let Some(instance) = project.instances.iter().find(|i| &i.id == instance_id) else {
@@ -426,10 +416,6 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
                 instance
                     .transform
                     .apply_polyline(polyline)
-                    .and_then(|placed| match mirror {
-                        Some(mirror) => mirror.apply_polyline(&placed),
-                        None => Ok(placed),
-                    })
                     .and_then(Contour::new)
                     .ok()
                     .map(Target::Outline)
@@ -460,17 +446,34 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
 }
 
 /// One hint per tool that the enabled operations, in project order, come
-/// back to after a different tool, by the tool's first use. Operations
-/// are never reordered (D7); the hint lists the tool's operations so the
-/// user can put them together.
+/// back to after a different tool on one board, by the tool's first use
+/// on the stock, then on the male board (#498: each board is cut as its
+/// own run of programs; a tool hinted on both is hinted once).
+/// Operations are never reordered (D7); the hint lists the tool's
+/// operations so the user can put them together.
 fn tool_change_hints(project: &Project) -> Vec<Warning> {
+    let mut hints = board_tool_change_hints(project, Board::Female);
+    for hint in board_tool_change_hints(project, Board::Male) {
+        if !hints.contains(&hint) {
+            hints.push(hint);
+        }
+    }
+    hints
+}
+
+/// [`tool_change_hints`] on `board`.
+fn board_tool_change_hints(project: &Project, board: Board) -> Vec<Warning> {
     // Every tool run in cut order (#406): a carve's clearing passes cut
     // with their own end mills before its V-bit.
     let uses: Vec<(&ToolId, &OperationId)> = project
         .operations
         .iter()
         .filter(|op| op.enabled())
-        .flat_map(|op| op.run_tools().into_iter().map(move |tool| (tool, op.id())))
+        .flat_map(|op| {
+            op.board_run_tools(board)
+                .into_iter()
+                .map(move |tool| (tool, op.id()))
+        })
         .collect();
     let mut by_first_use: Vec<(&ToolId, Vec<&OperationId>, usize)> = Vec::new();
     for &(tool, op) in &uses {
@@ -599,8 +602,8 @@ mod tests {
                     Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
-                    // #436: an Inlay side's V-bit run, the one the order
-                    // check is given.
+                    // #436: an Inlay's V-bit run on the stock (#498: the
+                    // female's, first), the one the order check is given.
                     Operation::Inlay(inlay) => {
                         crate::inlay::generate_inlay(project, inlay).map(|(runs, w)| {
                             let toolpath = runs
@@ -792,15 +795,16 @@ mod tests {
         );
     }
 
-    /// #436: a male Inlay cuts round its design mirrored about its
-    /// targets' centre line, so the order check reads the mirrored
-    /// outlines. Its targets are a 6 mm square `i2` inside the frame, at
-    /// X 35, and one `i3` outside it, at X 140: their centre line is X
-    /// 90.5, so the male cuts round `i3`'s mirror inside the frame and
-    /// round `i2`'s outside it. After an Outside Profile through the stock
-    /// frees the frame, the warning names `i3`, not `i2` as drawn.
+    /// #498: an Inlay cuts its female on the stock as drawn, and its male,
+    /// mirrored about its targets' centre line, on its own board, which
+    /// the order check does not read. Its targets are a 6 mm square `i2`
+    /// inside the frame, at X 35, and one `i3` outside it, at X 140 (their
+    /// centre line is X 90.5, so the mirror would swap them). After an
+    /// Outside Profile through the stock frees the frame, the warning
+    /// names `i2`, as drawn, though the male board is measured. (Before
+    /// #498 a male Inlay was on the stock, and named `i3`.)
     #[test]
-    fn male_inlay_targets_are_mirrored() {
+    fn inlay_targets_are_read_as_drawn_on_the_stock() {
         let mut project = frame_and_recess();
         project
             .tools
@@ -829,7 +833,11 @@ mod tests {
         let male = dc_project::InlayOp {
             id: OperationId::new("o2"),
             targets: vec![InstanceId::new("i2"), InstanceId::new("i3")],
-            side: dc_project::InlaySide::Male,
+            male_board: dc_project::MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
             depth_mm: Some(1.0),
             glue_gap_mm: Some(0.25),
             plug_depth_mm: Some(0.5),
@@ -845,7 +853,7 @@ mod tests {
         assert_eq!(found.len(), 1, "one warning: {warnings:?}");
         let (op, earlier_op, shape, freed) = freed_of(found[0]);
         assert_eq!((op, earlier_op), ("o2", "o1"));
-        assert_eq!(shape.instance.as_str(), "i3");
+        assert_eq!(shape.instance.as_str(), "i2");
         assert_eq!(freed.instance.as_str(), "i1");
     }
 

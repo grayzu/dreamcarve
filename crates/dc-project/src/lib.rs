@@ -29,11 +29,11 @@ pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{BandEdge, EdgePass, INLAY_MERGE_MM, MaleBand, edge_pass, male_band};
 pub use locate::{PathSegment, SourceMap, TextPosition};
-pub use migrate::{CURRENT_VERSION, migrate};
+pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};
 pub use model::{
-    BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle, DrillOp,
-    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayCutOut, InlayOp, InlaySide,
-    LastPass, Lead, MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, ParkXy,
+    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayCutOut, InlayOp,
+    LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, ParkXy,
     PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
     TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };

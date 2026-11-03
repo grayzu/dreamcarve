@@ -49,17 +49,19 @@ then a second Drill on the same circles with the V-bit and
 `countersink: { "diameter_mm": 6 }`. The V-bit plunges exactly deep
 enough to open a 6 mm mouth.
 - **Alex** makes a cutting-board inlay as in Corbin's Workshop's Fusion
-tutorial: a two-letter monogram, walnut into maple. They make
-`female.dcv` and `male.dcv` from the same SVG, each with one Inlay
-operation and the same 60° V-bit, `depth_mm: 4`, `glue_gap_mm: 1`,
-`plug_depth_mm: 2`; one says `side: female`, the other `side: male`.
-`export` of the male says the design is mirrored. Alex cuts both, test
-fits, glues, clamps, saws off the plug's backing and planes it flush. The
+tutorial: a two-letter monogram, walnut into maple. They make one
+project from the SVG with one Inlay operation, a 60° V-bit,
+`depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, the maple as the
+stock and the walnut as the Inlay's male board. `export` writes the
+female board's programs and the male board's, and says the male's
+design is mirrored. Alex cuts both, test fits, glues, clamps, saws off
+the plug's backing and planes it flush. The
 top shows no gap; a test piece cut in half shows the 1 mm glue gap under
 the plug.
 - **Alex, after a test fit** that bottoms out before the top closes,
-raises `glue_gap_mm` to 1.5 and re-exports only the male, as Corbin's fit
-procedure says: change one number, cut again.
+raises `glue_gap_mm` to 1.5 and re-exports only the male board
+(`export --board male`), as Corbin's fit procedure says: change one
+number, cut again.
 - **Jo** carves a photo of their dog. `dreamcarve init dog.jpg --width 100`
 writes a project holding the picture, placed at the origin 100 mm wide
 with its height from the picture's proportions, and one Photo V-Carve
@@ -241,18 +243,37 @@ is no GUI in this phase.
  [https://docs.corbinsworkshop.com/vbit\_inlay\_feature\_tab.md](https://docs.corbinsworkshop.com/vbit_inlay_feature_tab.md),
  [https://docs.corbinsworkshop.com/plug-setup-2d.md](https://docs.corbinsworkshop.com/plug-setup-2d.md),
  [https://docs.corbinsworkshop.com/inlay\_fit\_adjustment.md](https://docs.corbinsworkshop.com/inlay_fit_adjustment.md)). An
- operation that cuts one **side** of a V-bit inlay of its targets: the
- **female**, a pocket in one board, or the **male**, a plug standing on
- another, so the plug's V-sloped walls seat in the pocket's. The same
- four values describe both sides, so the two projects are made from one
- design by changing `side`:
+ operation that cuts both boards of a V-bit inlay of its targets from one
+ project: the **female**, a pocket in the project's stock, and the
+ **male**, a plug standing on the Inlay's **male board**, so the plug's
+ V-sloped walls seat in the pocket's. One set of values describes both
+ boards, so they cannot drift apart (changed 2026-11-02 in #498, the
+ maintainer's decision from the phase 4 UI review, #460: until format
+ 25 an Inlay cut one `side`, and a pair was two project files kept in
+ step by hand):
+    - `male_board` (format 25, #498): the board the male is cut from,
+    `{ "width_mm", "height_mm", "thickness_mm" }`. Width and height
+    `null` are the stock's; the thickness is the male board's own, and
+    until it is set the male is not cut: only the female exports, and
+    the generator warns `inlay_male_board_unset`. A width or height set
+    and not above 0 is `inlay_male_board_size`, a thickness set and not
+    above 0 `inlay_male_board_thickness`. The project's stock is the
+    female board, which can carry other operations (a Pocket, an
+    outline Profile). The male board shares the stock's bottom-left
+    corner, so the design is mirrored in place on it, and the project's
+    origin preset applies to it as to the stock (bottom-left of that
+    board, centre of that board; Z at that board's top or bottom). Every
+    rule that reads the stock for the male reads the male board: its
+    thickness, top, bottom and edges. Every Inlay of a project cuts its
+    male on one male board: a later Inlay naming a different one is
+    `inlay_male_boards_differ`.
     - `depth_mm` (Corbin "Inlay Depth" `inlay_depth`; VCarve's female
      "Flat Depth"): how deep the female pocket is. Corbin: about 2.5 mm
      for a superficial inlay, 6 mm for a cutting board.
     - `glue_gap_mm` (Corbin "Inlay Fit Adjustment" `inlay_fit_adjustment`,
     "the glue gap under the plug"): the gap left under the seated plug.
-    The male's start depth is `depth_mm − glue_gap_mm` (VCarve's male
-    "Start Depth"). 0 is a plug that bottoms exactly; must be below
+    The male's start depth is `depth_mm − glue_gap_mm` below the male
+    board's top (VCarve's male "Start Depth"). 0 is a plug that bottoms exactly; must be below
     `depth_mm` (error `inlay_glue_gap_not_below_depth`). Corbin starts at
     0 or 0.25 mm and adjusts in 0.25 mm steps; the known-good values on
     the parameter list run from 0 to 2.3 mm depending on the bit.
@@ -263,22 +284,23 @@ is no GUI in this phase.
     the fit adjustment.
     - `margin_mm` (Corbin "Plug Stock Offset", 5 to 7.5 mm for clamping;
     VCarve's drawn boundary): how far beyond the design's outer outlines
-    the male's surround is carved. Used by the male only; the female
-    ignores it.
+    the male's surround is carved. Used by the male, and required once
+    it is cut; the female ignores it.
     - `outline_rounding_mm` (format 24, added 2026-10-31 in #448): `null`
     or a radius above 0 (`inlay_outline_rounding` otherwise) the male's
     band is rounded by, so its outer edge need not follow the plug's
     shape: the band is the design grown by `margin_mm` and **closed** by
     the radius (grown by `margin_mm` plus it, then shrunk by it), so its
     inward curves are no tighter than the radius and notches and gaps
-    narrower than about twice it fill. Male only; the female ignores it.
+    narrower than about twice it fill. Used by the male; the female
+    ignores it.
     A user-drawn boundary, as VCarve's and Corbin's, is #449.
-     With `side: "female"` the operation is a V-Carve of its targets with
-     `flat_depth_mm: depth_mm` and start depth 0, move for move. With
-     `side: "male"` the targets are **mirrored** left to right in place,
+     On the stock the female is a V-Carve of its targets with
+     `flat_depth_mm: depth_mm` and start depth 0, move for move. On the
+     male board the targets are **mirrored** left to right in place,
      about the vertical centre line of their joint bounding box, because
      the plug is turned over onto the pocket; `export` and `check` say so
-     once per male operation (`inlay_male_mirrored`). The male then
+     once per Inlay that cuts its male (`inlay_male_mirrored`). The male then
      V-carves the **surround**: the mirrored outlines offset outward by
      `margin_mm` and rounded, minus the mirrored design, so the band round
      the design and every hole in the design (a circle inside a star) is
@@ -292,7 +314,7 @@ is no GUI in this phase.
      the edge and cuts it upright, the band rounded by at least the end
      mill's radius, and the V-bit carves only the walls against the design
      and the floor no end mill reaches, its cone never crossing the edge
-     below the stock top. Otherwise the V-bit cuts the edge as a V wall,
+     below the male board's top. Otherwise the V-bit cuts the edge as a V wall,
      and with clearing passes `inlay_band_edge_v_wall` names the margin
      that would open it. Only the walls against the design mate with the
      female; past the cut-out everything is waste. Where the band runs
@@ -311,8 +333,8 @@ is no GUI in this phase.
      pass's floor ring and the V-bit's flank (open edge), and the
      cut-out's floor ring; else `check` refuses the male
      (`InlayTooNearEdge`), naming the edge, the room needed, how far to
-     move the design and the stock that fits it centred. Its start plane is `depth_mm − glue_gap_mm` below
-     the stock top and its flat depth `plug_depth_mm`, so the surround's
+     move the design and the board that fits it centred. Its start plane is `depth_mm − glue_gap_mm` below
+     the male board's top and its flat depth `plug_depth_mm`, so the surround's
      floor is `depth_mm − glue_gap_mm + plug_depth_mm` deep. At the start
      plane the plug's walls pass exactly through the mirrored outline;
      above it the plug narrows by `z · tan(α/2)` at height `z`, which is
@@ -320,19 +342,20 @@ is no GUI in this phase.
      meet the pocket's walls along their whole height and the plug's top
      stops `glue_gap_mm` short of the floor. The tool is a V-bit, with the
      same checks as V-Carve, except that the cone-height check counts the
-     flank's whole engagement from the stock top: `depth_mm` on the
+     flank's whole engagement from its board's top: `depth_mm` on the
      female, and `depth_mm − glue_gap_mm + plug_depth_mm` on the male,
-     whose stock above its start plane is the plug and stays (changed
+     whose board above its start plane is the plug and stays (changed
      after the security review: the draft counted the male's
      `plug_depth_mm` alone, and with the bench's 90° bit, cone height
-     3.175 mm, Corbin's usual 2.5, 0.25 and 1.5 mm engage 3.75 mm). The
-     chapter says both sides must use the same bit angle, which two files
-     cannot check. `safe_z_mm` and
-     `machining_order` are as V-Carve's, and each side is one pass (42); either side takes
-     `clearing` passes (40). The male stock must leave a base under the
+     3.175 mm, Corbin's usual 2.5, 0.25 and 1.5 mm engage 3.75 mm). Both
+     boards are cut with the one V-bit, so their angles always agree.
+     `safe_z_mm` and
+     `machining_order` are as V-Carve's, and each board is one pass (42); both take
+     the `clearing` passes (40). The male board must leave a base under the
      surround's floor: less than 6 mm warns `inlay_plug_base_thin` (Corbin:
      "Plug Base Thickness" at least 6 mm, the backing that holds the plug
-     together until the glue dries). The male may **cut its plug out**
+     together until the glue dries; read from the male board's thickness).
+     The male may **cut its plug out**
      (`cut_out`, format 23, added 2026-10-30 in #443; Corbin's optional
      "Plug Cutout", a contour toolpath "with or without tabs"): a flat end
      mill (`tool`; `cutter_not_flat` otherwise) runs On line round the
@@ -347,23 +370,22 @@ is no GUI in this phase.
      no knife edge the board's full height round it. Its
      passes start at the floor and go through the board to its own
      `through_cut_allowance_mm`, with `tabs` as a Profile's tab request
-     (heights from the stock bottom; `null` for none). It is the
-     operation's last tool run, after the V-bit's. Design holes are not
+     (heights from the male board's bottom; `null` for none). It is the
+     male's last tool run, after its V-bit's; the female ignores it. Design holes are not
      cut out. Where an open band is clipped to the board (#495), the
      stretches of that path the radius inside the board's edge are
      dropped, as the board's own edge frees the plug there: the rest are
      open paths from the board's edge to the board's edge, their ends the
      radius inside it, so the kerf reaches the edge and the tool never
      leaves the board, and the tabs go only on them. A floor narrower than the tool is `inlay_cut_out_no_room`,
-     naming the margin needed; a cut-out on a female is
-     `inlay_cut_out_needs_male`. Freed, the piece is the plug on its
+     naming the margin needed. Freed, the piece is the plug on its
      backing with a rim of floor round it, `plug_depth_mm` below the start
      plane, which clears the female's surface. With `cut_out: null` the
      plug is sawn free inside the band. Cutting the backing off after
      gluing stays the user's: a saw.
      **Parts that nearly touch** (added 2026-11-02 in #479, the
      maintainer's decision): two parts of the design closer than 0.05 mm
-     are cut as one shape on both sides, so the female cuts one pocket with no
+     are cut as one shape on both boards, so the female cuts one pocket with no
      knife-edge wall between them and the male one plug with no groove,
      and `inlay_parts_merged` names the two shapes, the gap and where it
      is. A V-bit cannot carve such a gap: the female left the wall to
@@ -372,8 +394,22 @@ is no GUI in this phase.
      their parts as drawn. One outline that comes that near itself across
      the outside is merged across the gap the same way (#515). A hole of
      the design narrower than 0.05 mm all
-     along is filled on both sides the same way, and `inlay_hole_filled`
+     along is filled on both boards the same way, and `inlay_hole_filled`
      names it, its width and where it is (#511).
+     **Programs** (#498): `export` writes the stock's programs, then the
+     male board's, each board split by tool runs as any project's, named
+     `<stem>-female-<k>-T<n>.<ext>` and `<stem>-male-<k>-T<n>.<ext>`
+     (`k` counting from 1 within each board; a project with no Inlay
+     names its programs as before), and prints them grouped under
+     **Female board** and **Male board**, each board's first program
+     setting its own work zero. `export --board female|male` writes one
+     board only (re-cutting the male after a fit change); it is not
+     saved. The safety pass holds each program to its own board. A
+     format 24 project migrates: a female side gets an unset male board
+     and exports what it did; a male side gets a male board the size of
+     its stock, exports its male programs byte for byte under the new
+     names, and now also cuts the female on the stock, which `check` and
+     `export` say in a note.
 
 ### Photo V-Carve
 
@@ -485,9 +521,9 @@ relief or rest-of chain (a pass takes its tool's step-down and
 step-over and nothing else); and VCarve's "Corner Sharpen". Projecting a
 carve onto a 3D model. VCarve's "Use Vector Start Points" and "Use Vector
 Selection Order" (capability 11's rules order the shapes). 3D inlays on
-curved surfaces (Corbin's 3D mode). Inlays whose two sides are in one
-project on one board; two files, or two instances the user places, cover
-it. PhotoVCarve's "Selected Vectors" strategy and RasterCarve's
+curved surfaces (Corbin's 3D mode). Inlays whose female and male are
+cut side by side in one board; the Inlay's male board (#498), or two
+instances the user places, cover it. PhotoVCarve's "Selected Vectors" strategy and RasterCarve's
 experimental dots mode. Picture editing: contrast, gamma, borders, cropping
 and rotation are done in an image editor first, as Vectric's "Edit Picture"
 does before the toolpath. Heightmap carving, where brightness is a surface
@@ -593,11 +629,15 @@ Numbering continues from phase 2's 47.
  disabled it is refused with `start_depth_uncleared` (changed after the
  security review).
 56. **Inlay female.** The star fixture (a four-point star 60 mm tip to tip
- with a 12 mm circle at its centre), `side: "female"`, 60° V-bit,
- `depth_mm: 4`: the toolpath equals a V-Carve of the same targets with
- `flat_depth_mm: 4`, move for move.
-57. **Inlay male.** The same with `side: "male"`, `glue_gap_mm: 1`,
- `plug_depth_mm: 2`, `margin_mm: 8`: `check` prints
+ with a 12 mm circle at its centre), an Inlay with a 60° V-bit,
+ `depth_mm: 4`: the female's toolpath on the stock equals a V-Carve of
+ the same targets with `flat_depth_mm: 4`, move for move. With
+ `male_board.thickness_mm: null` it is the only board cut, and the
+ generator warns `inlay_male_board_unset`.
+57. **Inlay male.** The same Inlay with `glue_gap_mm: 1`,
+ `plug_depth_mm: 2`, `margin_mm: 8` and a male board the stock's size
+ (`male_board.thickness_mm` set): the female's runs come first, then
+ the male's, each tagged with its board; `check` prints
  `inlay_male_mirrored`; every cutting point lies in the band from the
  mirrored star out to 8 mm beyond it or inside the mirrored circle; no
  cutting point is below Z −5; the bit's flank passes through every
@@ -606,9 +646,9 @@ Numbering continues from phase 2's 47.
  1.732 mm); for each sample point on the star's outline, the female
  wall's inset at depth `z` and the plug's inset at height `z` above
  its start plane agree within 0.02 mm for `z` from 0 to 3. A
- `glue_gap_mm` of 4 is `inlay_glue_gap_not_below_depth`; on 10 mm stock
- the male warns `inlay_plug_base_thin` (5 mm left) and on 12 mm it does
- not. With `clearing: [t2]` (a 3.175 mm end mill) the male's first run
+ `glue_gap_mm` of 4 is `inlay_glue_gap_not_below_depth`; on a 10 mm male
+ board the male warns `inlay_plug_base_thin` (5 mm left) and on 12 mm it
+ does not, whatever the stock's thickness. With `clearing: [t2]` (a 3.175 mm end mill) the male's first run
  clears the surround's floor at Z −5 and its V-bit floor cutting shrinks
  as in 51. With a `cut_out` by the 3.175 mm end mill (4 tabs, #443) the
      male's last run is the cut-out, `op1 (cut-out t2)`: every point of its
@@ -620,7 +660,7 @@ Numbering continues from phase 2's 47.
  circle; and its passes below the tabs' top rise over all four. With
  `margin_mm: 4` the floor is 1.69 mm wide: `inlay_cut_out_no_room`.
  With `clearing: [t2]` the band's edge is open (#448): no V-bit cut
- comes within its cone's radius at the stock top of the band's edge,
+ comes within its cone's radius at the male board's top of the band's edge,
  and none within 1 mm; the end mill's outermost path at Z −5 is the
  edge less its radius; without clearing the V wall is cut; with
  `margin_mm: 4` the pass does not fit and `inlay_band_edge_v_wall`
@@ -793,13 +833,17 @@ a 90 × 60 mm `frame` round it that nothing cuts, so that `init` makes the
 110 × 80 mm stock with the letters at its centre. The D's counter is a
 design hole: an island in the female, a hole in the male's plug. Both
 letters face right, so the male carves a reversed "DC" and the flip
-direction matters. The female in one board, the male in another, from
-the same file with `side` changed. `tests/fixtures/dc-female.dcv` and
-`dc-male.dcv` are the quick start "An inlay pair"'s projects: `t1` is
-`init`'s unused "Set me", `t2` the end mill, `t3` the V-bit; both set
-`thickness_mm: 12`, which the user replaces with each board's
-measurement. Every cut of both lies inside the 110 × 80 mm board with
-at least 3 mm to spare (the male's clearing pass, which cuts the band's
+direction matters. The female on the stock, the male on the Inlay's
+male board, from one project (#498; until format 25 two files, the same
+but for `side`). `tests/fixtures/dc.dcv` is the quick start "An inlay
+pair"'s project: `t1` is `init`'s unused "Set me", `t2` the end mill,
+`t3` the V-bit; the stock and the male board are both 110 × 80 mm
+(`male_board` width and height `null`) and 12 mm thick, which the user
+replaces with each board's measurement. It exports byte for byte the
+programs the two-file pair did, under the board's names; the pair is
+kept as migration fixtures in
+`crates/dreamcarve/tests/fixtures/inlay-migration/`. Every cut of both
+boards lies inside its 110 × 80 mm board with at least 3 mm to spare (the male's clearing pass, which cuts the band's
 edge, comes within 10.3 mm of an edge).
 
 
@@ -810,8 +854,8 @@ edge, comes within 10.3 mm of an edge).
 | T1           | 60° V-bit, 6.35 mm diameter (cone height 5.5 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t3`) |
 | T2           | 3.175 mm two-flute upcut end mill, at least 14.2 mm of flute (12 mm board + 0.2 mm through + 2 mm): 1000 mm/min, plunge 300, 18000 RPM, step-down 2 mm, stepover 40 % (project tool `t2`) |
 | Inlay        | `op1` `DC`, targets the two letters; `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `margin_mm: 8`, `outline_rounding_mm: 10` (#448), `step_over_fraction: 0.1`; clearing pass `offset`, climb, ramp 15° |
-| dc-female.dcv | op1 Inlay (T1) `side: female`, `clearing: [t2]` (two runs: `dc-female-1-T2.nc` to Z −4, about 30 s, then `dc-female-2-T1.nc`, about 1 min 6 s); prints `unused_tool` and `entry_fallback` (the C's stroke has no room for the clearing pass's ramp, so it plunges there) |
-| dc-male.dcv | op1 Inlay (T1) `side: male`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (three runs: `dc-male-1-T2.nc` to Z −5, which clears the band out to its edge and cuts the edge upright, about 5 min 26 s, `dc-male-2-T1.nc`, the plug's walls and the floor's corners, about 47 s, then the cut-out `dc-male-3-T2.nc` from the floor to Z −12.2, along the band's edge, at least 6.412 mm out from the letters (#461; 4.577 mm before), about 1 min 19 s; changed in #448 from 3 min 11 s, 1 min 4 s and 1 min 32 s with a V-walled edge); prints `unused_tool`, `inlay_male_mirrored` at X = 55 mm and `tool_change_avoidable` (the order is required) |
+| dc.dcv, female board | op1 Inlay (T1) on the stock, `clearing: [t2]` (two runs: `dc-female-1-T2.nc` to Z −4, about 30 s, then `dc-female-2-T1.nc`, about 1 min 6 s); prints `unused_tool` and `entry_fallback` (the C's stroke has no room for the clearing pass's ramp, so it plunges there) |
+| dc.dcv, male board | op1 Inlay (T1) on its male board, `male_board.thickness_mm: 12`, `clearing: [t2]`, `cut_out` with `t2`, four rect tabs 6 mm wide and 3 mm tall, 0.2 mm through (three runs: `dc-male-1-T2.nc` to Z −5, which clears the band out to its edge and cuts the edge upright, about 5 min 26 s, `dc-male-2-T1.nc`, the plug's walls and the floor's corners, about 47 s, then the cut-out `dc-male-3-T2.nc` from the floor to Z −12.2, along the band's edge, at least 6.412 mm out from the letters (#461; 4.577 mm before), about 1 min 19 s; changed in #448 from 3 min 11 s, 1 min 4 s and 1 min 32 s with a V-walled edge); prints `unused_tool`, `inlay_male_mirrored` at X = 55 mm and `tool_change_avoidable` (the order is required) |
 | Safe Z       | 10 mm                                                                                                |
 | Controller   | grblHAL, one program per tool run                                                                    |
 
@@ -821,8 +865,8 @@ rapids, acceleration or tool changes.
 **Procedure** (Corbin, "Inlay Fit Adjustment"): cut the female, then the
 male. Test fit dry: the plug should seat with no gap at the top and stop
 before its base touches the female surface. If a gap shows at the top, the
-plug bottoms out: raise `glue_gap_mm` and recut the male. If the plug will
-not enter, lower it. Before the test fit, the plug comes out of its
+plug bottoms out: raise `glue_gap_mm` and recut the male
+(`export --board male`). If the plug will not enter, lower it. Before the test fit, the plug comes out of its
 board, since the male board outside the band is at full thickness and
 would rest on the female (changed in #437: the draft clamped the male's
 whole board face down): the male's third program cuts it out in the
@@ -870,8 +914,9 @@ picture and settings within the tolerance of acceptance 60.
 
 - User Guide: V-Carve operation (medial lines, flat depth, clearing
 passes, start depth, one pass, the offset strategy, choosing a bit angle);
-Inlay (the method, the four values and what each changes, the two-file
-workflow, the fit procedure, gluing and planing); Photo V-Carve (pictures
+Inlay (the method, the four values and what each changes, the two
+boards of one project and the male board, the fit procedure and
+re-cutting the male, gluing and planing); Photo V-Carve (pictures
 and `image`, every setting, dark and light wood, picking a bit and depth,
 what to do in an image editor first); Drill operation updated
 (countersink); Warnings updated

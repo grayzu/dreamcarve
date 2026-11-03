@@ -22,8 +22,38 @@
 //! leave the band's own room there ([`MaleBand::board_room_mm`]).
 
 use crate::ids::ToolId;
-use crate::model::{InlayOp, InlaySide, Project, Stock, ToolKind};
+use crate::model::{InlayOp, Operation, Project, Stock, ToolKind};
 use dc_geometry::{EPS_MM, Point, Rect};
+
+impl Project {
+    /// This project as Inlay `inlay`'s male board cuts it (#498;
+    /// `docs/specs/phase-3/design.md`, "Algorithms → Inlay", "Boards"): a
+    /// copy whose stock is the male board ([`crate::MaleBoard::stock`]),
+    /// everything else the same, so the origin preset, heights and
+    /// tolerances apply to the male board as they do to the stock. The
+    /// generator cuts the male on it and the safety pass checks the male's
+    /// programs against it.
+    #[must_use]
+    pub fn on_male_board(&self, inlay: &InlayOp) -> Self {
+        let mut project = self.clone();
+        project.stock = inlay.male_board.stock(&self.stock);
+        project
+    }
+
+    /// The project's male board (#498): the first enabled Inlay that cuts
+    /// its male, and its board as stock. Validation holds every other
+    /// such Inlay to the same board (`inlay_male_boards_differ`). `None`
+    /// when no Inlay cuts a male.
+    #[must_use]
+    pub fn male_board(&self) -> Option<(&InlayOp, Stock)> {
+        self.operations.iter().find_map(|op| match op {
+            Operation::Inlay(inlay) if inlay.enabled && inlay.cuts_male() => {
+                Some((inlay, inlay.male_board.stock(&self.stock)))
+            }
+            _ => None,
+        })
+    }
+}
 
 /// The clearing pass that cuts a male Inlay's band edge upright (#448):
 /// the first whose end mill fits the band's floor ring.
@@ -213,15 +243,12 @@ fn pass_radii<'p>(
     })
 }
 
-/// The edge pass of male Inlay `op` (#448): its first clearing pass whose
-/// flat end mill fits the band's floor ring, `M − P·tan(α/2) ≥ 2r` (within
-/// [`EPS_MM`]). `None` on a female, without such a pass, or when the
-/// margin, the plug depth or the V-bit is not usable.
+/// The edge pass of Inlay `op`'s male (#448): its first clearing pass
+/// whose flat end mill fits the band's floor ring, `M − P·tan(α/2) ≥ 2r`
+/// (within [`EPS_MM`]). `None` without such a pass, or when the margin,
+/// the plug depth or the V-bit is not usable.
 #[must_use]
 pub fn edge_pass(project: &Project, op: &InlayOp) -> Option<EdgePass> {
-    if op.side != InlaySide::Male {
-        return None;
-    }
     let margin_mm = positive(op.margin_mm)?;
     let foot_mm = positive(op.plug_depth_mm)? * slope_of(project, op)?;
     let ring_mm = margin_mm - foot_mm;
@@ -235,15 +262,13 @@ pub fn edge_pass(project: &Project, op: &InlayOp) -> Option<EdgePass> {
     })
 }
 
-/// Male Inlay `op`'s band (#448; module docs): its edge, open or a V
-/// wall, and its roundings. `None` on a female, or when a value the band
-/// needs is unusable: the margin, depth, glue gap or plug depth, an
-/// `outline_rounding_mm` that is set and not above 0, or the V-bit.
+/// Inlay `op`'s male band (#448; module docs): its edge, open or a V
+/// wall, and its roundings. `None` when a value the band needs is
+/// unusable: the margin, depth, glue gap or plug depth, an
+/// `outline_rounding_mm` that is set and not above 0, or the V-bit. It
+/// does not read the male board, which only clips it ([`MaleBand::board`]).
 #[must_use]
 pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
-    if op.side != InlaySide::Male {
-        return None;
-    }
     let (slope, v_bit_radius_mm) = v_bit_of(project, op)?;
     let margin_mm = positive(op.margin_mm)?;
     let plug_depth_mm = positive(op.plug_depth_mm)?;
@@ -308,7 +333,7 @@ pub const INLAY_MERGE_MM: f64 = 0.05;
 mod tests {
     use super::*;
     use crate::ids::ToolId;
-    use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry, InlaySide, Tool};
+    use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry, MaleBoard, Tool};
     use crate::test_support::{sample_inlay, sample_project, tool_6_35_upcut, tool_v_bit_90};
 
     /// An end mill `id` `diameter_mm` across.
@@ -321,18 +346,22 @@ mod tests {
         }
     }
 
-    /// The sample male ([`sample_inlay`] on its side: the 90° V-bit `t2`,
-    /// slope 1, `D 2.5, G 0.25, P 1.5`, margin 6, so the floor ring is
-    /// `M − P·s` = 4.5 mm wide) with clearing passes by `tools`, in a
-    /// project holding the 6.35 mm end mill `t1`, `t2`, a 3.175 mm end
-    /// mill `t3` and a 1 mm one `t4`.
+    /// The sample Inlay's male ([`sample_inlay`] with its male board
+    /// measured, 6 mm: the 90° V-bit `t2`, slope 1, `D 2.5, G 0.25, P
+    /// 1.5`, margin 6, so the floor ring is `M − P·s` = 4.5 mm wide) with
+    /// clearing passes by `tools`, in a project holding the 6.35 mm end
+    /// mill `t1`, `t2`, a 3.175 mm end mill `t3` and a 1 mm one `t4`.
     fn male(tools: &[&str]) -> (Project, InlayOp) {
         let mut p = sample_project();
         p.tools.push(tool_v_bit_90());
         p.tools.push(end_mill("t3", 3.175));
         p.tools.push(end_mill("t4", 1.0));
         let op = InlayOp {
-            side: InlaySide::Male,
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
             clearing: tools
                 .iter()
                 .map(|t| ClearingPass {
@@ -351,7 +380,7 @@ mod tests {
     /// the floor ring, `M − P·tan(α/2) ≥ 2r`: of the 6.35 mm and 3.175 mm
     /// passes in a 4.5 mm ring, the second, though a 1 mm pass follows;
     /// a 4.5 mm end mill just fits. With only the 6.35 mm pass, or none,
-    /// or on a female, there is no edge pass.
+    /// there is no edge pass; the male board does not change it (#498).
     #[test]
     fn edge_pass_is_the_first_clearing_pass_that_fits() {
         let (p, op) = male(&["t1", "t3", "t4"]);
@@ -369,11 +398,11 @@ mod tests {
             assert_eq!(edge_pass(&p, &op), None, "{tools:?}");
         }
         let (p, op) = male(&["t3"]);
-        let female = InlayOp {
-            side: InlaySide::Female,
-            ..op
+        let unmeasured = InlayOp {
+            male_board: MaleBoard::default(),
+            ..op.clone()
         };
-        assert_eq!(edge_pass(&p, &female), None);
+        assert_eq!(edge_pass(&p, &unmeasured), edge_pass(&p, &op));
     }
 
     /// #448: the band's outer edge is open when an edge pass fits and the
@@ -439,11 +468,11 @@ mod tests {
                 margin_needed_mm: None
             }
         );
-        let female = InlayOp {
-            side: InlaySide::Female,
-            ..op
+        let unmeasured = InlayOp {
+            male_board: MaleBoard::default(),
+            ..op.clone()
         };
-        assert_eq!(male_band(&p, &female), None);
+        assert_eq!(male_band(&p, &unmeasured), male_band(&p, &op));
     }
 
     /// #495: an open band is clipped to the stock itself, a V wall the

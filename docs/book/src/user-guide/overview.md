@@ -101,11 +101,12 @@ default ([Projects with more than one tool](post-processors.md#projects-with-mor
 
 | Option | Meaning |
 | --- | --- |
-| `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … |
+| `-o`, `--output <NC>` | Where to write the program. Default: the project's name with the post-processor's extension (`.nc`). With one program per tool run, its stem and extension name them: `-o job.nc` writes `job-1-T1.nc`, `job-2-T2.nc`, … With an Inlay, every program is named after its board: `job-female-1-T2.nc`, …, `job-male-1-T2.nc`, … ([Inlay: programs](inlay.md#programs)). |
 | `--post <ID>` | Switch the project to the latest version of this post-processor, keeping the settings you changed where it can use them, save the project with it, then export. A setting it cannot use is reset and named ([Switching keeps your settings](post-processors.md#switching-keeps-your-settings)). With the project's own id, it upgrades to the latest version and changes nothing else ([Versions](post-processors.md#versions)). The project is checked against the new post-processor, not the old one. |
 | `--reset-settings` | With `--post`: take every setting from the new post-processor's defaults, with your [configured](configuration.md) ones on top, instead of keeping yours. |
 | `--programs-per-tool` | One program per tool run, whatever the project's `tool_change_mode` says. Not saved to the project. |
 | `--one-program` | One program with `T<n> M6` tool changes, whatever the project's `tool_change_mode` says; an error on a post-processor without `M6` (every one but grblHAL). Not saved to the project. Cannot be combined with `--programs-per-tool`. |
+| `--board <female\|male>` | With an Inlay: write one board's programs only, the stock's (`female`) or the male board's (`male`), to cut that board again. Not saved to the project ([Inlay: cutting one board again](inlay.md#cutting-one-board-again)). |
 | `--preview <SVG>` | Also write a picture of the toolpaths to this `.svg` file, with the programs ([Toolpath preview](#toolpath-preview)). |
 
 Export writes nothing unless every step succeeds. It refuses a project with
@@ -179,6 +180,11 @@ dreamcarve check coaster.dcv --preview coaster-preview.svg
   diameter long pointing the way the cut goes. This is where `at_distances`
   tabs are measured from ([Tabs: placement](tabs.md#placement)).
 - A Drill draws a circle the size of the bit at each hole.
+- With an [Inlay](inlay.md#programs) that cuts its male, the male board
+  is drawn to the right of the stock, 10 mm apart, their bottom edges
+  level, with its own dashed outline, the mirrored design and the male's
+  toolpaths; each board has a mark at its work zero, and the legend
+  marks the male's runs "(male board)".
 
 It shows the toolpath DreamCarve generated, not the program: the arcs
 export fits to runs of short moves ([Arc fitting](project-file.md#arc-fitting))

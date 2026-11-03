@@ -61,8 +61,8 @@
 use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp, Entry,
-    InlayOp, InlaySide, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
+    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp,
+    Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
     ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp, VCarveStrategy,
 };
 use crate::post_processor::{
@@ -742,13 +742,40 @@ pub enum Problem {
         /// What is left under the floor, mm.
         base_mm: f64,
     },
-    /// A female Inlay has a cut-out (format 23, #443): only the male has a
-    /// band to cut its plug out of. An error.
-    InlayCutOutNeedsMale {
+    /// An Inlay's male board has a width or height set that is not above 0
+    /// (format 25, #498): `null` is the stock's, a number is the board's
+    /// size. An error.
+    InlayMaleBoardSize {
         /// The operation.
         operation: OperationId,
         /// Its display name.
         name: String,
+        /// `width_mm` or `height_mm`.
+        field: &'static str,
+        /// The value set, mm.
+        value_mm: f64,
+    },
+    /// An Inlay's male board has a thickness set that is not above 0
+    /// (format 25, #498). An error.
+    InlayMaleBoardThickness {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The thickness set, mm.
+        thickness_mm: f64,
+    },
+    /// Two enabled Inlays that cut their males name different male boards
+    /// (#498): every male program of a project is cut on the one male
+    /// board, the first such Inlay's. An error, on the later Inlay.
+    InlayMaleBoardsDiffer {
+        /// The later operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The first Inlay that cuts its male, whose board is the project's
+        /// male board.
+        first: OperationId,
     },
     /// A male Inlay's cut-out tool does not fit the band's flat floor
     /// (format 23, #443; #448): the floor ring, from the mirrored design
@@ -858,7 +885,9 @@ impl Problem {
             Self::InlayMarginPositive { .. } => "inlay_margin_positive",
             Self::InlayOutlineRounding { .. } => "inlay_outline_rounding",
             Self::InlayPlugBaseThin { .. } => "inlay_plug_base_thin",
-            Self::InlayCutOutNeedsMale { .. } => "inlay_cut_out_needs_male",
+            Self::InlayMaleBoardSize { .. } => "inlay_male_board_size",
+            Self::InlayMaleBoardThickness { .. } => "inlay_male_board_thickness",
+            Self::InlayMaleBoardsDiffer { .. } => "inlay_male_boards_differ",
             Self::InlayCutOutNoRoom { .. } => "inlay_cut_out_no_room",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
@@ -883,7 +912,9 @@ impl Problem {
             | Self::CountersinkIgnoresToolWidth { .. }
             | Self::InlayPlugBaseThin { .. } => Severity::Warning,
             Self::CutterNotFlat { .. }
-            | Self::InlayCutOutNeedsMale { .. }
+            | Self::InlayMaleBoardSize { .. }
+            | Self::InlayMaleBoardThickness { .. }
+            | Self::InlayMaleBoardsDiffer { .. }
             | Self::InlayCutOutNoRoom { .. }
             | Self::OperationHasNoTargets { .. }
             | Self::DuplicateToolNumber { .. }
@@ -1083,8 +1114,14 @@ impl Problem {
             Self::InlayPlugBaseThin { operation, .. } => {
                 Some(format!("operations[{operation}].{INLAY_PLUG_DEPTH}"))
             }
-            Self::InlayCutOutNeedsMale { operation, .. } => {
-                Some(format!("operations[{operation}].cut_out"))
+            Self::InlayMaleBoardSize {
+                operation, field, ..
+            } => Some(format!("operations[{operation}].male_board.{field}")),
+            Self::InlayMaleBoardThickness { operation, .. } => {
+                Some(format!("operations[{operation}].male_board.thickness_mm"))
+            }
+            Self::InlayMaleBoardsDiffer { operation, .. } => {
+                Some(format!("operations[{operation}].male_board"))
             }
             Self::InlayCutOutNoRoom { operation, .. } => {
                 Some(format!("operations[{operation}].margin_mm"))
@@ -1517,11 +1554,32 @@ impl fmt::Display for Problem {
                 base_mm,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the stock top, leaving {base_mm} mm of the {thickness_mm} mm board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use thicker stock, or a smaller depth_mm or plug_depth_mm"
+                "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the male board's top, leaving {base_mm} mm of the {thickness_mm} mm male board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use a thicker male board, or a smaller depth_mm or plug_depth_mm"
             ),
-            Self::InlayCutOutNeedsMale { operation, name } => write!(
+            Self::InlayMaleBoardSize {
+                operation,
+                name,
+                field,
+                value_mm,
+            } => write!(
                 f,
-                "operation `{name}` (`{operation}`) is a female inlay with a cut_out; only the male's plug is cut out of its board, the female's pocket stays in it. Set cut_out to null, or side to \"male\""
+                "operation `{name}` (`{operation}`) has male_board.{field} {value_mm} mm; the male board's size must be above 0. Set it to null to use the stock's"
+            ),
+            Self::InlayMaleBoardThickness {
+                operation,
+                name,
+                thickness_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has male_board.thickness_mm {thickness_mm} mm; measure the male board and set its thickness, above 0"
+            ),
+            Self::InlayMaleBoardsDiffer {
+                operation,
+                name,
+                first,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) cuts its male on a male_board other than operation `{first}`'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board"
             ),
             Self::InlayCutOutNoRoom {
                 operation,
@@ -1532,7 +1590,7 @@ impl fmt::Display for Problem {
                 needed_mm,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm in both projects, or use a narrower end mill"
+                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm, or use a narrower end mill"
             ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
@@ -2806,11 +2864,14 @@ impl Validator {
     /// tool, clearing, cone and plug-base rules (format 22;
     /// `docs/specs/phase-3/design.md`, "Validation" and "Algorithms →
     /// Inlay", steps 1 and 4). The depth, glue gap and plug depth are
-    /// required on either side, the margin on a male only. An Inlay has
-    /// no start depth, so no `start_depth_*` rule applies, and it always
-    /// has a flat depth, so its clearing passes always have a floor.
+    /// required on both boards; the margin, and the male's cone, cut-out
+    /// and plug base, once the male is cut, its board's thickness set
+    /// (#498). An Inlay has no start depth, so no `start_depth_*` rule
+    /// applies, and it always has a flat depth, so its clearing passes
+    /// always have a floor.
     fn inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>, at: &str) {
-        let male = inlay.side == InlaySide::Male;
+        let male = inlay.cuts_male();
+        self.male_board(p, inlay, at);
         let unset = |v: &mut Self, field: &'static str| {
             v.problems.push(Problem::OperationValueUnset {
                 operation: inlay.id.clone(),
@@ -2904,21 +2965,17 @@ impl Validator {
     }
 
     /// The rules of an enabled Inlay's cut-out that need its tools
-    /// (format 23, #443): only a male has one; its tool is a flat end
-    /// mill; and the band's flat floor ring holds the tool's diameter: `M
-    /// − P·tan(α/2)` wide when a clearing pass cuts the band's edge, `M −
-    /// 2·P·tan(α/2)` with a V-walled edge (#448, [`crate::male_band`]).
+    /// (format 23, #443), once its male is cut (#498): its tool is a flat
+    /// end mill; and the band's flat floor ring holds the tool's diameter:
+    /// `M − P·tan(α/2)` wide when a clearing pass cuts the band's edge, `M
+    /// − 2·P·tan(α/2)` with a V-walled edge (#448, [`crate::male_band`]).
     /// The ring is compared only when the values it uses passed their own
     /// checks.
     fn enabled_cut_out(&mut self, p: &Project, inlay: &InlayOp, v_bit: Option<&Tool>) {
         let Some(cut_out) = &inlay.cut_out else {
             return;
         };
-        if inlay.side != InlaySide::Male {
-            self.problems.push(Problem::InlayCutOutNeedsMale {
-                operation: inlay.id.clone(),
-                name: inlay.name.clone(),
-            });
+        if !inlay.cuts_male() {
             return;
         }
         let Some(tool) = p.tools.iter().find(|t| t.id == cut_out.tool) else {
@@ -2959,11 +3016,14 @@ impl Validator {
     }
 
     /// The rules of an enabled Inlay that need its tools and the project
-    /// (format 22): its tools as a V-Carve's; its flank engagement from
-    /// the stock top ([`InlayOp::engagement_mm`]; security review H4)
-    /// within the V-bit's cone; and a male's board under its surround's
-    /// floor at least [`INLAY_MIN_PLUG_BASE_MM`] thick (a warning). Only
-    /// values that passed their own checks are compared.
+    /// (format 22): its tools as a V-Carve's; each board's flank
+    /// engagement from its top ([`InlayOp::engagement_mm`]; security
+    /// review H4) within the V-bit's cone, the female's `D` at
+    /// `depth_mm` and, once the male is cut (#498), the male's `D − G + P`
+    /// at `plug_depth_mm`; and the male board under its surround's floor
+    /// at least [`INLAY_MIN_PLUG_BASE_MM`] thick (a warning; the male
+    /// board's thickness, not the stock's). Only values that passed their
+    /// own checks are compared.
     fn enabled_inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>) {
         self.carving_tools(p, &inlay.id, &inlay.name, tool, &inlay.clearing);
         let depth_ok = inlay.depth_mm.is_some_and(|d| d.is_finite() && d > 0.0);
@@ -2974,21 +3034,32 @@ impl Validator {
         let plug_depth_ok = inlay
             .plug_depth_mm
             .is_some_and(|p| p.is_finite() && p > 0.0);
-        let male = inlay.side == InlaySide::Male;
-        let usable = depth_ok && (!male || (glue_gap_ok && plug_depth_ok));
-        let Some(engagement_mm) = inlay.engagement_mm().filter(|_| usable) else {
-            return;
-        };
-        if let Some(tool) = tool
-            && let ToolKind::VBit { included_angle_deg } = tool.cutter
-            && included_angle_deg > 0.0
-            && included_angle_deg < 180.0
-            && tool.diameter_mm.is_finite()
-            && tool.diameter_mm > 0.0
-        {
-            let cone_height_mm =
-                tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
-            if engagement_mm > cone_height_mm + EPS_MM {
+        let cone_height_mm = tool.and_then(|tool| match tool.cutter {
+            ToolKind::VBit { included_angle_deg }
+                if included_angle_deg > 0.0
+                    && included_angle_deg < 180.0
+                    && tool.diameter_mm.is_finite()
+                    && tool.diameter_mm > 0.0 =>
+            {
+                Some((
+                    tool,
+                    tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan(),
+                ))
+            }
+            _ => None,
+        });
+        let mut boards = vec![(Board::Female, depth_ok)];
+        if inlay.cuts_male() {
+            boards.push((Board::Male, depth_ok && glue_gap_ok && plug_depth_ok));
+        }
+        for (board, usable) in boards {
+            let Some(engagement_mm) = inlay.engagement_mm(board).filter(|_| usable) else {
+                continue;
+            };
+            let male = board == Board::Male;
+            if let Some((tool, cone_height_mm)) = cone_height_mm
+                && engagement_mm > cone_height_mm + EPS_MM
+            {
                 self.problems.push(Problem::VBitConeExceeded {
                     operation: inlay.id.clone(),
                     name: inlay.name.clone(),
@@ -2999,20 +3070,92 @@ impl Validator {
                     field: if male { INLAY_PLUG_DEPTH } else { "depth_mm" },
                 });
             }
+            if male
+                && let Some(thickness_mm) = inlay
+                    .male_board
+                    .thickness_mm
+                    .filter(|t| t.is_finite() && *t > 0.0)
+            {
+                let base_mm = thickness_mm - engagement_mm;
+                if base_mm < INLAY_MIN_PLUG_BASE_MM {
+                    self.problems.push(Problem::InlayPlugBaseThin {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        floor_depth_mm: engagement_mm,
+                        thickness_mm,
+                        base_mm,
+                    });
+                }
+            }
         }
-        if male
-            && let Some(thickness_mm) = p.stock.thickness_mm.filter(|t| t.is_finite() && *t > 0.0)
-        {
-            let base_mm = thickness_mm - engagement_mm;
-            if base_mm < INLAY_MIN_PLUG_BASE_MM {
-                self.problems.push(Problem::InlayPlugBaseThin {
+    }
+
+    /// An Inlay's male board (format 25, #498): its width and height,
+    /// when set, above 0 (`inlay_male_board_size`) and within
+    /// [`MAX_COORDINATE_MM`]; its thickness, when set, above 0
+    /// (`inlay_male_board_thickness`) and within it too. An enabled Inlay
+    /// that cuts its male shares the one male board of the project: one
+    /// whose board differs from the first such Inlay's is
+    /// `inlay_male_boards_differ`.
+    fn male_board(&mut self, p: &Project, inlay: &InlayOp, at: &str) {
+        let board = &inlay.male_board;
+        for (field, value) in [("width_mm", board.width_mm), ("height_mm", board.height_mm)] {
+            let Some(value_mm) = value else {
+                continue;
+            };
+            let path = format!("{at}.male_board.{field}");
+            if !self.finite(&path, value_mm) {
+                continue;
+            }
+            if value_mm <= 0.0 {
+                self.problems.push(Problem::InlayMaleBoardSize {
                     operation: inlay.id.clone(),
                     name: inlay.name.clone(),
-                    floor_depth_mm: engagement_mm,
-                    thickness_mm,
-                    base_mm,
+                    field,
+                    value_mm,
                 });
+            } else if value_mm > MAX_COORDINATE_MM {
+                self.out_of_range(path, value_mm, STOCK_SIDE);
             }
+        }
+        if let Some(thickness_mm) = board.thickness_mm {
+            let path = format!("{at}.male_board.thickness_mm");
+            if self.finite(&path, thickness_mm) {
+                if thickness_mm <= 0.0 {
+                    self.problems.push(Problem::InlayMaleBoardThickness {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        thickness_mm,
+                    });
+                } else if thickness_mm > MAX_COORDINATE_MM {
+                    self.out_of_range(path, thickness_mm, STOCK_SIDE);
+                }
+            }
+        }
+        if !(inlay.enabled && inlay.cuts_male()) {
+            return;
+        }
+        let Some((first, first_board)) = p.male_board() else {
+            return;
+        };
+        if first.id == inlay.id {
+            return;
+        }
+        let this_board = board.stock(&p.stock);
+        let same = |a: Option<f64>, b: Option<f64>| match (a, b) {
+            (Some(a), Some(b)) => (a - b).abs() <= EPS_MM || !(a.is_finite() && b.is_finite()),
+            (None, None) => true,
+            _ => false,
+        };
+        if !(same(Some(this_board.width_mm), Some(first_board.width_mm))
+            && same(Some(this_board.height_mm), Some(first_board.height_mm))
+            && same(this_board.thickness_mm, first_board.thickness_mm))
+        {
+            self.problems.push(Problem::InlayMaleBoardsDiffer {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                first: first.id.clone(),
+            });
         }
     }
 
@@ -6837,10 +6980,31 @@ mod tests {
         p
     }
 
+    /// Gives `inlay` a male board the size of [`inlay_project`]'s 19 mm
+    /// stock, so its male is cut and checked too (#498).
+    fn on_male_board(inlay: &mut crate::model::InlayOp) {
+        inlay.male_board = crate::model::MaleBoard {
+            width_mm: None,
+            height_mm: None,
+            thickness_mm: Some(19.0),
+        };
+    }
+
+    /// Sets which boards `inlay` cuts in a test of one board (#498): on
+    /// [`Board::Female`] its male board is unset, so only the female is
+    /// cut and checked; on [`Board::Male`] it is measured
+    /// ([`on_male_board`]), so the male's rules apply too.
+    fn cuts(inlay: &mut crate::model::InlayOp, side: Board) {
+        match side {
+            Board::Female => inlay.male_board = crate::model::MaleBoard::default(),
+            Board::Male => on_male_board(inlay),
+        }
+    }
+
     /// The star test part's values (functional spec, "Inlay pair"): `D 4,
-    /// G 1, P 2`, margin 8, on `side`.
-    fn star(inlay: &mut crate::model::InlayOp, side: crate::model::InlaySide) {
-        inlay.side = side;
+    /// G 1, P 2`, margin 8, cutting `side` ([`cuts`]).
+    fn star(inlay: &mut crate::model::InlayOp, side: Board) {
+        cuts(inlay, side);
         inlay.depth_mm = Some(4.0);
         inlay.glue_gap_mm = Some(1.0);
         inlay.plug_depth_mm = Some(2.0);
@@ -6854,10 +7018,7 @@ mod tests {
         };
     }
 
-    const SIDES: [crate::model::InlaySide; 2] = [
-        crate::model::InlaySide::Female,
-        crate::model::InlaySide::Male,
-    ];
+    const SIDES: [Board; 2] = [Board::Female, Board::Male];
 
     /// Capability 45: the glue gap is left under the seated plug, so it
     /// is 0 or more and below the depth, on either side; at or above it
@@ -6866,13 +7027,13 @@ mod tests {
     fn inlay_glue_gap_must_be_below_depth() {
         for side in SIDES {
             assert_eq!(
-                validate(&inlay_project(|inlay| inlay.side = side)),
+                validate(&inlay_project(|inlay| cuts(inlay, side))),
                 vec![],
                 "{side:?}"
             );
             for glue_gap_mm in [2.5, 3.0] {
                 let p = inlay_project(|inlay| {
-                    inlay.side = side;
+                    cuts(inlay, side);
                     inlay.glue_gap_mm = Some(glue_gap_mm);
                 });
                 let problems = validate(&p);
@@ -6902,13 +7063,13 @@ mod tests {
             // 0 is a plug that bottoms exactly; just below the depth fits.
             for glue_gap_mm in [0.0, 2.4] {
                 let p = inlay_project(|inlay| {
-                    inlay.side = side;
+                    cuts(inlay, side);
                     inlay.glue_gap_mm = Some(glue_gap_mm);
                 });
                 assert_eq!(validate(&p), vec![], "{side:?} {glue_gap_mm}");
             }
             let p = inlay_project(|inlay| {
-                inlay.side = side;
+                cuts(inlay, side);
                 inlay.glue_gap_mm = Some(-0.25);
             });
             assert_eq!(
@@ -6931,7 +7092,7 @@ mod tests {
     fn inlay_values_must_be_set() {
         for side in SIDES {
             let p = inlay_project(|inlay| {
-                inlay.side = side;
+                cuts(inlay, side);
                 inlay.depth_mm = None;
                 inlay.glue_gap_mm = None;
                 inlay.plug_depth_mm = None;
@@ -6957,7 +7118,7 @@ mod tests {
                 Some("operations[o7].plug_depth_mm")
             );
             let p = inlay_project(|inlay| {
-                inlay.side = side;
+                cuts(inlay, side);
                 inlay.depth_mm = Some(0.0);
                 inlay.plug_depth_mm = Some(-1.0);
             });
@@ -6984,9 +7145,8 @@ mod tests {
     /// `margin_mm`, so a male needs one above 0; the female ignores it.
     #[test]
     fn inlay_male_needs_margin() {
-        use crate::model::InlaySide;
         let p = inlay_project(|inlay| {
-            inlay.side = InlaySide::Male;
+            cuts(inlay, Board::Male);
             inlay.margin_mm = None;
         });
         let problems = validate(&p);
@@ -7005,7 +7165,7 @@ mod tests {
         );
         for margin_mm in [0.0, -1.0] {
             let p = inlay_project(|inlay| {
-                inlay.side = InlaySide::Male;
+                cuts(inlay, Board::Male);
                 inlay.margin_mm = Some(margin_mm);
             });
             let problems = validate(&p);
@@ -7034,14 +7194,20 @@ mod tests {
 
     /// Design spec, "Inlay" step 4: a male leaving less than 6 mm of
     /// board under its surround's floor warns. The star's values put the
-    /// floor 4 − 1 + 2 = 5 mm down: 5 mm left on a 10 mm board, 6 on an
-    /// 11 mm one, 7 on 12. The female leaves no plug base.
+    /// floor 4 − 1 + 2 = 5 mm down: 5 mm left on a 10 mm male board, 6 on
+    /// an 11 mm one, 7 on 12, whatever the 19 mm stock (#498: the male
+    /// board's thickness). With the male board unset only the female is
+    /// cut, which leaves no plug base.
     #[test]
     fn thin_plug_base_warns() {
-        use crate::model::InlaySide;
-        let mut p = inlay_project(|inlay| star(inlay, InlaySide::Male));
+        let male_board = |p: &mut Project, thickness_mm: f64| {
+            if let Some(Operation::Inlay(inlay)) = p.operations.last_mut() {
+                inlay.male_board.thickness_mm = Some(thickness_mm);
+            }
+        };
+        let mut p = inlay_project(|inlay| star(inlay, Board::Male));
         v_bit_angle(&mut p, 60.0);
-        p.stock.thickness_mm = Some(10.0);
+        male_board(&mut p, 10.0);
         let problems = validate(&p);
         assert_eq!(
             problems,
@@ -7061,10 +7227,10 @@ mod tests {
         );
         assert!(approx_eq(INLAY_MIN_PLUG_BASE_MM, 6.0, 0.0));
         for thickness_mm in [11.0, 12.0] {
-            p.stock.thickness_mm = Some(thickness_mm);
+            male_board(&mut p, thickness_mm);
             assert_eq!(validate(&p), vec![], "{thickness_mm} mm");
         }
-        let mut female = inlay_project(|inlay| star(inlay, InlaySide::Female));
+        let mut female = inlay_project(|inlay| star(inlay, Board::Female));
         v_bit_angle(&mut female, 60.0);
         female.stock.thickness_mm = Some(10.0);
         assert_eq!(validate(&female), vec![]);
@@ -7077,7 +7243,6 @@ mod tests {
     /// `4, 1, 2` engages 5 mm, within the 60° bit's 5.5 mm.
     #[test]
     fn male_inlay_engagement_beyond_the_cone_is_error() {
-        use crate::model::InlaySide;
         let corbin = |inlay: &mut crate::model::InlayOp| {
             inlay.depth_mm = Some(2.5);
             inlay.glue_gap_mm = Some(0.25);
@@ -7085,7 +7250,7 @@ mod tests {
         };
         let p = inlay_project(|inlay| {
             corbin(inlay);
-            inlay.side = InlaySide::Male;
+            cuts(inlay, Board::Male);
         });
         let problems = validate(&p);
         let (engagement_mm, cone_height_mm, from_stock_top, field) = cone_exceeded(&problems);
@@ -7102,13 +7267,22 @@ mod tests {
             "{message}"
         );
 
-        let mut p = inlay_project(|inlay| star(inlay, InlaySide::Male));
+        let mut p = inlay_project(|inlay| star(inlay, Board::Male));
         v_bit_angle(&mut p, 60.0);
         assert_eq!(validate(&p), vec![]);
-        // The star on the 90° bit engages 5 mm, past its 3.175 mm cone.
-        let p = inlay_project(|inlay| star(inlay, InlaySide::Male));
-        let (engagement_mm, ..) = cone_exceeded(&validate(&p));
+        // The star on the 90° bit engages 5 mm on the male board, past its
+        // 3.175 mm cone, and 4 mm on the female's (#498: each board is
+        // checked, at its own field).
+        let p = inlay_project(|inlay| star(inlay, Board::Male));
+        let problems = validate(&p);
+        let (female, male): (Vec<Problem>, Vec<Problem>) = problems
+            .into_iter()
+            .partition(|p| p.field().as_deref() == Some("operations[o7].depth_mm"));
+        let (engagement_mm, ..) = cone_exceeded(&male);
         assert!(approx_eq(engagement_mm, 5.0, 1e-9), "{engagement_mm}");
+        let (engagement_mm, _, from_stock_top, _) = cone_exceeded(&female);
+        assert!(approx_eq(engagement_mm, 4.0, 1e-9), "{engagement_mm}");
+        assert!(!from_stock_top);
     }
 
     /// Design spec, "Inlay" step 1: the female starts at the stock top,
@@ -7133,7 +7307,7 @@ mod tests {
             inlay.plug_depth_mm = Some(3.0);
         });
         assert_eq!(validate(&p), vec![]);
-        let mut p = inlay_project(|inlay| star(inlay, crate::model::InlaySide::Female));
+        let mut p = inlay_project(|inlay| star(inlay, Board::Female));
         v_bit_angle(&mut p, 60.0);
         assert_eq!(validate(&p), vec![]);
     }
@@ -7150,7 +7324,7 @@ mod tests {
                 ToolKind::Engraver,
                 ToolKind::Drill,
             ] {
-                let mut p = inlay_project(|inlay| inlay.side = side);
+                let mut p = inlay_project(|inlay| cuts(inlay, side));
                 p.tools[1].cutter = cutter.clone();
                 let problems = validate(&p);
                 assert_eq!(
@@ -7174,7 +7348,7 @@ mod tests {
                 );
             }
             for angle in [0.0, 180.0] {
-                let mut p = inlay_project(|inlay| inlay.side = side);
+                let mut p = inlay_project(|inlay| cuts(inlay, side));
                 v_bit_angle(&mut p, angle);
                 assert_eq!(
                     validate(&p),
@@ -7197,7 +7371,7 @@ mod tests {
     fn cut_out_project(edit: impl FnOnce(&mut crate::model::InlayOp)) -> Project {
         use crate::model::{InlayCutOut, TabPlacement, TabShape, TabSpec};
         let mut p = inlay_project(|inlay| {
-            inlay.side = crate::model::InlaySide::Male;
+            on_male_board(inlay);
             inlay.cut_out = Some(InlayCutOut {
                 tool: ToolId::new("t3"),
                 tabs: Some(TabSpec {
@@ -7228,30 +7402,142 @@ mod tests {
         assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
     }
 
-    /// #443: only the male has a band to cut the plug out of; a female's
-    /// pocket is in the board it stays in. A cut-out on a female is
-    /// `inlay_cut_out_needs_male`, at `cut_out`, an error.
+    /// #498: every Inlay has a male, so a cut-out needs no side: an Inlay
+    /// with a cut-out whose male board is not measured yet is valid (its
+    /// male is not cut until it is, and the female ignores the cut-out),
+    /// and so is one with a measured board. `inlay_cut_out_needs_male` is
+    /// gone.
     #[test]
-    fn cut_out_on_a_female_is_an_error() {
-        let p = cut_out_project(|inlay| inlay.side = crate::model::InlaySide::Female);
+    fn cut_out_no_longer_needs_a_side() {
+        let unmeasured = cut_out_project(|inlay| {
+            inlay.male_board = crate::model::MaleBoard::default();
+        });
+        assert_eq!(validate(&unmeasured), vec![]);
+        assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
+    }
+
+    /// #498: a male board's width and height, when set, are its size,
+    /// above 0; `inlay_male_board_size`, an error, at the field. `null`
+    /// is the stock's.
+    #[test]
+    fn male_board_size_must_be_positive() {
+        for field in ["width_mm", "height_mm"] {
+            for value_mm in [0.0, -10.0] {
+                let p = inlay_project(|inlay| {
+                    on_male_board(inlay);
+                    match field {
+                        "width_mm" => inlay.male_board.width_mm = Some(value_mm),
+                        _ => inlay.male_board.height_mm = Some(value_mm),
+                    }
+                });
+                let problems = validate(&p);
+                assert_eq!(
+                    problems,
+                    vec![Problem::InlayMaleBoardSize {
+                        operation: OperationId::new("o7"),
+                        name: "Inlay".into(),
+                        field,
+                        value_mm,
+                    }],
+                    "{field} {value_mm}"
+                );
+                assert_eq!(problems[0].severity(), Severity::Error);
+                assert_eq!(problems[0].code(), "inlay_male_board_size");
+                assert_eq!(
+                    problems[0].field(),
+                    Some(format!("operations[o7].male_board.{field}"))
+                );
+                let message = problems[0].to_string();
+                assert!(message.contains(field), "{message}");
+            }
+            let p = inlay_project(|inlay| {
+                on_male_board(inlay);
+                match field {
+                    "width_mm" => inlay.male_board.width_mm = Some(60.0),
+                    _ => inlay.male_board.height_mm = Some(60.0),
+                }
+            });
+            assert_eq!(validate(&p), vec![], "{field} 60");
+        }
+    }
+
+    /// #498: a male board's thickness, when set, is above 0;
+    /// `inlay_male_board_thickness`, an error, at the field. Unset, the
+    /// male is not cut (the generator's `inlay_male_board_unset`), and the
+    /// project is valid.
+    #[test]
+    fn male_board_thickness_must_be_positive() {
+        for thickness_mm in [0.0, -6.0] {
+            let p = inlay_project(|inlay| {
+                inlay.male_board.thickness_mm = Some(thickness_mm);
+            });
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::InlayMaleBoardThickness {
+                    operation: OperationId::new("o7"),
+                    name: "Inlay".into(),
+                    thickness_mm,
+                }],
+                "{thickness_mm}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+            assert_eq!(problems[0].code(), "inlay_male_board_thickness");
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("operations[o7].male_board.thickness_mm")
+            );
+        }
+        assert_eq!(
+            validate(&inlay_project(|inlay| {
+                inlay.male_board.thickness_mm = None;
+            })),
+            vec![]
+        );
+    }
+
+    /// #498: two enabled Inlays of one project cut their males on the one
+    /// male board, so their boards must agree; a later one whose board
+    /// differs is `inlay_male_boards_differ`, an error, at its
+    /// `male_board`. A disabled Inlay cuts nothing and does not count.
+    #[test]
+    fn inlays_share_one_male_board() {
+        let mut p = inlay_project(on_male_board);
+        let Some(Operation::Inlay(first)) = p.operations.last().cloned() else {
+            panic!("an inlay");
+        };
+        let mut second = crate::model::InlayOp {
+            id: OperationId::new("o8"),
+            name: "Second".into(),
+            ..first
+        };
+        p.operations.push(Operation::Inlay(second.clone()));
+        assert_eq!(validate(&p), vec![], "the same board");
+        second.male_board.thickness_mm = Some(12.0);
+        *p.operations.last_mut().unwrap() = Operation::Inlay(second.clone());
         let problems = validate(&p);
         assert_eq!(
             problems,
-            vec![Problem::InlayCutOutNeedsMale {
-                operation: OperationId::new("o7"),
-                name: "Inlay".into(),
+            vec![Problem::InlayMaleBoardsDiffer {
+                operation: OperationId::new("o8"),
+                name: "Second".into(),
+                first: OperationId::new("o7"),
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
-        assert_eq!(problems[0].code(), "inlay_cut_out_needs_male");
+        assert_eq!(problems[0].code(), "inlay_male_boards_differ");
         assert_eq!(
             problems[0].field().as_deref(),
-            Some("operations[o7].cut_out")
+            Some("operations[o8].male_board")
         );
+        second.enabled = false;
+        *p.operations.last_mut().unwrap() = Operation::Inlay(second);
         assert!(
-            problems[0].to_string().contains("female"),
-            "{}",
-            problems[0]
+            validate(&p)
+                .iter()
+                .all(|problem| problem.code() != "inlay_male_boards_differ"),
+            "{:?}",
+            validate(&p)
         );
     }
 
@@ -7303,7 +7589,7 @@ mod tests {
     #[test]
     fn cut_out_with_no_room_in_the_floor_ring_is_an_error() {
         let mut p = cut_out_project(|inlay| {
-            star(inlay, crate::model::InlaySide::Male);
+            star(inlay, Board::Male);
             inlay.margin_mm = Some(4.0);
         });
         v_bit_angle(&mut p, 60.0);
@@ -7336,7 +7622,7 @@ mod tests {
         assert!(problems[0].to_string().contains("5.484"), "{}", problems[0]);
 
         // The star's own 8 mm margin has room.
-        let mut p = cut_out_project(|inlay| star(inlay, crate::model::InlaySide::Male));
+        let mut p = cut_out_project(|inlay| star(inlay, Board::Male));
         v_bit_angle(&mut p, 60.0);
         assert_eq!(validate(&p), vec![]);
     }
@@ -7354,7 +7640,7 @@ mod tests {
         use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry};
         let open = |margin_mm: f64, clearing: bool| {
             let mut p = cut_out_project(|inlay| {
-                star(inlay, crate::model::InlaySide::Male);
+                star(inlay, Board::Male);
                 inlay.margin_mm = Some(margin_mm);
                 if let Some(cut_out) = inlay.cut_out.as_mut() {
                     cut_out.tool = ToolId::new("t1");
@@ -7395,7 +7681,7 @@ mod tests {
         for side in SIDES {
             for rounding_mm in [0.0, -1.0, f64::NAN] {
                 let p = inlay_project(|inlay| {
-                    inlay.side = side;
+                    cuts(inlay, side);
                     inlay.outline_rounding_mm = Some(rounding_mm);
                 });
                 let problems = validate(&p);
@@ -7427,7 +7713,7 @@ mod tests {
             }
             for rounding_mm in [None, Some(5.0)] {
                 let p = inlay_project(|inlay| {
-                    inlay.side = side;
+                    cuts(inlay, side);
                     inlay.outline_rounding_mm = rounding_mm;
                 });
                 assert_eq!(validate(&p), vec![], "{side:?} {rounding_mm:?}");
@@ -7534,7 +7820,7 @@ mod tests {
         for side in SIDES {
             for clearing in &lists {
                 let mut inlay = inlay_project(|inlay| {
-                    inlay.side = side;
+                    cuts(inlay, side);
                     inlay.depth_mm = Some(2.0);
                     inlay.glue_gap_mm = Some(0.5);
                     inlay.plug_depth_mm = Some(1.0);

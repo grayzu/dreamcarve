@@ -22,7 +22,7 @@ fn squares_project(gap_mm: f64) -> Project {
 
 /// The star part's Inlay of the squares, side `side`, the V-bit's floor
 /// at step-over 0.1.
-fn squares_inlay(side: InlaySide) -> InlayOp {
+fn squares_inlay(side: Board) -> InlayOp {
     InlayOp {
         step_over_fraction: Some(0.1),
         ..inlay(side)
@@ -39,13 +39,7 @@ fn squares_inlay(side: InlaySide) -> InlayOp {
 #[test]
 fn male_of_parts_a_hair_apart_seats() {
     let project = squares_project(0.003);
-    let fit = fit_of(
-        &project,
-        &squares_inlay(InlaySide::Female),
-        &project,
-        &squares_inlay(InlaySide::Male),
-        0.05,
-    );
+    let fit = fit_of(&project, &squares_inlay(Board::Male), 0.05);
     assert!(
         fit.is_flush(),
         "the plug stands {:.3} mm proud at {:?}",
@@ -65,13 +59,7 @@ fn male_of_parts_a_hair_apart_seats() {
 #[test]
 fn male_of_parts_closer_than_the_written_precision_seats() {
     let project = squares_project(0.001);
-    let fit = fit_of(
-        &project,
-        &squares_inlay(InlaySide::Female),
-        &project,
-        &squares_inlay(InlaySide::Male),
-        0.05,
-    );
+    let fit = fit_of(&project, &squares_inlay(Board::Male), 0.05);
     assert!(
         fit.is_flush(),
         "the plug stands {:.3} mm proud at {:?}",
@@ -180,13 +168,7 @@ fn pair_fit(profiles: Vec<Polyline>, angle_deg: f64) -> Fit {
         plug_depth_mm: Some(0.4 * depth_mm),
         ..inlay(side)
     };
-    fit_of(
-        &project,
-        &side(InlaySide::Female),
-        &project,
-        &side(InlaySide::Male),
-        0.05,
-    )
+    fit_of(&project, &side(Board::Male), 0.05)
 }
 
 /// The `inlay_parts_merged` warnings of `warnings`.
@@ -200,10 +182,10 @@ fn merged_warnings(warnings: &[Warning]) -> Vec<&Warning> {
 /// The design side `op` of `project` carves: the female's regions, the
 /// male's mirrored design.
 fn design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
-    let resolved = side(project, op, &mut Vec::new()).expect("the side resolves");
-    match op.side {
-        InlaySide::Female => resolved.targets.regions,
-        InlaySide::Male => resolved.design,
+    let resolved = side(project, op, board_of(op), &mut Vec::new()).expect("the side resolves");
+    match board_of(op) {
+        Board::Female => resolved.targets.regions,
+        Board::Male => resolved.design,
     }
 }
 
@@ -216,7 +198,7 @@ fn design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
 #[test]
 fn parts_closer_than_the_merge_distance_merge_and_warn() {
     let project = squares_project(0.001);
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         let op = squares_inlay(side);
         assert_eq!(
             design_of(&project, &op).len(),
@@ -229,7 +211,7 @@ fn parts_closer_than_the_merge_distance_merge_and_warn() {
             1,
             "{side:?}: {warnings:?}"
         );
-        if side == InlaySide::Female {
+        if side == Board::Female {
             let z_mm = crate::heightfield::carved_z_mm(
                 main_run(&runs),
                 Point::new(CENTRE.0, CENTRE.1 + 5.0),
@@ -250,17 +232,17 @@ fn parts_closer_than_the_merge_distance_merge_and_warn() {
 #[test]
 fn parts_a_tenth_apart_are_not_merged() {
     let project = squares_project(0.1);
-    let female = squares_inlay(InlaySide::Female);
-    let male = squares_inlay(InlaySide::Male);
+    let female = squares_inlay(Board::Female);
+    let male = squares_inlay(Board::Male);
     for op in [&female, &male] {
-        assert_eq!(design_of(&project, op).len(), 2, "{:?}", op.side);
+        assert_eq!(design_of(&project, op).len(), 2, "{:?}", board_of(op));
         let (runs, warnings) = inlay_runs(&project, op);
         assert!(
             merged_warnings(&warnings).is_empty(),
             "{:?}: {warnings:?}",
-            op.side
+            board_of(op)
         );
-        if op.side == InlaySide::Female {
+        if board_of(op) == Board::Female {
             let z_mm = crate::heightfield::carved_z_mm(
                 main_run(&runs),
                 Point::new(CENTRE.0, CENTRE.1 + 5.0),
@@ -272,7 +254,7 @@ fn parts_a_tenth_apart_are_not_merged() {
             );
         }
     }
-    let fit = fit_of(&project, &female, &project, &male, 0.05);
+    let fit = fit_of(&project, &male, 0.05);
     assert!(
         fit.is_flush(),
         "the plug stands {:.3} mm proud at {:?}",

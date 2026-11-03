@@ -93,6 +93,10 @@ npx tsx inlay-fixture.ts --purecutcnc ../../../purecutcnc
 ```
 
 The output is byte-identical run to run; `node inlay-fixture.ts` runs it
-too, on Node 23.6 or newer. After changing it, rebuild
-`tests/fixtures/dc-female.dcv` and `dc-male.dcv`: the quick start test
-(`quick_start::inlay_pair_chapter_runs`) says how when they differ.
+too, on Node 23.6 or newer. It writes only the drawing; the project
+built from it is the quick start's. After changing it, rebuild
+`tests/fixtures/dc.dcv`, the one project that cuts both boards (#498):
+the quick start test (`quick_start::inlay_pair_chapter_runs`) says how
+when it differs. The two-file pair of format 24 it replaced is a
+migration fixture in `crates/dreamcarve/tests/fixtures/inlay-migration/`
+and is not rebuilt.

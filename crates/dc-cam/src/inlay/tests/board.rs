@@ -60,7 +60,7 @@ fn small_bits_project() -> Project {
 /// The near star's Inlay for the small bits, side `side`: `depth_mm` 2,
 /// `glue_gap_mm` 0.5, `plug_depth_mm` 0.6, margin 8, the end mill's
 /// clearing pass, the V-bit's floor at step-over 0.2.
-fn small_inlay(side: InlaySide) -> InlayOp {
+fn small_inlay(side: Board) -> InlayOp {
     InlayOp {
         depth_mm: Some(2.0),
         glue_gap_mm: Some(0.5),
@@ -76,7 +76,7 @@ fn small_inlay(side: InlaySide) -> InlayOp {
 fn small_cut_out_male() -> InlayOp {
     InlayOp {
         cut_out: cut_out_male().cut_out,
-        ..small_inlay(InlaySide::Male)
+        ..small_inlay(Board::Male)
     }
 }
 
@@ -132,7 +132,7 @@ fn clipped_warnings(warnings: &[Warning]) -> Vec<(Vec<StockEdge>, bool, f64)> {
 #[test]
 fn band_is_clipped_to_the_stock() {
     let project = small_bits_project();
-    let op = small_inlay(InlaySide::Male);
+    let op = small_inlay(Board::Male);
     let (runs, warnings) = inlay_runs(&project, &op);
     let tolerance_mm = project.flatten_tolerance_mm;
     for run in &runs {
@@ -173,7 +173,7 @@ fn v_wall_band_is_clipped_inside_the_board() {
     let project = small_bits_project();
     let op = InlayOp {
         clearing: Vec::new(),
-        ..small_inlay(InlaySide::Male)
+        ..small_inlay(Board::Male)
     };
     let (runs, warnings) = inlay_runs(&project, &op);
     let off = off_stock(main_run(&runs), &project, SMALL_V_BIT_MM / 2.0, EPS_MM);
@@ -203,7 +203,7 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
     let band =
         male_band(&with_op(&project, Operation::Inlay(op.clone())), &op).expect("a male band");
     assert!(band.is_open());
-    let side = side(&project, &op, &mut Vec::new()).expect("the side resolves");
+    let side = side(&project, &op, board_of(&op), &mut Vec::new()).expect("the side resolves");
     let paths = cut_out_paths(
         &side.design,
         &band,
@@ -269,13 +269,7 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
 #[test]
 fn clipped_male_still_seats() {
     let project = small_bits_project();
-    let fit = fit_of(
-        &project,
-        &small_inlay(InlaySide::Female),
-        &project,
-        &small_cut_out_male(),
-        0.1,
-    );
+    let fit = fit_of(&project, &small_cut_out_male(), 0.1);
     println!(
         "the plug stands {:.3} mm proud at {:?}; the male's share {:.3} mm at {:?}",
         fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
@@ -302,7 +296,7 @@ fn design_too_near_the_edge_is_explained() {
     let project = near_project();
     let op = InlayOp {
         clearing: vec![clearing_pass()],
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     };
     let needed_mm = PLUG_DEPTH_MM * slope() + 6.35 / 2.0;
     let err = try_inlay(&project, &op).expect_err("too near the edge");
@@ -347,7 +341,7 @@ fn design_too_near_the_edge_is_explained() {
 /// rounded, cut-out) and the star's (open and V wall, with a cut-out).
 #[test]
 fn unclipped_band_is_unchanged() {
-    let (dc, dc_op) = fixture(include_str!("../../../../../tests/fixtures/dc-male.dcv"));
+    let (dc, dc_op) = fixture(include_str!("../../../../../tests/fixtures/dc.dcv"));
     let star = star_project(THICKNESS_MM);
     let open = InlayOp {
         clearing: vec![clearing_pass()],
@@ -360,7 +354,7 @@ fn unclipped_band_is_unchanged() {
     ];
     for (name, project, op) in cases {
         let p = with_op(&project, Operation::Inlay(op.clone()));
-        let side = side(&p, &op, &mut Vec::new()).expect("the side resolves");
+        let side = side(&p, &op, board_of(&op), &mut Vec::new()).expect("the side resolves");
         assert_eq!(side.clipped, None, "{name}");
         let band = male_band(&p, &op).expect("a male band");
         let tolerance_mm = p.flatten_tolerance_mm;

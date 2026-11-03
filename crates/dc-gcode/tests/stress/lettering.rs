@@ -4,7 +4,7 @@
 //! Lettering designs (#464), deterministic from a seed: two to five
 //! letters of the repo's bundled Droid Serif Bold glyphs ("DreamCarve"
 //! of `tests/fixtures/sign.dcv`, 14 mm caps, and the "DC" of
-//! `tests/fixtures/dc-female.dcv`, 40 mm caps; the font notice is
+//! `tests/fixtures/dc.dcv`, 40 mm caps; the font notice is
 //! `tests/fixtures/README.md`'s), 3 to 25 mm tall, each turned up to 15°
 //! and lifted or dropped a little, spaced from 40 % of the cap height
 //! apart to 40 % overlapped, sometimes in a second row over the first.
@@ -31,10 +31,7 @@ fn glyphs() -> &'static [Glyph] {
         let mut out = Vec::new();
         for (text, cap_mm) in [
             (include_str!("../../../../tests/fixtures/sign.dcv"), 14.0),
-            (
-                include_str!("../../../../tests/fixtures/dc-female.dcv"),
-                40.0,
-            ),
+            (include_str!("../../../../tests/fixtures/dc.dcv"), 40.0),
         ] {
             let project = dc_project::load(text.as_bytes())
                 .expect("the fixture loads")

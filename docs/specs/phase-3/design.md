@@ -12,11 +12,11 @@ axis they rest on is a new `dc-geometry` module ported from PureCutCNC's
 come in through `dc-import` and live in the project as **bitmaps**, a new
 list beside the instances. `dc-gcode` gains the cone test (S17), the
 countersink rule (S18) and the groove rule (S19). The CLI gains `init` on
-a picture and an `image` command. The format moves through versions 20 to 25, one per sub-phase and two for the Inlay's cut-out and band rounding ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
+a picture and an `image` command. The format moves through versions 20 to 26, one per sub-phase and three more for the Inlay's cut-out, band rounding and one-file form ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
 
 ```
 SVG / DXF ──dc-import──▶ FeatureDefinitions ─┐
-PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v25, dc-project)
+PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v26, dc-project)
 user edits .dcv ─────────────────────────────┘        │
                                                       ▼
    dc-cam::{profile, pocket, drill (+ countersink), engrave,
@@ -34,7 +34,7 @@ The medial axis is the one piece of this phase whose port needs no Y-up
 re-derivation: a Voronoi skeleton is the same under reflection. What does
 change hands is stated where it happens: the offset strategy's ring
 direction (as Pocket's), a picture's row order (its top row is at the
-highest Y), and the male Inlay's mirror (about X, in place).
+highest Y), and the male Inlay's mirror (about X, in place, on its male board).
 
 Three things in this phase are **not** ports:
 
@@ -68,17 +68,22 @@ carry the DreamCarve header.
 
 ## Data model
 
-### dc-project (format versions 20 to 25)
+### dc-project (format versions 20 to 26)
 
 One version per sub-phase ("Sub-phases"): 20 adds the V-Carve kind with
 its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23 the
 male Inlay's cut-out (added in 3.3 on 2026-10-30, #443), 24 the male
-Inlay's outline rounding (added in 3.3 on 2026-10-31, #448), 25 `bitmaps`
-and the Photo V-Carve kind (24 until #448). Every step is additive; a file from an earlier
-version exports the same bytes.
+Inlay's outline rounding (added in 3.3 on 2026-10-31, #448), 25 the
+one-file Inlay, whose `side` gives way to a `male_board` (added in 3.3
+on 2026-11-02, #498), 26 `bitmaps` and the Photo V-Carve kind (24 until
+#448, 25 until #498). Every step but 25 is additive, and a file from an
+earlier version exports the same bytes. Step 25 replaces a field: a
+female file exports the same programs, and a male file the same male
+programs, both under the board's program names, but a male file now
+also cuts the female ("Migrations").
 
 ```rust
-pub const CURRENT_VERSION: u32 = 25;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443) and 24 (rounding, #448) in 3.3, 25 in 3.4
+pub const CURRENT_VERSION: u32 = 26;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443), 24 (rounding, #448) and 25 (one-file Inlay, #498) in 3.3, 26 in 3.4
                                        // (phase 2 ended at 19: tool vendor, Drill hole width, Bore, stock to leave)
 
 pub struct Project {
@@ -127,7 +132,8 @@ pub enum Operation {
     Profile(ProfileOp), Pocket(PocketOp), Drill(DrillOp), Engrave(EngraveOp),
     /// Medial-line V-carving of closed shapes (functional 38–43).
     VCarve(VCarveOp),
-    /// One side of a V-bit inlay (functional 45).
+    /// A V-bit inlay, both its boards (functional 45; one operation for
+    /// both since format 25, #498).
     Inlay(InlayOp),
     /// A picture as parallel V-bit grooves (functional 47).
     PhotoVCarve(PhotoVCarveOp),
@@ -182,33 +188,74 @@ pub struct InlayOp {
     pub id: OperationId, pub name: String, pub enabled: bool,
     pub targets: Vec<InstanceId>,
     pub tool: ToolId,
-    pub side: InlaySide,                  // "female" | "male"
+    /// The board the male is cut from (format 25, #498; in `side`'s
+    /// place). The project's stock is the female board.
+    pub male_board: MaleBoard,
     pub depth_mm: Option<f64>,            // Corbin `inlay_depth`; None until set
     pub glue_gap_mm: Option<f64>,         // Corbin `inlay_fit_adjustment`
     pub plug_depth_mm: Option<f64>,       // Corbin `plug_depth`
-    pub margin_mm: Option<f64>,           // Corbin plug stock offset; male only
-    /// Male only (format 24, #448): the radius the band's outer edge is
+    pub margin_mm: Option<f64>,           // Corbin plug stock offset; the male's, required once it is cut
+    /// The male's (format 24, #448): the radius the band's outer edge is
     /// closed by ("Algorithms → Inlay", step 4); `None` by default and on
     /// migration, rounding by the edge pass's radius alone when the edge
     /// is open. Above 0 when set (`inlay_outline_rounding`).
     pub outline_rounding_mm: Option<f64>,
-    pub clearing: Vec<ClearingPass>,      // functional 40; either side
+    pub clearing: Vec<ClearingPass>,      // functional 40; on both boards
     pub step_over_fraction: Option<f64>,  // V-bit floor, as VCarveOp
     pub machining_order: MachiningOrder,
     pub through_cut_allowance_mm: f64,
     pub safe_z_mm: f64,
-    /// Male only (format 23, #443; Corbin's "Plug Cutout"): an end-mill
-    /// pass that frees the plug, run last. `None` by default and on
-    /// migration: the plug is sawn free.
+    /// The male's (format 23, #443; Corbin's "Plug Cutout"): an end-mill
+    /// pass that frees the plug, run last on the male board. `None` by
+    /// default and on migration: the plug is sawn free. The female
+    /// ignores it.
     pub cut_out: Option<InlayCutOut>,
 }
-pub enum InlaySide { Female, Male }
+impl InlayOp {
+    /// The flank's engagement below `board`'s top: `D` on the female,
+    /// `D − G + P` on the male; `None` until the values are set.
+    pub fn engagement_mm(&self, board: Board) -> Option<f64>;
+    /// Whether the male is cut: its board's thickness is set (#498).
+    pub const fn cuts_male(&self) -> bool;
+}
 
-/// A male Inlay's cut-out (#443; "Algorithms → Inlay", step 6).
+/// The board an Inlay's male is cut from (format 25, #498; "Algorithms →
+/// Inlay", "Boards"). Saved right after `tool` as `"male_board": {
+/// "width_mm": null, "height_mm": null, "thickness_mm": null }`.
+pub struct MaleBoard {
+    pub width_mm: Option<f64>,            // None: the stock's
+    pub height_mm: Option<f64>,           // None: the stock's
+    pub thickness_mm: Option<f64>,        // the male board's own; None: the male is not cut
+}
+impl MaleBoard {
+    /// The male board as a `Stock`: its width and height, or the
+    /// stock's where unset, and its own thickness.
+    pub fn stock(&self, stock: &Stock) -> Stock;
+}
+impl Project {
+    /// The project with its stock replaced by `inlay`'s male board
+    /// (`MaleBoard::stock`), so the origin preset, heights and
+    /// tolerances apply to the male board as to the stock. The male
+    /// board shares the stock's bottom-left corner.
+    pub fn on_male_board(&self, inlay: &InlayOp) -> Project;
+    /// The first enabled Inlay that cuts its male, and its board.
+    pub fn male_board(&self) -> Option<(&InlayOp, Stock)>;
+}
+/// The board a run or program cuts (#498): the stock (`Female`, every
+/// operation's board and an Inlay's female's) or an Inlay's male board.
+/// Not saved; `as_str` is `"female"` or `"male"`.
+pub enum Board { Female, Male }
+// Operation::board_run_tools(board): the tools an operation cuts with on
+// one board (the stock: every operation's runs but an Inlay's cut-out;
+// the male board: an Inlay's clearing passes, V-bit and cut-out, when
+// it cuts its male). Operation::depth_mm() of an Inlay is the female's
+// `depth_mm`, the deepest it cuts below the stock top.
+
+/// An Inlay's cut-out (#443; "Algorithms → Inlay", step 6).
 pub struct InlayCutOut {
     pub tool: ToolId,                     // a flat end mill; its step-down sets the passes
-    pub tabs: Option<TabSpec>,            // the Profile's tab request; heights from the stock bottom
-    pub through_cut_allowance_mm: f64,    // S1 for the cut-out run, which goes through the board
+    pub tabs: Option<TabSpec>,            // the Profile's tab request; heights from the male board's bottom
+    pub through_cut_allowance_mm: f64,    // S1 for the cut-out run, which goes through the male board
 }
 
 pub struct PhotoVCarveOp {
@@ -245,8 +292,9 @@ pub const MAX_BITMAP_SIDE_PX: u32 = 8192;
 ```
 
 Serialization: `VCarveStrategy` has a unit variant, so it is externally
-tagged (`"medial"` or `{ "offset": { … } }`), like `DrillCycle`. `InlaySide`
-and `PhotoStrategy` are plain strings; `ClearingPass` is a struct with
+tagged (`"medial"` or `{ "offset": { … } }`), like `DrillCycle`.
+`PhotoStrategy` is a plain string; `MaleBoard` an object with all three
+fields present, `null` when unset; `ClearingPass` is a struct with
 every field present, as every persisted struct. `Operation` keeps its internal
 `kind` tag: `"v_carve"`, `"inlay"`, `"photo_v_carve"`. `Bitmap::png_base64`
 is the one long string in a `.dcv`; the formatter writes it on one line,
@@ -257,14 +305,33 @@ field: each adds an operation kind (or a cycle variant) that a file from
 before cannot contain, so they bump the version only. `v22_to_v23`
 inserts `"cut_out": null` after `safe_z_mm` in every Inlay (#443),
 `v23_to_v24` inserts `"outline_rounding_mm": null` after `margin_mm` in
-every Inlay (#448), and `v24_to_v25` inserts `"bitmaps": []` after
-`instances`. A file from any earlier version exports the same bytes as
-the same project written at the current version; a male Inlay with a
-fitting clearing pass from version 22 or 23 exports differently from
-the build that wrote it (#448 changed its band edge before any release
-shipped the Inlay). Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24}/sample.dcv`,
-each holding the kinds its version has.
+every Inlay (#448), `v24_to_v25` replaces each Inlay's `side`, in its
+place, with its `male_board` (#498), and `v25_to_v26` inserts
+`"bitmaps": []` after `instances`. A file from any earlier version
+exports the same bytes as the same project written at the current
+version; a male Inlay with a fitting clearing pass from version 22 or 23
+exports differently from the build that wrote it (#448 changed its band
+edge before any release shipped the Inlay).
+
+`v24_to_v25` gives a `"female"` Inlay an all-`null` male board, so the
+file cuts what it did: the female, with `inlay_male_board_unset`. A
+`"male"` Inlay gets the stock's width, height and thickness (thickness
+`null` if the stock's was), and the project keeps its stock, so its male
+programs are byte for byte the ones it wrote, under the male board's
+names; it now also cuts the female on the stock. A side that is neither,
+an Inlay that already has a `male_board`, or a male whose stock has no
+width or height is refused. `dc_project::migrate_with_notes` returns,
+for each such male of a file from version 22 to 24,
+`MigrationNote::MaleInlayGainsFemale { operation, name }`, which
+`Loaded::notes` keeps and `check` and `export` print as ``<file>: note:
+operations[op1] `DC` was the male of a two-file inlay pair (format 24);
+… Run only its male programs (export --board male), or make one project
+for the pair from the design and set its male_board``.
+
+Fixtures
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25}/sample.dcv`,
+each holding the kinds its version has; `v24` is the previous version's
+and `v25` the current one's until sub-phase 3.4 adds `v26`.
 
 **Validation** (`validate.rs`), errors unless marked:
 
@@ -278,7 +345,8 @@ each holding the kinds its version has.
   `tool_out_of_range` for such a tool, so the angle is named once (#413).
 - `operation_value_unset` extended to `flat_depth_mm`'s neighbours that are
   required: Inlay `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, and
-  `margin_mm` on a male; Photo `max_depth_mm`.
+  `margin_mm` once the male is cut (its board's thickness set, #498);
+  Photo `max_depth_mm`.
 - `v_bit_cone_exceeded` (functional 39, 44, 47): a V-Carve or Inlay whose
   flat depth (or, with none, the deepest medial clearance: generator-time
   only, since validation has no geometry; validation checks only the
@@ -324,23 +392,41 @@ each holding the kinds its version has.
   its depth is derived, so the Drill's `depth_mm` is not used, not
   required (`Operation::depth_mm()` is `None` for it) and not checked
   (#425).
-- `inlay_glue_gap_not_below_depth` (`glue_gap_mm >= depth_mm`, either
-  side; at `glue_gap_mm`), `inlay_plug_base_thin` (warning: male with
+- `inlay_glue_gap_not_below_depth` (`glue_gap_mm >= depth_mm`; at
+  `glue_gap_mm`), `inlay_plug_base_thin` (warning: the male board's
   `thickness − (depth − gap + plug) < 6`,
-  `dc_project::INLAY_MIN_PLUG_BASE_MM`; at `plug_depth_mm`),
-  `inlay_margin_positive` (male with `margin_mm <= 0`; at `margin_mm`),
-  `inlay_outline_rounding` (format 24, #448: `outline_rounding_mm` set and
-  not a positive finite number, on either side; at
+  `dc_project::INLAY_MIN_PLUG_BASE_MM`; at `plug_depth_mm`; the male
+  board's thickness since #498, never the stock's),
+  `inlay_margin_positive` (`margin_mm <= 0` with the male cut; at
+  `margin_mm`), `inlay_outline_rounding` (format 24, #448:
+  `outline_rounding_mm` set and not a positive finite number; at
   `outline_rounding_mm`).
-  An Inlay's `v_bit_cone_exceeded` is on `InlayOp::engagement_mm()` (`D`
-  female, `D − G + P` male), located at `depth_mm` for a female and at
-  `plug_depth_mm`, with `from_stock_top`, for a male; it and the plug
-  base are compared only when the values they use passed their own
-  checks. `Operation::depth_mm()` of an Inlay is the same engagement, the
-  deepest it cuts below the stock top (#434).
-- The cut-out (format 23, #443): `inlay_cut_out_needs_male` (a `cut_out`
-  on a female; at `cut_out`), `cutter_not_flat` for its tool (at
-  `cut_out.tool`), `inlay_cut_out_no_room` (the floor ring narrower than
+  An Inlay's `v_bit_cone_exceeded` is on `InlayOp::engagement_mm(board)`
+  for each board it cuts: the female's `D` always, located at
+  `depth_mm`, and once the male is cut the male's `D − G + P`, located
+  at `plug_depth_mm` with `from_stock_top` (the male board's top), so
+  with both boards cut both can be reported; each, and the plug base,
+  is compared only when the values it uses passed their own checks.
+  `Operation::depth_mm()` of an Inlay is the female's `depth_mm`, the
+  deepest it cuts below the stock top (#434; the male's engagement until
+  #498, when the male moved to its own board).
+- The male board (format 25, #498): `inlay_male_board_size` (`width_mm`
+  or `height_mm` set and not above 0; at
+  `operations[i].male_board.width_mm` or `.height_mm`),
+  `inlay_male_board_thickness` (`thickness_mm` set and not above 0; at
+  `operations[i].male_board.thickness_mm`), `out_of_range` for a size
+  above `MAX_COORDINATE_MM` (6 m, as a stock side), and
+  `inlay_male_boards_differ` (a later enabled Inlay that cuts its male
+  names a different male board, as `MaleBoard::stock` resolves it, from
+  the first one's, `Project::male_board`; at `operations[i].male_board`):
+  every male program of a project is cut on one male board. The male's
+  own rules (its margin, its cone, its cut-out, its plug base) apply only
+  once the male is cut; an unset thickness is the generator's warning
+  `inlay_male_board_unset`, not a validation problem.
+- The cut-out (format 23, #443), checked once the male is cut (#498;
+  until then the female ignores it, and `inlay_cut_out_needs_male`,
+  the error for a cut-out on a female side, is gone with `side`):
+  `cutter_not_flat` for its tool (at `cut_out.tool`), `inlay_cut_out_no_room` (the floor ring narrower than
   the tool's diameter `d`: `M + EPS_MM < P·tan(α/2) + d` with an open
   band edge, `M + EPS_MM < 2·P·tan(α/2) + d` with a V wall, #448; at
   `margin_mm`, naming the margin needed,
@@ -369,13 +455,24 @@ each holding the kinds its version has.
 ### dc-cam
 
 ```rust
-/// One tool's toolpath of an operation. Every operation produces one
-/// run except a carve with clearing passes, which produces one per pass
-/// (that pass's tool, `Clearing(tool)`) and then its own (`Main`).
-pub struct ToolRun { pub label: RunLabel, pub tool: ToolId, pub toolpath: Toolpath }
-pub enum RunLabel { Main, Clearing(ToolId), CutOut(ToolId) }   // CutOut: a male Inlay's cut-out, its last run (#443)
+/// One tool's toolpath of an operation, in its board's project space.
+/// Every operation produces one run except a carve with clearing passes,
+/// which produces one per pass (that pass's tool, `Clearing(tool)`) and
+/// then its own (`Main`), and an Inlay, which does that on each board it
+/// cuts.
+pub struct ToolRun { pub label: RunLabel, pub tool: ToolId, pub toolpath: Toolpath, pub board: Board }
+pub enum RunLabel { Main, Clearing(ToolId), CutOut(ToolId) }   // CutOut: an Inlay's cut-out, its male's last run (#443)
 pub fn generate_vcarve(project: &Project, op: &VCarveOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
+/// Both boards (#498): the female's runs on the stock, then the male's on
+/// `project.on_male_board(op)`, each tagged with its `Board`. The male's
+/// `inlay_parts_merged` and `inlay_hole_filled` are dropped (the female's
+/// name the same parts where they are drawn), and so is any warning the
+/// female already gave.
 pub fn generate_inlay(project: &Project, op: &InlayOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
+/// One board: the female (clearing passes, then the V-bit) or the male
+/// (clearing passes, the V-bit, the cut-out). The male with its board's
+/// thickness unset has no runs and warns `inlay_male_board_unset`.
+pub fn generate_inlay_board(project: &Project, op: &InlayOp, board: Board) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
 pub fn generate_photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 // generate_drill gains the countersink path; the phase 2 generators are unchanged.
 
@@ -405,7 +502,7 @@ pub struct SequenceInput<'a> {
 
 pub mod vcarve {
     /// What a V-bit carve is, independent of which operation asked for
-    /// it: V-Carve builds one from its targets, Inlay one per side.
+    /// it: V-Carve builds one from its targets, Inlay one per board.
     pub struct Carve<'a> {
         pub regions: Vec<Region>,          // carved area, even-odd nested, project space
         pub shapes: Vec<ShapeRef>,         // each region's outer shape, for its blocks and errors (#404)
@@ -432,6 +529,8 @@ pub mod inlay {
     /// The male's mirror: X reflected about the targets' joint bounding
     /// box centre line, in project space.
     pub fn male_mirror(project: &Project, targets: &[InstanceId]) -> Result<Transform, CamError>;
+    /// The V-bit floor's ridge height on `board`, for `check`'s summary.
+    pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp, board: Board) -> Option<f64>;
 }
 ```
 
@@ -503,8 +602,11 @@ axis_x_mm)`, `InlayPlugBaseThin (op, base_mm)` (generator-time too, from
 the measured thickness), `InlayBandEdgeVWall (op, margin_needed_mm)`
 (#448: a male with clearing passes none of which can cut its band's edge;
 the least margin, `max(P·s + d_min, (D − G + 2P)·s)`, that would let one),
+`InlayMaleBoardUnset (op)` (#498: the male board has no thickness, so
+only the female is cut; `Warning::field()` locates it at
+`operations[i].male_board.thickness_mm`),
 `InlayBandClipped (op, edges: Vec<StockEdge>, open, narrowest_mm)` (#495:
-a male band that runs past the stock, clipped to it; the edges, whether the
+a male band that runs past the male board, clipped to it; the edges, whether the
 edge is open, and the band left at its narrowest), `InlayPartsMerged (op,
 first, second, x_mm, y_mm, gap_mm, merge_mm)` (#479: two parts of an
 Inlay's design closer than the merge distance, cut as one shape; the point
@@ -522,8 +624,8 @@ depth; #425),
 instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason: ClearingProblem }` (the validation reasons, re-checked: `NoFlatDepth`, `NotEndMill { cutter }`, `UnknownTool`), `CountersinkMouthExceedsTool
 { op, mouth_mm, tool_mm }`, `InlayGlueGap { op, glue_gap_mm, depth_mm }`,
 `InlayMargin { op, margin_mm }`, `InlayTooNearEdge { op, edge, distance_mm,
-needed_mm, stock_mm }` (#495: a male's design too near a stock edge that
-clips its band; "Algorithms → Inlay", step 4), `PhotoBitmapUnknown { op, bitmap }`,
+needed_mm, stock_mm }` (#495: a male's design too near an edge of the
+male board that clips its band; "Algorithms → Inlay", step 4), `PhotoBitmapUnknown { op, bitmap }`,
 `PhotoSetting { op, field, value }`, `BitmapDecode { bitmap, reason }`,
 `StartDepthUncleared { op, start_depth_mm }` (the generator's form of the
 validation error, re-checked as every generator re-checks validation),
@@ -557,6 +659,14 @@ pub enum ExportError {
     /// depth, or a between-groove move written as a rapid.
     GrooveOffPicture { op: OperationId, line: usize, x_mm: f64, y_mm: f64 },
     GrooveLinkRapid { op: OperationId, line: usize },
+    // #498, the male board:
+    /// A male-board run of an operation that is no Inlay, or of an Inlay
+    /// whose male board has no thickness.
+    NotOnMaleBoard { op: OperationId },
+    /// Two Inlays' male runs on different male boards.
+    MaleBoardsDiffer { op: OperationId, first: OperationId },
+    /// `emit` asked for one program across the stock and a male board.
+    BoardsMixed { op: OperationId },
 }
 ```
 
@@ -564,7 +674,21 @@ pub enum ExportError {
 gains `label: RunLabel`, so a clearing run is an `EmitOp` whose `tool`
 is the pass's end mill and whose program comment and summary read
 `op2 (clearing t1)`; `emit_programs` already groups consecutive
-`EmitOp`s by tool into programs, so nothing else in the emitter changes.
+`EmitOp`s by tool into programs, so nothing else in the emitter changes
+for it.
+
+`EmitOp` and `Program` gain `board: Board` (#498). `emit_programs`
+emits the stock's programs first, then the male board's, each board
+split by tool runs as before (or one `M6` program per board): every
+male run of every Inlay is on the one male board, in operation order,
+and female runs keep their place in the operation list. A male board's
+programs are emitted and safety-checked against
+`project.on_male_board(inlay)`, so its origin, heights, extents and
+checks are that board's ("Safety pass"). The emitter does not trust its
+caller: a male-board run of a non-Inlay or of an Inlay whose male board
+is unmeasured is `NotOnMaleBoard`, two Inlays on different male boards
+`MaleBoardsDiffer`, and `emit` of one program across two boards
+`BoardsMixed`. `Material::of_run` takes the run's board.
 `holes` stays `None` for a countersink Drill, which is what keeps the
 emitter on the plain-moves path (S18; upstream does the same by recording
 no cycle).
@@ -600,6 +724,7 @@ allocate past it), `ImageFormatMismatch { extension, found }`.
 dreamcarve init <svg|dxf|png|jpg|jpeg> [-o] [--post] [--units] [--width <mm> | --height <mm>] ...
 dreamcarve image add <dcv> <png|jpg|jpeg> (--width <mm> | --height <mm>) [--at <x>,<y>] [--name <name>]
 dreamcarve image list <dcv>
+dreamcarve export <dcv> ... [--board female|male]
 ```
 
 `init` on a picture requires exactly one of `--width`/`--height` (exit 2
@@ -626,8 +751,41 @@ operations naming it, `-` for none).
 `check` and `export` print, for a V-Carve or Inlay, the deepest cut and
 whether a flat floor exists and who clears it; for a Photo V-Carve, the
 picture's footprint, the groove count and the full-depth groove width;
-and once per male Inlay the `inlay_male_mirrored` note with the mirror
-line's X. `--preview` draws each bitmap as an `<image>` element under the
+and once per Inlay that cuts its male the `inlay_male_mirrored` note
+with the mirror line's X.
+
+**Boards** (#498). A project with an enabled Inlay names every program
+after its board, `<stem>-female-<k>-T<n>.<ext>` and
+`<stem>-male-<k>-T<n>.<ext>`, `k` counting from 1 within each board,
+always (one program per board, and in `M6` one-program mode, too); a
+project with no Inlay names its programs as before. `export` prints the
+programs grouped under `Female board, the stock, 110.000 mm × 80.000 mm
+× 12.000 mm:` and `Male board, 110.000 mm × 80.000 mm × 12.000 mm:`,
+the first program of each board saying "set work zero (X, Y and Z)";
+the extents grouped per board with `Estimated female board time:` and
+`Estimated male board time:` when that board has two programs or more,
+then the overall total. `check` groups its `Program dc-female-1-T2.nc
+(T2):` blocks under the same headings. The Inlay summary is one line per
+board, ``Inlay op1 `DC` (female board): deepest cut 4.000 mm below the
+stock top, a flat floor at depth_mm 4.000 mm; …`` and ``Inlay op1 `DC`
+(male board): deepest cut 5.000 mm below the male board's top, the
+plug's start plane 3.000 mm below the male board's top and …``; an
+operation line of a male run ends in " on the male board", and a
+male-board warning reads ``operation `op1` (male board): …``.
+`export --board female|male` writes one board's programs only and is
+not saved in the project (re-cutting the male after a glue-gap change);
+`--board male` on a project with nothing on the male board fails with
+"nothing is cut on the male board: no enabled Inlay cuts its male (set
+its male_board.thickness_mm)". A migration note (`Loaded::notes`) is
+printed by `check` and `export` as `<file>: note: …`.
+
+`--preview` draws the male board, when one is cut, beside the stock:
+to its right with a 10 mm gap, bottom edges level, with its own dashed
+outline (class `male-board`), each board's origin mark (class `origin`,
+at the XY work zero the origin preset gives on that board), the Inlays'
+mirrored shapes (class `male-shape`) and the male runs on it (group
+class `operation male`); their legend entries end in " (male board)".
+Without a male board the preview is unchanged. `--preview` draws each bitmap as an `<image>` element under the
 toolpaths, at its footprint with `preserveAspectRatio="none"` and the
 preview's Y flip, so the grooves can be checked against the picture. The
 data URI is re-encoded from the decoded PNG bytes, not pasted from the
@@ -1410,8 +1568,56 @@ start_depth_mm: s }`:
 
 ### Inlay (dc-cam::inlay)
 
-Both sides are a `vcarve::Carve` plus checks; the generator is
+Both boards are a `vcarve::Carve` plus checks; the generator is
 `vcarve::blocks` and `sequence`.
+
+**Boards** (#498; maintainer decision 2026-11-02, from the phase 4 UI
+review, #460). One Inlay cuts both boards of the pair from one set of
+values, so they cannot drift apart: until format 25 an `InlayOp` cut one
+`side`, and a pair was two project files kept in step by hand.
+
+- The **female** is cut on the project's stock, which stays the female
+  board, so it can carry other operations (a Pocket, an outline
+  Profile). Its runs are `Board::Female`.
+- The **male** is cut on the Inlay's `male_board`, generated on
+  `project.on_male_board(op)`: the project with its stock replaced by
+  `MaleBoard::stock`, the board's width and height (the stock's where
+  `null`) and its own thickness. The male board shares the stock's
+  bottom-left corner, so the design is mirrored in place on it about the
+  same line as before, and the origin preset applies to it as to the
+  stock (bottom-left of that board, centre of that board, Z at that
+  board's top or bottom). A male board the size of the stock gives, byte
+  for byte, the programs a male project gave on that stock. Its runs
+  are `Board::Male`: clearing passes, the V-bit, the cut-out, in that
+  order.
+- Every rule that reads the stock for the male reads the male board: in
+  steps 1 and 4 to 6 "the stock", "the stock top" and `thickness` are the
+  male board's. So the cone's engagement `D − G + P` is from the male
+  board's top; the band is clipped to `MaleBand::board` of the male
+  board, and `InlayTooNearEdge` names the male board's edges and length;
+  the cut-out goes through the male board, its tabs counted from its
+  bottom; and `InlayPlugBaseThin` reads the male board's thickness. The
+  safety pass holds male programs to the male board in the same way (S1,
+  S7, S17's stock-top plane, the cut-out's floor ring; "Safety pass").
+- While `male_board.thickness_mm` is `null` the male is not cut: it has
+  no runs, its own rules (its margin, cone, cut-out and plug base) wait,
+  and the generator warns `inlay_male_board_unset`, located at
+  `operations[i].male_board.thickness_mm`. The female still exports.
+- `generate_inlay` returns the female's runs, then the male's; the
+  male's `inlay_parts_merged` and `inlay_hole_filled` are left out (the
+  female's already name the same parts, where they are drawn), and so is
+  any warning the female already gave.
+- Every male of a project is cut on one male board
+  (`Project::male_board`, the first enabled Inlay that cuts its male):
+  validation refuses a later Inlay whose board differs
+  (`inlay_male_boards_differ`), and the emitter does too
+  (`MaleBoardsDiffer`). Two Inlays' males are cut on that board in
+  operation order.
+- The order check (`cut_inside_freed_part` and the others) reads the
+  stock only: an Inlay's female as drawn. `tool_change_avoidable` is
+  worked out per board: on the stock every operation's runs but Inlay
+  cut-outs, on the male board each Inlay's clearing passes, V-bit and
+  cut-out.
 
 1. **Values.** `depth_mm` D, `glue_gap_mm` G, `plug_depth_mm` P required
    (`MissingDepth`-style errors naming the field); `0 <= G < D` else
@@ -1419,8 +1625,8 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    `outline_rounding_mm` R, when set, `> 0` else `InlayValueRange`
    naming it (#448). Tool
    checks as V-Carve. The cone check is on the flank's **engagement from
-   the stock top**: `D` for the female, and `(D − G) + P` for the male,
-   whose stock above the start plane is the plug and is never cleared
+   the board's top**: `D` for the female, and `(D − G) + P` for the male,
+   whose board above the start plane is the plug and is never cleared
    (security review H4: the draft checked `P` alone; with the bench's
    90°, 6.35 mm bit, cone 3.175 mm, Corbin's `D 2.5, G 0.25, P 1.5`
    engages 3.75 mm and would have run the shank into the plug wall).
@@ -1432,7 +1638,7 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    come closer than the merge distance `d` across a gap outside the
    design (two outers side by side, or a hole and an island directly in
    it; not two holes, nor a hole and its own outer, which have the
-   design's material between them) are one shape on both sides. A V-bit
+   design's material between them) are one shape on both boards. A V-bit
    cannot carve such a gap: the female left a wall standing to the stock
    top between the two pockets, the male cut no groove between the two
    parts of its plug, and the plug stood up to `D − G` proud on the
@@ -1508,7 +1714,7 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    (`inlay::hairline_hole_is_filled_and_seats`). Each hole warns
    `inlay_hole_filled` with its mean width (twice its area over its
    perimeter) and the middle of its box as drawn.
-3. **Female.** `Carve { regions: design, start_plane: thickness,
+3. **Female.** `Carve { regions: design, start_plane: stock thickness,
    flat_depth: Some(D), strategy: Medial, cleared_by: the
    operation's clearing passes }`. Identical to a V-Carve with `flat_depth_mm: D`,
    `start_depth_mm: 0`, which acceptance 56 checks move for move.
@@ -1590,8 +1796,8 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      Where `B` runs past the stock rectangle it is clipped to the board,
      `B ∩ board` (`dc_geometry::band_on_board`, an intersection, flattened
      within the tolerance as `B` is), and the surround is the clipped band
-     less the design. The board is `MaleBand::board`: the stock's `[0, W]
-     × [0, H]` with an open edge, so the edge pass clears the floor to the
+     less the design. The board is `MaleBand::board`: the male board's
+     `[0, W] × [0, H]` (the stock's before #498) with an open edge, so the edge pass clears the floor to the
      board's edge, its end mill's edge on it and never past it (S7 allows
      a cut exactly along an edge); and that rectangle inset by the V-bit's
      radius `R_v` with a V wall, since the V-bit runs down the wall to its
@@ -1634,13 +1840,14 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      medial axis, "Corner reach"). Found by the maintainer's bench check
      (#438): a serif "M" whose stem and diagonal meet in a 23° notch
      lost the notch's whole branch to spur pruning, and the plug stood
-     3 mm proud. `inlay::plug_seats_flush` simulates both sides' programs
+     3 mm proud. `inlay::plug_seats_flush` simulates both boards' programs
      as heightfields and seats the plug: the male's share of the seat
      must be within 0.05 mm, and since #457 so must the whole seat (the
      female's Douglas-Peucker chords, a quarter step off the axis,
      stopped up to 0.11 mm short of a wall on the "DC" letters, which
      held the plug 0.185 mm up; it now seats 0.011 mm up).
-   - `InlayPlugBaseThin` when `thickness − (D − G + P) < 6`.
+   - `InlayPlugBaseThin` when the male board's `thickness − (D − G + P)
+     < 6`.
 5. **Fit property** (acceptance 57; `inlay::female_and_male_walls_mate`):
    for sample points `q` on a design outline and heights `h` in `[0, D −
    G]`: the female's uncut cross-section at depth `h` is the design inset
@@ -1649,7 +1856,7 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    from the two toolpaths' cone discs. The test builds both toolpaths,
    mirrors the male's back, and checks that the carved discs of each
    toolpath touch (within 0.02 mm) the same outline at the same inset.
-6. **Cut-out** (male only, format 23, #443; Corbin's optional "Plug
+6. **Cut-out** (the male's, on its board, format 23, #443; Corbin's optional "Plug
    Cutout"; moved by #448 and #461). With `s = tan(α/2)`, `P`, `M`, `X`
    the mirrored design, `B` the band's edge (step 4, closed by `R'`) and
    `r` the cut-out end mill's radius, the band's flat floor ring runs
@@ -1680,7 +1887,7 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    allowance, depth `thickness + allowance`), with its passes starting at
    the floor, `D − G + P` below the stock top
    (`profile::generate_profile_below`): no pass cuts the air the carve
-   removed. Tab heights count from the stock bottom. The run is
+   removed. Tab heights count from the male board's bottom. The run is
    `RunLabel::CutOut(tool)`, the operation's last, after the V-bit's, so
    the piece is freed only once carved (`op1 (cut-out t2)`; with the
    clearing end mill the tool is fitted twice, and
@@ -1804,6 +2011,18 @@ port.
 `material.rs` re-derives each operation's material from the project, as
 it does for Pocket and Profile, and never from the toolpath.
 
+**Per board** (#498). Each program is checked against the board it cuts
+(`Program::board`, `Material::of_run(…, board)`). A male board's programs
+are checked against `project.on_male_board(inlay)`, so every check that
+reads the stock reads the male board: S1 holds them to the male board's
+bottom (the cut-out's own through-cut allowance below it), S7 to its
+rectangle, S17's stock-top plane is its top, the cut-out's floor ring is
+derived on it, S9 places the cut-out's tabs from its bottom, and the
+origin preset and safe heights are its own. The stock's programs are
+checked as before; an Inlay's female is held to its design as drawn. A
+male program is never checked against the stock, nor a female one
+against the male board.
+
 - **S17, cone.** For a V-Carve, an Inlay side or a Photo V-Carve: `α`
   from the tool, `start_plane` from the operation, the regions from the
   project (targets nested; an Inlay's near parts merged by
@@ -1812,7 +2031,7 @@ it does for Pocket and Profile, and never from the toolpath.
   `dc_geometry::surround` on the targets mirrored by
   `Transform::mirror_x_about` the targets' bounding-box centre, closed by
   `R'` from `dc_project::male_band`, and clipped to `MaleBand::board` of
-  the project's stock where it runs past it, #495, all pure geometry,
+  the male board where it runs past it, #495, #498, all pure geometry,
   never a generator; a Photo's footprint rectangle), and
   `engaged_from` as the generator derives it: the stock top, or the
   start plane when `dc_project::cleared_start_plane` finds an enabled Pocket,
@@ -1856,10 +2075,11 @@ it does for Pocket and Profile, and never from the toolpath.
     (a groove's width may cross the picture's edge; S7 bounds it).
   - **Shank** (security review H4): `engaged_from − z <= cone + tol`
     for every cut, else `ConeHeightExceeded` (a tip below the cone height
-    is this too); for a male Inlay `engaged_from` is always the stock top.
+    is this too); for a male Inlay `engaged_from` is always the male
+    board's top.
   - **Open band edge** (#448): for a male Inlay whose edge is open, the
-    board beyond `B` stands to the stock top, so the same tests hold
-    against `B` with the stock top as the plane: a V-bit move whose disc
+    board beyond `B` stands to the male board's top, so the same tests
+    hold against `B` with that top as the plane: a V-bit move whose disc
     at the stock top, `(top − z)·s`, crosses `B` fails as
     `ConeOffMaterial`.
   A failure is `ConeOffMaterial` with the overlap and the worst point in
@@ -2036,15 +2256,16 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole), merge.rs (merge_near_parts, MergedParts, NearParts; #479), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, InlaySide, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v24_to_v25), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, MaleBoard, Board, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v25_to_v26, MigrationNote, migrate_with_notes), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479; Project::on_male_board, Project::male_board; #498), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
-crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries), preview.rs (+ <image>)}
+crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), preview.rs (+ <image>, the male board)}
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, dc-inlay.svg, dc-female.dcv, dc-male.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
-crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22}/sample.dcv
+tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
+crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26}/sample.dcv
+crates/dreamcarve/tests/{fixtures,expected}/inlay-migration/ (the two-file pairs of formats 23 and 24 and their programs, #498)
 ```
 
 New dependencies, all `[workspace.dependencies]` with
@@ -2129,11 +2350,12 @@ for V operations.
 - `inlay::female_equals_a_flat_depth_v_carve` (acceptance 56, move for move).
 - `inlay::male_engagement_beyond_the_cone_is_an_error` (H4: `D 2.5, G 0.25, P 1.5`, 90° 6.35 mm bit → `VBitConeExceeded` naming 3.75 mm and 3.175 mm; the star's values pass), `inlay::male_shank_check_in_the_safety_pass_counts_from_the_stock_top` (H4, `safety::`).
 - `inlay::male_mirrors_about_the_targets_centre_line` (acceptance 57: the mirrored outlines; the note's X), `inlay::male_carves_the_surround_and_the_holes` (every cutting point in the band or the circle), `inlay::male_floor_is_at_depth_minus_gap_plus_plug` (nothing below −5), `inlay::male_flank_passes_through_the_outline_at_the_start_plane` (within 0.02), `inlay::female_and_male_walls_mate` (the fit property, `z` 0..3, within 0.02), `inlay::glue_gap_at_or_above_depth_is_an_error`, `inlay::thin_plug_base_warns_on_10_mm_stock_and_not_on_12`, `inlay::clearing_pass_clears_the_male_floor`, `inlay::surround_of_a_star_with_a_hole_has_the_hole_as_a_region`, `inlay::mirror_negates_bulges_and_keeps_areas` (arcs survive the mirror).
-- The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_refuses_a_female_and_a_narrow_floor`; `validate::cut_out_on_a_female_is_an_error`, `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`.
+- The cut-out (#443): `inlay::cut_out_runs_last_with_its_own_tool`, `inlay::cut_out_stays_inside_the_floor_ring` (the footprint at least `r` from both edges), `inlay::cut_out_starts_at_the_floor_and_goes_through` (no lap above the floor; the last at −allowance), `inlay::cut_out_skips_design_holes`, `inlay::cut_out_leaves_the_tabs`, `inlay::cut_out_ignored_by_the_female_and_refused_on_a_narrow_floor` (#498: the female ignores the cut-out); `validate::cut_out_no_longer_needs_a_side` (#498; was `validate::cut_out_on_a_female_is_an_error`), `validate::cut_out_needs_a_flat_end_mill`, `validate::cut_out_with_no_room_in_the_floor_ring_is_an_error` (the star, `margin_mm: 4`, 3.175 mm), `validate::cut_out_tool_needs_its_rates`; `migrate::v22_to_v23_adds_a_null_cut_out`, `migrate::version_22_fixture_loads`, `serialize::inlay_cut_out_round_trips`.
 - The open, rounded band (#448): `carve::rounding_zero_is_the_plain_surround`, `carve::rounded_band_contains_the_plain_band`, `carve::rounding_fills_a_gap_narrower_than_twice_the_radius`, `carve::rounding_keeps_design_holes_as_regions`, `carve::open_floor_keeps_the_band_edge`, `carve::inset_outers_rounds_across_a_gap` (dc-geometry); `migrate::v23_to_v24_adds_null_outline_rounding`, `migrate::version_23_fixture_loads`, `serialize::inlay_outline_rounding_round_trips`, `validate::outline_rounding_must_be_positive`, `validate::cut_out_room_follows_the_open_edge`, `inlay::edge_pass_is_the_first_clearing_pass_that_fits`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (dc-project); `inlay::male_with_clearing_has_no_v_wall_at_the_band_edge` (no V-bit point within its cone's radius at the stock top of `B`, nor nearer than `M − P·s`; without clearing, the V wall's foot is cut), `inlay::edge_pass_sweeps_the_band_to_its_outer_edge` (every vertex of `B` is `r` from the floor path within the tolerance), `inlay::male_without_clearing_keeps_the_v_wall`, `inlay::clearing_that_does_not_fit_keeps_the_v_wall_and_warns`, `inlay::female_and_male_walls_mate` (also with `R` 12 and an open edge), `inlay::cut_out_no_room`.
 - The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
 - The band and the cut-out clipped to the stock (#495): `inlay::band_is_clipped_to_the_stock` (a star 2 mm from the left edge, `M` 8, a 3.175 mm 60° V-bit and a 1.5 mm end mill: no run's tool past the stock, the clearing floor out to the board's edge, `inlay_band_clipped` naming the left edge and 2 mm), `inlay::v_wall_band_is_clipped_inside_the_board` (clipped `R_v` inside it), `inlay::cut_out_runs_edge_to_edge_when_clipped` (open paths, their ends `r` inside the edge, every cut on them and on the stock, the tabs on them), `inlay::clipped_male_still_seats` (`plug_seats_flush`'s 0.05 mm), `inlay::design_too_near_the_edge_is_explained` (the bench's bits: `InlayTooNearEdge`, 4.330 mm needed), `inlay::unclipped_band_is_unchanged` (the tutorial's "DC" and the star: the surround and `B` as before, the same runs on stock ten times the size), `carve::band_on_board_clips_only_what_runs_past`, `carve::without_rect_sides_opens_outlines_along_the_board` (dc-geometry), `inlay::band_is_clipped_to_the_board` (dc-project); `safety::clipped_band_is_derived_from_the_project` (S17 and S9 refuse past the clipped band on 60 mm stock and pass on 100 mm), `safety::cut_out_off_the_stock_still_fails` (the unclipped cut-out on the narrow stock fails S7; a cut along the dropped stretch fails S9).
 - Near parts merged (#479): `inlay::near::male_of_parts_closer_than_the_written_precision_seats` (squares 0.001 mm apart), `inlay::near::male_of_a_pinch_seats` (a circle 0.005 mm from a square, 60° and 90°), `inlay::near::male_of_a_merged_pinch_seats_at_every_gap` (0.01, 0.012, 0.02 and 0.04 mm, 60°), `inlay::near::male_of_a_corner_beside_a_curve_seats` (0.016 and 0.03 mm), `inlay::near::male_of_parts_a_hair_apart_seats` (0.003 mm), `inlay::near::parts_closer_than_the_merge_distance_merge_and_warn` (one region a side, one `inlay_parts_merged` a side, the female's pocket across the gap), `inlay::near::parts_a_tenth_apart_are_not_merged` (0.1 mm: two regions, no warning, the female's ridge stands to the stock top, the pair seats); `merge::squares_a_hair_apart_merge`, `merge::circle_at_a_pinch_merges`, `merge::merging_ends_a_gap_in_a_corner`, `merge::island_near_its_hole_merges_and_a_thin_web_does_not`, `merge::touching_parts_and_no_distance_merge_nothing`, `merge::merging_keeps_inward_corners_away_from_the_gap` (dc-geometry); `safety::female_holds_merged_parts_as_one_shape` (a cut over the 0.001 mm gap passes, over a 0.1 mm gap fails S17), `safety::generated_near_parts_pass_the_safety_pass`; the stress tests' `known_issue` no longer excuses near touches.
+- One-file Inlay (#498): `migrate::v24_to_v25_female_gets_an_unset_male_board`, `migrate::v24_to_v25_male_gets_the_stock_as_its_male_board`, `migrate::version_24_fixture_loads`, `serialize::inlay_male_board_round_trips`, `serialize::photo_v_carve_is_format_26` (pins the chain the 3.4 slice renumbers); `validate::male_board_size_must_be_positive`, `validate::male_board_thickness_must_be_positive`, `validate::cut_out_no_longer_needs_a_side`, `validate::inlays_share_one_male_board`; `inlay::both_boards_from_one_operation` (the female's runs, then the male's, each tagged), `inlay::male_runs_wait_for_the_board_thickness` (unset: no male runs, `inlay_male_board_unset` at `operations[i].male_board.thickness_mm`), `inlay::male_board_defaults_to_the_stock_in_xy`, `inlay::plug_base_thin_reads_the_male_board` (stock 18 mm, male board 8 mm with `D 4, G 1, P 2`: warns); `inlay::female_and_male_walls_mate` and `inlay::plug_seats_flush` unchanged in meaning, now from one project; `safety::male_program_is_held_to_the_male_boards_bottom` (male board 8 mm: a cut-out through 8.2 mm passes, through 12 mm fails S1), `safety::male_program_stays_on_the_male_board` (S7 against the male board's XY), `safety::generated_inlays_pass_on_both_boards`, `safety::origin_preset_applies_to_the_male_board` (centre origin: the male programs' XY are about the male board's centre); `cli::v24_male_project_exports_the_same_male_programs` (the old `star-male.dcv` and `dc-male.dcv`, migrated, export the committed male programs byte for byte under the new names), `cli::v24_female_project_exports_the_same_female_programs`, `cli::export::programs_are_grouped_by_board` (names, order, `k` restarting per board), `cli::export::board_flag_exports_one_board`, `cli::export::two_inlays_share_one_male_board`, `cli::export::no_inlay_keeps_todays_names`, `cli::preview::male_board_drawn_beside_the_stock`, `cli::lettered_inlay_exports_both_boards`, `quick_start::inlay_pair_chapter_runs` (one file). The stress harness (`crates/dc-gcode/tests/stress`) builds one-project Inlays: the female case with an unset male board, each male case cutting both boards from its one Inlay on a male board the stock's size, its thickness drawn from 10–14 mm on a separate RNG stream, and seating its own two boards.
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
@@ -2156,7 +2378,7 @@ for V operations.
 **dreamcarve (integration, `tests/`)**
 - `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`.
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
-- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_female_and_male_export` (#446, the inlay pair's two files from `fixtures/dc-inlay.svg`: female T2 clearing, T1 V-bit; male T2 clearing, T1 V-bit, T2 cut-out; all pass S1–S18; the male prints the mirror note), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
+- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).
 
 **dc-gcode (integration, `tests/golden.rs`)**
@@ -2246,11 +2468,12 @@ Goal: the sign complete, the phase's first real cut.
 16. **3.2 bench check.** Test part 1 cut and recorded (functional spec,
     "Sign"). Exit: acceptance 48 to 55 and 61 green.
 
-### 3.3 Inlay (formats v22, v23 and v24)
+### 3.3 Inlay (formats v22, v23, v24 and v25)
 
 Goal: the lettered inlay pair cut and fitted.
 
-17. **Format v22 and the Inlay model.** `InlayOp`, `InlaySide`,
+17. **Format v22 and the Inlay model.** `InlayOp`, `InlaySide` (gone in
+    v25, slice 20e),
     `v21_to_v22`, validation with the male engagement sum. Tests: the
     dc-project Inlay tests. [3.2]
 18. **Inlay geometry.** `dc-geometry::surround`, `Transform::mirror_x_about`.
@@ -2299,16 +2522,30 @@ Goal: the lettered inlay pair cut and fitted.
     `InlayTooNearEdge` ("Algorithms → Inlay", steps 4 and 6), S17 and S9
     on the clipped band. No format change. Tests: the #495 group of the
     test plan. [20c]
+20e. **One-file Inlay, format v25** (#498, maintainer decision
+    2026-11-02, from the phase 4 UI review, #460: an inlay is one design
+    cut into two boards from one set of numbers, and the user should not
+    keep two project files in step by hand). `InlayOp::side` gives way to
+    `InlayOp::male_board` (`MaleBoard`), `v24_to_v25` with its migration
+    note, `Board` on runs and programs, `generate_inlay` for both boards,
+    `inlay_male_board_unset`, the three male-board validation codes and
+    the removal of `inlay_cut_out_needs_male`, the safety pass per board,
+    the CLI's per-board names, grouping, `--board` and preview, the one
+    tutorial project `tests/fixtures/dc.dcv` (the old pairs kept as
+    migration fixtures in `crates/dreamcarve/tests/fixtures/inlay-migration/`).
+    Photo V-Carve moves to format v26. Tests: the #498 group of the test
+    plan. [20d]
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 
-### 3.4 Photo V-Carve (format v25)
+### 3.4 Photo V-Carve (format v26)
 
 Goal: a photograph carved.
 
-22. **Format v25: bitmaps and Photo V-Carve** (v24 until #448). `Bitmap`, `BitmapId`,
+22. **Format v26: bitmaps and Photo V-Carve** (v24 until #448, v25
+    until #498). `Bitmap`, `BitmapId`,
     `MAX_BITMAP_SIDE_PX`, `Bitmap::header` and `pixels` with their limits,
-    `PhotoVCarveOp`, `PhotoStrategy`, `v24_to_v25`, validation; the `png`
+    `PhotoVCarveOp`, `PhotoStrategy`, `v25_to_v26`, validation; the `png`
     and `base64` dependencies. Tests: the dc-project bitmap and Photo
     tests with the M4 additions. [3.3]
 23. **Bitmap import and the CLI.** `dc-import::bitmap` with `png` and
@@ -2323,7 +2560,7 @@ Goal: a photograph carved.
 25. **Photo goldens.** `tools/parity/photo/capture.py` and the two
     RasterCarve cases. Tests: `golden::photo_*`. [24]
 26. **Photo docs.** Photo V-Carve chapter, Images chapter (`image`,
-    pictures in the file), The project file (v25),
+    pictures in the file), The project file (v26),
     `cli::photo_quick_start_runs`. [23, 24]
 27. **3.4 bench check.** Test part 3 cut and recorded. Exit: acceptance
     58 to 60 green.

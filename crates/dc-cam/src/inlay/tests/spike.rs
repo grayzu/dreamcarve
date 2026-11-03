@@ -33,7 +33,7 @@ fn spike_project(side_mm: f64, gap_mm: f64, tilt_deg: f64) -> Project {
 
 /// The spike's female or male, the V-bit's floor at step-over 0.1 and one
 /// clearing pass.
-fn spike_inlay(side: InlaySide) -> InlayOp {
+fn spike_inlay(side: Board) -> InlayOp {
     InlayOp {
         step_over_fraction: Some(0.1),
         clearing: vec![clearing_pass()],
@@ -49,13 +49,7 @@ fn spike_inlay(side: InlaySide) -> InlayOp {
 fn spike_in_a_large_region_seats_flush() {
     for (gap_mm, tilt_deg) in [(0.2, 60.0), (0.5, 0.0)] {
         let project = spike_project(50.0, gap_mm, tilt_deg);
-        let fit = fit_of(
-            &project,
-            &spike_inlay(InlaySide::Female),
-            &project,
-            &spike_inlay(InlaySide::Male),
-            0.1,
-        );
+        let fit = fit_of(&project, &spike_inlay(Board::Male), 0.1);
         println!(
             "gap {gap_mm}, tilt {tilt_deg}°: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
             fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
