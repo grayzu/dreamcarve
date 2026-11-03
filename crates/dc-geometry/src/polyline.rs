@@ -555,6 +555,62 @@ impl Polyline {
     }
 }
 
+/// The `vertices` of a closed polyline less its spikes: a vertex between
+/// two straight segments where the line runs out and straight back along
+/// itself, within [`EPS_MM`], encloses nothing, and goes; so does a vertex
+/// repeated, whose segment's bulge the vertex before it takes. A spike
+/// meets itself, so the polyline is no [`crate::Contour`] until they are
+/// gone. i_overlay leaves such spikes where a clip's edge runs along a
+/// subject's edge a rounding error off it (#464), and cavalier_contours
+/// where it trims away a short side's inward offset (#513). Removing one
+/// can make another, so the walk backs up after each. Fewer than four
+/// vertices are left as they are: a triangle with a spike encloses no
+/// area, and its caller drops it.
+pub(crate) fn without_spikes(vertices: impl IntoIterator<Item = Vertex>) -> Vec<Vertex> {
+    // `b` between `a` and `c` is a spike, or `b` repeats `a`.
+    let spike = |a: Vertex, b: Vertex, c: Vertex| {
+        let ab = b.point() - a.point();
+        let length = ab.length();
+        let straight = a.bulge.abs() < BULGE_EPS && b.bulge.abs() < BULGE_EPS;
+        length <= EPS_MM
+            || (straight
+                && ab.dot(c.point() - b.point()) < 0.0
+                && (ab.cross(c.point() - a.point()) / length).abs() <= EPS_MM)
+    };
+    let mut out: Vec<Vertex> = Vec::new();
+    for v in vertices {
+        out.push(v);
+        while let [.., a, b, c] = out[..] {
+            if !spike(a, b, c) {
+                break;
+            }
+            out.truncate(out.len() - 3);
+            out.push(Vertex {
+                bulge: b.bulge,
+                ..a
+            });
+            out.push(c);
+        }
+    }
+    // The seam: the last vertices and the first.
+    while let [first, second, .., y, z] = out[..] {
+        if spike(y, z, first) {
+            out.pop();
+            if let Some(last) = out.last_mut() {
+                last.bulge = z.bulge;
+            }
+        } else if spike(z, first, second) {
+            out.remove(0);
+            if let Some(last) = out.last_mut() {
+                last.bulge = first.bulge;
+            }
+        } else {
+            break;
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -869,5 +925,44 @@ mod tests {
         let pieces = arc.outside_discs(&[Point::new(-1.0, -1.0)], 1.2);
         assert_eq!(pieces.len(), 1, "{pieces:?}");
         assert!(pieces[0].length_mm() < arc.length_mm() - 0.1, "{pieces:?}");
+    }
+
+    /// #513: a spike between two lines goes, and so does a repeated vertex,
+    /// the one before it taking its segment's bulge; a turn back into an
+    /// arc is not a spike and stays.
+    #[test]
+    fn without_spikes_drops_line_spikes_and_repeats_keeping_arcs() {
+        // A square whose left side runs down past (0, 5) to a tip 0.001 mm
+        // up and straight back, and whose top's last vertex repeats.
+        let square = [
+            Vertex::line(0.0, 0.0),
+            Vertex::line(10.0, 0.0),
+            Vertex::line(10.0, 10.0),
+            Vertex::line(0.0, 10.0),
+            Vertex::new(0.0, 10.0, 0.4),
+            Vertex::line(0.0, 5.0),
+            Vertex::line(0.0, 5.001),
+            Vertex::line(0.0, 5.0),
+        ];
+        let kept = without_spikes(square);
+        assert_eq!(
+            kept,
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(10.0, 0.0),
+                Vertex::line(10.0, 10.0),
+                Vertex::new(0.0, 10.0, 0.4),
+                Vertex::line(0.0, 5.0),
+            ]
+        );
+        // Out along a line and back along an arc that leaves it at a tangent
+        // (`bulge` 1, a half turn): no spike.
+        let tear = [
+            Vertex::line(0.0, 0.0),
+            Vertex::new(10.0, 0.0, 1.0),
+            Vertex::line(5.0, 0.0),
+            Vertex::line(5.0, -5.0),
+        ];
+        assert_eq!(without_spikes(tear), tear.to_vec());
     }
 }

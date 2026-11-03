@@ -39,7 +39,8 @@ impl Contour {
 
     /// [`Contour::new`] without the self-intersection test, for polylines
     /// that cannot cross themselves by construction, such as the loops
-    /// cavalier_contours returns from an offset.
+    /// cavalier_contours returns from an offset once their spikes are gone
+    /// (`crate::polyline::without_spikes`; #513).
     pub(crate) fn oriented(polyline: Polyline) -> Result<Self, GeometryError> {
         if !polyline.is_closed() {
             return Err(GeometryError::Degenerate(DegenerateReason::Open));

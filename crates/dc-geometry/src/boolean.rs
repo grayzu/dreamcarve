@@ -11,8 +11,7 @@
 //! they were given in.
 
 use crate::contour::Contour;
-use crate::point::{EPS_MM, Point};
-use crate::polyline::{Polyline, Vertex};
+use crate::polyline::{Polyline, Vertex, without_spikes};
 use crate::region::{Region, nest_unchecked};
 use i_overlay::core::fill_rule::FillRule;
 use i_overlay::core::overlay_rule::OverlayRule;
@@ -100,10 +99,7 @@ fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
         .into_iter()
         .flatten()
         .filter_map(|ring| {
-            let vertices = without_spikes(&ring)
-                .into_iter()
-                .map(|p| Vertex::line(p[0], p[1]))
-                .collect();
+            let vertices = without_spikes(ring.iter().map(|p| Vertex::line(p[0], p[1])));
             Contour::oriented(canonical_start(Polyline::new(vertices, true))).ok()
         })
         .collect();
@@ -115,48 +111,6 @@ fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
         })
     });
     nest_unchecked(contours)
-}
-
-/// `ring` (closed) less its spikes: a vertex where the ring runs out and
-/// straight back along itself, within [`EPS_MM`], encloses nothing, and
-/// goes; so does a vertex repeated. i_overlay leaves such a spike where a
-/// clip's edge runs along a subject's edge a rounding error off it (#464:
-/// a V-Carve floor less what its clearing pass reached, the reach's sides
-/// on the floor's, gave a corner piece a spike the length of a side, and
-/// the V-bit's rings round it cut 0.15 mm past the wall). Removing one can
-/// make another, so the walk backs up after each.
-fn without_spikes(ring: &[[f64; 2]]) -> Vec<[f64; 2]> {
-    let point = |p: [f64; 2]| Point::new(p[0], p[1]);
-    // `b` between `a` and `c` is a spike, or `b` repeats `a`.
-    let spike = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
-        let (a, b, c) = (point(a), point(b), point(c));
-        let (ab, bc) = (b - a, c - b);
-        let length = ab.length();
-        length <= EPS_MM || (ab.dot(bc) < 0.0 && (ab.cross(c - a) / length).abs() <= EPS_MM)
-    };
-    let mut out: Vec<[f64; 2]> = Vec::with_capacity(ring.len());
-    for &p in ring {
-        out.push(p);
-        while let [.., a, b, c] = out[..] {
-            if !spike(a, b, c) {
-                break;
-            }
-            out.truncate(out.len() - 2);
-            out.push(c);
-        }
-    }
-    // The seam: the last vertices and the first. A triangle left with a
-    // spike has no area and is dropped by the caller.
-    while let [first, second, .., y, z] = out[..] {
-        if spike(y, z, first) {
-            out.pop();
-        } else if spike(z, first, second) {
-            out.remove(0);
-        } else {
-            break;
-        }
-    }
-    out
 }
 
 /// The lowest-then-leftmost vertex of `contour` as a totally ordered key

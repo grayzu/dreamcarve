@@ -8,7 +8,7 @@
 
 use crate::contour::Contour;
 use crate::point::{EPS_MM, Point};
-use crate::polyline::{Polyline, Segment, Vertex};
+use crate::polyline::{Polyline, Segment, Vertex, without_spikes};
 use cavalier_contours::polyline::{
     PlineCreation, PlineOffsetOptions, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex,
     pline_seg_intr,
@@ -53,6 +53,12 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 /// `decimated`). The first result that is closed and plausible is kept,
 /// else the first closed one, else the first. A closed, plausible first
 /// result, the usual case, is returned as it was.
+///
+/// Every piece loses its spikes first (`without_spikes`; #513): shrunk
+/// past a short side, `cavalier_contours` can trim the side's offset away
+/// but leave a spike where it was, the loop running to a point and
+/// straight back, which meets itself. A spike encloses nothing, so the
+/// area tests see the same piece.
 #[must_use]
 pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     let ccw = contour.is_ccw();
@@ -202,7 +208,10 @@ fn offset_with(
     let mut contours = Vec::with_capacity(pieces.len());
     let mut net_mm2 = 0.0;
     for piece in &pieces {
-        let Ok(contour) = Contour::oriented(from_cavalier(piece)) else {
+        // #513: a piece can run out to a point and straight back where a
+        // short side's offset was trimmed away; the spike encloses nothing.
+        let vertices = without_spikes(from_cavalier(piece).vertices().iter().copied());
+        let Ok(contour) = Contour::oriented(Polyline::new(vertices, true)) else {
             continue;
         };
         // A piece runs the source's way round, a loop inside a grown
