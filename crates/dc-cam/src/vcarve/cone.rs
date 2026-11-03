@@ -397,6 +397,24 @@ impl Walls {
             })
     }
 
+    /// Whether a chord of a drawn arc lies within `reach_mm` of `p` (#506):
+    /// only there do chords drawn at another tolerance put the walls
+    /// elsewhere.
+    pub(crate) fn arc_within(&self, p: Point, reach_mm: f64) -> bool {
+        self.near(p, p, reach_mm).into_iter().any(|i| {
+            let on_arc = self
+                .sources
+                .get(i)
+                .and_then(|&s| self.drawn.get(s))
+                .is_some_and(|w| w.bulge != 0.0);
+            on_arc
+                && self
+                    .segments
+                    .get(i)
+                    .is_some_and(|&(a, b)| point_segment(p, a, b) <= reach_mm)
+        })
+    }
+
     /// Whether `p` lies inside the regions by the even-odd rule, or within
     /// `slack_mm` of a wall.
     pub(crate) fn holds(&self, p: Point, slack_mm: f64) -> bool {
