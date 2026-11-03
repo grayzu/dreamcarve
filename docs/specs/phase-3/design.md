@@ -508,7 +508,10 @@ a male band that runs past the stock, clipped to it; the edges, whether the
 edge is open, and the band left at its narrowest), `InlayPartsMerged (op,
 first, second, x_mm, y_mm, gap_mm, merge_mm)` (#479: two parts of an
 Inlay's design closer than the merge distance, cut as one shape; the point
-as drawn, the male's mirrored back), `PhotoLinesOverlap (op, fraction)`. New
+as drawn, the male's mirrored back), `InlayHoleFilled (op, hole, x_mm,
+y_mm, width_mm, merge_mm)` (#511: a hole of an Inlay's design narrower
+than the merge distance everywhere, filled; the middle of its box as
+drawn, its mean width), `PhotoLinesOverlap (op, fraction)`. New
 `CamError`s: `VCarveNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkNeedsVBit { op, tool, tool_id, cutter }`,
 `CountersinkDiameterPositive { op, diameter_mm }`,
@@ -747,6 +750,16 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
 9. **Spur pruning** (`pruneSpurs`): up to 32 passes, a leaf whose edge to
    its junction is shorter than `1.5 · step` and whose clearance is not
    below the junction's by more than `0.25 · len` is removed.
+   **Long dead ends (#511).** With `CornerReach::Every`, no node of a
+   chain from a leaf to its first junction longer than `5 · step` is
+   pruned: a spur is a node or two off a junction, and a longer dead end
+   is axis. Upstream's passes unzipped such chains up to 32 nodes: the
+   axis down a channel of a male's band between two serif feet, whose
+   exit got no circumcentre (lettering `0x47`,
+   `stress::lettering_male_cuts_the_channel_between_two_feet`); the axis
+   into a wedge narrower than the step either side of a pinch, where a
+   hole comes within 3 µm of the outline (`inlay::pinched_design_seats_flush`);
+   and a strip's round end (step 11, below, puts that back too).
 10. **Small components** (`dropSmallComponents`): components with total
     length under `4 · step` are dropped, unless none is longer, in which
     case the one holding the deepest node stays.
@@ -797,6 +810,12 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
     (`inlay::slot_plug_seats_flush`).
     `convex_corners` returns bisectors into the region.
     `medial_axis` (upstream's reach) stays for the ported tests.
+    **A lone node (#511).** A graph with no edge after the passes (a
+    regular octagon: its corners turn 45°, under the 50° a sharp corner
+    turns, and the contact-spread filter drops every spoke) is its deepest
+    node alone; a tip may join that node, which no tip could before, so
+    the octagon was carved by a plunge at its middle and its corners stood
+    short (`inlay::octagon_plug_seats_flush`).
 12. **Finalise**: nodes with no edges are dropped; a graph with no edges
     keeps its deepest node alone; a graph whose extent is at most
     `3 · step` collapses to its deepest node (a dot). Adjacency lists are
@@ -1457,6 +1476,15 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
    drawn. The male merges its mirrored design, the same rule on the same
    shapes. A gap of `d` or more is left as drawn: two squares 0.1 mm
    apart keep the ridge between the female's pockets, and the pair seats.
+   A hole narrower than `d` all along (its own area inset by `d/2` is
+   empty) that holds no other region is filled, the same thing the other
+   way round (#511): a hairline where two overlapping letters leave a
+   sliver. The female left a wall that thin to the stock top, the male's
+   groove keeps half a written unit from each wall and was dropped, and
+   a 3 µm slit's plug stood 3 mm proud in an inch program
+   (`inlay::hairline_hole_is_filled_and_seats`). Each hole warns
+   `inlay_hole_filled` with its mean width (twice its area over its
+   perimeter) and the middle of its box as drawn.
 3. **Female.** `Carve { regions: design, start_plane: thickness,
    flat_depth: Some(D), strategy: Medial, cleared_by: the
    operation's clearing passes }`. Identical to a V-Carve with `flat_depth_mm: D`,
