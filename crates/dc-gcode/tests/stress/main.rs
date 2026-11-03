@@ -544,3 +544,22 @@ fn lettering_curve_bay_seats_with_a_narrow_bit() {
         outcome.known
     );
 }
+
+/// #506 (found by the sweep): the male of line-art seed `0x55` (15° bit;
+/// the sweep's inch program, and the same in millimetres) with a V wall
+/// seats within 0.05 mm. Simplification and the off-axis fit let the
+/// carved edge stop up to `EDGE_MM`, 0.005 mm, short of the walls (#457),
+/// which the 15° bit's cone turns into 0.038 mm; the female stood that
+/// shallow over a stretch of wall and, with the male's 0.027, the plug
+/// 0.062 mm proud. The allowance now scales with the bit, as the wall
+/// tolerance does (#478).
+#[test]
+fn line_art_seats_with_the_edge_allowance_scaled() {
+    let outcome = reproduce("line art", 0x55, designs::line_art(0x55), Kind::MaleVWall);
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}

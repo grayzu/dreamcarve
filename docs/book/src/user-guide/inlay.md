@@ -170,15 +170,18 @@ the tip, and the plug keeps the wood the bit cannot reach:
 So for an inlay with a 15° or 30° bit, set the project's `display_units`
 to `"mm"` before you export, whatever units you design in.
 
-Apart from that limit, corners, sharp or obtuse, seat with every bit.
-Some other tight features still don't. With the 30° bit most plugs seat
-within 0.05 mm, and some stand up to about 0.1 mm proud. With the 15°
-bit, expect 0.05 to 0.2 mm. In both cases the excess comes where a line
-ends inside the design, where a curve narrows, or where two parts
-nearly touch: there the plug's walls meet the pocket's before they do
-elsewhere ([#506](https://github.com/grayzu/dreamcarve/issues/506)).
-If you use a narrow bit, plan for it: press the plug home with a clamp
-and flat cauls, so that the wood gives where the walls meet first, and
+Apart from that limit, corners, sharp or obtuse, seat with every bit,
+and so do the other tight features where a narrow bit's plug used to
+meet the pocket first: a line that ends inside the design, a curve that
+narrows, two parts that nearly touch
+([#506](https://github.com/grayzu/dreamcarve/issues/506)). In
+millimetres the 30° bit's plugs seat within 0.05 mm. So do the 15°
+bit's, with one exception: where the V-bit clears a wide floor itself,
+in rings, the rings' corners can leave a peak taller than the ridges
+`check` reports, and on a five-sided floor one held a 15° plug 0.16 mm
+proud ([#522](https://github.com/grayzu/dreamcarve/issues/522)). A
+[clearing pass](#clearing-passes) clears such a floor flat with an end
+mill. Either way, press the plug home with a clamp and flat cauls, and
 keep `glue_gap_mm` at 1 mm or more, so that the plug has room under it
 to go down.
 

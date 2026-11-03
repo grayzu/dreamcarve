@@ -181,6 +181,9 @@ phases bump the patch number.
   far 15° and 30° plugs stand proud after the fixes since: under about
   0.1 and 0.2 mm in millimetre programs, and more at a hairline point in
   an inch program ([#501]).
+- **Documentation:** the Inlay chapter's narrow-bit note now says that
+  in millimetres the 30° and 15° bits seat within 0.05 mm, except where
+  a V-bit floor's ring corners stand up ([#506]).
 
 ### Fixed
 
@@ -263,6 +266,21 @@ phases bump the patch number.
   The branch now runs on to the rest of the axis. The Inlay chapter's
   note on narrow bits says what still keeps them from seating within
   0.05 mm ([#500]).
+- Narrow-bit Inlays now seat within 0.05 mm in millimetre programs at
+  the tight features that held them up: a line ending inside the design,
+  a narrowing curve, two parts nearly touching. A fixed allowance
+  sideways becomes 7.6 times that in height under a 15° bit, so the
+  generator's small allowances now shrink with the bit, as its wall
+  tolerance does: the V-bit floor's outline, the medial axis's reach
+  into a corner and the carved edge's allowance. Short stretches between
+  fitted points are sampled, the carve's nodes beside drawn arcs are
+  measured against the arcs themselves, and an export no longer writes an
+  arc only a few units of its last place across. In the stress sweep the
+  15° bit's failures in millimetres fell from 16 designs to 2 and the 30°
+  bit's from 6 to none; the 2 left are the V-bit floor's ring corners
+  ([#522]). Of the repository's programs only a few V-Carve and Inlay
+  programs change, by a few lines; a narrow bit's programs grow by up to
+  a quarter in lines ([#501], [#506]).
 
 ## [0.2.0] - 2026-10-27
 
@@ -1051,4 +1069,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#501]: https://github.com/grayzu/dreamcarve/issues/501
 [#506]: https://github.com/grayzu/dreamcarve/issues/506
 [#507]: https://github.com/grayzu/dreamcarve/issues/507
+[#522]: https://github.com/grayzu/dreamcarve/issues/522
 [#502]: https://github.com/grayzu/dreamcarve/issues/502

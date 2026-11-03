@@ -130,13 +130,22 @@ impl Carve<'_> {
     }
 
     /// How far the medial chains of a region sampled every `step_mm` may
-    /// be simplified (#452): upstream's tolerances, and where material
-    /// may stand above the start plane, no stretch left more than
-    /// [`DEEPEN_MM`] shallower than its own depth.
-    pub(crate) fn tolerances(&self, step_mm: f64) -> Tolerances {
+    /// be simplified (#452), for a V-bit of `slope` (`tan(α/2)`):
+    /// upstream's tolerances, and where material may stand above the start
+    /// plane, no stretch left more than [`DEEPEN_MM`] shallower than its
+    /// own depth. How far short of the walls the carved edge may stop,
+    /// [`medial::EDGE_MM`] (#457), scales with the bit as the wall
+    /// tolerance does (#506): the cone turns it into `edge / tan(α/2)` of
+    /// height, 0.038 mm with the 15° bit, which a plug stood proud by.
+    pub(crate) fn tolerances(&self, step_mm: f64, slope: f64) -> Tolerances {
+        let upstream = Tolerances::at_step(step_mm);
+        let edge_mm = wall_tolerance_mm(medial::EDGE_MM, slope);
         Tolerances {
+            simplify_mm: upstream.simplify_mm.min(edge_mm),
+            redundancy_mm: upstream.redundancy_mm.min(edge_mm),
+            axis_mm: upstream.axis_mm.map(|a| a.min(edge_mm)),
             deepen_mm: self.stands_above().then_some(DEEPEN_MM),
-            ..Tolerances::at_step(step_mm)
+            ..upstream
         }
     }
 }
@@ -595,7 +604,7 @@ pub fn blocks(
             Tolerances {
                 written_mm,
                 grid: Some(grid),
-                ..carve.tolerances(step_mm)
+                ..carve.tolerances(step_mm, bit.slope)
             },
             &walls,
             &floors,
