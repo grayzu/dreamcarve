@@ -29,7 +29,8 @@ ones: one project cuts what the pair did.
 
 They were exported on macOS, and the tests hold the programs to them byte
 for byte there. On another platform the maths library may round a number in
-its last bit differently, so the tests there allow a written number to
-differ by one unit in its last place (0.001 mm), every other word the same
+its last bit differently, so the tests there allow a written coordinate to
+differ by one unit in its last place (0.001 mm), and a ramp's scaled feed
+by 0.05 mm/min, every other word the same
 (`cli::assert_inlay_migration_program`): the female's V-bit program of the
 "DC" pair is written so on Linux and Windows.

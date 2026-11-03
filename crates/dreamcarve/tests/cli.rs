@@ -7088,9 +7088,11 @@ fn inlay_migration_expected(name: &str) -> String {
 /// `tests/expected/inlay-migration/`, which `what` names in the message.
 /// The programs were exported on macOS, where they must match byte for
 /// byte. Elsewhere the platform's maths library may round a sine or an
-/// arc's end differently in the last bit, so a written number may differ
-/// by one unit in its last place (0.001 mm): there every line must be the
-/// same but for such numbers, the same words in the same order. The first
+/// arc's end differently in the last bit, so a written coordinate may
+/// differ by one unit in its last place (0.001 mm), and a feed a ramp
+/// scales by its length over its drop by up to 0.05 mm/min: there every
+/// line must be the same but for such numbers, the same words in the same
+/// order. The first
 /// line that differs more is named.
 fn assert_inlay_migration_program(program: &str, name: &str, what: &str) {
     let expected = inlay_migration_expected(name);
@@ -7113,10 +7115,13 @@ fn assert_inlay_migration_program(program: &str, name: &str, what: &str) {
                     p == q || {
                         let (lp, np) = p.split_at(p.len().min(1));
                         let (lq, nq) = q.split_at(q.len().min(1));
+                        // A feed a ramp scales by its length over its drop
+                        // magnifies the last bit of a short move.
+                        let tolerance = if lp == "F" { 0.05 } else { 0.0011 };
                         lp == lq
                             && matches!(
                                 (np.parse::<f64>(), nq.parse::<f64>()),
-                                (Ok(u), Ok(v)) if (u - v).abs() <= 0.0011
+                                (Ok(u), Ok(v)) if (u - v).abs() <= tolerance
                             )
                     }
                 });
