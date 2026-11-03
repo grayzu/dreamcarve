@@ -89,6 +89,32 @@ phases bump the patch number.
   cut-out follows the same rounding. Older files upgrade with
   `"outline_rounding_mm": null`. The inlay quick start rounds its band by
   10 mm.
+- **One Inlay cuts both boards; format version 25.** An Inlay no longer
+  cuts one side: its `side` is replaced by `male_board`, `{ "width_mm",
+  "height_mm", "thickness_mm" }`, and one project cuts the female on its
+  stock and the male on the male board, from one set of values, so the
+  two can no longer drift apart. Width and height `null` are the stock's;
+  the thickness is the male board's own, and until it is set only the
+  female is cut (`inlay_male_board_unset`). The male board shares the
+  stock's front-left corner and takes the project's origin preset, safe
+  heights and safety checks as the stock does; the plug base
+  (`inlay_plug_base_thin`) reads its thickness. `check` refuses a male
+  board size or thickness not above 0 (`inlay_male_board_size`,
+  `inlay_male_board_thickness`) and two Inlays on different male boards
+  (`inlay_male_boards_differ`); `inlay_cut_out_needs_male` is gone, the
+  female ignoring the cut-out. In a project with an Inlay, `export`
+  names every program after its board, `<stem>-female-<k>-T<n>` and
+  `<stem>-male-<k>-T<n>`, lists them under a heading for each board with
+  each board's own work zero and times, and `--board female|male`
+  exports one board alone (re-cutting the male after a fit change);
+  `--preview` draws the male board beside the stock. A project with no
+  Inlay is named and cut as before. Older files upgrade: a female gets an
+  unset male board and exports what it did; a male gets a male board the
+  size of its stock and exports the same male programs, byte for byte,
+  under the new names, and now also cuts the female on its stock, which
+  `check` and `export` print as a note. The inlay quick start makes one
+  project, `tests/fixtures/dc.dcv`, in place of `dc-female.dcv` and
+  `dc-male.dcv`, and its programs are byte for byte the pair's ([#498]).
 
 ### Changed
 
@@ -1064,6 +1090,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#479]: https://github.com/grayzu/dreamcarve/issues/479
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
+[#498]: https://github.com/grayzu/dreamcarve/issues/498
 [#499]: https://github.com/grayzu/dreamcarve/issues/499
 [#500]: https://github.com/grayzu/dreamcarve/issues/500
 [#501]: https://github.com/grayzu/dreamcarve/issues/501

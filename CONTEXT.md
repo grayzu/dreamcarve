@@ -168,32 +168,45 @@ _Avoid_: Carve, vcarve, chamfer
 _PureCutCNC_: V-Carve
 
 **Inlay**:
-An operation (format 22) that cuts one **side** of a V-bit inlay of a design:
-the **female**, a flat-bottomed V-carved pocket `depth_mm` deep, or the
-**male**, a plug of the design mirrored in place, left standing by carving
-the band round it. The plug is turned over and glued into the pocket, its
-V-sloped walls seating in the pocket's, and the excess planed off. One design
-and the same values make both sides; only `side` changes.
-_Avoid_: Insert, female/male V-Carve
+An operation (format 22) that cuts both boards of a V-bit inlay of a design
+from one project: the **female**, a flat-bottomed V-carved pocket
+`depth_mm` deep, on the stock, and the **male**, a plug of the design
+mirrored in place, left standing by carving the band round it, on the
+Inlay's **Male Board**. The plug is turned over and glued into the pocket,
+its V-sloped walls seating in the pocket's, and the excess planed off. One
+design and one set of values make both boards. (changed: maintainer
+decision 2026-11-02, #498: was one side per operation, chosen by `side`,
+so a pair took two projects)
+_Avoid_: Insert, female/male V-Carve, side (of an Inlay)
 _PureCutCNC_: none (Corbin's Workshop's method)
+
+**Male Board**:
+The board an Inlay's male is cut from (format 25), `male_board`: its width
+and height (`null`, the stock's) and its own thickness, which must be set
+for the male to be cut. The project's stock is the female board. The male
+board shares the stock's bottom-left corner, and the origin preset, safe
+heights and safety checks apply to it as they do to the stock. Every male
+of a project is cut on the one male board.
+_Avoid_: Male stock, second stock, plug blank
 
 **Glue Gap**:
 The gap an Inlay leaves under its seated plug, `glue_gap_mm`, 0 or more and
-below `depth_mm` (Corbin's "Inlay Fit Adjustment"). The male's start plane is
-`depth_mm − glue_gap_mm` below the stock top.
+below `depth_mm` (Corbin's "Inlay Fit Adjustment"). The plug's start plane
+is `depth_mm − glue_gap_mm` below the male board's top.
 _Avoid_: Fit adjustment, clearance
 
 **Plug Depth**:
-How far below the male's start plane its surround is cut flat,
+How far below the plug's start plane the band round it is cut flat,
 `plug_depth_mm`, so the plug's base clears the pocket's surface when the walls
-mate. The male's flank engages `depth_mm − glue_gap_mm + plug_depth_mm` from
-the stock top, which must fit the V-bit's cone.
+mate. The plug's flank engages `depth_mm − glue_gap_mm + plug_depth_mm` from
+the male board's top, which must fit the V-bit's cone.
 _Avoid_: Plug height
 
 **Cut-out**:
-A male Inlay's last tool run (format 23), `cut_out`: a flat end mill that
-frees the plug from its board, On line half `margin_mm` out from the mirrored
-design, in the band's flat floor, from the floor through the board, with tabs.
+An Inlay's last tool run on the male board (format 23), `cut_out`: a flat
+end mill that frees the plug from its board, On line half `margin_mm` out
+from the mirrored design, in the band's flat floor, from the floor through
+the board, with tabs.
 _Avoid_: Plug cutout, profile (it is part of the Inlay, not an operation)
 
 **Engrave**:

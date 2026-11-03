@@ -12,6 +12,19 @@ After writing a program, `export` reads the text back the way the controller
 will, and checks it. If any check fails, the export fails and nothing is
 written. There are no safety warnings, only errors.
 
+Each program is checked against the board it cuts. Every program is cut
+on the project's stock except an [Inlay](inlay.md)'s male's, which are
+cut on the Inlay's [male board](inlay.md#the-male-board). A male board's
+programs are checked with the male board in the stock's place, so where
+a rule below says "the stock" it means the male board for them: rule 1
+holds them to the male board's bottom (the cut-out's own
+`through_cut_allowance_mm` below it), rule 9 to the male board's width
+and height, rule 14 counts the V-bit's flank from the male board's top,
+and rule 12 holds the cut-out to the band's floor ring worked out on the
+male board, its tabs counted from the male board's bottom. Safe Z, the
+clearance height and work zero are the male board's too. One program
+never cuts on both boards.
+
 1. **Never below the stock bottom.** No move goes lower than the stock
    bottom, minus the operation's `through_cut_allowance_mm` (0 unless you
    set it). A depth deeper than that is refused before any toolpath is made.
@@ -76,7 +89,9 @@ written. There are no safety warnings, only errors.
    machine depends on your sender, and several do not stop by default, so
    a program with `M6` could cut the next bit's paths with the old bit
    still fitted. Each program passes every check here on its own, and if
-   any fails, none is written. One program with `M6` is a setting you
+   any fails, none is written. A project with an Inlay is split by
+   board first: the stock's programs, then the male board's, so even
+   with `M6` each board has a program of its own. One program with `M6` is a setting you
    choose, on grblHAL only, after setting your sender to stop at `M6`
    ([Senders](post-processors.md#senders)). GRBL cannot stop for a tool
    change where you can jog, so DreamCarve refuses `M6` with GRBL.
@@ -197,15 +212,15 @@ written. There are no safety warnings, only errors.
       earlier one cleared. Each pass is checked only with its own end
       mill, in its own run.
     - an [Inlay](inlay.md): the V-bit's cone, by rule 14, against its
-      side's own material: the design on the female, the surround on the
+      board's own material: the design on the female, the surround on the
       male. A clearing pass is held as a V-Carve's is, as a Pocket of the
-      side's floor. A male's [cut-out](inlay.md#cutting-the-plug-free) is
+      board's floor. A male's [cut-out](inlay.md#cutting-the-plug-free) is
       held to the band's flat floor ring round the mirrored design (the
       surround's floor, out to the band's edge when a clearing pass cuts
       it, less the floors of the design's holes): the whole
       width of its end mill stays inside the ring at every depth, since
       the carve has cleared the ring to the top and below the floor it
-      cuts the board's base, which rule 1 bounds with the cut-out's own
+      cuts the male board's base, which rule 1 bounds with the cut-out's own
       `through_cut_allowance_mm`. Its end mill's centre is also held to
       the cut-out's path, worked out again from the project: the band's
       edge inset by the end mill's radius, or by the V wall's foot plus
@@ -239,9 +254,9 @@ written. There are no safety warnings, only errors.
     tan(α / 2))`; and where the bit's flank is engaged from, which is the
     stock top unless an enabled Pocket, or the flat floor of an enabled
     V-Carve, earlier in the list, at the start depth, contains the
-    targets. An Inlay is held the same way, with its side's carved
+    targets. An Inlay is held the same way, with each board's carved
     shapes, start plane and flat depth, and its flank always engaged from
-    the stock top:
+    that board's top:
 
     - the **female**: the design (its targets, nested as for a Pocket),
       a start plane at the stock top, and a flat depth of `depth_mm`;
@@ -249,16 +264,17 @@ written. There are no safety warnings, only errors.
       with the geometry library alone, never from the generator: the
       targets mirrored about the middle of their bounding box, offset
       outward by `margin_mm` and rounded by `outline_rounding_mm` (or
-      the edge pass's radius), less the mirrored design. Its start plane
-      is `depth_mm − glue_gap_mm` below the stock top and its flat depth
+      the edge pass's radius), and clipped to the male board where it
+      runs past it, less the mirrored design. Its start plane
+      is `depth_mm − glue_gap_mm` below the male board's top and its flat depth
       `plug_depth_mm` below that. The plug's wood above the start plane
       is never cleared, so the shank check counts the flank from the
-      stock top: `depth_mm − glue_gap_mm + plug_depth_mm` must fit the
+      male board's top: `depth_mm − glue_gap_mm + plug_depth_mm` must fit the
       cone. When a clearing pass cuts the band's outer edge upright
       ([Inlay: the band's outer edge](inlay.md#the-bands-outer-edge)),
-      the board beyond that edge stands to the stock top, so the cone is
-      also held inside the band right up to the stock top: no part of it
-      may cross the edge below the top.
+      the board beyond that edge stands to the male board's top, so the
+      cone is also held inside the band right up to that top: no part of
+      it may cross the edge below the top.
 
     Then every cutting move of the V-bit:
 
@@ -385,10 +401,16 @@ It also checks that:
   that something else cleared its start plane. It counts the bit's flank
   from the stock top, so the shank stays out either way, but it cannot
   see that pocket.
-- **The other side of an inlay.** An [Inlay](inlay.md)'s female and male
-  are two projects. Each is checked on its own; DreamCarve cannot tell
-  that both use the same drawing, the same four values and a bit of the
-  same angle, which the fit depends on.
+- **The male board.** An [Inlay](inlay.md)'s male programs are checked
+  against the male board in the project, as the stock's are against the
+  stock: DreamCarve trusts `male_board`'s size and thickness as it trusts
+  the stock's. Measure the male board and set
+  `male_board.thickness_mm` to it; set work zero on the male board with
+  its first program, where the origin preset says. The female and the
+  male come from one operation, so they always share the drawing, the
+  four values and the bit; a project from before format 25 that cut one
+  side may now cut both (see [Inlay: projects from before format
+  25](inlay.md#projects-from-before-format-25)).
 - **Ridges on a V-Carve floor.** A V-Carve's flat floor counts as cleared
   for a carve or countersink started on it, and is treated as flat. Where
   the V-bit alone cut it, it has ridges up to `step_over_fraction` times
@@ -425,7 +447,8 @@ It also checks that:
    if there are several): that is where the bit's edge reaches.
 2. **Check the stock.** Measure its thickness and compare it with
    `thickness_mm`. Make sure the stock covers the area from work zero to
-   `width_mm` by `height_mm`.
+   `width_mm` by `height_mm`. For an Inlay's male programs, check the
+   male board the same way against `male_board`.
 3. **Check the clamps.** Keep them outside the area the bit's edge
    reaches, from the printed extents, with room to spare for the collet
    nut. Rapids cross that area at safe Z (Z max), so anything left inside
@@ -437,7 +460,9 @@ It also checks that:
    and check it by jogging there. `export` names the first bit
    ("Before you start: fit T1 ..."). With more than one bit, run the
    programs in the order `export` lists them. Before each later one, fit
-   the bit it names and set Z zero with it; keep X and Y zero.
+   the bit it names and set Z zero with it; keep X and Y zero. An
+   Inlay's male board is a setup of its own: its first program says to
+   set work zero (X, Y and Z) again, on the male board.
 7. **Do an air cut.** Set Z zero well above the stock: more than the cut
    depth plus a margin, for example 20 mm for a 12 mm cut. Run the whole
    program and watch where the bit goes. Then set Z zero back on the stock.
