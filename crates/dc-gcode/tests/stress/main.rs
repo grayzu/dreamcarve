@@ -397,3 +397,26 @@ fn male_of_line_art_0xb3_generates() {
     );
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
+
+/// #511 (found by the sweep): the male of lettering seed `0x47` ("mm",
+/// 60° bit, millimetre program) with a V wall seats within 0.05 mm. Two
+/// serif feet leave a channel 0.44 mm wide in the band; its exit, between
+/// the two feet's corners, got no circumcentre, so the axis down the
+/// channel ended there, and spur pruning, whose test it passes (its
+/// clearance does not fall), unzipped it back to the counter above. The
+/// male cut nothing in the channel, and the plug stood 0.140 mm proud.
+#[test]
+fn lettering_male_cuts_the_channel_between_two_feet() {
+    let outcome = reproduce(
+        "lettering",
+        0x47,
+        lettering::lettering(0x47),
+        Kind::MaleVWall,
+    );
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}
