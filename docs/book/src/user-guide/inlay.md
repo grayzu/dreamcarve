@@ -148,6 +148,17 @@ of the pocket's, the plug seats higher or lower by that error times
 | 30° | 3.7 |
 | 15° | 7.6 |
 
+Very sharp corners, under about 10°, have a limit of their own: the
+program's decimal places. A program writes each point to its places, so
+the bit can only start its cut into a corner at a point it can write
+exactly, and in a corner a few degrees wide the nearest such point may
+be some way from the tip. In a millimetre program (three places) that
+costs a plug at most about 0.04 mm at a 5° corner with the 15° bit. In
+an inch program (four places, 0.00254 mm) it can cost the 30° bit up to
+about 0.08 mm and the 15° bit up to about 0.16 mm there. So for a narrow
+bit and a design with very sharp points, set `display_units` to `"mm"`
+before you export.
+
 For now, with a 15° or 30° bit, expect the plug to stand up to about
 0.3 mm proud: in sharp corners and other tight features of the design,
 its walls meet the pocket's before they do elsewhere
