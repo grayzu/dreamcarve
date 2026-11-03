@@ -552,10 +552,13 @@ pub fn blocks(
         // Step 6: the floor, where the region is wider than the groove at
         // the flat depth; the chains it covers are dropped.
         // #448: a band region with an open edge floors out to the edge,
-        // and its V-bit keeps its cone off the edge.
+        // and its V-bit keeps its cone off the edge. #506: a floor piece
+        // too thin to cut is dropped only below the wall tolerance. The
+        // chains clamp at the flat depth, so they stop as far short of the
+        // walls as the piece is wide, which the cone turns into height.
         let band = is_band(region);
         let floors = flat
-            .map(|f| f.regions_of(carve, region, tolerance_mm))
+            .map(|f| f.regions_of(carve, region, wall_tolerance_mm))
             .unwrap_or_default();
         let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
         let runs = medial::runs_within(

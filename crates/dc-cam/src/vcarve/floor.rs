@@ -92,8 +92,12 @@ impl Floor {
 
     /// The floor regions of `region` that are cut: the region inset by
     /// [`Floor::inset_mm`] ([`floor_regions`]), less any thinner than twice
-    /// `tolerance_mm` (Pocket's noise rule), which the medial chains cover.
-    /// Empty where the region is nowhere wider than `2 · inset_mm`.
+    /// `tolerance_mm` (Pocket's noise rule). The medial chains, clamped at
+    /// the flat depth, stop as far short of the walls as a dropped piece
+    /// is wide, so the medial strategy passes the wall tolerance (#506,
+    /// [`dc_geometry::wall_tolerance_mm`]), which keeps that under what the
+    /// cone turns into a seat error. Empty where the region is nowhere
+    /// wider than `2 · inset_mm`.
     pub(crate) fn regions(&self, region: &Region, tolerance_mm: f64) -> Vec<Region> {
         floor_regions(std::slice::from_ref(region), self.inset_mm, tolerance_mm)
             .into_iter()

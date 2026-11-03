@@ -124,6 +124,18 @@ const AXIS_REACH_MM: f64 = 1.0;
 /// points whose own depth is deeper than the stretch there, mm (#452).
 const DEEPEN_SAMPLE_MM: f64 = 0.05;
 
+/// How many pieces fitting reads stretch `a`–`b` in, [`Fit::off_axis`] and
+/// [`Fit::undercut`] reading it at each join between them: one every
+/// [`DEEPEN_SAMPLE_MM`], and at least two (#506). A stretch shorter than
+/// the sampling step was read nowhere, so one running off the axis or
+/// above its depth was cut as it was: into a 16° notch, two such stretches
+/// ran along one wall and left the wood against the other.
+fn sample_pieces(a: Point3, b: Point3) -> f64 {
+    (a.xy().distance_to(b.xy()) / DEEPEN_SAMPLE_MM)
+        .ceil()
+        .max(2.0)
+}
+
 /// How far a stretch's cone may reach past a wall before it is split, mm:
 /// a tenth of a micrometre, ten times finer than a program writes. Where a
 /// wall bends between two points the overlap shrinks about fourfold per
@@ -1158,7 +1170,7 @@ impl Fit<'_> {
         let tolerance_mm = self.axis_mm?;
         let slope = self.depth.slope;
         let floor_mm = self.depth.flat_depth_mm.map(|f| f * slope);
-        let pieces = (a.xy().distance_to(b.xy()) / DEEPEN_SAMPLE_MM).ceil();
+        let pieces = sample_pieces(a, b);
         let mut worst: Option<(f64, Point3)> = None;
         let mut k = 1.0;
         while k < pieces {
@@ -1194,7 +1206,7 @@ impl Fit<'_> {
     /// below.
     fn undercut(&self, a: Point3, b: Point3) -> Option<Point3> {
         let slack_mm = self.deepen_mm?;
-        let pieces = (a.xy().distance_to(b.xy()) / DEEPEN_SAMPLE_MM).ceil();
+        let pieces = sample_pieces(a, b);
         let mut worst: Option<(f64, Point3)> = None;
         let mut k = 1.0;
         while k < pieces {
