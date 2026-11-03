@@ -322,6 +322,7 @@ dreamcarve check dc-male.dcv
 ```text
 dc-female.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
+warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
 Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
 Program 1 (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
@@ -330,9 +331,9 @@ Program 1 (T2):
 Program 2 (T1):
   Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
     The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
-  Estimated time: 1 min 5 s (cutting 1 min 2 s, dwells 3 s); 779 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 1 min 34 s (cutting 1 min 28 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female.dcv: 0 error(s), 2 warning(s)
+  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-female.dcv: 0 error(s), 3 warning(s)
 dc-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
@@ -344,12 +345,12 @@ Program 1 (T2):
 Program 2 (T1):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
-  Estimated time: 47 s (cutting 44 s, dwells 3 s); 418 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 56 s (cutting 53 s, dwells 3 s); 605 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Program 3 (T2):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 7 min 31 s (cutting 7 min 22 s, dwells 9 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-male.dcv: 0 error(s), 3 warning(s)
 ```
 
@@ -398,6 +399,7 @@ dreamcarve export dc-male.dcv
 ```text
 dc-female.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
+warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
 Wrote 2 programs; run them in this order:
   1. dc-female-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
   2. dc-female-2-T1.nc  Before you start: fit T1 1/4 60 degree V-bit and set Z zero with it. Keep X and Y zero.
@@ -410,11 +412,11 @@ dc-female-1-T2.nc (137 lines):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female-2-T1.nc (1082 lines):
+dc-female-2-T1.nc (1173 lines):
   Extents (machine coordinates, mm, tool centre): X 18.320..91.093, Y 20.001..59.999, Z -4.000..10.000
     The cutter's edge reaches X 15.145..94.268, Y 16.826..63.174; keep clamps outside that.
-  Estimated time: 1 min 5 s (cutting 1 min 2 s, dwells 3 s); 779 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 1 min 34 s (cutting 1 min 28 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Inlay op1 `DC` (female): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
 dc-male.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: inlay_male_mirrored: operation `op1`: it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
@@ -433,15 +435,15 @@ dc-male-1-T2.nc (8822 lines):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
   Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-2-T1.nc (595 lines):
+dc-male-2-T1.nc (680 lines):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
-  Estimated time: 47 s (cutting 44 s, dwells 3 s); 418 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 56 s (cutting 53 s, dwells 3 s); 605 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-male-3-T2.nc (218 lines):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 7 min 31 s (cutting 7 min 22 s, dwells 9 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Inlay op1 `DC` (male): deepest cut 5.000 mm below the stock top, the plug's start plane 3.000 mm below the stock top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 ```
 

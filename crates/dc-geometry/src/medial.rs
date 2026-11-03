@@ -612,6 +612,23 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         })
         .collect();
 
+    // #452: on the loops `reach` reaches, no sharp corner's own branch is
+    // a spur.
+    let reached = |index: usize| reach.reaches(index > 0);
+    let spared: Vec<Corner> = loops
+        .iter()
+        .enumerate()
+        .filter(|&(index, _)| reached(index))
+        .flat_map(|(index, pts)| corners_of_loop(pts, index > 0, CORNER_ANGLE_RAD, reach))
+        .collect();
+    // #484: a sharp corner turning no more than the spread has its two
+    // walls' contacts closer than the spread all along its branch, which
+    // the spread test drops but for a stub at the tip.
+    let narrow_spread: Vec<&Corner> = spared
+        .iter()
+        .filter(|c| c.turn_rad <= CONTACT_SPREAD_RAD)
+        .collect();
+
     // 4. Keep nodes whose boundary contacts spread (a λ-medial axis on the
     //    exact boundary). The tolerance covers the node error from chord
     //    sagitta, plus a small floor.
@@ -627,7 +644,17 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         // whose contacts the spread test reads as one direction.
         let kept = grid.has_contact_spread(p, clearance, CONTACT_SPREAD_RAD, tol_ratio)
             || (reach != CornerReach::Upstream
-                && has_feature_contact(&grid, &boundary, p, clearance, tol_ratio));
+                && (has_feature_contact(&grid, &boundary, p, clearance, tol_ratio)
+                    || narrow_spread.iter().any(|c| {
+                        on_corner_branch(
+                            MedialNode {
+                                p,
+                                clearance_mm: clearance,
+                            },
+                            c,
+                            step_mm,
+                        )
+                    })));
         if !kept {
             continue;
         }
@@ -661,17 +688,8 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         }
     }
 
-    // #452: on the loops `reach` reaches, no sharp corner's own branch is
-    // a spur.
-    let reached = |index: usize| reach.reaches(index > 0);
-    let spared: Vec<Corner> = loops
-        .iter()
-        .enumerate()
-        .filter(|&(index, _)| reached(index))
-        .flat_map(|(index, pts)| corners_of_loop(pts, index > 0, CORNER_ANGLE_RAD, reach))
-        .collect();
     let mut graph = contract_micro_clusters(&nodes, &graph_edges, step_mm * 0.75);
-    prune_spurs(&mut graph, step_mm * PRUNE_FACTOR, &spared, step_mm);
+    let pruned = prune_spurs(&mut graph, step_mm * PRUNE_FACTOR, &spared, step_mm);
     drop_small_components(&mut graph, step_mm * 4.0);
     // Every sharp corner gets a tip; on a loop `reach` reaches, so does
     // every other convex corner no medial disc, nor the floor's trace,
@@ -694,7 +712,7 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
     }
     let sampled = (reach != CornerReach::Upstream).then_some(&grid);
     extend_into_corners(&mut graph, &sharp, &loops, step_mm, sampled);
-    reach_blunt_corners(&mut graph, &blunt, &loops, step_mm, &grid);
+    reach_blunt_corners(&mut graph, &blunt, &loops, step_mm, &grid, &pruned);
     finalize(graph, step_mm)
 }
 
@@ -722,12 +740,21 @@ fn reach_gap_mm(graph: &Graph, p: Point, from: usize) -> f64 {
 /// reaches the rest, so the curve gets one tip rather than one per vertex;
 /// a coarse polygon's corners, each beyond every other's discs, get one
 /// each.
+///
+/// Before a corner gets a tip, a branch spur pruning took off is put back
+/// when one of its discs reaches the corner (#484, `pruned`): the axis of
+/// a strip with a round end keeps its clearance to the end's centre, so
+/// pruning unzips it up to [`MAX_PRUNE_ITERATIONS`] nodes back, and the
+/// end's vertices then lie a millimetre beyond the axis and off every
+/// bisector a tip could follow. The branch put back runs to the centre,
+/// whose disc reaches the whole end.
 fn reach_blunt_corners(
     graph: &mut Graph,
     corners: &[Corner],
     loops: &[Vec<Point>],
     step_mm: f64,
     grid: &SegmentDistanceGrid,
+    pruned: &BTreeMap<usize, usize>,
 ) {
     let mut gaps: Vec<f64> = corners
         .iter()
@@ -748,6 +775,18 @@ fn reach_blunt_corners(
         let Some((i, _)) = worst else {
             break;
         };
+        if let Some(corner) = corners.get(i)
+            && let Some(restored) = restore_pruned(graph, pruned, corner.p)
+        {
+            for (gap, corner) in gaps.iter_mut().zip(corners) {
+                for &k in &restored {
+                    if let Some(n) = graph.node(k) {
+                        *gap = gap.min(n.p.distance_to(corner.p) - n.clearance_mm);
+                    }
+                }
+            }
+            continue;
+        }
         let added = graph.nodes.len();
         extend_into_corners(
             graph,
@@ -764,6 +803,52 @@ fn reach_blunt_corners(
             *gap = f64::NEG_INFINITY;
         }
     }
+}
+
+/// Puts back the branch of the pruned node whose disc comes nearest `p`,
+/// when one reaches it within [`REACH_SLACK_MM`]: the node and each node
+/// it was unlinked from in turn (`pruned`, from [`prune_spurs`]), up to a
+/// node still in the graph. The nodes put back; `None` when no pruned disc
+/// reaches `p`, or its branch no longer leads to the graph.
+fn restore_pruned(
+    graph: &mut Graph,
+    pruned: &BTreeMap<usize, usize>,
+    p: Point,
+) -> Option<Vec<usize>> {
+    let mut best: Option<(usize, f64)> = None;
+    for &k in pruned.keys() {
+        let Some(n) = graph.node(k).filter(|_| graph.degree(k) == 0) else {
+            continue;
+        };
+        let gap = n.p.distance_to(p) - n.clearance_mm;
+        if gap <= REACH_SLACK_MM && best.is_none_or(|(_, g)| gap < g) {
+            best = Some((k, gap));
+        }
+    }
+    let (start, _) = best?;
+    let mut path = vec![start];
+    let mut current = start;
+    loop {
+        let &next = pruned.get(&current)?;
+        path.push(next);
+        if graph.degree(next) > 0 {
+            break;
+        }
+        // Each node is unlinked once, so the branch has no loop; this
+        // only bounds the walk.
+        if path.len() > pruned.len() + 1 {
+            return None;
+        }
+        current = next;
+    }
+    for pair in path.windows(2) {
+        if let [a, b] = *pair {
+            graph.link(a, b);
+        }
+    }
+    // The last node was in the graph already.
+    path.pop();
+    Some(path)
 }
 
 // ---------------------------------------------------------------------------
@@ -855,8 +940,16 @@ fn contract_micro_clusters(
 /// corner's angle, so below about 29° the test reads it as a spur and the
 /// passes unzip it from its tip to its junction (#452). A leaf on the
 /// branch of one of `spared` ([`on_corner_branch`], within `step_mm`) is
-/// kept; upstream spares none.
-fn prune_spurs(graph: &mut Graph, max_len_mm: f64, spared: &[Corner], step_mm: f64) {
+/// kept; upstream spares none. Gives back each node removed, with the
+/// junction it was unlinked from (#484: [`reach_blunt_corners`] puts a
+/// branch back where its disc reaches a corner nothing else does).
+fn prune_spurs(
+    graph: &mut Graph,
+    max_len_mm: f64,
+    spared: &[Corner],
+    step_mm: f64,
+) -> BTreeMap<usize, usize> {
+    let mut pruned = BTreeMap::new();
     for _ in 0..MAX_PRUNE_ITERATIONS {
         let mut removed = 0;
         for leaf in 0..graph.adjacency.len() {
@@ -878,12 +971,14 @@ fn prune_spurs(graph: &mut Graph, max_len_mm: f64, spared: &[Corner], step_mm: f
                 continue;
             }
             graph.unlink(leaf, junction);
+            pruned.insert(leaf, junction);
             removed += 1;
         }
         if removed == 0 {
             break;
         }
     }
+    pruned
 }
 
 /// True when `node` is on the straight branch of the medial axis into

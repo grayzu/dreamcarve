@@ -50,6 +50,18 @@ use dc_geometry::{
 use dc_project::{CutDirection, OperationId, Project, Tool, VCarveOp};
 use std::f64::consts::FRAC_PI_2;
 
+/// How far, in step-overs, a ring node with children may leave a point
+/// from its own ring and from its children before the point gets a centre
+/// ring (#484): just over the `s / (1 + sin 45°)` = 0.586 `s` a square
+/// convex corner of two rings `s` apart leaves (its ridge `0.59 s /
+/// tan(α/2)`, design step 6), so a square or blunter corner gets none;
+/// a strip of the node narrower than two step-overs, whose inset is empty
+/// or noise there but not elsewhere, gets one along its middle. A sharper
+/// corner's gap lies along its bisector, which the corner's medial chain
+/// cuts at the floor's depth, so its centre rings cut little that is not
+/// cut already.
+const CENTRE_REACH_STEPS: f64 = 0.6;
+
 /// The flat floor of a carve with one V-bit: where it lies and how its
 /// rings step.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -347,10 +359,29 @@ fn rings_clearing(
         let Some(node) = tree.nodes.get(ring.node) else {
             continue;
         };
-        if node.children.is_empty() && !node.residual && !centred.contains(&ring.node) {
+        if !node.residual && !centred.contains(&ring.node) {
             centred.push(ring.node);
             let mut from = Some(ring.start);
-            for centre in residual_regions(&node.region, &[], stepover_mm / 2.0, cut.tolerance_mm) {
+            // #484: a node with children is centred too, where it is no
+            // more than two step-overs across and its inset is empty or
+            // noise there, though not elsewhere: its rings leave its middle
+            // up to a step-over from either, as a leaf's would.
+            let children: Vec<Region> = node
+                .children
+                .iter()
+                .filter_map(|&c| tree.nodes.get(c))
+                .filter(|c| !c.residual)
+                .map(|c| c.region.clone())
+                .collect();
+            let reach_mm = if children.is_empty() {
+                stepover_mm / 2.0
+            } else {
+                CENTRE_REACH_STEPS * stepover_mm
+            };
+            let centres = residual_regions(&node.region, &children, reach_mm, cut.tolerance_mm)
+                .into_iter()
+                .filter(|c| children.is_empty() || wider_than(c, stepover_mm));
+            for centre in centres {
                 for centre_ring in rings_of(&centre, ring.node, &mut from, |_| true) {
                     out.push(ring_block(
                         centre_ring,
@@ -376,6 +407,19 @@ fn rings_clearing(
         *anchor = Some(last.exit);
     }
     Ok(out)
+}
+
+/// Whether `region`'s box is wider than `span_mm` either way (#484): a
+/// centre ring of a node with children is cut only along a strip, not in
+/// the sliver its rings leave at a corner sharper than a right angle,
+/// which the corner's own medial chain cuts along its bisector at the
+/// floor's depth.
+fn wider_than(region: &Region, span_mm: f64) -> bool {
+    region
+        .outer()
+        .polyline()
+        .bounds()
+        .is_some_and(|b| b.width_mm().max(b.height_mm()) > span_mm)
 }
 
 /// The outer and holes of `region` that `keep` keeps, as rings of `node`,

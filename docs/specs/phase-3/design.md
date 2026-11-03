@@ -728,6 +728,16 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
    nothing. `medial_axis` (upstream's reach) keeps upstream's test alone
    (`medial::axis_wraps_round_a_line_end`,
    `medial::feature_contacts_keep_no_flattening_spokes`).
+   **Corners turning 50° to 60° (#484).** A sharp corner (step 11) whose
+   walls turn no more than the 60° spread has their contacts closer than
+   the spread all along its branch; the band only widens near the tip,
+   where `tolRatio` grows, so the test kept a stub there, the tip joined
+   the stub, and the branch from it to the rest of the axis was missing
+   (a regular heptagon's axis was four nodes, and its female and male cut
+   nothing between the stubs). With `CornerReach::Every` a node on such a
+   corner's branch (as step 9's spared leaves: within a step of the
+   bisector, its clearance `along · sin(θ/2)` within a step) is kept too
+   (`inlay::heptagon_plug_seats_flush`).
 7. **Edges**: for each Delaunay half-edge pair whose two triangles both
    map to kept nodes, an edge, unless the edge's midpoint is outside the
    region (a reflex-corner cut).
@@ -777,6 +787,14 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
     and "aligned" with the bisector, over the axis a step away, and the
     branch then runs along the wall, a V-bit tip on the outline all the
     way, which S17 refuses (`medial::no_corner_tip_is_joined_to_another`).
+    Before such a corner gets a tip, a branch spur pruning (step 9) took
+    off is put back when one of its discs reaches the corner within
+    0.01 mm, node by node to the junction it was unlinked from (#484): a
+    strip's axis keeps its clearance to a round end's centre, so pruning
+    unzipped up to 32 nodes of it, and the end's flattened vertices then
+    lay a millimetre beyond the axis and off every bisector a tip could
+    follow; the branch put back runs to the end's centre
+    (`inlay::slot_plug_seats_flush`).
     `convex_corners` returns bisectors into the region.
     `medial_axis` (upstream's reach) stays for the ported tests.
 12. **Finalise**: nodes with no edges are dropped; a graph with no edges
@@ -837,9 +855,15 @@ orientation; DreamCarve's regions are normalised anyway.
      junctions or leaves, pure cycles (closed, first node repeated),
      isolated nodes as plunge points.
    - **Redundant leaves** (`pruneRedundantLeafChains`, tolerance
-     `0.75 · step`): a leaf chain whose every body node's groove is
-     covered by a remaining node's groove within the tolerance is
-     dropped; zero-clearance tips are exempt; at most four passes.
+     `min(0.75 · step, 0.005 mm)`): a leaf chain whose every body node's
+     groove is covered by a remaining node's groove within the tolerance
+     is dropped; zero-clearance tips are exempt; at most four passes.
+     Upstream's `0.75 · step` lets a dropped chain reach that far beyond
+     the grooves left, so the groove stops up to that short of a wall: on
+     a wide male band (step 0.2 mm and more) a short branch into a fillet
+     went, and the plug's wall stood `0.75 · step / tan(α/2)` too high
+     (#484, `inlay::fillet_in_a_wide_band_seats_flush`). The cap is the
+     carved edge's (simplify, below).
    - **Depth** per node: `d = min(clearance / slope, F)`; `z = start_plane
      − d`. The carved disc radius at the start plane is `d · slope`
      (the clamped value, never the raw clearance: upstream's gouge fix).
@@ -1030,7 +1054,20 @@ orientation; DreamCarve's regions are normalised anyway.
      inside it (`residual_regions` at `s / 2`, upstream's
      `appendResidualCoreGuides`), since the rings alone can leave the
      middle up to `s` from a groove, a ridge twice the reported one
-     (#405). Arcs of the rings are flattened to the floor's side:
+     (#405). A ring with children leaves the same where it is under two
+     step-overs across and its inset is empty or noise there, though not
+     elsewhere (a strip between two wider parts): it gets centre rings
+     too (#484), round the pieces of it more than `0.6 · s` from its
+     ring and from its children (`residual_regions` at `0.6 · s`, just
+     over the `0.586 · s` a square corner of two rings leaves, so a
+     square corner gets none), less the pieces no wider than `s` either
+     way, which are the slivers at corners sharper than a right angle that
+     the corner's medial chain cuts along its bisector. Before, a 0.88 mm
+     strip of a female's floor kept a ridge `s / slope` high along its
+     middle, which held the plug 0.3 mm up
+     (`inlay::dumbbell_floor_seats_flush`); the tutorial's "DC" floor gets
+     a few such strips (its female's V-bit program 1080 → 1173 lines).
+     Arcs of the rings are flattened to the floor's side:
      chords for a counter-clockwise arc, lines tangent to a clockwise
      one (outside its circle), so no move comes nearer a wall than its
      arc (#405). The floor is scalloped: between two grooves `s` apart
@@ -1435,7 +1472,15 @@ Both sides are a `vcarve::Carve` plus checks; the generator is
      curves tighter than `R'` become arcs of radius `R'`, notches and
      gaps narrower than about `2R'` fill, and `B` reaches no farther than
      the plain band where it is convex. `R' = 0` is the union of the
-     offsets, as before. `dc_geometry::surround` is `B` minus
+     offsets, as before. `B` has no holes (#484): where the parts' margins
+     ring round board farther than `M + R'` from every part, that board
+     is band too. No part lies in such a hole (each part's margin covers
+     it), and left out of `B` it was never cut: it stood to the stock top
+     inside the band's floor and held the plug off the female's surface,
+     up to 2.6 mm on the sweep's lettering
+     (`carve::band_fills_the_board_its_parts_ring_round`,
+     `inlay::band_round_a_space_seats_flush`). The safety pass reads the
+     same `B`. `dc_geometry::surround` is `B` minus
      `design_mirrored` (every region, so a hole in the design is carved:
      `difference` with the design's regions, which subtracts their outers
      and adds back their holes, with walls on every side). Tolerance the

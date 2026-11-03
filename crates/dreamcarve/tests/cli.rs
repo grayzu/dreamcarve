@@ -6762,7 +6762,9 @@ fn lettered_inlay_female_and_male_export() {
                 "unused_tool",
             ]
         } else {
-            &["entry_fallback", "unused_tool"]
+            // #484: the floor's centre rings along its narrow strips; one
+            // is kept as straight moves by the arc fitter.
+            &["arc_fit_fallback", "entry_fallback", "unused_tool"]
         };
         assert_eq!(warning_codes(&report), expected, "{stem}: {report}");
         let mirrored = report.matches("inlay_male_mirrored").count();

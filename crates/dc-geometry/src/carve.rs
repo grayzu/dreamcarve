@@ -73,7 +73,8 @@ pub fn floor_regions(regions: &[Region], inset_mm: f64, tolerance_mm: f64) -> Ve
 /// narrower than about `2R` fill; nothing reaches farther than the design
 /// grown by `M + R`, and no more than the plain band where it is convex.
 /// With `rounding_mm` 0 it is the union of the margin offsets exactly.
-/// Holes of the design are never offset.
+/// Holes of the design are never offset. The band has no holes
+/// ([`filled`], #484): board the margins ring round is band too.
 ///
 /// The union is [`crate::union`], so the result is polygonal: arcs are
 /// flattened to chords within `tolerance_mm`. Outers come back
@@ -92,15 +93,30 @@ pub fn rounded_band(
     if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
     }
-    let united = union(
+    let united = filled(union(
         &grown_outers(regions, margin_mm + rounding_mm, Bays::Island),
         &[],
         tolerance_mm,
-    );
+    ));
     if rounding_mm == 0.0 {
         return united;
     }
     floor_regions(&united, rounding_mm, tolerance_mm)
+}
+
+/// `regions` with their holes filled: each outer alone (#484). A hole of
+/// the margins' union is board the design's parts ring round, farther than
+/// the margin from all of them; no part lies in it, since each part's own
+/// margin covers it. Left out of the band, it stood to the stock top
+/// inside the band's floor, and held the plug off the female's surface.
+fn filled(regions: Vec<Region>) -> Vec<Region> {
+    if regions.iter().all(|r| r.holes().is_empty()) {
+        return regions;
+    }
+    regions
+        .into_iter()
+        .filter_map(|r| single_region(r.outer().clone()))
+        .collect()
 }
 
 /// A male inlay's surround (`docs/specs/phase-3/design.md`, "Algorithms →
@@ -149,7 +165,17 @@ pub fn surround_within(
         return Vec::new();
     }
     let band = if rounding_mm == 0.0 {
-        grown_outers(regions, margin_mm, Bays::Island)
+        let mut grown = grown_outers(regions, margin_mm, Bays::Island);
+        // #484: the board the margins ring round is band too
+        // ([`filled`]), added as regions of its own, which the difference
+        // fills with the rest.
+        let rings: Vec<Region> = union(&grown, &[], tolerance_mm)
+            .iter()
+            .flat_map(|r| r.holes().iter().map(Contour::reversed))
+            .filter_map(single_region)
+            .collect();
+        grown.extend(rings);
+        grown
     } else {
         rounded_band(regions, margin_mm, rounding_mm, tolerance_mm)
     };
