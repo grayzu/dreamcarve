@@ -166,6 +166,9 @@ The end mill is the sign's 3.175 mm end mill, T2 on the machine. The
 V-bit is a 60° bit, T1. Its **cone height**, the depth at which its sides
 reach their full 6.35 mm, is 5.5 mm, and the deepest either side of this
 inlay goes is 5 mm (see [Choosing the bit](../user-guide/inlay.md#choosing-the-bit)).
+Use a 60° or 90° bit for inlays: narrower bits fit less closely, as
+[Choosing a V-bit for an inlay](../user-guide/inlay.md#choosing-a-v-bit-for-an-inlay)
+explains.
 
 Add the file's tools to your library, list it, and copy both tools into
 both projects:
@@ -694,6 +697,8 @@ same operation, and set each board's measured thickness.
   of the four values changes: [Inlay](../user-guide/inlay.md).
 - A cutting board: Corbin's Workshop uses about 6 mm of inlay depth for
   a board that will be planed hard and used. That is past the 60° bit's
-  5.5 mm cone, so use a 30° 6.35 mm bit (an 11.8 mm cone), and a male
-  board thick enough to keep 6 mm under its band. See [Choosing the
-  bit](../user-guide/inlay.md#choosing-the-bit).
+  5.5 mm cone, so use a 60° bit 12.7 mm (1/2 in) across (an 11 mm
+  cone), and a male board thick enough to keep 6 mm under its band. A
+  30° 6.35 mm bit (an 11.8 mm cone) reaches too, but fits less closely.
+  See [Choosing the bit](../user-guide/inlay.md#choosing-the-bit) and
+  [Choosing a V-bit for an inlay](../user-guide/inlay.md#choosing-a-v-bit-for-an-inlay).

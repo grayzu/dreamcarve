@@ -124,10 +124,37 @@ With the 90° 1/4 in bit, Corbin's usual values are refused on the male:
 `depth_mm` 2, `glue_gap_mm` 0.25 and `plug_depth_mm` 1.25 (3 mm), or use a
 60° bit, or a 90° bit 12.7 mm (1/2 in) across, whose cone is 6.35 mm.
 
-A steeper bit (a smaller angle) makes deeper walls for the same width,
-which glue better and survive more planing, and it reaches farther into
-narrow parts of a design. A 60° bit is a good start. Both projects must
-use the same angle; two files cannot check that for you.
+Both projects must use the same angle; two files cannot check that for
+you.
+
+### Choosing a V-bit for an inlay
+
+Use a 60° or a 90° bit. With either, the plug seats within about
+0.05 mm of the height its walls are cut for. A 60° 1/4 in bit takes the
+quick start's values as they are; a 90° 1/4 in bit needs them lowered to
+fit its 3.175 mm cone, as above.
+
+A narrower bit, 30° or 15°, makes deeper walls for the same width, which
+glue better and survive more planing, and it reaches farther into narrow
+parts of a design. But its steep walls turn a small sideways error into
+a larger one in height: where the plug's wall sits a little to one side
+of the pocket's, the plug seats higher or lower by that error times
+1 / tan(α / 2), for angle `α`:
+
+| Angle | Height per unit of sideways error |
+| --- | --- |
+| 90° | 1 |
+| 60° | 1.7 |
+| 30° | 3.7 |
+| 15° | 7.6 |
+
+For now, with a 15° or 30° bit, expect the plug to stand up to about
+0.3 mm proud: in sharp corners and other tight features of the design,
+its walls meet the pocket's before they do elsewhere
+([#506](https://github.com/grayzu/dreamcarve/issues/506)). If you use
+one, plan for it: press the plug home with a clamp and flat cauls, so
+that the wood gives where the walls meet first, and keep `glue_gap_mm`
+at 1 mm or more, so that the plug has room under it to go down.
 
 ## Two projects from one drawing
 
