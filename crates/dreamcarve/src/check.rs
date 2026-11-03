@@ -40,20 +40,25 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
         findings,
         generated,
     } = export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
+    // Where a plain `export` would write its programs; with none, the one
+    // program's default path.
+    let boards = export::by_board(&project);
+    let mut outputs = export::output_paths(None, &args.dcv, &programs, boards)?;
+    if programs.is_empty() {
+        outputs = vec![
+            args.dcv
+                .with_extension(&project.post_processor.file_extension),
+        ];
+    }
     if let Some(preview) = &args.preview {
-        // Where a plain `export` would write its programs; with none, the
-        // one program's default path.
-        let mut outputs = export::output_paths(None, &args.dcv, &programs)?;
-        if programs.is_empty() {
-            outputs = vec![
-                args.dcv
-                    .with_extension(&project.post_processor.file_extension),
-            ];
-        }
         export::check_preview_not_program(preview, &outputs)?;
     }
     let estimates = export::Estimates::new(&project, &programs, estimate_settings);
 
+    // #498: what migrating the file changed that the user should know.
+    for note in &file.notes {
+        outln!("{}: note: {note}", args.dcv.display())?;
+    }
     for error in &findings.errors {
         outln!("{}", file.describe("error", error))?;
     }
@@ -68,15 +73,32 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     // #62: where the program would take the tool, and capability 30: how
     // long it would run, as `export` prints them; for each program when
     // there is one per tool run (#95), then the total.
-    if let [program] = programs.as_slice() {
+    if let [program] = programs.as_slice()
+        && !boards
+    {
         let radius_mm = export::largest_tool_radius_mm(&project);
         for line in export::describe_extents(&project, program, radius_mm) {
             outln!("{line}")?;
         }
         outln!("{}", estimates.program_line(0))?;
     } else {
+        let mut board = None;
         for (k, program) in programs.iter().enumerate() {
-            outln!("Program {} (T{}):", k + 1, program.first_tool.number)?;
+            // #498: each board's programs under its heading, named as
+            // `export` names them.
+            if boards {
+                if board != Some(program.board) {
+                    board = Some(program.board);
+                    outln!("{}", export::board_heading(&project, program.board))?;
+                }
+                let name = outputs
+                    .get(k)
+                    .and_then(|o| o.file_name())
+                    .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                outln!("Program {name} (T{}):", program.first_tool.number)?;
+            } else {
+                outln!("Program {} (T{}):", k + 1, program.first_tool.number)?;
+            }
             let radius_mm = export::tool_radius_mm(&project, program);
             for line in export::describe_extents(&project, program, radius_mm) {
                 outln!("  {line}")?;

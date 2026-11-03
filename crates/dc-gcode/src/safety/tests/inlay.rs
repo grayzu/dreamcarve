@@ -26,8 +26,8 @@ use dc_project::test_support::{
     line_art_inlay, line_art_project, line_art_v_carve, tool_6_35_upcut, tool_v_bit_90,
 };
 use dc_project::{
-    ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlayOp, InlaySide, InstanceId, MachiningOrder, OperationId, Stock, ToolId,
+    Board, ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, InlayOp, InstanceId, MachiningOrder, MaleBoard, OperationId, Stock, ToolId,
     ToolKind,
 };
 use std::collections::BTreeMap;
@@ -126,9 +126,21 @@ pub(super) fn inlay(side: Board, tool: &str, plug_mm: f64, margin_mm: f64) -> In
     }
 }
 
+/// The board a one-board test cuts `op` on ([`inlay`], #498): the male
+/// when its male board is measured, else the female. The male board is
+/// the stock's size and thickness, so the project is its own.
+pub(super) fn board_of(op: &InlayOp) -> Board {
+    if op.cuts_male() {
+        Board::Male
+    } else {
+        Board::Female
+    }
+}
+
 /// S9 and S17 alone on hand-written `text`, as the V-bit's run of `op` in
 /// `project` (which gains `op`).
 fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<(), ExportError> {
+    let board = board_of(op);
     let mut project = project.clone();
     project.operations = vec![Operation::Inlay(op.clone())];
     let tool = project
@@ -141,7 +153,7 @@ fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<(), ExportE
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(&project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(&project, &op, &RunLabel::Main, &tool);
+    let material = Material::of_run(&project, &op, &RunLabel::Main, &tool, board);
     let tabs = material::tab_spines(&project, &op);
     let toolpath = Toolpath::default();
     let span = OpSpan {
@@ -178,7 +190,7 @@ fn assert_cone_off(result: Result<(), ExportError>, line: usize) {
 fn export_inlay(project: &Project, op: &InlayOp) -> Result<Vec<String>, ExportError> {
     let mut project = project.clone();
     project.operations = vec![Operation::Inlay(op.clone())];
-    let (runs, _) = dc_cam::generate_inlay(&project, op)
+    let (runs, _) = dc_cam::generate_inlay_board(&project, op, board_of(op))
         .unwrap_or_else(|e| panic!("the inlay generates: {e}\n{e:?}"));
     let ops: Vec<EmitOp> = runs
         .into_iter()
@@ -193,6 +205,7 @@ fn export_inlay(project: &Project, op: &InlayOp) -> Result<Vec<String>, ExportEr
             toolpath: run.toolpath,
             holes: None,
             label: run.label,
+            board: run.board,
         })
         .collect();
     let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE)?;
@@ -240,7 +253,7 @@ fn generated_inlays_pass_s17() {
         direction: CutDirection::Climb,
         entry: Entry::Plunge,
     };
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         for clearing in [Vec::new(), vec![pass.clone()]] {
             let op = InlayOp {
                 clearing: clearing.clone(),
@@ -251,7 +264,7 @@ fn generated_inlays_pass_s17() {
             assert_eq!(programs.len(), 1 + clearing.len(), "{side:?}");
         }
     }
-    let male = inlay(InlaySide::Male, "t2", 1.0, 3.0);
+    let male = inlay(Board::Male, "t2", 1.0, 3.0);
     export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
     // #448: open, rounded band edges: the small star's male with the end
     // mill's pass (its 4 mm margin has room for it) rounded by 3 mm, and
@@ -262,7 +275,7 @@ fn generated_inlays_pass_s17() {
             InlayOp {
                 clearing: vec![pass.clone()],
                 outline_rounding_mm: Some(3.0),
-                ..inlay(InlaySide::Male, "t5", 1.0, 4.0)
+                ..inlay(Board::Male, "t5", 1.0, 4.0)
             },
         ),
         (
@@ -270,7 +283,7 @@ fn generated_inlays_pass_s17() {
             InlayOp {
                 clearing: vec![pass.clone()],
                 outline_rounding_mm: Some(20.0),
-                ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+                ..inlay(Board::Male, "t2", 1.0, 6.0)
             },
         ),
     ] {
@@ -303,7 +316,7 @@ fn narrow_bit_inlays_pass_the_safety_pass() {
             },
             ..tool_v_bit_90()
         });
-        for side in [InlaySide::Female, InlaySide::Male] {
+        for side in [Board::Female, Board::Male] {
             for clearing in [Vec::new(), vec![pass.clone()]] {
                 let op = InlayOp {
                     clearing: clearing.clone(),
@@ -328,7 +341,7 @@ fn narrow_bit_inlays_pass_the_safety_pass() {
 #[test]
 fn generated_line_art_passes_the_safety_pass() {
     let project = line_art_project();
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         let programs = export_inlay(&project, &line_art_inlay(side))
             .unwrap_or_else(|e| panic!("the {side:?} line art: {e}"));
         assert_eq!(
@@ -355,6 +368,7 @@ fn generated_line_art_passes_the_safety_pass() {
             toolpath: run.toolpath,
             holes: None,
             label: run.label,
+            board: run.board,
         })
         .collect();
     let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE)
@@ -406,7 +420,7 @@ fn male_band_rounding_is_derived_from_the_project() {
     let rounded = InlayOp {
         clearing: vec![edge_pass()],
         outline_rounding_mm: Some(20.0),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     let cut = program_at(30.0, 23.0, "G1 Z-2.5 F300\nX32 F1000\n");
     check_male(&cut, &project, &rounded).unwrap();
@@ -430,12 +444,12 @@ fn v_bit_across_the_open_edge_fails_s17() {
     let project = two_shapes();
     let open = InlayOp {
         clearing: vec![edge_pass()],
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     let at = |y: f64| program_at(56.0, y, "G1 Z-2.5 F300\nX57 F1000\n");
     check_male(&at(17.0), &project, &open).unwrap();
     assert_cone_off(check_male(&at(15.5), &project, &open), 6);
-    let v_wall = inlay(InlaySide::Male, "t2", 1.0, 6.0);
+    let v_wall = inlay(Board::Male, "t2", 1.0, 6.0);
     check_male(&at(15.5), &project, &v_wall).unwrap();
 }
 
@@ -455,7 +469,7 @@ fn cut_out_off_the_open_edge_ring_fails() {
     let open = InlayOp {
         clearing: vec![edge_pass()],
         cut_out: Some(cut_out(None)),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     let label = RunLabel::CutOut(ToolId::new("t3"));
     let at = |y: f64| program_at(55.0, y, "G1 Z-12.2 F300\nX60 F1000\n");
@@ -481,7 +495,7 @@ fn cut_out_off_the_open_edge_ring_fails() {
 #[test]
 fn male_surround_is_derived_from_the_mirrored_targets() {
     let project = two_shapes();
-    let op = inlay(InlaySide::Male, "t2", 1.0, 3.0);
+    let op = inlay(Board::Male, "t2", 1.0, 3.0);
     let cut = "G1 Z-2 F300\nX{x} F1000\n";
     let at = |x: f64| program_at(x, 18.5, &cut.replace("{x}", &format!("{}", x + 1.0)));
     check_male(&at(56.0), &project, &op).unwrap();
@@ -497,7 +511,7 @@ fn male_surround_is_derived_from_the_mirrored_targets() {
 #[test]
 fn male_shank_check_counts_from_the_stock_top() {
     let project = two_shapes();
-    let op = inlay(InlaySide::Male, "t2", 2.5, 6.0);
+    let op = inlay(Board::Male, "t2", 2.5, 6.0);
     let at = |z: f64| program_at(56.0, 17.0, &format!("G1 Z{z} F300\nX57 F1000\n"));
     check_male(&at(-3.0), &project, &op).unwrap();
     match check_male(&at(-3.5), &project, &op) {
@@ -520,7 +534,7 @@ fn male_shank_check_counts_from_the_stock_top() {
 #[test]
 fn male_cut_inside_the_plug_fails_s17() {
     let project = two_shapes();
-    let op = inlay(InlaySide::Male, "t2", 1.0, 3.0);
+    let op = inlay(Board::Male, "t2", 1.0, 3.0);
     assert_cone_off(
         check_male(
             &program_at(60.0, 25.0, "G1 Z-2 F300\nX61 F1000\n"),
@@ -572,6 +586,7 @@ fn check_run(
     label: &RunLabel,
     tool: &str,
 ) -> Result<(), ExportError> {
+    let board = board_of(op);
     let mut project = project.clone();
     project.operations = vec![Operation::Inlay(op.clone())];
     let tool = project
@@ -584,8 +599,8 @@ fn check_run(
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(&project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(&project, &op, label, &tool);
-    let tabs = material::run_tab_spines(&project, &op, label, &tool);
+    let material = Material::of_run(&project, &op, label, &tool, board);
+    let tabs = material::run_tab_spines(&project, &op, label, &tool, board);
     let toolpath = Toolpath::default();
     let span = OpSpan {
         op: &op,
@@ -626,7 +641,7 @@ fn cut_out_off_the_floor_ring_fails() {
     let project = two_shapes();
     let op = InlayOp {
         cut_out: Some(cut_out(None)),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     let label = RunLabel::CutOut(ToolId::new("t3"));
     let at = |x: f64, y: f64| program_at(x, y, &format!("G1 Z-12.2 F300\nX{} F1000\n", x + 5.0));
@@ -643,13 +658,13 @@ fn cut_out_off_the_floor_ring_fails() {
         check_run(&at(55.0, 16.5875), &project, &op, &label, "t2"),
         6,
     );
-    let without = inlay(InlaySide::Male, "t2", 1.0, 6.0);
+    let without = inlay(Board::Male, "t2", 1.0, 6.0);
     assert_off(
         check_run(&at(55.0, 16.5875), &project, &without, &label, "t3"),
         6,
     );
     let female = InlayOp {
-        side: InlaySide::Female,
+        male_board: MaleBoard::default(),
         ..op.clone()
     };
     assert_off(
@@ -667,7 +682,7 @@ fn cut_out_plunge_into_a_tab_fails() {
     let mut project = two_shapes();
     let op = InlayOp {
         cut_out: Some(cut_out(Some(four_tabs()))),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     project.operations = vec![Operation::Inlay(op.clone())];
     let label = RunLabel::CutOut(ToolId::new("t3"));
@@ -679,7 +694,7 @@ fn cut_out_plunge_into_a_tab_fails() {
         .expect("the end mill");
     let operation = Operation::Inlay(op.clone());
     assert_eq!(
-        material::run_tab_spines(&project, &operation, &label, &tool).len(),
+        material::run_tab_spines(&project, &operation, &label, &tool, Board::Male).len(),
         7,
         "four round the rectangle; three round the square, whose 45 mm path (#461) is too short for four"
     );
@@ -734,7 +749,7 @@ fn cut_out_is_held_to_its_own_allowance() {
     let project = two_shapes();
     let op = InlayOp {
         cut_out: Some(cut_out(Some(four_tabs()))),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     let mut programs = export_inlay(&project, &op).expect("the male exports");
     let cut_out = programs.pop().expect("a cut-out program");
@@ -761,7 +776,7 @@ fn generated_cut_outs_pass() {
             let op = InlayOp {
                 clearing: clearing.clone(),
                 cut_out: Some(cut_out(tabs.clone())),
-                ..inlay(InlaySide::Male, "t5", 1.0, 6.0)
+                ..inlay(Board::Male, "t5", 1.0, 6.0)
             };
             let programs =
                 export_inlay(&star, &op).unwrap_or_else(|e| panic!("{clearing:?} {tabs:?}: {e}"));
@@ -773,7 +788,7 @@ fn generated_cut_outs_pass() {
     }
     let male = InlayOp {
         cut_out: Some(cut_out(Some(four_tabs()))),
-        ..inlay(InlaySide::Male, "t2", 1.0, 6.0)
+        ..inlay(Board::Male, "t2", 1.0, 6.0)
     };
     export_inlay(&two_shapes(), &male).unwrap_or_else(|e| panic!("two shapes: {e}"));
     // #448, #461: open, rounded band edges, the cut-out its radius inside
@@ -784,7 +799,7 @@ fn generated_cut_outs_pass() {
             clearing: vec![pass.clone()],
             outline_rounding_mm: Some(rounding_mm),
             cut_out: Some(cut_out(Some(four_tabs()))),
-            ..inlay(InlaySide::Male, tool, 1.0, 6.0)
+            ..inlay(Board::Male, tool, 1.0, 6.0)
         };
         let programs =
             export_inlay(&project, &op).unwrap_or_else(|e| panic!("R {rounding_mm}: {e}"));
@@ -838,7 +853,7 @@ fn near_male(cut_out: bool) -> InlayOp {
             tabs: Some(four_tabs()),
             through_cut_allowance_mm: 0.2,
         }),
-        ..inlay(InlaySide::Male, "t6", 0.6, 8.0)
+        ..inlay(Board::Male, "t6", 0.6, 8.0)
     }
 }
 
@@ -899,6 +914,7 @@ fn cut_out_off_the_stock_still_fails() {
             toolpath: run.toolpath,
             holes: None,
             label: run.label,
+            board: run.board,
         })
         .collect();
     assert_eq!(ops.len(), 1, "a cut-out run");
@@ -936,7 +952,7 @@ fn near_squares(gap_mm: f64) -> Project {
 /// the stock top, and the same cut is off the material.
 #[test]
 fn female_holds_merged_parts_as_one_shape() {
-    let op = inlay(InlaySide::Female, "t2", 1.0, 3.0);
+    let op = inlay(Board::Female, "t2", 1.0, 3.0);
     let cut = program_at(20.0, 25.0, "G1 Z-1 F300\nY26 F1000\n");
     check_male(&cut, &near_squares(0.001), &op).unwrap();
     assert_cone_off(check_male(&cut, &near_squares(0.1), &op), 6);
@@ -962,7 +978,7 @@ fn generated_near_parts_pass_the_safety_pass() {
         entry: Entry::Plunge,
     };
     for project in [near_squares(0.001), pinch] {
-        for side in [InlaySide::Female, InlaySide::Male] {
+        for side in [Board::Female, Board::Male] {
             for clearing in [Vec::new(), vec![pass.clone()]] {
                 let op = InlayOp {
                     clearing: clearing.clone(),

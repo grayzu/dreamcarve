@@ -20,7 +20,7 @@ use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::vcarve::{carve_regions, cone_height_mm, cone_in_material, start_plane};
 use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
+use dc_project::{Board, InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -56,8 +56,17 @@ use dc_project::{InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
 ///    plane and engagement as the project gives them (an Inlay male's: the
 ///    mirrored design's surround, engaged from the stock top).
 ///
-/// Panics with the offending move index on the first violation.
+/// Panics with the offending move index on the first violation. An
+/// Inlay's toolpath is held as its female's, on the stock; a male's run is
+/// checked by [`assert_run_safe`], on its own board (#498).
 pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
+    assert_safe_on(toolpath, project, op, Board::Female);
+}
+
+/// [`assert_safe`] on `board`, `project` already that board's (the male
+/// board's stock is its own, so resolving it again,
+/// [`Project::on_male_board`], changes nothing).
+fn assert_safe_on(toolpath: &Toolpath, project: &Project, op: &Operation, board: Board) {
     let tool = project
         .tools
         .iter()
@@ -90,20 +99,34 @@ pub fn assert_safe(toolpath: &Toolpath, project: &Project, op: &Operation) {
     );
     match op {
         Operation::VCarve(carve) => assert_cone_in_material(toolpath, project, carve, tool),
-        Operation::Inlay(inlay) => assert_inlay_cone_in_material(toolpath, project, inlay, tool),
+        Operation::Inlay(inlay) => {
+            assert_inlay_cone_in_material(toolpath, project, inlay, tool, board);
+        }
         _ => {}
     }
 }
 
-/// [`assert_safe`] for one tool run of `op` (#406): its own run with the
-/// operation's tool, the cone test included; a carve's clearing run with
-/// its pass's end mill, whose rates it is held to, and no cone test; and
-/// a male Inlay's cut-out (#443) the same with its end mill, down to its
+/// [`assert_safe`] for one tool run of `op` (#406), on the run's board
+/// (#498: a male Inlay's on its male board, `project`'s otherwise): its
+/// own run with the operation's tool, the cone test included; a carve's
+/// clearing run with its pass's end mill, whose rates it is held to, and
+/// no cone test; and a male Inlay's cut-out (#443) the same with its end
+/// mill, down to its
 /// own through-cut allowance.
 pub fn assert_run_safe(run: &ToolRun, project: &Project, op: &Operation) {
+    // #498: a male Inlay's run is cut on its male board.
+    let on_board;
+    let project = match (run.board, op) {
+        (Board::Male, Operation::Inlay(inlay)) => {
+            on_board = project.on_male_board(inlay);
+            &on_board
+        }
+        (Board::Male, _) => panic!("a male board run of an operation that is no Inlay: {op:?}"),
+        (Board::Female, _) => project,
+    };
     let (tool_id, floor_z_mm) = match &run.label {
         RunLabel::Main => {
-            assert_safe(&run.toolpath, project, op);
+            assert_safe_on(&run.toolpath, project, op, run.board);
             return;
         }
         RunLabel::Clearing(tool_id) => (tool_id, -op.through_cut_allowance_mm()),
@@ -178,8 +201,10 @@ fn assert_inlay_cone_in_material(
     project: &Project,
     op: &InlayOp,
     tool: &Tool,
+    board: Board,
 ) {
-    let side = crate::inlay::side(project, op, &mut Vec::new()).expect("the inlay's side resolves");
+    let side = crate::inlay::side(project, op, board, &mut Vec::new())
+        .expect("the inlay's board resolves");
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         panic!("an Inlay's tool is a V-bit: {tool:?}");
     };

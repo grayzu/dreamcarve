@@ -243,6 +243,7 @@ pub(crate) fn runs(
                 label: RunLabel::Clearing(tool.id.clone()),
                 tool: tool.id.clone(),
                 toolpath,
+                board: dc_project::Board::Female,
             });
         }
         earlier.push(reference(radius_mm));

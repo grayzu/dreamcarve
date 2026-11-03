@@ -134,7 +134,13 @@ fn check_sink(text: &str, project: &Project, op: &DrillOp) -> Result<(), ExportE
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
     let operation = Operation::Drill(op.clone());
     let tool = tool_of(project, &op.tool);
-    let material = Material::of_run(project, &operation, &RunLabel::Main, &tool);
+    let material = Material::of_run(
+        project,
+        &operation,
+        &RunLabel::Main,
+        &tool,
+        dc_project::Board::Female,
+    );
     let tabs = material::tab_spines(project, &operation);
     let toolpath = Toolpath::default();
     let span = OpSpan {

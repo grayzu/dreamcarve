@@ -149,16 +149,16 @@ fn deviation_beyond_tolerance_is_still_rejected() {
     assert!(violation(&result), "10 mm circle: {result:?}");
 }
 
-/// The quick start's "DC" male (`tests/fixtures/dc-male.dcv`, the 60°
+/// The quick start's "DC" male (`tests/fixtures/dc.dcv`'s, the 60°
 /// V-bit, `plug_depth_mm` 2) with no clearing pass and no cut-out, so the
 /// band's edge is a V wall the V-bit cuts round the rounded outline,
 /// `margin_mm` 12 and `outline_rounding_mm` `rounding_mm`.
 fn dc_male_v_wall(rounding_mm: f64) -> (Project, InlayOp) {
-    let project = dc_project::load(include_bytes!("../../../../../tests/fixtures/dc-male.dcv"))
-        .expect("the DC male loads")
+    let project = dc_project::load(include_bytes!("../../../../../tests/fixtures/dc.dcv"))
+        .expect("the DC inlay loads")
         .project;
     let [Operation::Inlay(op)] = &project.operations[..] else {
-        panic!("the DC male has one operation, an Inlay");
+        panic!("the DC project has one operation, an Inlay");
     };
     let op = InlayOp {
         clearing: Vec::new(),
@@ -241,7 +241,8 @@ fn rounded_band_edge_v_wall_exports() {
     let (mut project, op) = dc_male_v_wall(10.0);
     assert_eq!(project.arc_fit_tolerance_mm, Some(ARC_FIT_MM));
     project.operations = vec![Operation::Inlay(op.clone())];
-    let (runs, _) = dc_cam::generate_inlay(&project, &op).expect("the inlay generates");
+    let (runs, _) = dc_cam::generate_inlay_board(&project, &op, dc_project::Board::Male)
+        .expect("the inlay generates");
 
     let ops: Vec<EmitOp> = runs
         .iter()
@@ -256,6 +257,7 @@ fn rounded_band_edge_v_wall_exports() {
             toolpath: run.toolpath.clone(),
             holes: None,
             label: run.label.clone(),
+            board: run.board,
         })
         .collect();
     let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, "2026-10-31")

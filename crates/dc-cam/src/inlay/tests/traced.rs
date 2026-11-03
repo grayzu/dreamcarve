@@ -63,7 +63,7 @@ fn traced_project() -> Project {
 }
 
 /// The traced design's female or male, the V-bit's floor at step-over 0.1.
-fn traced_inlay(side: InlaySide) -> InlayOp {
+fn traced_inlay(side: Board) -> InlayOp {
     InlayOp {
         step_over_fraction: Some(0.1),
         ..inlay(side)
@@ -98,10 +98,11 @@ fn traced_hole_insets_close() {
 #[test]
 fn traced_hole_plug_seats_flush() {
     let project = traced_project();
-    let male = traced_inlay(InlaySide::Male);
+    let male = traced_inlay(Board::Male);
     let side = side(
         &with_op(&project, Operation::Inlay(male.clone())),
         &male,
+        Board::Male,
         &mut Vec::new(),
     )
     .expect("the male resolves");
@@ -118,13 +119,7 @@ fn traced_hole_plug_seats_flush() {
         FLATTEN_TOLERANCE_DEFAULT_MM,
     );
     assert!(!floors.is_empty(), "the traced hole has no floor");
-    let fit = fit_of(
-        &project,
-        &traced_inlay(InlaySide::Female),
-        &project,
-        &male,
-        0.1,
-    );
+    let fit = fit_of(&project, &male, 0.1);
     println!(
         "traced hole: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
         fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at

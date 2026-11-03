@@ -261,6 +261,11 @@ pub struct ExportArgs {
     /// and the shapes to this .svg file, with the programs.
     #[arg(long, value_name = "SVG")]
     pub preview: Option<PathBuf>,
+    /// Write the programs of one board only: `female`, the stock, or
+    /// `male`, the Inlays' male board (to re-cut the male after a fit
+    /// change). Not saved to the project.
+    #[arg(long, value_name = "BOARD")]
+    pub board: Option<BoardArg>,
     /// The date written in the program header instead of today's (UTC).
     /// For reproducible output in tests.
     #[arg(long, hide = true, value_name = "YYYY-MM-DD")]
@@ -289,6 +294,24 @@ pub struct CheckArgs {
     /// the shapes to this .svg file, when every operation generates.
     #[arg(long, value_name = "SVG")]
     pub preview: Option<PathBuf>,
+}
+
+/// `--board` values (#498).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BoardArg {
+    /// The stock: every operation but an Inlay's male.
+    Female,
+    /// The Inlays' male board.
+    Male,
+}
+
+impl From<BoardArg> for dc_project::Board {
+    fn from(board: BoardArg) -> Self {
+        match board {
+            BoardArg::Female => Self::Female,
+            BoardArg::Male => Self::Male,
+        }
+    }
 }
 
 /// `--units` values.

@@ -20,6 +20,36 @@ pub enum ExportError {
     /// There is nothing to export: no operation is enabled.
     #[error("no enabled operation to export")]
     NoEnabledOperations,
+    /// A run is tagged for the male board (#498) but its operation is no
+    /// Inlay, or an Inlay whose male board has no thickness, so there is no
+    /// board to hold it to.
+    #[error(
+        "operation `{op}` has a run on the male board, but it is not an Inlay with a measured male board"
+    )]
+    NotOnMaleBoard {
+        /// The operation.
+        op: OperationId,
+    },
+    /// Two Inlays' male runs are on different male boards (#498): every
+    /// male program of a project is cut on the one male board.
+    #[error(
+        "operation `{op}` cuts its male on a male board other than operation `{first}`'s; give every Inlay the same male_board"
+    )]
+    MaleBoardsDiffer {
+        /// The later Inlay.
+        op: OperationId,
+        /// The first Inlay of the male board's runs.
+        first: OperationId,
+    },
+    /// One program would cut on two boards (#498): the stock and an
+    /// Inlay's male board are two setups, each with its own programs.
+    #[error(
+        "operation `{op}` has a run on another board than the program's first; each board is cut by programs of its own"
+    )]
+    BoardsMixed {
+        /// The first operation on the other board.
+        op: OperationId,
+    },
     /// An operation's tool is not in the project's tool list.
     #[error("operation `{op}` uses tool `{tool}`, which is not in the project")]
     UnknownTool {

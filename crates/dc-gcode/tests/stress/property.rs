@@ -17,8 +17,8 @@ use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_geometry::{Point, Transform};
 use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
-    ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, InlayCutOut, InlayOp, InlaySide, InstanceId, MachiningOrder, Operation,
+    Board, ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, InlayCutOut, InlayOp, InstanceId, MachiningOrder, MaleBoard, Operation,
     OperationId, Problem, Project, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind,
     Units, VCarveOp, VCarveStrategy, validate,
 };
@@ -36,9 +36,12 @@ const END_MILL_MM: f64 = 3.175;
 /// The operations each design is carved with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Inlay female.
+    /// Inlay with its male board unset (#498): the female board alone, with
+    /// a clearing pass of its own one time in two.
     Female,
-    /// Inlay male, no clearing: the band's edge is a V wall.
+    /// Inlay cutting both boards (#498), its male on a male board of its
+    /// own thickness, no clearing: the band's edge is a V wall. Each male
+    /// case seats its own two boards.
     MaleVWall,
     /// Inlay male with the end mill's clearing pass: an open edge.
     MaleOpenEdge,
@@ -250,13 +253,25 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
             }
         },
     };
-    let inlay = |side: InlaySide| InlayOp {
+    // #498: one Inlay cuts both boards. The female's case leaves the male
+    // board unset, so only the female is cut; each male's cuts both, its
+    // male on a board the stock's size and its own thickness, drawn from a
+    // stream of its own so the other settings are drawn as before.
+    let male_thickness_mm = Rng::new(seed ^ 0xb0a7_0498).range(10.0, 14.0);
+    let inlay = |side: Board| InlayOp {
         id: OperationId::new("o1"),
         name: "Inlay".into(),
         enabled: true,
         targets: vec![InstanceId::new("i1")],
         tool: ToolId::new("t1"),
-        side,
+        male_board: match side {
+            Board::Female => MaleBoard::default(),
+            Board::Male => MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(male_thickness_mm),
+            },
+        },
         depth_mm: Some(depth_mm),
         glue_gap_mm: Some(glue_gap_mm),
         plug_depth_mm: Some(plug_depth_mm),
@@ -344,15 +359,15 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
             Kind::Female,
             Operation::Inlay(InlayOp {
                 clearing: female_clearing,
-                ..inlay(InlaySide::Female)
+                ..inlay(Board::Female)
             }),
         ),
-        (Kind::MaleVWall, Operation::Inlay(inlay(InlaySide::Male))),
+        (Kind::MaleVWall, Operation::Inlay(inlay(Board::Male))),
         (
             Kind::MaleOpenEdge,
             Operation::Inlay(InlayOp {
                 clearing: open_clearing,
-                ..inlay(InlaySide::Male)
+                ..inlay(Board::Male)
             }),
         ),
         (
@@ -360,7 +375,7 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
             Operation::Inlay(InlayOp {
                 clearing: rounded_clearing,
                 outline_rounding_mm: Some(rounding_mm),
-                ..inlay(InlaySide::Male)
+                ..inlay(Board::Male)
             }),
         ),
         (
@@ -372,14 +387,14 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
                     tabs,
                     through_cut_allowance_mm: 0.2,
                 }),
-                ..inlay(InlaySide::Male)
+                ..inlay(Board::Male)
             }),
         ),
         (Kind::VCarveTop, Operation::VCarve(top)),
         (Kind::VCarveStart, Operation::VCarve(start)),
     ];
     let mut label = format!(
-        "{family} seed {seed:#x}: {angle_deg}° V-bit, {units:?}, D {depth_mm:.3} G {glue_gap_mm:.3} P {plug_depth_mm:.3} M {margin_mm:.2} R {rounding_mm:.2}"
+        "{family} seed {seed:#x}: {angle_deg}° V-bit, {units:?}, D {depth_mm:.3} G {glue_gap_mm:.3} P {plug_depth_mm:.3} M {margin_mm:.2} R {rounding_mm:.2}, male board {male_thickness_mm:.2} mm"
     );
     for note in &design.notes {
         let _ = write!(label, "\n    {note}");
@@ -554,7 +569,6 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
             );
         }
     };
-    let mut female: Option<(Project, InlayOp, Vec<ToolRun>)> = None;
     let mut males: Vec<(Kind, Project, InlayOp, Vec<ToolRun>)> = Vec::new();
     for (kind, op) in &case.ops {
         let kind = *kind;
@@ -627,6 +641,7 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                 toolpath: run.toolpath.clone(),
                 holes: None,
                 label: run.label.clone(),
+                board: run.board,
             })
             .collect();
         match catch_unwind(AssertUnwindSafe(|| {
@@ -644,16 +659,14 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
         }
         lap("passed S1–S19", kind);
         out.carved += 1;
-        if let Operation::Inlay(inlay) = op {
-            match kind {
-                Kind::Female => female = Some((project, inlay.clone(), runs)),
-                _ => males.push((kind, project, inlay.clone(), runs)),
-            }
+        // #498: a male's case cuts both boards from its one Inlay, which
+        // is the pair seated.
+        if let Operation::Inlay(inlay) = op
+            && kind != Kind::Female
+        {
+            males.push((kind, project, inlay.clone(), runs));
         }
     }
-    let Some((female_project, female_op, female_runs)) = female else {
-        return out;
-    };
     let chosen: Vec<&(Kind, Project, InlayOp, Vec<ToolRun>)> = match seats {
         Seats::None => Vec::new(),
         Seats::All => males.iter().collect(),
@@ -667,14 +680,8 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                 .collect()
         }
     };
-    for (kind, male_project, male_op, male_runs) in chosen {
-        let seated = catch_unwind(AssertUnwindSafe(|| {
-            fit(
-                (&female_project, &female_op, &female_runs),
-                (male_project, male_op, male_runs),
-                0.1,
-            )
-        }));
+    for (kind, project, inlay, runs) in chosen {
+        let seated = catch_unwind(AssertUnwindSafe(|| fit(project, inlay, runs, 0.1)));
         lap("seated", *kind);
         match seated {
             Ok(f) if f.is_flush() => out.seated += 1,
@@ -683,7 +690,7 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                     "the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?}); at most {SEAT_MM}",
                     f.seat_mm, f.seat_at, f.male_mm, f.male_at
                 );
-                let limit = inch_sharp_corner(case, &female_op, f.seat_at);
+                let limit = inch_sharp_corner(case, inlay, f.seat_at);
                 match (known_issue(case, *kind), limit) {
                     (Some(issue), _) => out
                         .known

@@ -118,7 +118,17 @@
 //!   Inlay. The male's band edge changed in the same release (it is cut
 //!   by the end mill when a clearing pass fits), so a version 23 male
 //!   exports what the same project written at version 24 does.
+//! - **25**: one Inlay cuts both boards (#498): each Inlay's `side` is
+//!   replaced, in its place, by `"male_board": { "width_mm",
+//!   "height_mm", "thickness_mm" }`. A `"female"` Inlay gets all three
+//!   `null`: its male is not cut until the user measures the male board,
+//!   so the file exports the female programs it did. A `"male"` Inlay gets
+//!   the stock's width, height and thickness, and the project keeps its
+//!   stock, so its male programs are cut on the same board, byte for
+//!   byte; it now also cuts the female on the stock, which
+//!   [`migrate_with_notes`] notes ([`MigrationNote::MaleInlayGainsFemale`]).
 
+use crate::ids::OperationId;
 use crate::post_processor::{
     BundledDefinition, PostProcessorError, SETTING_PATHS, V6_SETTING_COUNT, bundled_definition,
     bundled_definitions,
@@ -128,7 +138,33 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 24;
+pub const CURRENT_VERSION: u32 = 25;
+
+/// Something a migration changed that the user should hear about, though
+/// the file loads (#498).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MigrationNote {
+    /// A version 24 (or earlier) male Inlay, one side of a two-file
+    /// pair, now cuts both boards: its male on a male board the size of
+    /// the stock, exactly as before, and the female on the stock too.
+    MaleInlayGainsFemale {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+    },
+}
+
+impl std::fmt::Display for MigrationNote {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MaleInlayGainsFemale { operation, name } => write!(
+                f,
+                "operations[{operation}] `{name}` was the male of a two-file inlay pair (format 24); one Inlay now cuts both boards, so this file cuts its male on a male board the size of the stock, as before, and also the female on the stock. Run only its male programs (export --board male), or make one project for the pair from the design and set its male_board"
+            ),
+        }
+    }
+}
 
 /// One migration step: rewrites a root object of version `from` into
 /// version `from + 1`.
@@ -161,6 +197,7 @@ fn step(from: u32) -> Option<Step> {
         21 => Some(v21_to_v22),
         22 => Some(v22_to_v23),
         23 => Some(v23_to_v24),
+        24 => Some(v24_to_v25),
         _ => None,
     }
 }
@@ -202,6 +239,48 @@ pub fn migrate(root: Value, from_version: u32) -> Result<Value, LoadError> {
     }
     obj.insert("version".into(), Value::from(CURRENT_VERSION));
     Ok(Value::Object(obj))
+}
+
+/// [`migrate`], and what the migration changed that the user should hear
+/// about ([`MigrationNote`]), in operation order. [`crate::load`] keeps
+/// the notes in [`crate::Loaded::notes`].
+///
+/// # Errors
+///
+/// As [`migrate`].
+pub fn migrate_with_notes(
+    root: Value,
+    from_version: u32,
+) -> Result<(Value, Vec<MigrationNote>), LoadError> {
+    let notes = if (22..25).contains(&from_version) {
+        male_inlays(&root)
+    } else {
+        Vec::new()
+    };
+    Ok((migrate(root, from_version)?, notes))
+}
+
+/// [`MigrationNote::MaleInlayGainsFemale`] for each `"side": "male"` Inlay
+/// of a version 22 to 24 root (the formats with a side), in operation
+/// order.
+fn male_inlays(root: &Value) -> Vec<MigrationNote> {
+    let Some(ops) = root.get("operations").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    ops.iter()
+        .filter(|op| {
+            op.get("kind").and_then(Value::as_str) == Some("inlay")
+                && op.get("side").and_then(Value::as_str) == Some("male")
+        })
+        .map(|op| MigrationNote::MaleInlayGainsFemale {
+            operation: OperationId::new(op.get("id").and_then(Value::as_str).unwrap_or_default()),
+            name: op
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+        })
+        .collect()
 }
 
 /// Version 0 → 1: adds `flatten_tolerance_mm` after `display_units`.
@@ -920,6 +999,74 @@ fn v23_to_v24(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
     Ok(root)
 }
 
+/// Version 24 → 25 (#498): replaces each Inlay's `side`, in its place,
+/// with its `male_board`: all `null` for a `"female"`, the stock's
+/// `width_mm`, `height_mm` and `thickness_mm` for a `"male"`. The stock is
+/// kept. A side that is neither, an Inlay that already has a male board,
+/// or a male whose stock has no width or height, is refused.
+fn v24_to_v25(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let stock = root.get("stock").cloned().unwrap_or(Value::Null);
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("inlay") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("male_board") {
+            return Err(format!(
+                "a version 24 file has no `operations[{i}].male_board`, but this one does"
+            ));
+        }
+        let board = match fields.get("side").and_then(Value::as_str) {
+            Some("female") => serde_json::json!({
+                "width_mm": null,
+                "height_mm": null,
+                "thickness_mm": null,
+            }),
+            Some("male") => {
+                let field = |key: &str| {
+                    stock
+                        .get(key)
+                        .cloned()
+                        .ok_or_else(|| format!("`stock.{key}` is missing"))
+                };
+                let width = field("width_mm")?;
+                let height = field("height_mm")?;
+                if !(width.is_number() && height.is_number()) {
+                    return Err("`stock.width_mm` and `stock.height_mm` must be numbers".into());
+                }
+                serde_json::json!({
+                    "width_mm": width,
+                    "height_mm": height,
+                    "thickness_mm": stock.get("thickness_mm").cloned().unwrap_or(Value::Null),
+                })
+            }
+            _ => {
+                return Err(format!(
+                    "`operations[{i}].side` is not \"female\" or \"male\""
+                ));
+            }
+        };
+        let mut out = Map::new();
+        let mut board = Some(board);
+        for (k, v) in fields {
+            if k == "side" {
+                if let Some(board) = board.take() {
+                    out.insert("male_board".into(), board);
+                }
+            } else {
+                out.insert(k, v);
+            }
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
 /// `map` with key `from` renamed `to`, in its place. Fails if `to` is
 /// already there, naming it under `at` (a path prefix such as
 /// `operations[1].`).
@@ -1118,6 +1265,44 @@ mod tests {
     /// The sample project as raw JSON of `version`, without the fields
     /// added after it. Before version 7 it embeds the whole GRBL
     /// definition that `grbl/v1.json` was made from.
+    /// The male board a migrated version 24 male Inlay gets: the sample
+    /// stock's, 100 × 100 × 6 mm (#498).
+    fn stock_board() -> crate::model::MaleBoard {
+        crate::model::MaleBoard {
+            width_mm: Some(100.0),
+            height_mm: Some(100.0),
+            thickness_mm: Some(6.0),
+        }
+    }
+
+    /// `op` (an operation as the current version writes it) as version 24
+    /// wrote it, when it is an Inlay: `side` in place of `male_board`,
+    /// `"male"` when the board has a thickness, else `"female"` (#498).
+    fn as_v24(op: &mut Value) {
+        let Some(fields) = op.as_object_mut() else {
+            return;
+        };
+        let Some(board) = fields.get("male_board") else {
+            return;
+        };
+        let side = if board["thickness_mm"].is_null() {
+            "female"
+        } else {
+            "male"
+        };
+        let old: Map<String, Value> = std::mem::take(fields)
+            .into_iter()
+            .map(|(k, v)| {
+                if k == "male_board" {
+                    ("side".to_owned(), json!(side))
+                } else {
+                    (k, v)
+                }
+            })
+            .collect();
+        *fields = old;
+    }
+
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
         if version < 17 {
@@ -2879,9 +3064,7 @@ mod tests {
     #[test]
     fn v22_to_v23_adds_a_null_cut_out() {
         use crate::ids::ToolId;
-        use crate::model::{
-            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayOp, InlaySide,
-        };
+        use crate::model::{ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayOp};
         use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
         const { assert!(CURRENT_VERSION >= 23) };
         let fixture: Value = serde_json::from_slice(V22_FIXTURE).unwrap();
@@ -2893,7 +3076,7 @@ mod tests {
         );
 
         let male = InlayOp {
-            side: InlaySide::Male,
+            male_board: stock_board(),
             clearing: vec![ClearingPass {
                 tool: ToolId::new("t1"),
                 strategy: ClearanceStrategy::Offset,
@@ -2912,6 +3095,7 @@ mod tests {
         ] {
             let current = serde_json::to_value(op).unwrap();
             let mut old = current.clone();
+            as_v24(&mut old);
             if let Some(fields) = old.as_object_mut() {
                 fields.shift_remove("cut_out");
                 // Format 24 (#448) adds it after.
@@ -2978,10 +3162,10 @@ mod tests {
     fn v23_to_v24_adds_null_outline_rounding() {
         use crate::ids::ToolId;
         use crate::model::{
-            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp, InlaySide,
+            ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp,
         };
         use crate::test_support::{sample_inlay, sample_pocket, sample_v_carve};
-        assert_eq!(CURRENT_VERSION, 24);
+        const { assert!(CURRENT_VERSION >= 24) };
         let fixture: Value = serde_json::from_slice(V23_FIXTURE).unwrap();
         let stepped = v23_to_v24(fixture.as_object().unwrap().clone()).unwrap();
         assert_eq!(
@@ -2991,7 +3175,7 @@ mod tests {
         );
 
         let male = InlayOp {
-            side: InlaySide::Male,
+            male_board: stock_board(),
             clearing: vec![ClearingPass {
                 tool: ToolId::new("t1"),
                 strategy: ClearanceStrategy::Offset,
@@ -3015,6 +3199,7 @@ mod tests {
         ] {
             let current = serde_json::to_value(op).unwrap();
             let mut old = current.clone();
+            as_v24(&mut old);
             if let Some(fields) = old.as_object_mut() {
                 fields.shift_remove("outline_rounding_mm");
             }
@@ -3052,7 +3237,7 @@ mod tests {
     /// A version 23 reader refuses a version 24 file as newer (ADR-0002).
     #[test]
     fn version_24_is_newer_than_23() {
-        assert_eq!(CURRENT_VERSION, 24);
+        const { assert!(CURRENT_VERSION >= 24) };
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

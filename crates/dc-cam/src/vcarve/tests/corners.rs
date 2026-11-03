@@ -10,7 +10,7 @@
 use super::*;
 use crate::heightfield::carved_z_mm;
 use dc_geometry::medial::convex_corners;
-use dc_project::{InlayOp, InlaySide};
+use dc_project::{Board, InlayOp};
 
 /// How near a carve must come to each corner, mm (#456).
 const REACH_MM: f64 = 0.01;
@@ -129,7 +129,7 @@ fn raised_text_corners_are_crisp() {
     assert!(failures.is_empty(), "corners missed: {failures:#?}");
 }
 
-/// The tutorial female (`tests/fixtures/dc-female.dcv`), and with its
+/// The tutorial female (`tests/fixtures/dc.dcv`'s female), and with its
 /// values a ring: a regular octagon 40 mm across its corners, whose 135°
 /// corners turn less than upstream's 50° tip angle, round a 20 mm square
 /// island with a 23° notch 8 mm deep in its top edge, the serif M's notch
@@ -145,9 +145,7 @@ fn females() -> Vec<(&'static str, Project, InlayOp)> {
             })
             .expect("the fixture has an Inlay")
     };
-    let dc = load(include_bytes!(
-        "../../../../../tests/fixtures/dc-female.dcv"
-    ));
+    let dc = load(include_bytes!("../../../../../tests/fixtures/dc.dcv"));
     let dc_op = inlay_of(&dc);
     let mut ring = dc.clone();
     let octagon: Vec<(f64, f64)> = (0..8)
@@ -202,8 +200,8 @@ fn females() -> Vec<(&'static str, Project, InlayOp)> {
 fn female_corners_reach_the_tip() {
     let mut failures = Vec::new();
     for (name, p, op) in females() {
-        assert_eq!(op.side, InlaySide::Female, "{name}");
-        let (runs, _) = crate::inlay::generate_inlay(&p, &op).expect("the female generates");
+        let (runs, _) = crate::inlay::generate_inlay_board(&p, &op, Board::Female)
+            .expect("the female generates");
         let run = runs
             .iter()
             .find(|r| r.label == RunLabel::Main)
@@ -216,7 +214,8 @@ fn female_corners_reach_the_tip() {
         let ToolKind::VBit { included_angle_deg } = tool.cutter else {
             panic!("{name}: the main run is a V-bit's");
         };
-        let side = crate::inlay::side(&p, &op, &mut Vec::new()).expect("the female resolves");
+        let side = crate::inlay::side(&p, &op, Board::Female, &mut Vec::new())
+            .expect("the female resolves");
         let (missed, count) = missed_corners(
             &run.toolpath,
             &side.targets.regions,

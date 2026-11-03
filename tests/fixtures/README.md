@@ -40,14 +40,20 @@ needed. `cli::sign_lettering_is_within_the_cone` holds it to 3 mm.
 not in the 5 mm border (too narrow for a hole and the 6 mm countersink
 the finished sign has) or the oval (the lettering fills it).
 
-## `dc-inlay.svg`, `dc-female.dcv` and `dc-male.dcv`
+## `dc-inlay.svg` and `dc.dcv`
 
 The phase 3 inlay test part (`docs/specs/phase-3/functional.md`,
 "Lettered inlay pair"; #446, replacing #437's star), drawn by
 `tools/parity/inlay-fixture.ts`. Do not edit it by hand; re-run the tool.
-`dc-female.dcv` and `dc-male.dcv` are the two projects the quick start
-"An inlay pair" builds from it; they differ only in the Inlay's `side`
-and the male's `cut_out`.
+`dc.dcv` is the one project the quick start "An inlay pair" builds from
+it (#498): its Inlay cuts the female on the stock and the male, with its
+`cut_out`, on its `male_board`. It replaced the two projects
+`dc-female.dcv` and `dc-male.dcv` of format 24, which differed only in
+the Inlay's `side` and the male's `cut_out`; `dc.dcv` exports their
+programs byte for byte, under the board's names. The pair, and the
+star pair of format 23 before it, are kept as migration fixtures in
+`crates/dreamcarve/tests/fixtures/inlay-migration/`, with their programs
+in `crates/dreamcarve/tests/expected/inlay-migration/`.
 
 | Shape | Size, mm | Where (SVG, Y-down) |
 | --- | --- | --- |
@@ -63,8 +69,10 @@ male's plug. The frame is there only so that `init`, which makes the
 stock the drawing plus 10 mm all round, makes the test part's
 110 × 80 mm stock with the letters at its centre, (55, 40) in project
 space. The male's band, `margin_mm` 8 plus the V wall above the start
-plane, keeps more than 8 mm of board at every edge. Each project sets
-`thickness_mm` to 12; a user measures each board and sets its own.
+plane, keeps more than 8 mm of board at every edge. The project sets the
+stock's `thickness_mm` and `male_board.thickness_mm` to 12, the male
+board's width and height `null` (the stock's); a user measures each
+board and sets its own.
 
 The unit tests (`cli::inlay_exports_and_passes_safety`, the `dc-cam`
 inlay tests) still build a four-point star in code: they test geometry,

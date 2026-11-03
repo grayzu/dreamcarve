@@ -224,6 +224,10 @@ pub enum WarningCode {
     /// everywhere, so both sides cut it as part of the shape round it, with
     /// no wall there (#511).
     InlayHoleFilled,
+    /// An Inlay's male board has no thickness set, so its male is not cut
+    /// and only its female's programs are written (#498). Located at the
+    /// male board's thickness, the value to measure ([`Warning::field`]).
+    InlayMaleBoardUnset,
 }
 
 impl WarningCode {
@@ -283,6 +287,7 @@ impl WarningCode {
             Self::InlayBandClipped => "inlay_band_clipped",
             Self::InlayPartsMerged => "inlay_parts_merged",
             Self::InlayHoleFilled => "inlay_hole_filled",
+            Self::InlayMaleBoardUnset => "inlay_male_board_unset",
         }
     }
 }
@@ -979,9 +984,26 @@ pub enum Warning {
         /// The merge distance, mm.
         merge_mm: f64,
     },
+    /// [`WarningCode::InlayMaleBoardUnset`].
+    InlayMaleBoardUnset {
+        /// The Inlay.
+        op: OperationId,
+    },
 }
 
 impl Warning {
+    /// The value of the project the warning is about, as validation names
+    /// fields (`operations[op1].male_board.thickness_mm`), for the
+    /// warnings about one value; `None` for the others.
+    #[must_use]
+    pub fn field(&self) -> Option<String> {
+        match self {
+            Self::InlayMaleBoardUnset { op } => {
+                Some(format!("operations[{op}].male_board.thickness_mm"))
+            }
+            _ => None,
+        }
+    }
     /// What happened.
     #[must_use]
     pub const fn code(&self) -> WarningCode {
@@ -1040,6 +1062,7 @@ impl Warning {
             Self::InlayBandClipped { .. } => WarningCode::InlayBandClipped,
             Self::InlayPartsMerged { .. } => WarningCode::InlayPartsMerged,
             Self::InlayHoleFilled { .. } => WarningCode::InlayHoleFilled,
+            Self::InlayMaleBoardUnset { .. } => WarningCode::InlayMaleBoardUnset,
         }
     }
 
@@ -1090,7 +1113,8 @@ impl Warning {
             | Self::InlayBandEdgeVWall { op, .. }
             | Self::InlayBandClipped { op, .. }
             | Self::InlayPartsMerged { op, .. }
-            | Self::InlayHoleFilled { op, .. } => Some(op),
+            | Self::InlayHoleFilled { op, .. }
+            | Self::InlayMaleBoardUnset { op } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
             | Self::ToolTooLarge { .. }
@@ -1789,7 +1813,7 @@ impl fmt::Display for Warning {
                 margin_needed_mm, ..
             } => write!(
                 f,
-                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least {} mm in both projects for the first clearing pass that fits to cut it",
+                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least {} mm for the first clearing pass that fits to cut it",
                 mm(*margin_needed_mm)
             ),
             Self::InlayBandClipped {
@@ -1868,6 +1892,9 @@ impl fmt::Display for Warning {
                 rounded(*y_mm, 3),
                 rounded(*merge_mm, 4),
                 rounded(*merge_mm, 4)
+            ),
+            Self::InlayMaleBoardUnset { .. } => f.write_str(
+                "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
             ),
         }
     }
@@ -2598,7 +2625,7 @@ mod tests {
                     op: op(),
                     margin_needed_mm: 4.330_127_018_922_193,
                 },
-                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least 4.33 mm in both projects for the first clearing pass that fits to cut it",
+                "none of its clearing passes can cut the band's outer edge upright (no end mill fits the band's flat floor, or the V-bit's flank would reach past the edge), so the V-bit cuts it as a sloped wall; raise margin_mm to at least 4.33 mm for the first clearing pass that fits to cut it",
             ),
             (
                 Warning::InlayBandClipped {
@@ -2655,6 +2682,10 @@ mod tests {
                     merge_mm: 0.05,
                 },
                 "`Shape` (instance `i1`, profile 2) is a hole about 0.004 mm wide at (50, 55) mm, narrower everywhere than the 0.05 mm an inlay keeps between two parts, so both sides cut it as part of the shape round it, with no wall there; draw it at least 0.05 mm wide to keep it",
+            ),
+            (
+                Warning::InlayMaleBoardUnset { op: op() },
+                "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
             ),
         ]
     }
@@ -2722,7 +2753,8 @@ mod tests {
             C::InlayBandEdgeVWall => C::InlayBandClipped,
             C::InlayBandClipped => C::InlayPartsMerged,
             C::InlayPartsMerged => C::InlayHoleFilled,
-            C::InlayHoleFilled => return None,
+            C::InlayHoleFilled => C::InlayMaleBoardUnset,
+            C::InlayMaleBoardUnset => return None,
         })
     }
 
@@ -2759,7 +2791,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 52);
+        assert_eq!(count, 53);
     }
 
     #[test]

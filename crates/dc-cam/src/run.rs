@@ -5,12 +5,16 @@
 //! toolpaths of one operation, one per tool. A carve with clearing passes
 //! cuts with an end mill per pass before its V-bit (#406); every other
 //! operation, and a carve without them, is one run labelled
-//! [`RunLabel::Main`].
+//! [`RunLabel::Main`]. An Inlay's runs are on two boards (#498): the
+//! female's on the stock, the male's on its male board, each run tagged
+//! with its [`Board`].
 
 use crate::toolpath::Toolpath;
-use dc_project::ToolId;
+use dc_project::{Board, ToolId};
 
-/// One tool's toolpath of an operation, project space (mm, Y-up).
+/// One tool's toolpath of an operation, in its board's project space (mm,
+/// Y-up; the male board's shares the stock's bottom-left corner and has
+/// its own thickness).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolRun {
     /// Which run of the operation this is.
@@ -19,6 +23,9 @@ pub struct ToolRun {
     pub tool: ToolId,
     /// Its moves.
     pub toolpath: Toolpath,
+    /// The board it cuts (#498): [`Board::Female`], the stock, for every
+    /// operation's runs but an Inlay's male's.
+    pub board: Board,
 }
 
 /// What a [`ToolRun`] cuts for its operation.

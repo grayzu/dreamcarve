@@ -17,6 +17,7 @@
 use super::inlay::{inlay, small_star};
 use super::*;
 use crate::emit::{EmitOp, ProgramSplit, emit_programs};
+use dc_cam::RunLabel;
 use dc_project::{
     Board, ClearanceStrategy, ClearingPass, CutDirection, Entry, InlayCutOut, InlayOp, MaleBoard,
     OriginXy, ToolId,
@@ -224,7 +225,7 @@ fn generated_inlays_pass_on_both_boards() {
 #[test]
 fn origin_preset_applies_to_the_male_board() {
     let mut project = small_star();
-    project.origin.xy = OriginXy::Center;
+    project.origin.xy = OriginXy::Centre;
     let op = InlayOp {
         clearing: Vec::new(),
         cut_out: None,

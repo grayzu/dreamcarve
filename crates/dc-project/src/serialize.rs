@@ -19,7 +19,7 @@
 
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
-use crate::migrate::migrate;
+use crate::migrate::{MigrationNote, migrate_with_notes};
 use crate::model::{BoreOp, DrillOp, EngraveOp, PocketOp, ProfileOp, Project, VCarveOp};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
@@ -121,6 +121,9 @@ pub struct Loaded {
     pub project: Project,
     /// Validation problems, errors and warnings.
     pub problems: Vec<Problem>,
+    /// What migrating the file changed that the user should hear about
+    /// (#498); empty for a file of the current version.
+    pub notes: Vec<MigrationNote>,
 }
 
 impl Loaded {
@@ -165,7 +168,8 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         message: e.to_string(),
     })?;
     let version = read_version(&root)?;
-    let root = migrate(root, version).map_err(|err| locate_migration(err, bytes))?;
+    let (root, notes) =
+        migrate_with_notes(root, version).map_err(|err| locate_migration(err, bytes))?;
     let project = deserialize_project(&root, bytes)?;
     check_post_processor(&project, bytes)?;
     let problems = validate(&project);
@@ -174,7 +178,11 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
     if let Some(field) = first_non_finite(&problems) {
         return Err(LoadError::NonFinite { field });
     }
-    Ok(Loaded { project, problems })
+    Ok(Loaded {
+        project,
+        problems,
+        notes,
+    })
 }
 
 /// `err` with the position of the first field its message names, in
@@ -391,7 +399,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v24/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v25/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1177,14 +1185,18 @@ mod tests {
     /// every field is required, `null` included.
     #[test]
     fn inlay_round_trips() {
-        use crate::model::{InlaySide, MachiningOrder};
+        use crate::model::{MachiningOrder, MaleBoard};
         use crate::test_support::{sample_inlay, tool_v_bit_90};
         let mut p = sample_project();
         p.tools.push(tool_v_bit_90());
         let female = sample_inlay();
         let male = crate::model::InlayOp {
             id: crate::ids::OperationId::new("o8"),
-            side: InlaySide::Male,
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
             depth_mm: Some(2.0),
             glue_gap_mm: Some(0.5),
             plug_depth_mm: Some(1.0),
@@ -1215,7 +1227,7 @@ mod tests {
                 "enabled",
                 "targets",
                 "tool",
-                "side",
+                "male_board",
                 "depth_mm",
                 "glue_gap_mm",
                 "plug_depth_mm",
@@ -1230,11 +1242,14 @@ mod tests {
             ]
         );
         assert_eq!(op["kind"], json!("inlay"));
-        assert_eq!(op["side"], json!("female"));
+        assert_eq!(
+            op["male_board"],
+            json!({ "width_mm": null, "height_mm": null, "thickness_mm": null })
+        );
         assert_eq!(op["clearing"], json!([]));
         assert_eq!(op["step_over_fraction"], json!(null));
         let male = &value["operations"][2];
-        assert_eq!(male["side"], json!("male"));
+        assert_eq!(male["male_board"]["thickness_mm"], json!(6.0));
         assert_eq!(male["glue_gap_mm"], json!(0.5));
         assert_eq!(male["margin_mm"], json!(7.5));
         assert_eq!(
@@ -1288,11 +1303,14 @@ mod tests {
                 text.replacen("\"plug_depth_mm\"", "\"plug_depth\"", 1),
                 "plug_depth",
             ),
-            (text.replacen("\"female\"", "\"both\"", 1), "both"),
+            (
+                text.replacen("\"male_board\"", "\"male_boards\"", 1),
+                "male_boards",
+            ),
             (
                 text.replacen("\"start_depth_mm\": 0.0,", "", 1).replacen(
-                    "\"side\": \"female\",",
-                    "\"side\": \"female\",\n      \"start_depth_mm\": 0.0,",
+                    "\"tool\": \"t2\",",
+                    "\"tool\": \"t2\",\n      \"start_depth_mm\": 0.0,",
                     1,
                 ),
                 "start_depth_mm",
@@ -1311,7 +1329,7 @@ mod tests {
     /// unit, and an unknown field is named.
     #[test]
     fn inlay_cut_out_round_trips() {
-        use crate::model::{InlayCutOut, InlaySide, TabPlacement, TabShape, TabSpec};
+        use crate::model::{InlayCutOut, MaleBoard, TabPlacement, TabShape, TabSpec};
         use crate::test_support::{sample_inlay, tool_v_bit_90};
         let mut p = sample_project();
         p.tools.push(tool_v_bit_90());
@@ -1324,7 +1342,11 @@ mod tests {
             avoid_corners: true,
         };
         let male = crate::model::InlayOp {
-            side: InlaySide::Male,
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
             cut_out: Some(InlayCutOut {
                 tool: crate::ids::ToolId::new("t1"),
                 tabs: Some(tabs),
@@ -1419,12 +1441,16 @@ mod tests {
     /// carry its unit, and it is required, `null` included.
     #[test]
     fn inlay_outline_rounding_round_trips() {
-        use crate::model::InlaySide;
+        use crate::model::MaleBoard;
         use crate::test_support::{sample_inlay, tool_v_bit_90};
         let mut p = sample_project();
         p.tools.push(tool_v_bit_90());
         p.operations.push(Operation::Inlay(crate::model::InlayOp {
-            side: InlaySide::Male,
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
             outline_rounding_mm: Some(10.0),
             ..sample_inlay()
         }));

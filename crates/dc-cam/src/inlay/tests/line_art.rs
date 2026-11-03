@@ -27,7 +27,7 @@ fn line_art_regions_carve() {
     for run in &runs {
         assert_run_safe(run, &with_carve, &Operation::VCarve(carve.clone()));
     }
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         let (runs, _) = inlay_runs(&project, &line_art_inlay(side));
         assert_eq!(
             runs.len(),
@@ -48,9 +48,7 @@ fn line_art_regions_carve() {
 #[test]
 fn line_art_plug_seats_flush() {
     let project = line_art_project();
-    let female = line_art_inlay(InlaySide::Female);
-    let male = line_art_inlay(InlaySide::Male);
-    let fit = fit_of(&project, &female, &project, &male, 0.1);
+    let fit = fit_of(&project, &line_art_inlay(Board::Male), 0.1);
     println!(
         "line art: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
         fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at

@@ -7,6 +7,16 @@
 //! (cited in the functional spec), which VCarve's "V-Carve Inlay" also
 //! follows.
 //!
+//! One Inlay cuts two boards (#498): the female on the project's stock,
+//! and the male on the Inlay's male board ([`Project::on_male_board`]),
+//! which shares the stock's bottom-left corner and has its own thickness;
+//! [`generate_inlay`] gives both boards' runs, each tagged with its
+//! [`Board`], and [`generate_inlay_board`] one. Every rule below that
+//! reads "the stock" for the male reads the male board: the band's
+//! clipping and `InlayTooNearEdge`, the stock top its flank is engaged
+//! from, its floor and cut-out depths, and the plug base. Until the male
+//! board's thickness is set, the male is not cut.
+//!
 //! Both sides of an inlay are a [`vcarve::Carve`] cut by the V-Carve
 //! machinery ([`vcarve::blocks`], the clearing passes, `sequence` and the
 //! generator's own cone test); this module only says what each side
@@ -40,6 +50,8 @@
 #[cfg(test)]
 mod tests;
 
+use std::borrow::Cow;
+
 use crate::error::{CamError, ShapeRef};
 use crate::profile::{generate_profile_below, rates_of};
 use crate::run::{RunLabel, ToolRun};
@@ -55,10 +67,10 @@ use dc_geometry::{
     wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
-    BandEdge, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition, FeatureInstance,
-    INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InlaySide, InstanceId, MaleBand,
-    Operation, OperationId, ProfileOp, Project, Side as ProfileSide, StartAt, VCarveStrategy,
-    male_band,
+    BandEdge, Board, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InstanceId,
+    MaleBand, Operation, OperationId, ProfileOp, Project, Side as ProfileSide, StartAt,
+    VCarveStrategy, male_band,
 };
 
 /// Both sides carve along the medial lines; an Inlay has no strategy of
@@ -132,8 +144,9 @@ struct Values {
 }
 
 impl Values {
-    /// The values of `op`, as validation checks them.
-    fn of(op: &InlayOp) -> Result<Self, CamError> {
+    /// The values of `op` for `board`, as validation checks them: the
+    /// margin only for the male.
+    fn of(op: &InlayOp, board: Board) -> Result<Self, CamError> {
         let unset = |field| CamError::InlayValueUnset {
             op: op.id.clone(),
             field,
@@ -162,9 +175,9 @@ impl Values {
                 depth_mm,
             });
         }
-        let margin_mm = match op.side {
-            InlaySide::Female => None,
-            InlaySide::Male => {
+        let margin_mm = match board {
+            Board::Female => None,
+            Board::Male => {
                 let margin_mm = op.margin_mm.ok_or_else(|| unset("margin_mm"))?;
                 if !(margin_mm.is_finite() && margin_mm > 0.0) {
                     return Err(CamError::InlayMargin {
@@ -333,22 +346,34 @@ fn bounds_of<'c>(contours: impl Iterator<Item = &'c Contour>) -> Option<Rect> {
         .reduce(|all, b| all.including(b.min).including(b.max))
 }
 
-/// The side `op` of `project` carves (design steps 2 to 4), its near
-/// parts merged ([`merge_near`]). Warnings of the design's outlines (an
-/// open path, a duplicate, near parts merged) go to `warnings`.
+/// `project` as `board` of Inlay `op` cuts it (#498): the project itself
+/// for the female, whose board is the stock, and
+/// [`Project::on_male_board`] for the male.
+fn on_board<'p>(project: &'p Project, op: &InlayOp, board: Board) -> Cow<'p, Project> {
+    match board {
+        Board::Female => Cow::Borrowed(project),
+        Board::Male => Cow::Owned(project.on_male_board(op)),
+    }
+}
+
+/// What `board` of Inlay `op` in `project` carves (design steps 2 to 4),
+/// its near parts merged ([`merge_near`]), on that board
+/// ([`on_board`]). Warnings of the design's outlines (an open path, a
+/// duplicate, near parts merged) go to `warnings`.
 ///
 /// # Errors
 ///
 /// As [`Values`] (an unset or out-of-range value, `InlayGlueGap`,
-/// `InlayMargin`), [`CamError::MissingThickness`], and what
+/// `InlayMargin`), [`CamError::MissingThickness`] (the board's), and what
 /// [`carve_regions`] refuses.
 pub(crate) fn side(
     project: &Project,
     op: &InlayOp,
+    board: Board,
     warnings: &mut Vec<Warning>,
 ) -> Result<Side, CamError> {
-    let values = Values::of(op)?;
-    side_of(project, op, values, warnings)
+    let values = Values::of(op, board)?;
+    side_of(&on_board(project, op, board), op, values, warnings)
 }
 
 fn side_of(
@@ -595,18 +620,19 @@ fn bordering_shape(region: &Region, design: &Targets) -> ShapeRef {
 }
 
 /// The height, mm, of the ridges the V-bit leaves between its floor rings
-/// on side `op`, `step_over_fraction · F` as for a V-Carve
-/// ([`vcarve::floor_ridge_height_mm`]); `None` when the side has no floor
-/// wide enough, no usable V-bit or step-over, or does not resolve.
+/// on `board` of Inlay `op`, `step_over_fraction · F` as for a V-Carve
+/// ([`vcarve::floor_ridge_height_mm`]); `None` when that board has no
+/// floor wide enough, no usable V-bit or step-over, or does not resolve
+/// (the male's, while its board is not measured).
 #[must_use]
-pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp) -> Option<f64> {
+pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp, board: Board) -> Option<f64> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
     let bit = checked_v_bit(&op.id, tool).ok()?;
     let fraction = op
         .step_over_fraction
         .or(tool.step_over_fraction)
         .filter(|f| f.is_finite() && *f > 0.0 && *f <= 1.0)?;
-    let side = side(project, op, &mut Vec::new()).ok()?;
+    let side = side(project, op, board, &mut Vec::new()).ok()?;
     let floor = Floor {
         z_mm: side.start_plane_z_mm - side.flat_depth_mm,
         inset_mm: side.flat_depth_mm * bit.slope,
@@ -621,23 +647,64 @@ pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp) -> Option<f64> {
     has_floor.then_some(fraction * side.flat_depth_mm)
 }
 
-/// Generates one side of the Inlay `op` in `project`, in project space
-/// (Y-up, mm, stock bottom at Z = 0, safe Z at `thickness +
-/// op.safe_z_mm`): one [`ToolRun`] per clearing pass that reaches some of
-/// the floor, then [`RunLabel::Main`] with the operation's V-bit, as a
-/// V-Carve's ([`vcarve::generate_vcarve`]).
+/// Generates both boards of the Inlay `op` in `project` (#498): the
+/// female's runs on the stock, then the male's on its male board, each
+/// [`ToolRun`] tagged with its [`Board`], as [`generate_inlay_board`]
+/// generates each. While the male board has no thickness the male is not
+/// cut: the runs are the female's, with [`Warning::InlayMaleBoardUnset`].
+///
+/// The warnings are the female's, then the male's that differ from them;
+/// the male's [`Warning::InlayPartsMerged`] and
+/// [`Warning::InlayHoleFilled`] are left out, since it merges and fills
+/// the same design's parts, mirrored, and the female's already name them
+/// where they are drawn.
+///
+/// # Errors
+///
+/// As [`generate_inlay_board`], for either board.
+#[must_use = "the toolpath is the whole point"]
+pub fn generate_inlay(
+    project: &Project,
+    op: &InlayOp,
+) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
+    let (mut runs, mut warnings) = generate_inlay_board(project, op, Board::Female)?;
+    let (male, male_warnings) = generate_inlay_board(project, op, Board::Male)?;
+    runs.extend(male);
+    for warning in male_warnings {
+        let repeats = matches!(
+            warning,
+            Warning::InlayPartsMerged { .. } | Warning::InlayHoleFilled { .. }
+        ) || warnings.contains(&warning);
+        if !repeats {
+            warnings.push(warning);
+        }
+    }
+    Ok((runs, warnings))
+}
+
+/// Generates `board` of the Inlay `op` in `project` (#498), in that
+/// board's project space (Y-up, mm, its bottom at Z = 0, safe Z at its
+/// `thickness + op.safe_z_mm`; the male board shares the stock's
+/// bottom-left corner, [`Project::on_male_board`]): one [`ToolRun`] per
+/// clearing pass that reaches some of the floor, then [`RunLabel::Main`]
+/// with the operation's V-bit, as a V-Carve's
+/// ([`vcarve::generate_vcarve`]), and on the male its cut-out last; every
+/// run tagged `board`.
 ///
 /// The female carves the design (the targets' closed outlines nested
 /// even-odd) from the stock top with a flat depth of `depth_mm`. The male
 /// carves the surround of the design mirrored about its targets' centre
 /// line ([`male_mirror`]), `margin_mm` wide, from a start plane
-/// `depth_mm − glue_gap_mm` below the stock top with a flat depth of
-/// `plug_depth_mm`, engaged from the stock top; it warns
+/// `depth_mm − glue_gap_mm` below the male board's top with a flat depth
+/// of `plug_depth_mm`, engaged from that top; it warns
 /// [`Warning::InlayMaleMirrored`] with the line's X, and
 /// [`Warning::InlayPlugBaseThin`] when less than
-/// [`INLAY_MIN_PLUG_BASE_MM`] of board is left under its floor. On either
-/// side, parts of the design closer than [`INLAY_MERGE_MM`] are cut as one
-/// shape, each pair warning [`Warning::InlayPartsMerged`] (#479).
+/// [`INLAY_MIN_PLUG_BASE_MM`] of the male board is left under its floor.
+/// While the male board has no thickness the male has no runs, and warns
+/// [`Warning::InlayMaleBoardUnset`] instead. On either board, parts of the
+/// design closer than [`INLAY_MERGE_MM`] are cut as one shape, each pair
+/// warning [`Warning::InlayPartsMerged`] (#479). The female ignores the
+/// cut-out.
 ///
 /// # Errors
 ///
@@ -645,14 +712,34 @@ pub fn floor_ridge_height_mm(project: &Project, op: &InlayOp) -> Option<f64> {
 /// thickness, a safe Z that is not positive; [`CamError::InlayValueUnset`],
 /// [`CamError::InlayValueRange`], [`CamError::InlayGlueGap`],
 /// [`CamError::InlayMargin`]; [`CamError::VBitConeExceeded`] when the
-/// flank's engagement from the stock top, `D` or `D − G + P`, is past the
-/// bit's cone (security review H4); a clearing pass that cannot run; and
-/// what [`vcarve::blocks`] and the V-Carve's sequencing and cone test
+/// flank's engagement from the board's top, `D` or `D − G + P`, is past
+/// the bit's cone (security review H4); a clearing pass that cannot run;
+/// and what [`vcarve::blocks`] and the V-Carve's sequencing and cone test
 /// refuse.
 #[must_use = "the toolpath is the whole point"]
-pub fn generate_inlay(
+pub fn generate_inlay_board(
     project: &Project,
     op: &InlayOp,
+    board: Board,
+) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
+    if board == Board::Male && !op.cuts_male() {
+        return Ok((
+            Vec::new(),
+            vec![Warning::InlayMaleBoardUnset { op: op.id.clone() }],
+        ));
+    }
+    let (mut runs, warnings) = generate_on(&on_board(project, op, board), op, board)?;
+    for run in &mut runs {
+        run.board = board;
+    }
+    Ok((runs, warnings))
+}
+
+/// [`generate_inlay_board`] on `project`, already that board's.
+fn generate_on(
+    project: &Project,
+    op: &InlayOp,
+    board: Board,
 ) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
     let tool = project
         .tools
@@ -670,7 +757,7 @@ pub fn generate_inlay(
             safe_z_mm: op.safe_z_mm,
         });
     }
-    let values = Values::of(op)?;
+    let values = Values::of(op, board)?;
     let cut_out = checked_cut_out(project, op, values)?;
     let passes = clearing::Passes::of_inlay(op, values.start_depth_mm());
     let clearing_tools = clearing::checked_tools(project, &passes, true)?;
@@ -784,6 +871,7 @@ pub fn generate_inlay(
         label: RunLabel::Main,
         tool: tool.id.clone(),
         toolpath,
+        board,
     });
     // #443: the cut-out last, so the piece is freed only once carved.
     if let (Some((cut_out, band, diameter_mm)), Some(thickness_mm)) =
@@ -804,6 +892,7 @@ pub fn generate_inlay(
             label: RunLabel::CutOut(cut_out.tool.clone()),
             tool: cut_out.tool.clone(),
             toolpath,
+            board,
         });
     }
     Ok((runs, warnings))
@@ -811,11 +900,11 @@ pub fn generate_inlay(
 
 /// The cut-out of `op` (#443), checked as validation checks it, with the
 /// male's band ([`dc_project::male_band`], #448) and its tool's diameter,
-/// mm: `None` without one.
+/// mm: `None` without one, and on the female (no margin in `values`),
+/// which has no plug to free.
 ///
 /// # Errors
 ///
-/// [`CamError::InlayCutOutNeedsMale`] on a female;
 /// [`CamError::UnknownTool`], [`CamError::CutterNotFlat`] or
 /// [`CamError::InvalidToolDiameter`] for its tool; and
 /// [`CamError::InlayCutOutNoRoom`] when the band's flat floor ring is
@@ -830,7 +919,8 @@ fn checked_cut_out<'o>(
         return Ok(None);
     };
     let Some(margin_mm) = values.margin_mm else {
-        return Err(CamError::InlayCutOutNeedsMale { op: op.id.clone() });
+        // The female ignores the cut-out: only the male's plug is cut out.
+        return Ok(None);
     };
     let tool = project
         .tools

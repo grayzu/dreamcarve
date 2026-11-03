@@ -9,14 +9,8 @@ use super::*;
 
 /// The pair's female and male of `project`, each `side(…)`, seat within
 /// [`SEAT_MM`]: the male's share and the whole seat.
-fn assert_seats(name: &str, project: &Project, side: impl Fn(InlaySide) -> InlayOp) {
-    let fit = fit_of(
-        project,
-        &side(InlaySide::Female),
-        project,
-        &side(InlaySide::Male),
-        0.1,
-    );
+fn assert_seats(name: &str, project: &Project, side: impl Fn(Board) -> InlayOp) {
+    let fit = fit_of(project, &side(Board::Male), 0.1);
     println!(
         "{name}: the plug's start plane stops {:.3} mm above the female at {:?}; the male's share {:.3} mm at {:?}",
         fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
@@ -37,7 +31,7 @@ fn assert_seats(name: &str, project: &Project, side: impl Fn(InlaySide) -> Inlay
 
 /// The star part's Inlay, the V-bit's floor at the step-over the user
 /// guide asks for, 0.1.
-fn fine(side: InlaySide) -> InlayOp {
+fn fine(side: Board) -> InlayOp {
     InlayOp {
         step_over_fraction: Some(0.1),
         ..inlay(side)
@@ -262,7 +256,7 @@ fn hairline_hole_is_filled_and_seats() {
     );
     project.display_units = dc_project::Units::Inch;
     assert_seats("hairline hole", &project, fine);
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         let (_, warnings) = inlay_runs(&project, &fine(side));
         assert!(
             warnings
@@ -335,7 +329,7 @@ fn obtuse_corner_groove_runs_to_the_floor() {
         plug_depth_mm: Some(1.6),
         ..fine(side)
     };
-    let (runs, _) = inlay_runs(&project, &side(InlaySide::Female));
+    let (runs, _) = inlay_runs(&project, &side(Board::Female));
     let floor_s_mm = 4.0 * slope / half_sin;
     let mut short = Vec::new();
     let mut s = 0.02;
@@ -385,7 +379,7 @@ fn self_near_touch_is_merged_and_seats() {
         100.0,
     );
     assert_seats("C with a slit mouth", &project, fine);
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         let (_, warnings) = inlay_runs(&project, &fine(side));
         let merged: Vec<&Warning> = warnings
             .iter()

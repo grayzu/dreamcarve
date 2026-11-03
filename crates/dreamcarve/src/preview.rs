@@ -44,7 +44,7 @@ use std::fmt::Write as _;
 
 use dc_cam::{Move, MoveKind, RunLabel, Toolpath};
 use dc_geometry::{Arc, Point, Point3, Polyline, Vec2};
-use dc_project::{Operation, Project, Tool};
+use dc_project::{Board, Operation, Project, Tool};
 
 /// Operation colours, by the operation's place in the preview, repeating
 /// after eight. Distinct on white and from the black shapes.
@@ -87,24 +87,52 @@ pub struct Run<'a> {
     pub label: &'a RunLabel,
     /// The run's tool.
     pub tool: &'a Tool,
-    /// The run's toolpath, project space.
+    /// The run's toolpath, in its board's project space.
     pub toolpath: &'a Toolpath,
+    /// The board the run cuts (#498): an Inlay male's is drawn on the male
+    /// board, beside the stock.
+    pub board: Board,
 }
+
+/// The gap between the stock and the male board in the picture, mm
+/// (#498).
+const BOARD_GAP_MM: f64 = 10.0;
+/// The origin mark's radius, mm.
+const ORIGIN_MARK_MM: f64 = 1.5;
 
 /// A deterministic SVG of the project's stock, shapes and each enabled
 /// operation's tool runs, in mm, Y flipped for display, each run in a
-/// colour of its own.
+/// colour of its own. When a run is on an Inlay's male board (#498), the
+/// male board is drawn beside the stock, to its right [`BOARD_GAP_MM`]
+/// away, their bottom edges level, with its own outline and its Inlays'
+/// mirrored shapes, its male runs drawn on it, and each board its origin
+/// mark.
 pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
     let width = project.stock.width_mm;
-    let height = project.stock.height_mm;
-    let frame = Frame { height_mm: height };
+    let male = project
+        .male_board()
+        .filter(|_| ops.iter().any(|r| r.board == Board::Male));
+    let height = male.as_ref().map_or(project.stock.height_mm, |(_, board)| {
+        project.stock.height_mm.max(board.height_mm)
+    });
+    let total = male
+        .as_ref()
+        .map_or(width, |(_, board)| width + BOARD_GAP_MM + board.width_mm);
+    let frame = Frame {
+        height_mm: height,
+        x_mm: 0.0,
+    };
+    let male_frame = Frame {
+        height_mm: height,
+        x_mm: width + BOARD_GAP_MM,
+    };
     let mut svg = String::new();
     let _ = writeln!(svg, r#"<?xml version="1.0" encoding="UTF-8"?>"#);
     let _ = writeln!(svg, "{MARKER}");
     let _ = writeln!(
         svg,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w}mm" height="{h}mm" viewBox="0 0 {w} {h}">"#,
-        w = fmt(width),
+        w = fmt(total),
         h = fmt(height),
     );
     let _ = writeln!(
@@ -114,26 +142,108 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
     );
     let _ = writeln!(
         svg,
-        r#"<rect class="stock" x="0.000" y="0.000" width="{}" height="{}" fill="none" stroke="{STOCK_COLOUR}" stroke-width="{}" stroke-dasharray="{STOCK_DASH}"/>"#,
+        r#"<rect class="stock" x="0.000" y="{}" width="{}" height="{}" fill="none" stroke="{STOCK_COLOUR}" stroke-width="{}" stroke-dasharray="{STOCK_DASH}"/>"#,
+        fmt(height - project.stock.height_mm),
         fmt(width),
-        fmt(height),
+        fmt(project.stock.height_mm),
         fmt(STOCK_STROKE_MM),
     );
+    if let Some((_, board)) = &male {
+        let _ = writeln!(
+            svg,
+            r#"<rect class="male-board" x="{}" y="{}" width="{}" height="{}" fill="none" stroke="{STOCK_COLOUR}" stroke-width="{}" stroke-dasharray="{STOCK_DASH}"/>"#,
+            fmt(male_frame.x_mm),
+            fmt(height - board.height_mm),
+            fmt(board.width_mm),
+            fmt(board.height_mm),
+            fmt(STOCK_STROKE_MM),
+        );
+    }
     write_shapes(&mut svg, project, &frame);
+    if let Some((_, board)) = &male {
+        write_male_shapes(&mut svg, project, &male_frame);
+        write_origin(&mut svg, project, &project.stock, &frame);
+        write_origin(&mut svg, project, board, &male_frame);
+    }
     for (
         k,
         &Run {
-            op, tool, toolpath, ..
+            op,
+            tool,
+            toolpath,
+            board,
+            ..
         },
     ) in ops.iter().enumerate()
     {
         let colour = colour(k);
-        let drawing = Drawing::of(toolpath, matches!(op, Operation::Drill(_)), &frame);
-        write_operation(&mut svg, &frame, op, tool, colour, &drawing);
+        let on = if board == Board::Male && male.is_some() {
+            &male_frame
+        } else {
+            &frame
+        };
+        let drawing = Drawing::of(toolpath, matches!(op, Operation::Drill(_)), on);
+        write_operation(&mut svg, on, op, tool, colour, &drawing, board);
     }
     write_legend(&mut svg, width, height, ops);
     svg.push_str("</svg>\n");
     svg
+}
+
+/// Every enabled Inlay's design as its male cuts it (#498): its targets'
+/// closed outlines mirrored about their centre line
+/// ([`dc_cam::inlay::male_mirror`]), thin black, on the male board.
+fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
+    let _ = writeln!(
+        svg,
+        r##"<g class="male-shapes" fill="none" stroke="#000000" stroke-width="{}">"##,
+        fmt(SHAPE_STROKE_MM)
+    );
+    for op in &project.operations {
+        let Operation::Inlay(inlay) = op else {
+            continue;
+        };
+        if !(inlay.enabled && inlay.cuts_male()) {
+            continue;
+        }
+        let Ok(mirror) = dc_cam::inlay::male_mirror(project, &inlay.targets) else {
+            continue;
+        };
+        for target in &inlay.targets {
+            let Some(instance) = project.instances.iter().find(|i| &i.id == target) else {
+                continue;
+            };
+            let Some(definition) = project.definitions.get(&instance.definition) else {
+                continue;
+            };
+            for profile in definition.profiles.iter().filter(|p| p.is_closed()) {
+                let Ok(placed) = instance
+                    .transform
+                    .apply_polyline(profile)
+                    .and_then(|p| mirror.apply_polyline(&p))
+                else {
+                    continue;
+                };
+                if let Some(d) = polyline_path(&placed, frame) {
+                    let _ = writeln!(svg, r#"<path class="male-shape" d="{d}"/>"#);
+                }
+            }
+        }
+    }
+    svg.push_str("</g>\n");
+}
+
+/// The origin mark of a board `stock` drawn in `frame` (#498): a circle at
+/// the XY work zero the project's origin preset puts on that board.
+fn write_origin(svg: &mut String, project: &Project, stock: &dc_project::Stock, frame: &Frame) {
+    let at = project.origin.xy.point_mm(stock);
+    let _ = writeln!(
+        svg,
+        r##"<circle class="origin" {} r="{}" fill="none" stroke="#000000" stroke-width="{}"/>"##,
+        frame.centre_attrs(at),
+        fmt(ORIGIN_MARK_MM),
+        fmt(MARK_STROKE_MM),
+    );
 }
 
 /// The colour of the `k`th operation.
@@ -141,21 +251,28 @@ fn colour(k: usize) -> &'static str {
     PALETTE.get(k % PALETTE.len()).copied().unwrap_or("#000000")
 }
 
-/// Where a project point is drawn.
+/// Where a board's project points are drawn.
 struct Frame {
-    /// The stock height, mm: `y_svg = height_mm − y`.
+    /// The picture's height, mm: `y_svg = height_mm − y`.
     height_mm: f64,
+    /// Where the board's X = 0 is in the picture, mm: 0 for the stock,
+    /// right of it for the male board (#498).
+    x_mm: f64,
 }
 
 impl Frame {
     /// `p` as `x y` in SVG coordinates. The one place Y is flipped.
     fn xy(&self, p: Point) -> String {
-        format!("{} {}", fmt(p.x), fmt(self.height_mm - p.y))
+        format!("{} {}", fmt(self.x_mm + p.x), fmt(self.height_mm - p.y))
     }
 
     /// `p` as the attributes `cx="…" cy="…"`.
     fn centre_attrs(&self, p: Point) -> String {
-        format!(r#"cx="{}" cy="{}""#, fmt(p.x), fmt(self.height_mm - p.y))
+        format!(
+            r#"cx="{}" cy="{}""#,
+            fmt(self.x_mm + p.x),
+            fmt(self.height_mm - p.y)
+        )
     }
 }
 
@@ -509,10 +626,16 @@ fn write_operation(
     tool: &Tool,
     colour: &str,
     drawing: &Drawing,
+    board: Board,
 ) {
+    // #498: a male board run is marked as such.
+    let class = match board {
+        Board::Female => "operation",
+        Board::Male => "operation male",
+    };
     let _ = writeln!(
         svg,
-        r#"<g id="{}" class="operation" fill="none" stroke="{colour}">"#,
+        r#"<g id="{}" class="{class}" fill="none" stroke="{colour}">"#,
         escape_xml(op.id().as_str())
     );
     if !drawing.rapids.is_empty() {
@@ -585,9 +708,13 @@ fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>]
         .iter()
         .map(|run| {
             format!(
-                "{} {}",
+                "{} {}{}",
                 run.label.naming(run.op.id().as_str()),
-                run.op.name()
+                run.op.name(),
+                match run.board {
+                    Board::Female => "",
+                    Board::Male => " (male board)",
+                }
             )
         })
         .collect();
@@ -674,6 +801,7 @@ mod tests {
             label: &RunLabel::Main,
             tool: &project.tools[0],
             toolpath,
+            board: Board::Female,
         }
     }
 

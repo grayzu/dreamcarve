@@ -285,6 +285,7 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
                         toolpath: run.toolpath,
                         holes: None,
                         label: run.label,
+                        board: run.board,
                     });
                 }
                 continue;
@@ -293,7 +294,8 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
                 let (drilled, _) = generate_drill(project, op).map_err(err)?;
                 (drilled.toolpath, Some(drilled.holes))
             }
-            // Format 22 (#436): an Inlay side's runs, as a V-Carve's.
+            // Format 22 (#436): an Inlay's runs, as a V-Carve's, both boards
+            // (#498), each emitted on its own board.
             Operation::Inlay(op) => {
                 for run in generate_inlay(project, op).map_err(err)?.0 {
                     let tool = project
@@ -308,6 +310,7 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
                         toolpath: run.toolpath,
                         holes: None,
                         label: run.label,
+                        board: run.board,
                     });
                 }
                 continue;
@@ -319,6 +322,7 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             toolpath,
             holes,
             label: RunLabel::Main,
+            board: dc_project::Board::Female,
         });
     }
     let (programs, _) =

@@ -7,9 +7,9 @@
 use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
-    BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle, DrillOp,
-    EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, InlaySide,
-    MachineOrigin, MachiningOrder, Operation, OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp,
+    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
+    DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, MachineOrigin,
+    MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp,
     Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
     VCarveOp, VCarveStrategy, WallPass,
 };
@@ -66,7 +66,7 @@ pub fn tool_v_bit_90() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v24/sample.dcv`.
+/// yet. Matches the committed fixture `tests/fixtures/dcv/v25/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -270,12 +270,13 @@ pub fn sample_v_carve() -> VCarveOp {
     }
 }
 
-/// A valid female Inlay of the sample rectangle with [`tool_v_bit_90`]
-/// (`t2`, which the caller adds to the project), id `o7` (format 22):
+/// A valid Inlay of the sample rectangle with [`tool_v_bit_90`] (`t2`,
+/// which the caller adds to the project), id `o7` (format 22):
 /// Corbin's superficial-inlay values, `depth_mm` 2.5, `glue_gap_mm` 0.25,
-/// `plug_depth_mm` 1.5, and a 6 mm `margin_mm`, no clearing. The female
-/// engages the bit 2.5 mm, within its 3.175 mm cone; the male of the
-/// same values engages it 3.75 mm (security review H4).
+/// `plug_depth_mm` 1.5, and a 6 mm `margin_mm`, no clearing, its male
+/// board unset (#498), so only the female is cut. The female engages the
+/// bit 2.5 mm, within its 3.175 mm cone; the male of the same values
+/// engages it 3.75 mm (security review H4).
 pub fn sample_inlay() -> InlayOp {
     InlayOp {
         id: OperationId::new("o7"),
@@ -283,7 +284,7 @@ pub fn sample_inlay() -> InlayOp {
         enabled: true,
         targets: vec![InstanceId::new("i1")],
         tool: ToolId::new("t2"),
-        side: InlaySide::Female,
+        male_board: MaleBoard::default(),
         depth_mm: Some(2.5),
         glue_gap_mm: Some(0.25),
         plug_depth_mm: Some(1.5),
@@ -442,19 +443,28 @@ pub fn line_art_project() -> Project {
     project
 }
 
-/// An Inlay `o1` of [`line_art_project`]'s design, side `side`, as the
-/// maintainer's line-art inlay (#463): `depth_mm` 4, `glue_gap_mm` 1,
-/// `plug_depth_mm` 2, a 6 mm margin, the V-bit's floor at step-over 0.1,
-/// and a clearing pass with the end mill, offset, climb, ramping in at
-/// 15°.
-pub fn line_art_inlay(side: InlaySide) -> InlayOp {
+/// An Inlay `o1` of [`line_art_project`]'s design, as the maintainer's
+/// line-art inlay (#463): `depth_mm` 4, `glue_gap_mm` 1, `plug_depth_mm`
+/// 2, a 6 mm margin, the V-bit's floor at step-over 0.1, and a clearing
+/// pass with the end mill, offset, climb, ramping in at 15°. For the tests
+/// of one board (#498): `Board::Male` measures its male board, the
+/// stock's size and 12 mm thick; `Board::Female` leaves it unset, so only
+/// the female is cut.
+pub fn line_art_inlay(side: Board) -> InlayOp {
     InlayOp {
         id: OperationId::new("o1"),
         name: "Line art".into(),
         enabled: true,
         targets: vec![InstanceId::new("i1")],
         tool: ToolId::new("t1"),
-        side,
+        male_board: match side {
+            Board::Female => MaleBoard::default(),
+            Board::Male => MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(12.0),
+            },
+        },
         depth_mm: Some(4.0),
         glue_gap_mm: Some(1.0),
         plug_depth_mm: Some(2.0),
@@ -530,7 +540,7 @@ pub fn blobs_male_inlay() -> InlayOp {
         name: "Blobs".into(),
         margin_mm: Some(16.0),
         outline_rounding_mm: Some(25.0),
-        ..line_art_inlay(InlaySide::Male)
+        ..line_art_inlay(Board::Male)
     }
 }
 

@@ -435,7 +435,7 @@ fn female_equals_a_flat_depth_v_carve() {
     for clearing in [Vec::new(), vec![clearing_pass()]] {
         let op = InlayOp {
             clearing: clearing.clone(),
-            ..inlay(InlaySide::Female)
+            ..inlay(Board::Female)
         };
         let carve = VCarveOp {
             id: op.id.clone(),
@@ -483,7 +483,7 @@ fn male_mirrors_about_the_targets_centre_line() {
         glue_gap_mm: Some(0.5),
         plug_depth_mm: Some(1.0),
         margin_mm: Some(3.0),
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     };
     let mirror = male_mirror(&project, &op.targets).expect("the targets resolve");
     let expected = Transform::mirror_x_about(43.0).coeffs();
@@ -526,7 +526,7 @@ fn male_mirrors_about_the_targets_centre_line() {
 /// hole of the design and so is carved; both are cut.
 #[test]
 fn male_carves_the_surround_and_the_holes() {
-    let (runs, _) = star_side(InlaySide::Male);
+    let (runs, _) = star_side(Board::Male);
     let star = star_placed();
     let (star_region, _) = nest(vec![Contour::new(star.clone()).expect("a star")]).expect("nests");
     let centre = Point::new(CENTRE.0, CENTRE.1);
@@ -553,7 +553,7 @@ fn male_carves_the_surround_and_the_holes() {
 /// top, and nothing is cut below it.
 #[test]
 fn male_floor_is_at_depth_minus_gap_plus_plug() {
-    let (runs, _) = star_side(InlaySide::Male);
+    let (runs, _) = star_side(Board::Male);
     let floor_z_mm = THICKNESS_MM - (DEPTH_MM - GLUE_GAP_MM + PLUG_DEPTH_MM);
     let lowest = cut_points(main_run(runs))
         .iter()
@@ -569,7 +569,7 @@ fn male_floor_is_at_depth_minus_gap_plus_plug() {
 /// inset of 3 · tan 30° = 1.732 mm into the plug.
 #[test]
 fn male_flank_passes_through_the_outline_at_the_start_plane() {
-    let (runs, warnings) = star_side(InlaySide::Male);
+    let (runs, warnings) = star_side(Board::Male);
     // The star is symmetric about its centre line, so its mirror is
     // itself.
     assert!((mirror_axis(warnings) - CENTRE.0).abs() < 1e-9);
@@ -728,7 +728,7 @@ fn male_engagement_beyond_the_cone_is_an_error() {
         plug_depth_mm: Some(1.5),
         ..inlay(side)
     };
-    match try_inlay(&project, &corbin(InlaySide::Male)) {
+    match try_inlay(&project, &corbin(Board::Male)) {
         Err(CamError::VBitConeExceeded {
             depth_mm, cone_mm, ..
         }) => {
@@ -737,7 +737,7 @@ fn male_engagement_beyond_the_cone_is_an_error() {
         }
         other => panic!("expected VBitConeExceeded, got {other:?}"),
     }
-    inlay_runs(&project, &corbin(InlaySide::Female));
+    inlay_runs(&project, &corbin(Board::Female));
 }
 
 /// `0 <= G < D` on either side, else `InlayGlueGap`; a male's margin must
@@ -745,7 +745,7 @@ fn male_engagement_beyond_the_cone_is_an_error() {
 #[test]
 fn glue_gap_at_or_above_depth_is_an_error() {
     let project = star_project(THICKNESS_MM);
-    for side in [InlaySide::Female, InlaySide::Male] {
+    for side in [Board::Female, Board::Male] {
         for gap in [4.0, 5.0, -0.5] {
             let op = InlayOp {
                 glue_gap_mm: Some(gap),
@@ -766,14 +766,14 @@ fn glue_gap_at_or_above_depth_is_an_error() {
     }
     let flat = InlayOp {
         margin_mm: Some(0.0),
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     };
     assert!(
         matches!(try_inlay(&project, &flat), Err(CamError::InlayMargin { margin_mm, .. }) if margin_mm.abs() < 1e-12)
     );
     let unset = InlayOp {
         plug_depth_mm: None,
-        ..inlay(InlaySide::Female)
+        ..inlay(Board::Female)
     };
     assert!(matches!(
         try_inlay(&project, &unset),
@@ -784,9 +784,10 @@ fn glue_gap_at_or_above_depth_is_an_error() {
     ));
 }
 
-/// Acceptance 57: on 10 mm stock the male leaves 10 − 5 = 5 mm under its
-/// floor and warns `inlay_plug_base_thin`; on 12 mm it leaves 7 and does
-/// not, nor does the female. A 20 × 10 rectangle keeps the test quick.
+/// Acceptance 57: on a 10 mm board the male leaves 10 − 5 = 5 mm under
+/// its floor and warns `inlay_plug_base_thin`; on 12 mm it leaves 7 and
+/// does not, nor does the female. The board is the stock and, for the
+/// male, its male board (#498). A 20 × 10 rectangle keeps the test quick.
 #[test]
 fn thin_plug_base_warns_on_10_mm_stock_and_not_on_12() {
     let thin = |thickness_mm: f64, side| {
@@ -797,7 +798,11 @@ fn thin_plug_base_warns_on_10_mm_stock_and_not_on_12() {
             100.0,
         );
         project.stock.thickness_mm = Some(thickness_mm);
-        let (_, warnings) = inlay_runs(&project, &inlay(side));
+        let mut op = inlay(side);
+        if side == Board::Male {
+            op.male_board.thickness_mm = Some(thickness_mm);
+        }
+        let (_, warnings) = inlay_runs(&project, &op);
         warnings
             .iter()
             .filter_map(|w| match w {
@@ -806,11 +811,11 @@ fn thin_plug_base_warns_on_10_mm_stock_and_not_on_12() {
             })
             .collect::<Vec<f64>>()
     };
-    let on_10 = thin(10.0, InlaySide::Male);
+    let on_10 = thin(10.0, Board::Male);
     assert_eq!(on_10.len(), 1, "{on_10:?}");
     assert!((on_10[0] - 5.0).abs() < 1e-9, "{on_10:?}");
-    assert!(thin(12.0, InlaySide::Male).is_empty());
-    assert!(thin(10.0, InlaySide::Female).is_empty());
+    assert!(thin(12.0, Board::Male).is_empty());
+    assert!(thin(10.0, Board::Female).is_empty());
 }
 
 /// Acceptance 57: with `clearing: [t2]` the male's first run is the end
@@ -824,7 +829,7 @@ fn clearing_pass_clears_the_male_floor() {
     let project = star_project(THICKNESS_MM);
     let op = InlayOp {
         clearing: vec![clearing_pass()],
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     };
     let (runs, _) = inlay_runs(&project, &op);
     let labels: Vec<&RunLabel> = runs.iter().map(|r| &r.label).collect();
@@ -877,7 +882,7 @@ fn clearing_pass_clears_the_male_floor() {
         }
         length
     };
-    let (alone, _) = star_side(InlaySide::Male);
+    let (alone, _) = star_side(Board::Male);
     let with = floor_length(&runs[1].toolpath);
     let without = floor_length(main_run(alone));
     println!("V-bit floor {with:.1} mm with clearing, {without:.1} mm without");
@@ -909,7 +914,7 @@ fn cut_out_male() -> InlayOp {
             }),
             through_cut_allowance_mm: CUT_OUT_ALLOWANCE_MM,
         }),
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     }
 }
 
@@ -1011,7 +1016,7 @@ fn cut_out_runs_last_with_its_own_tool() {
         ]
     );
     // Without a cut-out the male is as before.
-    let (runs, _) = star_side(InlaySide::Male);
+    let (runs, _) = star_side(Board::Male);
     assert!(runs.iter().all(|r| !matches!(r.label, RunLabel::CutOut(_))));
 }
 
@@ -1256,21 +1261,20 @@ fn cut_out_leaves_the_tabs() {
     }
 }
 
-/// #443: the generator refuses what validation refuses: a cut-out on a
-/// female, and one whose end mill does not fit the floor ring (the star
-/// with a 4 mm margin: 4 − 2.309 < 3.175).
+/// #443: the generator refuses what validation refuses: a cut-out whose
+/// end mill does not fit the floor ring (the star with a 4 mm margin: 4 −
+/// 2.309 < 3.175). The female ignores the cut-out (#498: every Inlay has
+/// a male, so a cut-out needs no side): it cuts the same as with none.
 #[test]
-fn cut_out_refuses_a_female_and_a_narrow_floor() {
+fn cut_out_ignored_by_the_female_and_refused_on_a_narrow_floor() {
     let project = star_project(THICKNESS_MM);
     let female = InlayOp {
-        side: InlaySide::Female,
+        male_board: MaleBoard::default(),
         ..cut_out_male()
     };
-    let result = try_inlay(&project, &female);
-    assert!(
-        matches!(result, Err(CamError::InlayCutOutNeedsMale { .. })),
-        "{result:?}"
-    );
+    let (with_cut_out, _) = inlay_runs(&project, &female);
+    let (without, _) = inlay_runs(&project, &inlay(Board::Female));
+    assert_eq!(with_cut_out, without);
     let narrow = InlayOp {
         margin_mm: Some(4.0),
         ..cut_out_male()
@@ -1304,7 +1308,7 @@ fn open_male(rounding_mm: Option<f64>) -> InlayOp {
     InlayOp {
         clearing: vec![clearing_pass()],
         outline_rounding_mm: rounding_mm,
-        ..inlay(InlaySide::Male)
+        ..inlay(Board::Male)
     }
 }
 
@@ -1375,7 +1379,7 @@ fn male_with_clearing_has_no_v_wall_at_the_band_edge() {
         "{nearest_mm}"
     );
 
-    let (alone, _) = star_side(InlaySide::Male);
+    let (alone, _) = star_side(Board::Male);
     let plain = outlines(&rounded_band(&design, MARGIN_MM, 0.0, tolerance_mm));
     let wall = on_v_wall(&cut_points(main_run(alone)), &plain);
     assert!(wall > 20, "{wall} V-bit points on the outer V wall's foot");
@@ -1461,7 +1465,7 @@ fn male_without_clearing_keeps_the_v_wall() {
     for rounding_mm in [None, Some(6.0)] {
         let op = InlayOp {
             outline_rounding_mm: rounding_mm,
-            ..inlay(InlaySide::Male)
+            ..inlay(Board::Male)
         };
         let (runs, warnings) = inlay_runs(&project, &op);
         assert!(v_wall_warnings(&warnings).is_empty(), "{warnings:?}");
@@ -1537,7 +1541,7 @@ fn cut_out_no_room() {
                 tabs: None,
                 through_cut_allowance_mm: CUT_OUT_ALLOWANCE_MM,
             }),
-            ..inlay(InlaySide::Male)
+            ..inlay(Board::Male)
         };
         match try_inlay(&project, &op) {
             Err(CamError::InlayCutOutNoRoom {
@@ -1578,7 +1582,7 @@ fn rounded_male_over_wide_gaps_clears_only_the_band() {
         .find(|r| r.label == RunLabel::Clearing(ToolId::new("t2")))
         .expect("a clearing run");
     let p = with_op(&project, Operation::Inlay(op.clone()));
-    let design = side(&p, &op, &mut Vec::new())
+    let design = side(&p, &op, board_of(&op), &mut Vec::new())
         .expect("the male resolves")
         .design;
     let edges = outlines(&design);
@@ -1647,12 +1651,13 @@ fn male_carves_to_the_tip_of_an_acute_notch() {
     for clearing in [Vec::new(), vec![clearing_pass()]] {
         let op = InlayOp {
             clearing: clearing.clone(),
-            ..inlay(InlaySide::Male)
+            ..inlay(Board::Male)
         };
         let (runs, _) = inlay_runs(&project, &op);
         let male = side(
             &with_op(&project, Operation::Inlay(op.clone())),
             &op,
+            Board::Male,
             &mut Vec::new(),
         )
         .expect("the male resolves");
@@ -1793,13 +1798,7 @@ fn star_seats_flush_with_narrow_bits() {
             plug_depth_mm: Some(0.4 * depth_mm),
             ..inlay(side)
         };
-        let fit = fit_of(
-            &star,
-            &side(InlaySide::Female),
-            &star,
-            &side(InlaySide::Male),
-            0.1,
-        );
+        let fit = fit_of(&star, &side(Board::Male), 0.1);
         assert!(
             fit.is_flush(),
             "{angle_deg}°: the plug stands {:.3} mm proud at {:?}",
@@ -1834,7 +1833,7 @@ fn notch_pair(
         plug_depth_mm: Some(0.4 * depth_mm),
         ..inlay(side)
     };
-    (notch, side(InlaySide::Female), side(InlaySide::Male))
+    (notch, side(Board::Female), side(Board::Male))
 }
 
 /// #499: the 5° notch seats within [`SEAT_MM`] (0.1 mm grid) with the
@@ -1862,8 +1861,8 @@ fn notch_seats_flush_with_narrow_bits() {
     ];
     let mut failures = Vec::new();
     for (angle_deg, units, (turn_rad, at)) in cases {
-        let (notch, female, male) = notch_pair(angle_deg, units, turn_rad, at);
-        let fit = fit_of(&notch, &female, &notch, &male, 0.1);
+        let (notch, _, male) = notch_pair(angle_deg, units, turn_rad, at);
+        let fit = fit_of(&notch, &male, 0.1);
         if !fit.is_flush() {
             failures.push(format!(
                 "{angle_deg}°, {units:?}, turned {turn_rad}: the plug stands {:.3} mm proud at {:?} (the male's share {:.3})",
@@ -1914,26 +1913,8 @@ fn closed_c_plug_seats_flush() {
         ..inlay(side)
     };
     let pairs = [
-        (
-            "no clearing",
-            fit_of(
-                &c,
-                &fine(InlaySide::Female),
-                &c,
-                &fine(InlaySide::Male),
-                0.1,
-            ),
-        ),
-        (
-            "clearing",
-            fit_of(
-                &c,
-                &with_clearing(InlaySide::Female),
-                &c,
-                &with_clearing(InlaySide::Male),
-                0.1,
-            ),
-        ),
+        ("no clearing", fit_of(&c, &fine(Board::Male), 0.1)),
+        ("clearing", fit_of(&c, &with_clearing(Board::Male), 0.1)),
     ];
     for (name, fit) in pairs {
         println!(

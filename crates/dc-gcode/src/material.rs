@@ -246,7 +246,13 @@
 //!   floor `plug_depth_mm` below that. Either side's flank is engaged from
 //!   the stock top (security review H4): the plug above the male's start
 //!   plane is never cleared. A cut inside the plug, or sideways above the
-//!   male's start plane, fails as it would for a V-Carve.
+//!   male's start plane, fails as it would for a V-Carve. Each board is
+//!   its own (#498): a run tagged [`dc_project::Board::Male`] is held
+//!   against the project on the Inlay's male board
+//!   ([`Project::on_male_board`], which the emitter hands this pass), so
+//!   "the stock" above, its top, its rectangle and its bottom, is the
+//!   male board's for the male, and the female's design and the male's
+//!   surround each follow from the board the run is tagged with.
 //! - **Inlay cut-out** (format 23, #443): a male's run labelled with its
 //!   cut-out's flat end mill, and cut with it, is held to the band's flat
 //!   floor rings: the floor regions of its surround (the surround inset
@@ -299,10 +305,10 @@ use dc_geometry::{
     strip_ends, surround_floor_regions, surround_within, wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
-    ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, INLAY_MERGE_MM, InlayOp, InlaySide, InstanceId, MaleBand, Operation,
-    PostProcessor, ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units,
-    VCarveOp, cleared_start_plane, male_band,
+    Board, ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
+    FeatureInstance, INLAY_MERGE_MM, InlayOp, InstanceId, MaleBand, Operation, PostProcessor,
+    ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
+    cleared_start_plane, male_band,
 };
 
 use crate::ExportError;
@@ -767,8 +773,18 @@ impl Material {
     /// end mill `t` to its floor, and only when `t` is one of its passes
     /// and the run's tool. Every other operation has only its own run,
     /// which is held as [`Material::of`] says; a clearing run of one is
+    /// unresolved. An Inlay's run is held as its `board`'s (#498): the
+    /// female's design on the stock, or the male's surround on its male
+    /// board, `project` then being the project on that board
+    /// ([`Project::on_male_board`]); a cut-out on the female board is
     /// unresolved.
-    pub(crate) fn of_run(project: &Project, op: &Operation, label: &RunLabel, tool: &Tool) -> Self {
+    pub(crate) fn of_run(
+        project: &Project,
+        op: &Operation,
+        label: &RunLabel,
+        tool: &Tool,
+        board: Board,
+    ) -> Self {
         match (op, label) {
             (Operation::VCarve(carve), RunLabel::Main) if tool.id == carve.tool => {
                 v_bit_material(project, carve)
@@ -778,14 +794,14 @@ impl Material {
             }
             // Format 22 (#436): an Inlay side's runs, as a V-Carve's.
             (Operation::Inlay(inlay), RunLabel::Main) if tool.id == inlay.tool => {
-                inlay_material(project, inlay)
+                inlay_material(project, inlay, board)
             }
             (Operation::Inlay(inlay), RunLabel::Clearing(pass)) if tool.id == *pass => {
-                inlay_floor_material(project, inlay, pass)
+                inlay_floor_material(project, inlay, pass, board)
             }
             // Format 23 (#443): a male's cut-out, with its own end mill.
             (Operation::Inlay(inlay), RunLabel::CutOut(cut)) if tool.id == *cut => {
-                cut_out_material(project, inlay, tool)
+                cut_out_material(project, inlay, tool, board)
             }
             (Operation::VCarve(_) | Operation::Inlay(_), _)
             | (_, RunLabel::Clearing(_) | RunLabel::CutOut(_)) => Self::Unresolved,
@@ -922,7 +938,7 @@ impl Material {
             Operation::VCarve(carve) => v_bit_material(project, carve),
             // Format 22 (#436): S17 on the side's carve, the male's being
             // the surround of its mirrored targets.
-            Operation::Inlay(inlay) => inlay_material(project, inlay),
+            Operation::Inlay(inlay) => inlay_material(project, inlay, Board::Female),
         }
     }
 }
@@ -996,8 +1012,8 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
 
 /// The V-bit material of Inlay side `inlay` (#436; module docs, [`cone`]):
 /// [`Material::Unresolved`] when [`inlay_cone`] is.
-fn inlay_material(project: &Project, inlay: &InlayOp) -> Material {
-    inlay_cone(project, inlay).map_or(Material::Unresolved, |(cone, _)| Material::VBit(cone))
+fn inlay_material(project: &Project, inlay: &InlayOp, board: Board) -> Material {
+    inlay_cone(project, inlay, board).map_or(Material::Unresolved, |(cone, _)| Material::VBit(cone))
 }
 
 /// A male Inlay's band as the safety pass derives it (#448; module docs):
@@ -1086,7 +1102,11 @@ impl MaleGeometry {
 /// there, and the plug above the male's start plane is never cleared.
 /// `None` when the tool is not a usable V-bit, a value is unset or out of
 /// the range validation allows, or the targets do not resolve.
-fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<(Cone, Option<MaleGeometry>)> {
+fn inlay_cone(
+    project: &Project,
+    inlay: &InlayOp,
+    board: Board,
+) -> Option<(Cone, Option<MaleGeometry>)> {
     let thickness_mm = project.stock.thickness_mm.filter(|t| t.is_finite())?;
     let (slope, cone_mm) = v_bit_of(project, &inlay.tool)?;
     let depth_mm = inlay.depth_mm.filter(|d| d.is_finite() && *d > 0.0)?;
@@ -1094,14 +1114,14 @@ fn inlay_cone(project: &Project, inlay: &InlayOp) -> Option<(Cone, Option<MaleGe
         .glue_gap_mm
         .filter(|g| g.is_finite() && *g >= 0.0 && *g < depth_mm)?;
     let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
-    let (regions, start_depth_mm, flat_depth_mm, male) = match inlay.side {
-        InlaySide::Female => (
+    let (regions, start_depth_mm, flat_depth_mm, male) = match board {
+        Board::Female => (
             merged_design(project, inlay, regions_of(project, &inlay.targets)?),
             0.0,
             depth_mm,
             None,
         ),
-        InlaySide::Male => {
+        Board::Male => {
             let male = MaleGeometry::of(project, inlay)?;
             (
                 male.surround.clone(),
@@ -1225,17 +1245,22 @@ struct CutOutGeometry {
 /// when it has no cut-out, is not a male, `tool` is not the cut-out's
 /// flat end mill, its V-bit or values are unusable, or its targets do
 /// not resolve.
-fn cut_out_geometry(project: &Project, inlay: &InlayOp, tool: &Tool) -> Option<CutOutGeometry> {
+fn cut_out_geometry(
+    project: &Project,
+    inlay: &InlayOp,
+    tool: &Tool,
+    board: Board,
+) -> Option<CutOutGeometry> {
     let cut_out = inlay.cut_out.as_ref()?;
     let radius_mm = tool.diameter_mm / 2.0;
     let usable_tool = tool.id == cut_out.tool
         && tool.cutter.is_flat()
         && radius_mm.is_finite()
         && radius_mm > 0.0;
-    if inlay.side != InlaySide::Male || !usable_tool {
+    if board != Board::Male || !usable_tool {
         return None;
     }
-    let (cone, male) = inlay_cone(project, inlay)?;
+    let (cone, male) = inlay_cone(project, inlay, board)?;
     let male = male?;
     let floor_z_mm = cone.floor_z_mm?;
     let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
@@ -1267,9 +1292,9 @@ fn cut_out_geometry(project: &Project, inlay: &InlayOp, tool: &Tool) -> Option<C
 /// floor rings, the tool's radius and the cut-out's own through-cut
 /// allowance; [`Material::Unresolved`] when [`cut_out_geometry`] is
 /// `None`.
-fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool) -> Material {
+fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool, board: Board) -> Material {
     let Some((geometry, cut_out)) =
-        cut_out_geometry(project, inlay, tool).zip(inlay.cut_out.as_ref())
+        cut_out_geometry(project, inlay, tool, board).zip(inlay.cut_out.as_ref())
     else {
         return Material::Unresolved;
     };
@@ -1307,9 +1332,14 @@ fn floor_material(project: &Project, carve: &VCarveOp, pass: &ToolId) -> Materia
 /// The material of male or female Inlay `inlay`'s clearing run with end
 /// mill `pass` (#436): its floor, out to the band's edge when a clearing
 /// pass cuts that edge upright (#448, [`MaleGeometry::floors`]).
-fn inlay_floor_material(project: &Project, inlay: &InlayOp, pass: &ToolId) -> Material {
+fn inlay_floor_material(
+    project: &Project,
+    inlay: &InlayOp,
+    pass: &ToolId,
+    board: Board,
+) -> Material {
     floor_of(project, &inlay.clearing, pass, |inset_mm, tolerance_mm| {
-        let (cone, male) = inlay_cone(project, inlay)?;
+        let (cone, male) = inlay_cone(project, inlay, board)?;
         let inset_mm = inset_mm(&cone)?;
         let floors = match male {
             Some(male) => male.floors(inset_mm, tolerance_mm),
@@ -1713,12 +1743,13 @@ pub(crate) fn run_tab_spines(
     op: &Operation,
     label: &RunLabel,
     tool: &Tool,
+    board: Board,
 ) -> Vec<TabSpine> {
     match (op, label) {
         (_, RunLabel::Main) => tab_spines(project, op),
         (Operation::Inlay(inlay), RunLabel::CutOut(_)) => {
             let (Some(geometry), Some(cut_out), Some(thickness_mm)) = (
-                cut_out_geometry(project, inlay, tool),
+                cut_out_geometry(project, inlay, tool, board),
                 inlay.cut_out.as_ref(),
                 project.stock.thickness_mm,
             ) else {
