@@ -252,6 +252,13 @@ phases bump the patch number.
   and 30° bits can still stand up to 0.16 and 0.08 mm proud at so sharp
   a corner. A program's corners start nearer their tips, so the sign
   quick start's background now starts at its corner ([#499]).
+- An Inlay's female now carves all the way into a corner between 120°
+  and 130°. Only a stub of the medial axis into such a corner survived,
+  and the corner's tip joined the stub, so the groove stopped 0.025 mm
+  in and the plug stood 0.188 mm proud with the 15° bit on line art.
+  The branch now runs on to the rest of the axis. The Inlay chapter's
+  note on narrow bits says what still keeps them from seating within
+  0.05 mm ([#500]).
 
 ## [0.2.0] - 2026-10-27
 
@@ -1036,6 +1043,7 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#490]: https://github.com/grayzu/dreamcarve/issues/490
 [#495]: https://github.com/grayzu/dreamcarve/issues/495
 [#499]: https://github.com/grayzu/dreamcarve/issues/499
+[#500]: https://github.com/grayzu/dreamcarve/issues/500
 [#506]: https://github.com/grayzu/dreamcarve/issues/506
 [#507]: https://github.com/grayzu/dreamcarve/issues/507
 [#502]: https://github.com/grayzu/dreamcarve/issues/502

@@ -159,10 +159,15 @@ about 0.08 mm and the 15° bit up to about 0.16 mm there. So for a narrow
 bit and a design with very sharp points, set `display_units` to `"mm"`
 before you export.
 
-For now, with a 15° or 30° bit, expect the plug to stand up to about
-0.3 mm proud: in sharp corners and other tight features of the design,
-its walls meet the pocket's before they do elsewhere
-([#506](https://github.com/grayzu/dreamcarve/issues/506)). If you use
+Apart from that limit, corners, sharp or obtuse, seat with every bit.
+Some other tight features still don't. With the 30° bit most plugs seat
+within 0.05 mm, and some stand up to about 0.15 mm proud. With the 15°
+bit, expect 0.05 to 0.4 mm. In both cases the excess comes where a line ends inside
+the design, where a curve narrows, or where two parts nearly touch:
+there the plug's walls meet the pocket's before they do elsewhere
+([#506](https://github.com/grayzu/dreamcarve/issues/506)). A few designs
+with such features stand more than 0.3 mm proud with either bit
+([#501](https://github.com/grayzu/dreamcarve/issues/501)). If you use
 one, plan for it: press the plug home with a clamp and flat cauls, so
 that the wood gives where the walls meet first, and keep `glue_gap_mm`
 at 1 mm or more, so that the plug has room under it to go down.
