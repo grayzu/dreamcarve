@@ -590,6 +590,36 @@ fn male_of_lettering_0xc4_generates() {
     );
 }
 
+/// #553 (found by the confirmation sweep on #438): the males of
+/// lettering seeds `0x8f` and `0x81` (30° bit, millimetre programs) with a
+/// V wall seat within 0.05 mm. The band round the letters is sampled every
+/// 0.33 and 0.36 mm, and where two letters, or two lobes of one, pass
+/// 0.05 to 0.11 mm apart the band has a neck narrower than the step, with
+/// no medial node in it (`0x8f`) or only a stub of the branch (`0x81`).
+/// The male cut nothing across it, and the plug stood 3.586 and 0.890 mm
+/// proud on the wood left there, `0x8f`'s its whole height `D − G`. The
+/// band is now sampled again where it has a neck narrower than its step.
+/// About 160 s in a debug build, so it runs with the sweep; dc-cam's
+/// `male_of_a_curve_beside_an_edge_cuts_the_neck` is its minimal design.
+#[test]
+#[ignore = "slow: the sweep's full-size designs; run with --release -- --ignored"]
+fn lettering_male_cuts_a_neck_narrower_than_its_step() {
+    for seed in [0x8f, 0x81] {
+        let outcome = reproduce(
+            "lettering",
+            seed,
+            lettering::lettering(seed),
+            Kind::MaleVWall,
+        );
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{seed:#x}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}
+
 /// #522 (found by the sweep): line-art seed `0xa` and lettering seed
 /// `0x3c` (15° bit, millimetres) seat within 0.05 mm. Their glue gaps,
 /// drawn at 0.12 of the depth, stood above the floor's straight-run

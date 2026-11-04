@@ -262,3 +262,38 @@ fn parts_a_tenth_apart_are_not_merged() {
         fit.seat_at
     );
 }
+
+/// #553 (lettering `0x8f` and `0x81` of the sweep, 30° bit): a 6 mm
+/// circle 0.055 mm from a 12 mm square, just over the merge distance, so
+/// not merged, with a 20 mm margin, seats within [`SEAT_MM`] (0.1 mm
+/// grid). The band is sampled every 0.31 mm, and the neck between the
+/// circle and the square, 0.055 mm wide where they pass nearest and under
+/// 0.16 mm for 2 mm along, got no medial node: the samples either side are
+/// too far apart along each wall for a circumcentre to land in it. The
+/// male cut nothing there, and the plug stood its whole height, `D − G`
+/// = 3 mm, proud on the wood left across the neck. The band is now
+/// sampled again where it has a neck narrower than its step
+/// (`dc_geometry::medial::neck_mm`).
+#[test]
+fn male_of_a_curve_beside_an_edge_cuts_the_neck() {
+    let gap_mm = 0.055;
+    let circle = Polyline::circle(Point::new(-6.0 - gap_mm / 2.0, 0.0), 6.0);
+    let x = gap_mm / 2.0;
+    let square = polygon(&[(x, -6.0), (x + 12.0, -6.0), (x + 12.0, 6.0), (x, 6.0)]);
+    let mut project = project_of(vec![circle, square], (75.0, 75.0), 150.0, 150.0);
+    project.tools[0] = v_bit(30.0);
+    let op = InlayOp {
+        step_over_fraction: Some(0.1),
+        plug_depth_mm: Some(1.6),
+        margin_mm: Some(20.0),
+        ..inlay(Board::Male)
+    };
+    let fit = fit_of(&project, &op, 0.1);
+    assert!(
+        fit.is_flush(),
+        "the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm)",
+        fit.seat_mm,
+        fit.seat_at,
+        fit.male_mm
+    );
+}
