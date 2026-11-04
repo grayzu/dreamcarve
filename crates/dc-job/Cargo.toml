@@ -1,0 +1,30 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dc-job"
+description = "DreamCarve job pipeline: from a project to its programs, previews and summaries, shared by the CLI and the app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+dc-cam.workspace = true
+dc-gcode.workspace = true
+dc-geometry.workspace = true
+dc-import.workspace = true
+dc-project.workspace = true
+# `EstimateConfig` is the `[estimate]` table of the user config, read by
+# `dreamcarve-shell` into the type the estimate lines take.
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+dc-cam = { workspace = true, features = ["test-support"] }
+dc-project = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

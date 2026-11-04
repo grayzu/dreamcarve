@@ -1,0 +1,25 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dreamcarve-shell"
+description = "DreamCarve shell I/O shared by the CLI and the app: staged writes, the config directory, config.toml and gui.toml"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+# `EstimateConfig`, the `[estimate]` table `config.toml` is read into.
+dc-job.workspace = true
+dc-project.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+# `gui.toml` is written as well as read, so the writer (`display`) is on
+# here; the `dc-*` crates never write a config file.
+toml = { workspace = true, features = ["display"] }
+
+[lints]
+workspace = true

@@ -1,34 +1,43 @@
 # Crate map
 
 DreamCarve is a Cargo workspace. Library crates carry a `dc-` prefix; the
-command line binary is `dreamcarve`. Library crates never panic, print, or
-do I/O: they take values and return `Result`s and warnings. The binary does
-all file, terminal, clock and exit-code handling.
+command line binary is `dreamcarve`, and the app (phase 4) will be
+`dreamcarve-app`. Library crates never panic, print, or do I/O: they take
+values and return `Result`s and warnings. The binaries do the terminal,
+clock and exit-code handling; the file I/O they share (staged writes, the
+config directory, `config.toml`, `gui.toml`) is `dreamcarve-shell`'s, a
+library that may do I/O and is therefore not a `dc-` crate.
 
 ## How the pieces fit
 
 ```text
 plaque.dxf ──dc-import──▶ definitions + instances ─┐
                                                    ├─▶ Project (dc-project) ──save/load──▶ plaque.dcv
-         init defaults (dreamcarve) ───────────────┘
+   project_from::drawing (dc-job) ─────────────────┘
 tools.json ──dc-library──▶ Tool ──tools add (dreamcarve)──▶ a copy in the project
 
-plaque.dcv ──load + validate (dc-project)──▶ Project
-           ──generate_profile / _pocket / _drill / _bore / _engrave (dc-cam)──▶ cut blocks
+plaque.dcv ──load (dc-project)──▶ Project ──dc-job::build (both shells call this)──▶ programs + findings
+   build = validate (dc-project)
+           ──generate_profile / _pocket / _drill / _bore / _engrave / _vcarve / _inlay_board (dc-cam)──▶ cut blocks
            ──sequence (dc-cam)──▶ Toolpath per operation (project space, mm, Y-up)
-           ──order::check (dc-cam)──▶ operation-order warnings
+           ──order::check + placed_tabs::check (dc-cam)──▶ operation-order and tab warnings
            ──emit_programs (dc-gcode): arc fitting, canned cycles, one program per tool run or M6
            ──parse + safety pass (dc-gcode)──▶ plaque-1-T2.nc, plaque-2-T1.nc
+   dc-job also names the programs, writes the summary lines and draws the preview SVG
 ```
 
 Dependencies point one way, down this table. `dc-gcode` depends on
 `dc-cam` only for the toolpath types it consumes; it trusts nothing a
 generator says and works out each operation's material from the project
-itself.
+itself. The GUI crates (`dc-app`, `dreamcarve-app`, phase 4) depend on
+`dc-cam` and `dc-gcode` only through `dc-job`, so the program the app
+writes is the CLI's (phase 4 functional spec, S20).
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `dreamcarve` | The command line. All file, terminal, clock and exit-code handling, the user config directory and the tool library file. | every `dc-` crate |
+| `dreamcarve` | The command line: argument parsing, printing, the clock, exit codes, the tool library file, and the `tabs` command's flags. Thin: the pipeline is `dc-job`'s and the shared file I/O `dreamcarve-shell`'s. | every `dc-` crate, `dreamcarve-shell` |
+| `dreamcarve-shell` | The file I/O both binaries share: the staged write that puts every file of an export in place or none, the user config directory, `config.toml` and `gui.toml`. Reads and writes files; prints nothing. | `dc-job`, `dc-project` |
+| `dc-job` | The job pipeline: `build` (validate, generate, check, emit) and its two halves `generate_operation` and `finish`; `Findings` with tiers; program names; the export summary's lines; the preview SVG and its marks; a project from a drawing; a drawing imported into a project; placed tabs. Re-exports the `dc-cam` and `dc-gcode` types a shell needs. | `dc-cam`, `dc-gcode`, `dc-import`, `dc-project`, `dc-geometry` |
 | `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools, and Fusion 360 import. Bytes in, values out; the binary owns `tools.json`. | `dc-project` |
 | `dc-gcode` | G-code emission, arc fitting, canned cycles, and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
 | `dc-cam` | Toolpath generators, sequencing and the operation-order warnings. Pure functions from project and operation to toolpath plus warnings. | `dc-project`, `dc-geometry` |
@@ -148,18 +157,41 @@ the code they test.
 | `fusion.rs` | Fusion 360 library import: `import(&[u8])` reads a `.tools` zip (the `zip` crate, deflate only) or `.json` into `FusionImport { tools: Vec<ImportedTool>, skipped: Vec<Skipped> }`, one tool per preset, with `ImportNote`s for unset values and `SkipReason`s; `is_fusion_library` tells a Fusion file from a DreamCarve one. |
 | `error.rs` | `LibraryError`. |
 
+### `dc-job` (`crates/dc-job/src/`)
+
+| Module | Contents |
+| --- | --- |
+| `lib.rs` | The crate's surface, and the re-exports of the `dc-cam` and `dc-gcode` types a shell needs (`Toolpath`, `Move`, `Warning`, `EmitOp`, `Program`, `ProgramSplit`, `Estimate`, `Extents`, the error types). |
+| `build.rs` | `build` and `build_board`, the whole pipeline without writing, which `export` and `check` share; its halves for the app, `validation`, `generate_operation` and `finish`; `Finding` (field, code, message, `Tier`, operation, shape), `Findings`, `Built`, `Finished` and `ProgramSummary`. Moved from the CLI's `export.rs`. |
+| `names.rs` | `program_names` and `program_suffixes`: `<stem>.nc`, `<stem>-<k>-T<n>.nc`, `<stem>-female-<k>-T<n>.nc`. |
+| `summary.rs` | The export summary's lines: each operation and its depth, a carve's deepest cut and floor ridges, extents and edge extents, the cycle-time `Estimates` and `EstimateConfig`, board headings, what to do before a program starts. |
+| `preview.rs` | The toolpath preview SVG of `--preview` (`render`), a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`; `marks`, the tab marks, start points and holes it draws, as geometry for the app's Viewport. |
+| `project_from.rs` | `drawing`: the project `init` writes for a drawing, with or without the placeholder tool and Profile. |
+| `import.rs` | `Drawing` (an SVG or DXF import) and `drawing_into`: a drawing's shapes appended to a project, placed as drawn, under fresh ids. |
+| `tabs.rs` | `place_request`, what `tabs place <dcv> <op>` does, and the `dc-cam` placement functions re-exported. |
+| `error.rs` | `JobError`. |
+
+### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)
+
+| Module | Contents |
+| --- | --- |
+| `staged.rs` | `StagedFile` and `commit_all`: every file of an export written to a temporary name beside its destination and renamed into place at the end, or none (#71). Moved from the CLI's `cli.rs`. |
+| `config_dir.rs` | `Paths`: the user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's) and the files in it. |
+| `config.rs` | `config.toml` (`[export]`, `[estimate]`): strict, a typo is an error at its line and column. |
+| `gui_prefs.rs` | `gui.toml`, the app's preferences: layout, visibility, recent files, theme. Lenient: a missing file is the defaults, an unknown key a note. |
+| `error.rs` | `ShellError`, whose messages are the CLI's. |
+
 ### `dreamcarve` (`crates/dreamcarve/src/`)
 
 | Module | Contents |
 | --- | --- |
 | `main.rs` | Entry point: runs the command and maps its result to an exit code. |
-| `cli.rs` | Arguments (clap), exit codes, staged file writes, the date. |
+| `cli.rs` | Arguments (clap), exit codes, the date. |
 | `output.rs` | `outln!`, `out!`, `errln!`: all printing; a closed stdout pipe stops output and keeps the exit code (#216). |
-| `init.rs` | `init`: SVG or DXF import and the default project; the DXF-only `--units`, `--join-tolerance` and `--layer`. |
-| `export.rs` | `export`, and `build`, the whole pipeline without writing, which `check` shares; `--post`, `--one-program`, `--programs-per-tool`, `--preview`; the printed run-time estimate (`Estimates`). |
+| `init.rs` | `init`: SVG or DXF import, printed; the DXF-only `--units`, `--join-tolerance` and `--layer`; the project itself is `dc_job::project_from::drawing`'s. |
+| `export.rs` | `export`: `--post`, `--one-program`, `--programs-per-tool`, `--preview`, `--board`; the output paths, the staged write and the printed summary of what `dc_job::build` produced. |
 | `check.rs` | `check`, and its `--preview`. |
-| `preview.rs` | The toolpath preview SVG of `--preview`: a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`. |
-| `config.rs` | The user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's), `config.toml` (`[export]`, `[estimate]`), and `config path`. |
+| `config.rs` | `config path`, and the user config as the commands read it, through `dreamcarve-shell`. |
 | `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
 | `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |
 | `clock.rs` | UTC dates from the system clock, with no date crate; `build.rs` includes it for `--version`. |
@@ -167,7 +199,9 @@ the code they test.
 Behaviour tests for the binary are in `crates/dreamcarve/tests/`: `cli.rs`
 for every command, with committed programs in `tests/expected/`, and
 `quick_start.rs`, which runs the commands of the quick start chapters,
-read from the chapters themselves.
+read from the chapters themselves. `crates/dc-job/tests/` holds the
+programs, previews and projects the CLI wrote before the pipeline moved
+(`expected/`), which the pipeline must still produce byte for byte.
 
 ## Outside the workspace crates
 

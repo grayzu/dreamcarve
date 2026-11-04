@@ -10,6 +10,8 @@ members = [
     "crates/dc-gcode",
     "crates/dc-import",
     "crates/dc-library",
+    "crates/dc-job",
+    "crates/dreamcarve-shell",
     "crates/dreamcarve",
     "tools/check-headers",
     "tools/doc-figures",
@@ -39,6 +41,8 @@ dc-cam = { path = "crates/dc-cam", version = "0.2.1" }
 dc-gcode = { path = "crates/dc-gcode", version = "0.2.1" }
 dc-import = { path = "crates/dc-import", version = "0.2.1" }
 dc-library = { path = "crates/dc-library", version = "0.2.1" }
+dc-job = { path = "crates/dc-job", version = "0.2.1" }
+dreamcarve-shell = { path = "crates/dreamcarve-shell", version = "0.2.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.
 serde = { version = "1.0", features = ["derive"] }
@@ -68,8 +72,8 @@ delaunator = { version = "1.1", default-features = false, features = ["std"] }
 # svgz, and the writer, none of which an importer needs.
 usvg = { version = "0.48", default-features = false }
 # `config.toml` parsing (phase 2 design, "User config (CLI only)"). Default
-# features are off: `display` (the writer) is not needed; `parse` and
-# `serde` deserialize the file into a struct.
+# features are off: `parse` and `serde` deserialize the file into a struct;
+# `dreamcarve-shell` adds `display` (the writer) for `gui.toml` alone.
 toml = { version = "1.1", default-features = false, features = ["parse", "serde", "std"] }
 # Unzips Fusion 360 `.tools` libraries (phase 2 design, "Fusion import").
 # Default features are off: they add encryption, timestamps and five more

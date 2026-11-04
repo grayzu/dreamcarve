@@ -3,81 +3,40 @@
 
 //! `dreamcarve init <svg|dxf>`: imports the drawing with `dc-import` and
 //! writes a `.dcv` project with the defaults of `docs/specs/phase-1/design.md`,
-//! "CLI (dreamcarve)": stock = drawing bounds plus a 10 mm margin on each
-//! side; origin bottom-left at the stock top; one placeholder tool "Set me"
-//! (6.35 mm, 2 flutes, no feeds or step-down); one outside climb Profile of
-//! every closed shape, safe Z 5 mm, asking for four 8 × 3 mm rectangular
-//! tabs on each part it cuts and none on its holes: a tab request, cut as
-//! the tabs it places, which `dreamcarve tabs` writes as placed tabs
-//! (#105, ADR-0005). The
-//! format is the file's extension; a DXF takes the DXF-only `--units`
-//! override, `--join-tolerance` and `--layer` (`docs/specs/phase-2/design.md`,
-//! "CLI additions").
+//! "CLI (dreamcarve)", which [`dc_job::project_from::drawing`] builds:
+//! stock = drawing bounds plus a 10 mm margin on each side; origin
+//! bottom-left at the stock top; one placeholder tool "Set me" (6.35 mm, 2
+//! flutes, no feeds or step-down); one outside climb Profile of every
+//! closed shape, safe Z 5 mm, asking for four 8 × 3 mm rectangular tabs on
+//! each part it cuts and none on its holes: a tab request, cut as the tabs
+//! it places, which `dreamcarve tabs` writes as placed tabs (#105,
+//! ADR-0005). The format is the file's extension; a DXF takes the DXF-only
+//! `--units` override, `--join-tolerance` and `--layer`
+//! (`docs/specs/phase-2/design.md`, "CLI additions").
 //!
 //! The stock thickness, the Profile depth, the feeds, the spindle speed and
 //! the step-down are left unset (`null`), so `export` refuses the project
 //! until the user fills them in (S3, #64, #98): `init` cannot know the
-//! material or the machine. The step-down is the tool's: the operation's,
-//! which would override it, stays `null` too.
-//! `init` lists each of them as `coaster.dcv:line:column: …`, a link an
-//! editor or terminal opens at the `null` to replace (#76).
+//! material or the machine. `init` lists each of them as
+//! `coaster.dcv:line:column: …`, a link an editor or terminal opens at the
+//! `null` to replace (#76).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::ExitCode;
 
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transform};
 use dc_import::{
     DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
     import_dxf, import_svg,
 };
-use dc_project::{
-    CURRENT_VERSION, CornerRelief, CutDirection, Entry, FeatureDefinition, FeatureInstance,
-    Heights, MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ,
-    PostProcessorRef, ProfileOp, Project, Side, SourceMap, StartAt, Stock, TabPlacement, TabShape,
-    TabSpec, Tool, ToolId, ToolKind, Units, validate,
-};
+use dc_job::JobError;
+use dc_job::import::Drawing;
+use dc_job::project_from;
+use dc_project::{Project, SourceMap, validate};
+use dreamcarve_shell::StagedFile;
 
-use crate::cli::{Failure, InitArgs, StagedFile, UnitsArg, lookup_post, read_file};
+use crate::cli::{Failure, InitArgs, UnitsArg, lookup_post, read_file};
 use crate::config;
 use crate::output::{errln, outln};
-
-/// Margin between the drawing's bounds and each stock edge, mm.
-const STOCK_MARGIN_MM: f64 = 10.0;
-/// Stock sizes and instance offsets are rounded up to this many steps per
-/// millimetre (0.01 mm), so the file reads cleanly.
-const ROUND_STEPS_PER_MM: f64 = 100.0;
-/// How far a value may sit above a 0.01 mm step and still round down to it.
-/// The imported bounds come from flattened curves and carry noise of a few
-/// micrometres (the coaster's circle spans 4.9999981..95.0000026 mm), which
-/// would otherwise push a 110 mm stock to 110.01 and shift the drawing by
-/// 0.01 mm. The margin can fall short by less than this, which is below the
-/// 0.001 mm resolution programs are written with.
-const ROUND_SLACK_MM: f64 = 0.001;
-/// The placeholder tool: a 1/4" two-flute end mill.
-const TOOL_ID: &str = "t1";
-const TOOL_NAME: &str = "Set me";
-const TOOL_DIAMETER_MM: f64 = 6.35;
-const TOOL_FLUTES: u8 = 2;
-/// The one operation `init` writes, a Profile, and its defaults.
-const OPERATION_ID: &str = "op1";
-/// Arc-fitting tolerance a new project starts with, mm (functional spec,
-/// capability 24).
-const ARC_FIT_TOLERANCE_MM: f64 = 0.01;
-const SAFE_Z_MM: f64 = 5.0;
-const TAB_COUNT: u8 = 4;
-const TAB_WIDTH_MM: f64 = 8.0;
-const TAB_HEIGHT_MM: f64 = 3.0;
-/// The ramp angle a new project's Profile enters each pass at, degrees
-/// (functional spec, capability 16; #119).
-const INIT_RAMP_ANGLE_DEG: f64 = dc_cam::entry::INIT_RAMP_ANGLE_DEG;
-
-/// What an importer produced, whichever format it read.
-struct Imported {
-    definitions: Vec<FeatureDefinition>,
-    instances: Vec<FeatureInstance>,
-    bounds: Option<Rect>,
-}
 
 /// Runs `init`.
 pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
@@ -115,28 +74,30 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     for warning in &warnings {
         errln!("warning: {warning}");
     }
-    let Some(bounds) = import.bounds else {
-        return Err(Failure::error(format!(
-            "{} contains no shapes to import",
-            args.drawing.display()
-        )));
-    };
 
     let name = project_name(&args.drawing);
     let display_units = args.units.unwrap_or(UnitsArg::Mm).into();
-    let project = default_project(name, import, bounds, post, display_units);
-    // The drawing imported within the limit, but the margin can push the
-    // stock past it; refuse rather than write a project `check` rejects.
-    let stock = &project.stock;
-    if stock.width_mm > MAX_COORDINATE_MM || stock.height_mm > MAX_COORDINATE_MM {
-        return Err(Failure::error(format!(
-            "{} with a {STOCK_MARGIN_MM} mm margin needs a {:.2} × {:.2} mm stock, \
-             larger than the {MAX_COORDINATE_MM} mm limit; make the drawing smaller",
-            args.drawing.display(),
-            stock.width_mm,
-            stock.height_mm,
-        )));
-    }
+    let project =
+        project_from::drawing(&name, import, post, display_units, true).map_err(|e| match e {
+            JobError::NoShapes => Failure::error(format!(
+                "{} contains no shapes to import",
+                args.drawing.display()
+            )),
+            // The drawing imported within the limit, but the margin pushed
+            // the stock past it; refused rather than written as a project
+            // `check` rejects.
+            JobError::StockTooLarge {
+                width_mm,
+                height_mm,
+                margin_mm,
+                limit_mm,
+            } => Failure::error(format!(
+                "{} with a {margin_mm} mm margin needs a {width_mm:.2} × {height_mm:.2} mm stock, \
+                 larger than the {limit_mm} mm limit; make the drawing smaller",
+                args.drawing.display(),
+            )),
+            other => Failure::error(other),
+        })?;
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 
@@ -148,7 +109,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
 fn import_svg_drawing(
     args: &InitArgs,
     bytes: &[u8],
-) -> Result<(Imported, Vec<ImportWarning>), Failure> {
+) -> Result<(Drawing, Vec<ImportWarning>), Failure> {
     let (import, warnings) = import_svg(bytes, &SvgImportOptions::new())
         .map_err(|e| Failure::error(format!("cannot import {}: {e}", args.drawing.display())))?;
     outln!(
@@ -158,14 +119,7 @@ fn import_svg_drawing(
         import.units,
         import.mm_per_user_unit
     )?;
-    Ok((
-        Imported {
-            definitions: import.definitions,
-            instances: import.instances,
-            bounds: import.bounds,
-        },
-        warnings,
-    ))
+    Ok((Drawing::Svg(import), warnings))
 }
 
 /// Imports a DXF with the DXF-only flags and prints what was read. A file
@@ -173,7 +127,7 @@ fn import_svg_drawing(
 fn import_dxf_drawing(
     args: &InitArgs,
     bytes: &[u8],
-) -> Result<(Imported, Vec<ImportWarning>), Failure> {
+) -> Result<(Drawing, Vec<ImportWarning>), Failure> {
     let options = DxfImportOptions {
         units: args.units.map(Into::into),
         join_tolerance_mm: args.join_tolerance.unwrap_or(JOIN_TOLERANCE_DEFAULT_MM),
@@ -202,14 +156,7 @@ fn import_dxf_drawing(
         args.drawing.display(),
         import.mm_per_unit
     )?;
-    Ok((
-        Imported {
-            definitions: import.definitions,
-            instances: import.instances,
-            bounds: import.bounds,
-        },
-        warnings,
-    ))
+    Ok((Drawing::Dxf(import), warnings))
 }
 
 /// The project name: the drawing's file name without its extension.
@@ -218,123 +165,6 @@ fn project_name(drawing: &Path) -> String {
         || "untitled".to_owned(),
         |s| s.to_string_lossy().into_owned(),
     )
-}
-
-/// `value_mm` rounded up to the next multiple of 0.01 mm, ignoring up to
-/// `ROUND_SLACK_MM` of noise above a multiple.
-fn round_up_mm(value_mm: f64) -> f64 {
-    ((value_mm - ROUND_SLACK_MM) * ROUND_STEPS_PER_MM).ceil() / ROUND_STEPS_PER_MM
-}
-
-/// Builds the project with the `init` defaults. Instances are moved so the
-/// drawing's bounds sit at least `STOCK_MARGIN_MM` in from the stock's
-/// bottom-left corner; definitions keep the imported coordinates. The
-/// imported bounds carry float noise from flattening, so the offset and the
-/// stock size are rounded up to 0.01 mm: the drawing stays at least
-/// `STOCK_MARGIN_MM` (less under `ROUND_SLACK_MM`) from every edge, and the
-/// file reads cleanly.
-fn default_project(
-    name: String,
-    import: Imported,
-    bounds: Rect,
-    post_processor: PostProcessorRef,
-    display_units: Units,
-) -> Project {
-    let dx_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.x);
-    let dy_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.y);
-    let shift = Transform::translate(dx_mm, dy_mm);
-    let mut instances = import.instances;
-    for instance in &mut instances {
-        instance.transform = instance.transform.then(shift);
-    }
-    let definitions: BTreeMap<_, _> = import
-        .definitions
-        .into_iter()
-        .map(|d| (d.id.clone(), d))
-        .collect();
-    // Profile cuts closed shapes only; open paths stay in the project for
-    // the user to see, untargeted (functional spec, capability 8).
-    let targets = instances
-        .iter()
-        .filter(|i| {
-            definitions
-                .get(&i.definition)
-                .is_some_and(|d| d.profiles.iter().any(|p| p.is_closed()))
-        })
-        .map(|i| i.id.clone())
-        .collect();
-    let tool = Tool {
-        id: ToolId::new(TOOL_ID),
-        name: TOOL_NAME.into(),
-        vendor: None,
-        product_id: None,
-        number: None,
-        cutter: ToolKind::EndMill,
-        diameter_mm: TOOL_DIAMETER_MM,
-        flutes: TOOL_FLUTES,
-        feed_mm_min: None,
-        plunge_mm_min: None,
-        rpm: None,
-        step_down_mm: None,
-        step_over_fraction: None,
-    };
-    let profile = ProfileOp {
-        id: OperationId::new(OPERATION_ID),
-        name: "Profile".into(),
-        enabled: true,
-        targets,
-        tool: tool.id.clone(),
-        side: Side::Outside,
-        depth_mm: None,
-        step_down_mm: None,
-        direction: CutDirection::Climb,
-        through_cut_allowance_mm: 0.0,
-        safe_z_mm: SAFE_Z_MM,
-        tabs: Some(TabSpec {
-            placement: TabPlacement::Count { count: TAB_COUNT },
-            width_mm: TAB_WIDTH_MM,
-            height_mm: TAB_HEIGHT_MM,
-            shape: TabShape::Rect,
-            // #109: a hole's slug is waste.
-            on_holes: false,
-            // #285: tabs are weakest, and hardest to clean up, on a corner.
-            avoid_corners: true,
-        }),
-        machining_order: MachiningOrder::FullDepthFirst,
-        entry: Entry::Ramp {
-            angle_deg: INIT_RAMP_ANGLE_DEG,
-        },
-        lead: None,
-        corner_relief: CornerRelief::None,
-        last_pass: None,
-        start: StartAt::Auto,
-    };
-    Project {
-        version: CURRENT_VERSION,
-        name,
-        display_units,
-        flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
-        arc_fit_tolerance_mm: Some(ARC_FIT_TOLERANCE_MM),
-        stock: Stock {
-            width_mm: round_up_mm(bounds.max.x + dx_mm + STOCK_MARGIN_MM),
-            height_mm: round_up_mm(bounds.max.y + dy_mm + STOCK_MARGIN_MM),
-            thickness_mm: None,
-        },
-        origin: MachineOrigin {
-            xy: OriginXy::BottomLeft,
-            z: OriginZ::StockTop,
-        },
-        // #283: the clearance, tool-change and park heights are the
-        // user's to set, like the thickness; unset, the program is as
-        // before they existed.
-        heights: Heights::unset(),
-        definitions,
-        instances,
-        tools: vec![tool],
-        operations: vec![Operation::Profile(profile)],
-        tabs: Vec::new(),
-        post_processor,
-    }
 }
 
 /// Prints what was written and what the user must do next: one line per

@@ -26,7 +26,9 @@ use std::process::ExitCode;
 use dc_library::{AddOutcome, Library, LibraryTool};
 use dc_project::{Tool, ToolId, ToolKind};
 
-use crate::cli::{Failure, StagedFile, ToolsCommand, read_file};
+use dreamcarve_shell::StagedFile;
+
+use crate::cli::{Failure, ToolsCommand, read_file};
 use crate::config::Paths;
 use crate::export::load_project;
 use crate::output::{out, outln};
@@ -79,7 +81,7 @@ fn write_library(paths: &Paths, lib: &Library) -> Result<(), Failure> {
     let text = dc_library::save(lib).map_err(Failure::error)?;
     std::fs::create_dir_all(&paths.dir)
         .map_err(|e| Failure::error(format!("cannot create {}: {e}", paths.dir.display())))?;
-    StagedFile::write(&paths.library_file, text.as_bytes())?.commit()
+    Ok(StagedFile::write(&paths.library_file, text.as_bytes())?.commit()?)
 }
 
 /// `tools list`: a table of every tool, or with `--json` the library file.

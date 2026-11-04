@@ -7,13 +7,17 @@
 
 //! The toolpath preview SVG of `export --preview` and `check --preview`
 //! (functional spec, capability 31; `docs/specs/phase-2/design.md`, "Phase
-//! 2 addendum (#73) → A5").
+//! 2 addendum (#73) → A5"), moved from `crates/dreamcarve/src/preview.rs`
+//! with its bytes unchanged (`docs/specs/phase-4/design.md`, "Data model →
+//! dc-job"). [`marks`] is new: the tab marks, start points and drill
+//! holes as geometry, which [`render`] draws and the app's Viewport draws
+//! the same way (functional spec, acceptance 79).
 //!
 //! [`render`] draws the generated toolpath, not the G-code, so arc fitting
 //! does not show. It is a pure function of the project and the toolpaths:
 //! numbers have three decimals and nothing depends on the date or a random
-//! id, so the same project gives the same bytes. The binary writes the
-//! file. Here until the phase 4 GUI draws toolpaths itself.
+//! id, so the same project gives the same bytes. The shell writes the
+//! file.
 //!
 //! The picture is the stock at 1:1 in millimetres, seen from above. Project
 //! space is Y-up and SVG is Y-down, so, as ADR-0001 asks of a renderer,
@@ -43,7 +47,8 @@ use std::f64::consts::PI;
 use std::fmt::Write as _;
 
 use dc_cam::{Move, MoveKind, RunLabel, Toolpath};
-use dc_geometry::{Arc, Point, Point3, Polyline, Vec2};
+use dc_gcode::EmitOp;
+use dc_geometry::{Arc, EPS_MM, Point, Point3, Polyline, Vec2, Vertex};
 use dc_project::{Board, Operation, Project, Tool};
 
 /// Operation colours, by the operation's place in the preview, repeating
@@ -94,6 +99,19 @@ pub struct Run<'a> {
     pub board: Board,
 }
 
+impl<'a> From<&'a EmitOp> for Run<'a> {
+    /// A generated entry as the run it draws.
+    fn from(entry: &'a EmitOp) -> Self {
+        Self {
+            op: &entry.op,
+            label: &entry.label,
+            tool: &entry.tool,
+            toolpath: &entry.toolpath,
+            board: entry.board,
+        }
+    }
+}
+
 /// The gap between the stock and the male board in the picture, mm
 /// (#498).
 const BOARD_GAP_MM: f64 = 10.0;
@@ -103,10 +121,11 @@ const ORIGIN_MARK_MM: f64 = 1.5;
 /// A deterministic SVG of the project's stock, shapes and each enabled
 /// operation's tool runs, in mm, Y flipped for display, each run in a
 /// colour of its own. When a run is on an Inlay's male board (#498), the
-/// male board is drawn beside the stock, to its right [`BOARD_GAP_MM`]
+/// male board is drawn beside the stock, to its right `BOARD_GAP_MM`
 /// away, their bottom edges level, with its own outline and its Inlays'
 /// mirrored shapes, its male runs drawn on it, and each board its origin
 /// mark.
+#[must_use]
 pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
     let width = project.stock.width_mm;
     let male = project
@@ -165,29 +184,79 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
         write_origin(&mut svg, project, &project.stock, &frame);
         write_origin(&mut svg, project, board, &male_frame);
     }
-    for (
-        k,
-        &Run {
-            op,
-            tool,
-            toolpath,
-            board,
-            ..
-        },
-    ) in ops.iter().enumerate()
-    {
+    for (k, run) in ops.iter().enumerate() {
         let colour = colour(k);
-        let on = if board == Board::Male && male.is_some() {
+        let on = if run.board == Board::Male && male.is_some() {
             &male_frame
         } else {
             &frame
         };
-        let drawing = Drawing::of(toolpath, matches!(op, Operation::Drill(_)), on);
-        write_operation(&mut svg, on, op, tool, colour, &drawing, board);
+        let drawn = Drawn::of(
+            run.toolpath,
+            matches!(run.op, Operation::Drill(_)),
+            on,
+            run.tool.diameter_mm / 2.0,
+        );
+        write_operation(&mut svg, on, run, colour, &drawn);
     }
     write_legend(&mut svg, width, height, ops);
     svg.push_str("</svg>\n");
     svg
+}
+
+/// [`render`] of every generated entry, in order (addendum A5).
+#[must_use]
+pub fn render_generated(project: &Project, generated: &[EmitOp]) -> String {
+    let ops: Vec<Run<'_>> = generated.iter().map(Run::from).collect();
+    render(project, &ops)
+}
+
+/// The marks a run's toolpath draws besides its cuts and rapids, as
+/// geometry in its board's project space, mm, Y-up, so the app's Viewport
+/// draws the same ones [`render`] does (functional spec, acceptance 79).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Marks {
+    /// Each stretch of cutting moves over a tab, as the moves trace it:
+    /// one open polyline per tab per pass that rises over it.
+    pub tab_marks: Vec<Polyline>,
+    /// Where each descent starts, with the direction of the first cut
+    /// after it. Empty for a Drill, whose descents are its holes.
+    pub start_points: Vec<StartMark>,
+    /// A Drill's holes in order, each once, with the bit's radius, mm.
+    pub holes: Vec<(Point, f64)>,
+}
+
+/// Where a descent starts: a circle of the bit's radius, with a tick one
+/// diameter long in the direction of the first cut after it, when there
+/// is one.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StartMark {
+    /// Where the tool comes down, mm.
+    pub at: Point,
+    /// The unit direction of the first cutting move after the descent,
+    /// `None` when none moves in XY.
+    pub direction: Option<Vec2>,
+    /// The bit's radius, mm: the circle's, and half the tick's length.
+    pub radius_mm: f64,
+}
+
+/// The marks of `run`: its tab marks, start points and holes, as
+/// [`render`] draws them.
+#[must_use]
+pub fn marks(run: &Run<'_>) -> Marks {
+    // The cuts are built as path data in a frame; the marks are geometry
+    // and need none.
+    let frame = Frame {
+        height_mm: 0.0,
+        x_mm: 0.0,
+    };
+    Drawn::of(
+        run.toolpath,
+        matches!(run.op, Operation::Drill(_)),
+        &frame,
+        run.tool.diameter_mm / 2.0,
+    )
+    .marks
 }
 
 /// Every enabled Inlay's design as its male cuts it (#498): its targets'
@@ -399,20 +468,25 @@ fn write_shapes(svg: &mut String, project: &Project, frame: &Frame) {
     svg.push_str("</g>\n");
 }
 
-/// What one toolpath draws, in project space.
+/// What one toolpath draws: its cuts and rapids as path data in a frame,
+/// and its marks as geometry in project space.
 #[derive(Default)]
-struct Drawing {
+struct Drawn {
     /// Rapids that move in XY, as `(from, to)`.
     rapids: Vec<(Point, Point)>,
     /// One path of each run of cuts, as path data.
     cuts: Vec<String>,
-    /// One path per stretch over a tab, as path data.
-    tabs: Vec<String>,
-    /// Where each descent starts, with the direction of the first cut
-    /// after it, when there is one.
-    starts: Vec<(Point, Option<Vec2>)>,
-    /// A Drill's holes, in order, each once.
-    holes: Vec<Point>,
+    /// The tab marks, start points and holes.
+    marks: Marks,
+}
+
+impl Drawn {
+    /// Walks `toolpath` once, building its paths in `frame` and its marks
+    /// for a bit of `radius_mm`. A move whose start is unknown, the first,
+    /// only places the tool.
+    fn of(toolpath: &Toolpath, drill: bool, frame: &Frame, radius_mm: f64) -> Self {
+        Walk::new(drill, frame, radius_mm).run(toolpath)
+    }
 }
 
 /// Path data being built from moves, and whether any of them drew.
@@ -460,6 +534,69 @@ impl PathBuilder {
     }
 }
 
+/// A tab mark being built from moves, as a polyline with bulge arcs, and
+/// whether any of them drew. It traces what [`PathBuilder`] would write:
+/// a straight move with no XY extent adds nothing, an arc is a bulge, and
+/// a full turn is two half turns, as [`push_arc`] splits it.
+struct TabBuilder {
+    vertices: Vec<Vertex>,
+    drawn: bool,
+}
+
+impl TabBuilder {
+    fn starting_at(p: Point) -> Self {
+        Self {
+            vertices: vec![Vertex::line(p.x, p.y)],
+            drawn: false,
+        }
+    }
+
+    /// Sets the bulge of the segment leaving the last vertex.
+    fn set_bulge(&mut self, bulge: f64) {
+        if let Some(last) = self.vertices.last_mut() {
+            last.bulge = bulge;
+        }
+    }
+
+    /// Adds the cutting move `m` from `from`.
+    fn push(&mut self, from: Point3, m: &Move) {
+        let (from, to) = (xy(from), xy(m.to));
+        match m.kind {
+            MoveKind::ArcCw { centre } | MoveKind::ArcCcw { centre } => {
+                let ccw = matches!(m.kind, MoveKind::ArcCcw { .. });
+                if from.distance_to(centre) <= XY_EPS_MM {
+                    // No radius: a line, as `push_arc` draws it.
+                    self.vertices.push(Vertex::line(to.x, to.y));
+                } else if from.distance_to(to) <= EPS_MM {
+                    // A full turn: two half turns through the point
+                    // opposite the start, since a polyline segment cannot
+                    // end where it begins.
+                    let bulge = if ccw { 1.0 } else { -1.0 };
+                    let mid = Point::new(2.0 * centre.x - from.x, 2.0 * centre.y - from.y);
+                    self.set_bulge(bulge);
+                    self.vertices.push(Vertex::new(mid.x, mid.y, bulge));
+                    self.vertices.push(Vertex::line(to.x, to.y));
+                } else {
+                    let sweep = move_sweep(from, to, centre, ccw);
+                    self.set_bulge((sweep / 4.0).tan());
+                    self.vertices.push(Vertex::line(to.x, to.y));
+                }
+                self.drawn = true;
+            }
+            _ if from.distance_to(to) > XY_EPS_MM => {
+                self.vertices.push(Vertex::line(to.x, to.y));
+                self.drawn = true;
+            }
+            _ => {}
+        }
+    }
+
+    /// The polyline, if anything was drawn.
+    fn finish(self) -> Option<Polyline> {
+        self.drawn.then(|| Polyline::new(self.vertices, false))
+    }
+}
+
 /// The XY of `p`.
 const fn xy(p: Point3) -> Point {
     Point::new(p.x, p.y)
@@ -482,26 +619,20 @@ fn start_direction(from: Point3, m: &Move) -> Option<Vec2> {
     }
 }
 
-impl Drawing {
-    /// Walks `toolpath` once, building its paths in `frame`. A move whose
-    /// start is unknown, the first, only places the tool.
-    fn of(toolpath: &Toolpath, drill: bool, frame: &Frame) -> Self {
-        Walk::new(drill, frame).run(toolpath)
-    }
-}
-
 /// The state of a walk along a toolpath.
 struct Walk<'a> {
     frame: &'a Frame,
     /// A Drill: its descents are holes, and it has no tabs.
     drill: bool,
-    out: Drawing,
+    /// The bit's radius, mm: the start circles' and the holes'.
+    radius_mm: f64,
+    out: Drawn,
     /// Where the tool is, once known.
     at: Option<Point3>,
     /// The current run of cuts.
     run: Option<PathBuilder>,
     /// The current stretch over a tab.
-    tab: Option<PathBuilder>,
+    tab: Option<TabBuilder>,
     /// The Z the last descent reached, or where the last rapid left the
     /// tool.
     floor_z: f64,
@@ -512,11 +643,12 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(drill: bool, frame: &'a Frame) -> Self {
+    fn new(drill: bool, frame: &'a Frame, radius_mm: f64) -> Self {
         Self {
             frame,
             drill,
-            out: Drawing::default(),
+            radius_mm,
+            out: Drawn::default(),
             at: None,
             run: None,
             tab: None,
@@ -526,7 +658,7 @@ impl<'a> Walk<'a> {
         }
     }
 
-    fn run(mut self, toolpath: &Toolpath) -> Drawing {
+    fn run(mut self, toolpath: &Toolpath) -> Drawn {
         for m in &toolpath.moves {
             let Some(from) = self.at else {
                 if !m.is_dwell() {
@@ -564,23 +696,28 @@ impl<'a> Walk<'a> {
                 let hole = xy(from);
                 if self
                     .out
+                    .marks
                     .holes
                     .last()
-                    .is_none_or(|last| last.distance_to(hole) > XY_EPS_MM)
+                    .is_none_or(|(last, _)| last.distance_to(hole) > XY_EPS_MM)
                 {
-                    self.out.holes.push(hole);
+                    self.out.marks.holes.push((hole, self.radius_mm));
                 }
             } else {
-                self.out.starts.push((xy(from), None));
-                self.pending_tick = Some(self.out.starts.len() - 1);
+                self.out.marks.start_points.push(StartMark {
+                    at: xy(from),
+                    direction: None,
+                    radius_mm: self.radius_mm,
+                });
+                self.pending_tick = Some(self.out.marks.start_points.len() - 1);
             }
         }
         if !going_down
             && let Some(k) = self.pending_tick
             && let Some(direction) = start_direction(from, m)
         {
-            if let Some(start) = self.out.starts.get_mut(k) {
-                start.1 = Some(direction);
+            if let Some(start) = self.out.marks.start_points.get_mut(k) {
+                start.direction = Some(direction);
             }
             self.pending_tick = None;
         }
@@ -591,8 +728,8 @@ impl<'a> Walk<'a> {
             !self.drill && (from.z > self.floor_z + Z_EPS_MM || m.to.z > self.floor_z + Z_EPS_MM);
         if raised {
             self.tab
-                .get_or_insert_with(|| PathBuilder::starting_at(xy(from), frame))
-                .push(from, m, frame);
+                .get_or_insert_with(|| TabBuilder::starting_at(xy(from)))
+                .push(from, m);
         } else {
             self.end_tab();
         }
@@ -603,8 +740,8 @@ impl<'a> Walk<'a> {
     }
 
     fn end_tab(&mut self) {
-        if let Some(d) = self.tab.take().and_then(PathBuilder::finish) {
-            self.out.tabs.push(d);
+        if let Some(polyline) = self.tab.take().and_then(TabBuilder::finish) {
+            self.out.marks.tab_marks.push(polyline);
         }
     }
 
@@ -618,28 +755,20 @@ impl<'a> Walk<'a> {
 }
 
 /// One operation's group: rapids under its cuts, then tab marks, then
-/// start points or holes.
-fn write_operation(
-    svg: &mut String,
-    frame: &Frame,
-    op: &Operation,
-    tool: &Tool,
-    colour: &str,
-    drawing: &Drawing,
-    board: Board,
-) {
+/// start points or holes, the marks drawn from [`Marks`].
+fn write_operation(svg: &mut String, frame: &Frame, run: &Run<'_>, colour: &str, drawn: &Drawn) {
     // #498: a male board run is marked as such.
-    let class = match board {
+    let class = match run.board {
         Board::Female => "operation",
         Board::Male => "operation male",
     };
     let _ = writeln!(
         svg,
         r#"<g id="{}" class="{class}" fill="none" stroke="{colour}">"#,
-        escape_xml(op.id().as_str())
+        escape_xml(run.op.id().as_str())
     );
-    if !drawing.rapids.is_empty() {
-        let d: Vec<String> = drawing
+    if !drawn.rapids.is_empty() {
+        let d: Vec<String> = drawn
             .rapids
             .iter()
             .map(|(from, to)| format!("M {} L {}", frame.xy(*from), frame.xy(*to)))
@@ -651,44 +780,47 @@ fn write_operation(
             fmt(RAPID_STROKE_MM)
         );
     }
-    for d in &drawing.cuts {
+    for d in &drawn.cuts {
         let _ = writeln!(
             svg,
             r#"<path class="cut" d="{d}" stroke-width="{}"/>"#,
             fmt(CUT_STROKE_MM)
         );
     }
-    for d in &drawing.tabs {
-        let _ = writeln!(
-            svg,
-            r#"<path class="tab" d="{d}" stroke-width="{}" stroke-linecap="butt" stroke-opacity="0.6"/>"#,
-            fmt(TAB_STROKE_MM)
-        );
+    let marks = &drawn.marks;
+    for tab in &marks.tab_marks {
+        if let Some(d) = polyline_path(tab, frame) {
+            let _ = writeln!(
+                svg,
+                r#"<path class="tab" d="{d}" stroke-width="{}" stroke-linecap="butt" stroke-opacity="0.6"/>"#,
+                fmt(TAB_STROKE_MM)
+            );
+        }
     }
-    let diameter = tool.diameter_mm;
-    let radius = fmt(diameter / 2.0);
     let mark = fmt(MARK_STROKE_MM);
-    for (at, direction) in &drawing.starts {
+    for start in &marks.start_points {
+        let radius = fmt(start.radius_mm);
         let _ = writeln!(
             svg,
             r#"<circle class="start" {} r="{radius}" stroke-width="{mark}"/>"#,
-            frame.centre_attrs(*at)
+            frame.centre_attrs(start.at)
         );
-        if let Some(direction) = direction {
-            let end = *at + *direction * diameter;
+        if let Some(direction) = start.direction {
+            let end = start.at + direction * (2.0 * start.radius_mm);
             let _ = writeln!(
                 svg,
                 r#"<path class="start-tick" d="M {} L {}" stroke-width="{mark}"/>"#,
-                frame.xy(*at),
+                frame.xy(start.at),
                 frame.xy(end)
             );
         }
     }
-    for hole in &drawing.holes {
+    for (hole, radius_mm) in &marks.holes {
         let _ = writeln!(
             svg,
-            r#"<circle class="hole" {} r="{radius}" stroke-width="{mark}"/>"#,
-            frame.centre_attrs(*hole)
+            r#"<circle class="hole" {} r="{}" stroke-width="{mark}"/>"#,
+            frame.centre_attrs(*hole),
+            fmt(*radius_mm)
         );
     }
     svg.push_str("</g>\n");
@@ -963,6 +1095,55 @@ mod tests {
         assert!(elements(&svg, "tab").is_empty(), "{svg}");
     }
 
+    /// A tab mark over an arc is drawn as the arc, as a bulge polyline
+    /// (so the Viewport draws the same curve), and a full-turn arc over a
+    /// tab is two half turns, as a cut's is.
+    #[test]
+    fn tab_marks_keep_arcs() {
+        // Down at (60, 50) to Z 0 (the floor), then a quarter turn about
+        // (50, 50) at Z 2, over a tab, counter-clockwise to (50, 60).
+        let toolpath = Toolpath {
+            moves: vec![
+                rapid(60.0, 50.0, 10.0),
+                cut(60.0, 50.0, 0.0),
+                cut(60.0, 50.0, 2.0),
+                arc(true, 50.0, 60.0, 2.0, (50.0, 50.0)),
+                cut(50.0, 60.0, 0.0),
+            ],
+        };
+        let svg = render_one(&toolpath);
+        let tabs = elements(&svg, "tab");
+        assert_eq!(tabs.len(), 1, "{svg}");
+        assert_eq!(
+            attr(tabs[0], "d"),
+            "M 60.000 50.000 A 10.000 10.000 0 0 0 50.000 40.000"
+        );
+        let project = sample_project();
+        let marks = marks(&main_run(&project, &toolpath));
+        assert_eq!(marks.tab_marks.len(), 1);
+        let quarter = marks.tab_marks[0].segments().next().unwrap().arc().unwrap();
+        assert!((quarter.radius_mm - 10.0).abs() < 1e-9, "{quarter:?}");
+        assert!((quarter.sweep_rad - PI / 2.0).abs() < 1e-9, "{quarter:?}");
+
+        // A full circle over a tab.
+        let toolpath = Toolpath {
+            moves: vec![
+                rapid(60.0, 50.0, 10.0),
+                cut(60.0, 50.0, 0.0),
+                cut(60.0, 50.0, 2.0),
+                arc(false, 60.0, 50.0, 2.0, (50.0, 50.0)),
+                cut(60.0, 50.0, 0.0),
+            ],
+        };
+        let svg = render_one(&toolpath);
+        let tabs = elements(&svg, "tab");
+        assert_eq!(tabs.len(), 1, "{svg}");
+        assert_eq!(
+            attr(tabs[0], "d"),
+            "M 60.000 50.000 A 10.000 10.000 0 0 1 40.000 50.000 A 10.000 10.000 0 0 1 60.000 50.000"
+        );
+    }
+
     #[test]
     fn start_circle_per_run() {
         let mut toolpath = tab_lap(&[4.0, 2.0, 0.0], 3.0);
@@ -997,6 +1178,14 @@ mod tests {
         assert_eq!(ticks.len(), 4, "{svg}");
         assert_eq!(ticks[0], "M 10.000 90.000 L 16.350 90.000");
         assert_eq!(ticks[3], "M 20.000 50.000 L 20.000 43.650");
+        // The marks say the same, in project space.
+        let project = sample_project();
+        let marks = marks(&main_run(&project, &toolpath));
+        assert_eq!(marks.start_points.len(), 4);
+        assert_eq!(marks.start_points[3].at, Point::new(20.0, 50.0));
+        assert_eq!(marks.start_points[3].direction, Some(Vec2::new(0.0, 1.0)));
+        assert!((marks.start_points[3].radius_mm - 3.175).abs() < 1e-12);
+        assert!(marks.holes.is_empty());
     }
 
     #[test]
