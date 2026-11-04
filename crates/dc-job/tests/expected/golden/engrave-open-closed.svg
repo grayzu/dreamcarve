@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Toolpath preview written by DreamCarve -->
+<svg xmlns="http://www.w3.org/2000/svg" width="150.000mm" height="100.000mm" viewBox="0 0 150.000 100.000">
+<title>engrave-open-closed: toolpath preview</title>
+<rect class="stock" x="0.000" y="0.000" width="150.000" height="100.000" fill="none" stroke="#7f7f7f" stroke-width="0.350" stroke-dasharray="2.5 1.5"/>
+<g class="shapes" fill="none" stroke="#000000" stroke-width="0.200">
+<path class="shape" d="M 20.000 80.000 L 50.000 60.000 L 80.000 80.000 L 110.000 60.000"/>
+<path class="shape" d="M 30.000 20.000 L 90.000 20.000 L 90.000 45.000 L 30.000 45.000 L 30.000 20.000 Z"/>
+</g>
+<g id="o1" class="operation" fill="none" stroke="#1f77b4">
+<path class="rapid" d="M 110.000 60.000 L 20.000 80.000 M 110.000 60.000 L 30.000 20.000" stroke="#808080" stroke-width="0.180" stroke-dasharray="1.6 1.2"/>
+<path class="cut" d="M 20.000 80.000 L 50.000 60.000 L 80.000 80.000 L 110.000 60.000" stroke-width="0.300"/>
+<path class="cut" d="M 20.000 80.000 L 50.000 60.000 L 80.000 80.000 L 110.000 60.000" stroke-width="0.300"/>
+<path class="cut" d="M 30.000 20.000 L 90.000 20.000 L 90.000 45.000 L 30.000 45.000 L 30.000 20.000 L 90.000 20.000 L 90.000 45.000 L 30.000 45.000 L 30.000 20.000" stroke-width="0.300"/>
+<circle class="start" cx="20.000" cy="80.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 20.000 80.000 L 25.284 76.478" stroke-width="0.200"/>
+<circle class="start" cx="20.000" cy="80.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 20.000 80.000 L 25.284 76.478" stroke-width="0.200"/>
+<circle class="start" cx="30.000" cy="20.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 30.000 20.000 L 36.350 20.000" stroke-width="0.200"/>
+<circle class="start" cx="30.000" cy="20.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 30.000 20.000 L 36.350 20.000" stroke-width="0.200"/>
+</g>
+<g class="legend" font-family="sans-serif" font-size="2.500">
+<rect class="legend-box" x="0.000" y="0.000" width="22.500" height="6.250" fill="#ffffff" fill-opacity="0.5"/>
+<rect class="legend-swatch" x="2.500" y="3.000" width="2.000" height="2.000" fill="#1f77b4"/>
+<text class="legend-entry" x="5.500" y="5.000" fill="#000000">o1 Engrave</text>
+</g>
+</svg>

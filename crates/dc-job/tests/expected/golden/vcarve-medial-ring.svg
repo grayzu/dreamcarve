@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Toolpath preview written by DreamCarve -->
+<svg xmlns="http://www.w3.org/2000/svg" width="80.000mm" height="60.000mm" viewBox="0 0 80.000 60.000">
+<title>vcarve-medial-ring: toolpath preview</title>
+<rect class="stock" x="0.000" y="0.000" width="80.000" height="60.000" fill="none" stroke="#7f7f7f" stroke-width="0.350" stroke-dasharray="2.5 1.5"/>
+<g class="shapes" fill="none" stroke="#000000" stroke-width="0.200">
+<path class="shape" d="M 20.000 50.000 L 60.000 50.000 L 60.000 10.000 L 20.000 10.000 L 20.000 50.000 Z"/>
+<path class="shape" d="M 30.000 40.000 L 50.000 40.000 L 50.000 20.000 L 30.000 20.000 L 30.000 40.000 Z"/>
+</g>
+<g id="o1" class="operation" fill="none" stroke="#1f77b4">
+<path class="rapid" d="M 60.000 10.000 L 54.143 44.143 M 60.000 50.000 L 25.857 44.143 M 20.000 50.000 L 25.400 44.600 M 25.400 44.600 L 52.810 44.600 M 52.810 44.600 L 54.600 17.190 M 54.600 17.190 L 27.190 15.400 M 27.190 15.400 L 28.577 44.206 M 28.577 44.206 L 54.206 41.423 M 54.206 41.423 L 25.794 41.423 M 25.794 41.423 L 28.577 15.794 M 28.436 17.440 L 23.000 13.000" stroke="#808080" stroke-width="0.180" stroke-dasharray="1.6 1.2"/>
+<path class="cut" d="M 20.000 10.000 L 22.875 12.875 L 22.969 12.969 L 23.125 13.125 L 25.857 15.857 L 54.143 15.857 L 56.875 13.125 L 57.031 12.969 L 57.125 12.875 L 60.000 10.000" stroke-width="0.300"/>
+<path class="cut" d="M 54.143 44.143 L 56.875 46.875 L 57.031 47.031 L 57.125 47.125 L 60.000 50.000" stroke-width="0.300"/>
+<path class="cut" d="M 25.857 44.143 L 23.125 46.875 L 22.969 47.031 L 22.875 47.125 L 20.000 50.000" stroke-width="0.300"/>
+<path class="cut" d="M 25.400 44.600 L 27.190 44.600 L 26.932 44.444 L 26.419 44.042 L 25.958 43.581 L 25.556 43.068 L 25.400 42.810 L 25.400 44.600" stroke-width="0.300"/>
+<path class="cut" d="M 52.810 44.600 L 54.600 44.600 L 54.600 42.810 L 54.444 43.068 L 54.042 43.581 L 53.581 44.042 L 53.068 44.444 L 52.810 44.600" stroke-width="0.300"/>
+<path class="cut" d="M 54.600 17.190 L 54.600 15.400 L 52.810 15.400 L 53.068 15.556 L 53.581 15.958 L 54.042 16.419 L 54.444 16.932 L 54.600 17.190" stroke-width="0.300"/>
+<path class="cut" d="M 27.190 15.400 L 25.400 15.400 L 25.400 17.190 L 25.556 16.932 L 25.958 16.419 L 26.419 15.958 L 26.932 15.556 L 27.190 15.400" stroke-width="0.300"/>
+<path class="cut" d="M 28.577 44.206 L 28.622 44.367 L 28.638 44.680 L 28.587 44.989 L 28.471 45.280 L 28.295 45.539 L 28.284 45.550 L 51.716 45.550 L 51.705 45.539 L 51.529 45.280 L 51.413 44.989 L 51.362 44.680 L 51.378 44.367 L 51.423 44.206 L 51.152 44.298 L 50.581 44.412 L 50.000 44.450 L 30.000 44.450 L 29.419 44.412 L 28.848 44.298 L 28.577 44.206" stroke-width="0.300"/>
+<path class="cut" d="M 54.206 41.423 L 54.367 41.378 L 54.680 41.362 L 54.989 41.413 L 55.280 41.529 L 55.539 41.705 L 55.550 41.716 L 55.550 18.284 L 55.539 18.295 L 55.280 18.471 L 54.989 18.587 L 54.680 18.638 L 54.367 18.622 L 54.206 18.577 L 54.298 18.848 L 54.412 19.419 L 54.450 20.000 L 54.450 40.000 L 54.412 40.581 L 54.298 41.152 L 54.206 41.423" stroke-width="0.300"/>
+<path class="cut" d="M 25.794 41.423 L 25.702 41.152 L 25.588 40.581 L 25.550 40.000 L 25.550 20.000 L 25.588 19.419 L 25.702 18.848 L 25.794 18.577 L 25.633 18.622 L 25.320 18.638 L 25.011 18.587 L 24.720 18.471 L 24.461 18.295 L 24.450 18.284 L 24.450 41.716 L 24.461 41.705 L 24.720 41.529 L 25.011 41.413 L 25.320 41.362 L 25.633 41.378 L 25.794 41.423" stroke-width="0.300"/>
+<path class="cut" d="M 28.577 15.794 L 28.848 15.702 L 29.419 15.588 L 30.000 15.550 L 50.000 15.550 L 50.581 15.588 L 51.152 15.702 L 51.423 15.794 L 51.378 15.633 L 51.362 15.320 L 51.413 15.011 L 51.529 14.720 L 51.705 14.461 L 51.716 14.450 L 28.284 14.450 L 28.295 14.461 L 28.471 14.720 L 28.587 15.011 L 28.638 15.320 L 28.622 15.633 L 28.577 15.794 L 28.436 17.440 L 28.612 17.332 L 28.990 17.168 L 29.386 17.056 L 29.794 17.000 L 30.000 17.000 L 50.000 17.000 L 50.236 17.000 L 50.703 17.074 L 51.152 17.220 L 51.572 17.434 L 51.954 17.712 L 52.288 18.046 L 52.566 18.428 L 52.780 18.848 L 52.926 19.297 L 53.000 19.764 L 53.000 20.000 L 53.000 40.000 L 53.000 40.236 L 52.926 40.703 L 52.780 41.152 L 52.566 41.572 L 52.288 41.954 L 51.954 42.288 L 51.572 42.566 L 51.152 42.780 L 50.703 42.926 L 50.236 43.000 L 50.000 43.000 L 30.000 43.000 L 29.764 43.000 L 29.297 42.926 L 28.848 42.780 L 28.428 42.566 L 28.046 42.288 L 27.712 41.954 L 27.434 41.572 L 27.220 41.152 L 27.074 40.703 L 27.000 40.236 L 27.000 40.000 L 27.000 20.000 L 27.000 19.781 L 27.064 19.346 L 27.190 18.926 L 27.377 18.528 L 27.619 18.162 L 27.912 17.835 L 28.249 17.554 L 28.436 17.440" stroke-width="0.300"/>
+<path class="cut" d="M 23.000 13.000 L 23.000 47.000 L 57.000 47.000 L 57.000 13.000 L 23.000 13.000" stroke-width="0.300"/>
+<path class="tab" d="M 56.875 13.125 L 57.031 12.969 L 57.125 12.875 L 60.000 10.000" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 56.875 46.875 L 57.031 47.031 L 57.125 47.125 L 60.000 50.000" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 23.125 46.875 L 22.969 47.031 L 22.875 47.125 L 20.000 50.000" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<circle class="start" cx="20.000" cy="10.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 20.000 10.000 L 24.490 14.490" stroke-width="0.200"/>
+<circle class="start" cx="54.143" cy="44.143" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 54.143 44.143 L 58.633 48.633" stroke-width="0.200"/>
+<circle class="start" cx="25.857" cy="44.143" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 25.857 44.143 L 21.367 48.633" stroke-width="0.200"/>
+<circle class="start" cx="25.400" cy="44.600" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 25.400 44.600 L 31.750 44.600" stroke-width="0.200"/>
+<circle class="start" cx="52.810" cy="44.600" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 52.810 44.600 L 59.160 44.600" stroke-width="0.200"/>
+<circle class="start" cx="54.600" cy="17.190" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 54.600 17.190 L 54.600 10.840" stroke-width="0.200"/>
+<circle class="start" cx="27.190" cy="15.400" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 27.190 15.400 L 20.840 15.400" stroke-width="0.200"/>
+<circle class="start" cx="28.577" cy="44.206" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 28.577 44.206 L 30.267 50.327" stroke-width="0.200"/>
+<circle class="start" cx="54.206" cy="41.423" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 54.206 41.423 L 60.327 39.733" stroke-width="0.200"/>
+<circle class="start" cx="25.794" cy="41.423" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 25.794 41.423 L 23.753 35.410" stroke-width="0.200"/>
+<circle class="start" cx="28.577" cy="15.794" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 28.577 15.794 L 34.590 13.753" stroke-width="0.200"/>
+<circle class="start" cx="23.000" cy="13.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 23.000 13.000 L 23.000 19.350" stroke-width="0.200"/>
+</g>
+<g class="legend" font-family="sans-serif" font-size="2.000">
+<rect class="legend-box" x="0.000" y="0.000" width="18.000" height="5.000" fill="#ffffff" fill-opacity="0.5"/>
+<rect class="legend-swatch" x="2.000" y="2.400" width="1.600" height="1.600" fill="#1f77b4"/>
+<text class="legend-entry" x="4.400" y="4.000" fill="#000000">o1 V-Carve</text>
+</g>
+</svg>

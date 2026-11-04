@@ -256,6 +256,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dc-job"
+version = "0.2.1"
+dependencies = [
+ "dc-cam",
+ "dc-gcode",
+ "dc-geometry",
+ "dc-import",
+ "dc-project",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
 name = "dc-library"
 version = "0.2.1"
 dependencies = [
@@ -303,10 +316,21 @@ dependencies = [
  "dc-gcode",
  "dc-geometry",
  "dc-import",
+ "dc-job",
  "dc-library",
  "dc-project",
- "serde",
+ "dreamcarve-shell",
  "serde_json",
+]
+
+[[package]]
+name = "dreamcarve-shell"
+version = "0.2.1"
+dependencies = [
+ "dc-job",
+ "dc-project",
+ "serde",
+ "thiserror",
  "toml",
 ]
 

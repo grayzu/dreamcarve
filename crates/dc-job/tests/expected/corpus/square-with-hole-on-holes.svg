@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Toolpath preview written by DreamCarve -->
+<svg xmlns="http://www.w3.org/2000/svg" width="160.000mm" height="160.000mm" viewBox="0 0 160.000 160.000">
+<title>Sample: toolpath preview</title>
+<rect class="stock" x="0.000" y="0.000" width="160.000" height="160.000" fill="none" stroke="#7f7f7f" stroke-width="0.350" stroke-dasharray="2.5 1.5"/>
+<g class="shapes" fill="none" stroke="#000000" stroke-width="0.200">
+<path class="shape" d="M 50.000 110.000 L 110.000 110.000 L 110.000 50.000 L 50.000 50.000 L 50.000 110.000 Z"/>
+<path class="shape" d="M 65.000 95.000 L 95.000 95.000 L 95.000 65.000 L 65.000 65.000 L 65.000 95.000 Z"/>
+</g>
+<g id="o1" class="operation" fill="none" stroke="#1f77b4">
+<path class="rapid" d="M 68.175 91.825 L 46.825 110.000" stroke="#808080" stroke-width="0.180" stroke-dasharray="1.6 1.2"/>
+<path class="cut" d="M 68.175 91.825 L 91.825 91.825 L 91.825 68.175 L 68.175 68.175 L 68.175 91.825 L 91.825 91.825 L 91.825 68.175 L 68.175 68.175 L 68.175 91.825 L 77.767 91.825 L 90.117 91.825 L 91.825 91.825 L 91.825 74.350 L 91.825 68.175 L 85.650 68.175 L 68.175 68.175 L 68.175 69.883 L 68.175 82.233 L 68.175 91.825" stroke-width="0.300"/>
+<path class="cut" d="M 46.825 110.000 L 46.825 50.000 A 3.175 3.175 0 0 1 50.000 46.825 L 110.000 46.825 A 3.175 3.175 0 0 1 113.175 50.000 L 113.175 110.000 A 3.175 3.175 0 0 1 110.000 113.175 L 50.000 113.175 A 3.175 3.175 0 0 1 46.825 110.000 L 46.825 50.000 A 3.175 3.175 0 0 1 50.000 46.825 L 110.000 46.825 A 3.175 3.175 0 0 1 113.175 50.000 L 113.175 110.000 A 3.175 3.175 0 0 1 110.000 113.175 L 50.000 113.175 A 3.175 3.175 0 0 1 46.825 110.000 L 46.825 83.681 L 46.825 71.331 L 46.825 50.000 A 3.175 3.175 0 0 1 50.000 46.825 L 76.319 46.825 L 88.669 46.825 L 110.000 46.825 A 3.175 3.175 0 0 1 113.175 50.000 L 113.175 76.319 L 113.175 88.669 L 113.175 110.000 A 3.175 3.175 0 0 1 110.000 113.175 L 83.681 113.175 L 71.331 113.175 L 50.000 113.175 A 3.175 3.175 0 0 1 46.825 110.000" stroke-width="0.300"/>
+<path class="tab" d="M 77.767 91.825 L 90.117 91.825" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 91.825 74.350 L 91.825 68.175 L 85.650 68.175" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 68.175 69.883 L 68.175 82.233" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 46.825 83.681 L 46.825 71.331" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 76.319 46.825 L 88.669 46.825" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 113.175 76.319 L 113.175 88.669" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<path class="tab" d="M 83.681 113.175 L 71.331 113.175" stroke-width="1.200" stroke-linecap="butt" stroke-opacity="0.6"/>
+<circle class="start" cx="68.175" cy="91.825" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 68.175 91.825 L 74.525 91.825" stroke-width="0.200"/>
+<circle class="start" cx="68.175" cy="91.825" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 68.175 91.825 L 74.525 91.825" stroke-width="0.200"/>
+<circle class="start" cx="68.175" cy="91.825" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 68.175 91.825 L 74.525 91.825" stroke-width="0.200"/>
+<circle class="start" cx="46.825" cy="110.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 46.825 110.000 L 46.825 103.650" stroke-width="0.200"/>
+<circle class="start" cx="46.825" cy="110.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 46.825 110.000 L 46.825 103.650" stroke-width="0.200"/>
+<circle class="start" cx="46.825" cy="110.000" r="3.175" stroke-width="0.200"/>
+<path class="start-tick" d="M 46.825 110.000 L 46.825 103.650" stroke-width="0.200"/>
+</g>
+<g class="legend" font-family="sans-serif" font-size="4.000">
+<rect class="legend-box" x="0.000" y="0.000" width="36.000" height="10.000" fill="#ffffff" fill-opacity="0.5"/>
+<rect class="legend-swatch" x="4.000" y="4.800" width="3.200" height="3.200" fill="#1f77b4"/>
+<text class="legend-entry" x="8.800" y="8.000" fill="#000000">o1 Cut out</text>
+</g>
+</svg>
