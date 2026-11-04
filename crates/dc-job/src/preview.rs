@@ -121,7 +121,7 @@ const ORIGIN_MARK_MM: f64 = 1.5;
 /// A deterministic SVG of the project's stock, shapes and each enabled
 /// operation's tool runs, in mm, Y flipped for display, each run in a
 /// colour of its own. When a run is on an Inlay's male board (#498), the
-/// male board is drawn beside the stock, to its right [`BOARD_GAP_MM`]
+/// male board is drawn beside the stock, to its right `BOARD_GAP_MM`
 /// away, their bottom edges level, with its own outline and its Inlays'
 /// mirrored shapes, its male runs drawn on it, and each board its origin
 /// mark.
@@ -191,7 +191,12 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
         } else {
             &frame
         };
-        let drawn = Drawn::of(run.toolpath, matches!(run.op, Operation::Drill(_)), on);
+        let drawn = Drawn::of(
+            run.toolpath,
+            matches!(run.op, Operation::Drill(_)),
+            on,
+            run.tool.diameter_mm / 2.0,
+        );
         write_operation(&mut svg, on, run, colour, &drawn);
     }
     write_legend(&mut svg, width, height, ops);
@@ -209,7 +214,7 @@ pub fn render_generated(project: &Project, generated: &[EmitOp]) -> String {
 /// The marks a run's toolpath draws besides its cuts and rapids, as
 /// geometry in its board's project space, mm, Y-up, so the app's Viewport
 /// draws the same ones [`render`] does (functional spec, acceptance 79).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Marks {
     /// Each stretch of cutting moves over a tab, as the moves trace it:
     /// one open polyline per tab per pass that rises over it.
@@ -245,8 +250,13 @@ pub fn marks(run: &Run<'_>) -> Marks {
         height_mm: 0.0,
         x_mm: 0.0,
     };
-    Drawn::of(run.toolpath, matches!(run.op, Operation::Drill(_)), &frame)
-        .marks(run.tool.diameter_mm / 2.0)
+    Drawn::of(
+        run.toolpath,
+        matches!(run.op, Operation::Drill(_)),
+        &frame,
+        run.tool.diameter_mm / 2.0,
+    )
+    .marks
 }
 
 /// Every enabled Inlay's design as its male cuts it (#498): its targets'
@@ -466,37 +476,16 @@ struct Drawn {
     rapids: Vec<(Point, Point)>,
     /// One path of each run of cuts, as path data.
     cuts: Vec<String>,
-    /// One polyline per stretch over a tab.
-    tabs: Vec<Polyline>,
-    /// Where each descent starts, with the direction of the first cut
-    /// after it, when there is one.
-    starts: Vec<(Point, Option<Vec2>)>,
-    /// A Drill's holes, in order, each once.
-    holes: Vec<Point>,
+    /// The tab marks, start points and holes.
+    marks: Marks,
 }
 
 impl Drawn {
-    /// Walks `toolpath` once, building its paths in `frame`. A move whose
-    /// start is unknown, the first, only places the tool.
-    fn of(toolpath: &Toolpath, drill: bool, frame: &Frame) -> Self {
-        Walk::new(drill, frame).run(toolpath)
-    }
-
-    /// The marks, for a bit of `radius_mm`.
-    fn marks(self, radius_mm: f64) -> Marks {
-        Marks {
-            tab_marks: self.tabs,
-            start_points: self
-                .starts
-                .into_iter()
-                .map(|(at, direction)| StartMark {
-                    at,
-                    direction,
-                    radius_mm,
-                })
-                .collect(),
-            holes: self.holes.into_iter().map(|at| (at, radius_mm)).collect(),
-        }
+    /// Walks `toolpath` once, building its paths in `frame` and its marks
+    /// for a bit of `radius_mm`. A move whose start is unknown, the first,
+    /// only places the tool.
+    fn of(toolpath: &Toolpath, drill: bool, frame: &Frame, radius_mm: f64) -> Self {
+        Walk::new(drill, frame, radius_mm).run(toolpath)
     }
 }
 
@@ -635,6 +624,8 @@ struct Walk<'a> {
     frame: &'a Frame,
     /// A Drill: its descents are holes, and it has no tabs.
     drill: bool,
+    /// The bit's radius, mm: the start circles' and the holes'.
+    radius_mm: f64,
     out: Drawn,
     /// Where the tool is, once known.
     at: Option<Point3>,
@@ -652,10 +643,11 @@ struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    fn new(drill: bool, frame: &'a Frame) -> Self {
+    fn new(drill: bool, frame: &'a Frame, radius_mm: f64) -> Self {
         Self {
             frame,
             drill,
+            radius_mm,
             out: Drawn::default(),
             at: None,
             run: None,
@@ -704,23 +696,28 @@ impl<'a> Walk<'a> {
                 let hole = xy(from);
                 if self
                     .out
+                    .marks
                     .holes
                     .last()
-                    .is_none_or(|last| last.distance_to(hole) > XY_EPS_MM)
+                    .is_none_or(|(last, _)| last.distance_to(hole) > XY_EPS_MM)
                 {
-                    self.out.holes.push(hole);
+                    self.out.marks.holes.push((hole, self.radius_mm));
                 }
             } else {
-                self.out.starts.push((xy(from), None));
-                self.pending_tick = Some(self.out.starts.len() - 1);
+                self.out.marks.start_points.push(StartMark {
+                    at: xy(from),
+                    direction: None,
+                    radius_mm: self.radius_mm,
+                });
+                self.pending_tick = Some(self.out.marks.start_points.len() - 1);
             }
         }
         if !going_down
             && let Some(k) = self.pending_tick
             && let Some(direction) = start_direction(from, m)
         {
-            if let Some(start) = self.out.starts.get_mut(k) {
-                start.1 = Some(direction);
+            if let Some(start) = self.out.marks.start_points.get_mut(k) {
+                start.direction = Some(direction);
             }
             self.pending_tick = None;
         }
@@ -744,7 +741,7 @@ impl<'a> Walk<'a> {
 
     fn end_tab(&mut self) {
         if let Some(polyline) = self.tab.take().and_then(TabBuilder::finish) {
-            self.out.tabs.push(polyline);
+            self.out.marks.tab_marks.push(polyline);
         }
     }
 
@@ -790,13 +787,7 @@ fn write_operation(svg: &mut String, frame: &Frame, run: &Run<'_>, colour: &str,
             fmt(CUT_STROKE_MM)
         );
     }
-    let marks = Drawn {
-        tabs: drawn.tabs.clone(),
-        starts: drawn.starts.clone(),
-        holes: drawn.holes.clone(),
-        ..Drawn::default()
-    }
-    .marks(run.tool.diameter_mm / 2.0);
+    let marks = &drawn.marks;
     for tab in &marks.tab_marks {
         if let Some(d) = polyline_path(tab, frame) {
             let _ = writeln!(

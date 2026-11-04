@@ -56,23 +56,21 @@ impl Drawing {
 pub fn drawing_into(project: &Project, import: Drawing) -> (Project, Vec<InstanceId>) {
     let (definitions, instances) = import.into_shapes();
     let mut project = project.clone();
-    let mut next_definition = next_free(project.definitions.keys().map(DefinitionId::as_str), 'd');
-    let mut next_instance = next_free(project.instances.iter().map(|i| i.id.as_str()), 'i');
+    let first_definition = next_free(project.definitions.keys().map(DefinitionId::as_str), 'd');
+    let first_instance = next_free(project.instances.iter().map(|i| i.id.as_str()), 'i');
     let mut renamed: BTreeMap<DefinitionId, DefinitionId> = BTreeMap::new();
-    for mut definition in definitions {
-        let id = DefinitionId::new(format!("d{next_definition}"));
-        next_definition += 1;
+    for (n, mut definition) in (first_definition..).zip(definitions) {
+        let id = DefinitionId::new(format!("d{n}"));
         renamed.insert(definition.id.clone(), id.clone());
         definition.id = id.clone();
         project.definitions.insert(id, definition);
     }
     let mut new_ids = Vec::with_capacity(instances.len());
-    for mut instance in instances {
+    for (n, mut instance) in (first_instance..).zip(instances) {
         if let Some(definition) = renamed.get(&instance.definition) {
             instance.definition = definition.clone();
         }
-        instance.id = InstanceId::new(format!("i{next_instance}"));
-        next_instance += 1;
+        instance.id = InstanceId::new(format!("i{n}"));
         new_ids.push(instance.id.clone());
         project.instances.push(instance);
     }

@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Slice 1 of phase 4 (`docs/specs/phase-4/design.md`, "Test plan → dc-job
-//! (slice 1)"): the pipeline moved out of the CLI produces the bytes the
-//! CLI produced, in one call or in the app's two halves, and its findings
-//! carry what a Warnings panel shows.
+//! (slice 1)"): the pipeline in one call equals the app's two halves, and
+//! its findings carry what a Warnings panel shows. That the pipeline's
+//! bytes are the CLI's is `crates/dreamcarve/tests/pipeline_move.rs`,
+//! which runs the binary.
 
 #![allow(
     clippy::panic,
@@ -20,71 +21,15 @@ use dc_job::{Built, EstimateConfig, Finding, ProgramSplit, Tier, program_names};
 use dc_project::test_support::{profile_mut, sample_project};
 use dc_project::{Operation, OperationId, ToolId};
 
-use common::{DATE, expected, first_difference, load_dcv, read, repo_root};
-
-/// Every quick-start project (`tests/fixtures/*.dcv`), every golden case
-/// with a DreamCarve project and the tab-request corpus, through
-/// [`dc_job::build`], gives byte for byte the programs the CLI wrote
-/// before the move (`expected/quick-start/`, `expected/golden/`, and the
-/// CLI's own `tests/expected/tabs-migration/`), under the names
-/// [`program_names`] gives them.
-#[test]
-fn cli_programs_are_byte_identical_after_the_move() {
-    let cli_expected = repo_root().join("crates/dreamcarve/tests/expected/tabs-migration");
-    let groups: [(
-        &str,
-        Vec<common::Fixture>,
-        Box<dyn Fn(&str) -> std::path::PathBuf>,
-    ); 3] = [
-        (
-            "quick-start",
-            common::quick_start_projects(),
-            Box::new(|name| expected("quick-start", name)),
-        ),
-        (
-            "golden",
-            common::golden_projects(),
-            Box::new(|name| expected("golden", name)),
-        ),
-        (
-            "corpus",
-            common::corpus_projects(),
-            Box::new(move |name| cli_expected.join(name)),
-        ),
-    ];
-    let mut compared = 0;
-    for (group, fixtures, expected_path) in &groups {
-        for (stem, path) in fixtures {
-            let project = load_dcv(path);
-            let built = dc_job::build(&project, ProgramSplit::ProjectDefault, DATE);
-            assert!(
-                built.findings.errors.is_empty(),
-                "{group}/{stem}: {:?}",
-                built.findings.errors
-            );
-            let names = program_names(&project, stem, &built.programs);
-            assert_eq!(names.len(), built.programs.len(), "{group}/{stem}");
-            for (name, program) in names.iter().zip(&built.programs) {
-                let committed = read(&expected_path(name));
-                assert!(
-                    program.text == committed,
-                    "{group}/{stem}: {name} differs from the program the CLI wrote before the move: {}",
-                    first_difference(&program.text, &committed)
-                );
-                compared += 1;
-            }
-        }
-    }
-    assert!(compared >= 40, "{compared} programs compared");
-}
+use common::{DATE, load_dcv};
 
 /// For every committed project (the quick-start projects, the golden
 /// cases, the tab-request corpus): [`dc_job::validation`], then
 /// [`dc_job::generate_operation`] for each enabled operation, then
 /// [`dc_job::finish`], gives the same findings, in the same order, and the
-/// same programs and names as [`dc_job::build`]; with every split the CLI
-/// offers for the two-tool plaque. Where validation or generation finds an
-/// error, both stop there with the same errors and no program.
+/// same programs and names as [`dc_job::build()`]; with every split the
+/// CLI offers for the two-tool plaque. Where validation or generation
+/// finds an error, both stop there with the same errors and no program.
 #[test]
 fn generate_operation_then_finish_equals_build() {
     for (stem, path) in common::checked_projects() {

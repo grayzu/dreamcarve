@@ -1,7 +1,7 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dreamcarve check <dcv>`: runs the export pipeline ([`dc_job::build`])
+//! `dreamcarve check <dcv>`: runs the export pipeline ([`dc_job::build()`])
 //! without writing anything and prints every error and warning it finds,
 //! including each open path, which validation reports because Profile never
 //! cuts it (functional spec, capabilities 4 and 8), then, when the program

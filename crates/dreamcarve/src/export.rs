@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! `dreamcarve export <dcv>`: loads the project, runs the pipeline of
-//! [`dc_job::build`] (every enabled operation's toolpath with `dc-cam`, the
+//! [`dc_job::build()`] (every enabled operation's toolpath with `dc-cam`, the
 //! programs with `dc-gcode`), and writes them. A project whose operations
 //! use one tool is one program, `<stem>.<ext>`. With more than one tool,
 //! the post-processor's `tool_change.mode` decides (#95):
@@ -80,7 +80,7 @@ impl ProjectFile<'_> {
 
 /// Loads the `.dcv` at `path`; a file that cannot become a project is an
 /// error (exit 1). The problems found at load are not returned:
-/// [`dc_job::build`] validates the project again, after any `--post` swap,
+/// [`dc_job::build()`] validates the project again, after any `--post` swap,
 /// so they cannot go stale. The file comes back to locate the findings in.
 pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> {
     let bytes = read_file(path)?;

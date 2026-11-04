@@ -1,8 +1,10 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The preview after the move (`docs/specs/phase-4/design.md`, "Test plan →
-//! dc-job (slice 1)"): the same bytes, and marks the Viewport can draw.
+//! The preview's marks (`docs/specs/phase-4/design.md`, "Test plan → dc-job
+//! (slice 1)"): geometry the Viewport can draw, equal to what the SVG
+//! draws. That the SVG itself is unchanged is
+//! `crates/dreamcarve/tests/pipeline_move.rs`, against the binary.
 
 #![allow(
     clippy::panic,
@@ -15,62 +17,26 @@
 mod common;
 
 use dc_geometry::Point;
-use dc_job::preview::{Run, marks, render, render_generated};
+use dc_job::preview::{Run, marks, render};
 use dc_job::{EmitOp, ProgramSplit};
 use dc_project::{Board, Project};
 
-use common::{DATE, expected, first_difference, load_dcv, read};
-
-/// Every committed project with a committed preview, rendered from
-/// [`dc_job::build`]'s runs, is byte for byte the SVG `check --preview`
-/// wrote before the move (`expected/quick-start/`, `expected/golden/`,
-/// `expected/corpus/`): straight and arc tab marks, start points, holes,
-/// the male board, the legend.
-#[test]
-fn render_is_unchanged_after_the_move() {
-    let groups = [
-        ("quick-start", common::quick_start_projects()),
-        ("golden", common::golden_projects()),
-        ("corpus", common::corpus_projects()),
-    ];
-    let mut compared = 0;
-    for (group, fixtures) in groups {
-        for (stem, path) in fixtures {
-            let project = load_dcv(&path);
-            let built = dc_job::build(&project, ProgramSplit::ProjectDefault, DATE);
-            let generated = built
-                .generated
-                .unwrap_or_else(|| panic!("{group}/{stem}: {:?}", built.findings));
-            let svg = render_generated(&project, &generated);
-            let committed = read(&expected(group, &format!("{stem}.svg")));
-            assert!(
-                svg == committed,
-                "{group}/{stem}: the preview differs from the one the CLI wrote before the move: {}",
-                first_difference(&svg, &committed)
-            );
-            compared += 1;
-        }
-    }
-    assert!(compared >= 25, "{compared} previews compared");
-}
+use common::{DATE, load_dcv};
 
 /// For every run of every committed project, the tab marks, start points
 /// and holes [`marks`] returns are what the SVG of that run alone draws:
-/// one `tab` path per tab mark, from its first to its last vertex; one
-/// `start` circle per start point, with a tick where it has a direction;
-/// one `hole` circle per hole; all at the mark's place, Y flipped once,
-/// with the bit's radius (functional spec, acceptance 79).
+/// one `tab` path per tab mark, from its first to its last vertex, an arc
+/// where the mark follows an arc; one `start` circle per start point, with
+/// a tick where it has a direction; one `hole` circle per hole; all at the
+/// mark's place, Y flipped once, with the bit's radius (functional spec,
+/// acceptance 79).
 #[test]
 fn marks_equal_what_the_svg_draws() {
     let mut tab_marks = 0;
     let mut arcs = 0;
     let mut starts = 0;
     let mut holes = 0;
-    for (stem, path) in common::quick_start_projects()
-        .into_iter()
-        .chain(common::golden_projects())
-        .chain(common::corpus_projects())
-    {
+    for (stem, path) in common::checked_projects() {
         let project = load_dcv(&path);
         let built = dc_job::build(&project, ProgramSplit::ProjectDefault, DATE);
         let generated = built
