@@ -51,8 +51,8 @@ const TOOL_FLUTES: u8 = 2;
 /// The one operation the defaults write, a Profile, and its settings.
 const OPERATION_ID: &str = "op1";
 /// Arc-fitting tolerance a new project starts with, mm (functional spec,
-/// capability 24).
-const ARC_FIT_TOLERANCE_MM: f64 = 0.01;
+/// capability 24). The app's *New* starts from it too.
+pub const ARC_FIT_TOLERANCE_MM: f64 = 0.01;
 const SAFE_Z_MM: f64 = 5.0;
 const TAB_COUNT: u8 = 4;
 const TAB_WIDTH_MM: f64 = 8.0;
@@ -65,6 +65,36 @@ const INIT_RAMP_ANGLE_DEG: f64 = dc_cam::entry::INIT_RAMP_ANGLE_DEG;
 /// `ROUND_SLACK_MM` of noise above a multiple.
 fn round_up_mm(value_mm: f64) -> f64 {
     ((value_mm - ROUND_SLACK_MM) * ROUND_STEPS_PER_MM).ceil() / ROUND_STEPS_PER_MM
+}
+
+/// A stock sized round some shapes ([`fit_stock`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct StockFit {
+    /// The translation that moves the shapes so their bounds sit the
+    /// margin in from the stock's bottom-left corner.
+    pub shift: Transform,
+    /// The stock width, mm.
+    pub width_mm: f64,
+    /// The stock height, mm.
+    pub height_mm: f64,
+}
+
+/// The stock `init` sizes round shapes with `bounds` (mm, project space)
+/// at `margin_mm` from every edge, and the shift that places them: the
+/// rule [`drawing`] applies with [`STOCK_MARGIN_MM`], for the app's *Fit
+/// stock to shapes* with the margin the user types (functional spec,
+/// capability 61). Offsets and sizes are rounded up to 0.01 mm, so the
+/// shapes stay at least the margin (less `ROUND_SLACK_MM`) from every edge
+/// and the file reads cleanly.
+#[must_use]
+pub fn fit_stock(bounds: Rect, margin_mm: f64) -> StockFit {
+    let dx_mm = round_up_mm(margin_mm - bounds.min.x);
+    let dy_mm = round_up_mm(margin_mm - bounds.min.y);
+    StockFit {
+        shift: Transform::translate(dx_mm, dy_mm),
+        width_mm: round_up_mm(bounds.max.x + dx_mm + margin_mm),
+        height_mm: round_up_mm(bounds.max.y + dy_mm + margin_mm),
+    }
 }
 
 /// The project `dreamcarve init` writes for `import`, named `name` (the
@@ -125,11 +155,9 @@ fn default_project(
     display_units: Units,
     with_defaults: bool,
 ) -> Project {
-    let dx_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.x);
-    let dy_mm = round_up_mm(STOCK_MARGIN_MM - bounds.min.y);
-    let shift = Transform::translate(dx_mm, dy_mm);
+    let fit = fit_stock(bounds, STOCK_MARGIN_MM);
     for instance in &mut instances {
-        instance.transform = instance.transform.then(shift);
+        instance.transform = instance.transform.then(fit.shift);
     }
     let definitions: BTreeMap<_, _> = definitions.into_iter().map(|d| (d.id.clone(), d)).collect();
     let (tools, operations) = if with_defaults {
@@ -157,8 +185,8 @@ fn default_project(
         flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
         arc_fit_tolerance_mm: Some(ARC_FIT_TOLERANCE_MM),
         stock: Stock {
-            width_mm: round_up_mm(bounds.max.x + dx_mm + STOCK_MARGIN_MM),
-            height_mm: round_up_mm(bounds.max.y + dy_mm + STOCK_MARGIN_MM),
+            width_mm: fit.width_mm,
+            height_mm: fit.height_mm,
             thickness_mm: None,
         },
         origin: MachineOrigin {

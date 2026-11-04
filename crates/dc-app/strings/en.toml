@@ -4,4 +4,57 @@
 # Every user-visible string of the app (docs/specs/phase-4/design.md,
 # "Strings"), keyed `panel.section.item`. `{name}`-style placeholders are
 # filled by `Strings::fmt`. build.rs turns each key into a `StrKey` variant,
-# `command.label.set_stock` becoming `CommandLabelSetStock`.
+# `command.label.set_stock` becoming `CommandLabelSetStock`, and the test
+# `strings::every_key_is_used` fails on a key no GUI crate uses.
+#
+# Warning and error text is not here: it is `dc-cam`'s, `dc-project`'s and
+# `dc-app`'s `Display`, the CLI's text, until phase 8 keys it.
+
+# What an undo step acts on: one named thing, or a count of them.
+[command.subject]
+one = "“{name}”"
+many = "{count} shapes"
+
+# The undo labels (functional spec, capability 52): the Edit menu shows
+# the step it would undo.
+[command.label]
+set_stock = "Set stock"
+set_origin = "Set origin"
+set_heights = "Set heights"
+set_tolerances = "Set tolerances"
+set_display_units = "Set display units"
+switch_post = "Switch post-processor to {name}"
+set_post_settings = "Set post-processor settings"
+add_tool = "Add tool {subject}"
+add_tools = "Add {count} tools"
+update_tool = "Edit tool {subject}"
+remove_tool = "Remove tool {subject}"
+import = "Import {name}"
+move = "Move {subject}"
+rotate = "Rotate {subject}"
+scale = "Scale {subject}"
+mirror = "Mirror {subject}"
+transform = "Transform {subject}"
+show = "Show {subject}"
+hide = "Hide {subject}"
+lock = "Lock {subject}"
+unlock = "Unlock {subject}"
+set_flags = "Set flags of {subject}"
+rename = "Rename {subject}"
+duplicate = "Duplicate {subject}"
+delete = "Delete {subject}"
+add_operation = "Add {subject}"
+set_field = "Set {field} of {subject}"
+edit_operation = "Edit {subject}"
+reorder_operations = "Reorder operations"
+enable = "Enable {subject}"
+disable = "Disable {subject}"
+place_tab = "Place 1 tab"
+place_tabs = "Place {count} tabs"
+add_tab = "Add tab"
+move_tab = "Move tab"
+update_tab = "Edit tab"
+delete_tab = "Delete tab"
+delete_tabs = "Delete {count} tabs"
+centre_on_stock = "Centre {subject} on stock"
+fit_stock = "Fit stock to shapes"

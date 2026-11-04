@@ -30,7 +30,9 @@ fn dependency_keys() -> Vec<String> {
             continue;
         }
         if in_dependencies && let Some((key, _)) = line.split_once('=') {
-            keys.push(key.trim().trim_matches('"').to_owned());
+            // `dc-job.workspace = true` names the dependency `dc-job`.
+            let key = key.trim().trim_matches('"');
+            keys.push(key.split('.').next().unwrap_or(key).to_owned());
         }
     }
     keys

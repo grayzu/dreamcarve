@@ -103,9 +103,12 @@ fn new_project_has_the_phase_1_defaults() {
     assert!(project.tools.is_empty());
     assert!(project.operations.is_empty());
     assert!(project.instances.is_empty());
-    assert!(
-        dc_project::validate(&project)
-            .iter()
-            .all(|p| p.severity() != dc_project::Severity::Error)
-    );
+    // The one thing validation refuses is what capability 51 leaves unset:
+    // the thickness, which only the user knows.
+    let errors: Vec<Option<String>> = dc_project::validate(&project)
+        .iter()
+        .filter(|p| p.severity() == dc_project::Severity::Error)
+        .map(dc_project::Problem::field)
+        .collect();
+    assert_eq!(errors, vec![Some("stock.thickness_mm".to_owned())]);
 }

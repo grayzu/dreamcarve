@@ -60,10 +60,11 @@ fn inch_project_displays_inches() {
     let project = harness.app.project();
     let shown = units::format(project.stock.width_mm, project.display_units, 3);
     assert!(shown.ends_with(" in"), "{shown}");
-    assert_close(
-        shown.trim_end_matches(" in").parse::<f64>().unwrap(),
-        project.stock.width_mm / 25.4,
-        "stock width",
+    let displayed: f64 = shown.trim_end_matches(" in").parse().unwrap();
+    let exact = project.stock.width_mm / 25.4;
+    assert!(
+        (displayed - exact).abs() <= 0.0005,
+        "stock width: {displayed} is not {exact} to three places"
     );
 }
 

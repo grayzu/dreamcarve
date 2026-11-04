@@ -154,12 +154,8 @@ fn twenty_mixed_edits_undo_and_redo_in_order() {
     assert_eq!(harness.app.undo(), None);
     assert_eq!(harness.app.undo_label(), None);
 
-    for k in 0..20 {
-        assert_eq!(
-            harness.app.redo(),
-            Some(labels[k].clone()),
-            "redo of step {k}"
-        );
+    for (k, label) in labels.iter().enumerate() {
+        assert_eq!(harness.app.redo(), Some(label.clone()), "redo of step {k}");
         let expected = snapshots.get(k + 1).unwrap_or(&final_state);
         assert_eq!(harness.app.project(), expected, "redo of step {k}");
     }
