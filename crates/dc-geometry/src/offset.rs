@@ -924,4 +924,64 @@ mod tests {
             assert!(checked.is_ok(), "{checked:?}: {piece:?}");
         }
     }
+
+    /// #555: a hole of lettering seed `0xc4`'s male surround (90° bit),
+    /// cut down from 266 vertices to the 18 that still show the fault: a
+    /// letter's curve comes back to a sharp point beside a bay, and the
+    /// hole, clockwise, is grown by the floor's inset, `P·tan(α/2)`.
+    /// cavalier_contours returned open pieces at every tolerance, and the
+    /// bay's loop, closed by a straight line across the round join at the
+    /// point, came 0.016 mm nearer the hole than the inset; the V-bit's
+    /// floor ring ran along it and the generator refused its own move.
+    /// Every point of the offset is at least the offset distance from the
+    /// hole.
+    #[test]
+    fn grown_hole_beside_a_sharp_point_keeps_its_distance() {
+        let points = [
+            (21.234_263_152_266_09, 19.361_309_663_903_345),
+            (21.463_291_794_443_673, 19.342_558_221_470_94),
+            (21.514_222_532_892_77, 19.284_130_291_592_707),
+            (21.554_336_518_431_253, 19.238_450_543_534_388),
+            (21.597_733_289_385_385, 19.194_055_394_780_268),
+            (21.644_542_009_020_395, 19.150_919_513_356_317),
+            (21.694_906_562_948_77, 19.109_028_832_566_37),
+            (21.748_985_261_107_034, 19.068_380_729_806_055),
+            (21.803_826_600_695_2, 19.031_470_672_738_184),
+            (21.862_703_234_339_303, 18.996_372_656_476_13),
+            (21.925_833_732_271_737, 18.963_120_655_667_414),
+            (21.993_453_056_002_206, 18.931_766_764_771_57),
+            (22.125_035_792_971_2, 18.881_760_315_549_005),
+            (22.398_170_382_166_45, 18.824_897_544_037_928),
+            (24.242_156_774_187_63, 18.771_547_035_824_884),
+            (24.180_380_255_365_915, 18.718_938_665_043_94),
+            (24.180_266_350_889_75, 18.718_841_628_682_245),
+            (22.929_796_010_637_826, 18.292_408_542_286_98),
+        ];
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        let hole = Contour::new(Polyline::new(vertices, true))
+            .unwrap()
+            .reversed();
+        let inset_mm = 1.263_323_573_564_829_8;
+        let grown = offset(&hole, inset_mm);
+        assert!(!grown.is_empty());
+        let from_hole = |p: Point| {
+            hole.polyline()
+                .segments()
+                .map(|s| crate::point_segment_distance_mm(s, p))
+                .fold(f64::INFINITY, f64::min)
+        };
+        for piece in &grown {
+            let path = piece.polyline();
+            let length_mm = path.length_mm();
+            let steps = (length_mm / 0.005).ceil() as usize;
+            for i in 0..=steps {
+                let (p, _) = path.point_at(length_mm * i as f64 / steps as f64).unwrap();
+                let gap_mm = from_hole(p);
+                assert!(
+                    gap_mm >= inset_mm - 1e-4,
+                    "{p:?} is {gap_mm} mm from the hole, under {inset_mm}: {grown:?}"
+                );
+            }
+        }
+    }
 }
