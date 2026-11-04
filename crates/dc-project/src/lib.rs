@@ -18,7 +18,7 @@ mod model;
 mod post_processor;
 mod project;
 mod serialize;
-mod units_input;
+pub mod units_input;
 mod validate;
 
 #[cfg(any(test, feature = "test-support"))]

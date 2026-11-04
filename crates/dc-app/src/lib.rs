@@ -1,0 +1,28 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+#![doc = include_str!("../README.md")]
+
+pub mod app;
+pub mod command;
+mod error;
+pub mod generation;
+pub mod history;
+pub mod prefs;
+pub mod selection;
+pub mod strings;
+pub mod units;
+pub mod view;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
+pub use app::{App, Opened};
+pub use command::Command;
+pub use error::CommandError;
+pub use generation::{Generation, Job, JobResult, OperationResult, SnapshotId};
+pub use history::LabelledHistory;
+pub use prefs::{Panels, Prefs, Theme, WindowGeometry};
+pub use selection::Selection;
+pub use strings::{StrKey, Strings};
+pub use view::{Camera, ColourMode, View, Visibility};

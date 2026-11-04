@@ -1,0 +1,452 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! The application state (`docs/specs/phase-4/design.md`, "Data model →
+//! dc-app"): one project history with its labels, the selection, the view,
+//! the generation bookkeeping, the strings, the preferences, and the bytes
+//! last saved, which decide whether the project is dirty (functional spec,
+//! capability 51). Every mutation of the project is a [`Command`] through
+//! [`App::run`]; the shell never edits model fields in place.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
+use dc_job::{EmitOp, Finding, Findings};
+use dc_project::{
+    CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, OperationId, OriginXy,
+    OriginZ, Problem, Project, Stock, Units,
+};
+
+use crate::command::Command;
+use crate::error::CommandError;
+use crate::generation::{Generation, Job, JobResult, SnapshotId};
+use crate::history::LabelledHistory;
+use crate::prefs::Prefs;
+use crate::selection::Selection;
+use crate::strings::Strings;
+use crate::view::View;
+
+/// The bundled post-processor a new project names (capability 51).
+const DEFAULT_POST_ID: &str = "grblhal";
+/// A new project's stock, mm, square (capability 51).
+const DEFAULT_STOCK_MM: f64 = 100.0;
+/// A new project's name, before it is saved.
+const UNTITLED: &str = "untitled";
+
+/// The app's state: everything but the window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct App {
+    history: LabelledHistory,
+    selection: Selection,
+    view: View,
+    generation: Generation,
+    strings: Strings,
+    prefs: Prefs,
+    /// Where the project was opened from or last saved to.
+    source: Option<PathBuf>,
+    /// The clean state, when there is one: the project as opened,
+    /// serialized, or the bytes the shell last wrote. What
+    /// [`App::is_dirty`] compares the current snapshot against.
+    saved: Option<Vec<u8>>,
+    dirty: bool,
+    /// Validation of the current snapshot, run on every change.
+    validation: Findings,
+    /// Validation's, generation's and `finish`'s findings, merged.
+    findings: Vec<Finding>,
+}
+
+/// What opening a file reported (capability 51): the migration notes and
+/// the loader's validation problems, for the Warnings panel.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Opened {
+    /// What the migration to the current version changed.
+    pub notes: Vec<MigrationNote>,
+    /// What validation found in the opened project.
+    pub problems: Vec<Problem>,
+}
+
+impl App {
+    /// An app on `project` with nothing to undo and no file behind it.
+    #[must_use]
+    pub fn new(project: Project, strings: Strings, prefs: Prefs) -> Self {
+        let validation = dc_job::validation(&project);
+        let generation = Generation::new(&project, !validation.has_errors());
+        let mut app = Self {
+            history: LabelledHistory::new(project),
+            selection: Selection::Nothing,
+            view: View::default(),
+            generation,
+            strings,
+            prefs,
+            source: None,
+            saved: None,
+            dirty: false,
+            validation,
+            findings: Vec::new(),
+        };
+        app.refresh_findings();
+        app
+    }
+
+    /// The project *New* makes (capability 51): a 100 × 100 mm stock,
+    /// thickness unset, origin bottom-left at the stock top, no heights,
+    /// grblHAL at its latest version, no tools, operations or shapes.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::PostProcessor`] if the bundled grblHAL definition
+    /// cannot be read, which no release ships.
+    pub fn new_project() -> Result<Project, CommandError> {
+        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        Ok(Project {
+            version: CURRENT_VERSION,
+            name: UNTITLED.to_owned(),
+            display_units: Units::Mm,
+            flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
+            arc_fit_tolerance_mm: Some(dc_job::project_from::ARC_FIT_TOLERANCE_MM),
+            stock: Stock {
+                width_mm: DEFAULT_STOCK_MM,
+                height_mm: DEFAULT_STOCK_MM,
+                thickness_mm: None,
+            },
+            origin: MachineOrigin {
+                xy: OriginXy::BottomLeft,
+                z: OriginZ::StockTop,
+            },
+            heights: Heights::unset(),
+            tools: Vec::new(),
+            operations: Vec::new(),
+            tabs: Vec::new(),
+            instances: Vec::new(),
+            post_processor,
+            definitions: BTreeMap::new(),
+        })
+    }
+
+    /// Opens the project in `bytes`, read from `path` when there is one:
+    /// the history is cleared, the selection dropped, and the project as
+    /// loaded becomes the clean state (acceptance 62). The clean state is
+    /// the loaded project serialized, not the bytes read: a hand-formatted
+    /// or older-version file opens clean, since nothing of the user's has
+    /// changed, and saving it writes the current layout.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::Load`] when the bytes are not a project; the app
+    /// keeps the project it had.
+    pub fn open(&mut self, bytes: &[u8], path: Option<PathBuf>) -> Result<Opened, CommandError> {
+        let loaded = dc_project::load(bytes)?;
+        let clean = dc_project::save(&loaded.project)
+            .ok()
+            .map(String::into_bytes);
+        self.replace_project(loaded.project, path, clean);
+        Ok(Opened {
+            notes: loaded.notes,
+            problems: loaded.problems,
+        })
+    }
+
+    /// Makes `project` the whole history, as *New* does.
+    pub fn reset(&mut self, project: Project) {
+        self.replace_project(project, None, None);
+    }
+
+    fn replace_project(&mut self, project: Project, path: Option<PathBuf>, saved: Option<Vec<u8>>) {
+        self.validation = dc_job::validation(&project);
+        self.generation = Generation::new(&project, !self.validation.has_errors());
+        self.history = LabelledHistory::new(project);
+        self.selection = Selection::Nothing;
+        self.source = path;
+        self.saved = saved;
+        self.refresh_dirty();
+        self.refresh_findings();
+    }
+
+    /// The current snapshot.
+    #[must_use]
+    pub fn project(&self) -> &Project {
+        self.history.current()
+    }
+
+    /// The file the project came from or was last saved to.
+    #[must_use]
+    pub fn source(&self) -> Option<&Path> {
+        self.source.as_deref()
+    }
+
+    /// The current snapshot as the file the CLI would write, for the shell
+    /// to save. The app stays dirty until [`App::mark_saved`].
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::Save`] when the project cannot be serialized.
+    pub fn serialize(&self) -> Result<String, CommandError> {
+        Ok(dc_project::save(self.project())?)
+    }
+
+    /// Records that the shell wrote `bytes` to `path` (or to the source
+    /// when `None`), so the project is clean until the next change.
+    pub fn mark_saved(&mut self, bytes: &[u8], path: Option<PathBuf>) {
+        if path.is_some() {
+            self.source = path;
+        }
+        self.saved = Some(bytes.to_vec());
+        self.refresh_dirty();
+    }
+
+    /// Whether the project has unsaved changes (capability 51): the
+    /// current snapshot serialized differs from the clean state (the
+    /// project as opened, or the bytes last saved), or, with no file yet,
+    /// the project has been edited. Undoing every change makes it clean
+    /// again.
+    #[must_use]
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    fn refresh_dirty(&mut self) {
+        self.dirty = match &self.saved {
+            Some(bytes) => dc_project::save(self.project())
+                .map_or(true, |text| text.as_bytes() != bytes.as_slice()),
+            None => self.history.can_undo(),
+        };
+    }
+
+    /// Applies `command` to the current snapshot, pushes the result under
+    /// its label and returns the label. New shapes and a new operation
+    /// become the selection.
+    ///
+    /// # Errors
+    ///
+    /// The command's [`CommandError`]; nothing changes.
+    pub fn run(&mut self, command: Command) -> Result<String, CommandError> {
+        let before = self.history.current();
+        let after = command.apply(before)?;
+        let label = command.label(&self.strings, before, &after);
+        let new_instances: Vec<InstanceId> = after
+            .instances
+            .iter()
+            .filter(|i| !before.instances.iter().any(|b| b.id == i.id))
+            .map(|i| i.id.clone())
+            .collect();
+        let new_operations: Vec<OperationId> = after
+            .operations
+            .iter()
+            .filter(|o| !before.operations.iter().any(|b| b.id() == o.id()))
+            .map(|o| o.id().clone())
+            .collect();
+        self.history.push(after, label.clone());
+        if !new_instances.is_empty() {
+            self.selection = Selection::Instances(new_instances);
+        } else if let [id] = new_operations.as_slice() {
+            self.selection = Selection::Operation(id.clone());
+        }
+        self.snapshot_changed();
+        Ok(label)
+    }
+
+    /// Steps back one snapshot; the label of the step undone.
+    pub fn undo(&mut self) -> Option<String> {
+        let label = self.history.undo()?;
+        self.snapshot_changed();
+        Some(label)
+    }
+
+    /// Steps forward one snapshot; the label of the step redone.
+    pub fn redo(&mut self) -> Option<String> {
+        let label = self.history.redo()?;
+        self.snapshot_changed();
+        Some(label)
+    }
+
+    /// The label undo would report, for the Edit menu.
+    #[must_use]
+    pub fn undo_label(&self) -> Option<&str> {
+        self.history.undo_label()
+    }
+
+    /// The label redo would report, for the Edit menu.
+    #[must_use]
+    pub fn redo_label(&self) -> Option<&str> {
+        self.history.redo_label()
+    }
+
+    /// Whether there is a step to undo.
+    #[must_use]
+    pub fn can_undo(&self) -> bool {
+        self.history.can_undo()
+    }
+
+    /// Whether there is a step to redo.
+    #[must_use]
+    pub fn can_redo(&self) -> bool {
+        self.history.can_redo()
+    }
+
+    /// The history with its labels.
+    #[must_use]
+    pub fn history(&self) -> &LabelledHistory {
+        &self.history
+    }
+
+    /// After the current snapshot changed: validate, re-digest, prune the
+    /// selection, recompute dirty and the findings.
+    fn snapshot_changed(&mut self) {
+        let project = self.history.current();
+        self.validation = dc_job::validation(project);
+        let runnable = !self.validation.has_errors();
+        self.generation.advance(project, runnable);
+        self.selection.retain_existing(project);
+        self.refresh_dirty();
+        self.refresh_findings();
+    }
+
+    fn refresh_findings(&mut self) {
+        let mut findings =
+            Vec::with_capacity(self.validation.errors.len() + self.validation.warnings.len());
+        findings.extend(self.validation.errors.iter().cloned());
+        findings.extend(self.validation.warnings.iter().cloned());
+        findings.extend(self.generation.findings());
+        self.findings = findings;
+    }
+
+    /// What is selected.
+    #[must_use]
+    pub fn selection(&self) -> &Selection {
+        &self.selection
+    }
+
+    /// Selects `selection`, less anything the project does not have. Not
+    /// an undo step.
+    pub fn select(&mut self, selection: Selection) {
+        self.selection = selection;
+        self.selection.retain_existing(self.history.current());
+    }
+
+    /// The view settings.
+    #[must_use]
+    pub fn view(&self) -> &View {
+        &self.view
+    }
+
+    /// The view settings, to change. Not an undo step.
+    pub fn view_mut(&mut self) -> &mut View {
+        &mut self.view
+    }
+
+    /// The preferences.
+    #[must_use]
+    pub fn prefs(&self) -> &Prefs {
+        &self.prefs
+    }
+
+    /// The preferences, to change. Not an undo step; the shell writes
+    /// `gui.toml`.
+    pub fn prefs_mut(&mut self) -> &mut Prefs {
+        &mut self.prefs
+    }
+
+    /// The string table.
+    #[must_use]
+    pub fn strings(&self) -> &Strings {
+        &self.strings
+    }
+
+    /// The current snapshot's id.
+    #[must_use]
+    pub fn snapshot(&self) -> SnapshotId {
+        self.generation.snapshot()
+    }
+
+    /// The generation bookkeeping: results, staleness, what is finished.
+    #[must_use]
+    pub fn generation(&self) -> &Generation {
+        &self.generation
+    }
+
+    /// What the worker should run next (see [`Generation::pending`]).
+    #[must_use]
+    pub fn pending(&self) -> Vec<Job> {
+        self.generation.pending()
+    }
+
+    /// [`App::pending`], each job marked in flight so it is handed out once.
+    pub fn take_pending(&mut self) -> Vec<Job> {
+        self.generation.take_pending()
+    }
+
+    /// Whether [`dc_job::finish`] should run on [`App::finish_input`].
+    #[must_use]
+    pub fn needs_finish(&self) -> bool {
+        self.generation.needs_finish()
+    }
+
+    /// Every enabled operation's runs for `finish`, once all are in.
+    #[must_use]
+    pub fn finish_input(&self) -> Option<Vec<EmitOp>> {
+        self.generation.finish_input()
+    }
+
+    /// Stores a worker's result; ignored unless its snapshot is current.
+    /// Returns whether it was kept.
+    pub fn accept(&mut self, result: JobResult) -> bool {
+        let kept = self.generation.accept(result);
+        if kept {
+            self.refresh_findings();
+        }
+        kept
+    }
+
+    /// Validation's, generation's and `finish`'s findings for the current
+    /// snapshot, merged in the order `check` prints them: validation,
+    /// then each operation in project order, then the project-level
+    /// checks and the export warnings. Each carries its tier.
+    #[must_use]
+    pub fn warnings(&self) -> &[Finding] {
+        &self.findings
+    }
+
+    /// Validation of the current snapshot alone.
+    #[must_use]
+    pub fn validation(&self) -> &Findings {
+        &self.validation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dc_project::test_support::sample_project;
+
+    #[test]
+    fn a_new_app_is_clean_and_has_nothing_to_undo() {
+        let app = App::new(sample_project(), Strings::default(), Prefs::default());
+        assert!(!app.is_dirty());
+        assert!(!app.can_undo());
+        assert_eq!(app.selection(), &Selection::Nothing);
+        assert_eq!(app.source(), None);
+    }
+
+    #[test]
+    fn opening_bytes_that_are_not_a_project_keeps_the_current_one() {
+        let mut app = App::new(sample_project(), Strings::default(), Prefs::default());
+        let before = app.project().clone();
+        assert!(app.open(b"not json", None).is_err());
+        assert_eq!(app.project(), &before);
+    }
+
+    #[test]
+    fn a_duplicate_becomes_the_selection() {
+        let mut app = App::new(sample_project(), Strings::default(), Prefs::default());
+        let first = app.project().instances.first().map(|i| i.id.clone());
+        let Some(first) = first else {
+            return;
+        };
+        app.run(Command::DuplicateInstances(vec![first.clone()]))
+            .unwrap_or_default();
+        let selected = app.selection().instances();
+        assert_eq!(selected.len(), 1);
+        assert_ne!(selected.first(), Some(&first));
+    }
+}

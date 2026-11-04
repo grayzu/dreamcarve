@@ -11,6 +11,7 @@ members = [
     "crates/dc-import",
     "crates/dc-library",
     "crates/dc-job",
+    "crates/dc-app",
     "crates/dreamcarve-shell",
     "crates/dreamcarve",
     "tools/check-headers",
@@ -42,6 +43,7 @@ dc-gcode = { path = "crates/dc-gcode", version = "0.2.1" }
 dc-import = { path = "crates/dc-import", version = "0.2.1" }
 dc-library = { path = "crates/dc-library", version = "0.2.1" }
 dc-job = { path = "crates/dc-job", version = "0.2.1" }
+dc-app = { path = "crates/dc-app", version = "0.2.1" }
 dreamcarve-shell = { path = "crates/dreamcarve-shell", version = "0.2.1" }
 
 # External crates. Versions are set here once; crates use `workspace = true`.

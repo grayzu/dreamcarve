@@ -37,6 +37,7 @@ writes is the CLI's (phase 4 functional spec, S20).
 | --- | --- | --- |
 | `dreamcarve` | The command line: argument parsing, printing, the clock, exit codes, the tool library file, and the `tabs` command's flags. Thin: the pipeline is `dc-job`'s and the shared file I/O `dreamcarve-shell`'s. | every `dc-` crate, `dreamcarve-shell` |
 | `dreamcarve-shell` | The file I/O both binaries share: the staged write that puts every file of an export in place or none, the user config directory, `config.toml` and `gui.toml`. Reads and writes files; prints nothing. | `dc-job`, `dc-project` |
+| `dc-app` | The app's core (phase 4): one `History` of `Project` snapshots with a label per step, the `Command` enum whose `apply` makes the next snapshot, the selection, the view settings, the generation bookkeeping (what is pending, stale, finished), the string table and its generated `StrKey`, units formatting and parsing, the preferences record, and the headless test harness. No egui, no I/O. | `dc-job`, `dc-project`, `dc-geometry` |
 | `dc-job` | The job pipeline: `build` (validate, generate, check, emit) and its two halves `generate_operation` and `finish`; `Findings` with tiers; program names; the export summary's lines; the preview SVG and its marks; a project from a drawing; a drawing imported into a project; placed tabs. Re-exports the `dc-cam` and `dc-gcode` types a shell needs. | `dc-cam`, `dc-gcode`, `dc-import`, `dc-project`, `dc-geometry` |
 | `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools, and Fusion 360 import. Bytes in, values out; the binary owns `tools.json`. | `dc-project` |
 | `dc-gcode` | G-code emission, arc fitting, canned cycles, and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
@@ -46,8 +47,9 @@ writes is the CLI's (phase 4 functional spec, S20).
 | `dc-geometry` | Points, polylines with bulge arcs, transforms, offsets, booleans, circle tests, flattening, nesting, distances. Knows nothing about tools or stock. | nothing internal |
 
 The `test-support` features of `dc-project` and `dc-cam` carry fixture
-builders and `assert_safe` for other crates' tests; they are
-dev-dependencies only.
+builders and `assert_safe` for other crates' tests, and `dc-app`'s carries
+the `Harness` that drives the app headless; they are dev-dependencies
+only.
 
 ## Modules
 
@@ -166,10 +168,27 @@ the code they test.
 | `names.rs` | `program_names` and `program_suffixes`: `<stem>.nc`, `<stem>-<k>-T<n>.nc`, `<stem>-female-<k>-T<n>.nc`. |
 | `summary.rs` | The export summary's lines: each operation and its depth, a carve's deepest cut and floor ridges, extents and edge extents, the cycle-time `Estimates` and `EstimateConfig`, board headings, what to do before a program starts. |
 | `preview.rs` | The toolpath preview SVG of `--preview` (`render`), a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`; `marks`, the tab marks, start points and holes it draws, as geometry for the app's Viewport. |
-| `project_from.rs` | `drawing`: the project `init` writes for a drawing, with or without the placeholder tool and Profile. |
+| `project_from.rs` | `drawing`: the project `init` writes for a drawing, with or without the placeholder tool and Profile; `fit_stock`, the stock it sizes round some bounds at a margin, which the app's *Fit stock to shapes* reuses. |
 | `import.rs` | `Drawing` (an SVG or DXF import) and `drawing_into`: a drawing's shapes appended to a project, placed as drawn, under fresh ids. |
 | `tabs.rs` | `place_request`, what `tabs place <dcv> <op>` does, and the `dc-cam` placement functions re-exported. |
 | `error.rs` | `JobError`. |
+
+### `dc-app` (`crates/dc-app/src/`)
+
+| Module | Contents |
+| --- | --- |
+| `lib.rs` | The crate's surface: `App`, `Command`, `CommandError`, the history, selection, view, generation, strings, units and preferences types. |
+| `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes. |
+| `command.rs` | `Command`, every change to the project: `apply` returns the next snapshot and never touches the caller's; `label` names the undo step from the string table. `command/instances.rs` holds the transforms about the selection's bounding-box centre, linked copies, deletion and stock fitting; `command/operations.rs` the operation list, tool removal and the field an edit changed. |
+| `error.rs` | `CommandError`: a locked shape, an unknown id, a tool in use, a value that cannot be stored, a value that is not a length, and the lower crates' errors. |
+| `history.rs` | `LabelledHistory`: `dc_project::History` with one label per past and future snapshot. |
+| `selection.rs` | `Selection`: instances, tabs or one operation; pruned when a snapshot drops what was selected. |
+| `view.rs` | `View`, `Camera`, `Visibility`, `ColourMode`: view state, never project state. |
+| `generation.rs` | `Generation`, `SnapshotId`, `Job`, `JobResult`: which operations are pending or stale for the current snapshot, the results and `finish` bookkeeping; a result from an older snapshot is dropped. The digest is the snapshot id until slice 9 hashes each operation's inputs. |
+| `strings.rs` | `Strings` and the generated `StrKey` (`build.rs` from `strings/en.toml`): `get` and `fmt` with `{name}` placeholders. |
+| `units.rs` | `format` and `format_rate` in the project's display units with the unit after the value; `parse_length_mm` and `parse_rate_mm_min` through `dc_project::units_input`, a bare number in the project's units. |
+| `prefs.rs` | `Prefs`, `Theme`, `WindowGeometry`, `Panels`: the record behind `gui.toml`, whose file is `dreamcarve-shell`'s. |
+| `test_support.rs` | `Harness`: an `App` from fixture bytes, commands run, pending jobs executed inline with the real `dc_job` functions (`test-support` feature). |
 
 ### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)
 
