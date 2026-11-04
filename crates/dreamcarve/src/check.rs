@@ -1,7 +1,7 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dreamcarve check <dcv>`: runs the export pipeline ([`export::build`])
+//! `dreamcarve check <dcv>`: runs the export pipeline ([`dc_job::build`])
 //! without writing anything and prints every error and warning it finds,
 //! including each open path, which validation reports because Profile never
 //! cuts it (functional spec, capabilities 4 and 8), then, when the program
@@ -17,9 +17,14 @@
 
 use std::process::ExitCode;
 
-use dc_gcode::ProgramSplit;
+use dc_job::summary::{
+    board_heading, by_board, describe_carves, describe_extents, largest_tool_radius_mm,
+    tool_radius_mm,
+};
+use dc_job::{Built, Estimates, ProgramSplit, preview};
+use dreamcarve_shell::StagedFile;
 
-use crate::cli::{CheckArgs, Failure, StagedFile};
+use crate::cli::{CheckArgs, Failure};
 use crate::config;
 use crate::export;
 use crate::output::outln;
@@ -35,15 +40,15 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     let (project, file) = export::load_project(&args.dcv)?;
     let estimate_settings = config::estimate_settings()?;
     // `check` has no split flags: it reports what a plain `export` would.
-    let export::Built {
+    let Built {
         programs,
         findings,
         generated,
-    } = export::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
+    } = dc_job::build(&project, ProgramSplit::ProjectDefault, CHECK_DATE);
     // Where a plain `export` would write its programs; with none, the one
     // program's default path.
-    let boards = export::by_board(&project);
-    let mut outputs = export::output_paths(None, &args.dcv, &programs, boards)?;
+    let boards = by_board(&project);
+    let mut outputs = export::output_paths(None, &args.dcv, &project, &programs)?;
     if programs.is_empty() {
         outputs = vec![
             args.dcv
@@ -53,7 +58,7 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     if let Some(preview) = &args.preview {
         export::check_preview_not_program(preview, &outputs)?;
     }
-    let estimates = export::Estimates::new(&project, &programs, estimate_settings);
+    let estimates = Estimates::new(&project, &programs, estimate_settings);
 
     // #498: what migrating the file changed that the user should know.
     for note in &file.notes {
@@ -67,7 +72,7 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     }
     // Phase 3: a carve's depth follows its shapes, so its deepest cut is
     // stated.
-    for line in export::describe_carves(&project, generated.as_deref().unwrap_or_default()) {
+    for line in describe_carves(&project, generated.as_deref().unwrap_or_default()) {
         outln!("{line}")?;
     }
     // #62: where the program would take the tool, and capability 30: how
@@ -76,8 +81,8 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     if let [program] = programs.as_slice()
         && !boards
     {
-        let radius_mm = export::largest_tool_radius_mm(&project);
-        for line in export::describe_extents(&project, program, radius_mm) {
+        let radius_mm = largest_tool_radius_mm(&project);
+        for line in describe_extents(&project, program, radius_mm) {
             outln!("{line}")?;
         }
         outln!("{}", estimates.program_line(0))?;
@@ -89,7 +94,7 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
             if boards {
                 if board != Some(program.board) {
                     board = Some(program.board);
-                    outln!("{}", export::board_heading(&project, program.board))?;
+                    outln!("{}", board_heading(&project, program.board))?;
                 }
                 let name = outputs
                     .get(k)
@@ -99,8 +104,8 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
             } else {
                 outln!("Program {} (T{}):", k + 1, program.first_tool.number)?;
             }
-            let radius_mm = export::tool_radius_mm(&project, program);
-            for line in export::describe_extents(&project, program, radius_mm) {
+            let radius_mm = tool_radius_mm(&project, program);
+            for line in describe_extents(&project, program, radius_mm) {
                 outln!("  {line}")?;
             }
             outln!("  {}", estimates.program_line(k))?;
@@ -111,12 +116,12 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     }
     // Addendum A5: the preview is written when every operation generated,
     // whatever the warnings, and even if the programs then failed.
-    if let Some(preview) = &args.preview {
+    if let Some(preview_path) = &args.preview {
         match &generated {
             Some(generated) => {
-                let svg = export::preview_svg(&project, generated);
-                StagedFile::write(preview, svg.as_bytes())?.commit()?;
-                outln!("Wrote preview {}.", preview.display())?;
+                let svg = preview::render_generated(&project, generated);
+                StagedFile::write(preview_path, svg.as_bytes())?.commit()?;
+                outln!("Wrote preview {}.", preview_path.display())?;
             }
             None => outln!("Preview not written: not every operation generated a toolpath.")?,
         }

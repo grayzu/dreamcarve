@@ -1,100 +1,47 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dreamcarve export <dcv>`: loads the project, generates every enabled
-//! operation's toolpath with `dc-cam`, emits the programs with `dc-gcode`,
-//! and writes them. A project whose operations use one tool is one
-//! program, `<stem>.<ext>`. With more than one tool, the post-processor's
-//! `tool_change.mode` decides (#95): `"separate_programs"` writes one
-//! program per tool run, `<stem>-<k>-T<n>.<ext>`, and `"m6"` one program
-//! with `M6` tool changes; `--programs-per-tool` and `--one-program`
-//! override it for one export without saving it (functional spec,
-//! capability 19). Nothing is written unless every step succeeds:
-//! every program (with `--preview`, the toolpath picture of addendum A5,
-//! and with `--post`, the updated project) is staged in a
-//! temporary file, and all are renamed into place at the end. If one
-//! rename fails, the files already moved are put back as they were.
+//! `dreamcarve export <dcv>`: loads the project, runs the pipeline of
+//! [`dc_job::build`] (every enabled operation's toolpath with `dc-cam`, the
+//! programs with `dc-gcode`), and writes them. A project whose operations
+//! use one tool is one program, `<stem>.<ext>`. With more than one tool,
+//! the post-processor's `tool_change.mode` decides (#95):
+//! `"separate_programs"` writes one program per tool run,
+//! `<stem>-<k>-T<n>.<ext>`, and `"m6"` one program with `M6` tool changes;
+//! `--programs-per-tool` and `--one-program` override it for one export
+//! without saving it (functional spec, capability 19). Nothing is written
+//! unless every step succeeds: every program (with `--preview`, the
+//! toolpath picture of addendum A5, and with `--post`, the updated
+//! project) is staged in a temporary file, and all are renamed into place
+//! at the end. If one rename fails, the files already moved are put back
+//! as they were.
 //!
-//! [`build`] is the whole pipeline without writing; `check` runs it too, so
-//! `check` reports exactly what `export` would. It validates the project it
-//! is given rather than trusting the problems found at load, so the checks
-//! that depend on the post-processor see the one `--post` swapped in.
+//! `check` runs the same pipeline, so `check` reports exactly what `export`
+//! would. The pipeline validates the project it is given rather than
+//! trusting the problems found at load, so the checks that depend on the
+//! post-processor see the one `--post` swapped in.
 //!
 //! A finding about one value of the file is printed as
 //! `coaster.dcv:9:21: error: …`, the form editors and terminals turn into a
 //! link to that line and column (#76). Every warning carries its stable
 //! `snake_case` code and prints as `warning: <code>: <message>` (functional
-//! spec, capability 25); the Warnings chapter lists the codes. After
-//! generation, `dc_cam::order::check` adds the operation-order warnings,
-//! and `dc_cam::placed_tabs::check` the tabs no Profile cuts round (#105).
+//! spec, capability 25); the Warnings chapter lists the codes.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_cam::{
-    CamError, RunLabel, ToolRun, Toolpath, generate_bore, generate_drill, generate_engrave,
-    generate_inlay_board, generate_pocket, generate_profile, generate_vcarve, order, placed_tabs,
+use dc_job::summary::{
+    before_you_start, board_heading, by_board, changes_tools, describe_carves, describe_extents,
+    describe_operations, largest_tool_radius_mm, one_program, tool_radius_mm,
 };
-use dc_gcode::format::format_number;
-use dc_gcode::transform::mm_per_unit;
-use dc_gcode::{
-    AxisRange, EmitOp, Estimate, ExportWarning, Program, ProgramSplit, emit_programs,
-    machine_lift_limits_note, scaling_note,
-};
-use dc_project::{
-    Board, DrillCycle, DrillOp, Operation, OperationId, PostProcessorRef, Project, ResetReason,
-    SettingReset, Severity, SourceMap, ToolChangeMode, ToolId, Units, validate,
-};
+use dc_job::{Built, EmitOp, Estimates, Finding, Program, preview, program_suffixes};
+use dc_project::{Board, PostProcessorRef, Project, ResetReason, SettingReset, SourceMap};
+use dreamcarve_shell::{StagedFile, commit_all};
 
-use crate::cli::{
-    ExportArgs, Failure, StagedFile, commit_all, lookup_post, read_file, switch_post, today_utc,
-};
-use crate::config::{self, EstimateConfig};
+use crate::cli::{ExportArgs, Failure, lookup_post, read_file, switch_post, today_utc};
+use crate::config;
 use crate::output::{errln, outln};
-use crate::preview;
-
-/// One error or warning.
-#[derive(Debug)]
-pub struct Finding {
-    /// The field it is about, as validation names it
-    /// (`tools[t1].feed_mm_min`), when it is about one.
-    pub field: Option<String>,
-    /// The finding's stable `snake_case` code, printed before the
-    /// message. Every warning has one; errors print their message alone.
-    pub code: Option<String>,
-    /// What is wrong.
-    pub message: String,
-}
-
-impl Finding {
-    /// A finding about no one field, with no code.
-    fn plain(message: String) -> Self {
-        Self {
-            field: None,
-            code: None,
-            message,
-        }
-    }
-
-    /// A warning with code `code`, about no one field.
-    fn coded(code: &str, message: String) -> Self {
-        Self {
-            field: None,
-            code: Some(code.to_owned()),
-            message,
-        }
-    }
-}
-
-/// What the pipeline found, in the order found.
-#[derive(Debug, Default)]
-pub struct Findings {
-    /// Error-class findings; any one means no program.
-    pub errors: Vec<Finding>,
-    /// Findings that still allow a safe program.
-    pub warnings: Vec<Finding>,
-}
 
 /// The `.dcv` file as read, to locate findings in.
 pub struct ProjectFile<'a> {
@@ -131,530 +78,10 @@ impl ProjectFile<'_> {
     }
 }
 
-/// The pipeline's result: the programs when there were no errors.
-pub struct Built {
-    /// The emitted programs, in the order they are run: one per tool run
-    /// or one in all (#95). Empty when any error was found.
-    pub programs: Vec<Program>,
-    /// Errors and warnings.
-    pub findings: Findings,
-    /// Every enabled operation's generated toolpath, with its tool, when
-    /// every one of them generated, even if emitting the programs then
-    /// failed; `None` when one did not. What `--preview` draws.
-    pub generated: Option<Vec<EmitOp>>,
-}
-
-/// Validates `project`, generates every enabled operation's toolpath, and
-/// emits the programs, collecting every error and warning on the way.
-/// `split` is how a multi-tool project is divided into programs (the
-/// project's mode, or an `export` flag); `date` fills each program
-/// header's `{date}`. Both boards are built (#498): [`build_board`] builds
-/// one.
-pub fn build(project: &Project, split: ProgramSplit, date: &str) -> Built {
-    build_board(project, split, date, None)
-}
-
-/// [`build`], of the programs of `board` alone when it is given (#498,
-/// `export --board`): the stock's (every operation but an Inlay's male),
-/// or the male board's (every Inlay's male). A board with no programs is
-/// an error.
-pub fn build_board(
-    project: &Project,
-    split: ProgramSplit,
-    date: &str,
-    board: Option<Board>,
-) -> Built {
-    let mut findings = Findings::default();
-    for problem in validate(project) {
-        let severity = problem.severity();
-        let finding = Finding {
-            field: problem.field(),
-            code: (severity == Severity::Warning).then(|| problem.code().to_owned()),
-            message: problem.to_string(),
-        };
-        match severity {
-            Severity::Error => findings.errors.push(finding),
-            Severity::Warning => findings.warnings.push(finding),
-        }
-    }
-    if !findings.errors.is_empty() {
-        // Generators must not see a project validation rejects.
-        return Built {
-            programs: Vec::new(),
-            findings,
-            generated: None,
-        };
-    }
-
-    let mut ops = Vec::new();
-    for operation in &project.operations {
-        // Disabled operations are already reported by validation.
-        if !operation.enabled() {
-            continue;
-        }
-        let Some(tool) = project.tools.iter().find(|t| &t.id == operation.tool()) else {
-            findings.errors.push(Finding::plain(format!(
-                "operation `{}` uses tool `{}`, which is not in the project",
-                operation.id(),
-                operation.tool()
-            )));
-            continue;
-        };
-        // Format 22 (#436): an Inlay's board is a carve, so its runs are a
-        // V-Carve's: its clearing passes', then its V-bit's; #498: both
-        // boards, each generated and reported on its own.
-        if let Operation::Inlay(op) = operation {
-            inlay_boards(project, operation, op, board, &mut findings, &mut ops);
-            continue;
-        }
-        // Every other operation cuts the stock.
-        if board == Some(Board::Male) {
-            continue;
-        }
-        let plain =
-            |toolpath: Toolpath| vec![EmitOp::from((operation.clone(), tool.clone(), toolpath))];
-        let generated = match operation {
-            Operation::Profile(op) => generate_profile(project, op).map(|(t, w)| (plain(t), w)),
-            Operation::Pocket(op) => generate_pocket(project, op).map(|(t, w)| (plain(t), w)),
-            Operation::Engrave(op) => generate_engrave(project, op).map(|(t, w)| (plain(t), w)),
-            Operation::Bore(op) => generate_bore(project, op).map(|(t, w)| (plain(t), w)),
-            // The hole records go to the emitter, which writes them as
-            // canned cycles when the project asks and the controller's
-            // motion for them is the toolpath; a countersink's always as
-            // plain moves, which S18 holds to its derived depth (#427).
-            Operation::Drill(op) => generate_drill(project, op).map(|(drilled, w)| {
-                (
-                    vec![EmitOp::drill(operation.clone(), tool.clone(), drilled)],
-                    w,
-                )
-            }),
-            // Format 20: one tool run per clearing pass, then the V-bit's
-            // (`docs/specs/phase-3/design.md`, "Clearing passes", step 4);
-            // each is written with its own tool.
-            Operation::VCarve(op) => generate_vcarve(project, op).and_then(|(runs, w)| {
-                runs.into_iter()
-                    .map(|run| run_op(project, operation, run))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map(|runs| (runs, w))
-            }),
-            // Generated above, board by board.
-            Operation::Inlay(_) => continue,
-        };
-        match generated {
-            Ok((runs, warnings)) => {
-                // Validation reports `clearing_not_descending` (#406), as it
-                // reports `start_depth_uncleared` (#409) and
-                // `inlay_plug_base_thin` (#434): once.
-                let warnings = warnings.iter().filter(|w| {
-                    !matches!(
-                        w,
-                        dc_cam::Warning::ClearingNotDescending { .. }
-                            | dc_cam::Warning::InlayPlugBaseThin { .. }
-                    )
-                });
-                findings.warnings.extend(warnings.map(|w| {
-                    Finding::coded(
-                        w.code().as_str(),
-                        format!("operation `{}`: {w}", operation.id()),
-                    )
-                }));
-                ops.extend(runs);
-            }
-            Err(e) => findings.errors.push(Finding::plain(e.to_string())),
-        }
-    }
-    // The order check runs on whatever generated, so `check` reports it
-    // even when another operation failed; it never needs a failed one. It
-    // takes each operation's own run: a carve's clearing runs cut inside
-    // its targets before it, as intended (design "Clearing passes", step
-    // 5), and the tool-change hint counts them from the project.
-    // #498: it reads the stock; an Inlay's male is cut on its own board.
-    let generated: Vec<(&Operation, &Toolpath)> = ops
-        .iter()
-        .filter(|entry| entry.label == RunLabel::Main && entry.board == Board::Female)
-        .map(|entry| (&entry.op, &entry.toolpath))
-        .collect();
-    // #105: a placed tab no enabled Profile cuts round holds nothing.
-    let project_warnings = order::check(project, &generated)
-        .into_iter()
-        .chain(placed_tabs::check(project, &generated));
-    findings.warnings.extend(project_warnings.map(|w| {
-        let message = match w.op() {
-            Some(op) => format!("operation `{op}`: {w}"),
-            None => w.to_string(),
-        };
-        Finding {
-            field: warning_field(project, &w),
-            ..Finding::coded(w.code().as_str(), message)
-        }
-    }));
-    if let Some(board) = board
-        && findings.errors.is_empty()
-        && ops.is_empty()
-    {
-        findings.errors.push(Finding::plain(format!(
-            "nothing is cut on the {} board{}",
-            board.as_str(),
-            match board {
-                Board::Female => "",
-                Board::Male => ": no enabled Inlay cuts its male (set its male_board.thickness_mm)",
-            }
-        )));
-    }
-    if !findings.errors.is_empty() {
-        // An operation did not generate.
-        return Built {
-            programs: Vec::new(),
-            findings,
-            generated: None,
-        };
-    }
-
-    match emit_programs(project, &ops, split, date) {
-        Ok((programs, warnings)) => {
-            findings.warnings.extend(
-                warnings
-                    .iter()
-                    .map(|w| Finding::coded(w.code(), describe_export_warning(w))),
-            );
-            Built {
-                programs,
-                findings,
-                generated: Some(ops),
-            }
-        }
-        Err(e) => {
-            findings.errors.push(Finding::plain(e.to_string()));
-            Built {
-                programs: Vec::new(),
-                findings,
-                generated: Some(ops),
-            }
-        }
-    }
-}
-
-/// Generates Inlay `op` (the enabled `operation`) of `project` on each
-/// board (#498): both, or `only` that one, female first, appending its
-/// runs to `ops` (each tagged with its board) and its findings to
-/// `findings`. A male board's warning names the board; its
-/// `inlay_parts_merged` and `inlay_hole_filled`, the female's design
-/// mirrored, and any warning the female already gave, are left out, as
-/// [`dc_cam::generate_inlay`] leaves them. `inlay_male_board_unset` is located at
-/// the male board's thickness.
-fn inlay_boards(
-    project: &Project,
-    operation: &Operation,
-    op: &dc_project::InlayOp,
-    only: Option<Board>,
-    findings: &mut Findings,
-    ops: &mut Vec<EmitOp>,
-) {
-    let boards = match only {
-        Some(board) => vec![board],
-        None => vec![Board::Female, Board::Male],
-    };
-    let mut female_warnings: Vec<dc_cam::Warning> = Vec::new();
-    let female_cut = boards.contains(&Board::Female);
-    for board in boards {
-        let generated = generate_inlay_board(project, op, board).and_then(|(runs, w)| {
-            runs.into_iter()
-                .map(|run| run_op(project, operation, run))
-                .collect::<Result<Vec<_>, _>>()
-                .map(|runs| (runs, w))
-        });
-        let (runs, warnings) = match generated {
-            Ok(generated) => generated,
-            Err(e) => {
-                let message = match board {
-                    Board::Female => e.to_string(),
-                    Board::Male => format!("{e} (on the male board)"),
-                };
-                findings.errors.push(Finding::plain(message));
-                continue;
-            }
-        };
-        for w in &warnings {
-            // Validation reports `clearing_not_descending` (#406) and
-            // `inlay_plug_base_thin` (#434): once.
-            let reported = matches!(
-                w,
-                dc_cam::Warning::ClearingNotDescending { .. }
-                    | dc_cam::Warning::InlayPlugBaseThin { .. }
-            );
-            let repeats = board == Board::Male
-                && (female_warnings.contains(w)
-                    || (female_cut
-                        && matches!(
-                            w,
-                            dc_cam::Warning::InlayPartsMerged { .. }
-                                | dc_cam::Warning::InlayHoleFilled { .. }
-                        )));
-            if reported || repeats {
-                continue;
-            }
-            let on = match board {
-                Board::Female => String::new(),
-                Board::Male => " (male board)".to_owned(),
-            };
-            findings.warnings.push(Finding {
-                field: w.field(),
-                ..Finding::coded(
-                    w.code().as_str(),
-                    format!("operation `{}`{on}: {w}", operation.id()),
-                )
-            });
-        }
-        if board == Board::Female {
-            female_warnings = warnings;
-        }
-        ops.extend(runs);
-    }
-}
-
-/// The field, as validation names it, that a project-wide warning is
-/// about, so it is printed at that value's position: the start depth of
-/// a `start_depth_mismatch`, where `start_depth_uncleared` is located too
-/// (a countersink's is in its cycle, format 21).
-fn warning_field(project: &Project, warning: &dc_cam::Warning) -> Option<String> {
-    match warning {
-        dc_cam::Warning::StartDepthMismatch { op, .. } => {
-            let countersink = project.operations.iter().any(|o| {
-                matches!(o, Operation::Drill(drill) if &drill.id == op && drill.cycle.is_countersink())
-            });
-            let field = if countersink {
-                "cycle.countersink.start_depth_mm"
-            } else {
-                "start_depth_mm"
-            };
-            Some(format!("operations[{op}].{field}"))
-        }
-        _ => None,
-    }
-}
-
-/// The emitter's entry for tool run `run` of `operation`: written with the
-/// run's own tool, as plain moves.
-fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<EmitOp, CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == run.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: operation.id().clone(),
-            tool: run.tool.clone(),
-        })?;
-    Ok(EmitOp {
-        op: operation.clone(),
-        tool: tool.clone(),
-        toolpath: run.toolpath,
-        holes: None,
-        label: run.label,
-        board: run.board,
-    })
-}
-
-/// The deepest cut of operation `op` among `generated`, mm below the
-/// stock top (`docs/specs/phase-3/design.md`, "CLI": the summary prints
-/// it for a carve, whose depth follows its shapes); `None` when it cuts
-/// nothing or the stock has no thickness. A male Inlay's cut-out (#443)
-/// is not the carve: it goes through the board, and its line says so.
-/// An Inlay's female's runs only: its male's are on their own board
-/// ([`deepest_cut_on_mm`]).
-pub fn deepest_cut_mm(project: &Project, generated: &[EmitOp], op: &OperationId) -> Option<f64> {
-    deepest_cut_on_mm(project, generated, op, Board::Female)
-}
-
-/// [`deepest_cut_mm`] on `board` (#498), mm below that board's top:
-/// `project` is the project as given, its male board resolved for an
-/// Inlay's male runs.
-pub fn deepest_cut_on_mm(
-    project: &Project,
-    generated: &[EmitOp],
-    op: &OperationId,
-    board: Board,
-) -> Option<f64> {
-    generated
-        .iter()
-        .filter(|e| e.op.id() == op && e.board == board && !matches!(e.label, RunLabel::CutOut(_)))
-        .filter_map(|e| deepest_mm(&on_board(project, e), &e.toolpath))
-        .reduce(f64::max)
-}
-
-/// `project` as entry `entry`'s board cuts it (#498): itself, or on the
-/// male board of `entry`'s Inlay.
-fn on_board<'p>(project: &'p Project, entry: &EmitOp) -> std::borrow::Cow<'p, Project> {
-    match (&entry.op, entry.board) {
-        (Operation::Inlay(inlay), Board::Male) => {
-            std::borrow::Cow::Owned(project.on_male_board(inlay))
-        }
-        _ => std::borrow::Cow::Borrowed(project),
-    }
-}
-
-/// The V-bit floor's ridges for [`describe_carves`] (design step 6): their
-/// height between rings and, where it is higher, at the rings' corners
-/// (#522); then, with no clearing pass, what flattens them, or with one,
-/// that they stand only where no pass reaches.
-fn describe_ridges(project: &Project, ridges: dc_cam::vcarve::FloorRidges, alone: bool) -> String {
-    let straight = describe_length(project, ridges.straight_mm);
-    let corner = describe_length(project, ridges.corner_mm);
-    let heights = if corner == straight {
-        straight
-    } else {
-        format!("{straight} along the rings and up to {corner} at their corners")
-    };
-    if alone {
-        format!(
-            "; V-bit floor ridges {heights}; a clearing pass or a smaller step_over_fraction flattens them"
-        )
-    } else {
-        format!("; V-bit floor ridges {heights} where no clearing pass reaches")
-    }
-}
-
-/// The line of Inlay `inlay`'s `board` for [`describe_carves`] (#498),
-/// when `generated` cuts it: its deepest cut below the board's top, the
-/// female's flat floor or the male's start plane and floor, its floor
-/// ridges, and on the male its band's upright edge and its cut-out.
-fn describe_inlay(
-    project: &Project,
-    generated: &[EmitOp],
-    inlay: &dc_project::InlayOp,
-    board: Board,
-) -> Option<String> {
-    let deepest = deepest_cut_on_mm(project, generated, &inlay.id, board)?;
-    // Validation refuses an unset value, so an exported one is set.
-    let length =
-        |mm: Option<f64>| mm.map_or_else(|| "?".to_owned(), |mm| describe_length(project, mm));
-    let (top, mut floor) = match board {
-        Board::Female => (
-            "the stock top",
-            format!("a flat floor at depth_mm {}", length(inlay.depth_mm)),
-        ),
-        Board::Male => (
-            "the male board's top",
-            format!(
-                "the plug's start plane {} below the male board's top and the surround's flat floor plug_depth_mm {} below that",
-                length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
-                length(inlay.plug_depth_mm)
-            ),
-        ),
-    };
-    if let Some(ridges) = dc_cam::inlay::floor_ridges(project, inlay, board) {
-        floor.push_str(&describe_ridges(project, ridges, inlay.clearing.is_empty()));
-    }
-    let band = (board == Board::Male)
-        .then(|| dc_project::male_band(project, inlay))
-        .flatten();
-    // #448: the end mill's upright edge, and its rounding.
-    if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
-        let rounding = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
-        floor.push_str(&format!(
-            "; clearing pass `{}` cuts the band's outer edge upright, its inward curves rounded to {}",
-            pass.tool,
-            describe_length(project, rounding)
-        ));
-    }
-    // #443, #461: where the cut-out frees the plug, and how deep.
-    if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
-        && let Some(tool) = project.tools.iter().find(|t| t.id == cut_out.tool)
-        && generated
-            .iter()
-            .any(|e| e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_)))
-    {
-        let inset_mm = band.cut_out_inset_mm(tool.diameter_mm);
-        floor.push_str(&format!(
-            "; the cut-out frees the plug along the floor's outer edge, its centre {} inside the band's edge and at least {} out from the design, through the board to {} below it",
-            describe_length(project, inset_mm),
-            describe_length(project, band.margin_mm - inset_mm),
-            describe_length(project, cut_out.through_cut_allowance_mm)
-        ));
-    }
-    Some(format!(
-        "Inlay {} `{}` ({} board): deepest cut {} below {top}, {floor}.",
-        inlay.id,
-        inlay.name,
-        board.as_str(),
-        describe_length(project, deepest)
-    ))
-}
-
-/// One line per enabled V-Carve or Inlay of `generated`, for `check` and
-/// `export`: its deepest cut, whether it has a flat depth (capability 39)
-/// and, when the V-bit cuts a floor, the height of the ridges it leaves
-/// (design step 6) and whether clearing passes cut the rest. An Inlay has
-/// a line per board it cuts (#498): the female's, and the male's with its
-/// start plane, `depth_mm − glue_gap_mm` below the male board's top
-/// (#436); its mirror line is the `inlay_male_mirrored` warning's. A male
-/// with a cut-out says where it runs and how far through the board
-/// (#443); its deepest cut is the carve's, not the cut-out's.
-pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
-    project
-        .operations
-        .iter()
-        .filter(|op| op.enabled())
-        .flat_map(|op| match op {
-            Operation::VCarve(carve) => {
-                let Some(deepest) = deepest_cut_mm(project, generated, &carve.id) else {
-                    return Vec::new();
-                };
-                let mut floor = carve.flat_depth_mm.map_or_else(
-                    || "no flat depth".to_owned(),
-                    |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
-                );
-                // Design step 6: the V-bit's floor is scalloped; with
-                // clearing passes, only where none of them reaches (#406).
-                if let Some(ridges) = dc_cam::vcarve::floor_ridges(project, carve) {
-                    floor.push_str(&describe_ridges(project, ridges, carve.clearing.is_empty()));
-                }
-                vec![format!(
-                    "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
-                    carve.id,
-                    carve.name,
-                    describe_length(project, deepest)
-                )]
-            }
-            // #498: one line per board it cuts.
-            Operation::Inlay(inlay) => [Board::Female, Board::Male]
-                .into_iter()
-                .filter_map(|board| describe_inlay(project, generated, inlay, board))
-                .collect(),
-            _ => Vec::new(),
-        })
-        .collect()
-}
-
-fn describe_export_warning(warning: &ExportWarning) -> String {
-    match warning {
-        ExportWarning::DisabledOperationSkipped { op } => {
-            format!("operation `{op}` is disabled and was left out")
-        }
-        ExportWarning::ArcsFlattened { op, count } => format!(
-            "operation `{op}`: {count} arc(s) written as short straight moves because the controller would reject them once rounded"
-        ),
-        ExportWarning::CannedCycleExpanded { op, reason } => {
-            format!("operation `{op}`: written as plain moves, not canned cycles, because {reason}")
-        }
-        ExportWarning::UnitsSetByController { post, units } => {
-            let units = match units {
-                Units::Mm => "millimetres",
-                Units::Inch => "inches",
-            };
-            format!(
-                "post-processor `{post}` has no units words (G20/G21), so the program has none; it is in {units}, so run it only on a machine set up in {units}"
-            )
-        }
-        ExportWarning::ArcFitFallback { op, runs } => format!(
-            "operation `{op}`: {runs} run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them"
-        ),
-    }
-}
-
 /// Loads the `.dcv` at `path`; a file that cannot become a project is an
-/// error (exit 1). The problems found at load are not returned: [`build`]
-/// validates the project again, after any `--post` swap, so they cannot go
-/// stale. The file comes back to locate [`build`]'s findings in.
+/// error (exit 1). The problems found at load are not returned:
+/// [`dc_job::build`] validates the project again, after any `--post` swap,
+/// so they cannot go stale. The file comes back to locate the findings in.
 pub fn load_project(path: &Path) -> Result<(Project, ProjectFile<'_>), Failure> {
     let bytes = read_file(path)?;
     let loaded = dc_project::load(&bytes)
@@ -710,7 +137,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         programs,
         findings,
         generated,
-    } = build_board(&project, args.split(), &date, args.board.map(Board::from));
+    } = dc_job::build_board(&project, args.split(), &date, args.board.map(Board::from));
     for note in &file.notes {
         errln!("{}: note: {note}", file.path.display());
     }
@@ -728,7 +155,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     }
 
     let boards = by_board(&project);
-    let outputs = output_paths(args.output.as_deref(), &args.dcv, &programs, boards)?;
+    let outputs = output_paths(args.output.as_deref(), &args.dcv, &project, &programs)?;
     if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
             "refusing to write the program over the project file {}",
@@ -750,7 +177,7 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     let staged_preview = match (&args.preview, &generated) {
         (Some(path), Some(generated)) => Some(StagedFile::write(
             path,
-            preview_svg(&project, generated).as_bytes(),
+            preview::render_generated(&project, generated).as_bytes(),
         )?),
         _ => None,
     };
@@ -801,21 +228,6 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         outln!("Wrote preview {}.", preview.display())?;
     }
     Ok(ExitCode::SUCCESS)
-}
-
-/// The preview SVG of the generated operations (addendum A5).
-pub fn preview_svg(project: &Project, generated: &[EmitOp]) -> String {
-    let ops: Vec<preview::Run<'_>> = generated
-        .iter()
-        .map(|entry| preview::Run {
-            op: &entry.op,
-            label: &entry.label,
-            tool: &entry.tool,
-            toolpath: &entry.toolpath,
-            board: entry.board,
-        })
-        .collect();
-    preview::render(project, &ops)
 }
 
 /// Refuses a `--preview` path that is not an `.svg` file, that is the
@@ -893,170 +305,20 @@ fn resolved(path: &Path) -> Option<PathBuf> {
     Some(std::fs::canonicalize(parent).ok()?.join(path.file_name()?))
 }
 
-/// The cycle-time estimate of each program (functional spec, capability
-/// 30), with the user's `[estimate]` settings to print them with. It reads
-/// the programs and changes nothing.
-pub struct Estimates {
-    /// Each program's estimate, in program order, or why there is none.
-    per_program: Vec<Result<Estimate, String>>,
-    settings: EstimateConfig,
-}
-
-impl Estimates {
-    /// The estimates of `programs`, emitted from `project`.
-    pub fn new(project: &Project, programs: &[Program], settings: EstimateConfig) -> Self {
-        let post = project.post_processor.resolve().map_err(|e| e.to_string());
-        let per_program = programs
-            .iter()
-            .map(|program| {
-                let post = post.as_ref().map_err(Clone::clone)?;
-                dc_gcode::estimate(program, post).map_err(|e| e.to_string())
-            })
-            .collect();
-        Self {
-            per_program,
-            settings,
-        }
-    }
-
-    /// The `Estimated time: …` line of program `k`.
-    pub fn program_line(&self, k: usize) -> String {
-        match self.per_program.get(k) {
-            Some(Ok(estimate)) => describe_estimate("Estimated time", estimate, &self.settings),
-            Some(Err(reason)) => format!("Estimated time: not available ({reason})."),
-            None => "Estimated time: not available.".to_owned(),
-        }
-    }
-
-    /// The `<label>: …` line over the programs `ks` (#498: one board's);
-    /// `None` when `ks` is empty.
-    pub fn total_of(&self, ks: &[usize], label: &str) -> Option<String> {
-        if ks.is_empty() {
-            return None;
-        }
-        let total = ks.iter().try_fold(Estimate::default(), |sum, &k| {
-            self.per_program
-                .get(k)
-                .and_then(|e| e.as_ref().ok())
-                .map(|e| sum + *e)
-        });
-        Some(match total {
-            Some(total) => describe_estimate(label, &total, &self.settings),
-            None => format!("{label}: not available."),
-        })
-    }
-
-    /// The `Estimated total time: …` line over every program, when there
-    /// is more than one.
-    pub fn total_line(&self) -> Option<String> {
-        if self.per_program.len() < 2 {
-            return None;
-        }
-        let total = self
-            .per_program
-            .iter()
-            .try_fold(Estimate::default(), |sum, e| {
-                e.as_ref().ok().map(|e| sum + *e)
-            });
-        Some(match total {
-            Some(total) => describe_estimate("Estimated total time", &total, &self.settings),
-            None => "Estimated total time: not available.".to_owned(),
-        })
-    }
-}
-
-/// `estimate` as one line, as capability 30 shows it: the total, then the
-/// cutting and dwell times, the rapids' time when the user has given a
-/// rapid rate or else their distance and how to include it, the scale
-/// factor when it is not 1, and what is left out: acceleration, and the
-/// time at each pause and tool change, counted. Every time is multiplied
-/// by the scale factor.
-fn describe_estimate(label: &str, estimate: &Estimate, settings: &EstimateConfig) -> String {
-    let scale = settings.scale_factor;
-    let cutting_s = estimate.feed_s * scale;
-    let dwells_s = estimate.dwell_s * scale;
-    let rapids = settings
-        .rapid_mm_min
-        .map(|rate| (estimate.rapid_mm / rate * SECONDS_PER_MINUTE * scale, rate));
-    let total_s = cutting_s + dwells_s + rapids.map_or(0.0, |(s, _)| s);
-    let mut parts = format!(
-        "cutting {}, dwells {}",
-        duration(cutting_s),
-        duration(dwells_s)
-    );
-    if let Some((rapids_s, rate)) = rapids {
-        parts.push_str(&format!(", rapids {} at {rate} mm/min", duration(rapids_s)));
-    }
-    if (scale - 1.0).abs() > f64::EPSILON {
-        parts.push_str(&format!("; scale factor {scale}"));
-    }
-    let mut line = format!("{label}: {} ({parts})", duration(total_s));
-    if rapids.is_none() && estimate.rapid_mm > 0.0 {
-        line.push_str(&format!(
-            "; {} of rapids not included: set [estimate] rapid_mm_min in config.toml",
-            distance(estimate.rapid_mm)
-        ));
-    }
-    line.push_str(". Excludes acceleration");
-    match estimate.stops {
-        0 => {}
-        1 => line.push_str(" and 1 pause"),
-        n => line.push_str(&format!(" and {n} pauses")),
-    }
-    line.push('.');
-    line
-}
-
-const SECONDS_PER_MINUTE: f64 = 60.0;
-
-/// `seconds`, rounded to the second, as `1 h 2 min 3 s`, `14 min 5 s` or
-/// `13 s`.
-fn duration(seconds: f64) -> String {
-    let total = seconds.max(0.0).round();
-    let hours = (total / 3600.0).floor();
-    let minutes = ((total - hours * 3600.0) / 60.0).floor();
-    let secs = total - hours * 3600.0 - minutes * 60.0;
-    if hours > 0.0 {
-        format!("{hours:.0} h {minutes:.0} min {secs:.0} s")
-    } else if minutes > 0.0 {
-        format!("{minutes:.0} min {secs:.0} s")
-    } else {
-        format!("{secs:.0} s")
-    }
-}
-
-/// `mm` as `50 mm`, or from a metre up as `4.3 m`.
-fn distance(mm: f64) -> String {
-    if mm < 1000.0 {
-        format!("{mm:.0} mm")
-    } else {
-        format!("{:.1} m", mm / 1000.0)
-    }
-}
-
-/// Whether `project`'s programs are named and listed by board (#498): it
-/// has an enabled Inlay, whose female is cut on the stock and whose male
-/// on its male board.
-pub fn by_board(project: &Project) -> bool {
-    project
-        .operations
-        .iter()
-        .any(|op| matches!(op, Operation::Inlay(inlay) if inlay.enabled))
-}
-
 /// Where each program of the project `dcv` goes. One program goes to
 /// `output` (`-o`), or to the project's path with the post-processor's
 /// extension. Programs of tool runs (#95) go beside it, named
 /// `<stem>-<k>-T<n>.<ext>`: `<k>` the run's place, `<n>` its tool's
-/// number, `<stem>` and `<ext>` those of that one path. With `boards`
-/// (#498, [`by_board`]) every program is named after its board,
+/// number, `<stem>` and `<ext>` those of that one path. With an enabled
+/// Inlay (#498, [`by_board`]) every program is named after its board,
 /// `<stem>-female-<k>-T<n>.<ext>` and `<stem>-male-<k>-T<n>.<ext>`, `<k>`
-/// counting from 1 within each board, however many there are.
+/// counting from 1 within each board, however many there are
+/// ([`dc_job::program_suffixes`]).
 pub fn output_paths(
     output: Option<&Path>,
     dcv: &Path,
+    project: &Project,
     programs: &[Program],
-    boards: bool,
 ) -> Result<Vec<PathBuf>, Failure> {
     let single = match (output, programs.first()) {
         (Some(path), _) => path.to_path_buf(),
@@ -1065,32 +327,17 @@ pub fn output_paths(
         (None, Some(program)) => dcv.with_extension(&program.extension),
         (None, None) => dcv.to_path_buf(),
     };
-    if programs.len() < 2 && !boards {
+    if programs.len() < 2 && !by_board(project) {
         return Ok(vec![single]);
     }
     let stem = single
         .file_stem()
         .ok_or_else(|| Failure::error(format!("{} is not a file path", single.display())))?;
-    Ok(programs
-        .iter()
-        .enumerate()
-        .map(|(k, program)| {
+    Ok(program_suffixes(project, programs)
+        .into_iter()
+        .map(|suffix| {
             let mut name = OsString::from(stem);
-            if boards {
-                let k = programs
-                    .iter()
-                    .take(k)
-                    .filter(|p| p.board == program.board)
-                    .count();
-                name.push(format!(
-                    "-{}-{}-T{}",
-                    program.board.as_str(),
-                    k + 1,
-                    program.first_tool.number
-                ));
-            } else {
-                name.push(format!("-{}-T{}", k + 1, program.first_tool.number));
-            }
+            name.push(suffix);
             if let Some(extension) = single.extension() {
                 name.push(".");
                 name.push(extension);
@@ -1139,11 +386,7 @@ fn report(
     }
     outln!("{}", estimates.program_line(0))?;
     // #57: the program does not stop for the first tool.
-    outln!(
-        "Before you start: fit T{}{} and set work zero with it.",
-        program.first_tool.number,
-        name_suffix(&program.first_tool.name)
-    )?;
+    outln!("Before you start: {}", before_you_start(program, 0, true))?;
     // #283: `G53` moves to a machine position, which is right only on a
     // homed machine; the program cannot check that.
     if let Some(z) = &program.machine_lift {
@@ -1158,14 +401,7 @@ fn report(
     // #95: the user chose one program with M6, in the project or with
     // `--one-program`; it stops only if the sender lets M6 through or
     // stops for it itself.
-    let one_program = match args.split() {
-        ProgramSplit::OneProgram => true,
-        ProgramSplit::ProgramPerTool => false,
-        ProgramSplit::ProjectDefault => {
-            project.post_processor.tool_change_mode == ToolChangeMode::M6
-        }
-    };
-    if one_program && changes_tools(project) {
+    if one_program(project, args.split()) && changes_tools(project) {
         outln!(
             "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
         )?;
@@ -1176,7 +412,7 @@ fn report(
 /// #308: the post-processor's condition for a `G53` lift outside the
 /// travel to stop before it moves, with a leading space, or nothing.
 fn limits_note(project: &Project) -> String {
-    machine_lift_limits_note(&project.post_processor.id)
+    dc_gcode::machine_lift_limits_note(&project.post_processor.id)
         .map(|note| format!(" {note}"))
         .unwrap_or_default()
 }
@@ -1213,15 +449,9 @@ fn report_runs(
             k = 0;
             outln!("{}", board_heading(project, program.board))?;
         }
-        let tool = &program.first_tool;
-        let fit = format!("fit T{}{}", tool.number, name_suffix(&tool.name));
         // The first program sets work zero; a later one keeps X and Y and
         // sets Z zero with its new bit, whose length differs (#43).
-        let before = if k == 0 {
-            format!("{fit} and set work zero (X, Y and Z) with it.")
-        } else {
-            format!("{fit} and set Z zero with it. Keep X and Y zero.")
-        };
+        let before = before_you_start(program, k, false);
         k += 1;
         outln!("  {k}. {}  Before you start: {before}", output.display())?;
     }
@@ -1264,27 +494,6 @@ fn report_runs(
         outln!("{total}")?;
     }
     Ok(())
-}
-
-/// The heading of `board`'s programs (#498): `Female board, the stock,
-/// 110.000 mm × 80.000 mm × 12.000 mm:`, or the male board's the same,
-/// its size as the project's male board resolves it.
-pub fn board_heading(project: &Project, board: Board) -> String {
-    let (name, stock) = match board {
-        Board::Female => ("Female board, the stock", Some(project.stock.clone())),
-        Board::Male => ("Male board", project.male_board().map(|(_, stock)| stock)),
-    };
-    match stock {
-        Some(stock) => format!(
-            "{name}, {} × {} × {}:",
-            describe_length(project, stock.width_mm),
-            describe_length(project, stock.height_mm),
-            stock
-                .thickness_mm
-                .map_or_else(|| "?".to_owned(), |t| describe_length(project, t)),
-        ),
-        None => format!("{name}:"),
-    }
 }
 
 /// Prints the estimated time of `board`'s programs, when it has more than
@@ -1366,145 +575,6 @@ fn report_post_and_operations(
     Ok(())
 }
 
-/// One line per exported tool run, in cut order: each enabled operation's
-/// id, name, tool, target count and depth, a carve's clearing runs before
-/// it named `o6 (clearing t1)` with their own tools and depths (#406), and
-/// a male Inlay's cut-out after it, `op1 (cut-out t2)` (#443).
-pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<String> {
-    let tool_name = |id: &ToolId| {
-        project
-            .tools
-            .iter()
-            .find(|t| &t.id == id)
-            .map_or("?", |t| t.name.as_str())
-    };
-    let mut lines = Vec::new();
-    let run_line = |op: &Operation, run: &EmitOp| {
-        // #498: a male Inlay's run is as deep below its male board's top.
-        let depth = deepest_mm(&on_board(project, run), &run.toolpath).map_or_else(
-            || "? mm deep".to_owned(),
-            |d| format!("{} deep", describe_length(project, d)),
-        );
-        let on = match run.board {
-            Board::Female => "",
-            Board::Male => " on the male board",
-        };
-        format!(
-            "{} `{}`: tool `{}` ({}), {} target(s), {depth}{on}",
-            run.label.naming(op.id().as_str()),
-            op.name(),
-            run.tool.id,
-            tool_name(&run.tool.id),
-            op.targets().len(),
-        )
-    };
-    for op in project.operations.iter().filter(|op| op.enabled()) {
-        // #498: an Inlay's runs, board by board, each as it is cut.
-        if matches!(op, Operation::Inlay(_)) {
-            lines.extend(
-                generated
-                    .iter()
-                    .filter(|e| e.op.id() == op.id() && e.board == Board::Female)
-                    .chain(
-                        generated
-                            .iter()
-                            .filter(|e| e.op.id() == op.id() && e.board == Board::Male),
-                    )
-                    .map(|run| run_line(op, run)),
-            );
-            continue;
-        }
-        // Design "Clearing passes", step 4: a carve's clearing runs are cut
-        // before it, each to the carve's floor.
-        for run in generated
-            .iter()
-            .filter(|e| e.op.id() == op.id() && matches!(e.label, RunLabel::Clearing(_)))
-        {
-            lines.push(run_line(op, run));
-        }
-        // Validation refuses an unset depth, so an exported one is set; a
-        // carve's depth follows its shapes, so its deepest cut is stated,
-        // and a countersink's follows its mouth and bit (format 21), so
-        // its mouth and the depth its plunges reach are (#428).
-        let deepest = || {
-            generated
-                .iter()
-                .filter(|e| e.op.id() == op.id() && e.label == RunLabel::Main)
-                .find_map(|e| deepest_mm(project, &e.toolpath))
-        };
-        let depth = match op {
-            Operation::VCarve(_) => deepest().map_or_else(
-                || "? mm deep".to_owned(),
-                |d| format!("cut {} deep at most", describe_length(project, d)),
-            ),
-            Operation::Drill(DrillOp {
-                cycle: DrillCycle::Countersink { diameter_mm, .. },
-                ..
-            }) => format!(
-                "{} countersinks, {}",
-                describe_length(project, *diameter_mm),
-                deepest().map_or_else(
-                    || "? mm deep".to_owned(),
-                    |d| format!("{} deep", describe_length(project, d)),
-                ),
-            ),
-            _ => op.depth_mm().map_or_else(
-                || "? mm deep".to_owned(),
-                |d| format!("{} deep", describe_length(project, d)),
-            ),
-        };
-        lines.push(format!(
-            "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
-            op.id(),
-            op.name(),
-            op.tool(),
-            tool_name(op.tool()),
-            op.targets().len(),
-        ));
-        // #443: a male Inlay's cut-out is cut after it, through the board.
-        for run in generated
-            .iter()
-            .filter(|e| e.op.id() == op.id() && matches!(e.label, RunLabel::CutOut(_)))
-        {
-            lines.push(run_line(op, run));
-        }
-    }
-    lines
-}
-
-/// The deepest cut of `toolpath`, mm below the stock top; `None` when it
-/// cuts nothing or the stock has no thickness.
-fn deepest_mm(project: &Project, toolpath: &Toolpath) -> Option<f64> {
-    let thickness_mm = project.stock.thickness_mm?;
-    toolpath
-        .moves
-        .iter()
-        .filter(|m| m.is_cut())
-        .map(|m| thickness_mm - m.to.z)
-        .reduce(f64::max)
-}
-
-/// `length_mm` as the summary states a length (addendum A6): in the
-/// project's display units, with the post-processor's decimal places for
-/// them, then the unit: `12.000 mm`, `0.5000 in`, as VCarve states lengths
-/// in its job units.
-fn describe_length(project: &Project, length_mm: f64) -> String {
-    let units = project.display_units;
-    let value = length_mm / mm_per_unit(units);
-    let unit = match units {
-        Units::Mm => "mm",
-        Units::Inch => "in",
-    };
-    // The project was exported with this post-processor, so it resolves.
-    let number = project
-        .post_processor
-        .resolve()
-        .ok()
-        .and_then(|post| format_number(value, &post.number_format, units).ok())
-        .unwrap_or_else(|| value.to_string());
-    format!("{number} {unit}")
-}
-
 /// The post-processors whose programs leave the tool length offset
 /// (`G43.1`) alone: grblHAL and GRBL fold an active offset into the work
 /// zero the user sets (`G10 L20`), so a `G49` after the user zeroes Z
@@ -1525,15 +595,15 @@ fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
 
 /// Prints, for a grblHAL program whose header cancels scaling with `G50`,
 /// that grblHAL's `G50` misses a scale that leaves X at 1, so to soft-reset
-/// after any `G51` and check `$G` (#320; [`scaling_note`]). It is printed,
-/// not written into the program.
+/// after any `G51` and check `$G` (#320; [`dc_gcode::scaling_note`]). It is
+/// printed, not written into the program.
 fn report_scaling(project: &Project) -> Result<(), Failure> {
     // The project was exported with this post-processor, so it resolves.
     let note = project
         .post_processor
         .resolve()
         .ok()
-        .and_then(|post| scaling_note(&post));
+        .and_then(|post| dc_gcode::scaling_note(&post));
     if let Some(note) = note {
         outln!("{note}")?;
     }
@@ -1556,242 +626,4 @@ fn report_pauses(program: &Program, indent: &str) -> Result<(), Failure> {
         outln!("{indent}  line {}: {message}", pause.line)?;
     }
     Ok(())
-}
-
-/// ` <name>`, or nothing for an empty name.
-fn name_suffix(name: &str) -> String {
-    if name.is_empty() {
-        String::new()
-    } else {
-        format!(" {name}")
-    }
-}
-
-/// Whether consecutive enabled operations of `project` use different tools.
-fn changes_tools(project: &Project) -> bool {
-    // A carve's clearing passes are tool runs of their own (#406).
-    let tools: Vec<_> = project
-        .operations
-        .iter()
-        .filter(|op| op.enabled())
-        .flat_map(Operation::run_tools)
-        .collect();
-    tools.windows(2).any(|pair| pair.first() != pair.get(1))
-}
-
-/// The radius of the largest tool an enabled operation uses, mm: how far
-/// the cutter's edge reaches past the tool centre in a program that uses
-/// them all.
-pub fn largest_tool_radius_mm(project: &Project) -> f64 {
-    project
-        .operations
-        .iter()
-        .filter(|op| op.enabled())
-        .flat_map(Operation::run_tools)
-        .filter_map(|tool| project.tools.iter().find(|t| &t.id == tool))
-        .map(|t| t.diameter_mm / 2.0)
-        .fold(0.0, f64::max)
-}
-
-/// The radius of the one tool of `program`, a tool run's program (#95), mm.
-/// The tool is found by id: its `T` number, once set, is no place in the
-/// tool list (#120).
-pub fn tool_radius_mm(project: &Project, program: &Program) -> f64 {
-    project
-        .tools
-        .iter()
-        .find(|t| t.id == program.first_tool.id)
-        .map_or(0.0, |t| t.diameter_mm / 2.0)
-}
-
-/// The program's extents in machine coordinates (#62), written as the
-/// program writes numbers: first the tool centre's, every axis, then in X
-/// and Y widened by `radius_mm`, the largest radius of the program's tools,
-/// which is where the cutter's edge reaches. Users place clamps from them.
-/// Empty for a program that never moves.
-pub fn describe_extents(project: &Project, program: &Program, radius_mm: f64) -> Vec<String> {
-    let extents = &program.extents;
-    let units = extents.units;
-    // The program was emitted with this post-processor, so it resolves.
-    let post = project.post_processor.resolve().ok();
-    let number = |value: f64| {
-        post.as_ref()
-            .and_then(|post| format_number(value, &post.number_format, units).ok())
-            .unwrap_or_else(|| value.to_string())
-    };
-    let ranges = |widen: f64, axes: &[(&str, Option<AxisRange>)]| -> Vec<String> {
-        axes.iter()
-            .filter_map(|(axis, range)| {
-                range.map(|r| {
-                    format!(
-                        "{axis} {}..{}",
-                        number(r.min - widen),
-                        number(r.max + widen)
-                    )
-                })
-            })
-            .collect()
-    };
-    let centre = ranges(0.0, &[("X", extents.x), ("Y", extents.y), ("Z", extents.z)]);
-    if centre.is_empty() {
-        return Vec::new();
-    }
-    let unit = match units {
-        Units::Mm => "mm",
-        Units::Inch => "in",
-    };
-    let mut lines = vec![format!(
-        "Extents (machine coordinates, {unit}, tool centre): {}",
-        centre.join(", ")
-    )];
-    let edge = ranges(
-        radius_mm / mm_per_unit(units),
-        &[("X", extents.x), ("Y", extents.y)],
-    );
-    if radius_mm > 0.0 && !edge.is_empty() {
-        lines.push(format!(
-            "  The cutter's edge reaches {}; keep clamps outside that.",
-            edge.join(", ")
-        ));
-    }
-    lines
-}
-
-#[cfg(test)]
-mod tests {
-    use dc_project::test_support::{profile_mut, sample_project};
-    use dc_project::{OperationId, ToolId};
-
-    use super::*;
-
-    /// The sample project with a second tool `t2` (3 mm) and a second
-    /// Profile that cuts with it, the tools numbered `numbers`.
-    fn two_tool_project(numbers: [Option<u32>; 2]) -> Project {
-        let mut project = sample_project();
-        let mut second = project.tools[0].clone();
-        second.id = ToolId::new("t2");
-        second.name = "3 mm".into();
-        second.diameter_mm = 3.0;
-        project.tools.push(second);
-        let mut op = profile_mut(&mut project).clone();
-        op.id = OperationId::new("o2");
-        op.tool = ToolId::new("t2");
-        project.operations.push(Operation::Profile(op));
-        for (tool, number) in project.tools.iter_mut().zip(numbers) {
-            tool.number = number;
-        }
-        project
-    }
-
-    /// #120: a tool run's program finds its tool by id, not by its `T`
-    /// number, which once set is no place in the tool list.
-    #[test]
-    fn first_tool_radius_is_found_by_id_not_number() {
-        for numbers in [[None, None], [Some(9), Some(4)], [Some(2), Some(1)]] {
-            let project = two_tool_project(numbers);
-            let Built {
-                programs, findings, ..
-            } = build(&project, ProgramSplit::ProgramPerTool, "2026-01-01");
-            assert!(findings.errors.is_empty(), "{numbers:?}: {findings:?}");
-            let radii: Vec<f64> = programs
-                .iter()
-                .map(|p| tool_radius_mm(&project, p))
-                .collect();
-            assert_eq!(radii, [3.175, 1.5], "{numbers:?}");
-        }
-    }
-
-    /// The sample project with a V-Carve `o6` of its 50 x 30 mm rectangle
-    /// with the 90 degree V-bit `t2` at a 2 mm flat depth, clearing with
-    /// `passes` (format 20, #406), and a 3 mm end mill `t3`.
-    fn carve_project(passes: &[&str]) -> Project {
-        let mut project = sample_project();
-        project
-            .tools
-            .push(dc_project::test_support::tool_v_bit_90());
-        let mut small = project.tools[0].clone();
-        small.id = ToolId::new("t3");
-        small.name = "3 mm end mill".into();
-        small.diameter_mm = 3.0;
-        project.tools.push(small);
-        let carve = dc_project::VCarveOp {
-            flat_depth_mm: Some(2.0),
-            clearing: passes
-                .iter()
-                .map(|tool| dc_project::ClearingPass {
-                    tool: ToolId::new(*tool),
-                    strategy: dc_project::ClearanceStrategy::Offset,
-                    direction: dc_project::CutDirection::Climb,
-                    entry: dc_project::Entry::Plunge,
-                })
-                .collect(),
-            ..dc_project::test_support::sample_v_carve()
-        };
-        project.operations = vec![Operation::VCarve(carve)];
-        project
-    }
-
-    /// #406: the summary names a carve's clearing run `o6 (clearing t1)`
-    /// with its own tool and depth, before the carve's own line.
-    #[test]
-    fn summary_names_clearing_runs() {
-        let project = carve_project(&["t1"]);
-        let Built { generated, .. } = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
-        let generated = generated.expect("every operation generated");
-        let lines = describe_operations(&project, &generated);
-        assert_eq!(lines.len(), 2, "{lines:?}");
-        assert!(
-            lines[0].starts_with(
-                "o6 (clearing t1) `V-Carve`: tool `t1` (6.35 mm upcut), 1 target(s), 2."
-            ) && lines[0].ends_with(" mm deep"),
-            "{lines:?}"
-        );
-        assert!(
-            lines[1].starts_with("o6 `V-Carve`: tool `t2` (90° V-bit), 1 target(s), cut 2."),
-            "{lines:?}"
-        );
-    }
-
-    /// #406: a wider clearing pass after a narrower one is reported once,
-    /// by validation, not again by the generator.
-    #[test]
-    fn clearing_not_descending_is_reported_once() {
-        let project = carve_project(&["t3", "t1"]);
-        let Built { findings, .. } = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
-        let count = findings
-            .warnings
-            .iter()
-            .filter(|w| w.code.as_deref() == Some("clearing_not_descending"))
-            .count();
-        assert_eq!(count, 1, "{findings:?}");
-    }
-
-    /// Format 21: `start_depth_mismatch` is printed at the start depth,
-    /// which for a countersink is in its cycle.
-    #[test]
-    fn start_depth_mismatch_is_located_at_the_operations_start_depth() {
-        let mut project = sample_project();
-        let mut sink = dc_project::test_support::sample_drill();
-        sink.cycle = dc_project::DrillCycle::Countersink {
-            diameter_mm: 6.0,
-            start_depth_mm: 2.0,
-            start_plane_cleared_externally: false,
-        };
-        project.operations.push(Operation::Drill(sink));
-        let mismatch = |op: &str| dc_cam::Warning::StartDepthMismatch {
-            op: OperationId::new(op),
-            cleared_by: OperationId::new("o2"),
-            floor: dc_cam::FloorKind::Pocket,
-            start_depth_mm: 2.0,
-            floor_depth_mm: Some(1.0),
-        };
-        assert_eq!(
-            warning_field(&project, &mismatch("o3")).as_deref(),
-            Some("operations[o3].cycle.countersink.start_depth_mm")
-        );
-        assert_eq!(
-            warning_field(&project, &mismatch("o6")).as_deref(),
-            Some("operations[o6].start_depth_mm")
-        );
-    }
 }

@@ -32,7 +32,9 @@ use dc_project::{
     Operation, OperationId, PlacedTab, Project, TabId, TabPlacement, TabShape, TabSpec,
 };
 
-use crate::cli::{Failure, StagedFile, TabsCommand, TabsPlaceArgs};
+use dreamcarve_shell::StagedFile;
+
+use crate::cli::{Failure, TabsCommand, TabsPlaceArgs};
 use crate::export::load_project;
 use crate::output::{errln, outln};
 
@@ -87,7 +89,7 @@ fn print_warnings(warnings: &[Warning]) {
 /// Saves `project` to `dcv`.
 fn save(dcv: &Path, project: &Project) -> Result<(), Failure> {
     let text = dc_project::save(project).map_err(Failure::error)?;
-    StagedFile::write(dcv, text.as_bytes())?.commit()
+    Ok(StagedFile::write(dcv, text.as_bytes())?.commit()?)
 }
 
 /// `tabs place`.

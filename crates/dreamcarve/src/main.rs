@@ -7,10 +7,12 @@
 //! `config` and `tools` (`docs/specs/phase-2/design.md`, "Tool library
 //! CLI") and `tabs` (#105, "Placed tabs").
 //!
-//! The binary owns argument parsing, file I/O, the clock, printing, and exit
-//! codes. Every decision about geometry, toolpaths, and G-code is made by
-//! the `dc-*` crates it calls. All printing goes through [`output`], which
-//! handles a closed pipe (#216).
+//! The binary owns argument parsing, the clock, printing, and exit codes,
+//! and the file I/O it shares with the app through `dreamcarve-shell`.
+//! Every decision about geometry, toolpaths, and G-code is made by the
+//! `dc-*` crates it calls, through `dc-job`'s pipeline (phase 4, slice 1).
+//! All printing goes through [`output`], which handles a closed pipe
+//! (#216).
 
 // `println!` and `eprintln!` panic when the stream fails; use `output`.
 #![deny(clippy::print_stdout, clippy::print_stderr)]
@@ -24,7 +26,6 @@ mod config;
 mod export;
 mod init;
 mod output;
-mod preview;
 mod tabs;
 mod tools;
 

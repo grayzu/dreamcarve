@@ -21,11 +21,12 @@ dc-cam.workspace = true
 dc-gcode.workspace = true
 dc-geometry.workspace = true
 dc-import.workspace = true
+# The pipeline (`build`, the preview, `init`'s project) and the file I/O
+# the app shares (staged writes, the config directory, `config.toml`).
+dc-job.workspace = true
 dc-library.workspace = true
 dc-project.workspace = true
-# The user config file (`src/config.rs`).
-serde.workspace = true
-toml.workspace = true
+dreamcarve-shell.workspace = true
 
 [dev-dependencies]
 # Tests re-lay out a .dcv by hand, as a user might (#76), and build phase

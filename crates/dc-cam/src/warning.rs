@@ -1125,6 +1125,67 @@ impl Warning {
             | Self::ToolChangeAvoidable { .. } => None,
         }
     }
+
+    /// The shape the warning is about, for the warnings that name one, so
+    /// a shell can point at it.
+    #[must_use]
+    pub const fn shape(&self) -> Option<&ShapeRef> {
+        match self {
+            Self::OpenPathSkipped { shape, .. }
+            | Self::SideNeedsOpenPath { shape, .. }
+            | Self::ToolTooLarge { shape, .. }
+            | Self::DuplicateShapeDropped { shape, .. }
+            | Self::TabOnHole { shape, .. }
+            | Self::TabNotCrossed { shape, .. }
+            | Self::TabOffOutline { shape, .. }
+            | Self::TabOnCorner { shape, .. }
+            | Self::ToolpathsOverlap { shape, .. }
+            | Self::PocketNoRoom { shape, .. }
+            | Self::PocketIslandTooClose { shape, .. }
+            | Self::EntryFallback { shape, .. }
+            | Self::HelixDiameterReduced { shape, .. }
+            | Self::LeadShrunk { shape, .. }
+            | Self::ReliefCornerTooTight { shape, .. }
+            | Self::ReliefCornerNotCut { shape, .. }
+            | Self::LastPassEdgeFaster { shape, .. }
+            | Self::LastPassFlattenedCurve { shape, .. }
+            | Self::EngravePathDegenerate { shape, .. }
+            | Self::CutInsideFreedPart { shape, .. }
+            | Self::CutInsideTabHeldPart { shape, .. }
+            | Self::DrillTargetNotCircle { shape, .. }
+            | Self::DrillHoleTooSmall { shape, .. }
+            | Self::DrillToolWiderThanHole { shape, .. }
+            | Self::CountersinkMouthNotWiderThanHole { shape, .. }
+            | Self::BoreTargetNotCircle { shape, .. }
+            | Self::BoreNoRoom { shape, .. }
+            | Self::BoreLeavesCore { shape, .. }
+            | Self::VCarveTargetOpen { shape, .. }
+            | Self::VCarveNoMedialAxis { shape, .. } => Some(shape),
+            Self::TabsOverlap { shape, .. }
+            | Self::TabsCoverMostOfContour { shape, .. }
+            | Self::LeadDropped { shape, .. } => shape.as_ref(),
+            Self::TabsOutsideCutRange { .. }
+            | Self::ReliefSkipped { .. }
+            | Self::LastPassUnused { .. }
+            | Self::ToolChangeAvoidable { .. }
+            | Self::DrillPeckDeeperThanHole { .. }
+            | Self::DrillRetractBelowStockTop { .. }
+            | Self::DrillNoHoles { .. }
+            | Self::BoreNoHoles { .. }
+            | Self::RestOfClearsNothing { .. }
+            | Self::VCarveSamplingBudget { .. }
+            | Self::StartDepthMismatch { .. }
+            | Self::ClearingNoRoom { .. }
+            | Self::ClearingNotDescending { .. }
+            | Self::InlayMaleMirrored { .. }
+            | Self::InlayPlugBaseThin { .. }
+            | Self::InlayBandEdgeVWall { .. }
+            | Self::InlayBandClipped { .. }
+            | Self::InlayPartsMerged { .. }
+            | Self::InlayHoleFilled { .. }
+            | Self::InlayMaleBoardUnset { .. } => None,
+        }
+    }
 }
 
 /// `value` rounded to `decimals` places, trailing zeros dropped.

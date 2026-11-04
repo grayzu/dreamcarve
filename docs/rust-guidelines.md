@@ -42,12 +42,18 @@ the GUI both call, so **pure core, thin shell**.
 Dependency direction is one way:
 
 ```
-dc-geometry → dc-project → { dc-cam, dc-import, dc-library } → dreamcarve (CLI, later GUI)
-dc-project → dc-cam → dc-gcode → dreamcarve
+dc-geometry → dc-project → { dc-cam, dc-import, dc-library } → dc-job → dc-app → dreamcarve-app
+dc-project → dc-cam → dc-gcode → dc-job → dreamcarve
+dreamcarve-shell → { dreamcarve, dreamcarve-app }
 ```
 
 `dc-gcode` depends on `dc-cam` for the `Toolpath` type it writes out, and for
-nothing else.
+nothing else. `dc-job` is the pipeline both shells drive (phase 4 design,
+"Overview"): validation, generation, the order and tab checks, emission,
+program names, summaries, the preview, a project from a drawing, placed
+tabs. `dreamcarve-shell` is the file I/O the two binaries share (staged
+writes, the config directory, `config.toml`, `gui.toml`); it is not a
+`dc-*` crate.
 
 **Must**
 
@@ -55,10 +61,18 @@ nothing else.
   tools or stock; `dc-cam` knows nothing about G-code text; `dc-gcode` uses
   only `dc-cam`'s toolpath data types, never its generators, and knows nothing
   about how a toolpath was generated.
+- The GUI crates (`dc-app`, `dreamcarve-app`) depend on `dc-cam` and
+  `dc-gcode` only through `dc-job`, which Cargo enforces: neither appears
+  in their manifests, and the types they need (`Toolpath`, `Move`,
+  `Warning`, `EmitOp`, `Program`) come re-exported from `dc-job` (phase 4
+  functional spec, S20: the app's program is the CLI's, built by the same
+  call). The CLI may call `dc-cam` and `dc-gcode` directly where a command
+  needs more than the pipeline (`tabs place --at`).
 - Library crates do no file, terminal, clock, or network I/O. They take
-  `&str` or `&[u8]` and return values. `dreamcarve` owns `std::fs`, `std::env`,
-  exit codes, and all printing. (`dc-project::load` parses bytes; the binary
-  reads the file.)
+  `&str` or `&[u8]` and return values. `dreamcarve-shell` owns the
+  `std::fs` and `std::env` both binaries share; `dreamcarve` and
+  `dreamcarve-app` own exit codes, the clock, and all printing.
+  (`dc-project::load` parses bytes; the shell reads the file.)
 - Libraries report problems as values: `Err(E)` when the result cannot be
   trusted, `Vec<Warning>` alongside an `Ok` when it can. No `println!`,
   `eprintln!`, or logging macros in `dc-*`.
