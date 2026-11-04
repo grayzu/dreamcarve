@@ -1,0 +1,43 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dc-app"
+description = "DreamCarve application core: the project history, commands, selection, view, generation bookkeeping, strings, units and preferences the app's shell drives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[features]
+# Exposes `test_support::Harness` to other crates' tests.
+test-support = []
+
+# `dc-cam` and `dc-gcode` are reached through `dc-job` only (phase 4
+# functional spec, S20); `tests/manifest.rs` checks that neither is listed.
+[dependencies]
+dc-geometry.workspace = true
+dc-job.workspace = true
+dc-project.workspace = true
+# Routes a typed unit string through `dc_project::units_input`'s
+# deserializer, so a field accepts what the file accepts.
+serde_json.workspace = true
+thiserror.workspace = true
+
+[build-dependencies]
+# `build.rs` reads `strings/en.toml` to generate `StrKey`.
+toml.workspace = true
+
+[dev-dependencies]
+# Cargo unifies features across the package, so the integration tests
+# see `test_support` through this dependency on the crate itself.
+dc-app = { path = ".", features = ["test-support"] }
+# The tests import drawings into fixture projects.
+dc-import.workspace = true
+dc-project = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true

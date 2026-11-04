@@ -1,0 +1,7 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Every user-visible string of the app (docs/specs/phase-4/design.md,
+# "Strings"), keyed `panel.section.item`. `{name}`-style placeholders are
+# filled by `Strings::fmt`. build.rs turns each key into a `StrKey` variant,
+# `command.label.set_stock` becoming `CommandLabelSetStock`.
