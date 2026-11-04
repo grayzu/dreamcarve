@@ -77,7 +77,8 @@ use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::vcarve::written::{Snap, WrittenGrid, snapped_ends};
 use crate::warning::Warning;
 use dc_geometry::medial::{
-    CornerReach, MedialGraph, Resolution, medial_axis_with, refined_step_mm, resolution,
+    CornerReach, MedialGraph, Resolution, medial_axis_with, neck_step_mm, refined_step_mm,
+    resolution,
 };
 use dc_geometry::{EPS_MM, Point, Point3, Region};
 use dc_project::OperationId;
@@ -233,8 +234,10 @@ pub(crate) struct Step {
 /// The medial graph of `region`, at its automatic resolution, refined up
 /// to [`MAX_AUTO_REFINEMENTS`] times while empty, then once more where it
 /// has a bottleneck narrower than its step ([`refined_step_mm`], #475),
-/// with the step it was built at, carried into the region's sharp corners
-/// as `reach` says (#452). Warns [`Warning::VCarveSamplingBudget`] once
+/// or a neck the graph has no node in ([`neck_step_mm`], #553), at the
+/// finer of the two; with the step it was built at, carried into the
+/// region's sharp corners as `reach` says (#452). Warns
+/// [`Warning::VCarveSamplingBudget`] once
 /// per operation (`budget_warned`) and [`Warning::VCarveNoMedialAxis`]
 /// when there is no graph, then gives `None`.
 pub(crate) fn region_graph(
@@ -286,7 +289,15 @@ pub(crate) fn region_graph(
         step_mm,
         ..resolved
     };
-    if let Some(refined_mm) = refined_step_mm(&sampled, &graph) {
+    // #553: a neck so narrow the graph has no node in it.
+    let refined_mm = [
+        refined_step_mm(&sampled, &graph),
+        neck_step_mm(region, &sampled, tolerance_mm),
+    ]
+    .into_iter()
+    .flatten()
+    .reduce(f64::min);
+    if let Some(refined_mm) = refined_mm {
         let refined = medial_axis_with(region, refined_mm, tolerance_mm, reach);
         if !refined.nodes.is_empty() {
             return Some((refined, refined_mm));

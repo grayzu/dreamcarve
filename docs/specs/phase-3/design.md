@@ -813,6 +813,8 @@ pub fn convex_corners(region: &Region, min_turn_rad: f64, tolerance_mm: f64) -> 
 pub fn point_in_loops(p: Point, loops: &[&Polyline]) -> bool;   // even-odd
 pub fn bottleneck_mm(graph: &MedialGraph) -> Option<f64>;  // #475
 pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64>;  // #475
+pub fn neck_mm(region: &Region, step_mm: f64, tolerance_mm: f64) -> Option<f64>;  // #553
+pub fn neck_step_mm(region: &Region, resolved: &Resolution, tolerance_mm: f64) -> Option<f64>;  // #553
 ```
 
 1. **Resolution** (`resolution.ts`): `step = max(short_span / 160,
@@ -845,6 +847,25 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
    (`medial::refined_step_resolves_a_spike_beside_a_wall`,
    `medial::refined_step_keeps_the_step_of_a_wide_shape`,
    `medial::refined_step_is_bounded`).
+   **A neck the graph does not see (#553).** A channel much narrower than
+   the step can have no node at all: the samples either side of it lie a
+   step apart along each wall, so every triangle across it has its
+   circumcentre outside it, and the graph has no bottleneck there either.
+   A male Inlay's band round lettering is sampled every 0.33 mm; where two
+   letters passed 0.055 mm apart (lettering `0x8f`, 30°), the male cut
+   nothing across the channel and the plug stood its whole height, 3.59
+   mm, proud. `neck_mm` reads the narrowest neck from the boundary itself:
+   from each sample, the nearest stretch of boundary within two steps
+   that faces it across the region (into the region from both walls) and
+   is not the same corner, on another loop, or on the same loop more than
+   eight times the gap apart along it (a wedge counts only when sharper
+   than 14°); half that gap, when under the step. `neck_step_mm` refines
+   for it as `refined_step_mm` does for a bottleneck, the neck's clearance
+   but no finer than a quarter of the step nor the budget floor, and the
+   carve samples again at the finer of the two
+   (`medial::neck_mm_finds_a_curve_beside_an_edge`,
+   `medial::neck_mm_ignores_corners_and_wide_shapes`,
+   `inlay::male_of_a_curve_beside_an_edge_cuts_the_neck`).
 2. **Loops**: the region's outer and holes, arcs flattened at
    `tolerance_mm`, consecutive duplicates and an explicit closing vertex
    dropped (`cleanLoop`). A loop with fewer than three vertices is
@@ -1032,7 +1053,10 @@ orientation; DreamCarve's regions are normalised anyway.
    that step (`inlay::spike_in_a_large_region_seats_flush`). Of the
    corpus only "Rag"'s "g" refines (0.073 → 0.018 mm, a node at the tip
    of the tail's wedge); its program is 13% longer and still within the
-   golden's tolerance. Then `toolpath.ts`'s pipeline:
+   golden's tolerance. So it is, at the finer step, where the region has
+   a neck narrower than its step that the graph has no node in
+   (`neck_step_mm`, #553); the goldens', the sign's and the tutorial
+   pair's programs are unchanged by it. Then `toolpath.ts`'s pipeline:
    - **Chains** (`extractChains`): maximal degree-2 paths between
      junctions or leaves, pure cycles (closed, first node repeated),
      isolated nodes as plunge points.

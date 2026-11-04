@@ -1448,3 +1448,99 @@ fn refined_step_is_bounded() {
     };
     assert_eq!(refined_step_mm(&limited, &graph), None);
 }
+
+/// A male Inlay's band round a 6 mm circle `gap_mm` from a 12 mm square:
+/// an outer 52 mm square with the two as holes.
+fn circle_beside_square(gap_mm: f64) -> Region {
+    let half = gap_mm / 2.0;
+    region(
+        &rect_loop(-26.0, -26.0, 52.0, 52.0),
+        &[
+            regular_polygon(-6.0 - half, 0.0, 6.0, 96),
+            rect_loop(half, -6.0, 12.0, 12.0),
+        ],
+    )
+}
+
+/// #553: the band of [`circle_beside_square`] 0.055 mm apart. Its step,
+/// `52 / 160` = 0.325 mm, is six times the neck between the circle and the
+/// square, whose walls' samples lie too far apart along each for a
+/// circumcentre to land in it: the graph has no node there, so no
+/// bottleneck and no refined step. The neck is read from the boundary,
+/// half its width, and the step refined to a quarter, where the graph
+/// runs through it.
+#[test]
+fn neck_mm_finds_a_curve_beside_an_edge() {
+    let r = circle_beside_square(0.055);
+    let resolved = resolution(&r).expect("a resolution");
+    assert!((resolved.step_mm - 0.325).abs() < 1e-9);
+    let graph = medial_axis_with(&r, resolved.step_mm, TOL, EVERY);
+    let neck = Point::new(0.0, 0.0);
+    assert!(
+        graph.nodes.iter().all(|n| n.p.distance_to(neck) > 0.3),
+        "the graph has no node in the neck"
+    );
+    assert_eq!(refined_step_mm(&resolved, &graph), None);
+    let neck_mm = neck_mm(&r, resolved.step_mm, TOL).expect("a neck");
+    assert!(
+        (neck_mm - 0.0275).abs() < 1e-3,
+        "the neck's clearance {neck_mm:.4} mm"
+    );
+    let refined_mm = neck_step_mm(&r, &resolved, TOL).expect("a finer step");
+    assert!(
+        (refined_mm - resolved.step_mm / MAX_FEATURE_REFINEMENT).abs() < 1e-12,
+        "refined to {refined_mm:.4} mm"
+    );
+    let fine = medial_axis_with(&r, refined_mm, TOL, EVERY);
+    assert!(
+        fine.nodes.iter().any(|n| n.p.distance_to(neck) < 0.1),
+        "at {refined_mm:.4} mm the graph runs through the neck"
+    );
+}
+
+/// #553: no neck where the boundary does not pass near another stretch of
+/// itself: a rectangle, a ring, a 20° wedge (a corner, its walls only
+/// `1 / sin 10°` times their gap apart along it), the circle 1 mm from
+/// the square; nor in a square with a slit 0.06 mm wide cut into it from
+/// its edge, whose walls are near each other across the outside.
+#[test]
+fn neck_mm_ignores_corners_and_wide_shapes() {
+    let ring = region(
+        &regular_polygon(0.0, 0.0, 20.0, 64),
+        &[regular_polygon(0.0, 0.0, 10.0, 64)],
+    );
+    let (sin, cos) = 10.0_f64.to_radians().sin_cos();
+    let wedge = region(
+        &[
+            Point::new(0.0, 0.0),
+            Point::new(40.0 * cos, -40.0 * sin),
+            Point::new(40.0 * cos, 40.0 * sin),
+        ],
+        &[],
+    );
+    let notch = region(
+        &[
+            Point::new(0.0, 0.0),
+            Point::new(50.0, 0.0),
+            Point::new(50.0, 50.0),
+            Point::new(25.03, 50.0),
+            Point::new(25.03, 20.0),
+            Point::new(24.97, 20.0),
+            Point::new(24.97, 50.0),
+            Point::new(0.0, 50.0),
+        ],
+        &[],
+    );
+    for (name, r) in [
+        ("rectangle", region(&rect_loop(0.0, 0.0, 20.0, 10.0), &[])),
+        ("ring", ring),
+        ("wedge", wedge),
+        ("far circle", circle_beside_square(2.0)),
+    ] {
+        let resolved = resolution(&r).expect("a resolution");
+        assert_eq!(neck_mm(&r, resolved.step_mm, TOL), None, "{name}");
+        assert_eq!(neck_step_mm(&r, &resolved, TOL), None, "{name}");
+    }
+    let resolved = resolution(&notch).expect("a resolution");
+    assert_eq!(neck_mm(&notch, resolved.step_mm, TOL), None, "notch");
+}
