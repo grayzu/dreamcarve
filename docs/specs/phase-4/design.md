@@ -1,6 +1,6 @@
 # Phase 4: GUI, CAM only — Design Spec
 
-**Status:** draft
+**Status:** accepted (merged in #460, 2026-11-03)
 **Functional spec:** `functional.md`
 **Visual design:** `experience.md` (the design language: principles, type,
 colour, controls, interaction, egui realisation, review checklist)
@@ -568,6 +568,9 @@ output. Slices 2–3 can follow immediately. Slice 14 waits for #498 and
 slice 15 for 3.4; nothing else waits for phase 3.
 
 ## Open questions
+
+Answered by the maintainer on 2026-11-03: every recommendation accepted.
+The decisions stand as the slices assume them; the record stays here.
 
 | # | Question | Recommendation |
 | --- | --- | --- |
