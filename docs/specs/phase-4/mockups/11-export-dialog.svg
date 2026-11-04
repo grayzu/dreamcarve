@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="820" height="700" viewBox="0 0 820 700" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: export dialog</title>
+<rect width="820" height="700" fill="#ffffff"/>
+<rect x="0" y="0" width="820" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">11 · Export dialog (capability 77). What export prints, before it writes; the override is not saved.</text>
+<rect x="20" y="40" width="780" height="640" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="20" y="40" width="780" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="28" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Export G-code · plaque.dcv</text>
+<text x="790" y="57" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">✕</text>
+<text x="36" y="90" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Destination</text>
+<rect x="36" y="98" width="560" height="22" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="113" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">/Users/sam/cnc/plaque</text>
+<text x="436" y="113" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">+ -1-T1.nc, -2-T2.nc …</text>
+<rect x="604" y="97" width="90" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="649.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Choose…</text>
+<text x="36" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Post-processor</text>
+<rect x="156" y="132" width="280" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="162" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">grblHAL  v3</text>
+<text x="428" y="146" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<text x="156" y="162" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Changing it here changes the project (undoable) and keeps your settings.</text>
+<text x="36" y="188" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Programs</text>
+<circle cx="162" cy="182" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<circle cx="162" cy="182" r="3" fill="#2b2b2b" stroke="none" stroke-width="1"/>
+<text x="174" y="187" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">As the project says: one program per tool</text>
+<circle cx="162" cy="202" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="174" y="207" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">One program per tool, this export only</text>
+<circle cx="162" cy="222" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="174" y="227" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">One program with M6 tool changes, this export only</text>
+<rect x="156" y="240" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M158 246 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="174" y="251" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Also write the toolpath preview (plaque-preview.svg)</text>
+<text x="36" y="282" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Programs to write</text>
+<rect x="36" y="290" width="748" height="20" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">#</text>
+<text x="66" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">File</text>
+<text x="236" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tool</text>
+<text x="396" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Operations</text>
+<text x="596" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Est.</text>
+<text x="656" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Z range</text>
+<rect x="36" y="310" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1</text>
+<text x="66" y="324" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-1-T1.nc</text>
+<text x="236" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T1 6.35 mm end mill</text>
+<text x="396" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Panel pocket, Outside cut</text>
+<text x="596" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">9 min 40 s</text>
+<text x="656" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−12.2..5</text>
+<text x="66" y="339" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Zero the tool on the stock top, then run.</text>
+<rect x="36" y="346" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="66" y="360" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-2-T2.nc</text>
+<text x="236" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T2 3.175 mm end mill</text>
+<text x="396" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Screw holes, Flourish</text>
+<text x="596" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2 min 05 s</text>
+<text x="656" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−12.2..5</text>
+<text x="66" y="375" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Change to T2 3.175 mm end mill, re-zero Z, then run.</text>
+<rect x="36" y="382" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="42" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">3</text>
+<text x="66" y="396" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-3-T3.nc</text>
+<text x="236" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T3 90° V-bit</text>
+<text x="396" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lettering</text>
+<text x="596" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1 min 50 s</text>
+<text x="656" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−2.5..5</text>
+<text x="66" y="411" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Change to T3 90° V-bit, re-zero Z, then run.</text>
+<text x="36" y="434" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Extents, tool centre: X 6.8..153.2  Y 6.8..93.2 · bit edge: X 3.7..156.3  Y 3.7..96.3 · total 13 min 35 s (rapids not included: set [estimate] rapid_mm_min)</text>
+<text x="36" y="462" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#c62828" text-anchor="start">Errors (export is disabled until fixed)</text>
+<circle cx="44" cy="477" r="4" fill="#c62828" stroke="none" stroke-width="1"/>
+<text x="56" y="481" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start">tool_missing_plunge  90° V-bit 6.35 mm has no plunge rate.</text>
+<text x="688" y="481" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Fix →</text>
+<text x="36" y="512" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#b26a00" text-anchor="start">Warnings (listed, do not block)</text>
+<path d="M44 521 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="56" y="531" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">relief_corner_too_tight  2 of panel's corners skipped.</text>
+<path d="M44 539 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="56" y="549" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">tab_on_hole  A tab on hole-3 holds its slug.</text>
+<path d="M44 557 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
+<text x="56" y="567" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">tool_change_avoidable  T2 in two non-adjacent operations.</text>
+<text x="36" y="596" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Every file is written or none is. The project file is not changed by exporting.</text>
+<rect x="600" y="640" width="80" height="28" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="640.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Cancel</text>
+<rect x="690" y="640" width="94" height="28" rx="3" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="737.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="middle">Export</text>
+</svg>

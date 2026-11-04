@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="570" viewBox="0 0 900 570" font-family="Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 wireframe: tool library</title>
+<rect width="900" height="570" fill="#ffffff"/>
+<rect x="0" y="0" width="900" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
+<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">04 · Tool Library window (capability 64), with the Fusion import report open.</text>
+<rect x="20" y="40" width="860" height="512" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="20" y="40" width="860" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="28" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tool Library · ~/Library/Application Support/dreamcarve/tools.json</text>
+<text x="870" y="57" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">✕</text>
+<rect x="32" y="74" width="300" height="22" rx="11" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="44" y="89" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Search name, vendor, diameter…</text>
+<text x="344" y="89" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Type</text>
+<rect x="384" y="75" width="120" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="390" y="89" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">All</text>
+<text x="496" y="89" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
+<rect x="560" y="74" width="80" height="22" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="600.0" y="89.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Import…</text>
+<rect x="648" y="74" width="80" height="22" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="688.0" y="89.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Export…</text>
+<rect x="736" y="74" width="70" height="22" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="771.0" y="89.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Remove</text>
+<rect x="32" y="108" width="816" height="20" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="36" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Name</text>
+<text x="290" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Type</text>
+<text x="360" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Ø</text>
+<text x="420" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Angle</text>
+<text x="470" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Flutes</text>
+<text x="520" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Feed</text>
+<text x="590" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Plunge</text>
+<text x="660" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">RPM</text>
+<text x="720" y="122" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Vendor</text>
+<rect x="32" y="128" width="816" height="22" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
+<rect x="38" y="133" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M40 139 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="56" y="144" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">IDC Woodcraft 1/4" Downcut (Hardwood)</text>
+<text x="290" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">End mill</text>
+<text x="360" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">6.35</text>
+<text x="420" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="470" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1800</text>
+<text x="590" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">600</text>
+<text x="660" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">18000</text>
+<text x="720" y="143" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">IDC Woodcraft</text>
+<rect x="824" y="132" width="64" height="14" rx="7" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="856" y="142" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="middle">in project</text>
+<line x1="32" y1="150" x2="848" y2="150" stroke="#e8e8e8" stroke-width="1"/>
+<rect x="32" y="150" width="816" height="22" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
+<rect x="38" y="155" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<path d="M40 161 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
+<text x="56" y="166" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">IDC Woodcraft 1/8" Upcut</text>
+<text x="290" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">End mill</text>
+<text x="360" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">3.175</text>
+<text x="420" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="470" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1200</text>
+<text x="590" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">400</text>
+<text x="660" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">18000</text>
+<text x="720" y="165" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">IDC Woodcraft</text>
+<line x1="32" y1="172" x2="848" y2="172" stroke="#e8e8e8" stroke-width="1"/>
+<rect x="38" y="177" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="56" y="188" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Amana 45771 60° V-bit</text>
+<text x="290" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">V-bit</text>
+<text x="360" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">6.35</text>
+<text x="420" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">60°</text>
+<text x="470" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1500</text>
+<text x="590" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">500</text>
+<text x="660" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">18000</text>
+<text x="720" y="187" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Amana</text>
+<line x1="32" y1="194" x2="848" y2="194" stroke="#e8e8e8" stroke-width="1"/>
+<rect x="38" y="199" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="56" y="210" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Amana 45702 90° V-bit</text>
+<text x="290" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">V-bit</text>
+<text x="360" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">6.35</text>
+<text x="420" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">90°</text>
+<text x="470" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1500</text>
+<text x="590" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">500</text>
+<text x="660" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">18000</text>
+<text x="720" y="209" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Amana</text>
+<rect x="824" y="198" width="64" height="14" rx="7" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="856" y="208" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="middle">in project</text>
+<line x1="32" y1="216" x2="848" y2="216" stroke="#e8e8e8" stroke-width="1"/>
+<rect x="38" y="221" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="56" y="232" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Club 2 mm drill</text>
+<text x="290" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Drill</text>
+<text x="360" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="420" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="470" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start"></text>
+<text x="590" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">300</text>
+<text x="660" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">12000</text>
+<text x="720" y="231" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<rect x="824" y="220" width="64" height="14" rx="7" fill="#ffffff" stroke="#c62828" stroke-width="1"/>
+<text x="856" y="230" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#c62828" text-anchor="middle">no feed</text>
+<line x1="32" y1="238" x2="848" y2="238" stroke="#e8e8e8" stroke-width="1"/>
+<rect x="38" y="243" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="56" y="254" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="60" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Club 6 mm ball nose</text>
+<text x="290" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Ball nose</text>
+<text x="360" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">6</text>
+<text x="420" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<text x="470" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
+<text x="520" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1200</text>
+<text x="590" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">400</text>
+<text x="660" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">16000</text>
+<text x="720" y="253" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
+<line x1="32" y1="260" x2="848" y2="260" stroke="#e8e8e8" stroke-width="1"/>
+<text x="32" y="290" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">23 tools · 2 selected · rows marked “in project” are already embedded in plaque.dcv</text>
+<rect x="700" y="276" width="148" height="26" rx="3" fill="#2f6fdb" stroke="#2f6fdb" stroke-width="1"/>
+<text x="774.0" y="293.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#ffffff" text-anchor="middle">Add 2 tools to project</text>
+<rect x="400" y="318" width="470" height="210" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
+<rect x="400" y="318" width="470" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
+<text x="408" y="334" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Import report · club.tools</text>
+<text x="412" y="350" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Imported 23 tools from Fusion library club.tools</text>
+<text x="412" y="368" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">  21 end mills, V-bits, ball noses and drills, each preset one tool</text>
+<text x="412" y="386" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Skipped 2:</text>
+<text x="412" y="404" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">  Thread mill 1/4-20 — no DreamCarve cutter for thread mills</text>
+<text x="412" y="422" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">  Face mill 50 mm — no DreamCarve cutter for face mills</text>
+<text x="412" y="440" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Already present 0 (Replace existing: off)</text>
+<text x="412" y="458" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start">3 imported presets have no feed or plunge rate; export refuses them until set.</text>
+<rect x="412" y="484" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="430" y="495" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Replace existing tools with the same source</text>
+<rect x="780" y="498" width="80" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
+<text x="820.0" y="514.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Close</text>
+</svg>
