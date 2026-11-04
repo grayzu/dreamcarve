@@ -367,9 +367,10 @@ const NECK_ALONG_RATIO: f64 = 8.0;
 /// clearance at its middle (half its width), mm; `None` when it has none
 /// (#553). A neck is where the region passes between two stretches of
 /// its boundary that are not one corner: on two loops (a channel between
-/// two islands, or an island and the outer), or on one loop
-/// [`NECK_ALONG_RATIO`] times their gap apart along it (a loop that comes
-/// near itself across the region). Read from the boundary itself, arcs
+/// two islands, or an island and the outer), or on one loop more than
+/// eight times their gap apart along it (a loop that comes near itself
+/// across the region; a corner's walls are that far apart only when it is
+/// sharper than 14°). Read from the boundary itself, arcs
 /// flattened within `tolerance_mm`, sampled every `step_mm`, from each
 /// sample to the nearest such stretch across the region.
 ///
