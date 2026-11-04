@@ -565,3 +565,26 @@ fn line_art_seats_with_the_edge_allowance_scaled() {
         outcome.known
     );
 }
+
+/// #522 (found by the sweep): line-art seed `0xa` and lettering seed
+/// `0x3c` (15° bit, millimetres) seat within 0.05 mm. Their glue gaps,
+/// drawn at 0.12 of the depth, stood above the floor's straight-run
+/// ridge, `0.1 · D`, but not above the peaks where the V-bit's floor rings
+/// turn a corner: line art `0xa`'s plug rested on one 0.161 mm proud. The
+/// export now reports the corner ridge too, and the sweep draws the glue
+/// gap above it, as a user following the Inlay chapter would set it.
+#[test]
+fn glue_gap_stands_above_the_floor_corner_ridge() {
+    for (family, seed, design) in [
+        ("line art", 0xa, designs::line_art(0xa)),
+        ("lettering", 0x3c, lettering::lettering(0x3c)),
+    ] {
+        let outcome = reproduce(family, seed, design, Kind::MaleVWall);
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{family} {seed:#x}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}

@@ -170,19 +170,30 @@ bit leaves a small ridge between two rings, of height
 ridge = step_over_fraction × F
 ```
 
-So the step-over is required whenever there is a floor to cut: the
-operation's `step_over_fraction`, or else the tool's; with neither,
-export stops with an error. `check` prints the ridge height:
+Where a ring turns a corner, the next ring's corner stands farther back
+along the corner's bisector, and the ridge between them is higher: for
+the sharpest corner θ of any ring,
 
 ```text
-V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 1.000 mm; a clearing pass or a smaller step_over_fraction flattens them.
+corner ridge = ridge / sin(θ / 2), at most 2 × ridge
+```
+
+1.41 times the ridge at a right angle, and twice it where the floor comes
+to a point, as it does wherever a design narrows. No point of the floor
+is more than one step-over from a ring, so no ridge is higher than that.
+
+So the step-over is required whenever there is a floor to cut: the
+operation's `step_over_fraction`, or else the tool's; with neither,
+export stops with an error. `check` prints both heights:
+
+```text
+V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 1.000 mm along the rings and up to 2.000 mm at their corners; a clearing pass or a smaller step_over_fraction flattens them.
 ```
 
 That is the sign's background with the tool's 0.4, which is sized for an
 end mill: 1 mm ridges. **Use 0.1** on the V-Carve: at `F` 2.5 mm that
-leaves ridges 0.25 mm high, which sanding removes. Near a
-corner of a ring, where two rings are farther apart, the ridge can be up
-to about a sixth higher than the figure printed. A V-bit floor at 0.1 is
+leaves ridges 0.25 mm high, and 0.5 mm at the rings' sharpest corners,
+which sanding removes. A V-bit floor at 0.1 is
 many rings, and slow over a large floor: clear large floors with an end
 mill instead.
 
@@ -224,7 +235,7 @@ step-down and step-over come from its tool, so set the tool's
 - **The V-bit still traces the whole floor boundary**, so the floor and
   the sloped walls meet cleanly, and clears only what no end mill
   reached: the floor's corners and parts narrower than the smallest end
-  mill. `check` then prints the ridge height "where no clearing pass
+  mill. `check` then prints the ridge heights "where no clearing pass
   reaches".
 - A carve with no flat depth has no floor, so clearing passes are the
   error `clearing_needs_flat_depth`.

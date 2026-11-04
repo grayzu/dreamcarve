@@ -413,8 +413,9 @@ It also checks that:
   25](inlay.md#projects-from-before-format-25)).
 - **Ridges on a V-Carve floor.** A V-Carve's flat floor counts as cleared
   for a carve or countersink started on it, and is treated as flat. Where
-  the V-bit alone cut it, it has ridges up to `step_over_fraction` times
-  the flat depth high, which the next cut's flank meets above its start
+  the V-bit alone cut it, it has ridges `step_over_fraction` times the
+  flat depth high, and up to twice that at its rings' corners (`check`
+  prints both), which the next cut's flank meets above its start
   plane ([Drill: countersink](drill.md#start-depth)).
 - **Whether the feeds suit the job.** It uses your values exactly. It cannot
   tell whether they suit your machine, bit, and material.

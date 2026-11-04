@@ -363,7 +363,7 @@ dreamcarve check sign.dcv
 ```text
 sign.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: tool_change_avoidable: tool `t2` (`1/4 end mill`) is used by operations `op2`, `op4`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 0.250 mm where no clearing pass reaches.
+V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 0.250 mm along the rings and up to 0.500 mm at their corners where no clearing pass reaches.
 V-Carve op3 `Lettering`: deepest cut 1.658 mm below the stock top, no flat depth.
 Program 1 (T2):
   Extents (machine coordinates, mm, tool centre): X 25.000..195.000, Y 75.000..75.000, Z -12.000..15.000
@@ -395,7 +395,8 @@ No errors. Two warnings:
 
 The two V-Carve lines give each carve's deepest cut. The background stops
 at its 2.5 mm flat depth; where the V-bit clears floor corners itself, it
-leaves ridges 0.25 mm high (`step_over_fraction` × flat depth). The
+leaves ridges 0.25 mm high (`step_over_fraction` × flat depth), and up
+to 0.5 mm where its rings turn a corner. The
 lettering goes 1.658 mm deep at most, well within the bit's 3.175 mm cone.
 
 `dreamcarve check sign.dcv --preview sign-preview.svg` also draws every
@@ -445,7 +446,7 @@ sign-4-T1.nc (86 lines):
     The cutter's edge reaches X 0.650..216.350, Y 3.650..96.350; keep clamps outside that.
   Estimated time: 1 min 21 s (cutting 1 min 18 s, dwells 3 s); 137 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated total time: 4 min 14 s (cutting 4 min 2 s, dwells 12 s); 4.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 0.250 mm where no clearing pass reaches.
+V-Carve op2 `Background`: deepest cut 2.500 mm below the stock top, clamped at a flat depth of 2.500 mm; V-bit floor ridges 0.250 mm along the rings and up to 0.500 mm at their corners where no clearing pass reaches.
 V-Carve op3 `Lettering`: deepest cut 1.658 mm below the stock top, no flat depth.
 ```
 

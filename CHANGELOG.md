@@ -210,6 +210,16 @@ phases bump the patch number.
 - **Documentation:** the Inlay chapter's narrow-bit note now says that
   in millimetres the 30° and 15° bits seat within 0.05 mm, except where
   a V-bit floor's ring corners stand up ([#506]).
+- **The V-bit floor's corner ridge.** Where the V-bit clears a floor in
+  rings, `check` and the export summary now give the ridge at the rings'
+  corners beside the one between them: the straight-run ridge over
+  `sin(θ/2)` for the sharpest corner θ of any ring, and at most twice it
+  ("V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at
+  their corners"). The corner ridge is printed only where it is higher.
+  The Inlay chapter now sets `glue_gap_mm` above the female's corner
+  ridge: a 15° plug on a gap just above the straight-run ridge rested
+  0.16 mm proud on a corner's peak. Toolpaths are unchanged. Covering the
+  corners, so that the lower figure holds everywhere, is [#527] ([#522]).
 
 ### Fixed
 
@@ -1097,4 +1107,5 @@ Phase 1: cut a real part from an SVG with one Profile operation.
 [#506]: https://github.com/grayzu/dreamcarve/issues/506
 [#507]: https://github.com/grayzu/dreamcarve/issues/507
 [#522]: https://github.com/grayzu/dreamcarve/issues/522
+[#527]: https://github.com/grayzu/dreamcarve/issues/527
 [#502]: https://github.com/grayzu/dreamcarve/issues/502

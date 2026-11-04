@@ -33,7 +33,7 @@
 //!   that turns counter-clockwise keeps its chords, which already are.
 
 use super::cone::Walls;
-use super::{Carve, VBit, carve_regions, v_bit};
+use super::{Carve, FloorRidges, VBit, carve_regions, v_bit};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::pocket::rest::{self, Reference};
@@ -48,7 +48,7 @@ use dc_geometry::{
     nearest_point, surround_floor_regions,
 };
 use dc_project::{CutDirection, OperationId, Project, Tool, VCarveOp};
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 
 /// How far, in step-overs, a ring node with children may leave a point
 /// from its own ring and from its children before the point gets a centre
@@ -576,9 +576,9 @@ fn flatten_segment(segment: Segment, tolerance_mm: f64) -> Vec<Point> {
     out
 }
 
-/// [`super::floor_ridge_height_mm`]: `s / (2 tan(α/2))` for the floor's
-/// step-over `s`, when `op` has a floor for its V-bit to cut.
-pub(crate) fn ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
+/// [`super::floor_ridges`]: the ridges of `op`'s floor, when it has one
+/// for its V-bit to cut.
+pub(crate) fn ridges_of_carve(project: &Project, op: &VCarveOp) -> Option<FloorRidges> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
     let VBit { slope, .. } = v_bit(tool)?;
     let flat_depth_mm = op.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0)?;
@@ -592,11 +592,100 @@ pub(crate) fn ridge_height_mm(project: &Project, op: &VCarveOp) -> Option<f64> {
         step_over_fraction: Some(fraction),
     };
     let targets = carve_regions(project, &op.id, &op.targets, &mut Vec::new()).ok()?;
-    let tolerance_mm = project.flatten_tolerance_mm;
-    let has_floor = targets
-        .regions
+    floor.ridges(
+        &targets.regions,
+        flat_depth_mm,
+        project.flatten_tolerance_mm,
+    )
+}
+
+impl Floor {
+    /// The ridges ([`FloorRidges`]) the V-bit leaves on the floors of
+    /// `regions`, `flat_depth_mm` (`F`) below the start plane, cut as
+    /// [`blocks`] cuts them without clearing passes; `None` when no region
+    /// has a floor or the floor has no step-over.
+    ///
+    /// The straight-run ridge is `step_over_fraction · F`. The corner
+    /// ridge (#522) is that over `sin(θ/2)` for the sharpest convex corner
+    /// θ of any ring of the floors' ring trees, the floor's outline and
+    /// islands included, capped at twice the straight-run ridge: each ring
+    /// is the one outside it inset by a step-over `s`, and a leaf's middle
+    /// is no more than `s / 2` from its ring, so no point of the floor is
+    /// more than `s` from a ring, and no ridge higher than `s / (2·tan(α/2))
+    /// · 2`. A floor whose ring tree would be too large to build reports
+    /// the cap. With clearing passes the V-bit's rings cut only what no pass
+    /// reaches, and the report holds for them too.
+    pub(crate) fn ridges(
+        &self,
+        regions: &[Region],
+        flat_depth_mm: f64,
+        tolerance_mm: f64,
+    ) -> Option<FloorRidges> {
+        let fraction = self.step_over_fraction?;
+        let floors: Vec<Region> = regions
+            .iter()
+            .flat_map(|r| self.regions(r, tolerance_mm))
+            .collect();
+        if floors.is_empty() {
+            return None;
+        }
+        let straight_mm = fraction * flat_depth_mm;
+        let stepover_mm = fraction * 2.0 * self.inset_mm;
+        // The sharpest convex corner of any ring; none is a straight
+        // angle, and a tree too large to build counts as no angle at all,
+        // which the cap then holds.
+        let sharpest_rad = floors
+            .into_iter()
+            .map(|floor| {
+                RingTree::build(floor, stepover_mm, self.inset_mm, tolerance_mm, MAX_RINGS).map_or(
+                    0.0,
+                    |tree| {
+                        tree.nodes
+                            .iter()
+                            .flat_map(|n| std::iter::once(n.region.outer()).chain(n.region.holes()))
+                            .map(sharpest_convex_corner_rad)
+                            .fold(PI, f64::min)
+                    },
+                )
+            })
+            .fold(PI, f64::min);
+        let corner_mm = (straight_mm / (sharpest_rad / 2.0).sin()).min(2.0 * straight_mm);
+        Some(FloorRidges {
+            straight_mm,
+            corner_mm: if corner_mm.is_finite() {
+                corner_mm
+            } else {
+                2.0 * straight_mm
+            },
+        })
+    }
+}
+
+/// The interior angle, radians, of the sharpest convex corner of
+/// `contour`, a ring of a region (its interior on the left, ADR-0001):
+/// where the tangent turns left between two segments, by `φ`, the corner
+/// is `π − φ`. `π` when it has none: an arc's ends meet the next segment
+/// tangent, and a curve flattened to short lines turns by little at each.
+fn sharpest_convex_corner_rad(contour: &Contour) -> f64 {
+    let segments: Vec<Segment> = contour
+        .polyline()
+        .segments()
+        .filter(|s| s.length_mm() > EPS_MM)
+        .collect();
+    let turns = segments
         .iter()
-        .any(|r| !floor.regions(r, tolerance_mm).is_empty());
-    let stepover_mm = fraction * 2.0 * floor.inset_mm;
-    has_floor.then(|| stepover_mm / (2.0 * slope))
+        .zip(segments.iter().cycle().skip(1))
+        .take(if segments.len() < 2 {
+            0
+        } else {
+            segments.len()
+        });
+    turns
+        .filter_map(|(before, after)| {
+            let (_, incoming) = before.point_at(before.length_mm())?;
+            let (_, outgoing) = after.point_at(0.0)?;
+            let turn_rad = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
+            (turn_rad > 0.0).then_some(PI - turn_rad)
+        })
+        .fold(PI, f64::min)
 }

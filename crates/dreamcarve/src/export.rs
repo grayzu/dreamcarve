@@ -492,6 +492,27 @@ fn on_board<'p>(project: &'p Project, entry: &EmitOp) -> std::borrow::Cow<'p, Pr
     }
 }
 
+/// The V-bit floor's ridges for [`describe_carves`] (design step 6): their
+/// height between rings and, where it is higher, at the rings' corners
+/// (#522); then, with no clearing pass, what flattens them, or with one,
+/// that they stand only where no pass reaches.
+fn describe_ridges(project: &Project, ridges: dc_cam::vcarve::FloorRidges, alone: bool) -> String {
+    let straight = describe_length(project, ridges.straight_mm);
+    let corner = describe_length(project, ridges.corner_mm);
+    let heights = if corner == straight {
+        straight
+    } else {
+        format!("{straight} along the rings and up to {corner} at their corners")
+    };
+    if alone {
+        format!(
+            "; V-bit floor ridges {heights}; a clearing pass or a smaller step_over_fraction flattens them"
+        )
+    } else {
+        format!("; V-bit floor ridges {heights} where no clearing pass reaches")
+    }
+}
+
 /// The line of Inlay `inlay`'s `board` for [`describe_carves`] (#498),
 /// when `generated` cuts it: its deepest cut below the board's top, the
 /// female's flat floor or the male's start plane and floor, its floor
@@ -520,17 +541,8 @@ fn describe_inlay(
             ),
         ),
     };
-    if let Some(ridge_mm) = dc_cam::inlay::floor_ridge_height_mm(project, inlay, board) {
-        let ridges = describe_length(project, ridge_mm);
-        if inlay.clearing.is_empty() {
-            floor.push_str(&format!(
-                "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
-            ));
-        } else {
-            floor.push_str(&format!(
-                "; V-bit floor ridges {ridges} where no clearing pass reaches"
-            ));
-        }
+    if let Some(ridges) = dc_cam::inlay::floor_ridges(project, inlay, board) {
+        floor.push_str(&describe_ridges(project, ridges, inlay.clearing.is_empty()));
     }
     let band = (board == Board::Male)
         .then(|| dc_project::male_band(project, inlay))
@@ -593,17 +605,8 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                 );
                 // Design step 6: the V-bit's floor is scalloped; with
                 // clearing passes, only where none of them reaches (#406).
-                if let Some(ridge_mm) = dc_cam::vcarve::floor_ridge_height_mm(project, carve) {
-                    let ridges = describe_length(project, ridge_mm);
-                    if carve.clearing.is_empty() {
-                        floor.push_str(&format!(
-                            "; V-bit floor ridges {ridges}; a clearing pass or a smaller step_over_fraction flattens them"
-                        ));
-                    } else {
-                        floor.push_str(&format!(
-                            "; V-bit floor ridges {ridges} where no clearing pass reaches"
-                        ));
-                    }
+                if let Some(ridges) = dc_cam::vcarve::floor_ridges(project, carve) {
+                    floor.push_str(&describe_ridges(project, ridges, carve.clearing.is_empty()));
                 }
                 vec![format!(
                     "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
