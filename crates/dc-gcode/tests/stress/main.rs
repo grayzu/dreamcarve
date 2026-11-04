@@ -566,6 +566,30 @@ fn line_art_seats_with_the_edge_allowance_scaled() {
     );
 }
 
+/// #555 (found by the confirmation sweep, #438): the male of lettering
+/// seed `0xc4` (90° bit, millimetre program) with a V wall generates,
+/// every program passes S1–S19 and the pair seats within 0.05 mm. The
+/// generator refused its own move, "would cut 0.0161 mm past a wall": a
+/// letter's hole, grown by the floor's inset to find the band's floor,
+/// came back from `dc_geometry::offset` with its bay's loop closed by a
+/// straight line across the round join at a sharp point of the letter,
+/// 0.016 mm nearer it than the inset, and the floor's ring ran along it.
+#[test]
+fn male_of_lettering_0xc4_generates() {
+    let outcome = reproduce(
+        "lettering",
+        0xc4,
+        lettering::lettering(0xc4),
+        Kind::MaleVWall,
+    );
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}
+
 /// #522 (found by the sweep): line-art seed `0xa` and lettering seed
 /// `0x3c` (15° bit, millimetres) seat within 0.05 mm. Their glue gaps,
 /// drawn at 0.12 of the depth, stood above the floor's straight-run
