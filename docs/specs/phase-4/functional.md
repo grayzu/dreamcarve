@@ -1,6 +1,6 @@
 # Phase 4: GUI, CAM only — Functional Spec
 
-**Status:** draft
+**Status:** accepted (merged in #460, 2026-11-03)
 **Mock-ups:** `mockups/` (wireframes referenced from the capabilities below;
 `mockups/README.md` lists them and how they are rendered)
 
