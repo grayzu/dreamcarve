@@ -45,14 +45,21 @@ pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
 ///   without the loop inside it where it closes round a gap, or that loop
 ///   alone. A grown result is held to at most `A + L·δ + π·δ²` too, its
 ///   inside loops counted as holes.
+/// - #555: grown round a hole of a letter, whose curve comes back to a
+///   sharp point beside a bay, it can return open pieces at every
+///   tolerance, which closed by a straight line ran across the round join
+///   at the point, nearer the hole than the offset distance. The same
+///   contour run the other way round slices differently and closes.
 ///
 /// The retries, in order: both tolerances at 1e-6, 1e-7, then 1e-8 mm
 /// (`RETRY_EPS_MM`); the position tolerance alone at 1e-8 mm
 /// (`FINE_POS_EQUAL_EPS_MM`); the contour rid of its redundant vertices;
 /// the contour moved by at most 0.1, then 1 µm (`DECIMATE_MM`,
-/// `decimated`). The first result that is closed and plausible is kept,
-/// else the first closed one, else the first. A closed, plausible first
-/// result, the usual case, is returned as it was.
+/// `decimated`); then the contour reversed, at the default tolerances and
+/// each of the first four, its pieces reversed back (#555). The first
+/// result that is closed and plausible is kept, else the first closed
+/// one, else the first. A closed, plausible first result, the usual case,
+/// is returned as it was.
 ///
 /// Every piece loses its spikes first (`without_spikes`; #513): shrunk
 /// past a short side, `cavalier_contours` can trim the side's offset away
@@ -81,16 +88,32 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .iter()
         .map(|&eps| (source.clone(), both(eps)))
         .collect();
-    retries.push((source.clone(), fine));
+    retries.push((source.clone(), fine.clone()));
     if let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps) {
         retries.push((from_cavalier(&p), PlineOffsetOptions::default()));
     }
     let decimations =
         DECIMATE_MM.map(|eps_mm| (decimated(source, eps_mm), PlineOffsetOptions::default()));
     retries.extend(decimations);
+    // #555: the contour the other way round, whose pieces `offset_with`
+    // winds its way and are turned back.
+    let reversed = source.reversed();
+    let backward: Vec<(Polyline, PlineOffsetOptions<f64>)> = std::iter::once(defaults)
+        .chain(RETRY_EPS_MM.iter().map(|&eps| both(eps)))
+        .chain(std::iter::once(fine))
+        .map(|options| (reversed.clone(), options))
+        .collect();
+    let forward = retries.len();
+    retries.extend(backward);
     let mut closed: Option<Vec<Contour>> = None;
-    for (polyline, options) in &retries {
-        let out = offset_with(polyline, ccw, delta_mm, options);
+    for (k, (polyline, options)) in retries.iter().enumerate() {
+        let out = if k < forward {
+            offset_with(polyline, ccw, delta_mm, options)
+        } else {
+            let mut out = offset_with(polyline, !ccw, delta_mm, options);
+            out.contours = out.contours.iter().map(Contour::reversed).collect();
+            out
+        };
         if !out.closed {
             continue;
         }
@@ -973,14 +996,15 @@ mod tests {
         for piece in &grown {
             let path = piece.polyline();
             let length_mm = path.length_mm();
-            let steps = (length_mm / 0.005).ceil() as usize;
-            for i in 0..=steps {
-                let (p, _) = path.point_at(length_mm * i as f64 / steps as f64).unwrap();
+            let mut at_mm = 0.0;
+            while at_mm < length_mm {
+                let (p, _) = path.point_at(at_mm).unwrap();
                 let gap_mm = from_hole(p);
                 assert!(
                     gap_mm >= inset_mm - 1e-4,
                     "{p:?} is {gap_mm} mm from the hole, under {inset_mm}: {grown:?}"
                 );
+                at_mm += 0.005;
             }
         }
     }
