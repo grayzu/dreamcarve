@@ -34,9 +34,10 @@
 //! and seed, which [`designs::line_art`] or [`lettering::lettering`]
 //! redraw, and [`designs::line_art_keeping`] narrows to a motif. Seat
 //! failures of an open issue are reported as known
-//! (`property::known_issue`), not failed, and so is a 15° or 30° bit's in
-//! an inch program by a corner too sharp for its written places, the
-//! limit the maintainer accepted on #438 (`property::inch_sharp_corner`).
+//! (`property::known_issue`), not failed, and so is one by a corner too
+//! sharp for the bit and the program's written places, the limit the
+//! maintainer accepted on #438 for inch programs and then, with #559, for
+//! millimetre ones (`property::written_grid_corner`).
 //! No regression file is written:
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
@@ -475,14 +476,17 @@ fn lettering_outline_near_itself_is_merged() {
     );
 }
 
-/// #438 (the maintainer's decision on #499's limit): a narrow bit's seat
-/// failure in an inch program is excused only near a corner sharper than
-/// the written margin lets it seat ([`property::inch_sharp_corner`]). A
-/// 10° wedge 20 mm long, under the 15° bit's 24.8°: a binding cell
-/// 0.05 mm from its tip is excused; one 5 mm in along it is not, nor is
-/// the cell by the tip in a millimetre program or with the 60° bit.
+/// #438, #559 (the maintainer's decisions on #499's limit): a seat
+/// failure is excused only near a corner sharper than the written margin
+/// lets the bit seat at the program's places
+/// ([`property::written_grid_corner`]), `N = 2 asin(w / (SEAT_MM ·
+/// tan(α/2) + w))`. A 10° wedge 20 mm long: a binding cell 0.05 mm from
+/// its tip is excused with the 15° bit in an inch program (`N` 24.8°) and
+/// in a three-place millimetre one (11.1°); not in a four-place
+/// millimetre one (1.2°), nor with the 30° bit in millimetres (5.7°) or
+/// the 60° in inches (6.7°). A cell 5 mm in along it is never excused.
 #[test]
-fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
+fn grid_limit_excuses_only_a_corner_sharper_than_the_bit_and_places_allow() {
     let half = 5.0_f64.to_radians().tan() * 20.0;
     let wedge = dc_geometry::Polyline::new(
         vec![
@@ -496,31 +500,43 @@ fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
         profiles: vec![wedge],
         notes: Vec::new(),
     };
-    let with = |units: dc_project::Units, angle_deg: f64| {
+    let with = |units: dc_project::Units, angle_deg: f64, mm_places: Option<u8>| {
         let mut c = case("line art", 0, design.clone());
         c.project.display_units = units;
         c.project.tools[0].cutter = dc_project::ToolKind::VBit {
             included_angle_deg: angle_deg,
         };
+        if let Some(places) = mm_places {
+            c.project.post_processor.decimal_places.mm = places;
+        }
         c
     };
     let female = |c: &property::Case| match c.ops.iter().find(|(k, _)| *k == Kind::Female) {
         Some((_, dc_project::Operation::Inlay(op))) => op.clone(),
         _ => panic!("the case has a female"),
     };
-    let inch = with(dc_project::Units::Inch, 15.0);
-    let place = |p: dc_geometry::Point| inch.project.instances[0].transform.apply(p);
+    let (inch, mm) = (dc_project::Units::Inch, dc_project::Units::Mm);
+    let inch_15 = with(inch, 15.0, None);
+    let place = |p: dc_geometry::Point| inch_15.project.instances[0].transform.apply(p);
     let (by_tip, far) = (
         place(dc_geometry::Point::new(0.05, 0.0)),
         place(dc_geometry::Point::new(5.0, 0.0)),
     );
-    let excused = |c: &property::Case, at| property::inch_sharp_corner(c, &female(c), at);
-    assert!(excused(&inch, by_tip).is_some(), "by the tip");
-    assert!(excused(&inch, far).is_none(), "5 mm in");
-    let mm = with(dc_project::Units::Mm, 15.0);
-    assert!(excused(&mm, by_tip).is_none(), "in millimetres");
-    let wide = with(dc_project::Units::Inch, 60.0);
-    assert!(excused(&wide, by_tip).is_none(), "with the 60° bit");
+    let excused = |c: &property::Case, at| property::written_grid_corner(c, &female(c), at);
+    for (name, c, by_the_tip) in [
+        ("15°, inch", with(inch, 15.0, None), true),
+        ("15°, mm", with(mm, 15.0, None), true),
+        ("15°, mm at four places", with(mm, 15.0, Some(4)), false),
+        ("30°, mm", with(mm, 30.0, None), false),
+        ("60°, inch", with(inch, 60.0, None), false),
+    ] {
+        assert_eq!(
+            excused(&c, by_tip).is_some(),
+            by_the_tip,
+            "{name}: by the tip"
+        );
+        assert!(excused(&c, far).is_none(), "{name}: 5 mm in");
+    }
 }
 
 /// #506 (found by the sweep): the male of lettering seed `0x2d` (15° bit,

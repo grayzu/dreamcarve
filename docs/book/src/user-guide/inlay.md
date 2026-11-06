@@ -153,30 +153,53 @@ of the pocket's, the plug seats higher or lower by that error times
 | 30° | 3.7 |
 | 15° | 7.6 |
 
-**Export narrow-bit inlays in millimetres.** An inch program has a
-limit at very sharp corners that a millimetre program does not, and
-DreamCarve accepts it rather than working round it. A program writes
-each point to its decimal places, so the bit can only start its cut into
-a corner at a point the program can write exactly. A millimetre program
-writes to 0.001 mm and an inch program to 0.0001 in (0.00254 mm). In a
-corner a few degrees wide, the nearest such point can be some way from
-the tip, and the plug keeps the wood the bit cannot reach:
+**Export narrow-bit inlays in millimetres.** A program has a limit at
+very sharp corners, set by its decimal places, and DreamCarve accepts it
+rather than working round it. A program writes each point to its decimal
+places, so the bit can only start its cut into a corner at a point the
+program can write exactly. A millimetre program writes to 0.001 mm and
+an inch program to 0.0001 in (0.00254 mm). In a corner a few degrees
+wide, the nearest such point can be some way from the tip, and the plug
+keeps the wood the bit cannot reach. How sharp a corner must be before
+that can hold the plug more than 0.05 mm up depends on the bit and the
+places:
 
-- **In millimetres** every bench bit seats within 0.05 mm, a 5° corner
-  included. At a point sharper still the nearest such point can be
-  too far even in millimetres: a 15° bit's plug stood 0.068 mm proud
-  past the tip of a 4.5° notch
-  ([#559](https://github.com/grayzu/dreamcarve/issues/559)).
-- **In inches**, with a 15° or 30° bit, a corner sharper than about 25°
-  (15° bit) or 14° (30° bit) can hold the plug up: by up to about
-  0.16 mm with the 15° bit and 0.08 mm with the 30° at a 5° corner, and
-  more at a point sharper still. Where two overlapping letters left a
-  counter ending in a hairline spike, a 30° bit's plug stood 0.37 mm
-  proud in inches and seated in millimetres. The 60° and 90° bits are
-  far less sensitive: in inches they seat within 0.05 mm at a 5° corner.
+| Bit | Millimetres, 3 places | Millimetres, 4 places | Inches, 4 places |
+| --- | --- | --- | --- |
+| 15° | 11° | 1.2° | 25° |
+| 30° | 5.7° | 0.6° | 14° |
+| 60° | 2.7° | 0.3° | 6.7° |
+| 90° | 1.6° | 0.2° | 4° |
+
+A corner sharper than the table's angle *can* hold the plug up, not
+always: whether it does depends on where the corner's tip falls between
+the points the program can write.
+
+- **In inches**, with a 15° or 30° bit, the plug can stand up to about
+  0.16 mm proud with the 15° bit and 0.08 mm with the 30° at a 5°
+  corner, and more at a point sharper still. Where two overlapping
+  letters left a counter ending in a hairline spike, a 30° bit's plug
+  stood 0.37 mm proud in inches and seated in millimetres.
+- **In millimetres** a 15° bit's plug stood 0.068 mm proud past the tip
+  of a 4.5° notch
+  ([#559](https://github.com/grayzu/dreamcarve/issues/559)), and seated
+  at 0.033 mm with four places.
 
 So for an inlay with a 15° or 30° bit, set the project's `display_units`
-to `"mm"` before you export, whatever units you design in.
+to `"mm"` before you export, whatever units you design in. If the design
+also has very sharp points, a few degrees wide, set the post-processor's
+`decimal_places.mm` to 4 as well
+([Post-processors](post-processors.md#settings)):
+
+```json
+"decimal_places": {
+  "mm": 4,
+  "inch": 4
+}
+```
+
+An inch program already writes four places. The bundled
+post-processors keep 3 as their default.
 
 Apart from that limit, corners, sharp or obtuse, seat with every bit,
 and so do the other tight features where a narrow bit's plug used to
