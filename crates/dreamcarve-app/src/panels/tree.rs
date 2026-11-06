@@ -225,6 +225,15 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .flatten();
             ui.data_mut(|d| d.insert_temp(seen_id(), current));
             for row in &tree.shapes {
+                // A row out of view keeps its place and is not laid out,
+                // so 500 shapes cost a frame what a screenful does
+                // (acceptance 87); the row to reveal is always drawn.
+                let next =
+                    Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), ROW_PX));
+                if !ui.is_rect_visible(next) && reveal.as_ref() != Some(&row.id) {
+                    ui.allocate_exact_size(next.size(), Sense::hover());
+                    continue;
+                }
                 let response = shape_row(ui, state, &tree, row, out);
                 if reveal.as_ref() == Some(&row.id) {
                     response.scroll_to_me(None);

@@ -10,17 +10,25 @@
 //! menu bar, toolbar, status bar, side panels and Viewport, and then runs
 //! what the widgets asked for.
 //!
+//! Generation runs on the [`Worker`] thread (slice 9, #538): each frame
+//! first hands the results it finished to `dc_app::App::accept`, and last
+//! posts the next piece of work once the frame's edits have settled. The
+//! UI thread never runs a generator.
+//!
 //! Files are read and written on the UI thread: a `.dcv` is small, and the
 //! progress sheet the design gives slow disks arrives with export (slice
 //! 18), the first job that can be large.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use dc_app::import::{DrawingFormat, Purpose};
 use dc_app::{App, Command, Prefs, StrKey, Strings};
-use dreamcarve_shell::{GuiPrefs, Paths, gui_prefs};
+use dc_job::EstimateConfig;
+use dreamcarve_shell::{GuiPrefs, Paths, config, gui_prefs};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Vec2, ViewportCommand};
 
+use crate::shell::worker::{self, Worker};
 use crate::shell::{files, menu, status, theme, toolbar};
 use crate::{panels, viewport};
 
@@ -242,6 +250,17 @@ pub(crate) enum Action {
     ZoomToSelection,
     /// Clear the selection (Escape).
     ClearSelection,
+    /// Open or close the Warnings drawer (the status bar's counts, View ▸
+    /// Warnings).
+    ToggleWarnings,
+    /// Put `check`'s text on the clipboard (the drawer's *Copy*).
+    CopyWarnings,
+    /// Stop generation (the status bar's *Stop*).
+    StopGeneration,
+    /// Regenerate every operation (View ▸ Regenerate All, the drawer).
+    RegenerateAll,
+    /// Open a page of the book (a warning code's chapter entry).
+    OpenUrl(String),
 }
 
 impl Action {
@@ -306,6 +325,10 @@ pub struct Shell {
     forced_open: (bool, bool),
     /// The Viewport's gestures and layer caches.
     viewport: viewport::ViewportState,
+    /// The generation thread.
+    worker: Worker,
+    /// Whether the Warnings drawer is open.
+    warnings_open: bool,
 }
 
 impl std::fmt::Debug for Shell {
@@ -342,6 +365,21 @@ impl Shell {
             None => GuiPrefs::default(),
         };
         let prefs = files::prefs_from_file(&written);
+        // `config.toml`'s `[estimate]`, as the CLI reads it for the
+        // printed estimates (capability 78); unreadable is the defaults
+        // and a note.
+        let estimate = match options.config.as_ref().map(config::load_from) {
+            Some(Ok(config)) => config.estimate,
+            Some(Err(e)) => {
+                message = Some(e.to_string());
+                EstimateConfig::default()
+            }
+            None => EstimateConfig::default(),
+        };
+        let (worker, failed) = Worker::spawn(estimate);
+        if let Some(e) = failed {
+            message = Some(e.to_string());
+        }
         theme::apply(&cc.egui_ctx, prefs.theme);
         if let Some(render_state) = cc.wgpu_render_state.as_ref() {
             viewport::renderer::install(render_state);
@@ -369,6 +407,8 @@ impl Shell {
             last_window: None,
             forced_open: (false, false),
             viewport: viewport::ViewportState::default(),
+            worker,
+            warnings_open: false,
         };
         shell.viewport.fit_on_next_frame();
         if let Some(path) = options.open {
@@ -386,6 +426,19 @@ impl Shell {
     /// The application state, to change.
     pub fn app_mut(&mut self) -> &mut App {
         &mut self.app
+    }
+
+    /// Whether the generation thread is running a piece of work, kept or
+    /// not.
+    #[must_use]
+    pub fn worker_busy(&self) -> bool {
+        self.worker.busy()
+    }
+
+    /// Whether the Warnings drawer is open.
+    #[must_use]
+    pub fn warnings_open(&self) -> bool {
+        self.warnings_open
     }
 
     /// The last frame's layout.
@@ -829,6 +882,14 @@ impl Shell {
                 self.viewport.reset_clicks();
                 ctx.request_repaint();
             }
+            Action::ToggleWarnings => self.warnings_open = !self.warnings_open,
+            // The OS clipboard needs eframe's `clipboard` feature, off
+            // until `deny.toml` admits its BSL-1.0 Windows crates (#532);
+            // egui keeps the text until then.
+            Action::CopyWarnings => ctx.copy_text(dc_app::warnings::copy_text(&self.app)),
+            Action::StopGeneration => self.app.stop(),
+            Action::RegenerateAll => self.app.regenerate_all(),
+            Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
         }
     }
 
@@ -989,12 +1050,17 @@ pub(crate) struct FrameState<'a> {
     pub show_empty: bool,
     /// The pointer over the Viewport, for the status bar.
     pub pointer: viewport::Pointer,
+    /// Whether the Warnings drawer is open, for View ▸ Warnings.
+    pub warnings_open: bool,
 }
 
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::follow(&ctx, self.app.prefs().theme);
+        // What the worker finished since the last frame, before anything
+        // reads the results.
+        self.worker.tick(&mut self.app, Instant::now());
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
 
@@ -1010,13 +1076,18 @@ impl eframe::App for Shell {
             message: self.message.as_deref(),
             show_empty: self.app.project().instances.is_empty() && !self.empty_dismissed,
             pointer,
+            warnings_open: self.warnings_open,
         };
         menu::bar(ui, &state, &mut actions);
         toolbar::bar(ui, &state, &mut actions);
-        status::bar(ui, &state);
+        status::bar(ui, &state, &mut actions);
         let left = panels::side::left(ui, &state, left_open, size, right_open, &mut actions);
         let mut cam_tab = self.cam_tab;
         let right = panels::side::right(ui, &state, right_open, size, &mut cam_tab, &mut actions);
+        // Between the side panels, over the Viewport's bottom.
+        if self.warnings_open {
+            panels::warnings::drawer(ui, &state, &mut actions);
+        }
         let viewport = viewport::show(ui, &state, &mut self.viewport, &mut actions);
         if self.sheet.is_some() {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
@@ -1069,6 +1140,11 @@ impl eframe::App for Shell {
 
         for action in actions {
             self.run(&ctx, action);
+        }
+        // Post the next work once the frame's edits have settled; look
+        // again soon while any is out or waiting.
+        if self.worker.tick(&mut self.app, Instant::now()) {
+            ctx.request_repaint_after(worker::POLL);
         }
         self.update_title(&ctx);
         self.record_window(&ctx);

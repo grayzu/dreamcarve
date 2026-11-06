@@ -27,8 +27,12 @@ dc-import.workspace = true
 # copies (capability 64).
 dc-library.workspace = true
 dc-project.workspace = true
+# The generation digest serializes the model records it covers
+# (`generation::digest`).
+serde.workspace = true
 # Routes a typed unit string through `dc_project::units_input`'s
-# deserializer, so a field accepts what the file accepts.
+# deserializer, so a field accepts what the file accepts; the digest
+# hashes the records' JSON.
 serde_json.workspace = true
 thiserror.workspace = true
 

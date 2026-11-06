@@ -513,7 +513,13 @@ fn run_op(project: &Project, operation: &Operation, run: ToolRun) -> Result<Emit
 /// before it, as intended (design "Clearing passes", step 5), and the
 /// tool-change hint counts them from the project. #498: they read the
 /// stock; an Inlay's male is cut on its own board.
-fn project_checks(project: &Project, ops: &[EmitOp]) -> Findings {
+///
+/// [`build`] runs them on whatever generated even when an operation
+/// failed, and then emits nothing; [`finish`] runs them and emits. The
+/// app calls them alone when an operation failed, so its Warnings panel
+/// lists what `check` lists (acceptance 82).
+#[must_use]
+pub fn project_checks(project: &Project, ops: &[EmitOp]) -> Findings {
     let generated: Vec<(&Operation, &Toolpath)> = ops
         .iter()
         .filter(|entry| entry.label == RunLabel::Main && entry.board == Board::Female)

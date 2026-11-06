@@ -24,7 +24,7 @@ use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
 use dc_app::test_support::Harness;
 use dc_app::{App, Command, Selection};
 use dc_import::{DxfImportOptions, DxfUnits, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM};
-use dc_job::{Drawing, Tier};
+use dc_job::Drawing;
 use dc_project::{Stock, Units};
 
 use common::{fixture, read};
@@ -224,9 +224,9 @@ fn layer_subset() {
 
 /// Acceptance 64: entities the importer does not read are listed on their
 /// layer, a layer of nothing else has no shapes to import, and the
-/// warning reaches the app's warnings once, under the import's name, and
-/// stays once through later edits and generation. Opening a project
-/// clears it.
+/// warning reaches the Warnings panel's notes (`App::notes`, #538) once,
+/// under the import's name, and stays once through later edits and
+/// generation. Opening a project clears it.
 #[test]
 fn unread_entities_noted_once() {
     let sheet = sheet("dxf/unsupported.dxf");
@@ -250,11 +250,12 @@ fn unread_entities_noted_once() {
     assert_eq!(skipped.len(), 1, "one warning for every unread entity");
     let warning = skipped[0].to_string();
 
-    let noted = |harness: &Harness| -> Vec<dc_job::Finding> {
+    let noted = |harness: &Harness| -> Vec<String> {
         harness
-            .warnings()
+            .app
+            .notes()
             .iter()
-            .filter(|f| f.message.contains("dxf_entities_skipped"))
+            .filter(|note| note.contains("dxf_entities_skipped"))
             .cloned()
             .collect()
     };
@@ -266,12 +267,11 @@ fn unread_entities_noted_once() {
         .expect("the file imports");
     let found = noted(&harness);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].tier, Tier::Warning);
-    assert!(found[0].message.contains(&warning), "{}", found[0].message);
-    assert!(
-        found[0].message.contains("unsupported.dxf"),
-        "under the import's name: {}",
-        found[0].message
+    assert_eq!(found[0], format!("unsupported.dxf: {warning}"));
+    assert_eq!(
+        harness.app.notes().len(),
+        sheet.warnings().len(),
+        "one note per importer warning"
     );
 
     harness

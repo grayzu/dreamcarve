@@ -280,6 +280,43 @@ hover_locked = "{name} · locked"
 fit_view = "Fit View"
 zoom_selection = "Zoom to Selection"
 
+# Generation on the worker and the Warnings drawer (slice 9, #538): the
+# status bar's generation cell, Stop and Regenerate All, a row's spinner,
+# and the drawer's title, actions, groups and tiers.
+[app.generation]
+generating = "Generating {at} of {of}…"
+checking = "Checking…"
+stopped = "Stopped"
+stop = "Stop"
+regenerate_all = "Regenerate All"
+regenerating = "Regenerating"
+
+[app.warnings]
+title = "Warnings"
+heading = "Warnings · {counts}"
+none = "No warnings: check finds nothing to report."
+hint = "1 hint"
+hints = "{count} hints"
+note = "1 note"
+notes = "{count} notes"
+separator = " · "
+copy = "Copy"
+close = "Close the Warnings drawer"
+project = "Project"
+group = "{name} · {kind}"
+level_error = "error"
+level_warning = "warning"
+level_hint = "hint"
+level_note = "note"
+chapter = "Open {code} in the Warnings chapter"
+kind_profile = "Profile"
+kind_pocket = "Pocket"
+kind_drill = "Drill"
+kind_bore = "Bore"
+kind_engrave = "Engrave"
+kind_v_carve = "V-Carve"
+kind_inlay = "Inlay"
+
 # The CAM panel's Tools tab (slice 8, #537; functional spec, capability
 # 63): the toolbar, the rows, the editor's labels and the messages the
 # status bar shows after Save to library.

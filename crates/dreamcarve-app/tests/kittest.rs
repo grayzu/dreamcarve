@@ -1356,3 +1356,289 @@ fn new_from_drawing_through_the_sheet() {
     assert!(!app.can_undo());
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 76 on the window: once the version 14 plaque (whose Drill
+/// predates `allow_tool_wider_than_hole`, so its holes are too small for
+/// its bit) has generated, the status bar's counts open the Warnings
+/// drawer; a row about a hole selects the hole; *Copy* hands egui
+/// `check`'s text (`dc_app::warnings::copy_text`), which reaches the OS
+/// clipboard once eframe's `clipboard` feature is on (#532 left it off
+/// for its licences); the close button closes it.
+#[test]
+fn warnings_drawer_selects_and_copies() {
+    let dir = scratch("warnings-drawer");
+    let plaque = dir.join("plaque.dcv");
+    std::fs::copy(
+        common::repo_root()
+            .join("crates/dreamcarve/tests/fixtures/holds-slug-migration/plaque.dcv"),
+        &plaque,
+    )
+    .expect("fixture copied");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    assert!(h.state().app().generation().finished().is_some());
+
+    h.get_by_label("Warnings").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    let row = dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .find(|r| r.code.as_deref() == Some("drill_hole_too_small"))
+        .expect("the plaque's holes are too small for its drill");
+    h.get_by_label(&row.line).click();
+    h.run();
+    assert_eq!(Some(h.state().app().selection().clone()), row.selection());
+
+    h.get_by_label("Copy").click();
+    h.step();
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        copied,
+        [dc_app::warnings::copy_text(h.state().app())],
+        "Copy hands egui check's text"
+    );
+    h.run();
+
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    assert!(!h.state().warnings_open());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A project of 500 shapes, built here and never committed: 500 linked
+/// copies of a 12 mm circle on a 25 × 20 grid at 20 mm pitch, on
+/// 510 × 410 × 12 mm stock, with a 3 mm Pocket and a medial V-Carve on
+/// all of them (acceptance 87's project).
+fn five_hundred_shapes() -> dc_project::Project {
+    use dc_geometry::{Point, Polyline, Transform};
+    use dc_project::{
+        ClearanceStrategy, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
+        FeatureInstance, InstanceId, MachiningOrder, Operation, OperationId, PocketOp, Tool,
+        ToolId, ToolKind, VCarveOp, VCarveStrategy, WallPass,
+    };
+
+    let mut project = dc_app::App::new_project().expect("a new project");
+    project.name = "five-hundred".into();
+    project.stock.width_mm = 510.0;
+    project.stock.height_mm = 410.0;
+    project.stock.thickness_mm = Some(12.0);
+    let definition = DefinitionId::new("d1");
+    project.definitions.insert(
+        definition.clone(),
+        FeatureDefinition {
+            id: definition.clone(),
+            name: "circle".into(),
+            profiles: vec![Polyline::circle(Point::new(0.0, 0.0), 6.0)],
+        },
+    );
+    for k in 0..500_u32 {
+        let (col, row) = (f64::from(k % 25), f64::from(k / 25));
+        project.instances.push(FeatureInstance {
+            id: InstanceId::new(format!("i{k}")),
+            definition: definition.clone(),
+            transform: Transform::translate(15.0 + 20.0 * col, 15.0 + 20.0 * row),
+            name: format!("circle {k}"),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(12.0),
+            z_bottom_mm: Some(0.0),
+        });
+    }
+    let end_mill = Tool {
+        id: ToolId::new("t1"),
+        name: "6.35 mm upcut".into(),
+        vendor: None,
+        product_id: None,
+        number: Some(1),
+        cutter: ToolKind::EndMill,
+        diameter_mm: 6.35,
+        flutes: 2,
+        feed_mm_min: Some(1000.0),
+        plunge_mm_min: Some(300.0),
+        rpm: Some(18000),
+        step_down_mm: Some(2.0),
+        step_over_fraction: Some(0.4),
+    };
+    let v_bit = Tool {
+        id: ToolId::new("t2"),
+        name: "90° V-bit".into(),
+        number: Some(2),
+        cutter: ToolKind::VBit {
+            included_angle_deg: 90.0,
+        },
+        step_down_mm: None,
+        ..end_mill.clone()
+    };
+    project.tools = vec![end_mill, v_bit];
+    let targets: Vec<InstanceId> = project.instances.iter().map(|i| i.id.clone()).collect();
+    project.operations = vec![
+        Operation::Pocket(PocketOp {
+            id: OperationId::new("o1"),
+            name: "Pocket".into(),
+            enabled: true,
+            targets: targets.clone(),
+            tool: ToolId::new("t1"),
+            strategy: ClearanceStrategy::Offset,
+            wall_pass: WallPass::Last,
+            depth_mm: Some(3.0),
+            step_down_mm: None,
+            step_over_fraction: None,
+            direction: CutDirection::Climb,
+            stock_to_leave_mm: 0.0,
+            rest_of: None,
+            entry: Entry::Plunge,
+            corner_relief: CornerRelief::None,
+            machining_order: MachiningOrder::FullDepthFirst,
+            through_cut_allowance_mm: 0.0,
+            safe_z_mm: 5.0,
+        }),
+        Operation::VCarve(VCarveOp {
+            id: OperationId::new("o2"),
+            name: "V-Carve".into(),
+            enabled: true,
+            targets,
+            tool: ToolId::new("t2"),
+            strategy: VCarveStrategy::Medial,
+            clearing: Vec::new(),
+            flat_depth_mm: None,
+            start_depth_mm: 0.0,
+            start_plane_cleared_externally: false,
+            step_over_fraction: None,
+            machining_order: MachiningOrder::FullDepthFirst,
+            through_cut_allowance_mm: 0.0,
+            safe_z_mm: 5.0,
+        }),
+    ];
+    project
+}
+
+/// Steps `h` once and returns how long the UI's frame took: the shell's
+/// update and egui's layout on this thread, while the worker runs.
+fn timed_step(h: &mut Harness<'_, dreamcarve_app::Shell>) -> std::time::Duration {
+    let start = std::time::Instant::now();
+    h.step();
+    start.elapsed()
+}
+
+/// Acceptance 87 (the window never blocks; capability 71): on 500 shapes
+/// with a Pocket and a V-Carve on all of them, generation runs on the
+/// worker while the window answers input within 100 ms a frame, both
+/// operations' rows show the spinner while they wait, the status bar
+/// reads *Generating k of n…*, and *Stop* shows generation stopped on
+/// the next frame, well within the second the spec allows: the worker
+/// finishes the job it is on (design open question 4), and its result is
+/// dropped when it lands. The frames are timed on the UI thread, not the
+/// worker's jobs.
+#[test]
+fn window_answers_input_while_generating() {
+    const FRAME_BUDGET: std::time::Duration = std::time::Duration::from_millis(100);
+    let dir = scratch("five-hundred");
+    let path = dir.join("five-hundred.dcv");
+    let text = dc_project::save(&five_hundred_shapes()).expect("the project saves");
+    std::fs::write(&path, text).expect("the project is written");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(path), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert_eq!(h.state().app().project().instances.len(), 500);
+
+    // The change settles, the worker takes the first job, and every frame
+    // meanwhile stays inside the budget.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let mut slowest = std::time::Duration::ZERO;
+    while !h.state().worker_busy() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the worker never started"
+        );
+        slowest = slowest.max(timed_step(&mut h));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    for _ in 0..2 {
+        slowest = slowest.max(timed_step(&mut h));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let generation = h.state().app().generation();
+    assert!(generation.busy(), "generation is still running");
+    for op in ["o1", "o2"] {
+        assert!(
+            generation.is_regenerating(&dc_project::OperationId::new(op)),
+            "{op} is waiting for its result"
+        );
+    }
+    assert_eq!(
+        h.query_all_by_label("Regenerating").count(),
+        2,
+        "both rows show the spinner"
+    );
+    assert!(
+        h.state().app().scene().operations().iter().all(|o| o.stale),
+        "the Scene marks both stale, for the Viewport to fade (slice 16 draws runs)"
+    );
+    assert!(
+        h.query_by_label_contains("Generating").is_some(),
+        "the status bar says it is generating"
+    );
+
+    // Input is answered at once: the status bar's counts open the
+    // Warnings drawer, read in one frame and drawn in the next.
+    h.get_by_label("Warnings").click();
+    slowest = slowest.max(timed_step(&mut h));
+    assert!(h.state().warnings_open(), "the click was read");
+    slowest = slowest.max(timed_step(&mut h));
+    assert!(
+        h.query_by_label("Copy").is_some(),
+        "the drawer is drawn in the next frame"
+    );
+    println!("window_answers_input_while_generating: slowest frame {slowest:?}");
+    assert!(
+        slowest < FRAME_BUDGET,
+        "a frame took {slowest:?} while generating"
+    );
+
+    // Stop: stopped on the UI at once, nothing pending, the running job's
+    // result dropped when it lands.
+    assert!(h.state().app().generation().busy());
+    let stopped_at = std::time::Instant::now();
+    h.get_by_label("Stop").click();
+    timed_step(&mut h);
+    timed_step(&mut h);
+    assert!(
+        stopped_at.elapsed() < std::time::Duration::from_secs(1),
+        "Stop took {:?}",
+        stopped_at.elapsed()
+    );
+    let app = h.state().app();
+    assert!(!app.generation().busy(), "generation stopped");
+    assert!(app.pending().is_empty());
+    assert!(app.generation().finished().is_none());
+    assert_eq!(h.query_all_by_label("Regenerating").count(), 0);
+    assert!(
+        h.query_by_label("Stopped").is_some(),
+        "the status bar says so"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

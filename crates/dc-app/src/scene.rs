@@ -66,10 +66,26 @@ pub struct SceneOperation {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
     revision: u64,
+    shapes_revision: u64,
     shapes: Vec<Shape>,
     tabs: Vec<TabMark>,
     operations: Vec<SceneOperation>,
     bounds: Option<Rect>,
+}
+
+/// Each enabled operation of `project` with `generation`'s state.
+fn operations(project: &Project, generation: &Generation) -> Vec<SceneOperation> {
+    project
+        .operations
+        .iter()
+        .enumerate()
+        .filter(|(_, op)| op.enabled())
+        .map(|(index, op)| SceneOperation {
+            id: op.id().clone(),
+            index,
+            stale: !generation.is_current(op.id()),
+        })
+        .collect()
 }
 
 /// The joint box of `a` and `b`.
@@ -129,31 +145,43 @@ impl Scene {
                 })
             })
             .collect();
-        let operations = project
-            .operations
-            .iter()
-            .enumerate()
-            .filter(|(_, op)| op.enabled())
-            .map(|(index, op)| SceneOperation {
-                id: op.id().clone(),
-                index,
-                stale: !generation.is_current(op.id()),
-            })
-            .collect();
         Self {
             revision,
+            shapes_revision: revision,
             shapes,
             tabs,
-            operations,
+            operations: operations(project, generation),
             bounds,
         }
     }
 
-    /// Which build this is: it changes on every rebuild and on nothing
-    /// else, so the renderer re-uploads a layer only when it does.
+    /// The Scene after a generation result, Stop or Regenerate all on the
+    /// same snapshot: the operations' state re-read, the shapes kept (on
+    /// 500 shapes, placing every outline again would cost a frame), under
+    /// `revision`.
+    pub(crate) fn refresh_operations(
+        &mut self,
+        project: &Project,
+        generation: &Generation,
+        revision: u64,
+    ) {
+        self.operations = operations(project, generation);
+        self.revision = revision;
+    }
+
+    /// Which build this is: it changes on every rebuild and every result
+    /// and on nothing else.
     #[must_use]
     pub fn revision(&self) -> u64 {
         self.revision
+    }
+
+    /// Which build of the shapes and tabs this is: it changes only when
+    /// the snapshot does, so the renderer re-uploads the shape layers
+    /// only then, not for every generation result.
+    #[must_use]
+    pub fn shapes_revision(&self) -> u64 {
+        self.shapes_revision
     }
 
     /// The visible instances in file order: the last is drawn on top.

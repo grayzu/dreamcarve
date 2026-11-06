@@ -12,15 +12,15 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
-use dc_job::{EmitOp, Finding, Findings, Tier};
+use dc_job::{EmitOp, Finding, Findings};
 use dc_project::{
     CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, OperationId, OriginXy,
-    OriginZ, Problem, Project, SettingReset, Stock, Units,
+    OriginZ, Problem, Project, SettingReset, SourceMap, Stock, Units,
 };
 
 use crate::command::Command;
 use crate::error::CommandError;
-use crate::generation::{Generation, Job, JobResult, SnapshotId};
+use crate::generation::{Generation, Job, JobResult, SnapshotId, Work};
 use crate::history::LabelledHistory;
 use crate::import::DrawingImport;
 use crate::prefs::Prefs;
@@ -54,20 +54,22 @@ pub struct App {
     dirty: bool,
     /// Validation of the current snapshot, run on every change.
     validation: Findings,
-    /// Validation's, generation's and `finish`'s findings, merged.
-    findings: Vec<Finding>,
+    /// Validation's, generation's and `finish`'s findings, merged
+    /// (`warnings::merge`).
+    findings: Findings,
+    /// `findings`, errors then warnings, as `check` prints them.
+    listed: Vec<Finding>,
+    /// What opening the file (its migration) or importing into it noted,
+    /// for the Warnings panel; cleared when the file is saved.
+    notes: Vec<String>,
+    /// Where each value is in the file's text, as opened or last saved,
+    /// so a finding's line names its position as `check`'s does.
+    source_map: Option<SourceMap>,
     /// The settings the last command reset, when it switched the
     /// post-processor (functional spec, capability 62).
     last_resets: Vec<SettingReset>,
     /// What the Viewport draws, rebuilt with the snapshot and the results.
     scene: Scene,
-    /// The last import's notes (functional spec, capability 55): the
-    /// importer's warnings, under the file's name, listed once among the
-    /// warnings until the next import, an open, *New*, or an undo past the
-    /// import.
-    import_notes: Vec<Finding>,
-    /// How many steps the history held after that import.
-    import_depth: usize,
 }
 
 /// What opening a file reported (capability 51): the migration notes and
@@ -97,11 +99,12 @@ impl App {
             saved: None,
             dirty: false,
             validation,
-            findings: Vec::new(),
+            findings: Findings::default(),
+            listed: Vec::new(),
+            notes: Vec::new(),
+            source_map: None,
             last_resets: Vec::new(),
             scene: Scene::default(),
-            import_notes: Vec::new(),
-            import_depth: 0,
         };
         app.refresh_findings();
         app.rebuild_scene();
@@ -160,6 +163,10 @@ impl App {
             .ok()
             .map(String::into_bytes);
         self.replace_project(loaded.project, path, clean);
+        // `check` locates findings in the file as read and prints what the
+        // migration changed first (#498): so does the Warnings panel.
+        self.source_map = source_map(bytes);
+        self.notes = loaded.notes.iter().map(ToString::to_string).collect();
         Ok(Opened {
             notes: loaded.notes,
             problems: loaded.problems,
@@ -173,13 +180,18 @@ impl App {
 
     fn replace_project(&mut self, project: Project, path: Option<PathBuf>, saved: Option<Vec<u8>>) {
         self.validation = dc_job::validation(&project);
-        self.generation = Generation::new(&project, !self.validation.has_errors());
+        self.generation = Generation::after(
+            self.generation.snapshot(),
+            &project,
+            !self.validation.has_errors(),
+        );
         self.history = LabelledHistory::new(project);
         self.selection = Selection::Nothing;
         self.source = path;
         self.saved = saved;
+        self.notes.clear();
+        self.source_map = None;
         self.last_resets.clear();
-        self.import_notes.clear();
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
@@ -187,8 +199,8 @@ impl App {
 
     /// Imports the drawing `sheet` shows into the project, placed as
     /// drawn, as one undo step (*Import plaque.dxf*), and selects the new
-    /// shapes (functional spec, capability 55). The importer's warnings
-    /// become the import's notes among [`App::warnings`], once.
+    /// shapes (functional spec, capability 55). Each of the importer's
+    /// warnings becomes one note in the Warnings panel ([`App::notes`]).
     ///
     /// # Errors
     ///
@@ -199,8 +211,7 @@ impl App {
             reason: sheet.blocked().unwrap_or_default(),
         })?;
         let label = self.run(command)?;
-        self.import_depth = self.history.undo_labels().count();
-        self.take_import_notes(sheet);
+        self.note_import(sheet);
         Ok(label)
     }
 
@@ -230,36 +241,20 @@ impl App {
             false,
         )?;
         self.reset(project);
-        self.import_depth = 0;
-        self.take_import_notes(sheet);
+        self.note_import(sheet);
         Ok(())
     }
 
-    /// The import's notes: each importer warning, under the file's name.
-    fn take_import_notes(&mut self, sheet: &DrawingImport) {
-        let name = sheet.name();
-        self.import_notes = sheet
-            .warnings()
-            .iter()
-            .map(|warning| Finding {
-                field: None,
-                code: None,
-                message: self.strings.fmt(
-                    StrKey::AppImportNote,
-                    &[("name", name), ("note", &warning.to_string())],
-                ),
-                tier: Tier::Warning,
-                op: None,
-                shape: None,
-            })
-            .collect();
-        self.refresh_findings();
-    }
-
-    /// The last import's notes, as [`App::warnings`] lists them.
-    #[must_use]
-    pub fn import_notes(&self) -> &[Finding] {
-        &self.import_notes
+    /// The importer's warnings as the Warnings panel's notes
+    /// ([`App::add_note`]), each under the file's name.
+    fn note_import(&mut self, sheet: &DrawingImport) {
+        for warning in sheet.warnings() {
+            let note = self.strings.fmt(
+                StrKey::AppImportNote,
+                &[("name", sheet.name()), ("note", &warning.to_string())],
+            );
+            self.add_note(note);
+        }
     }
 
     /// The current snapshot.
@@ -291,7 +286,45 @@ impl App {
             self.source = path;
         }
         self.saved = Some(bytes.to_vec());
+        // The file now holds the current version: nothing migrated.
+        self.source_map = source_map(bytes);
+        self.notes.clear();
         self.refresh_dirty();
+    }
+
+    /// The file name the Warnings panel's lines are prefixed with, as
+    /// `check` prints them run in the file's folder: the source's name,
+    /// or the project's with `.dcv` before it has a file.
+    #[must_use]
+    pub fn file_name(&self) -> String {
+        self.source
+            .as_deref()
+            .and_then(Path::file_name)
+            .map_or_else(
+                || format!("{}.dcv", self.project().name),
+                |n| n.to_string_lossy().into_owned(),
+            )
+    }
+
+    /// Where each value of the file is, while the project is what the file
+    /// holds; `None` once it is edited (the file's positions no longer
+    /// name the values checked) or with no file.
+    #[must_use]
+    pub fn source_map(&self) -> Option<&SourceMap> {
+        self.source_map.as_ref().filter(|_| !self.dirty)
+    }
+
+    /// What opening or importing noted, oldest first, for the Warnings
+    /// panel.
+    #[must_use]
+    pub fn notes(&self) -> &[String] {
+        &self.notes
+    }
+
+    /// Adds a note to the Warnings panel: an importer's warning about what
+    /// a drawing it read left out ([`App::import_drawing`]).
+    pub fn add_note(&mut self, note: String) {
+        self.notes.push(note);
     }
 
     /// Whether the project has unsaved changes (capability 51): the
@@ -357,9 +390,6 @@ impl App {
     pub fn undo(&mut self) -> Option<String> {
         let label = self.history.undo()?;
         self.last_resets.clear();
-        if self.history.undo_labels().count() < self.import_depth {
-            self.import_notes.clear();
-        }
         self.snapshot_changed();
         Some(label)
     }
@@ -438,14 +468,24 @@ impl App {
         &self.scene
     }
 
+    /// The Scene's operations re-read after a result, Stop or Regenerate
+    /// all, under the next revision; its shapes are kept, since the
+    /// snapshot did not change.
+    fn refresh_scene_operations(&mut self) {
+        let revision = self.scene.revision().wrapping_add(1);
+        self.scene
+            .refresh_operations(self.history.current(), &self.generation, revision);
+    }
+
     fn refresh_findings(&mut self) {
-        let mut findings =
-            Vec::with_capacity(self.validation.errors.len() + self.validation.warnings.len());
-        findings.extend(self.validation.errors.iter().cloned());
-        findings.extend(self.validation.warnings.iter().cloned());
-        findings.extend(self.generation.findings());
-        findings.extend(self.import_notes.iter().cloned());
-        self.findings = findings;
+        self.findings = crate::warnings::merge(&self.validation, self.generation.findings());
+        self.listed = self
+            .findings
+            .errors
+            .iter()
+            .chain(&self.findings.warnings)
+            .cloned()
+            .collect();
     }
 
     /// What is selected.
@@ -531,18 +571,46 @@ impl App {
         let kept = self.generation.accept(result);
         if kept {
             self.refresh_findings();
-            self.rebuild_scene();
+            self.refresh_scene_operations();
         }
         kept
     }
 
+    /// The next work for the worker, marked handed out
+    /// ([`Generation::next_work`]): the shell posts one at a time, so Stop
+    /// has nothing queued to take back.
+    pub fn next_work(&mut self) -> Option<Work> {
+        self.generation.next_work()
+    }
+
+    /// Stop (capability 71): nothing pending, the running job's result
+    /// dropped when it lands, the stale operations held until an edit
+    /// changes them or Regenerate all.
+    pub fn stop(&mut self) {
+        self.generation.stop();
+        self.refresh_scene_operations();
+    }
+
+    /// Regenerate all (capability 71): every enabled operation
+    /// regenerates, whatever its result.
+    pub fn regenerate_all(&mut self) {
+        self.generation.regenerate_all();
+        self.refresh_scene_operations();
+    }
+
     /// Validation's, generation's and `finish`'s findings for the current
-    /// snapshot, merged in the order `check` prints them: validation,
-    /// then each operation in project order, then the project-level
-    /// checks and the export warnings, then the last import's notes. Each
-    /// carries its tier.
+    /// snapshot, in the order `check` prints them: the errors, then the
+    /// warnings, each in the order `build` finds them (validation, each
+    /// operation in project order, the project-level checks, the export
+    /// warnings). Each carries its tier.
     #[must_use]
     pub fn warnings(&self) -> &[Finding] {
+        &self.listed
+    }
+
+    /// [`App::warnings`] as errors and warnings.
+    #[must_use]
+    pub fn findings(&self) -> &Findings {
         &self.findings
     }
 
@@ -551,6 +619,13 @@ impl App {
     pub fn validation(&self) -> &Findings {
         &self.validation
     }
+}
+
+/// Where each value is in `bytes`, when they are JSON text.
+fn source_map(bytes: &[u8]) -> Option<SourceMap> {
+    std::str::from_utf8(bytes)
+        .ok()
+        .and_then(|text| SourceMap::parse(text).ok())
 }
 
 #[cfg(test)]
