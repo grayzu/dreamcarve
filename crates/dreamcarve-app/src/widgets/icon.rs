@@ -40,6 +40,12 @@ pub enum Icon {
     PanelLeftOpen,
     /// `panel-right-open`: reopen the CAM panel.
     PanelRightOpen,
+    /// `chevron-right`: a closed section.
+    ChevronRight,
+    /// `chevron-down`: an open section, a dropdown.
+    ChevronDown,
+    /// `crosshair`: pick a point on the Viewport.
+    Crosshair,
     /// `info`: an unused tool's hint.
     Info,
     /// `search`: the library's search field.
@@ -91,6 +97,9 @@ impl Icon {
             Self::TriangleAlert => "triangle-alert",
             Self::PanelLeftOpen => "panel-left-open",
             Self::PanelRightOpen => "panel-right-open",
+            Self::ChevronRight => "chevron-right",
+            Self::ChevronDown => "chevron-down",
+            Self::Crosshair => "crosshair",
             Self::Info => "info",
             Self::Search => "search",
             Self::Check => "check",
@@ -126,6 +135,9 @@ impl Icon {
             Self::TriangleAlert => '\u{e193}',
             Self::PanelLeftOpen => '\u{e21d}',
             Self::PanelRightOpen => '\u{e434}',
+            Self::ChevronRight => '\u{e06f}',
+            Self::ChevronDown => '\u{e06d}',
+            Self::Crosshair => '\u{e0ac}',
             Self::Info => '\u{e0f9}',
             Self::Search => '\u{e151}',
             Self::Check => '\u{e06c}',
@@ -145,7 +157,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 28] = [
+    pub const ALL: [Self; 31] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -160,6 +172,9 @@ impl Icon {
         Self::TriangleAlert,
         Self::PanelLeftOpen,
         Self::PanelRightOpen,
+        Self::ChevronRight,
+        Self::ChevronDown,
+        Self::Crosshair,
         Self::Info,
         Self::Search,
         Self::Check,

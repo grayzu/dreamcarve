@@ -11,6 +11,7 @@ pub mod history;
 pub mod library;
 pub mod mixed;
 pub mod prefs;
+pub mod project;
 pub mod properties;
 pub mod scene;
 pub mod selection;

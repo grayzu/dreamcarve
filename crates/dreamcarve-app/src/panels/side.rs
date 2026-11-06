@@ -56,8 +56,9 @@ fn frame(palette: &Palette) -> egui::Frame {
 /// A 32-px header band with `title` and the one rule under it.
 fn header(ui: &mut Ui, title: &str) {
     let palette = Palette::current(ui);
-    let (rect, _) =
+    let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, title));
     ui.painter().text(
         egui::pos2(rect.left() + 12.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -203,12 +204,19 @@ pub(crate) fn left(
                     // Fill the panel, or it shrinks to its content.
                     ui.set_min_height(ui.available_height());
                     match state.app.selection() {
+                        // Nothing selected: the Project panel (#536).
+                        selection if selection.is_empty() => {
+                            let title =
+                                strings.fmt(StrKey::ProjectTitle, &[("name", &state.display_name)]);
+                            header(ui, &title);
+                            panels::project::show(ui, state, out);
+                        }
                         // Instances: their placement (#534).
-                        Selection::Instances(ids) if !ids.is_empty() => {
+                        Selection::Instances(ids) => {
                             header(ui, &panels::properties::title(state, ids));
                             panels::properties::show(ui, state, ids, out);
                         }
-                        Selection::Tabs(ids) if !ids.is_empty() => {
+                        Selection::Tabs(ids) => {
                             header(ui, strings.get(StrKey::AppPanelProperties));
                             empty_sentence(
                                 ui,

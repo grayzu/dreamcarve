@@ -1931,3 +1931,63 @@ fn closed_c_plug_seats_flush() {
         );
     }
 }
+
+/// #565 (line art `0x63`'s open-edge and rounded males, 15° bit): a floor
+/// piece of the band no clearing pass reaches is cut, however thin, when
+/// the band's edge is open. A 10 mm square design with a round cavity in
+/// its middle, reached through a slit 0.2 mm wide from its right side; the
+/// cavity's radius is the 15° bit's floor inset on the male, `P · tan
+/// 7.5°`, and 0.014 mm more, so its floor is a disc 0.014 mm across on
+/// its own, the slit too narrow to floor. Fitting drops the chains on a
+/// floor piece thicker than twice the wall tolerance (#506), which this
+/// is, but with an open edge the V-bit cut only the pieces thicker than
+/// twice the project's flatten tolerance, which this is not. Nothing cut
+/// it, the groove stopped 0.014 mm short of the cavity's wall, and the
+/// plug stood about 0.1 mm proud there (`0x63`: 0.101 mm, in a channel
+/// between two strokes). Without a clearing pass the floor is cut whole
+/// and the pair seats.
+#[test]
+fn open_edge_male_cuts_a_floor_piece_a_hair_wide() {
+    let (_, _, male) = notch_pair(15.0, dc_project::Units::Mm, 0.0, (0.0, 0.0));
+    let slope = (7.5_f64).to_radians().tan();
+    let radius_mm = male.plug_depth_mm.expect("a plug depth") * slope + 0.014;
+    let s = 0.1;
+    let xc = (radius_mm * radius_mm - s * s).sqrt();
+    // Clockwise round the cavity from the slit's lower side to its upper,
+    // the long way: the design lies outside the circle.
+    let sweep_rad = -(2.0 * std::f64::consts::PI - 2.0 * s.atan2(xc));
+    let design = Polyline::new(
+        vec![
+            Vertex::line(5.0, s),
+            Vertex::line(5.0, 5.0),
+            Vertex::line(-5.0, 5.0),
+            Vertex::line(-5.0, -5.0),
+            Vertex::line(5.0, -5.0),
+            Vertex::line(5.0, -s),
+            Vertex::new(xc, -s, (sweep_rad / 4.0).tan()),
+            Vertex::line(xc, s),
+        ],
+        true,
+    );
+    let mut cavity = project_of(vec![design], CENTRE, 100.0, 100.0);
+    cavity.tools[0] = v_bit(15.0);
+    let with_clearing = InlayOp {
+        clearing: vec![clearing_pass()],
+        ..male.clone()
+    };
+    for (name, op) in [("no clearing", &male), ("clearing", &with_clearing)] {
+        let fit = fit_of(&cavity, op, 0.1);
+        println!(
+            "{name}: the plug stands {:.3} mm proud at {:?}; the male's share {:.3} mm at {:?}",
+            fit.seat_mm, fit.seat_at, fit.male_mm, fit.male_at
+        );
+        assert!(
+            fit.is_flush(),
+            "{name}: the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?})",
+            fit.seat_mm,
+            fit.seat_at,
+            fit.male_mm,
+            fit.male_at
+        );
+    }
+}

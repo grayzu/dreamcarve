@@ -16,7 +16,7 @@ inlay pair projects of `../../fixtures/inlay-migration/`, with
 | `star-female.dcv` | 23 | `star-female-1-T2.nc`, `-2-T1` | `star-female-female-1-T2.nc`, `-2-T1` |
 
 Each file is renamed as `export` names it since #498 (`<stem>-female-<k>-T<n>`
-and `<stem>-male-<k>-T<n>`); the bytes are unchanged. The `dc-*` projects
+and `<stem>-male-<k>-T<n>`); the bytes are unchanged, except as below. The `dc-*` projects
 are the tutorial pair as `tests/fixtures/` held them before #498, and the
 star pair is the inlay test part #446 replaced, from `tests/fixtures/` at
 1f1984c's parent.
@@ -26,6 +26,16 @@ star pair is the inlay test part #446 replaced, from `tests/fixtures/` at
 migrated files to these programs, and `cli::export::programs_are_grouped_by_board`
 holds the one-file tutorial project `tests/fixtures/dc.dcv` to the `dc`
 ones: one project cuts what the pair did.
+
+Re-exported since, from the same projects with the same date:
+
+- #565: the female V-bit programs, `dc-female-female-2-T1.nc` and
+  `star-female-female-2-T1.nc`. The grid start (#499) now holds a
+  corner's move to the cone within fitting's slack, so a chain into a
+  corner starts on the corner's tip, a grid point written exactly
+  (`X18.319 Y20.000 Z0.000` in the "DC" female, two corners of the
+  star), where it started one unit off it at `Z-0.001`. No other line
+  changed, and no male program.
 
 They were exported on macOS, and the tests hold the programs to them byte
 for byte there. On another platform the maths library may round a number in
