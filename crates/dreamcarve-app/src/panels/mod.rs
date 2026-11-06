@@ -7,6 +7,7 @@
 
 pub(crate) mod empty;
 pub(crate) mod library;
+pub(crate) mod project;
 pub(crate) mod side;
 pub(crate) mod tools;
 pub(crate) mod unsaved;

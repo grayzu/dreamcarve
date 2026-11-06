@@ -16,7 +16,9 @@
 //! Ctrl/⌘ toggles, a drag from empty stock is a marquee, and the result is
 //! `dc_app`'s one selection. Every position is the camera's: Y flips
 //! once, in `dc_app::Camera::to_screen`, which the painter and the
-//! pointer go through; the GPU never works in Y-down.
+//! pointer go through; the GPU never works in Y-down. While the Project
+//! panel's *Click on the view* is armed, a click sets the park point
+//! instead of the selection and Escape disarms it (#536).
 
 mod layers;
 pub(crate) mod renderer;
@@ -36,7 +38,7 @@ use eframe::egui::{
     TextStyle, Ui,
 };
 
-use crate::panels::empty;
+use crate::panels::{empty, project};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::icon::Icon;
@@ -224,6 +226,7 @@ pub(crate) fn keys(ctx: &egui::Context) -> Vec<Action> {
         return Vec::new();
     }
     let popup_open = egui::Popup::is_any_open(ctx);
+    let park_picking = project::park_pick_armed(ctx);
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::SHIFT, Key::F) {
@@ -233,7 +236,11 @@ pub(crate) fn keys(ctx: &egui::Context) -> Vec<Action> {
             actions.push(Action::FitView);
         }
         if !popup_open && input.consume_key(Modifiers::NONE, Key::Escape) {
-            actions.push(Action::ClearSelection);
+            if park_picking {
+                project::arm_park_pick(ctx, false);
+            } else {
+                actions.push(Action::ClearSelection);
+            }
         }
     });
     actions
@@ -567,7 +574,22 @@ pub(crate) fn show(
             if let Some(at) = at {
                 moved |= scroll_and_pinch(ui, pane, pane_pos(pane, at), &mut camera);
             }
-            moved |= gestures(ui, pane, &response, state, view, &mut camera, out);
+            if project::park_pick_armed(ui.ctx()) && response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
+            }
+            if project::park_pick_armed(ui.ctx())
+                && response.clicked()
+                && let Some(at) = response.interact_pointer_pos()
+            {
+                // The armed click is the park point's, not a selection.
+                project::arm_park_pick(ui.ctx(), false);
+                view.drag = None;
+                view.clicks.reset();
+                let at_mm = camera.to_world(pane_pos(pane, at));
+                out.extend(project::park_at(app.project(), at_mm).map(Action::run));
+            } else {
+                moved |= gestures(ui, pane, &response, state, view, &mut camera, out);
+            }
             if moved {
                 view.fitted = false;
             }

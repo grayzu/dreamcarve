@@ -10,6 +10,7 @@ pub mod generation;
 pub mod history;
 pub mod library;
 pub mod prefs;
+pub mod project;
 pub mod scene;
 pub mod selection;
 pub mod strings;

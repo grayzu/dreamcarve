@@ -67,6 +67,36 @@ pub fn format_rate(value_mm_min: f64, units: Units, decimals: usize) -> String {
     )
 }
 
+/// Decimal places a field shows of a length in millimetres: a micron
+/// and a tenth, finer than any tolerance the file takes.
+const FIELD_DECIMALS_MM: usize = 4;
+/// Decimal places a field shows of a length in inches: the same
+/// resolution as [`FIELD_DECIMALS_MM`].
+const FIELD_DECIMALS_INCH: usize = 5;
+
+/// A length as a field's text: `value_mm` in `units`, trailing zeros
+/// dropped (`160`, `12.7`, `0.5`), with no unit, since the field draws
+/// its unit after the value (`experience.md`, section 7). Parsing the
+/// text back with [`parse_length_mm`] gives the value to the field's
+/// resolution.
+#[must_use]
+pub fn field_text(value_mm: f64, units: Units) -> String {
+    let decimals = match units {
+        Units::Mm => FIELD_DECIMALS_MM,
+        Units::Inch => FIELD_DECIMALS_INCH,
+    };
+    trimmed(&number(to_display(value_mm, units), decimals))
+}
+
+/// `text`, a formatted decimal, without trailing zeros or a bare point.
+fn trimmed(text: &str) -> String {
+    if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.').to_owned()
+    } else {
+        text.to_owned()
+    }
+}
+
 /// `value` to `decimals` places with negative zero normalised, as
 /// `dc-gcode` formats numbers for output.
 fn number(value: f64, decimals: usize) -> String {

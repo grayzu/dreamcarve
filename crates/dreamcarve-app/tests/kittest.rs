@@ -1095,3 +1095,80 @@ fn window_answers_input_while_generating() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Capability 60 and acceptance 69 (#536): with nothing selected the
+/// Properties area is the Project panel, and the park point is typed or
+/// clicked on the Viewport. *Click on the view* arms the Viewport; the next
+/// click there sets `heights.park` to the project point the camera puts
+/// under the cursor (`Camera::to_world`, the one Y flip), one undo step,
+/// disarms it, and selects nothing. Typing `20, 30` into the field and
+/// pressing Enter writes the same field.
+#[test]
+fn park_point_click_on_the_viewport() {
+    let dir = scratch("park");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert!(h.state().app().selection().is_empty());
+    assert!(
+        h.query_by_label("Project · plaque.dcv").is_some(),
+        "the Properties area is the Project panel"
+    );
+    assert_eq!(h.state().app().project().heights.park, None);
+
+    h.get_by_label("Click on the view").scroll_to_me();
+    h.run();
+    h.get_by_label("Click on the view").click();
+    h.run();
+    // Empty stock near the plaque's top-right corner (stock 170 × 120).
+    let want = dc_geometry::Point::new(165.0, 115.0);
+    let at = common::on_screen(&h, want);
+    let under = world_at(&h, at);
+    common::click_at(&mut h, at, egui::Modifiers::NONE);
+
+    let park = h
+        .state()
+        .app()
+        .project()
+        .heights
+        .park
+        .expect("the click sets the park point");
+    assert_near(
+        dc_geometry::Point::new(park.x_mm, park.y_mm),
+        under,
+        "the park point is the point under the click",
+    );
+    assert!(
+        under.distance_to(want) < 0.5,
+        "the camera maps the click back: {under:?}"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Set heights"));
+    assert!(h.state().app().selection().is_empty(), "nothing selected");
+
+    // One click: the Viewport is disarmed after it.
+    let elsewhere = common::on_screen(&h, dc_geometry::Point::new(3.0, 3.0));
+    common::click_at(&mut h, elsewhere, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().project().heights.park, Some(park));
+
+    // The typed entry writes the same field.
+    h.get_by_role_and_label(Role::TextInput, "Park point")
+        .focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Park point")
+        .set_text_value_accesskit("20, 30");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().app().project().heights.park,
+        Some(dc_project::ParkXy {
+            x_mm: 20.0,
+            y_mm: 30.0
+        })
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
