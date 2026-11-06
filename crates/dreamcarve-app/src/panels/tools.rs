@@ -24,7 +24,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
-use crate::widgets::unit_field::{FieldSpec, row, unit_field};
+use crate::widgets::unit_field::{UnitField, field as unit_field, row, validation_line};
 
 /// A list row's height, px (section 3).
 const ROW_PX: f32 = 40.0;
@@ -394,17 +394,21 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
             ""
         };
         let id = Id::unique(("tool_field", tool.id.as_str(), field.file_name()));
-        let (label, output) = row(ui, strings.get(key), |ui| {
-            unit_field(
+        let name = strings.get(key);
+        let error = error_for(field.file_name());
+        let (label, output) = row(ui, name, |ui| {
+            let output = unit_field(
                 ui,
-                FieldSpec {
-                    id,
-                    text: &value,
-                    unit: tools::field_unit(field, units),
-                    hint,
-                    error: error_for(field.file_name()),
+                UnitField {
+                    placeholder: hint,
+                    tier: error.map(|_| dc_job::Tier::Error),
+                    ..UnitField::new(id, name, &value, tools::field_unit(field, units))
                 },
-            )
+            );
+            if let Some(message) = error {
+                validation_line(ui, message);
+            }
+            output
         });
         let response = output.response.labelled_by(label.id);
         response.on_hover_text(field.file_name());

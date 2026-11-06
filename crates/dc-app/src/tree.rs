@@ -211,7 +211,8 @@ pub enum MenuItem {
     Delete,
     /// Frame the rows on the Viewport: view state, no command.
     ZoomTo,
-    /// *Add operation ▸*: the kinds the selection can take (slice 10).
+    /// *Add operation ▸*: the Operations tab's Add menu for the rows
+    /// (`crate::operations::add_menu`).
     AddOperation,
 }
 

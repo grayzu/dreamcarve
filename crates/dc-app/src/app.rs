@@ -41,6 +41,10 @@ const UNTITLED: &str = "untitled";
 pub struct App {
     history: LabelledHistory,
     selection: Selection,
+    /// The operation the editor shows: the Operations list's selection,
+    /// independent of the shapes selected (`experience.md`, section 8,
+    /// "Selection"), so *Add selected* can read the Viewport's.
+    editing: Option<OperationId>,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -91,6 +95,7 @@ impl App {
         let mut app = Self {
             history: LabelledHistory::new(project),
             selection: Selection::Nothing,
+            editing: None,
             view: View::default(),
             generation,
             strings,
@@ -187,6 +192,7 @@ impl App {
         );
         self.history = LabelledHistory::new(project);
         self.selection = Selection::Nothing;
+        self.editing = None;
         self.source = path;
         self.saved = saved;
         self.notes.clear();
@@ -381,6 +387,7 @@ impl App {
             self.selection = Selection::Instances(new_instances);
         } else if let [id] = new_operations.as_slice() {
             self.selection = Selection::Operation(id.clone());
+            self.editing = Some(id.clone());
         }
         self.snapshot_changed();
         Ok(label)
@@ -449,6 +456,11 @@ impl App {
         let runnable = !self.validation.has_errors();
         self.generation.advance(project, runnable);
         self.selection.retain_existing(project);
+        if let Some(id) = &self.editing
+            && !project.operations.iter().any(|o| o.id() == id)
+        {
+            self.editing = None;
+        }
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
@@ -499,6 +511,37 @@ impl App {
     pub fn select(&mut self, selection: Selection) {
         self.selection = selection;
         self.selection.retain_existing(self.history.current());
+        if let Selection::Operation(id) = &self.selection {
+            self.editing = Some(id.clone());
+        }
+    }
+
+    /// The operation the editor shows, when one is (capability 66).
+    #[must_use]
+    pub fn editing(&self) -> Option<&OperationId> {
+        self.editing.as_ref()
+    }
+
+    /// Shows operation `id` in the editor, or none; the shapes selected
+    /// stay selected. Not an undo step.
+    pub fn edit(&mut self, id: Option<OperationId>) {
+        self.editing = id.filter(|id| {
+            self.history
+                .current()
+                .operations
+                .iter()
+                .any(|o| o.id() == id)
+        });
+    }
+
+    /// The eye of operation `id`'s row: its toolpath hidden or shown on
+    /// the Viewport ([`View::hidden_ops`]). View state, not an undo step
+    /// (acceptance 81).
+    pub fn toggle_hidden(&mut self, id: &OperationId) {
+        let hidden = &mut self.view.hidden_ops;
+        if !hidden.remove(id) {
+            hidden.insert(id.clone());
+        }
     }
 
     /// The view settings.

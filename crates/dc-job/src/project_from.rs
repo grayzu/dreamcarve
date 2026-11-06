@@ -228,8 +228,11 @@ fn placeholder_tool() -> Tool {
 
 /// The Profile `op1` of `targets` with `tool`: outside, climb, no depth, a
 /// tab request of four 8 × 3 mm rect tabs off the corners and not on
-/// holes, a 15° ramp into each pass.
-fn default_profile(targets: Vec<dc_project::InstanceId>, tool: ToolId) -> ProfileOp {
+/// holes, a 15° ramp into each pass, safe Z 5 mm. The app's *Add ▸
+/// Profile* starts from it too (functional spec, capability 65), so a new
+/// Profile is `init`'s whichever shell made it.
+#[must_use]
+pub fn default_profile(targets: Vec<dc_project::InstanceId>, tool: ToolId) -> ProfileOp {
     ProfileOp {
         id: OperationId::new(OPERATION_ID),
         name: "Profile".into(),
