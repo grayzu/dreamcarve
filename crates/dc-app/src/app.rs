@@ -22,10 +22,11 @@ use crate::command::Command;
 use crate::error::CommandError;
 use crate::generation::{Generation, Job, JobResult, SnapshotId, Work};
 use crate::history::LabelledHistory;
+use crate::import::DrawingImport;
 use crate::prefs::Prefs;
 use crate::scene::Scene;
 use crate::selection::Selection;
-use crate::strings::Strings;
+use crate::strings::{StrKey, Strings};
 use crate::view::View;
 
 /// The bundled post-processor a new project names (capability 51).
@@ -196,6 +197,66 @@ impl App {
         self.rebuild_scene();
     }
 
+    /// Imports the drawing `sheet` shows into the project, placed as
+    /// drawn, as one undo step (*Import plaque.dxf*), and selects the new
+    /// shapes (functional spec, capability 55). Each of the importer's
+    /// warnings becomes one note in the Warnings panel ([`App::notes`]).
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] with the sheet's reason when its
+    /// *Import* is disabled; nothing changes.
+    pub fn import_drawing(&mut self, sheet: &DrawingImport) -> Result<String, CommandError> {
+        let command = sheet.command().ok_or_else(|| CommandError::NotImportable {
+            reason: sheet.blocked().unwrap_or_default(),
+        })?;
+        let label = self.run(command)?;
+        self.note_import(sheet);
+        Ok(label)
+    }
+
+    /// Replaces the project with a new one round the drawing `sheet`
+    /// shows, as *New from drawing…* does (functional spec, capability 51
+    /// and open question 1): what `dreamcarve init` builds, named by the
+    /// file's stem, on grblHAL at its latest version in millimetres, with
+    /// the stock and the shapes only (no placeholder tool, no Profile).
+    /// The history is cleared and the project has no file yet, as after
+    /// *New*; the importer's warnings become its notes.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] when the sheet's *Import* is
+    /// disabled, and [`CommandError::Job`] when `init` would refuse the
+    /// drawing (a stock past the coordinate limit); nothing changes.
+    pub fn new_from_drawing(&mut self, sheet: &DrawingImport) -> Result<(), CommandError> {
+        let drawing = sheet.drawing().ok_or_else(|| CommandError::NotImportable {
+            reason: sheet.blocked().unwrap_or_default(),
+        })?;
+        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        let project = dc_job::project_from::drawing(
+            sheet.stem(),
+            drawing.clone(),
+            post_processor,
+            Units::Mm,
+            false,
+        )?;
+        self.reset(project);
+        self.note_import(sheet);
+        Ok(())
+    }
+
+    /// The importer's warnings as the Warnings panel's notes
+    /// ([`App::add_note`]), each under the file's name.
+    fn note_import(&mut self, sheet: &DrawingImport) {
+        for warning in sheet.warnings() {
+            let note = self.strings.fmt(
+                StrKey::AppImportNote,
+                &[("name", sheet.name()), ("note", &warning.to_string())],
+            );
+            self.add_note(note);
+        }
+    }
+
     /// The current snapshot.
     #[must_use]
     pub fn project(&self) -> &Project {
@@ -261,7 +322,7 @@ impl App {
     }
 
     /// Adds a note to the Warnings panel: an importer's warning about what
-    /// a drawing it read left out (slice 6 brings the import sheet).
+    /// a drawing it read left out ([`App::import_drawing`]).
     pub fn add_note(&mut self, note: String) {
         self.notes.push(note);
     }

@@ -170,6 +170,19 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     item(
         ui,
         strings,
+        StrKey::AppMenuNewFromDrawing,
+        None,
+        Action::NewFromDrawing,
+        out,
+    );
+    ui.add_enabled(
+        false,
+        Button::new(strings.get(StrKey::AppMenuNewFromPicture)),
+    )
+    .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
+    item(
+        ui,
+        strings,
         StrKey::AppMenuOpen,
         Some((command, Key::O)),
         Action::Open,

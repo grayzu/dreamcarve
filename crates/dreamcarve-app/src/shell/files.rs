@@ -4,9 +4,9 @@
 //! The shell's files (`docs/specs/phase-4/design.md`, "Architecture → The
 //! shell", "Files"; functional spec, capability 51): reading and writing a
 //! `.dcv` (the write staged, as the CLI's), the Recent list, `gui.toml`
-//! read into `dc-app`'s preferences and written back, and a drawing read
-//! for import with the importers' default options (the import sheet with
-//! DXF units and layers is slice 6).
+//! read into `dc-app`'s preferences and written back, and the kind of a
+//! dropped or chosen file. A drawing's bytes go to the Import drawing
+//! sheet (`panels::import`), which parses them with `dc-import`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -69,6 +69,8 @@ pub enum FileKind {
     Svg,
     /// A DXF drawing.
     Dxf,
+    /// A PNG or JPEG picture (capability 56), which waits for phase 3.4.
+    Picture,
 }
 
 /// The kind of file at `path`; `None` for anything else.
@@ -79,13 +81,14 @@ pub fn kind(path: &Path) -> Option<FileKind> {
         "dcv" => Some(FileKind::Project),
         "svg" => Some(FileKind::Svg),
         "dxf" => Some(FileKind::Dxf),
+        "png" | "jpg" | "jpeg" => Some(FileKind::Picture),
         _ => None,
     }
 }
 
 /// The drawing in `bytes`, read as `kind` with the importer's default
-/// options. A DXF that declares no units fails here until the import
-/// sheet (slice 6) lets the user choose them.
+/// options, for the bundled coaster example; a user's drawing goes
+/// through the Import drawing sheet.
 ///
 /// # Errors
 ///
@@ -99,7 +102,7 @@ pub fn read_drawing(kind: FileKind, bytes: &[u8]) -> Result<Drawing, String> {
         FileKind::Dxf => dc_import::import_dxf(bytes, &DxfImportOptions::default())
             .map(|(import, _warnings)| Drawing::Dxf(import))
             .map_err(|e| e.to_string()),
-        FileKind::Project => Err(String::new()),
+        FileKind::Project | FileKind::Picture => Err(String::new()),
     }
 }
 
@@ -238,7 +241,9 @@ mod tests {
         assert_eq!(kind(Path::new("a/b.DCV")), Some(FileKind::Project));
         assert_eq!(kind(Path::new("plaque.svg")), Some(FileKind::Svg));
         assert_eq!(kind(Path::new("plaque.Dxf")), Some(FileKind::Dxf));
-        assert_eq!(kind(Path::new("photo.png")), None);
+        assert_eq!(kind(Path::new("photo.png")), Some(FileKind::Picture));
+        assert_eq!(kind(Path::new("photo.JPEG")), Some(FileKind::Picture));
+        assert_eq!(kind(Path::new("notes.txt")), None);
         assert_eq!(kind(Path::new("README")), None);
     }
 }

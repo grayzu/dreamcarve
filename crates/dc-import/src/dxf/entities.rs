@@ -102,6 +102,9 @@ pub(super) struct Walker<'a> {
     pub shapes: Vec<Shape>,
     /// Skipped entities per type name.
     pub skipped: BTreeMap<String, usize>,
+    /// The same counts per layer, for the layer list
+    /// ([`super::DxfLayer`]).
+    pub skipped_per_layer: BTreeMap<String, BTreeMap<String, usize>>,
     /// Blocks whose INSERT nested past [`MAX_INSERT_DEPTH`], in order.
     pub too_deep: Vec<String>,
     /// Blocks an INSERT named that the file does not define, in order.
@@ -119,6 +122,7 @@ impl<'a> Walker<'a> {
             max_visits: max_vertices / MAX_VERTICES_PER_PLACEMENT,
             shapes: Vec::new(),
             skipped: BTreeMap::new(),
+            skipped_per_layer: BTreeMap::new(),
             too_deep: Vec::new(),
             missing: Vec::new(),
         }
@@ -164,23 +168,23 @@ impl<'a> Walker<'a> {
                 self.add_polyline(polyline, transform, &layer, "LINE")
             }
             "CIRCLE" => {
-                let Some(ocs) = self.ocs(entity, kind) else {
+                let Some(ocs) = self.ocs(entity, kind, &layer) else {
                     return Ok(());
                 };
                 let radius = entity.real_or(40, 0.0);
                 if !(radius.is_finite() && radius > 0.0) {
-                    return self.skip("CIRCLE (degenerate)");
+                    return self.skip("CIRCLE (degenerate)", &layer);
                 }
                 let polyline = Polyline::circle(entity.point(10), radius);
                 self.add_polyline(polyline, ocs.then(transform), &layer, "CIRCLE")
             }
             "ARC" => {
-                let Some(ocs) = self.ocs(entity, kind) else {
+                let Some(ocs) = self.ocs(entity, kind, &layer) else {
                     return Ok(());
                 };
                 let radius = entity.real_or(40, 0.0);
                 if !(radius.is_finite() && radius > 0.0) {
-                    return self.skip("ARC (degenerate)");
+                    return self.skip("ARC (degenerate)", &layer);
                 }
                 let polyline = arc_polyline(
                     entity.point(10),
@@ -191,7 +195,7 @@ impl<'a> Walker<'a> {
                 self.add_polyline(polyline, ocs.then(transform), &layer, "ARC")
             }
             "LWPOLYLINE" => {
-                let Some(ocs) = self.ocs(entity, kind) else {
+                let Some(ocs) = self.ocs(entity, kind, &layer) else {
                     return Ok(());
                 };
                 let mut vertices: Vec<Vertex> = Vec::new();
@@ -238,21 +242,18 @@ impl<'a> Walker<'a> {
             // Structural: VERTEX rows belong to their POLYLINE and SEQEND
             // ends an INSERT's attributes or a POLYLINE.
             "VERTEX" | "SEQEND" => Ok(()),
-            other => self.skip(other),
+            other => self.skip(other, &layer),
         }
     }
 
     /// The map from the entity's object coordinate system to world XY, or
     /// `None` (and the entity counted) when it does not lie in the XY
     /// plane. See [`ocs_to_world`].
-    fn ocs(&mut self, entity: &Entity, kind: &str) -> Option<Transform> {
+    fn ocs(&mut self, entity: &Entity, kind: &str, layer: &str) -> Option<Transform> {
         match ocs_to_world(entity.extrusion()) {
             Ok(ocs) => Some(ocs),
             Err(reason) => {
-                *self
-                    .skipped
-                    .entry(format!("{kind} ({reason})"))
-                    .or_insert(0) += 1;
+                self.count_skipped(&format!("{kind} ({reason})"), layer);
                 None
             }
         }
@@ -274,12 +275,12 @@ impl<'a> Walker<'a> {
     ) -> Result<(), ImportError> {
         let flags = entity.int(70);
         if flags & (POLYLINE_POLYGON_MESH | POLYLINE_POLYFACE_MESH) != 0 {
-            return self.skip("POLYLINE (mesh)");
+            return self.skip("POLYLINE (mesh)", layer);
         }
         let ocs = if flags & POLYLINE_3D != 0 {
             Transform::IDENTITY
         } else {
-            let Some(ocs) = self.ocs(entity, "POLYLINE") else {
+            let Some(ocs) = self.ocs(entity, "POLYLINE", layer) else {
                 return Ok(());
             };
             ocs
@@ -310,7 +311,7 @@ impl<'a> Walker<'a> {
         transform: Transform,
         layer: &str,
     ) -> Result<(), ImportError> {
-        let Some(ocs) = self.ocs(entity, "ELLIPSE") else {
+        let Some(ocs) = self.ocs(entity, "ELLIPSE", layer) else {
             return Ok(());
         };
         let centre = entity.point(10);
@@ -327,7 +328,7 @@ impl<'a> Walker<'a> {
         let a = major.length();
         let b = a * ratio;
         if a <= EPS_MM || b <= EPS_MM {
-            return self.skip("ELLIPSE (degenerate)");
+            return self.skip("ELLIPSE (degenerate)", layer);
         }
         let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
         let full = sweep <= 1e-12;
@@ -382,7 +383,7 @@ impl<'a> Walker<'a> {
             self.too_deep.push(block.name.clone());
             return Ok(());
         }
-        let Some(ocs) = self.ocs(entity, "INSERT") else {
+        let Some(ocs) = self.ocs(entity, "INSERT", layer) else {
             return Ok(());
         };
         let (sx, sy) = (entity.real_or(41, 1.0), entity.real_or(42, 1.0));
@@ -393,7 +394,7 @@ impl<'a> Walker<'a> {
         if !(sx.is_finite() && sy.is_finite() && sx != 0.0 && sy != 0.0)
             || placement.iter().any(|v| !v.is_finite())
         {
-            return self.skip("INSERT (degenerate)");
+            return self.skip("INSERT (degenerate)", layer);
         }
         // Counts below 1 are the default single placement.
         let columns = entity.int(70).clamp(1, i64::from(i16::MAX));
@@ -426,10 +427,23 @@ impl<'a> Walker<'a> {
         Ok(())
     }
 
-    /// Counts a skipped entity; `Ok` so a `walk` arm can return it.
-    fn skip(&mut self, kind: &str) -> Result<(), ImportError> {
-        *self.skipped.entry(kind.to_owned()).or_insert(0) += 1;
+    /// Counts a skipped entity on `layer`; `Ok` so a `walk` arm can
+    /// return it.
+    fn skip(&mut self, kind: &str, layer: &str) -> Result<(), ImportError> {
+        self.count_skipped(kind, layer);
         Ok(())
+    }
+
+    /// Counts one entity of `kind` on `layer` as not read, in all and per
+    /// layer.
+    fn count_skipped(&mut self, kind: &str, layer: &str) {
+        *self.skipped.entry(kind.to_owned()).or_insert(0) += 1;
+        *self
+            .skipped_per_layer
+            .entry(layer.to_owned())
+            .or_default()
+            .entry(kind.to_owned())
+            .or_insert(0) += 1;
     }
 
     /// Adds a bulge polyline given in entity coordinates, through
@@ -454,7 +468,7 @@ impl<'a> Walker<'a> {
         }
         let polyline = without_repeats(polyline);
         if polyline.vertices().len() < 2 {
-            return self.skip(&format!("{kind} (degenerate)"));
+            return self.skip(&format!("{kind} (degenerate)"), layer);
         }
         match transform.apply_polyline(&polyline) {
             Ok(placed) => self.add_mm_polyline(placed, layer, kind),
@@ -470,7 +484,7 @@ impl<'a> Walker<'a> {
                 })
             }
             // A singular INSERT scale is refused before it gets here.
-            Err(_) => self.skip(&format!("{kind} (degenerate)")),
+            Err(_) => self.skip(&format!("{kind} (degenerate)"), layer),
         }
     }
 
@@ -498,7 +512,7 @@ impl<'a> Walker<'a> {
             || polyline.length_mm() <= EPS_MM
             || (polyline.is_closed() && polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM);
         if degenerate {
-            return self.skip(&format!("{kind} (degenerate)"));
+            return self.skip(&format!("{kind} (degenerate)"), layer);
         }
         self.count_vertices(polyline.vertices().len())?;
         self.shapes.push(Shape {
