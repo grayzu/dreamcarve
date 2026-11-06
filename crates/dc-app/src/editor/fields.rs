@@ -31,9 +31,12 @@
 //! This slice (#539) fills every kind's Identity, Targets, Tool, depth and
 //! Heights rows, and every Profile row; slices 11–15 (#540–#544) add the
 //! other kinds' rows, a table edit each, plus a renderer for a block kind
-//! where they need one. Slice 13 (#542) fills the V-Carve, with a switched
-//! length for its flat depth and a table of its own for each clearing
-//! pass ([`CLEARING_PASS`]), edited at the pass's key path.
+//! where they need one. Slice 11 (#540) fills the Pocket and the Engrave,
+//! and gives the Profile's tab request its own rows (`tabs.width_mm`, the
+//! internally tagged `tabs.placement` chosen as a variant is) and its
+//! start point a Viewport pick. Slice 13 (#542) fills the V-Carve, with a
+//! switched length for its flat depth and a table of its own for each
+//! clearing pass ([`CLEARING_PASS`]), edited at the pass's key path.
 
 use dc_project::{Operation, Project, Tool};
 use serde_json::{Value, json};
@@ -156,6 +159,9 @@ pub enum OptionValue {
     /// A one-key object, the tag over the template's data (`{ "ramp": {
     /// "angle_deg": 15.0 } }`).
     Variant(Template),
+    /// An internally tagged object, the template's data with the tag as
+    /// its `kind` (`{ "kind": "count", "count": 4 }`).
+    Tagged(Template),
 }
 
 /// One option of a choice.
@@ -180,16 +186,29 @@ impl ChoiceOption {
                 variant.insert(self.tag.to_owned(), data(project));
                 Value::Object(variant)
             }
+            OptionValue::Tagged(data) => {
+                let mut variant = serde_json::Map::new();
+                variant.insert("kind".to_owned(), Value::from(self.tag));
+                if let Value::Object(fields) = data(project) {
+                    variant.extend(fields);
+                }
+                Value::Object(variant)
+            }
         }
     }
 }
 
-/// The tag of a choice's value: a string itself, a one-key object's key.
+/// The tag of a choice's value: a string itself, an internally tagged
+/// object's `kind`, a one-key object's key.
 #[must_use]
 pub fn tag_of(value: &Value) -> Option<&str> {
     match value {
         Value::String(tag) => Some(tag),
-        Value::Object(map) if map.len() == 1 => map.keys().next().map(String::as_str),
+        Value::Object(map) => match map.get("kind") {
+            Some(Value::String(kind)) => Some(kind),
+            _ if map.len() == 1 => map.keys().next().map(String::as_str),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -217,6 +236,9 @@ pub enum FieldKind {
     Count,
     /// Seconds.
     Seconds,
+    /// Lengths, typed one after another with commas between (a tab
+    /// request's distances); empty is none.
+    LengthList,
     /// One of a few options: segmented for two to four short ones, a
     /// dropdown otherwise.
     Choice(&'static [ChoiceOption]),
@@ -229,7 +251,15 @@ pub enum FieldKind {
     ToolPicker,
     /// Instances, by id: the Targets group.
     InstanceList,
-    /// A Profile's tab request (functional spec, capability 69).
+    /// A Pocket's `rest_of`: none, or one of the earlier enabled Pockets
+    /// ([`super::earlier_pockets`]), by id.
+    EarlierPocket,
+    /// A point clicked on the Viewport: the row's value is `{ "x_mm",
+    /// "y_mm" }`, typed in the rows under it ([`super::pick_point`]).
+    PointPick,
+    /// A tab request (functional spec, capability 69): a switch, `null`
+    /// when off and `init`'s request when on, beside *Place tabs*; its
+    /// settings are the rows under its key.
     TabRequest,
     /// A carve's clearing passes (capability 70).
     ClearingList,
@@ -244,10 +274,18 @@ impl FieldKind {
     /// under its key is its own.
     #[must_use]
     pub const fn is_block(self) -> bool {
-        matches!(
-            self,
-            Self::TabRequest | Self::ClearingList | Self::CutOut | Self::MaleBoard
-        )
+        matches!(self, Self::ClearingList | Self::CutOut | Self::MaleBoard)
+    }
+
+    /// What turning the row's switch on writes, for a switch: a feature
+    /// ([`FieldKind::Toggle`]) or a tab request.
+    #[must_use]
+    pub const fn switch_template(self) -> Option<Template> {
+        match self {
+            Self::Toggle(template) => Some(template),
+            Self::TabRequest => Some(tab_request_template),
+            _ => None,
+        }
     }
 }
 
@@ -295,7 +333,7 @@ impl Row {
     #[must_use]
     pub const fn unit(&self) -> Unit {
         match self.kind {
-            FieldKind::Length | FieldKind::SwitchedLength => Unit::Length,
+            FieldKind::Length | FieldKind::SwitchedLength | FieldKind::LengthList => Unit::Length,
             FieldKind::Rate => Unit::Rate,
             FieldKind::Angle => Unit::Degrees,
             FieldKind::Percentage => Unit::Percent,
@@ -400,6 +438,73 @@ const SAFE_Z: Row = row(
     StrKey::EditorFieldSafeZHelp,
 );
 
+// ── Rows several kinds share (slice 11, #540). ─────────────────────────
+
+const STEP_DOWN: Row = tool_row(
+    Group::Depth,
+    "step_down_mm",
+    FieldKind::Length,
+    StrKey::EditorFieldStepDown,
+    StrKey::EditorFieldStepDownHelp,
+    ToolDefault::StepDown,
+);
+const THROUGH_CUT_ALLOWANCE: Row = row(
+    Group::Depth,
+    "through_cut_allowance_mm",
+    FieldKind::Length,
+    StrKey::EditorFieldThroughCutAllowance,
+    StrKey::EditorFieldThroughCutAllowanceHelp,
+);
+const DIRECTION: Row = row(
+    Group::Strategy,
+    "direction",
+    FieldKind::Choice(DIRECTIONS),
+    StrKey::EditorFieldDirection,
+    StrKey::EditorFieldDirectionHelp,
+);
+const ENTRY: Row = row(
+    Group::EntryAndLeads,
+    "entry",
+    FieldKind::Choice(ENTRIES),
+    StrKey::EditorFieldEntry,
+    StrKey::EditorFieldEntryHelp,
+);
+const ENTRY_RAMP_ANGLE: Row = row(
+    Group::EntryAndLeads,
+    "entry.ramp.angle_deg",
+    FieldKind::Angle,
+    StrKey::EditorFieldRampAngle,
+    StrKey::EditorFieldRampAngleHelp,
+);
+const ENTRY_HELIX_DIAMETER: Row = row(
+    Group::EntryAndLeads,
+    "entry.helix.diameter_fraction",
+    FieldKind::Percentage,
+    StrKey::EditorFieldHelixDiameter,
+    StrKey::EditorFieldHelixDiameterHelp,
+);
+const ENTRY_HELIX_ANGLE: Row = row(
+    Group::EntryAndLeads,
+    "entry.helix.angle_deg",
+    FieldKind::Angle,
+    StrKey::EditorFieldHelixAngle,
+    StrKey::EditorFieldHelixAngleHelp,
+);
+const CORNER_RELIEF: Row = row(
+    Group::CornersAndTabs,
+    "corner_relief",
+    FieldKind::Choice(CORNER_RELIEFS),
+    StrKey::EditorFieldCornerRelief,
+    StrKey::EditorFieldCornerReliefHelp,
+);
+const MACHINING_ORDER: Row = row(
+    Group::Order,
+    "machining_order",
+    FieldKind::Choice(ORDERS),
+    StrKey::EditorFieldMachiningOrder,
+    StrKey::EditorFieldMachiningOrderHelp,
+);
+
 // ── Choices. ───────────────────────────────────────────────────────────
 
 /// `init`'s ramp angle, degrees: the angle a ramp or a helix starts at.
@@ -441,6 +546,36 @@ fn ramp_template(_: &Project) -> Value {
 /// A helix at `init`'s angle.
 fn helix_template(_: &Project) -> Value {
     json!({ "diameter_fraction": HELIX_DIAMETER_FRACTION, "angle_deg": init_ramp_angle_deg() })
+}
+
+/// `init`'s tab request (`dc_job::project_from::default_profile`): four
+/// 8 × 3 mm rect tabs, not on holes, off the corners.
+fn tab_request_template(_: &Project) -> Value {
+    dc_job::project_from::default_profile(Vec::new(), dc_project::ToolId::new(""))
+        .tabs
+        .and_then(|tabs| serde_json::to_value(tabs).ok())
+        .unwrap_or(Value::Null)
+}
+
+/// `init`'s count of tabs on each outline.
+fn tab_count_template(project: &Project) -> Value {
+    let request = tab_request_template(project);
+    let count = get(&request, "placement.count")
+        .cloned()
+        .unwrap_or(Value::Null);
+    json!({ "count": count })
+}
+
+/// No distances yet: the user types them, measured along each path from
+/// its start, which the editor cannot know.
+fn tab_distances_template(_: &Project) -> Value {
+    json!({ "distances_mm": [] })
+}
+
+/// A raster at 0°, along X, as the Pocket chapter's settings table and the
+/// plaque's Panel write it.
+fn raster_template(_: &Project) -> Value {
+    json!({ "angle_deg": 0.0 })
 }
 
 /// An option written as its plain tag.
@@ -491,17 +626,33 @@ const ORDERS: &[ChoiceOption] = &[
     tag(StrKey::EditorChoiceFullDepthFirst, "full_depth_first"),
     tag(StrKey::EditorChoicePassFirst, "pass_first"),
 ];
-
-/// A raster at 0°, along X, as the Pocket chapter's settings table and the
-/// plaque's Panel write it.
-fn raster_template(_: &Project) -> Value {
-    json!({ "angle_deg": 0.0 })
-}
-
+/// A tab request's placement, internally tagged (`{ "kind": "count",
+/// "count": 4 }`).
+const TAB_PLACEMENTS: &[ChoiceOption] = &[
+    ChoiceOption {
+        label: StrKey::EditorChoiceCount,
+        tag: "count",
+        value: OptionValue::Tagged(tab_count_template),
+    },
+    ChoiceOption {
+        label: StrKey::EditorChoiceAtDistances,
+        tag: "at_distances",
+        value: OptionValue::Tagged(tab_distances_template),
+    },
+];
+const TAB_SHAPES: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceRect, "rect"),
+    tag(StrKey::EditorChoiceSmooth, "smooth"),
+];
 /// A Pocket's clearance strategy; a carve's clearing pass has the same.
 const CLEARANCE_STRATEGIES: &[ChoiceOption] = &[
     tag(StrKey::EditorChoiceOffset, "offset"),
     variant(StrKey::EditorChoiceRaster, "raster", raster_template),
+];
+const WALL_PASSES: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceLast, "last"),
+    tag(StrKey::EditorChoiceFirst, "first"),
+    tag(StrKey::EditorChoiceNone, "none"),
 ];
 
 /// A V-Carve's offset rings as the V-Carve chapter writes them: 0.5 mm
@@ -530,21 +681,8 @@ const PROFILE: &[Row] = &[
     TARGETS,
     TOOL,
     DEPTH,
-    tool_row(
-        Group::Depth,
-        "step_down_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldStepDown,
-        StrKey::EditorFieldStepDownHelp,
-        ToolDefault::StepDown,
-    ),
-    row(
-        Group::Depth,
-        "through_cut_allowance_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldThroughCutAllowance,
-        StrKey::EditorFieldThroughCutAllowanceHelp,
-    ),
+    STEP_DOWN,
+    THROUGH_CUT_ALLOWANCE,
     row(
         Group::Strategy,
         "side",
@@ -552,19 +690,20 @@ const PROFILE: &[Row] = &[
         StrKey::EditorFieldSide,
         StrKey::EditorFieldSideHelp,
     ),
-    row(
-        Group::Strategy,
-        "direction",
-        FieldKind::Choice(DIRECTIONS),
-        StrKey::EditorFieldDirection,
-        StrKey::EditorFieldDirectionHelp,
-    ),
+    DIRECTION,
     row(
         Group::Strategy,
         "start",
         FieldKind::Choice(STARTS),
         StrKey::EditorFieldStart,
         StrKey::EditorFieldStartHelp,
+    ),
+    row(
+        Group::Strategy,
+        "start.near",
+        FieldKind::PointPick,
+        StrKey::EditorFieldStartPick,
+        StrKey::EditorFieldStartPickHelp,
     ),
     row(
         Group::Strategy,
@@ -608,34 +747,10 @@ const PROFILE: &[Row] = &[
         StrKey::EditorFieldLastPassReverse,
         StrKey::EditorFieldLastPassReverseHelp,
     ),
-    row(
-        Group::EntryAndLeads,
-        "entry",
-        FieldKind::Choice(ENTRIES),
-        StrKey::EditorFieldEntry,
-        StrKey::EditorFieldEntryHelp,
-    ),
-    row(
-        Group::EntryAndLeads,
-        "entry.ramp.angle_deg",
-        FieldKind::Angle,
-        StrKey::EditorFieldRampAngle,
-        StrKey::EditorFieldRampAngleHelp,
-    ),
-    row(
-        Group::EntryAndLeads,
-        "entry.helix.diameter_fraction",
-        FieldKind::Percentage,
-        StrKey::EditorFieldHelixDiameter,
-        StrKey::EditorFieldHelixDiameterHelp,
-    ),
-    row(
-        Group::EntryAndLeads,
-        "entry.helix.angle_deg",
-        FieldKind::Angle,
-        StrKey::EditorFieldHelixAngle,
-        StrKey::EditorFieldHelixAngleHelp,
-    ),
+    ENTRY,
+    ENTRY_RAMP_ANGLE,
+    ENTRY_HELIX_DIAMETER,
+    ENTRY_HELIX_ANGLE,
     row(
         Group::EntryAndLeads,
         "lead",
@@ -671,13 +786,7 @@ const PROFILE: &[Row] = &[
         StrKey::EditorFieldLeadOvercut,
         StrKey::EditorFieldLeadOvercutHelp,
     ),
-    row(
-        Group::CornersAndTabs,
-        "corner_relief",
-        FieldKind::Choice(CORNER_RELIEFS),
-        StrKey::EditorFieldCornerRelief,
-        StrKey::EditorFieldCornerReliefHelp,
-    ),
+    CORNER_RELIEF,
     row(
         Group::CornersAndTabs,
         "tabs",
@@ -686,20 +795,146 @@ const PROFILE: &[Row] = &[
         StrKey::EditorFieldTabsHelp,
     ),
     row(
-        Group::Order,
-        "machining_order",
-        FieldKind::Choice(ORDERS),
-        StrKey::EditorFieldMachiningOrder,
-        StrKey::EditorFieldMachiningOrderHelp,
+        Group::CornersAndTabs,
+        "tabs.placement",
+        FieldKind::Choice(TAB_PLACEMENTS),
+        StrKey::EditorFieldTabPlacement,
+        StrKey::EditorFieldTabPlacementHelp,
     ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.placement.count",
+        FieldKind::Count,
+        StrKey::EditorFieldTabCount,
+        StrKey::EditorFieldTabCountHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.placement.distances_mm",
+        FieldKind::LengthList,
+        StrKey::EditorFieldTabDistances,
+        StrKey::EditorFieldTabDistancesHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.width_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldTabWidth,
+        StrKey::EditorFieldTabWidthHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.height_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldTabHeight,
+        StrKey::EditorFieldTabHeightHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.shape",
+        FieldKind::Choice(TAB_SHAPES),
+        StrKey::EditorFieldTabShape,
+        StrKey::EditorFieldTabShapeHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.on_holes",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldTabOnHoles,
+        StrKey::EditorFieldTabOnHolesHelp,
+    ),
+    row(
+        Group::CornersAndTabs,
+        "tabs.avoid_corners",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldTabAvoidCorners,
+        StrKey::EditorFieldTabAvoidCornersHelp,
+    ),
+    MACHINING_ORDER,
     SAFE_Z,
 ];
 
-/// The rows slice 10 gives a Pocket; slice 11 (#540) adds the rest.
-const POCKET: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];
+/// Capability 68's Pocket line, every field (slice 11, #540).
+const POCKET: &[Row] = &[
+    NAME,
+    ENABLED,
+    TARGETS,
+    TOOL,
+    DEPTH,
+    STEP_DOWN,
+    row(
+        Group::Depth,
+        "stock_to_leave_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldStockToLeave,
+        StrKey::EditorFieldStockToLeaveHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Strategy,
+        "strategy",
+        FieldKind::Choice(CLEARANCE_STRATEGIES),
+        StrKey::EditorFieldStrategy,
+        StrKey::EditorFieldStrategyHelp,
+    ),
+    row(
+        Group::Strategy,
+        "strategy.raster.angle_deg",
+        FieldKind::Angle,
+        StrKey::EditorFieldRasterAngle,
+        StrKey::EditorFieldRasterAngleHelp,
+    ),
+    row(
+        Group::Strategy,
+        "wall_pass",
+        FieldKind::Choice(WALL_PASSES),
+        StrKey::EditorFieldWallPass,
+        StrKey::EditorFieldWallPassHelp,
+    ),
+    tool_row(
+        Group::Strategy,
+        "step_over_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldStepOver,
+        StrKey::EditorFieldStepOverHelp,
+        ToolDefault::StepOver,
+    ),
+    DIRECTION,
+    row(
+        Group::Strategy,
+        "rest_of",
+        FieldKind::EarlierPocket,
+        StrKey::EditorFieldRestOf,
+        StrKey::EditorFieldRestOfHelp,
+    ),
+    ENTRY,
+    ENTRY_RAMP_ANGLE,
+    ENTRY_HELIX_DIAMETER,
+    ENTRY_HELIX_ANGLE,
+    CORNER_RELIEF,
+    MACHINING_ORDER,
+    SAFE_Z,
+];
 
-/// The rows slice 10 gives an Engrave; slice 11 (#540) adds the rest.
-const ENGRAVE: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];
+/// Capability 68's Engrave line, every field (slice 11, #540).
+const ENGRAVE: &[Row] = &[
+    NAME,
+    ENABLED,
+    TARGETS,
+    TOOL,
+    DEPTH,
+    STEP_DOWN,
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Strategy,
+        "alternate_direction",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldAlternateDirection,
+        StrKey::EditorFieldAlternateDirectionHelp,
+    ),
+    MACHINING_ORDER,
+    SAFE_Z,
+];
 
 /// Whether a Drill's record is not a countersink, whose depth follows
 /// from its tool and mouth (format 21), so its `depth_mm` is unused.
@@ -758,13 +993,7 @@ const V_CARVE: &[Row] = &[
         StrKey::EditorFieldStartPlaneCleared,
         StrKey::EditorFieldStartPlaneClearedHelp,
     ),
-    row(
-        Group::Depth,
-        "through_cut_allowance_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldThroughCutAllowance,
-        StrKey::EditorFieldThroughCutAllowanceHelp,
-    ),
+    THROUGH_CUT_ALLOWANCE,
     row(
         Group::Strategy,
         "strategy",
@@ -801,13 +1030,7 @@ const V_CARVE: &[Row] = &[
         StrKey::EditorFieldClearing,
         StrKey::EditorFieldClearingHelp,
     ),
-    row(
-        Group::Order,
-        "machining_order",
-        FieldKind::Choice(ORDERS),
-        StrKey::EditorFieldMachiningOrder,
-        StrKey::EditorFieldMachiningOrderHelp,
-    ),
+    MACHINING_ORDER,
     SAFE_Z,
 ];
 

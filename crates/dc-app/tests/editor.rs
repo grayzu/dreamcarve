@@ -25,6 +25,10 @@
 //! operation shapes becomes a closure over the table's own choices and
 //! switches, from each kind's new operation and every committed fixture's
 //! operations.
+//!
+//! Slice 11 (#540) completes the Profile, Pocket and Engrave rows: the tab
+//! request's settings, `rest_of` (earlier Pockets only), and the start
+//! point clicked on the Viewport.
 
 #![allow(
     clippy::panic,
@@ -53,34 +57,8 @@ use serde_json::Value;
 /// deleted, so the list can only shrink.
 fn still_to_come(kind: Kind) -> &'static [&'static str] {
     match kind {
-        // Complete in slice 10 (#539), but for the tab request's block,
-        // whose renderer slice 11 (#540) fills in.
-        Kind::Profile => &[],
-        // Slice 11 (#540).
-        Kind::Pocket => &[
-            "step_down_mm",
-            "through_cut_allowance_mm",
-            "stock_to_leave_mm",
-            "strategy",
-            "strategy.raster.angle_deg",
-            "wall_pass",
-            "step_over_fraction",
-            "direction",
-            "rest_of",
-            "entry",
-            "entry.ramp.angle_deg",
-            "entry.helix.diameter_fraction",
-            "entry.helix.angle_deg",
-            "corner_relief",
-            "machining_order",
-        ],
-        // Slice 11 (#540).
-        Kind::Engrave => &[
-            "step_down_mm",
-            "through_cut_allowance_mm",
-            "alternate_direction",
-            "machining_order",
-        ],
+        // Complete in slice 10 (#539) and slice 11 (#540).
+        Kind::Profile | Kind::Pocket | Kind::Engrave => &[],
         // Slice 12 (#541).
         Kind::Drill => &[
             "retract_mm",
@@ -160,9 +138,20 @@ fn reachable(project: &Project, seed: &Operation) -> Vec<Operation> {
                 .filter_map(|i| editor::choose(project, seed, row, i).ok().flatten())
                 .filter_map(updated)
                 .collect(),
-            FieldKind::Toggle(_) => [true, false]
+            FieldKind::Toggle(_) | FieldKind::TabRequest => [true, false]
                 .into_iter()
                 .filter_map(|on| editor::switch(project, seed, row, on).ok().flatten())
+                .filter_map(updated)
+                .collect(),
+            // None, or a Pocket to rest on: the file reads any id, and
+            // validation says whether it is an earlier one.
+            FieldKind::EarlierPocket => [None, Some(dc_project::OperationId::new("op1"))]
+                .iter()
+                .filter_map(|id| {
+                    editor::set_earlier_pocket(seed, row, id.as_ref())
+                        .ok()
+                        .flatten()
+                })
                 .filter_map(updated)
                 .collect(),
             _ => Vec::new(),
@@ -187,11 +176,17 @@ fn updated(command: Command) -> Option<Operation> {
 /// The leaves of `value` under `prefix`: every scalar, `null` and array
 /// (an array is one field: the targets, the clearing list, the tab
 /// distances), and every one-key object's key (a variant's tag), as dotted
-/// key paths.
+/// key paths. An internally tagged variant's `kind` (a tab request's
+/// `placement`) is its tag, so its leaf is the variant's own path, the
+/// path of the row that chooses it.
 fn leaves(value: &Value, prefix: &str, out: &mut BTreeSet<String>) {
     match value {
         Value::Object(map) => {
             for (key, value) in map {
+                if key == "kind" && !prefix.is_empty() && value.is_string() {
+                    out.insert(prefix.to_owned());
+                    continue;
+                }
                 let path = if prefix.is_empty() {
                     key.clone()
                 } else {
@@ -380,6 +375,22 @@ fn other_value(
             Value::from(other.id.as_str())
         }
         FieldKind::InstanceList => Value::from(vec!["i1", "i2"]),
+        FieldKind::LengthList => {
+            if current.as_array().is_some_and(Vec::is_empty) {
+                Value::from(vec![12.5, 60.0])
+            } else {
+                Value::Array(Vec::new())
+            }
+        }
+        // The file reads any id; validation says whether it is an earlier
+        // Pocket.
+        FieldKind::EarlierPocket => {
+            if current.is_null() {
+                Value::from("op1")
+            } else {
+                Value::Null
+            }
+        }
         // A length whose switch is off at `null` (a V-Carve's flat depth):
         // a length when off, off when on.
         FieldKind::SwitchedLength => number.map_or(Value::from(2.5), |_| Value::Null),
@@ -485,6 +496,85 @@ fn profile_golden_render_order() {
             "lead",
             "corner_relief",
             "tabs",
+            "tabs.placement",
+            "tabs.placement.count",
+            "tabs.width_mm",
+            "tabs.height_mm",
+            "tabs.shape",
+            "tabs.on_holes",
+            "tabs.avoid_corners",
+            "machining_order",
+            "safe_z_mm",
+        ]
+    );
+}
+
+/// The golden render order of the other two kinds this slice completes
+/// (capability 68's Pocket and Engrave lines): a new Pocket (offset, a
+/// last wall pass, `init`'s ramp) and a new Engrave. A raster's angle
+/// follows its strategy; the stepover is the tool's while `null` and shows
+/// as a percentage.
+#[test]
+fn pocket_and_engrave_golden_render_order() {
+    let strings = Strings::english();
+    let base = project();
+    let pocket = operations::new_operation(&base, &strings, Kind::Pocket, &[]).unwrap();
+    let keys: Vec<&str> = fields::rows(&pocket).iter().map(|r| r.key).collect();
+    assert_eq!(
+        keys,
+        [
+            "name",
+            "enabled",
+            "targets",
+            "tool",
+            "depth_mm",
+            "step_down_mm",
+            "stock_to_leave_mm",
+            "through_cut_allowance_mm",
+            "strategy",
+            "wall_pass",
+            "step_over_fraction",
+            "direction",
+            "rest_of",
+            "entry",
+            "entry.ramp.angle_deg",
+            "corner_relief",
+            "machining_order",
+            "safe_z_mm",
+        ]
+    );
+    let raster = fields::set(
+        &pocket,
+        "strategy",
+        serde_json::json!({ "raster": { "angle_deg": 0.0 } }),
+    )
+    .unwrap();
+    let keys: Vec<&str> = fields::rows(&raster).iter().map(|r| r.key).collect();
+    assert_eq!(
+        keys.get(8..10),
+        Some(["strategy", "strategy.raster.angle_deg"].as_slice()),
+        "the raster angle follows the strategy"
+    );
+    let stepover = fields::rows(&pocket)
+        .into_iter()
+        .find(|r| r.key == "step_over_fraction")
+        .unwrap();
+    assert_eq!(stepover.tool_default, Some(fields::ToolDefault::StepOver));
+    assert_eq!(stepover.unit(), fields::Unit::Percent);
+
+    let engrave = operations::new_operation(&base, &strings, Kind::Engrave, &[]).unwrap();
+    let keys: Vec<&str> = fields::rows(&engrave).iter().map(|r| r.key).collect();
+    assert_eq!(
+        keys,
+        [
+            "name",
+            "enabled",
+            "targets",
+            "tool",
+            "depth_mm",
+            "step_down_mm",
+            "through_cut_allowance_mm",
+            "alternate_direction",
             "machining_order",
             "safe_z_mm",
         ]
@@ -759,10 +849,8 @@ fn located_warning_matches_its_row() {
     );
 }
 
-// ── Slice 13 (#542): the V-Carve editor and the clearing-pass list. ───
-
-/// The row of `op` at `key`, which must apply to it.
-fn applicable(op: &Operation, key: &str) -> &'static fields::Row {
+/// The row of `op` at `key`, which must apply.
+fn row_of(op: &Operation, key: &str) -> &'static fields::Row {
     fields::rows(op)
         .into_iter()
         .find(|r| r.key == key)
@@ -770,7 +858,7 @@ fn applicable(op: &Operation, key: &str) -> &'static fields::Row {
 }
 
 /// The operation `id` of the harness's project.
-fn operation(h: &dc_app::test_support::Harness, id: &str) -> Operation {
+fn op_of(h: &dc_app::test_support::Harness, id: &str) -> Operation {
     h.app
         .project()
         .operations
@@ -780,8 +868,8 @@ fn operation(h: &dc_app::test_support::Harness, id: &str) -> Operation {
         .unwrap_or_else(|| panic!("no operation {id}"))
 }
 
-/// Runs an edit that must change something; its undo label.
-fn edit(
+/// Runs `command`, which must be an edit, and returns its undo label.
+fn run_edit(
     h: &mut dc_app::test_support::Harness,
     command: Result<Option<Command>, dc_app::CommandError>,
 ) -> String {
@@ -790,6 +878,402 @@ fn edit(
         .expect("and changes something");
     h.run(command).expect("the edit runs")
 }
+
+/// Capability 68's Pocket line and capability 13: `rest_of` offers the
+/// earlier enabled Pockets only, in list order, so a Pocket can never
+/// rest on itself, a later Pocket, a disabled one or another kind
+/// (validation's `rest_of_invalid` rule, `dc-project`'s `pocket`). The
+/// plaque's list is Bore, Engrave, Panel (op1), Square recess (op2),
+/// Profile; a disabled Pocket and a later one are added. Choosing one
+/// writes its id and choosing none writes `null`, one step each; a
+/// hand-edited `rest_of` naming a later Pocket still shows, with
+/// validation's message under the row.
+#[test]
+fn rest_of_offers_earlier_pockets_only() {
+    let mut plaque = common::plaque();
+    let Some(Operation::Pocket(panel)) = plaque
+        .operations
+        .iter()
+        .find(|o| o.id().as_str() == "op1")
+        .cloned()
+    else {
+        panic!("the plaque's Panel is a Pocket");
+    };
+    let off = dc_project::PocketOp {
+        id: dc_project::OperationId::new("op6"),
+        name: "Off".into(),
+        enabled: false,
+        ..panel.clone()
+    };
+    let finish = dc_project::PocketOp {
+        id: dc_project::OperationId::new("op7"),
+        name: "Finish".into(),
+        ..panel
+    };
+    let profile_at = plaque
+        .operations
+        .iter()
+        .position(|o| o.id().as_str() == "op4")
+        .unwrap();
+    plaque.operations.insert(profile_at, Operation::Pocket(off));
+    plaque.operations.push(Operation::Pocket(finish));
+    let mut h = dc_app::test_support::Harness::from_project(plaque);
+    let offered = |h: &dc_app::test_support::Harness, id: &str| -> Vec<String> {
+        editor::earlier_pockets(h.app.project(), &op_of(h, id))
+            .into_iter()
+            .map(|(id, name)| format!("{id} {name}"))
+            .collect()
+    };
+    assert!(offered(&h, "op1").is_empty(), "the first Pocket has none");
+    assert_eq!(offered(&h, "op2"), ["op1 Panel"]);
+    assert_eq!(
+        offered(&h, "op7"),
+        ["op1 Panel", "op2 Square recess"],
+        "not itself, not the disabled Pocket"
+    );
+    assert!(
+        offered(&h, "op4").is_empty(),
+        "a Profile rests on nothing, and has no row"
+    );
+    assert!(
+        fields::rows(&op_of(&h, "op4"))
+            .iter()
+            .all(|r| r.key != "rest_of")
+    );
+
+    let finish = op_of(&h, "op7");
+    let row = row_of(&finish, "rest_of");
+    assert!(matches!(row.kind, FieldKind::EarlierPocket));
+    assert_eq!(row.group, Group::Strategy);
+    let label = {
+        let edit =
+            editor::set_earlier_pocket(&finish, row, Some(&dc_project::OperationId::new("op1")));
+        run_edit(&mut h, edit)
+    };
+    assert!(label.ends_with("of “Finish”"), "{label}");
+    let Operation::Pocket(rest) = op_of(&h, "op7") else {
+        panic!("still a Pocket");
+    };
+    assert_eq!(
+        rest.rest_of.as_ref().map(dc_project::OperationId::as_str),
+        Some("op1")
+    );
+    assert!(
+        !h.warnings()
+            .iter()
+            .any(|f| f.code.as_deref() == Some("rest_of_invalid")),
+        "an earlier enabled Pocket of the same shapes is valid: {:?}",
+        h.warnings()
+    );
+    assert_eq!(
+        editor::set_earlier_pocket(
+            &op_of(&h, "op7"),
+            row,
+            Some(&dc_project::OperationId::new("op1"))
+        )
+        .unwrap(),
+        None,
+        "choosing it again is no step"
+    );
+    {
+        let edit = editor::set_earlier_pocket(&op_of(&h, "op7"), row, None);
+        run_edit(&mut h, edit)
+    };
+    let Operation::Pocket(cleared) = op_of(&h, "op7") else {
+        panic!("still a Pocket");
+    };
+    assert_eq!(cleared.rest_of, None);
+
+    // A hand-edited file's later Pocket is kept and reported under the row.
+    let panel = op_of(&h, "op1");
+    let later = fields::set(&panel, "rest_of", Value::from("op7")).unwrap();
+    h.run(Command::UpdateOperation(later.clone())).unwrap();
+    let located = editor::Located::of(h.warnings(), &later);
+    let status = located
+        .status(row_of(&later, "rest_of"))
+        .expect("validation's message is under the row");
+    assert_eq!(status.tier, Tier::Error);
+}
+
+/// Capability 68's Profile line, "Near a point: typed or clicked": with
+/// the start point *Near a point*, its pick row takes a click on the
+/// Viewport, and the click writes `start.near` as the project point the
+/// camera puts under it (`Camera::to_world`, the one Y flip), in mm
+/// whatever the display units, one undo step. Choosing Near writes the
+/// stock's centre first; Auto and First vertex have no point to pick, and
+/// a row that is not a pick refuses one.
+#[test]
+fn start_point_near_can_be_clicked_on_the_viewport() {
+    let mut h = dc_app::test_support::Harness::from_project(common::plaque());
+    let cut_out = op_of(&h, "op4");
+    assert!(
+        fields::rows(&cut_out)
+            .iter()
+            .all(|r| !r.key.starts_with("start.near")),
+        "an automatic start has no point"
+    );
+    let start = row_of(&cut_out, "start");
+    let near_index = match start.kind {
+        FieldKind::Choice(options) => options.iter().position(|o| o.tag == "near").unwrap(),
+        _ => panic!("the start point is a choice"),
+    };
+    {
+        let edit = editor::choose(h.app.project(), &cut_out, start, near_index);
+        run_edit(&mut h, edit)
+    };
+    let near = op_of(&h, "op4");
+    let Operation::Profile(profile) = &near else {
+        panic!("still a Profile");
+    };
+    // The plaque's stock is 170 × 120 mm.
+    assert_eq!(
+        profile.start,
+        dc_project::StartAt::Near {
+            x_mm: 85.0,
+            y_mm: 60.0
+        },
+        "Near starts at the stock's centre"
+    );
+    let pick = row_of(&near, "start.near");
+    assert!(matches!(pick.kind, FieldKind::PointPick));
+    assert_eq!(pick.group, Group::Strategy);
+
+    // The Viewport's camera, fitted to the plaque in an 800 × 600 pane.
+    let mut camera = h.app.view().camera;
+    camera.viewport_px = dc_geometry::Vec2::new(800.0, 600.0);
+    camera.fit(dc_app::viewport::camera::fit_bounds(
+        h.app.project(),
+        h.app.scene(),
+    ));
+    let want = dc_geometry::Point::new(20.0, 30.0);
+    let at = camera.to_screen(want);
+    let clicked = camera.to_world(dc_app::Pos {
+        x_px: at.x_px.round(),
+        y_px: at.y_px.round(),
+    });
+    let label = run_edit(&mut h, editor::pick_point(&near, pick, clicked));
+    assert_eq!(label, "Set start of “Cut out”");
+    let picked = op_of(&h, "op4");
+    let Operation::Profile(profile) = &picked else {
+        panic!("still a Profile");
+    };
+    let dc_project::StartAt::Near { x_mm, y_mm } = profile.start else {
+        panic!("still Near: {:?}", profile.start);
+    };
+    common::assert_near(
+        dc_geometry::Point::new(x_mm, y_mm),
+        clicked,
+        1e-9,
+        "the start is the point under the click",
+    );
+    common::assert_near(clicked, want, 0.5, "the camera maps the click back");
+    assert_eq!(
+        editor::value_text(h.app.project(), &picked, row_of(&picked, "start.near.x_mm")),
+        dc_app::units::field_text(x_mm, Units::Mm),
+        "the typed rows show the clicked point"
+    );
+    assert_eq!(
+        editor::pick_point(&picked, pick, clicked).unwrap(),
+        None,
+        "the same point again is no step"
+    );
+
+    // In an inch project the file still holds millimetres.
+    let mut inch = h.app.project().clone();
+    inch.display_units = Units::Inch;
+    let elsewhere = dc_geometry::Point::new(25.4, 50.8);
+    let Some(Command::UpdateOperation(moved)) =
+        editor::pick_point(&picked, pick, elsewhere).unwrap()
+    else {
+        panic!("a click elsewhere moves it");
+    };
+    let Operation::Profile(profile) = &moved else {
+        panic!("still a Profile");
+    };
+    assert_eq!(
+        profile.start,
+        dc_project::StartAt::Near {
+            x_mm: 25.4,
+            y_mm: 50.8
+        }
+    );
+    assert_eq!(
+        editor::value_text(&inch, &moved, row_of(&moved, "start.near.x_mm")),
+        "1"
+    );
+
+    // Only a pick row takes a click.
+    assert!(editor::pick_point(&picked, start, clicked).is_err());
+}
+
+/// Capability 69 and acceptance 78's request half: the coaster's Profile
+/// (`init`'s request of four 8 × 3 mm rect tabs, not on holes, off the
+/// corners) edits its tab request through its rows. Off writes `null` and
+/// on writes `init`'s request again; count, width, height, shape, on holes
+/// and avoid corners write their fields; Distances keeps the size and
+/// takes typed distances in the display units; Count again writes `init`'s
+/// four. Each edit is one undo step, and the saved file read back by
+/// `dc_project::load` (the CLI's reader) holds the request as edited.
+/// Placing it is slice 17's (#546).
+#[test]
+fn profile_tab_request_round_trips() {
+    let mut h = dc_app::test_support::Harness::from_project(common::coaster());
+    let id = h.app.project().operations[0].id().as_str().to_owned();
+    let saved_tabs = |h: &dc_app::test_support::Harness| -> Option<dc_project::TabSpec> {
+        let text = h.save().expect("the project saves");
+        let loaded = dc_project::load(text.as_bytes()).expect("and the CLI reads it");
+        match loaded
+            .project
+            .operations
+            .iter()
+            .find(|o| o.id().as_str() == id)
+        {
+            Some(Operation::Profile(p)) => p.tabs.clone(),
+            other => panic!("the Profile is saved: {other:?}"),
+        }
+    };
+    let init = dc_job::project_from::default_profile(Vec::new(), dc_project::ToolId::new(""))
+        .tabs
+        .expect("init writes a request");
+    assert_eq!(saved_tabs(&h), Some(init.clone()), "init's request");
+    let profile = op_of(&h, &id);
+    let tabs = row_of(&profile, "tabs");
+    assert!(matches!(tabs.kind, FieldKind::TabRequest));
+    assert_eq!(tabs.group, Group::CornersAndTabs);
+    assert!(editor::switched(&profile, tabs));
+
+    // Off is `null`, and its rows go.
+    {
+        let edit = editor::switch(h.app.project(), &profile, tabs, false);
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(saved_tabs(&h), None);
+    let off = op_of(&h, &id);
+    assert!(
+        fields::rows(&off)
+            .iter()
+            .all(|r| !r.key.starts_with("tabs.")),
+        "no request, no settings"
+    );
+    // On is `init`'s request.
+    {
+        let edit = editor::switch(h.app.project(), &off, tabs, true);
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(saved_tabs(&h), Some(init));
+
+    let typed = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
+        let op = op_of(h, &id);
+        let project = h.app.project().clone();
+        run_edit(
+            h,
+            editor::commit_text(&project, &op, row_of(&op, key), text),
+        )
+    };
+    typed(&mut h, "tabs.placement.count", "6");
+    typed(&mut h, "tabs.width_mm", "10");
+    typed(&mut h, "tabs.height_mm", "2.5");
+    let op = op_of(&h, &id);
+    let shape = row_of(&op, "tabs.shape");
+    {
+        let edit = editor::choose(h.app.project(), &op, shape, 1);
+        run_edit(&mut h, edit)
+    };
+    let op = op_of(&h, &id);
+    run_edit(
+        &mut h,
+        editor::set_checked(&op, row_of(&op, "tabs.on_holes"), true),
+    );
+    let op = op_of(&h, &id);
+    run_edit(
+        &mut h,
+        editor::set_checked(&op, row_of(&op, "tabs.avoid_corners"), false),
+    );
+    let edited = dc_project::TabSpec {
+        placement: dc_project::TabPlacement::Count { count: 6 },
+        width_mm: 10.0,
+        height_mm: 2.5,
+        shape: dc_project::TabShape::Smooth,
+        on_holes: true,
+        avoid_corners: false,
+    };
+    assert_eq!(saved_tabs(&h), Some(edited.clone()));
+
+    // Distances keep the size; typed in inches they are saved in mm.
+    let op = op_of(&h, &id);
+    let placement = row_of(&op, "tabs.placement");
+    assert_eq!(editor::choice(&op, placement), Some(0), "Count");
+    {
+        let edit = editor::choose(h.app.project(), &op, placement, 1);
+        run_edit(&mut h, edit)
+    };
+    let op = op_of(&h, &id);
+    assert_eq!(editor::choice(&op, placement), Some(1), "Distances");
+    assert!(
+        fields::rows(&op)
+            .iter()
+            .all(|r| r.key != "tabs.placement.count"),
+        "the count goes with its variant"
+    );
+    let distances = row_of(&op, "tabs.placement.distances_mm");
+    assert!(matches!(distances.kind, FieldKind::LengthList));
+    let mut inch = h.app.project().clone();
+    inch.display_units = Units::Inch;
+    run_edit(&mut h, editor::commit_text(&inch, &op, distances, "1, 2.5"));
+    let op = op_of(&h, &id);
+    assert_eq!(editor::value_text(&inch, &op, distances), "1, 2.5");
+    assert_eq!(
+        editor::value_text(h.app.project(), &op, distances),
+        "25.4, 63.5"
+    );
+    assert_eq!(
+        saved_tabs(&h),
+        Some(dc_project::TabSpec {
+            placement: dc_project::TabPlacement::AtDistances {
+                distances_mm: vec![25.4, 63.5]
+            },
+            ..edited.clone()
+        })
+    );
+    assert!(
+        editor::commit_text(h.app.project(), &op, distances, "10, deep").is_err(),
+        "every distance is a length"
+    );
+
+    // Count again is `init`'s four, the size kept: the request acceptance
+    // 78 places.
+    {
+        let edit = editor::choose(h.app.project(), &op, placement, 0);
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(
+        saved_tabs(&h),
+        Some(dc_project::TabSpec {
+            placement: dc_project::TabPlacement::Count { count: 4 },
+            ..edited
+        })
+    );
+    // A count of 0 is the file's, and validation's message is under it;
+    // more than 255 is not.
+    typed(&mut h, "tabs.placement.count", "0");
+    let zero = op_of(&h, &id);
+    let status = editor::Located::of(h.warnings(), &zero)
+        .status(row_of(&zero, "tabs.placement.count"))
+        .expect("a count of 0 is reported under the count");
+    assert_eq!(status.tier, Tier::Error);
+    assert!(
+        editor::commit_text(
+            h.app.project(),
+            &zero,
+            row_of(&zero, "tabs.placement.count"),
+            "300"
+        )
+        .is_err(),
+        "a count is at most 255"
+    );
+}
+
+// ── Slice 13 (#542): the V-Carve editor and the clearing-pass list. ───
 
 /// The tools of `op`'s clearing passes, by id.
 fn pass_tools(op: &Operation, list: &fields::Row) -> Vec<String> {
@@ -829,27 +1313,27 @@ fn pass(tool: &str) -> dc_project::ClearingPass {
 #[test]
 fn clearing_list_orders_and_warns() {
     let mut h = dc_app::test_support::Harness::from_project(project());
-    let lettering = operation(&h, "op3");
-    let list = applicable(&lettering, "clearing");
+    let lettering = op_of(&h, "op3");
+    let list = row_of(&lettering, "clearing");
     assert!(matches!(list.kind, FieldKind::ClearingList));
     assert_eq!(list.group, Group::Strategy);
     assert!(clearing::passes(&lettering, list).is_empty());
 
     // The floor to clear: the flat depth is off at `null` until typed.
-    let flat = applicable(&lettering, "flat_depth_mm");
+    let flat = row_of(&lettering, "flat_depth_mm");
     assert!(matches!(flat.kind, FieldKind::SwitchedLength));
     assert_eq!(flat.group, Group::Depth);
     assert!(!editor::switched(&lettering, flat));
     let typed = editor::commit_text(h.app.project(), &lettering, flat, "2.5");
-    edit(&mut h, typed);
-    assert!(editor::switched(&operation(&h, "op3"), flat));
+    run_edit(&mut h, typed);
+    assert!(editor::switched(&op_of(&h, "op3"), flat));
 
     for _ in 0..2 {
-        let op = operation(&h, "op3");
+        let op = op_of(&h, "op3");
         let add = clearing::add(h.app.project(), &op, list);
-        edit(&mut h, add);
+        run_edit(&mut h, add);
     }
-    let op = operation(&h, "op3");
+    let op = op_of(&h, "op3");
     assert_eq!(
         pass_tools(&op, list),
         ["t1", "t3"],
@@ -875,8 +1359,8 @@ fn clearing_list_orders_and_warns() {
     // The smaller dragged above the larger: one step, and the warning.
     let undo_before = h.app.undo_label().map(str::to_owned);
     let drag = clearing::reorder(&op, list, 1, 0);
-    edit(&mut h, drag);
-    let op = operation(&h, "op3");
+    run_edit(&mut h, drag);
+    let op = op_of(&h, "op3");
     assert_eq!(pass_tools(&op, list), ["t3", "t1"]);
     let found = coded(&h, "clearing_not_descending");
     assert_eq!(found.len(), 1, "{found:?}");
@@ -913,7 +1397,7 @@ fn clearing_list_orders_and_warns() {
         "dropped where it was"
     );
     h.app.undo();
-    assert_eq!(pass_tools(&operation(&h, "op3"), list), ["t1", "t3"]);
+    assert_eq!(pass_tools(&op_of(&h, "op3"), list), ["t1", "t3"]);
     assert_eq!(
         h.app.undo_label().map(str::to_owned),
         undo_before,
@@ -921,11 +1405,11 @@ fn clearing_list_orders_and_warns() {
     );
     assert!(coded(&h, "clearing_not_descending").is_empty());
 
-    let op = operation(&h, "op3");
+    let op = op_of(&h, "op3");
     assert!(clearing::remove(&op, list, 5).is_err(), "no such pass");
     let remove = clearing::remove(&op, list, 1);
-    edit(&mut h, remove);
-    assert_eq!(pass_tools(&operation(&h, "op3"), list), ["t1"]);
+    run_edit(&mut h, remove);
+    assert_eq!(pass_tools(&op_of(&h, "op3"), list), ["t1"]);
 }
 
 /// Capability 70's *Add pass*: the end mill just smaller than the
@@ -977,15 +1461,15 @@ fn add_pass_picks_the_next_smaller_end_mill() {
     // Through the list: the Background's 6.35 mm pass, then 3.175 mm,
     // then none.
     let mut h = dc_app::test_support::Harness::from_project(base);
-    let background = operation(&h, "op2");
-    let list = applicable(&background, "clearing");
+    let background = op_of(&h, "op2");
+    let list = row_of(&background, "clearing");
     assert_eq!(pass_tools(&background, list), ["t2"]);
     for _ in 0..2 {
-        let op = operation(&h, "op2");
+        let op = op_of(&h, "op2");
         let add = clearing::add(h.app.project(), &op, list);
-        edit(&mut h, add);
+        run_edit(&mut h, add);
     }
-    let op = operation(&h, "op2");
+    let op = op_of(&h, "op2");
     assert_eq!(pass_tools(&op, list), ["t2", "t3", ""]);
     // `clearing_dangling_tool` is an error, which carries no code.
     let dangling: Vec<dc_job::Finding> = h
@@ -1019,11 +1503,11 @@ fn add_pass_picks_the_next_smaller_end_mill() {
 #[test]
 fn clearing_pass_rows_cover_a_pass() {
     let mut h = dc_app::test_support::Harness::from_project(project());
-    let background = operation(&h, "op2");
-    let list = applicable(&background, "clearing");
+    let background = op_of(&h, "op2");
+    let list = row_of(&background, "clearing");
     let add = clearing::add(h.app.project(), &background, list);
-    edit(&mut h, add);
-    let op = operation(&h, "op2");
+    run_edit(&mut h, add);
+    let op = op_of(&h, "op2");
     let project = h.app.project().clone();
 
     let offered: Vec<&str> = clearing::tools(&project)
@@ -1086,15 +1570,15 @@ fn clearing_pass_rows_cover_a_pass() {
         .find(|s| s.row.key == "strategy")
         .unwrap();
     let raster = strategy.choose(&project, &op, 1);
-    edit(&mut h, raster);
-    let op = operation(&h, "op2");
+    run_edit(&mut h, raster);
+    let op = op_of(&h, "op2");
     let angle = clearing::rows(&op, list, 1)
         .into_iter()
         .find(|s| s.row.key == "strategy.raster.angle_deg")
         .expect("the raster's angle follows its strategy");
     let typed = angle.commit_text(&project, &op, "30");
-    edit(&mut h, typed);
-    let op = operation(&h, "op2");
+    run_edit(&mut h, typed);
+    let op = op_of(&h, "op2");
     assert_eq!(
         clearing::passes(&op, list)[1].strategy,
         dc_project::ClearanceStrategy::Raster { angle_deg: 30.0 }
@@ -1105,8 +1589,8 @@ fn clearing_pass_rows_cover_a_pass() {
         .find(|s| s.row.key == "tool")
         .unwrap();
     let picked = tool.set_tool(&op, &dc_project::ToolId::new("t1"));
-    edit(&mut h, picked);
-    assert_eq!(pass_tools(&operation(&h, "op2"), list), ["t2", "t1"]);
+    run_edit(&mut h, picked);
+    assert_eq!(pass_tools(&op_of(&h, "op2"), list), ["t2", "t1"]);
 }
 
 /// The editor's status line is `check`'s carve summary for the edited
@@ -1153,10 +1637,10 @@ fn carve_summary_matches_check() {
     );
     assert!(summary(&h, "op1").is_empty(), "a Drill has no carve line");
 
-    let lettering = operation(&h, "op3");
-    let flat = applicable(&lettering, "flat_depth_mm");
+    let lettering = op_of(&h, "op3");
+    let flat = row_of(&lettering, "flat_depth_mm");
     let typed = editor::commit_text(h.app.project(), &lettering, flat, "1");
-    edit(&mut h, typed);
+    run_edit(&mut h, typed);
     assert!(summary(&h, "op3").is_empty(), "stale until it regenerates");
     h.generate();
     let edited = h.app.project().clone();
