@@ -22,12 +22,20 @@
 //!
 //! Clicking a Warnings row that names a field opens its operation here and
 //! focuses that field ([`request_focus`]).
+//!
+//! Slice 13 (#542): every control draws a [`Slot`], a row at its key
+//! path, so a clearing pass's rows (`clearing[1].tool`) are drawn by the
+//! same renderers ([`control`]) inside the clearing list's block
+//! ([`crate::panels::clearing`]); a flat depth is a switch and a field; a
+//! tool picker lists only the tools that fit and shows a V-bit's cone
+//! height under itself; and the editor's foot is `check`'s carve summary
+//! for the operation ([`status_line`]).
 
-use dc_app::editor::{self, FieldKind, Group, Row, fields, targets};
+use dc_app::editor::{self, FieldKind, Group, Row, Slot, fields, targets};
 use dc_app::operations::Kind;
 use dc_app::{Command, StrKey, Strings};
 use dc_job::Tier;
-use dc_project::{InstanceId, Operation, OperationId, Project, ToolKind};
+use dc_project::{InstanceId, Operation, OperationId, Project, Tool, ToolKind};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
@@ -97,12 +105,12 @@ pub(crate) fn request_focus(ctx: &egui::Context, op: OperationId, field: String)
 }
 
 /// What every row reads.
-struct Cx<'a> {
-    strings: &'a Strings,
-    project: &'a Project,
+pub(super) struct Cx<'a> {
+    pub(super) strings: &'a Strings,
+    pub(super) project: &'a Project,
     located: editor::Located<'a>,
     selected: &'a [InstanceId],
-    op: &'a Operation,
+    pub(super) op: &'a Operation,
     /// The row a Warnings click asked to focus, by key path.
     focus: Option<&'static str>,
 }
@@ -131,6 +139,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         .position(|o| o.id() == op.id())
         .unwrap_or(0);
     header(ui, &cx, index);
+    status_line(ui, &cx, &editor::carve_summary(app, op.id()));
     egui::ScrollArea::vertical()
         .id_salt(("operation_editor", op.id().as_str()))
         .auto_shrink(false)
@@ -212,13 +221,55 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize) {
     );
 }
 
-/// The id of `row`'s control for `op`.
-fn control_id(op: &Operation, row: &Row) -> Id {
-    Id::unique(("dc.editor.field", op.id().as_str(), row.key))
+/// The editor's status line, at its foot (slice 13, #542; mock-up 06):
+/// `check`'s carve summary for the operation, as `check` prints it, from
+/// the result the app holds ([`editor::carve_summary`]). Nothing for a
+/// kind `check` prints no such line for, or while the operation has no
+/// current result.
+fn status_line(ui: &mut Ui, cx: &Cx<'_>, lines: &[String]) {
+    if lines.is_empty() {
+        return;
+    }
+    let palette = Palette::current(ui);
+    egui::Panel::bottom(Id::unique(("dc.editor.status", cx.op.id().as_str())))
+        .resizable(false)
+        .show_separator_line(true)
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.surface_panel)
+                .inner_margin(egui::Margin::symmetric(MARGIN_PX, 6)),
+        )
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(cx.strings.get(StrKey::EditorCarveSummary))
+                        .text_style(TextStyle::Small)
+                        .color(palette.text_secondary),
+                )
+                .selectable(false),
+            );
+            for line in lines {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(line)
+                            .text_style(TextStyle::Small)
+                            .color(palette.text_primary),
+                    )
+                    .wrap(),
+                );
+            }
+        });
+}
+
+/// The id of the control at `key` (a row's key path, a clearing pass's
+/// `clearing[1].tool`) for `op`: stable however the layout moves.
+pub(super) fn control_id(op: &Operation, key: &str) -> Id {
+    Id::unique(("dc.editor.field", op.id().as_str(), key))
 }
 
 /// Pushes `result`'s command, or keeps its refusal under the row.
-fn commit(
+pub(super) fn commit(
     ui: &Ui,
     refused_id: Id,
     result: Result<Option<Command>, dc_app::CommandError>,
@@ -238,8 +289,8 @@ fn commit(
 /// One row: its renderer, then the message under it (the refusal of what
 /// was typed, else the file's located message).
 fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
-    let id = control_id(cx.op, row);
-    let refused_id = id.with("refused");
+    let slot = Slot::of(row);
+    let refused_id = control_id(cx.op, slot.key()).with("refused");
     let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
     let status = cx.located.status(row);
     let tier = refused
@@ -247,37 +298,15 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .map(|_| Tier::Error)
         .or(status.map(|s| s.tier));
     let focused = cx.focus == Some(row.key);
-    let nested = row.key.contains('.');
+    let offered = editor::offered_tools(cx.project, cx.op);
     let response = ui
-        .horizontal(|ui| {
-            if nested {
-                ui.add_space(NESTED_PX);
-            }
-            match row.kind {
-                FieldKind::Text
-                | FieldKind::Length
-                | FieldKind::Rate
-                | FieldKind::Angle
-                | FieldKind::Percentage
-                | FieldKind::Count
-                | FieldKind::Seconds => typed(ui, cx, row, id, tier, focused, out),
-                FieldKind::Choice(options) => choice(ui, cx, row, id, options, out),
-                FieldKind::Checkbox => checkbox(ui, cx, row, out),
-                FieldKind::Toggle(_) => switch(ui, cx, row, out),
-                FieldKind::ToolPicker => tool_picker(ui, cx, row, id, out),
-                FieldKind::InstanceList => {
-                    // The Targets group's own block, under the row.
-                    None
-                }
-                FieldKind::TabRequest
-                | FieldKind::ClearingList
-                | FieldKind::CutOut
-                | FieldKind::MaleBoard => block(ui, cx, row),
-            }
-        })
+        .horizontal(|ui| control(ui, cx, &slot, &offered, tier, focused, out))
         .inner;
-    if matches!(row.kind, FieldKind::InstanceList) {
-        target_list(ui, cx, out);
+    match row.kind {
+        FieldKind::InstanceList => target_list(ui, cx, out),
+        FieldKind::ToolPicker => tool_note(ui, cx, &slot),
+        FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
+        _ => {}
     }
     if focused {
         if let Some(response) = &response {
@@ -285,38 +314,109 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         }
         ui.data_mut(|d| d.remove::<(OperationId, String)>(focus_id()));
     }
-    match (refused, status) {
-        (Some(reason), _) => row::message(ui, Tier::Error, &reason),
-        (None, Some(status)) => row::message(ui, status.tier, status.message),
-        (None, None) => {}
+    match refused {
+        Some(reason) => row::message(ui, Tier::Error, &reason),
+        // A block shows every message located on it, its items' among
+        // them (a clearing list's `clearing_not_descending`).
+        None if row.kind.is_block() => {
+            for status in cx.located.all(row) {
+                row::message(ui, status.tier, status.message);
+            }
+        }
+        None => {
+            if let Some(status) = status {
+                row::message(ui, status.tier, status.message);
+            }
+        }
     }
 }
 
-/// The label with its help and the `.dcv` field name.
-fn label(ui: &mut Ui, cx: &Cx<'_>, row: &Row) {
+/// The control of `slot`, by its kind, indented under its feature or
+/// variant when its key is nested: what a row of the operation and a row
+/// of a clearing pass both draw. `offered` is what a tool picker lists.
+pub(super) fn control(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    offered: &[&Tool],
+    tier: Option<Tier>,
+    focused: bool,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let id = control_id(cx.op, slot.key());
+    if slot.row.key.contains('.') {
+        ui.add_space(NESTED_PX);
+    }
+    match slot.row.kind {
+        FieldKind::Text
+        | FieldKind::Length
+        | FieldKind::Rate
+        | FieldKind::Angle
+        | FieldKind::Percentage
+        | FieldKind::Count
+        | FieldKind::Seconds => {
+            label(ui, cx, slot);
+            typed(ui, cx, slot, id, tier, focused, out)
+        }
+        FieldKind::SwitchedLength => switched_length(ui, cx, slot, id, tier, focused, out),
+        FieldKind::Choice(options) => choice(ui, cx, slot, id, options, out),
+        FieldKind::Checkbox => checkbox(ui, cx, slot, out),
+        FieldKind::Toggle(_) => switch(ui, cx, slot, out),
+        FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
+        FieldKind::InstanceList => {
+            // The Targets group's own block, under the row.
+            None
+        }
+        FieldKind::ClearingList => {
+            // The list itself is under the row.
+            label(ui, cx, slot);
+            let palette = Palette::current(ui);
+            Some(
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(cx.strings.get(StrKey::EditorClearingIntro))
+                            .text_style(TextStyle::Small)
+                            .color(palette.text_secondary),
+                    )
+                    .wrap()
+                    .selectable(false),
+                ),
+            )
+        }
+        FieldKind::TabRequest | FieldKind::CutOut | FieldKind::MaleBoard => block(ui, cx, slot.row),
+    }
+}
+
+/// The label with its help and the `.dcv` field name (a clearing pass's
+/// with its index, `clearing[1].tool`).
+fn label(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) {
     row::label(
         ui,
-        cx.strings.get(row.label),
-        cx.strings.get(row.help),
-        Some(row.key),
+        cx.strings.get(slot.row.label),
+        cx.strings.get(slot.row.help),
+        Some(slot.key()),
     );
 }
 
-/// A typed row: the unit field, its placeholder the tool's value while
+/// A typed field: the unit field, its placeholder the tool's value while
 /// `null`, and ⟲ while it has its own.
 fn typed(
     ui: &mut Ui,
     cx: &Cx<'_>,
-    row: &Row,
+    slot: &Slot<'_>,
     id: Id,
     tier: Option<Tier>,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    label(ui, cx, row);
-    let value = editor::value_text(cx.project, cx.op, row);
-    let placeholder = editor::placeholder(cx.project, cx.strings, cx.op, row).unwrap_or_default();
-    let reset = editor::can_reset(cx.op, row).then(|| cx.strings.get(StrKey::EditorReset));
+    let row = slot.row;
+    let value = slot.value_text(cx.project, cx.op);
+    let placeholder = slot
+        .placeholder(cx.project, cx.strings, cx.op)
+        .unwrap_or_default();
+    let reset = slot
+        .can_reset(cx.op)
+        .then(|| cx.strings.get(StrKey::EditorReset));
     let name = cx.strings.get(row.label);
     if focused {
         ui.memory_mut(|m| m.request_focus(id));
@@ -340,14 +440,54 @@ fn typed(
         commit(
             ui,
             refused_id,
-            editor::commit_text(cx.project, cx.op, row, &text),
+            slot.commit_text(cx.project, cx.op, &text),
             out,
         );
     }
     if output.reset {
-        commit(ui, refused_id, editor::reset(cx.op, row), out);
+        commit(ui, refused_id, slot.reset(cx.op), out);
     }
     Some(output.response)
+}
+
+/// A length with an off switch for `null` (a V-Carve's flat depth): the
+/// switch, then, while it is on, the field. Turning it on opens the field
+/// empty and writes nothing (S20: the length typed is the value); the
+/// open state is view state, kept in egui's memory under the row's id
+/// until the switch is turned off, which writes `null`.
+fn switched_length(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    id: Id,
+    tier: Option<Tier>,
+    focused: bool,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    label(ui, cx, slot);
+    let opened_id = id.with("opened");
+    let opened = ui.data(|d| d.get_temp::<bool>(opened_id)).unwrap_or(false);
+    let on = slot.switched(cx.op) || opened || focused;
+    let switch = toggle(ui, on, cx.strings.get(slot.row.label));
+    if switch.clicked() {
+        if on {
+            ui.data_mut(|d| d.remove::<bool>(opened_id));
+            commit(
+                ui,
+                id.with("refused"),
+                slot.switch(cx.project, cx.op, false),
+                out,
+            );
+        } else {
+            ui.data_mut(|d| d.insert_temp(opened_id, true));
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
+    if !on {
+        return Some(switch);
+    }
+    ui.add_space(GAP_PX);
+    typed(ui, cx, slot, id, tier, focused, out)
 }
 
 /// A choice: segmented for two to four options whose labels fit 56 px
@@ -355,14 +495,15 @@ fn typed(
 fn choice(
     ui: &mut Ui,
     cx: &Cx<'_>,
-    row: &Row,
+    slot: &Slot<'_>,
     id: Id,
     options: &[editor::ChoiceOption],
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    label(ui, cx, row);
+    label(ui, cx, slot);
+    let row = slot.row;
     let labels: Vec<&str> = options.iter().map(|o| cx.strings.get(o.label)).collect();
-    let current = editor::choice(cx.op, row);
+    let current = slot.choice(cx.op);
     let fits = (2..=4).contains(&labels.len())
         && labels.iter().all(|l| {
             ui.painter()
@@ -408,26 +549,27 @@ fn choice(
         Some(response)
     };
     if let Some(index) = picked {
-        commit(
-            ui,
-            refused_id,
-            editor::choose(cx.project, cx.op, row, index),
-            out,
-        );
+        commit(ui, refused_id, slot.choose(cx.project, cx.op, index), out);
     }
     response
 }
 
 /// A checkbox, its label to its right; hovering it shows the help.
-fn checkbox(ui: &mut Ui, cx: &Cx<'_>, row: &Row, out: &mut Vec<Action>) -> Option<egui::Response> {
+fn checkbox(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
     let palette = Palette::current(ui);
-    let mut on = editor::checked(cx.op, row);
+    let row = slot.row;
+    let mut on = slot.checked(cx.op);
     let response = ui.checkbox(&mut on, cx.strings.get(row.label));
     let help = cx.strings.get(row.help);
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));
         ui.label(
-            egui::RichText::new(row.key)
+            egui::RichText::new(slot.key())
                 .text_style(TextStyle::Monospace)
                 .color(palette.text_secondary),
         );
@@ -435,8 +577,8 @@ fn checkbox(ui: &mut Ui, cx: &Cx<'_>, row: &Row, out: &mut Vec<Action>) -> Optio
     if response.changed() {
         commit(
             ui,
-            control_id(cx.op, row).with("refused"),
-            editor::set_checked(cx.op, row, on),
+            control_id(cx.op, slot.key()).with("refused"),
+            slot.set_checked(cx.op, on),
             out,
         );
     }
@@ -444,23 +586,39 @@ fn checkbox(ui: &mut Ui, cx: &Cx<'_>, row: &Row, out: &mut Vec<Action>) -> Optio
 }
 
 /// A feature's switch; its settings are the rows under its key.
-fn switch(ui: &mut Ui, cx: &Cx<'_>, row: &Row, out: &mut Vec<Action>) -> Option<egui::Response> {
-    label(ui, cx, row);
-    let on = editor::switched(cx.op, row);
-    let response = toggle(ui, on, cx.strings.get(row.label));
+fn switch(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    slot: &Slot<'_>,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    label(ui, cx, slot);
+    let on = slot.switched(cx.op);
+    let response = toggle(ui, on, cx.strings.get(slot.row.label));
     if response.clicked() {
         commit(
             ui,
-            control_id(cx.op, row).with("refused"),
-            editor::switch(cx.project, cx.op, row, !on),
+            control_id(cx.op, slot.key()).with("refused"),
+            slot.switch(cx.project, cx.op, !on),
             out,
         );
     }
     Some(response)
 }
 
+/// Under a tool picker: the chosen tool's note, a V-bit's cone height
+/// (mock-up 06, `cone height 3.175 mm`).
+pub(super) fn tool_note(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) {
+    if let Some(note) = slot
+        .tool(cx.project, cx.op)
+        .and_then(|tool| editor::tool_note(cx.project, cx.strings, tool))
+    {
+        row::hint(ui, &note);
+    }
+}
+
 /// A tool type's glyph (section 6).
-const fn tool_icon(kind: &ToolKind) -> Icon {
+pub(super) const fn tool_icon(kind: &ToolKind) -> Icon {
     match kind {
         ToolKind::EndMill => Icon::Cylinder,
         ToolKind::BallNose => Icon::CircleDot,
@@ -489,19 +647,22 @@ fn tool_text(strings: &Strings, project: &Project, tool: &dc_project::Tool) -> S
     )
 }
 
-/// The tool picker: the current tool, opening a popover of the project's
-/// tools, its last row *Add from library…* (section 8: a popover, never
+/// The tool picker: the current tool, opening a popover of `offered` (the
+/// project's tools that fit: V-bits for a carve, end mills for a clearing
+/// pass), its last row *Add from library…* (section 8: a popover, never
 /// a sheet over a sheet).
 fn tool_picker(
     ui: &mut Ui,
     cx: &Cx<'_>,
-    row: &Row,
+    slot: &Slot<'_>,
     id: Id,
+    offered: &[&Tool],
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
-    label(ui, cx, row);
+    label(ui, cx, slot);
+    let row = slot.row;
     let palette = Palette::current(ui);
-    let current = cx.project.tools.iter().find(|t| t.id == *cx.op.tool());
+    let current = slot.tool(cx.project, cx.op);
     let text = current.map_or_else(
         || cx.strings.get(StrKey::EditorToolNone).to_owned(),
         |t| tool_text(cx.strings, cx.project, t),
@@ -553,12 +714,12 @@ fn tool_picker(
     let refused_id = id.with("refused");
     egui::Popup::menu(&response).show(|ui| {
         ui.set_min_width(rect.width());
-        for tool in &cx.project.tools {
-            let chosen = tool.id == *cx.op.tool();
+        for tool in offered {
+            let chosen = current.is_some_and(|c| c.id == tool.id);
             let label = tool_text(cx.strings, cx.project, tool);
             let item = ui.selectable_label(chosen, label);
             if item.clicked() {
-                commit(ui, refused_id, editor::set_tool(cx.op, row, &tool.id), out);
+                commit(ui, refused_id, slot.set_tool(cx.op, &tool.id), out);
                 ui.close();
             }
         }
@@ -577,7 +738,7 @@ fn tool_picker(
 /// A block a later slice edits in place: its label and a note.
 fn block(ui: &mut Ui, cx: &Cx<'_>, row: &Row) -> Option<egui::Response> {
     let palette = Palette::current(ui);
-    label(ui, cx, row);
+    label(ui, cx, &Slot::of(row));
     let response = ui.add(
         egui::Label::new(
             egui::RichText::new(cx.strings.get(StrKey::EditorBlockLater))

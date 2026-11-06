@@ -96,6 +96,10 @@ pub enum JobResult {
         /// Each run's marks (`dc_job::preview::marks`), found on the
         /// worker so the window does not walk the toolpaths again.
         marks: Vec<Marks>,
+        /// `check`'s carve summary of its runs
+        /// ([`dc_job::describe_carves`]), described on the worker: empty
+        /// but for a V-Carve or an Inlay (slice 13, #542).
+        carves: Vec<String>,
     },
     /// The project-level pass ([`dc_job::finish`]) over every operation's
     /// runs.
@@ -121,10 +125,14 @@ pub fn execute(project: &Project, work: Work, date: &str, estimate: &EstimateCon
                 .iter()
                 .map(|run| dc_job::preview::marks(&dc_job::preview::Run::from(run)))
                 .collect();
+            // Only this operation has runs here, so only its lines are
+            // described: `check`'s, from the same runs.
+            let carves = dc_job::describe_carves(project, &generated.runs);
             JobResult::Operation {
                 job,
                 generated,
                 marks,
+                carves,
             }
         }
         Work::Finish(FinishJob {
@@ -298,6 +306,9 @@ pub struct OperationResult {
     /// Each run's marks, in `runs`' order (the worker's; empty when the
     /// result was made without them, and the Scene finds them then).
     pub marks: Vec<Marks>,
+    /// `check`'s carve summary of its runs, the editor's status line
+    /// ([`crate::editor::carve_summary`]).
+    pub carves: Vec<String>,
 }
 
 /// How far the current round of generation has got, for the status bar's
@@ -528,6 +539,7 @@ impl Generation {
                 job,
                 generated,
                 marks,
+                carves,
             } => {
                 if job.snapshot != self.snapshot || !self.in_flight.remove(&job.op) {
                     return false;
@@ -541,6 +553,7 @@ impl Generation {
                         runs: generated.runs,
                         findings: generated.findings,
                         marks,
+                        carves,
                     },
                 );
                 if self.in_flight.is_empty() && self.pending().is_empty() {
@@ -712,6 +725,7 @@ mod tests {
                 job,
                 generated: Generated::default(),
                 marks: Vec::new(),
+                carves: Vec::new(),
             }));
         }
     }
@@ -728,6 +742,7 @@ mod tests {
                 job,
                 generated: Generated::default(),
                 marks: Vec::new(),
+                carves: Vec::new(),
             }));
         }
         assert!(generation.needs_finish());
@@ -756,6 +771,7 @@ mod tests {
                 job,
                 generated: Generated::default(),
                 marks: Vec::new(),
+                carves: Vec::new(),
             }));
         }
         assert!(!generation.needs_finish());
@@ -774,6 +790,7 @@ mod tests {
                 job,
                 generated: Generated::default(),
                 marks: Vec::new(),
+                carves: Vec::new(),
             }));
         }
     }

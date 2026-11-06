@@ -987,11 +987,19 @@ fn add_pass_picks_the_next_smaller_end_mill() {
     }
     let op = operation(&h, "op2");
     assert_eq!(pass_tools(&op, list), ["t2", "t3", ""]);
-    let dangling = coded(&h, "clearing_dangling_tool");
+    // `clearing_dangling_tool` is an error, which carries no code.
+    let dangling: Vec<dc_job::Finding> = h
+        .warnings()
+        .iter()
+        .filter(|f| f.field.as_deref() == Some("operations[op2].clearing[2].tool"))
+        .cloned()
+        .collect();
     assert_eq!(dangling.len(), 1, "{dangling:?}");
-    assert_eq!(
-        dangling[0].field.as_deref(),
-        Some("operations[op2].clearing[2].tool")
+    assert_eq!(dangling[0].tier, Tier::Error);
+    assert!(
+        dangling[0].message.contains("which does not exist"),
+        "{}",
+        dangling[0].message
     );
     assert!(
         editor::Located::of(h.warnings(), &op)

@@ -7,6 +7,7 @@
 //! panel's Operations and Tools tabs, the operation editor, the Tool
 //! Library sheet and the Import drawing sheet.
 
+pub(crate) mod clearing;
 pub(crate) mod editor;
 pub(crate) mod empty;
 pub(crate) mod import;
