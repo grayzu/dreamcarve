@@ -172,9 +172,10 @@ fn field_row(
                 enabled,
                 disabled_reason,
                 tier,
+                reset: None,
             },
         );
-        if let Some(text) = typed {
+        if let Some(text) = typed.committed {
             match field.set(cx.project, &text) {
                 Ok(command) => {
                     ui.data_mut(|d| d.remove::<String>(refused_id));
@@ -289,8 +290,11 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                 enabled: true,
                 disabled_reason: None,
                 tier: refused.as_ref().map(|_| Tier::Error),
+                reset: None,
             },
-        ) {
+        )
+        .committed
+        {
             ui.data_mut(|d| {
                 d.insert_temp(id, text);
                 d.remove::<String>(refused_id);

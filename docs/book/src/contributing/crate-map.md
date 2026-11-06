@@ -180,7 +180,7 @@ the code they test.
 | Module | Contents |
 | --- | --- |
 | `lib.rs` | The crate's surface: `App`, `Command`, `CommandError`, the history, selection, view, generation, strings, units and preferences types. |
-| `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes. |
+| `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes; `editing`, the operation the editor shows, apart from the shapes selected, and `toggle_hidden`, an operation's eye. |
 | `command.rs` | `Command`, every change to the project: `apply` returns the next snapshot and never touches the caller's; `label` names the undo step from the string table. `command/instances.rs` holds the transforms about the selection's bounding-box centre, linked copies, deletion and stock fitting; `command/operations.rs` the operation list, tool removal and the field an edit changed. |
 | `error.rs` | `CommandError`: a locked shape, an unknown id, a tool in use, a value that cannot be stored, a value that is not a length, and the lower crates' errors. |
 | `history.rs` | `LabelledHistory`: `dc_project::History` with one label per past and future snapshot. |
@@ -192,6 +192,8 @@ the code they test.
 | `prefs.rs` | `Prefs`, `Theme`, `WindowGeometry`, `Panels`: the record behind `gui.toml`, whose file is `dreamcarve-shell`'s. |
 | `tools.rs` | The CAM panel's Tools tab: `ToolField`, `field_text`, `field_unit` and `set_field` (a feed, plunge or RPM shown empty while unset, never prefilled), `unset_rates` with the file's message, `users` for *Remove*'s refusal, `unused_hint`, `add_from_library` (`tools add`'s copies), `duplicate`, `save_to_library`. |
 | `library.rs` | The Tool Library window's model, ported from PureCutCNC `src/components/cam/toolLibraryDialogModel.ts` with its tests: `Filter` and `KindFilter`, search over name, vendor and diameter, the "in project" marking, the ticked rows and `build_add`, and `import` with its report. |
+| `operations.rs` | The Operations list: `Kind` (the eight kinds), `add_menu` (the kinds the selection can take, then the rest with the reason), `new_operation` (the selection, the first fitting tool, `<Kind> <n>`, the CLI's defaults with every depth `null`), `add`, `reorder`, and `rows` with each row's detail line and status cell. |
+| `editor/` | The operation editor. `fields.rs`, ported from PureCutCNC `src/components/cam/operationFields.ts`: `Group` in capability 66's order, `FieldKind` (one shell renderer each), `Row` (group, key path, kind, label, help, tool default, rule) and each kind's `table`; `rows`, `groups`, and `row_for`, which matches a located finding to its row by key path. `set.rs`: `record`, `get` and `set` by key path through `serde_json::Value`, read back by the file's deserializer. `targets.rs`: the Targets group's add, replace and remove. `mod.rs`: each row's text, tool-derived placeholder, choice, switch, reset and located message, and the `UpdateOperation` each edit is. |
 | `test_support.rs` | `Harness`: an `App` from fixture bytes, commands run, pending jobs executed inline with the real `dc_job` functions (`test-support` feature). |
 
 ### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)

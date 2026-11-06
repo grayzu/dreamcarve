@@ -46,8 +46,8 @@ use dc_job::Tier;
 use dc_project::{Entry, Operation, Project, Units};
 use serde_json::Value;
 
-/// The leaves of each kind's records that have no row yet, with the slice
-/// that adds them. A slice adding a kind's rows deletes its entries here,
+/// The leaves of each kind's records that have no row yet (an entry holds
+/// the paths under it too), with the slice that adds them. A slice adding a kind's rows deletes its entries here,
 /// which turns its kind's check on: from then on every leaf of that kind
 /// must have a row. An entry that gains a row fails the test until it is
 /// deleted, so the list can only shrink.
@@ -88,7 +88,6 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
             "cycle",
             "cycle.peck.peck_depth_mm",
             "cycle.peck.retract",
-            "cycle.peck.retract.chip_break.gap_mm",
             "cycle.countersink.diameter_mm",
             "cycle.countersink.start_depth_mm",
             "cycle.countersink.start_plane_cleared_externally",
@@ -128,9 +127,6 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
             "clearing",
             "step_over_fraction",
             "cut_out",
-            "cut_out.tool",
-            "cut_out.tabs",
-            "cut_out.through_cut_allowance_mm",
             "machining_order",
         ],
         // Slice 15 (#544): no record before phase 3.4.
@@ -163,30 +159,28 @@ fn seeds() -> Vec<Operation> {
     seeds
 }
 
-/// `seed` and every record the table's own choices and switches reach from
-/// it, each row's every option tried in turn until nothing new appears.
+/// `seed` and each record one of the table's own choices or switches
+/// makes of it: every option of every choice row and both states of every
+/// switch, one at a time. One step reaches every row, since a row's key
+/// path is at most one variant or feature deep.
 fn reachable(project: &Project, seed: &Operation) -> Vec<Operation> {
     let mut found = vec![seed.clone()];
-    let mut at = 0;
-    while let Some(op) = found.get(at).cloned() {
-        at += 1;
-        for row in fields::rows(&op) {
-            let next: Vec<Operation> = match row.kind {
-                FieldKind::Choice(options) => (0..options.len())
-                    .filter_map(|i| editor::choose(project, &op, row, i).ok().flatten())
-                    .filter_map(updated)
-                    .collect(),
-                FieldKind::Toggle(_) => [true, false]
-                    .into_iter()
-                    .filter_map(|on| editor::switch(project, &op, row, on).ok().flatten())
-                    .filter_map(updated)
-                    .collect(),
-                _ => Vec::new(),
-            };
-            for op in next {
-                if !found.contains(&op) {
-                    found.push(op);
-                }
+    for row in fields::rows(seed) {
+        let next: Vec<Operation> = match row.kind {
+            FieldKind::Choice(options) => (0..options.len())
+                .filter_map(|i| editor::choose(project, seed, row, i).ok().flatten())
+                .filter_map(updated)
+                .collect(),
+            FieldKind::Toggle(_) => [true, false]
+                .into_iter()
+                .filter_map(|on| editor::switch(project, seed, row, on).ok().flatten())
+                .filter_map(updated)
+                .collect(),
+            _ => Vec::new(),
+        };
+        for op in next {
+            if !found.contains(&op) {
+                found.push(op);
             }
         }
     }
@@ -257,6 +251,21 @@ fn fields_table_matches_the_records() {
                 }
             }
         }
+        // Round-tripped: the new operation and every record one step from
+        // it, and each fixture's own record.
+        let mut round_trip: Vec<Operation> = Vec::new();
+        for (n, seed) in seeds.iter().filter(|s| Kind::of(s) == kind).enumerate() {
+            let near = if n == 0 {
+                reachable(&project, seed)
+            } else {
+                vec![seed.clone()]
+            };
+            for op in near {
+                if !round_trip.contains(&op) {
+                    round_trip.push(op);
+                }
+            }
+        }
         if kind == Kind::PhotoVCarve {
             assert!(table.is_empty(), "no Photo V-Carve record before 3.4");
             assert!(records.is_empty());
@@ -273,9 +282,15 @@ fn fields_table_matches_the_records() {
                 if leaf == "kind" || leaf == "id" {
                     continue;
                 }
-                let covered = fields::rows(op).iter().any(|row| covers(row, &leaf));
+                // A row whose rule hides it here still covers the leaf: the
+                // file keeps a value the generator ignores (a countersink's
+                // depth).
+                let covered = table.iter().any(|row| covers(row, &leaf));
+                let to_come = pending
+                    .iter()
+                    .any(|p| leaf == *p || leaf.starts_with(&format!("{p}.")));
                 assert!(
-                    covered || pending.contains(&leaf.as_str()),
+                    covered || to_come,
                     "{kind:?}: `{leaf}` of {} has no row and is not listed as to come",
                     op.name()
                 );
@@ -301,14 +316,21 @@ fn fields_table_matches_the_records() {
                 row.key
             );
         }
-        for op in &records {
-            round_trip_every_row(&project, op);
+        let slim = Project {
+            definitions: std::collections::BTreeMap::new(),
+            instances: Vec::new(),
+            ..project.clone()
+        };
+        for op in &round_trip {
+            round_trip_every_row(&slim, op);
         }
     }
 }
 
 /// Each value-holding row of `op`: a different value through the editor,
-/// saved and loaded, reads back; set back, the record is `op` again.
+/// saved and loaded in `project` (its tools, no shapes: a target the file
+/// lacks is validation's problem, not the loader's), reads back; set back,
+/// the record is `op` again.
 fn round_trip_every_row(project: &Project, op: &Operation) {
     for row in fields::rows(op) {
         let record = fields::record(op).unwrap();
@@ -368,10 +390,7 @@ fn other_value(
                 .expect("the sign has several tools");
             Value::from(other.id.as_str())
         }
-        FieldKind::InstanceList => {
-            let first = project.instances.first().expect("the sign has shapes");
-            Value::from(vec![first.id.as_str()])
-        }
+        FieldKind::InstanceList => Value::from(vec!["i1", "i2"]),
         FieldKind::Choice(_) | FieldKind::Toggle(_) => return None,
         _ => return None,
     })
@@ -642,9 +661,11 @@ fn located_warning_matches_its_row() {
     let status = editor::status(harness.warnings(), &project, &profile, row).unwrap();
     assert_eq!(status.tier, Tier::Error);
     assert_eq!(status.message, finding.message);
+    // Closed, the Depth header counts the depth's error and the tool's
+    // unset step-down, which the step-down row takes while it is `null`.
     assert_eq!(
         editor::group_status(harness.warnings(), &project, &profile, Group::Depth),
-        Some((Tier::Error, 1))
+        Some((Tier::Error, 2))
     );
     let name = fields::rows(&profile)
         .into_iter()
@@ -710,7 +731,7 @@ fn located_warning_matches_its_row() {
     );
     // Another operation's field is not this one's.
     assert_eq!(
-        fields::row_for(&with_last, "operations[elsewhere].depth_mm"),
+        fields::row_for(&with_last, "operations[elsewhere].depth_mm").map(|r| r.key),
         None
     );
 
@@ -721,7 +742,7 @@ fn located_warning_matches_its_row() {
     assert_eq!(step_down.key, "step_down_mm");
     let own = fields::set(&profile, "step_down_mm", Value::from(1.0)).unwrap();
     assert_eq!(
-        fields::row_for(&own, &format!("tools[{tool}].step_down_mm")),
+        fields::row_for(&own, &format!("tools[{tool}].step_down_mm")).map(|r| r.key),
         None,
         "not once the operation has its own"
     );

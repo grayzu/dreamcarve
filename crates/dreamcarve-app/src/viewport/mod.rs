@@ -24,7 +24,10 @@
 //! flips once, in `dc_app::Camera::to_screen`, which the painter and the
 //! pointer go through; the GPU never works in Y-down. While the Project
 //! panel's *Click on the view* is armed, a click sets the park point
-//! instead of the selection and Escape disarms it (#536).
+//! instead of the selection and Escape disarms it (#536). While the
+//! operation editor's *Pick…* is armed, each click on a shape adds it to
+//! the operation's targets until Escape, and while its Targets group is
+//! hovered the targets draw in `shape.hover` (#539).
 
 mod layers;
 pub(crate) mod renderer;
@@ -45,7 +48,7 @@ use eframe::egui::{
     TextStyle, Ui,
 };
 
-use crate::panels::{empty, project, properties};
+use crate::panels::{editor, empty, project, properties};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::icon::Icon;
@@ -284,6 +287,8 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let popup_open = egui::Popup::is_any_open(ctx);
     let selected = app.selection().instances().to_vec();
     let park_picking = project::park_pick_armed(ctx);
+    let target_picking = editor::target_pick(ctx).is_some();
+    let mut disarm = false;
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
         if input.consume_key(Modifiers::SHIFT, Key::F) {
@@ -293,8 +298,9 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             actions.push(Action::FitView);
         }
         if !popup_open && input.consume_key(Modifiers::NONE, Key::Escape) {
-            if park_picking {
-                project::arm_park_pick(ctx, false);
+            if park_picking || target_picking {
+                // Disarmed below: the context is locked inside `input_mut`.
+                disarm = true;
             } else {
                 actions.push(Action::ClearSelection);
             }
@@ -330,6 +336,13 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             ))));
         }
     });
+    if disarm {
+        if park_picking {
+            project::arm_park_pick(ctx, false);
+        } else {
+            editor::arm_target_pick(ctx, None);
+        }
+    }
     actions
 }
 
@@ -636,6 +649,7 @@ fn frame(
     view: &mut ViewportState,
     camera: &Camera,
     palette: &Palette,
+    highlighted: &[InstanceId],
 ) -> Frame {
     let app = state.app;
     let project = app.project();
@@ -652,12 +666,18 @@ fn frame(
     let origin = project.origin.xy.point_mm(&project.stock);
     let origin_key = (origin.x.to_bits(), origin.y.to_bits());
     let selected = app.selection().instances().to_vec();
-    let hover: Vec<InstanceId> = view
+    let mut hover: Vec<InstanceId> = view
         .hover
         .iter()
         .filter(|id| !selected.contains(id))
         .cloned()
         .collect();
+    // The hovered Targets group's targets (capability 67).
+    for id in highlighted {
+        if !selected.contains(id) && !hover.contains(id) {
+            hover.push(id.clone());
+        }
+    }
 
     let grid_layer = view.layer(
         Layer::Grid,
@@ -882,7 +902,8 @@ pub(crate) fn show(
             if let Some(at) = at {
                 moved |= scroll_and_pinch(ui, pane, pane_pos(pane, at), &mut camera);
             }
-            if project::park_pick_armed(ui.ctx()) && response.hovered() {
+            let picking = editor::target_pick(ui.ctx());
+            if (project::park_pick_armed(ui.ctx()) || picking.is_some()) && response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             if project::park_pick_armed(ui.ctx())
@@ -895,6 +916,29 @@ pub(crate) fn show(
                 view.clicks.reset();
                 let at_mm = camera.to_world(pane_pos(pane, at));
                 out.extend(project::park_at(app.project(), at_mm).map(Action::run));
+            } else if let Some(op) = picking
+                && response.clicked()
+                && let Some(at) = response.interact_pointer_pos()
+            {
+                // An armed click adds the shape under it to the targets;
+                // the selection stays as it is.
+                view.drag = None;
+                view.clicks.reset();
+                let hit = pick::pick(
+                    app.scene(),
+                    &camera,
+                    pane_pos(pane, at),
+                    PICK_TOLERANCE_PX,
+                    0,
+                );
+                if let Hit::Instance(id) = hit
+                    && let Some(op) = app.project().operations.iter().find(|o| *o.id() == op)
+                {
+                    match dc_app::editor::targets::add(op, &[id]) {
+                        Ok(command) => out.extend(command.map(Action::run)),
+                        Err(e) => out.push(Action::Refused(e.to_string())),
+                    }
+                }
             } else {
                 moved |= gestures(ui, pane, &response, state, view, &mut camera, out);
             }
@@ -920,7 +964,8 @@ pub(crate) fn show(
                 window_pos(pane, &camera, Point::new(stock.width_mm, stock.height_mm)),
             );
             painter.rect_filled(sheet, 0.0, palette.viewport_stock_fill);
-            let frame = frame(state, view, &camera, palette);
+            let highlighted = editor::highlighted_targets(ui.ctx());
+            let frame = frame(state, view, &camera, palette, &highlighted);
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
 

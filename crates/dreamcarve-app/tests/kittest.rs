@@ -1493,7 +1493,7 @@ fn field_commits_on_blur_not_per_keystroke() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::Row, "Cut out").click();
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
     h.run();
     assert_eq!(
         h.state()
@@ -1545,7 +1545,7 @@ fn pick_targets_until_escape() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::Row, "Border and squiggle")
+    h.get_by_role_and_label(Role::ListItem, "Border and squiggle")
         .click();
     h.run();
     let targets = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
@@ -1599,5 +1599,59 @@ fn pick_targets_until_escape() {
         &dc_app::Selection::Instances(vec![dc_project::InstanceId::new("i1")]),
         "and a click selects again"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 76 with the editor (#539): clicking a Warnings row located
+/// on an operation's field opens that operation in the editor with the
+/// field focused, so typing goes straight into it.
+#[test]
+fn warnings_row_focuses_its_field() {
+    let dir = scratch("warnings-focus");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let dc_project::Operation::Profile(mut cut_out) = operation_of(&h, "op4") else {
+        panic!("the plaque's Cut out is a Profile");
+    };
+    cut_out.depth_mm = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(
+            dc_project::Operation::Profile(cut_out),
+        ))
+        .expect("the depth is cleared");
+    h.run();
+    assert_eq!(h.state().app().editing(), None);
+
+    h.get_by_label("Warnings").click();
+    h.run();
+    let row = dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .find(|r| r.field.as_deref() == Some("operations[op4].depth_mm"))
+        .expect("validation locates the unset depth");
+    h.get_by_label(&row.line).click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op4"),
+        "the row opens the operation in the editor"
+    );
+    h.event(egui::Event::Text("7".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+    let dc_project::Operation::Profile(after) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    assert_eq!(after.depth_mm, Some(7.0), "the depth field had the focus");
     std::fs::remove_dir_all(&dir).unwrap();
 }

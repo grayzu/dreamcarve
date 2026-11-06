@@ -5,11 +5,13 @@
 
 pub mod app;
 pub mod command;
+pub mod editor;
 mod error;
 pub mod generation;
 pub mod history;
 pub mod library;
 pub mod mixed;
+pub mod operations;
 pub mod prefs;
 pub mod project;
 pub mod properties;

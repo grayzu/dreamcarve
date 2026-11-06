@@ -35,8 +35,9 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// `experience.md` section 12: "no widget sets a colour literal
 /// (`Color32::from_rgb` outside `theme.rs` and the painter-glyph module is
 /// a bug)". A source scan of the app for colour constructors and named
-/// colours outside `shell/theme.rs`; the painter-glyph module arrives with
-/// the operation glyphs (slice 10) and is not exempt until then.
+/// colours outside `shell/theme.rs`. The painter-glyph module
+/// (`widgets/op_glyph.rs`, #539) takes its operation's colour from the
+/// palette, so it needs no exemption either.
 #[test]
 fn no_colour_literal_outside_theme() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");

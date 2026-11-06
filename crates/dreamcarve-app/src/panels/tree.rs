@@ -23,6 +23,7 @@ use dc_app::{ClickMode, Selection, StrKey, Strings};
 use dc_project::{InstanceId, Project};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
+use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::icon::Icon;
@@ -559,11 +560,10 @@ fn context_menu(
         };
         if item == MenuItem::AddOperation {
             ui.separator();
-            // Slice 10 (#539) lists the kinds the selection can take.
-            ui.add_enabled_ui(false, |ui| ui.menu_button(strings.get(key), |_| {}))
-                .inner
-                .response
-                .on_disabled_hover_text(strings.get(StrKey::TreeAddOperationLater));
+            // The Operations tab's Add menu, for these shapes (#539).
+            ui.menu_button(strings.get(key), |ui| {
+                panels::operations::add_menu(ui, strings, project, ids, out);
+            });
             continue;
         }
         if item == MenuItem::Delete {

@@ -240,7 +240,7 @@ pub(super) fn delete(project: &Project, ids: &[InstanceId]) -> Result<Project, C
 
 /// `<prefix><n>` for the smallest `n` past every numbered id in `taken`,
 /// from 1.
-pub(super) fn next_free_id(taken: &[&str], prefix: &str) -> String {
+pub(crate) fn next_free_id(taken: &[&str], prefix: &str) -> String {
     let highest = taken
         .iter()
         .filter_map(|id| id.strip_prefix(prefix)?.parse::<u64>().ok())

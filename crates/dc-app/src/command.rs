@@ -18,7 +18,7 @@ mod instances;
 mod operations;
 
 pub(crate) use instances::{
-    about, bounds as selection_bounds, centre, copy_name, find as find_instance,
+    about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
 
 use dc_geometry::Transform;

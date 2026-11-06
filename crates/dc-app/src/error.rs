@@ -109,6 +109,16 @@ pub enum CommandError {
         /// Why it was refused.
         reason: String,
     },
+    /// An operation's field cannot hold the value an editor row built:
+    /// the record has no such path, or the file's reader refuses the
+    /// result (capability 66).
+    #[error("`{field}` cannot be set: {reason}")]
+    FieldRefused {
+        /// The key path.
+        field: String,
+        /// The reader's reason.
+        reason: String,
+    },
     /// *Fit stock to shapes* with no visible shape to fit round.
     #[error("there are no visible shapes to fit the stock to")]
     NoShapes,

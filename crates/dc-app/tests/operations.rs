@@ -39,7 +39,12 @@ fn coaster() -> (Project, Project) {
     let post = dc_project::latest_definition("grblhal")
         .unwrap()
         .default_ref();
-    let drawing = || common::svg_drawing("coaster");
+    let drawing = || {
+        let bytes = common::read(&common::repo_root().join("fixtures/coaster.svg"));
+        let (import, _) =
+            dc_import::import_svg(&bytes, &dc_import::SvgImportOptions::default()).unwrap();
+        dc_job::Drawing::Svg(import)
+    };
     let app = dc_job::project_from::drawing("coaster", drawing(), post.clone(), Units::Mm, false)
         .unwrap();
     let init = dc_job::project_from::drawing("coaster", drawing(), post, Units::Mm, true).unwrap();
@@ -350,7 +355,11 @@ fn reorder_enable_duplicate() {
         .collect();
     let at = |id: &str| program_order.iter().position(|o| o == id);
     assert!(
-        at("op1") < at("op3") || program_order.is_empty(),
+        at("op1").is_some() && at("op3").is_some(),
+        "{program_order:?}"
+    );
+    assert!(
+        at("op1") < at("op3"),
         "the programs follow the list: {program_order:?}"
     );
 

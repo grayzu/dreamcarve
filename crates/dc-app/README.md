@@ -11,8 +11,11 @@ Viewport's geometry (the `Scene` it draws, the camera with the one Y
 flip, picking, the grid and the transform handles), the Design Tree's
 rows (`tree`), the Properties panel's placement fields (`properties`,
 with the mixed values of `mixed`, ported from PureCutCNC), the project
-tools' editing rules (`tools`) and the Tool Library window's model
-(`library`, ported from PureCutCNC).
+tools' editing rules (`tools`), the Tool Library window's model
+(`library`, ported from PureCutCNC), the Operations list with its Add
+menu and each kind's new operation (`operations`), and the operation
+editor's table of rows per kind with its key-path edits (`editor`, the
+idea of PureCutCNC's `operationFields.ts`).
 
 Pure, as every `dc-*` crate: no file, terminal, clock or network I/O, no
 egui, no panics. `dc-cam` and `dc-gcode` are reached through `dc-job`

@@ -256,6 +256,22 @@ pub(crate) enum Action {
     RegenerateAll,
     /// Open a page of the book (a warning code's chapter entry).
     OpenUrl(String),
+    /// Show an operation in the editor (its row clicked).
+    EditOperation(dc_project::OperationId),
+    /// *Add ▸ kind* on these shapes, from the Operations tab or the Design
+    /// Tree.
+    AddOperation {
+        kind: dc_app::operations::Kind,
+        targets: Vec<dc_project::InstanceId>,
+    },
+    /// An operation row's eye: its toolpath hidden or shown (view state).
+    ToggleOperationHidden(dc_project::OperationId),
+    /// A Warnings row naming an operation's field: the operation in the
+    /// editor, scrolled to that field and focused.
+    FocusField {
+        op: dc_project::OperationId,
+        field: String,
+    },
 }
 
 impl Action {
@@ -809,7 +825,39 @@ impl Shell {
             Action::StopGeneration => self.app.stop(),
             Action::RegenerateAll => self.app.regenerate_all(),
             Action::OpenUrl(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+            Action::EditOperation(id) => self.app.edit(Some(id)),
+            Action::AddOperation { kind, targets } => {
+                let app = &self.app;
+                match dc_app::operations::add(app.project(), app.strings(), kind, &targets) {
+                    Some(command) => {
+                        if let Err(e) = self.app.run(command) {
+                            self.message = Some(e.to_string());
+                        }
+                        self.show_operations();
+                    }
+                    None => {
+                        self.message = Some(
+                            self.strings()
+                                .get(StrKey::OperationsAddSelectShapes)
+                                .to_owned(),
+                        );
+                    }
+                }
+            }
+            Action::ToggleOperationHidden(id) => self.app.toggle_hidden(&id),
+            Action::FocusField { op, field } => {
+                self.app.edit(Some(op.clone()));
+                panels::editor::request_focus(ctx, op, field);
+                self.show_operations();
+            }
         }
+    }
+
+    /// The CAM panel open on its Operations tab.
+    fn show_operations(&mut self) {
+        self.cam_tab = CamTab::Operations;
+        self.app.prefs_mut().panels.right_open = true;
+        self.forced_open.1 = true;
     }
 
     fn answer(&mut self, ctx: &egui::Context, answer: Answer) {
