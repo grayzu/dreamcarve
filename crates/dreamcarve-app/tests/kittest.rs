@@ -21,7 +21,7 @@ mod common;
 
 use common::{
     QueuedDialogs, command_key, copy_fixture, harness, options, press_close, saved_form, scratch,
-    shift_command_key, window_commands,
+    shift_command_key, wgpu_adapter_available, window_commands,
 };
 use dc_app::Command;
 use dreamcarve_app::{PanelShown, theme};
@@ -30,30 +30,6 @@ use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::Queryable as _;
 use egui_kittest::{Harness, wgpu::WgpuTestRenderer};
-
-/// Whether this machine has a wgpu adapter to render with, asked the way
-/// egui_kittest's renderer will ask (the backends `WGPU_BACKEND` allows).
-fn wgpu_adapter_available() -> bool {
-    use eframe::egui_wgpu::{WgpuSetup, wgpu};
-    let WgpuSetup::CreateNew(setup) = WgpuSetup::without_display_handle() else {
-        return false;
-    };
-    let instance = wgpu::Instance::new(setup.instance_descriptor);
-    let adapters = block_on(instance.enumerate_adapters(wgpu::Backends::all()));
-    !adapters.is_empty()
-}
-
-/// Runs a future that native wgpu completes without waiting.
-fn block_on<F: Future>(future: F) -> F::Output {
-    let mut future = std::pin::pin!(future);
-    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-    loop {
-        if let std::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
-            return out;
-        }
-        std::thread::yield_now();
-    }
-}
 
 /// Acceptance 92 (three platforms), until slice 18 brings export: the app
 /// launches with `--open plaque.dcv`, shows the plaque (not the empty
@@ -432,5 +408,241 @@ fn theme_follows_system_and_both_palettes_apply() {
         "egui's own fonts are not bundled: {:?}",
         fonts.font_data.keys()
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The camera the shell holds.
+fn camera(h: &Harness<'_, dreamcarve_app::Shell>) -> dc_app::Camera {
+    h.state().app().view().camera
+}
+
+/// The camera fitted to `bounds` in the shell's pane.
+fn fitted(h: &Harness<'_, dreamcarve_app::Shell>, bounds: dc_geometry::Rect) -> dc_app::Camera {
+    let mut want = camera(h);
+    want.fit(bounds);
+    want
+}
+
+/// Two cameras agree to a thousandth of a pixel per millimetre and a
+/// thousandth of a millimetre.
+fn assert_same_view(got: dc_app::Camera, want: dc_app::Camera, what: &str) {
+    let close = (got.px_per_mm - want.px_per_mm).abs() < 1e-3
+        && got.centre_mm.distance_to(want.centre_mm) < 1e-3;
+    assert!(close, "{what}: {got:?}, want {want:?}");
+}
+
+/// The project point under window point `at`.
+fn world_at(h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Pos2) -> dc_geometry::Point {
+    camera(h).to_world(common::in_pane(h, at))
+}
+
+/// Two project points agree to a hundredth of a millimetre.
+fn assert_near(got: dc_geometry::Point, want: dc_geometry::Point, what: &str) {
+    assert!(
+        got.distance_to(want) < 1e-2,
+        "{what}: {got:?}, want {want:?}"
+    );
+}
+
+/// Functional capability 72 and open question 8 (`experience.md`, section
+/// 9): the camera is fitted to the stock and shapes when a project opens;
+/// a middle-button drag, a Space-drag and a two-finger scroll pan it, the
+/// content following the pointer; the wheel and a pinch zoom about the
+/// cursor; F fits again, the toolbar's Fit too, and Shift F frames the
+/// selection. The status bar shows the cursor in project units.
+#[test]
+fn pan_zoom_fit_reach_the_camera() {
+    let dir = scratch("viewport-camera");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+
+    let pane = h.state().layout().viewport;
+    let cam = camera(&h);
+    assert!(
+        (cam.viewport_px.x - f64::from(pane.width())).abs() < 1e-3
+            && (cam.viewport_px.y - f64::from(pane.height())).abs() < 1e-3,
+        "the camera knows the pane: {cam:?} in {pane:?}"
+    );
+    let app = h.state().app();
+    let fit = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
+    let fit_view = fitted(&h, fit);
+    assert_same_view(cam, fit_view, "opened");
+
+    // Middle-button drag: the grabbed point stays under the pointer.
+    let from = pane.center();
+    let to = from + egui::vec2(40.0, 30.0);
+    let grabbed = world_at(&h, from);
+    common::drag(&mut h, from, to, egui::PointerButton::Middle);
+    assert_near(world_at(&h, to), grabbed, "middle-drag");
+    assert!(
+        (camera(&h).px_per_mm - fit_view.px_per_mm).abs() < 1e-9,
+        "a pan does not zoom"
+    );
+
+    // Space-drag with the primary button pans the same way, and selects
+    // nothing.
+    let from = pane.center() + egui::vec2(-100.0, 50.0);
+    let to = from + egui::vec2(-60.0, -25.0);
+    let grabbed = world_at(&h, from);
+    h.key_down(egui::Key::Space);
+    h.run();
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.key_up(egui::Key::Space);
+    h.run();
+    assert_near(world_at(&h, to), grabbed, "Space-drag");
+    assert!(
+        h.state().app().selection().is_empty(),
+        "a pan selects nothing"
+    );
+
+    // A two-finger scroll pans by its delta.
+    let at = pane.center() + egui::vec2(20.0, 20.0);
+    h.hover_at(at);
+    h.run();
+    let under = world_at(&h, at);
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(12.0, -8.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Trackpad,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    assert_near(
+        world_at(&h, at + egui::vec2(12.0, -8.0)),
+        under,
+        "two-finger scroll",
+    );
+
+    // The wheel zooms in about the cursor; a pinch by its factor.
+    let before = camera(&h);
+    let under = world_at(&h, at);
+    h.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: egui::vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        source: egui::MouseWheelSource::Wheel,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    assert!(
+        camera(&h).px_per_mm > before.px_per_mm * 1.05,
+        "the wheel zooms in"
+    );
+    assert_near(world_at(&h, at), under, "wheel zoom about the cursor");
+    let before = camera(&h);
+    h.event(egui::Event::Zoom(1.5));
+    h.run();
+    assert!(
+        (camera(&h).px_per_mm - before.px_per_mm * 1.5).abs() < 1e-6,
+        "a pinch zooms by its factor"
+    );
+    assert_near(world_at(&h, at), under, "pinch about the cursor");
+
+    // The cursor's project coordinates in the status bar, one decimal.
+    let p = world_at(&h, at);
+    let readout = format!("X {:.1}  Y {:.1}", p.x, p.y);
+    assert!(
+        h.query_by_label(&readout).is_some(),
+        "the status bar reads {readout}"
+    );
+
+    // F fits again.
+    h.key_press(egui::Key::F);
+    h.run();
+    assert_same_view(camera(&h), fit_view, "F");
+
+    // Shift F frames the selection: the square.
+    let square = dc_project::InstanceId::new("i4");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![square.clone()]));
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F);
+    h.run();
+    let bounds = h
+        .state()
+        .app()
+        .scene()
+        .bounds_of(&[square])
+        .expect("the square has bounds");
+    assert_same_view(camera(&h), fitted(&h, bounds), "Shift F");
+
+    // The toolbar's Fit.
+    h.get_by_label("Fit").click();
+    h.run();
+    assert_same_view(camera(&h), fit_view, "the Fit button");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Functional capability 75 (`experience.md`, section 8, "Selection" and
+/// "Hover"): a click on a shape's outline selects it and the status bar
+/// names it; Shift-click adds a second; Ctrl/⌘-click toggles one out; a
+/// click on empty stock clears; a drag on empty stock is a marquee that
+/// selects what it touches; Escape clears. The selection is `dc_app`'s,
+/// the one the Design Tree reads.
+#[test]
+fn click_selects_and_escape_clears() {
+    let dir = scratch("viewport-select");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let selected = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
+        h.state()
+            .app()
+            .selection()
+            .instances()
+            .iter()
+            .map(|i| i.as_str().to_owned())
+            .collect()
+    };
+
+    // The square's left edge (x 70, y 18–48 in project space). Its name
+    // is in the Design Tree's rows; hovering it adds it to the status bar.
+    let named = |h: &Harness<'_, dreamcarve_app::Shell>| h.query_all_by_label("square").count();
+    let in_tree = named(&h);
+    let square = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+    assert_eq!(selected(&h), ["i4"], "a click selects the shape");
+    assert_eq!(
+        named(&h),
+        in_tree + 1,
+        "hovering it names it in the status bar"
+    );
+
+    // The pocket's left edge (x 35): Shift adds it.
+    let pocket = common::on_screen(&h, dc_geometry::Point::new(35.0, 77.0));
+    common::click_at(&mut h, pocket, egui::Modifiers::SHIFT);
+    assert_eq!(selected(&h), ["i4", "i2"], "Shift-click adds");
+
+    // Ctrl/⌘ toggles the square out.
+    common::click_at(&mut h, square, egui::Modifiers::COMMAND);
+    assert_eq!(selected(&h), ["i2"], "Ctrl-click toggles");
+
+    // Empty stock clears.
+    let empty = common::on_screen(&h, dc_geometry::Point::new(3.0, 3.0));
+    common::click_at(&mut h, empty, egui::Modifiers::NONE);
+    assert!(
+        h.state().app().selection().is_empty(),
+        "a click on nothing clears"
+    );
+
+    // A marquee from empty stock across the outline's left edge (x 10).
+    let to = common::on_screen(&h, dc_geometry::Point::new(12.0, 30.0));
+    common::drag(&mut h, empty, to, egui::PointerButton::Primary);
+    assert_eq!(selected(&h), ["i1"], "the marquee takes what it touches");
+
+    // Escape clears.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().app().selection(), &dc_app::Selection::Nothing);
     std::fs::remove_dir_all(&dir).unwrap();
 }

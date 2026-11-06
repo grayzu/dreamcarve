@@ -228,6 +228,23 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui.close();
     }
     ui.separator();
+    item(
+        ui,
+        strings,
+        StrKey::AppViewportFitView,
+        Some((Modifiers::NONE, Key::F)),
+        Action::FitView,
+        out,
+    );
+    item_text(
+        ui,
+        strings.get(StrKey::AppViewportZoomSelection),
+        Some((Modifiers::SHIFT, Key::F)),
+        !state.app.selection().instances().is_empty(),
+        Action::ZoomToSelection,
+        out,
+    );
+    ui.separator();
     ui.menu_button(strings.get(StrKey::AppMenuAppearance), |ui| {
         for (theme, key) in [
             (dc_app::Theme::System, StrKey::AppMenuThemeSystem),
