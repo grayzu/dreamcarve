@@ -29,6 +29,13 @@
 //! Slice 11 (#540) completes the Profile, Pocket and Engrave rows: the tab
 //! request's settings, `rest_of` (earlier Pockets only), and the start
 //! point clicked on the Viewport.
+//!
+//! Slice 12 (#541) completes the Drill and the Bore: the Drill's cycle and
+//! each cycle's rows (a peck's retract is a variant inside a variant, so
+//! the closure of records follows a choice's own choices), the
+//! countersink's depth, derived and shown, never typed (S18), and the
+//! generator's warnings about a target the kind cannot cut, under the
+//! Targets group.
 
 #![allow(
     clippy::panic,
@@ -47,7 +54,9 @@ use dc_app::editor::{self, FieldKind, Group, clearing, fields};
 use dc_app::operations::{self, Kind};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::Tier;
-use dc_project::{Entry, Operation, OperationId, Project, ToolKind, Units};
+use dc_project::{
+    DrillCycle, DrillOp, Entry, Operation, OperationId, PeckRetract, Project, ToolKind, Units,
+};
 use serde_json::Value;
 
 /// The leaves of each kind's records that have no row yet (an entry holds
@@ -59,26 +68,8 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
     match kind {
         // Complete in slice 10 (#539) and slice 11 (#540).
         Kind::Profile | Kind::Pocket | Kind::Engrave => &[],
-        // Slice 12 (#541).
-        Kind::Drill => &[
-            "retract_mm",
-            "through_cut_allowance_mm",
-            "cycle",
-            "cycle.peck.peck_depth_mm",
-            "cycle.peck.retract",
-            "cycle.countersink.diameter_mm",
-            "cycle.countersink.start_depth_mm",
-            "cycle.countersink.start_plane_cleared_externally",
-            "dwell_s",
-            "allow_tool_wider_than_hole",
-        ],
-        // Slice 12 (#541).
-        Kind::Bore => &[
-            "pitch_mm",
-            "stock_to_leave_mm",
-            "through_cut_allowance_mm",
-            "direction",
-        ],
+        // Complete in slice 12 (#541).
+        Kind::Drill | Kind::Bore => &[],
         // Complete in slice 13 (#542).
         Kind::VCarve => &[],
         // Slice 14 (#543).
@@ -126,43 +117,61 @@ fn seeds() -> Vec<Operation> {
     seeds
 }
 
-/// `seed` and each record one of the table's own choices or switches
-/// makes of it: every option of every choice row and both states of every
-/// switch, one at a time. One step reaches every row, since a row's key
-/// path is at most one variant or feature deep.
+/// `seed` and each record the table's own choices and switches make of
+/// it: every option of every choice row and both states of every switch,
+/// one at a time; then, in each record so made, the same for the rows it
+/// has that its parent had not (a variant's own choice, as a peck's
+/// retract under a Drill's cycle), and so on down. That reaches every row,
+/// since a row is reached through the variants and features above it.
 fn reachable(project: &Project, seed: &Operation) -> Vec<Operation> {
     let mut found = vec![seed.clone()];
-    for row in fields::rows(seed) {
-        let next: Vec<Operation> = match row.kind {
-            FieldKind::Choice(options) => (0..options.len())
-                .filter_map(|i| editor::choose(project, seed, row, i).ok().flatten())
-                .filter_map(updated)
-                .collect(),
-            FieldKind::Toggle(_) | FieldKind::TabRequest => [true, false]
-                .into_iter()
-                .filter_map(|on| editor::switch(project, seed, row, on).ok().flatten())
-                .filter_map(updated)
-                .collect(),
-            // None, or a Pocket to rest on: the file reads any id, and
-            // validation says whether it is an earlier one.
-            FieldKind::EarlierPocket => [None, Some(dc_project::OperationId::new("op1"))]
-                .iter()
-                .filter_map(|id| {
-                    editor::set_earlier_pocket(seed, row, id.as_ref())
-                        .ok()
-                        .flatten()
-                })
-                .filter_map(updated)
-                .collect(),
-            _ => Vec::new(),
-        };
-        for op in next {
-            if !found.contains(&op) {
-                found.push(op);
+    explore(project, seed, &[], &mut found);
+    found
+}
+
+/// [`reachable`] from `op`, through its rows whose keys are not in
+/// `known`, its parent's.
+fn explore(project: &Project, op: &Operation, known: &[&str], found: &mut Vec<Operation>) {
+    let rows = fields::rows(op);
+    let keys: Vec<&str> = rows.iter().map(|r| r.key).collect();
+    for row in rows {
+        if known.contains(&row.key) {
+            continue;
+        }
+        for next in one_step(project, op, row) {
+            if !found.contains(&next) {
+                found.push(next.clone());
+                explore(project, &next, &keys, found);
             }
         }
     }
-    found
+}
+
+/// The records one of `row`'s choices or switches makes of `op`.
+fn one_step(project: &Project, op: &Operation, row: &fields::Row) -> Vec<Operation> {
+    match row.kind {
+        FieldKind::Choice(options) => (0..options.len())
+            .filter_map(|i| editor::choose(project, op, row, i).ok().flatten())
+            .filter_map(updated)
+            .collect(),
+        FieldKind::Toggle(_) | FieldKind::TabRequest => [true, false]
+            .into_iter()
+            .filter_map(|on| editor::switch(project, op, row, on).ok().flatten())
+            .filter_map(updated)
+            .collect(),
+        // None, or a Pocket to rest on: the file reads any id, and
+        // validation says whether it is an earlier one.
+        FieldKind::EarlierPocket => [None, Some(dc_project::OperationId::new("op1"))]
+            .iter()
+            .filter_map(|id| {
+                editor::set_earlier_pocket(op, row, id.as_ref())
+                    .ok()
+                    .flatten()
+            })
+            .filter_map(updated)
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 /// The record a command writes, when it is an operation's update.
@@ -1271,6 +1280,550 @@ fn profile_tab_request_round_trips() {
         .is_err(),
         "a count is at most 255"
     );
+}
+
+/// The keys of `op`'s rows, in render order.
+fn keys(op: &Operation) -> Vec<&'static str> {
+    fields::rows(op).iter().map(|r| r.key).collect()
+}
+
+/// The index of the option tagged `tag` of choice row `row`.
+fn option(row: &fields::Row, tag: &str) -> usize {
+    match row.kind {
+        FieldKind::Choice(options) => options
+            .iter()
+            .position(|o| o.tag == tag)
+            .unwrap_or_else(|| panic!("`{}` has no option `{tag}`", row.key)),
+        _ => panic!("`{}` is not a choice", row.key),
+    }
+}
+
+/// Drill `id` of the harness's project, as the saved file reads back
+/// through `dc_project::load`, the CLI's reader.
+fn saved_drill(h: &dc_app::test_support::Harness, id: &str) -> DrillOp {
+    let text = h.save().expect("the project saves");
+    let loaded = dc_project::load(text.as_bytes()).expect("and the CLI reads it");
+    match loaded
+        .project
+        .operations
+        .into_iter()
+        .find(|o| o.id().as_str() == id)
+    {
+        Some(Operation::Drill(drill)) => drill,
+        other => panic!("the Drill is saved: {other:?}"),
+    }
+}
+
+/// Capability 68's Drill line (mock-up 07): depth, retract height and
+/// through-cut allowance under Depth; the cycle, then dwell and *allow
+/// tool wider than hole*, under Strategy; safe Z under Heights. The cycle
+/// is a variant: Simple shows nothing more; Peck shows its peck depth
+/// (the tool's step-down while `null`) and its retract, itself a variant,
+/// Full or Chip break with a gap; Countersink shows its mouth diameter,
+/// start depth and *start plane cleared externally*, and its derived depth
+/// in place of the typed one. Choosing a variant writes its defaults (the
+/// chapter's: a full retract, a 0.5 mm gap, a 6 mm mouth at the stock
+/// top), one undo step each, and never a depth (S20); the saved file
+/// reads back each choice. A countersink never offers *allow tool wider
+/// than hole*, which it ignores, unless the file sets it, when the row
+/// shows with validation's warning so it can be cleared. The Bore's line:
+/// depth, pitch (the tool's step-down while `null`), stock to leave and
+/// through-cut allowance under Depth; direction under Strategy.
+#[test]
+fn drill_cycle_fields_follow_the_cycle() {
+    let strings = Strings::english();
+    let mut h = dc_app::test_support::Harness::from_project(project());
+    let hole = vec![dc_project::InstanceId::new("i4")];
+    let command = operations::add(h.app.project(), &strings, Kind::Drill, &hole)
+        .expect("a circle takes a Drill");
+    h.run(command).unwrap();
+    let id = h
+        .app
+        .project()
+        .operations
+        .last()
+        .unwrap()
+        .id()
+        .as_str()
+        .to_owned();
+    // The sign's 1/8 end mill steps 2 mm.
+    let new = op_of(&h, &id);
+    run_edit(
+        &mut h,
+        editor::set_tool(&new, row_of(&new, "tool"), &dc_project::ToolId::new("t3")),
+    );
+    let simple = op_of(&h, &id);
+    let simple_keys = [
+        "name",
+        "enabled",
+        "targets",
+        "tool",
+        "depth_mm",
+        "retract_mm",
+        "through_cut_allowance_mm",
+        "cycle",
+        "dwell_s",
+        "allow_tool_wider_than_hole",
+        "safe_z_mm",
+    ];
+    assert_eq!(keys(&simple), simple_keys, "a simple Drill");
+    for (key, group) in [
+        ("depth_mm", Group::Depth),
+        ("retract_mm", Group::Depth),
+        ("through_cut_allowance_mm", Group::Depth),
+        ("cycle", Group::Strategy),
+        ("dwell_s", Group::Strategy),
+        ("allow_tool_wider_than_hole", Group::Strategy),
+        ("safe_z_mm", Group::Heights),
+    ] {
+        assert_eq!(row_of(&simple, key).group, group, "`{key}`");
+    }
+    assert_eq!(row_of(&simple, "dwell_s").unit(), fields::Unit::Seconds);
+    assert_eq!(row_of(&simple, "retract_mm").unit(), fields::Unit::Length);
+    let cycle = row_of(&simple, "cycle");
+    assert_eq!(
+        editor::choice(&simple, cycle),
+        Some(option(cycle, "simple"))
+    );
+    let drill = |h: &dc_app::test_support::Harness| match op_of(h, &id) {
+        Operation::Drill(drill) => drill,
+        other => panic!("still a Drill: {other:?}"),
+    };
+
+    // Peck: the tool's step-down, a full retract.
+    let label = {
+        let edit = editor::choose(h.app.project(), &simple, cycle, option(cycle, "peck"));
+        run_edit(&mut h, edit)
+    };
+    assert!(label.starts_with("Set cycle of"), "{label}");
+    assert_eq!(
+        drill(&h).cycle,
+        DrillCycle::Peck {
+            peck_depth_mm: None,
+            retract: PeckRetract::Full
+        }
+    );
+    assert_eq!(drill(&h).depth_mm, None, "no depth of the app's own (S20)");
+    let peck = op_of(&h, &id);
+    assert_eq!(
+        keys(&peck),
+        [
+            "name",
+            "enabled",
+            "targets",
+            "tool",
+            "depth_mm",
+            "retract_mm",
+            "through_cut_allowance_mm",
+            "cycle",
+            "cycle.peck.peck_depth_mm",
+            "cycle.peck.retract",
+            "dwell_s",
+            "allow_tool_wider_than_hole",
+            "safe_z_mm",
+        ]
+    );
+    let peck_depth = row_of(&peck, "cycle.peck.peck_depth_mm");
+    assert_eq!(peck_depth.group, Group::Strategy);
+    assert_eq!(peck_depth.tool_default, Some(fields::ToolDefault::StepDown));
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &peck, peck_depth).as_deref(),
+        Some("tool's: 2 mm")
+    );
+    {
+        let edit = editor::commit_text(h.app.project(), &peck, peck_depth, "3");
+        run_edit(&mut h, edit)
+    };
+    let pecked = op_of(&h, &id);
+    assert_eq!(
+        drill(&h).cycle,
+        DrillCycle::Peck {
+            peck_depth_mm: Some(3.0),
+            retract: PeckRetract::Full
+        }
+    );
+    run_edit(&mut h, editor::reset(&pecked, peck_depth));
+    assert_eq!(op_of(&h, &id), peck, "⟲ writes null again");
+
+    // The retract is a variant inside the cycle's: Chip break writes the
+    // chapter's 0.5 mm gap, and its gap row comes with it.
+    let retract = row_of(&peck, "cycle.peck.retract");
+    assert_eq!(retract.group, Group::Strategy);
+    assert_eq!(
+        editor::choice(&peck, retract),
+        Some(option(retract, "full"))
+    );
+    {
+        let edit = editor::choose(
+            h.app.project(),
+            &peck,
+            retract,
+            option(retract, "chip_break"),
+        );
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(
+        drill(&h).cycle,
+        DrillCycle::Peck {
+            peck_depth_mm: None,
+            retract: PeckRetract::ChipBreak { gap_mm: 0.5 }
+        }
+    );
+    let chip = op_of(&h, &id);
+    let gap = row_of(&chip, "cycle.peck.retract.chip_break.gap_mm");
+    assert_eq!(gap.unit(), fields::Unit::Length);
+    {
+        let edit = editor::commit_text(h.app.project(), &chip, gap, "0.8");
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(
+        saved_drill(&h, &id).cycle,
+        DrillCycle::Peck {
+            peck_depth_mm: None,
+            retract: PeckRetract::ChipBreak { gap_mm: 0.8 }
+        },
+        "the CLI reads the chip break back"
+    );
+    let chip = op_of(&h, &id);
+    {
+        let edit = editor::choose(h.app.project(), &chip, retract, option(retract, "full"));
+        run_edit(&mut h, edit)
+    };
+    assert!(
+        keys(&op_of(&h, &id))
+            .iter()
+            .all(|k| !k.starts_with("cycle.peck.retract.")),
+        "Full has no gap"
+    );
+
+    // Countersink: the chapter's 6 mm mouth at the stock top; the typed
+    // depth and *allow tool wider than hole* give way to the derived depth.
+    let full = op_of(&h, &id);
+    {
+        let edit = editor::choose(h.app.project(), &full, cycle, option(cycle, "countersink"));
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(
+        drill(&h).cycle,
+        DrillCycle::Countersink {
+            diameter_mm: 6.0,
+            start_depth_mm: 0.0,
+            start_plane_cleared_externally: false
+        }
+    );
+    assert_eq!(drill(&h).depth_mm, None, "no depth of the app's own (S20)");
+    let sink = op_of(&h, &id);
+    assert_eq!(
+        keys(&sink),
+        [
+            "name",
+            "enabled",
+            "targets",
+            "tool",
+            "cycle.countersink",
+            "retract_mm",
+            "through_cut_allowance_mm",
+            "cycle",
+            "cycle.countersink.diameter_mm",
+            "cycle.countersink.start_depth_mm",
+            "cycle.countersink.start_plane_cleared_externally",
+            "dwell_s",
+            "safe_z_mm",
+        ]
+    );
+    assert_eq!(row_of(&sink, "cycle.countersink").group, Group::Depth);
+    for key in [
+        "cycle.countersink.diameter_mm",
+        "cycle.countersink.start_depth_mm",
+        "cycle.countersink.start_plane_cleared_externally",
+    ] {
+        assert_eq!(row_of(&sink, key).group, Group::Strategy, "`{key}`");
+    }
+    assert_eq!(
+        saved_drill(&h, &id).cycle,
+        drill(&h).cycle,
+        "the CLI reads the countersink back"
+    );
+
+    // A file's `allow_tool_wider_than_hole: true` on a countersink shows,
+    // with validation's warning under it, until it is cleared.
+    let widened = fields::set(&sink, "allow_tool_wider_than_hole", Value::Bool(true)).unwrap();
+    h.run(Command::UpdateOperation(widened.clone())).unwrap();
+    let allow = row_of(&widened, "allow_tool_wider_than_hole");
+    let status = editor::Located::of(h.warnings(), &widened)
+        .status(allow)
+        .expect("countersink_ignores_tool_width is under the row");
+    assert_eq!(status.tier, Tier::Warning);
+    run_edit(&mut h, editor::set_checked(&widened, allow, false));
+    assert!(
+        keys(&op_of(&h, &id))
+            .iter()
+            .all(|k| *k != "allow_tool_wider_than_hole"),
+        "cleared, it is not offered again"
+    );
+
+    // Simple again: no cycle rows, the typed depth back, still unset.
+    let sink = op_of(&h, &id);
+    {
+        let edit = editor::choose(h.app.project(), &sink, cycle, option(cycle, "simple"));
+        run_edit(&mut h, edit)
+    };
+    assert_eq!(keys(&op_of(&h, &id)), simple_keys);
+    let saved = saved_drill(&h, &id);
+    assert_eq!(saved.cycle, DrillCycle::Simple);
+    assert_eq!(saved.depth_mm, None);
+
+    // The Bore's line.
+    let command = operations::add(h.app.project(), &strings, Kind::Bore, &hole)
+        .expect("a circle takes a Bore");
+    h.run(command).unwrap();
+    let bore = h.app.project().operations.last().unwrap().clone();
+    assert_eq!(
+        keys(&bore),
+        [
+            "name",
+            "enabled",
+            "targets",
+            "tool",
+            "depth_mm",
+            "pitch_mm",
+            "stock_to_leave_mm",
+            "through_cut_allowance_mm",
+            "direction",
+            "safe_z_mm",
+        ]
+    );
+    for (key, group) in [
+        ("depth_mm", Group::Depth),
+        ("pitch_mm", Group::Depth),
+        ("stock_to_leave_mm", Group::Depth),
+        ("through_cut_allowance_mm", Group::Depth),
+        ("direction", Group::Strategy),
+        ("safe_z_mm", Group::Heights),
+    ] {
+        assert_eq!(row_of(&bore, key).group, group, "`{key}`");
+    }
+    let pitch = row_of(&bore, "pitch_mm");
+    assert_eq!(pitch.tool_default, Some(fields::ToolDefault::StepDown));
+    {
+        let edit = editor::set_tool(&bore, row_of(&bore, "tool"), &dc_project::ToolId::new("t3"));
+        run_edit(&mut h, edit)
+    };
+    let bore = h.app.project().operations.last().unwrap().clone();
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &bore, pitch).as_deref(),
+        Some("tool's: 2 mm")
+    );
+}
+
+/// S18 and capability 68's Drill line (mock-up 07): a countersink's depth
+/// is derived from its mouth and the V-bit's angle, `start_depth_mm +
+/// diameter_mm / (2 · tan(α/2))` below the stock top (the depth `export`
+/// states), and shown read-only in the Depth group where the typed depth
+/// would be; it is never typed and never stored, so the file's `depth_mm`
+/// stays `null`. It follows the mouth, the start depth and the display
+/// units. With a tool that is not a V-bit there is no depth: the row shows
+/// validation's message instead of a number.
+#[test]
+fn countersink_depth_is_derived_and_read_only() {
+    let strings = Strings::english();
+    let mut h = dc_app::test_support::Harness::from_project(project());
+    // The sign's Countersinks: a 6 mm mouth 2.5 mm down, the 90° V-bit.
+    let sink = op_of(&h, "op5");
+    let Operation::Drill(drill) = &sink else {
+        panic!("op5 is a Drill");
+    };
+    assert!(drill.cycle.is_countersink());
+    assert_eq!(drill.depth_mm, None);
+    assert!(
+        keys(&sink).iter().all(|k| *k != "depth_mm"),
+        "the typed depth is not offered"
+    );
+    let derived = row_of(&sink, "cycle.countersink");
+    assert!(matches!(derived.kind, FieldKind::CountersinkDepth));
+    assert_eq!(derived.group, Group::Depth);
+    assert_eq!(strings.get(derived.label), "Depth");
+    assert_eq!(derived.unit(), fields::Unit::Length);
+    let depth_group = fields::groups(&sink)
+        .into_iter()
+        .find(|(g, _)| *g == Group::Depth)
+        .expect("a Depth group")
+        .1;
+    assert_eq!(
+        depth_group[0].key, "cycle.countersink",
+        "first, as Depth is"
+    );
+
+    let tip = 2.5 + dc_project::countersink_depth_mm(6.0, 90.0).unwrap();
+    let at = editor::countersink_depth_mm(h.app.project(), &sink).expect("a V-bit's depth");
+    assert!((at - tip).abs() < 1e-9, "{at} = {tip}");
+    assert_eq!(
+        editor::derived(h.app.project(), &strings, h.warnings(), &sink, derived),
+        Some(Ok("derived: 5.5".to_owned()))
+    );
+    let mut inch = h.app.project().clone();
+    inch.display_units = Units::Inch;
+    assert_eq!(
+        editor::derived(&inch, &strings, h.warnings(), &sink, derived),
+        Some(Ok(format!(
+            "derived: {}",
+            dc_app::units::field_text(tip, Units::Inch)
+        )))
+    );
+    // Only the derived row is derived.
+    assert_eq!(
+        editor::derived(
+            h.app.project(),
+            &strings,
+            h.warnings(),
+            &sink,
+            row_of(&sink, "retract_mm")
+        ),
+        None
+    );
+
+    // Read-only: nothing typed, no placeholder, nothing to reset.
+    assert!(editor::commit_text(h.app.project(), &sink, derived, "4").is_err());
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &sink, derived),
+        None
+    );
+    assert!(!editor::can_reset(&sink, derived));
+    assert!(editor::reset(&sink, derived).unwrap().is_none());
+
+    // It follows the mouth and the start depth.
+    {
+        let edit = editor::commit_text(
+            h.app.project(),
+            &sink,
+            row_of(&sink, "cycle.countersink.diameter_mm"),
+            "4",
+        );
+        run_edit(&mut h, edit)
+    };
+    let sink = op_of(&h, "op5");
+    assert_eq!(
+        editor::derived(h.app.project(), &strings, h.warnings(), &sink, derived),
+        Some(Ok("derived: 4.5".to_owned()))
+    );
+    {
+        let edit = editor::commit_text(
+            h.app.project(),
+            &sink,
+            row_of(&sink, "cycle.countersink.start_depth_mm"),
+            "0",
+        );
+        run_edit(&mut h, edit)
+    };
+    let sink = op_of(&h, "op5");
+    assert_eq!(
+        editor::derived(h.app.project(), &strings, h.warnings(), &sink, derived),
+        Some(Ok("derived: 2".to_owned()))
+    );
+    assert_eq!(
+        saved_drill(&h, "op5").depth_mm,
+        None,
+        "the derived depth is shown, never stored"
+    );
+
+    // Not a V-bit: validation's message in place of the number.
+    run_edit(
+        &mut h,
+        editor::set_tool(&sink, row_of(&sink, "tool"), &dc_project::ToolId::new("t3")),
+    );
+    let sink = op_of(&h, "op5");
+    assert_eq!(editor::countersink_depth_mm(h.app.project(), &sink), None);
+    let needs = h
+        .warnings()
+        .iter()
+        .find(|f| f.field.as_deref() == Some("operations[op5].tool") && f.tier == Tier::Error)
+        .expect("validation's countersink_needs_v_bit")
+        .clone();
+    assert!(needs.message.contains("use a V-bit"), "{}", needs.message);
+    assert_eq!(
+        editor::derived(h.app.project(), &strings, h.warnings(), &sink, derived),
+        Some(Err(needs.message))
+    );
+    // Disabled, validation says nothing of it; the row still says why.
+    let off = fields::set(&sink, "enabled", Value::Bool(false)).unwrap();
+    assert_eq!(
+        editor::derived(h.app.project(), &strings, &[], &off, derived),
+        Some(Err(strings.get(StrKey::EditorDerivedNeedsVBit).to_owned()))
+    );
+    assert_eq!(saved_drill(&h, "op5").depth_mm, None);
+}
+
+/// Capability 67 and the issue: the generator's warnings about a target
+/// the kind cannot cut name the operation and the shape but no field, and
+/// the editor draws them under the Targets group: a Drill's
+/// `drill_target_not_circle` (the plaque's square) and
+/// `drill_hole_too_small` (a 5 mm hole and the 1/4 end mill), and a Bore's
+/// `bore_no_room` (the same hole) and `bore_leaves_core` (the 20 mm
+/// island). A closed Targets group counts them.
+#[test]
+fn drill_and_bore_target_warnings_land_under_targets() {
+    let strings = Strings::english();
+    let mut plaque = common::plaque();
+    let targets: Vec<dc_project::InstanceId> = ["i4", "i5"]
+        .into_iter()
+        .map(dc_project::InstanceId::new)
+        .collect();
+    let Some(Operation::Drill(mut drill)) =
+        operations::new_operation(&plaque, &strings, Kind::Drill, &targets)
+    else {
+        panic!("a new Drill");
+    };
+    drill.tool = dc_project::ToolId::new("t2");
+    drill.depth_mm = Some(6.0);
+    let drill_id = drill.id.as_str().to_owned();
+    plaque.operations.push(Operation::Drill(drill));
+    for op in &mut plaque.operations {
+        if let Operation::Bore(bore) = op {
+            bore.tool = dc_project::ToolId::new("t2");
+            bore.targets = ["i5", "i3"]
+                .into_iter()
+                .map(dc_project::InstanceId::new)
+                .collect();
+        }
+    }
+    let mut h = dc_app::test_support::Harness::from_project(plaque);
+    h.generate();
+    for (id, codes) in [
+        (
+            drill_id.as_str(),
+            ["drill_target_not_circle", "drill_hole_too_small"],
+        ),
+        ("op3", ["bore_no_room", "bore_leaves_core"]),
+    ] {
+        let op = op_of(&h, id);
+        let mine: Vec<&dc_job::Finding> = h
+            .warnings()
+            .iter()
+            .filter(|f| f.op.as_ref() == Some(op.id()) && f.field.is_none())
+            .collect();
+        for code in codes {
+            assert!(
+                mine.iter().any(|f| f.code.as_deref() == Some(code)),
+                "{id}: generation warns {code}: {mine:?}"
+            );
+        }
+        let located = editor::Located::of(h.warnings(), &op);
+        let status = located
+            .status(row_of(&op, "targets"))
+            .expect("the warnings are under the Targets group");
+        assert_eq!(status.tier, Tier::Warning);
+        assert!(
+            mine.iter().any(|f| f.message == status.message
+                && f.code.as_deref().is_some_and(|c| codes.contains(&c))),
+            "{id}: {}",
+            status.message
+        );
+        let (tier, count) = located
+            .group(Group::Targets)
+            .expect("a closed Targets group shows them");
+        assert_eq!(tier, Tier::Warning);
+        assert!(count >= codes.len(), "{id}: {count}");
+    }
 }
 
 // ── Slice 13 (#542): the V-Carve editor and the clearing-pass list. ───

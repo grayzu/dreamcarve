@@ -29,6 +29,11 @@
 //! tab request is a switch with *Place tabs* beside it, disabled with its
 //! reason until slice 17 (#546), and its settings are ordinary rows.
 //!
+//! Slice 12 (#541): a countersink's depth is a read-only field, derived
+//! (S18), or validation's message where there is nothing to derive it
+//! from; the Targets group shows the generator's warnings about a target
+//! the kind cannot cut.
+//!
 //! Slice 13 (#542): every control draws a [`Slot`], a row at its key
 //! path, so a clearing pass's rows (`clearing[1].tool`) are drawn by the
 //! same renderers ([`control`]) inside the clearing list's block
@@ -153,6 +158,8 @@ pub(super) struct Cx<'a> {
     pub(super) strings: &'a Strings,
     pub(super) project: &'a Project,
     located: editor::Located<'a>,
+    /// Every finding, for a derived row's reason.
+    findings: &'a [dc_job::Finding],
     selected: &'a [InstanceId],
     pub(super) op: &'a Operation,
     /// The row a Warnings click asked to focus, by key path.
@@ -173,6 +180,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         strings,
         project,
         located: editor::Located::of(app.warnings(), op),
+        findings: app.warnings(),
         selected: app.selection().instances(),
         op,
         focus,
@@ -350,6 +358,14 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         FieldKind::InstanceList => target_list(ui, cx, out),
         FieldKind::ToolPicker => tool_note(ui, cx, &slot),
         FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
+        // Nothing to derive it from: validation's message in place of the
+        // number.
+        FieldKind::CountersinkDepth => {
+            if let Some(Err(why)) = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)
+            {
+                row::message(ui, Tier::Error, &why);
+            }
+        }
         _ => {}
     }
     if matches!(row.kind, FieldKind::PointPick)
@@ -393,7 +409,8 @@ pub(super) fn control(
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let id = control_id(cx.op, slot.key());
-    if slot.row.key.contains('.') {
+    // A derived value stands where the value it replaces would.
+    if slot.row.key.contains('.') && !matches!(slot.row.kind, FieldKind::CountersinkDepth) {
         ui.add_space(NESTED_PX);
     }
     match slot.row.kind {
@@ -436,6 +453,10 @@ pub(super) fn control(
         FieldKind::TabRequest => tab_request(ui, cx, slot.row, out),
         FieldKind::EarlierPocket => earlier_pocket(ui, cx, slot.row, id, out),
         FieldKind::PointPick => point_pick_button(ui, cx, slot.row),
+        FieldKind::CountersinkDepth => {
+            label(ui, cx, slot);
+            derived(ui, cx, slot.row, id)
+        }
         FieldKind::CutOut | FieldKind::MaleBoard => block(ui, cx, slot.row),
     }
 }
@@ -500,6 +521,28 @@ fn typed(
     if output.reset {
         commit(ui, refused_id, slot.reset(cx.op), out);
     }
+    Some(output.response)
+}
+
+/// A derived value (S18; slice 12, #541): a read-only field showing
+/// `derived: 5.5` in its unit, never typed. When there is nothing to
+/// derive it from (the tool is not a V-bit), nothing: [`render`] draws
+/// validation's message under the label in place of the number.
+fn derived(ui: &mut Ui, cx: &Cx<'_>, row: &Row, id: Id) -> Option<egui::Response> {
+    let text = editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)?.ok()?;
+    let output = unit_field(
+        ui,
+        UnitField {
+            enabled: false,
+            disabled_reason: Some(cx.strings.get(StrKey::EditorDerivedReadOnly)),
+            ..UnitField::new(
+                id,
+                cx.strings.get(row.label),
+                &text,
+                editor::unit_suffix(row, cx.project.display_units),
+            )
+        },
+    );
     Some(output.response)
 }
 
