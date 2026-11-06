@@ -4,7 +4,9 @@ The application core of the DreamCarve app (`docs/specs/phase-4/design.md`,
 "Data model → dc-app"): one `History` of `Project` snapshots, the `Command`
 enum whose `apply` makes the next snapshot and whose `label` names the undo
 step, the selection, the view settings, the generation bookkeeping, the
-preferences record, the string table, and units formatting and parsing.
+preferences record, the string table, units formatting and parsing, and
+the Viewport's geometry: the `Scene` it draws, the camera (the one Y flip),
+picking and the grid.
 
 Pure, as every `dc-*` crate: no file, terminal, clock or network I/O, no
 egui, no panics. `dc-cam` and `dc-gcode` are reached through `dc-job`

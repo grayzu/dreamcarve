@@ -106,7 +106,8 @@ fn view(px_per_mm: f64) -> Camera {
         px_per_mm,
         viewport_px,
     };
-    camera.pan(100.0 - 1000.0, 500.0 - 500.0);
+    // From the centre (1000, 500) to (100, 500).
+    camera.pan(-900.0, 0.0);
     camera
 }
 
@@ -517,7 +518,10 @@ fn hidden_is_not_picked_locked_is() {
     harness
         .app
         .select(Selection::Nothing.clicked(&hit, ClickMode::Replace));
-    assert_eq!(harness.app.selection().instances(), [second.clone()]);
+    assert_eq!(
+        harness.app.selection().instances(),
+        std::slice::from_ref(&second)
+    );
     let refused = harness.run(Command::TransformInstances {
         ids: vec![second.clone()],
         delta: Transform::translate(5.0, 0.0),

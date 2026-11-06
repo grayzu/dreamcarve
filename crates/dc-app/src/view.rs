@@ -5,13 +5,13 @@
 //! dc-app"): the camera, what the Viewport draws of a toolpath and how it
 //! colours it, and which operations are hidden. View state, not project
 //! state (functional spec, acceptance 81): nothing here is saved in the
-//! `.dcv` or undone. The camera's methods (`to_screen`, the one Y flip)
-//! are slice 4's (#533); this is the record they act on.
+//! `.dcv` or undone. The camera is [`crate::viewport::camera`]'s.
 
 use std::collections::BTreeSet;
 
-use dc_geometry::{Point, Vec2};
 use dc_project::OperationId;
+
+pub use crate::viewport::camera::Camera;
 
 /// What the user is looking at and how.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -28,30 +28,6 @@ pub struct View {
     pub extents: bool,
     /// Operations whose toolpath is hidden (the eye in the list).
     pub hidden_ops: BTreeSet<OperationId>,
-}
-
-/// The Viewport's camera: a point of the project (mm, Y-up) at the centre
-/// of a viewport of `viewport_px` logical pixels, at `px_per_mm`.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Camera {
-    /// The project point at the viewport's centre, mm.
-    pub centre_mm: Point,
-    /// Logical pixels per millimetre.
-    pub px_per_mm: f64,
-    /// The viewport's size, logical pixels.
-    pub viewport_px: Vec2,
-}
-
-impl Default for Camera {
-    /// A 100 × 100 mm stock, the empty project's, filling most of an
-    /// 800 × 600 viewport.
-    fn default() -> Self {
-        Self {
-            centre_mm: Point::new(50.0, 50.0),
-            px_per_mm: 5.0,
-            viewport_px: Vec2::new(800.0, 600.0),
-        }
-    }
 }
 
 /// What the Viewport draws of a toolpath. Everything but the arrows is on

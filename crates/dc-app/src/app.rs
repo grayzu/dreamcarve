@@ -23,6 +23,7 @@ use crate::error::CommandError;
 use crate::generation::{Generation, Job, JobResult, SnapshotId};
 use crate::history::LabelledHistory;
 use crate::prefs::Prefs;
+use crate::scene::Scene;
 use crate::selection::Selection;
 use crate::strings::Strings;
 use crate::view::View;
@@ -54,6 +55,8 @@ pub struct App {
     validation: Findings,
     /// Validation's, generation's and `finish`'s findings, merged.
     findings: Vec<Finding>,
+    /// What the Viewport draws, rebuilt with the snapshot and the results.
+    scene: Scene,
 }
 
 /// What opening a file reported (capability 51): the migration notes and
@@ -84,8 +87,10 @@ impl App {
             dirty: false,
             validation,
             findings: Vec::new(),
+            scene: Scene::default(),
         };
         app.refresh_findings();
+        app.rebuild_scene();
         app
     }
 
@@ -161,6 +166,7 @@ impl App {
         self.saved = saved;
         self.refresh_dirty();
         self.refresh_findings();
+        self.rebuild_scene();
     }
 
     /// The current snapshot.
@@ -300,6 +306,21 @@ impl App {
         self.selection.retain_existing(project);
         self.refresh_dirty();
         self.refresh_findings();
+        self.rebuild_scene();
+    }
+
+    /// Builds the Scene of the current snapshot and results under the
+    /// next revision.
+    fn rebuild_scene(&mut self) {
+        let revision = self.scene.revision().wrapping_add(1);
+        self.scene = Scene::build(self.history.current(), &self.generation, revision);
+    }
+
+    /// What the Viewport draws and picks from: rebuilt when the snapshot
+    /// or a generation result changes, never for view state.
+    #[must_use]
+    pub fn scene(&self) -> &Scene {
+        &self.scene
     }
 
     fn refresh_findings(&mut self) {
@@ -394,6 +415,7 @@ impl App {
         let kept = self.generation.accept(result);
         if kept {
             self.refresh_findings();
+            self.rebuild_scene();
         }
         kept
     }
