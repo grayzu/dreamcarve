@@ -1131,8 +1131,9 @@ fn park_point_click_on_the_viewport() {
     h.run();
     h.get_by_label("Click on the view").click();
     h.run();
-    // Empty stock near the plaque's top-right corner (stock 170 × 120).
-    let want = dc_geometry::Point::new(165.0, 115.0);
+    // Empty stock near the plaque's bottom-right corner (stock 170 × 120),
+    // clear of the Toolpaths card over the pane's top-right (#545).
+    let want = dc_geometry::Point::new(165.0, 5.0);
     let at = common::on_screen(&h, want);
     let under = world_at(&h, at);
     common::click_at(&mut h, at, egui::Modifiers::NONE);
