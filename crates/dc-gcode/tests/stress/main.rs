@@ -642,3 +642,60 @@ fn glue_gap_stands_above_the_floor_corner_ridge() {
         );
     }
 }
+
+/// #554 (found by the confirmation sweep on #438): the males of lettering
+/// seed `0x97` (15° bit, inch program) and line-art seed `0x63` (15° bit,
+/// millimetre program) with a V wall seat within 0.05 mm. Each has a
+/// corner whose medial tip is joined to a node beside one of its walls:
+/// in `0x97` the slit where an "e"'s tail meets its bowl, in `0x63` a
+/// pointed line end. The stretch to the tip ran along that wall, and
+/// fitting split it on the wall where the wall bends into the region, at
+/// the start plane; it reads a point's axis from its nearest wall point,
+/// which for a point on the wall is under it, so the rest of the way lay on
+/// the wall, and the written margin (#469) cut the groove back to where it
+/// left it, 0.022 and 0.051 mm from the tips: the plugs stood 0.051 and
+/// 0.340 mm proud past them. A point on a wall now seeks the axis along
+/// the wall's normal.
+/// Over ten minutes in a debug build, so it runs with the sweep; dc-cam's
+/// `chain_along_a_wall_into_a_corner_is_fitted_to_its_axis` is its minimal
+/// design.
+#[test]
+#[ignore = "slow: the sweep's full-size designs; run with --release -- --ignored"]
+fn males_reach_a_corner_their_axis_meets_along_a_wall() {
+    for (family, seed, design) in [
+        ("lettering", 0x97, lettering::lettering(0x97)),
+        ("line art", 0x63, designs::line_art(0x63)),
+    ] {
+        let outcome = reproduce(family, seed, design, Kind::MaleVWall);
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{family} {seed:#x}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}
+
+/// #554 (found by the confirmation sweep on #438): the males of line-art
+/// seed `0xa7` (15° bit, millimetre program) with a V wall and with an
+/// open edge seat within 0.05 mm. Two groups of its motifs have bands of
+/// their own whose outer edges pass 0.07 mm apart. The board between
+/// them, a ridge narrower than the seat check's 0.1 mm cells, fell apart
+/// in the check into pieces, and one, joined to the board through no
+/// cell, was counted as plug: 0.167 mm proud, 0.033 mm on a 0.05 mm grid.
+/// The check now counts every cell beyond the band's outer edges as
+/// board. About 160 s in a debug build, so it runs with the sweep; dc-cam's
+/// `sliver_of_board_between_two_bands_is_not_plug` is its minimal case.
+#[test]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
+fn board_between_two_bands_is_not_plug() {
+    for kind in [Kind::MaleVWall, Kind::MaleOpenEdge] {
+        let outcome = reproduce("line art", 0xa7, designs::line_art(0xa7), kind);
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{kind:?}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}
