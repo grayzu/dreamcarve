@@ -605,12 +605,16 @@ fn click_selects_and_escape_clears() {
             .collect()
     };
 
-    // The square's left edge (x 70, y 18–48 in project space).
+    // The square's left edge (x 70, y 18–48 in project space). Its name
+    // is in the Design Tree's rows; hovering it adds it to the status bar.
+    let named = |h: &Harness<'_, dreamcarve_app::Shell>| h.query_all_by_label("square").count();
+    let in_tree = named(&h);
     let square = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
     common::click_at(&mut h, square, egui::Modifiers::NONE);
     assert_eq!(selected(&h), ["i4"], "a click selects the shape");
-    assert!(
-        h.query_by_label("square").is_some(),
+    assert_eq!(
+        named(&h),
+        in_tree + 1,
         "hovering it names it in the status bar"
     );
 

@@ -40,6 +40,8 @@ pub enum Icon {
     PanelLeftOpen,
     /// `panel-right-open`: reopen the CAM panel.
     PanelRightOpen,
+    /// `lock`: a locked shape's padlock on the Viewport.
+    Lock,
 }
 
 impl Icon {
@@ -62,6 +64,7 @@ impl Icon {
             Self::TriangleAlert => "triangle-alert",
             Self::PanelLeftOpen => "panel-left-open",
             Self::PanelRightOpen => "panel-right-open",
+            Self::Lock => "lock",
         }
     }
 
@@ -83,12 +86,13 @@ impl Icon {
             Self::TriangleAlert => '\u{e193}',
             Self::PanelLeftOpen => '\u{e21d}',
             Self::PanelRightOpen => '\u{e434}',
+            Self::Lock => '\u{e10b}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 14] = [
+    pub const ALL: [Self; 15] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -103,6 +107,7 @@ impl Icon {
         Self::TriangleAlert,
         Self::PanelLeftOpen,
         Self::PanelRightOpen,
+        Self::Lock,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

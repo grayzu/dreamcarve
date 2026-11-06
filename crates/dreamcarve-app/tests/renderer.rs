@@ -45,11 +45,16 @@ fn stroke_width_px(
         let pixel = pixel(x, row);
         let mut coverage = 0.0;
         let mut channels = 0.0;
-        for c in 0..3 {
-            let fg = f64::from(colour.to_array()[c]);
-            let bg = f64::from(background.to_array()[c]);
+        let channels_of = colour
+            .to_array()
+            .into_iter()
+            .zip(background.to_array())
+            .zip(pixel)
+            .take(3);
+        for ((fg, bg), got) in channels_of {
+            let (fg, bg) = (f64::from(fg), f64::from(bg));
             if (fg - bg).abs() > 40.0 {
-                coverage += (f64::from(pixel[c]) - bg) / (fg - bg);
+                coverage += (f64::from(got) - bg) / (fg - bg);
                 channels += 1.0;
             }
         }

@@ -10,7 +10,8 @@
 //! The one place a colour is written: every widget takes its colours from
 //! a [`Palette`] (section 13, item 1; `tests/theme.rs` scans for literals
 //! elsewhere). Operation colours and the depth ramp arrive with the
-//! toolpath display (slice 16).
+//! toolpath display (slice 16). The Viewport's renderer takes its line
+//! colours from here too, as a style table (`viewport::renderer`).
 
 use std::sync::Arc;
 
@@ -110,6 +111,16 @@ pub struct Palette {
     pub viewport_stock: Color32,
     /// The stock's fill, a shade off the background.
     pub viewport_stock_fill: Color32,
+    /// A shape's outline, solid when closed, dashed when open.
+    pub viewport_shape: Color32,
+    /// The outline under the pointer.
+    pub viewport_shape_hover: Color32,
+    /// A selected outline.
+    pub viewport_shape_selected: Color32,
+    /// A locked outline and its padlock.
+    pub viewport_shape_locked: Color32,
+    /// The park point's crossed circle.
+    pub viewport_park: Color32,
     /// The scrim under a sheet (section 8, "Sheets").
     pub scrim: Color32,
     /// Raised surfaces' shadow (section 12, "Visuals").
@@ -162,6 +173,11 @@ pub const LIGHT: Palette = Palette {
     viewport_axis: rgb(0x6B7380),
     viewport_stock: rgb(0x6B7380),
     viewport_stock_fill: rgb(0xFFFFFF),
+    viewport_shape: rgb(0x23272E),
+    viewport_shape_hover: rgb(0x5B8DE8),
+    viewport_shape_selected: rgb(0x2563D0),
+    viewport_shape_locked: rgb(0x8A929E),
+    viewport_park: rgb(0x5B6472),
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_001F),
 };
@@ -212,6 +228,11 @@ pub const DARK: Palette = Palette {
     viewport_axis: rgb(0x9AA3AF),
     viewport_stock: rgb(0x9AA3AF),
     viewport_stock_fill: rgb(0x1F242C),
+    viewport_shape: rgb(0xE6E9EE),
+    viewport_shape_hover: rgb(0x8FBAF7),
+    viewport_shape_selected: rgb(0x6AA3F2),
+    viewport_shape_locked: rgb(0x7B8491),
+    viewport_park: rgb(0xA3ABB7),
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_004D),
 };
@@ -264,6 +285,11 @@ impl Palette {
             ("viewport.axis", self.viewport_axis),
             ("viewport.stock", self.viewport_stock),
             ("viewport.stock.fill", self.viewport_stock_fill),
+            ("viewport.shape", self.viewport_shape),
+            ("viewport.shape.hover", self.viewport_shape_hover),
+            ("viewport.shape.selected", self.viewport_shape_selected),
+            ("viewport.shape.locked", self.viewport_shape_locked),
+            ("viewport.park", self.viewport_park),
         ]
     }
 }
