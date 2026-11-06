@@ -34,7 +34,11 @@
 //! where they need one. Slice 11 (#540) fills the Pocket and the Engrave,
 //! and gives the Profile's tab request its own rows (`tabs.width_mm`, the
 //! internally tagged `tabs.placement` chosen as a variant is) and its
-//! start point a Viewport pick.
+//! start point a Viewport pick. Slice 12 (#541) fills the Drill and the
+//! Bore: the Drill's cycle with each cycle's rows, a peck's retract a
+//! variant inside the cycle's, and a countersink's derived depth, a
+//! read-only row ([`FieldKind::CountersinkDepth`]) in place of the typed
+//! one.
 
 use dc_project::{Operation, Project, Tool};
 use serde_json::{Value, json};
@@ -253,6 +257,12 @@ pub enum FieldKind {
     /// when off and `init`'s request when on, beside *Place tabs*; its
     /// settings are the rows under its key.
     TabRequest,
+    /// A countersink's depth (S18; slice 12, #541): read-only, derived
+    /// from its mouth, its start depth and the V-bit's angle
+    /// ([`super::countersink_depth_mm`]), never typed and never stored. The
+    /// row's key is the countersink's (`cycle.countersink`), so it shows
+    /// exactly while the cycle is one.
+    CountersinkDepth,
     /// A carve's clearing passes (capability 70).
     ClearingList,
     /// An Inlay's cut-out.
@@ -325,7 +335,7 @@ impl Row {
     #[must_use]
     pub const fn unit(&self) -> Unit {
         match self.kind {
-            FieldKind::Length | FieldKind::LengthList => Unit::Length,
+            FieldKind::Length | FieldKind::LengthList | FieldKind::CountersinkDepth => Unit::Length,
             FieldKind::Rate => Unit::Rate,
             FieldKind::Angle => Unit::Degrees,
             FieldKind::Percentage => Unit::Percent,
@@ -570,6 +580,28 @@ fn raster_template(_: &Project) -> Value {
     json!({ "angle_deg": 0.0 })
 }
 
+/// A peck cycle as the Drill chapter's Peck section starts one: the
+/// tool's step-down (`null`, no depth of the app's own), a full retract.
+fn peck_template(_: &Project) -> Value {
+    json!({ "peck_depth_mm": null, "retract": "full" })
+}
+
+/// A countersink as the Drill chapter writes one, opening the chapter's
+/// 6 mm mouth in the stock top (a start depth of 0), its start plane not
+/// vouched for. Its depth follows from the mouth and the bit (S18).
+fn countersink_template(_: &Project) -> Value {
+    json!({
+        "diameter_mm": 6.0,
+        "start_depth_mm": 0.0,
+        "start_plane_cleared_externally": false,
+    })
+}
+
+/// A chip-break retract with the Drill chapter's 0.5 mm gap.
+fn chip_break_template(_: &Project) -> Value {
+    json!({ "gap_mm": 0.5 })
+}
+
 /// An option written as its plain tag.
 const fn tag(label: StrKey, tag: &'static str) -> ChoiceOption {
     ChoiceOption {
@@ -645,6 +677,25 @@ const WALL_PASSES: &[ChoiceOption] = &[
     tag(StrKey::EditorChoiceLast, "last"),
     tag(StrKey::EditorChoiceFirst, "first"),
     tag(StrKey::EditorChoiceNone, "none"),
+];
+/// A Drill's cycle (slice 12, #541).
+const DRILL_CYCLES: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceSimple, "simple"),
+    variant(StrKey::EditorChoicePeck, "peck", peck_template),
+    variant(
+        StrKey::EditorChoiceCountersink,
+        "countersink",
+        countersink_template,
+    ),
+];
+/// How a peck cycle retracts between pecks (slice 12, #541).
+const PECK_RETRACTS: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceFull, "full"),
+    variant(
+        StrKey::EditorChoiceChipBreak,
+        "chip_break",
+        chip_break_template,
+    ),
 ];
 
 // ── The tables. ────────────────────────────────────────────────────────
@@ -917,7 +968,17 @@ fn not_countersink(record: &Value) -> bool {
     get(record, "cycle.countersink").is_none()
 }
 
-/// The rows slice 10 gives a Drill; slice 12 (#541) adds the rest.
+/// Whether a Drill's `allow_tool_wider_than_hole` is read: by every cycle
+/// but a countersink, whose bit is wider than its hole by design. A
+/// countersink that sets it anyway shows the row, with validation's
+/// `countersink_ignores_tool_width` under it, so it can be cleared.
+fn tool_width_read(record: &Value) -> bool {
+    not_countersink(record) || get(record, "allow_tool_wider_than_hole") == Some(&Value::Bool(true))
+}
+
+/// Capability 68's Drill line, every field (slice 12, #541; mock-up 07):
+/// a countersink's depth is derived and shown in place of the typed one
+/// (S18), and the cycle's rows follow the cycle.
 const DRILL: &[Row] = &[
     NAME,
     ENABLED,
@@ -931,11 +992,115 @@ const DRILL: &[Row] = &[
         StrKey::EditorFieldDepthHelp,
         not_countersink,
     ),
+    row(
+        Group::Depth,
+        "cycle.countersink",
+        FieldKind::CountersinkDepth,
+        StrKey::EditorFieldCountersinkDepth,
+        StrKey::EditorFieldCountersinkDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "retract_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldRetractHeight,
+        StrKey::EditorFieldRetractHeightHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Strategy,
+        "cycle",
+        FieldKind::Choice(DRILL_CYCLES),
+        StrKey::EditorFieldCycle,
+        StrKey::EditorFieldCycleHelp,
+    ),
+    tool_row(
+        Group::Strategy,
+        "cycle.peck.peck_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldPeckDepth,
+        StrKey::EditorFieldPeckDepthHelp,
+        ToolDefault::StepDown,
+    ),
+    row(
+        Group::Strategy,
+        "cycle.peck.retract",
+        FieldKind::Choice(PECK_RETRACTS),
+        StrKey::EditorFieldPeckRetract,
+        StrKey::EditorFieldPeckRetractHelp,
+    ),
+    row(
+        Group::Strategy,
+        "cycle.peck.retract.chip_break.gap_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldChipBreakGap,
+        StrKey::EditorFieldChipBreakGapHelp,
+    ),
+    row(
+        Group::Strategy,
+        "cycle.countersink.diameter_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMouthDiameter,
+        StrKey::EditorFieldMouthDiameterHelp,
+    ),
+    row(
+        Group::Strategy,
+        "cycle.countersink.start_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldCountersinkStartDepth,
+        StrKey::EditorFieldCountersinkStartDepthHelp,
+    ),
+    row(
+        Group::Strategy,
+        "cycle.countersink.start_plane_cleared_externally",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldCountersinkCleared,
+        StrKey::EditorFieldCountersinkClearedHelp,
+    ),
+    row(
+        Group::Strategy,
+        "dwell_s",
+        FieldKind::Seconds,
+        StrKey::EditorFieldDwell,
+        StrKey::EditorFieldDwellHelp,
+    ),
+    ruled(
+        Group::Strategy,
+        "allow_tool_wider_than_hole",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldAllowToolWider,
+        StrKey::EditorFieldAllowToolWiderHelp,
+        tool_width_read,
+    ),
     SAFE_Z,
 ];
 
-/// The rows slice 10 gives a Bore; slice 12 (#541) adds the rest.
-const BORE: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];
+/// Capability 68's Bore line, every field (slice 12, #541; mock-up 07).
+const BORE: &[Row] = &[
+    NAME,
+    ENABLED,
+    TARGETS,
+    TOOL,
+    DEPTH,
+    tool_row(
+        Group::Depth,
+        "pitch_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldPitch,
+        StrKey::EditorFieldPitchHelp,
+        ToolDefault::StepDown,
+    ),
+    row(
+        Group::Depth,
+        "stock_to_leave_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldBoreStockToLeave,
+        StrKey::EditorFieldBoreStockToLeaveHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    DIRECTION,
+    SAFE_Z,
+];
 
 /// The rows slice 10 gives a V-Carve, which has no `depth_mm`; slice 13
 /// (#542) adds the rest.

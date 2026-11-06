@@ -28,6 +28,11 @@
 //! pick does; `rest_of` is a dropdown of the earlier enabled Pockets; a
 //! tab request is a switch with *Place tabs* beside it, disabled with its
 //! reason until slice 17 (#546), and its settings are ordinary rows.
+//!
+//! Slice 12 (#541): a countersink's depth is a read-only field, derived
+//! (S18), or validation's message where there is nothing to derive it
+//! from; the Targets group shows the generator's warnings about a target
+//! the kind cannot cut.
 
 use dc_app::editor::{self, FieldKind, Group, Row, fields, targets};
 use dc_app::operations::Kind;
@@ -145,6 +150,8 @@ struct Cx<'a> {
     strings: &'a Strings,
     project: &'a Project,
     located: editor::Located<'a>,
+    /// Every finding, for a derived row's reason.
+    findings: &'a [dc_job::Finding],
     selected: &'a [InstanceId],
     op: &'a Operation,
     /// The row a Warnings click asked to focus, by key path.
@@ -165,6 +172,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         strings,
         project,
         located: editor::Located::of(app.warnings(), op),
+        findings: app.warnings(),
         selected: app.selection().instances(),
         op,
         focus,
@@ -291,7 +299,9 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .map(|_| Tier::Error)
         .or(status.map(|s| s.tier));
     let focused = cx.focus == Some(row.key);
-    let nested = row.key.contains('.');
+    // A derived value stands where the value it replaces would.
+    let nested = row.key.contains('.') && !matches!(row.kind, FieldKind::CountersinkDepth);
+    let mut underived = None;
     let response = ui
         .horizontal(|ui| {
             if nested {
@@ -313,6 +323,7 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
                 FieldKind::ToolPicker => tool_picker(ui, cx, row, id, out),
                 FieldKind::EarlierPocket => earlier_pocket(ui, cx, row, id, out),
                 FieldKind::PointPick => point_pick_button(ui, cx, row),
+                FieldKind::CountersinkDepth => derived(ui, cx, row, id, &mut underived),
                 FieldKind::InstanceList => {
                     // The Targets group's own block, under the row.
                     None
@@ -325,6 +336,9 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .inner;
     if matches!(row.kind, FieldKind::InstanceList) {
         target_list(ui, cx, out);
+    }
+    if let Some(why) = underived {
+        row::message(ui, Tier::Error, &why);
     }
     if matches!(row.kind, FieldKind::PointPick)
         && point_pick(ui.ctx()).is_some_and(|(op, key)| op == *cx.op.id() && key == row.key)
@@ -400,6 +414,42 @@ fn typed(
         commit(ui, refused_id, editor::reset(cx.op, row), out);
     }
     Some(output.response)
+}
+
+/// A derived value (S18; slice 12, #541): a read-only field showing
+/// `derived: 5.5` in its unit, never typed. When there is nothing to
+/// derive it from (the tool is not a V-bit), the label alone, and `why`
+/// takes validation's message, drawn under it in place of the number.
+fn derived(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    id: Id,
+    why: &mut Option<String>,
+) -> Option<egui::Response> {
+    label(ui, cx, row);
+    match editor::derived(cx.project, cx.strings, cx.findings, cx.op, row)? {
+        Ok(text) => {
+            let output = unit_field(
+                ui,
+                UnitField {
+                    enabled: false,
+                    disabled_reason: Some(cx.strings.get(StrKey::EditorDerivedReadOnly)),
+                    ..UnitField::new(
+                        id,
+                        cx.strings.get(row.label),
+                        &text,
+                        editor::unit_suffix(row, cx.project.display_units),
+                    )
+                },
+            );
+            Some(output.response)
+        }
+        Err(message) => {
+            *why = Some(message);
+            None
+        }
+    }
 }
 
 /// A choice: segmented for two to four options whose labels fit 56 px

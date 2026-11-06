@@ -479,6 +479,12 @@ picking_point = "Click on the view where the cut should start; Escape cancels"
 place_tabs = "Place tabs"
 place_tabs_later = "Placing tabs from the editor comes with a later release; `dreamcarve tabs place` places this request now."
 rest_of_none = "None"
+# Slice 12 (#541): a countersink's derived depth (S18), and why there is
+# none when validation has not said.
+derived_value = "derived: {value}"
+derived_read_only = "Derived from the mouth diameter, the start depth and the V-bit's angle; never typed."
+derived_needs_v_bit = "A countersink's depth follows the angle of a V-bit; pick a V-bit."
+derived_needs_mouth = "A countersink's depth follows its mouth; set a mouth diameter above 0."
 
 # The editor's groups, in capability 66's order.
 [editor.group]
@@ -587,6 +593,33 @@ rest_of = "Rest of"
 rest_of_help = "An earlier Pocket of the same shapes whose leftovers this one clears with a smaller bit."
 alternate_direction = "Alternate direction"
 alternate_direction_help = "Cut an open path's passes back and forth, saving a retract each pass."
+# Slice 12 (#541): the Drill's and the Bore's fields (their chapters').
+countersink_depth = "Depth"
+countersink_depth_help = "How deep the V-bit's tip goes below the stock top: the start depth plus the mouth diameter / (2 × tan(α / 2)). Derived, never typed."
+retract_height = "Retract height"
+retract_height_help = "How far above the stock top the bit starts each hole, and lifts to between pecks."
+cycle = "Cycle"
+cycle_help = "One plunge, pecks that lift to clear the chips, or a V-bit countersink round the top of the hole."
+peck_depth = "Peck depth"
+peck_depth_help = "How much deeper each peck goes; empty takes the tool's step-down."
+peck_retract = "Retract"
+peck_retract_help = "Lift all the way out between pecks, or only a short gap to break the chip."
+chip_break_gap = "Chip-break gap"
+chip_break_gap_help = "How far the bit lifts between pecks to break the chip."
+mouth_diameter = "Mouth diameter"
+mouth_diameter_help = "The cone's width where it meets the hole's top; at most the V-bit's diameter."
+countersink_start_depth = "Start depth"
+countersink_start_depth_help = "How far below the stock top the hole's top is: 0 for the stock top, the floor's depth for a hole in a pocket."
+countersink_cleared = "Start plane cleared externally"
+countersink_cleared_help = "Another program or hand work cleared the start plane, which the project cannot see."
+dwell = "Dwell"
+dwell_help = "Seconds to wait at the bottom of every plunge; 0 is no wait."
+allow_tool_wider = "Allow tool wider than hole"
+allow_tool_wider_help = "Drill a circle narrower than the bit anyway, at the bit's size; otherwise it is skipped with a warning."
+pitch = "Pitch"
+pitch_help = "How far the helix falls each turn; empty takes the tool's step-down."
+bore_stock_to_leave = "Stock to leave"
+bore_stock_to_leave_help = "Material left on the hole's wall; the hole comes out this much smaller all round."
 
 # The choices' names.
 [editor.choice]
@@ -616,6 +649,11 @@ offset = "Offset"
 raster = "Raster"
 last = "Last"
 first = "First"
+simple = "Simple"
+peck = "Peck"
+countersink = "Countersink"
+full = "Full"
+chip_break = "Chip break"
 
 # The Import drawing sheet (slice 6, #535; functional spec, capabilities
 # 51 and 55; mock-up 02).

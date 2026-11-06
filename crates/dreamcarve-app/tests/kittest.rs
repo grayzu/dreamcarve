@@ -2009,7 +2009,8 @@ fn countersink_depth_shows_derived_read_only() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Countersinks").click();
+    h.get_by_role_and_label(Role::ListItem, "Countersinks")
+        .click();
     h.run();
     let before = operation_of(&h, "op5");
     let depth = h.get_by_role_and_label(Role::TextInput, "Depth");

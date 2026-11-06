@@ -23,7 +23,7 @@ pub mod targets;
 
 use dc_geometry::Point;
 use dc_job::{Finding, Tier};
-use dc_project::{Operation, OperationId, Project, ToolId, Units};
+use dc_project::{DrillCycle, Operation, OperationId, Project, ToolId, ToolKind, Units};
 use serde_json::{Value, json};
 
 pub use fields::{ChoiceOption, FieldKind, Group, Row, ToolDefault, Unit};
@@ -60,7 +60,9 @@ pub const fn unit_suffix(row: &Row, units: Units) -> &'static str {
 /// `value`, a number of `row`'s kind, as its field shows it in `units`.
 fn number_text(row: &Row, value: f64, units: Units) -> String {
     match row.kind {
-        FieldKind::Length | FieldKind::LengthList => units::field_text(value, units),
+        FieldKind::Length | FieldKind::LengthList | FieldKind::CountersinkDepth => {
+            units::field_text(value, units)
+        }
         FieldKind::Rate => plain(units::to_display(value, units)),
         FieldKind::Percentage => plain(value * 100.0),
         _ => plain(value),
@@ -400,6 +402,96 @@ pub fn pick_point(
     update(op, row, json!({ "x_mm": at_mm.x, "y_mm": at_mm.y }))
 }
 
+/// The depth a countersink Drill's V-bit tip reaches below the stock top
+/// (S18; slice 12, #541): its start depth plus
+/// [`dc_project::countersink_depth_mm`] of its mouth and the V-bit's
+/// included angle, the depth `export` states. Shown, never stored: the
+/// Drill's `depth_mm` is not used by a countersink. `None` for any other
+/// operation or cycle, and when there is nothing to derive it from: the
+/// tool is missing or not a V-bit, or the mouth and the angle form no
+/// cone.
+#[must_use]
+pub fn countersink_depth_mm(project: &Project, op: &Operation) -> Option<f64> {
+    let Operation::Drill(drill) = op else {
+        return None;
+    };
+    let DrillCycle::Countersink {
+        diameter_mm,
+        start_depth_mm,
+        ..
+    } = drill.cycle
+    else {
+        return None;
+    };
+    let tool = project.tools.iter().find(|t| t.id == drill.tool)?;
+    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+        return None;
+    };
+    dc_project::countersink_depth_mm(diameter_mm, included_angle_deg).map(|d| start_depth_mm + d)
+}
+
+/// What a derived row ([`FieldKind::CountersinkDepth`]) shows for `op`:
+/// `derived: 5.5`, the countersink's depth ([`countersink_depth_mm`]) in
+/// the display units, or, when there is none, why: the error validation
+/// locates on the operation's tool (`countersink_needs_v_bit`, an unknown
+/// tool) or its mouth, as `check` words it, else the app's own sentence
+/// (a disabled countersink is not validated). `None` for any other row,
+/// or an operation that is not a countersink.
+#[must_use]
+pub fn derived(
+    project: &Project,
+    strings: &Strings,
+    findings: &[Finding],
+    op: &Operation,
+    row: &Row,
+) -> Option<Result<String, String>> {
+    if !matches!(row.kind, FieldKind::CountersinkDepth) {
+        return None;
+    }
+    let Operation::Drill(drill) = op else {
+        return None;
+    };
+    let DrillCycle::Countersink { diameter_mm, .. } = drill.cycle else {
+        return None;
+    };
+    if let Some(depth_mm) = countersink_depth_mm(project, op) {
+        let value = number_text(row, depth_mm, project.display_units);
+        return Some(Ok(
+            strings.fmt(StrKey::EditorDerivedValue, &[("value", &value)])
+        ));
+    }
+    let v_bit = project
+        .tools
+        .iter()
+        .any(|t| t.id == drill.tool && matches!(t.cutter, ToolKind::VBit { .. }));
+    let mouth = diameter_mm.is_finite() && diameter_mm > 0.0;
+    let (key, fallback) = if v_bit && !mouth {
+        (
+            "cycle.countersink.diameter_mm",
+            StrKey::EditorDerivedNeedsMouth,
+        )
+    } else {
+        ("tool", StrKey::EditorDerivedNeedsVBit)
+    };
+    let field = format!("operations[{}].{key}", op.id());
+    let message = findings
+        .iter()
+        .find(|f| f.tier == Tier::Error && f.field.as_deref() == Some(field.as_str()))
+        .map_or_else(|| strings.get(fallback).to_owned(), |f| f.message.clone());
+    Some(Err(message))
+}
+
+/// The generator's warnings about a target the kind cannot cut
+/// (capability 67; slice 12, #541): they name the operation and the shape
+/// but no field, so they are drawn under the Targets group.
+const TARGET_CODES: &[&str] = &[
+    "drill_target_not_circle",
+    "drill_hole_too_small",
+    "bore_target_not_circle",
+    "bore_no_room",
+    "bore_leaves_core",
+];
+
 /// The findings located on an operation's rows, matched once
 /// ([`fields::row_for`]), for the editor to draw under each row and count
 /// on each closed group's header.
@@ -409,16 +501,30 @@ pub struct Located<'a> {
 }
 
 impl<'a> Located<'a> {
-    /// The findings of `findings` located on `op`'s rows.
+    /// The findings of `findings` located on `op`'s rows: each at a field
+    /// under the row that holds it, and each of [`TARGET_CODES`] about
+    /// `op` under its Targets row.
     #[must_use]
     pub fn of(findings: &'a [Finding], op: &Operation) -> Self {
         let rows = fields::rows(op);
         let record = fields::record(op).ok();
+        let targets = rows
+            .iter()
+            .copied()
+            .find(|r| matches!(r.kind, FieldKind::InstanceList));
         let found = findings
             .iter()
             .filter_map(|f| {
-                let field = f.field.as_deref()?;
-                fields::row_among(&rows, record.as_ref()?, op, field).map(|row| (row, f))
+                let row = match f.field.as_deref() {
+                    Some(field) => fields::row_among(&rows, record.as_ref()?, op, field),
+                    None if f.op.as_ref() == Some(op.id())
+                        && f.code.as_deref().is_some_and(|c| TARGET_CODES.contains(&c)) =>
+                    {
+                        targets
+                    }
+                    None => None,
+                };
+                row.map(|row| (row, f))
             })
             .collect();
         Self { found }

@@ -1368,7 +1368,10 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(row_of(&simple, "dwell_s").unit(), fields::Unit::Seconds);
     assert_eq!(row_of(&simple, "retract_mm").unit(), fields::Unit::Length);
     let cycle = row_of(&simple, "cycle");
-    assert_eq!(editor::choice(&simple, cycle), Some(option(cycle, "simple")));
+    assert_eq!(
+        editor::choice(&simple, cycle),
+        Some(option(cycle, "simple"))
+    );
     let drill = |h: &dc_app::test_support::Harness| match op_of(h, &id) {
         Operation::Drill(drill) => drill,
         other => panic!("still a Drill: {other:?}"),
@@ -1433,7 +1436,10 @@ fn drill_cycle_fields_follow_the_cycle() {
     // chapter's 0.5 mm gap, and its gap row comes with it.
     let retract = row_of(&peck, "cycle.peck.retract");
     assert_eq!(retract.group, Group::Strategy);
-    assert_eq!(editor::choice(&peck, retract), Some(option(retract, "full")));
+    assert_eq!(
+        editor::choice(&peck, retract),
+        Some(option(retract, "full"))
+    );
     {
         let edit = editor::choose(
             h.app.project(),
@@ -1630,7 +1636,10 @@ fn countersink_depth_is_derived_and_read_only() {
         .find(|(g, _)| *g == Group::Depth)
         .expect("a Depth group")
         .1;
-    assert_eq!(depth_group[0].key, "cycle.countersink", "first, as Depth is");
+    assert_eq!(
+        depth_group[0].key, "cycle.countersink",
+        "first, as Depth is"
+    );
 
     let tip = 2.5 + dc_project::countersink_depth_mm(6.0, 90.0).unwrap();
     let at = editor::countersink_depth_mm(h.app.project(), &sink).expect("a V-bit's depth");
