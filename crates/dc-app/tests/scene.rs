@@ -76,7 +76,7 @@ fn rebuilds_only_when_the_snapshot_changes() {
     let view = harness.app.view_mut();
     view.camera.zoom_about(Pos::new(10.0, 10.0), 2.0);
     view.camera.pan(40.0, -3.0);
-    view.only_selected = true;
+    view.visibility.only_selected = true;
     view.visibility.rapids = false;
     assert_eq!(
         harness.app.scene().revision(),
@@ -141,5 +141,175 @@ fn rebuilds_only_when_the_snapshot_changes() {
         harness.app.scene().revision(),
         generated,
         "nothing new, no rebuild"
+    );
+}
+
+/// Acceptance 79 (capability 72): for each golden case and the quick
+/// start's plaque, what the Viewport draws of an operation is the
+/// generator's toolpath for the saved file, and its marks are the
+/// preview's. The Scene's runs, in list order, are the runs `dc_job::build`
+/// generates for the file (what `export` and `check` emit and preview),
+/// generated again here independently of the app's worker; each run's
+/// strokes (`scene::strokes`, what the renderer reads) are its moves, one
+/// for one but the first (which only places the tool) and the dwells
+/// (which do not move it), same count, same end points to 1 µm; its marks
+/// are `dc_job::preview::marks` of that run, the tab marks, start points
+/// and holes `--preview` draws. The Viewport's SVG dump equals the file
+/// `--preview` writes for the project: `render_generated` of what
+/// `dc_job::build` generated, which is what the CLI writes.
+#[test]
+fn marks_equal_the_svg_marks() {
+    let mut cases = common::golden_projects();
+    // The quick start's plaque: a Profile with placed tabs, so tab marks.
+    cases.push(("plaque".to_owned(), common::fixture("plaque.dcv")));
+    // One thread a case: the V-Carve cases generate for seconds each.
+    let marks: usize = std::thread::scope(|scope| {
+        let checks: Vec<_> = cases
+            .iter()
+            .map(|(name, path)| scope.spawn(move || marks_of_one_case(name, path)))
+            .collect();
+        checks.into_iter().map(|c| c.join().unwrap()).sum()
+    });
+    assert!(marks > 100, "{marks} marks compared");
+}
+
+/// [`marks_equal_the_svg_marks`] on the project at `path`; the number of
+/// marks compared.
+fn marks_of_one_case(name: &str, path: &std::path::Path) -> usize {
+    use dc_app::scene::{StrokeKind, strokes};
+    use dc_job::preview;
+
+    let bytes = common::read(path);
+    let mut harness = Harness::open(&bytes).expect("the project opens");
+    harness.generate();
+    let project = harness.app.project().clone();
+    let scene = harness.app.scene();
+    assert!(
+        scene.operations().iter().all(|o| !o.stale),
+        "{name}: every operation is current"
+    );
+    let built = dc_job::build(&project, dc_job::ProgramSplit::ProjectDefault, "2026-10-15");
+    let generated = built.generated.expect("every operation generates");
+    let drawn: Vec<_> = scene
+        .operations()
+        .iter()
+        .flat_map(|o| o.runs.iter().map(move |r| (&o.id, r)))
+        .collect();
+    assert_eq!(
+        drawn.len(),
+        generated.len(),
+        "{name}: one drawn run per run"
+    );
+    let mut checked = 0;
+    for (k, ((op, drawn), run)) in drawn.iter().zip(&generated).enumerate() {
+        assert_eq!(*op, run.op.id(), "{name} run {k}: in list order");
+        let moves: Vec<_> = run
+            .toolpath
+            .moves
+            .iter()
+            .filter(|m| !m.is_dwell())
+            .skip(1)
+            .collect();
+        let strokes = strokes(&drawn.run.toolpath);
+        assert_eq!(
+            strokes.len(),
+            moves.len(),
+            "{name} {op} run {k}: one stroke per move"
+        );
+        for (i, (stroke, m)) in strokes.iter().zip(&moves).enumerate() {
+            let d = (stroke.to.x - m.to.x)
+                .abs()
+                .max((stroke.to.y - m.to.y).abs())
+                .max((stroke.to.z - m.to.z).abs());
+            assert!(
+                d <= 1e-3,
+                "{name} {op} run {k} move {i}: {stroke:?} vs {m:?}"
+            );
+            assert_eq!(
+                stroke.kind == StrokeKind::Rapid,
+                m.is_rapid(),
+                "{name} {op} run {k} move {i}: a rapid is drawn as one"
+            );
+        }
+        let want = preview::marks(&preview::Run::from(run));
+        assert_eq!(drawn.marks, want, "{name} {op} run {k}: marks");
+        checked += want.tab_marks.len() + want.start_points.len() + want.holes.len();
+    }
+    assert_eq!(
+        scene.preview_svg(&project),
+        preview::render_generated(&project, &generated),
+        "{name}: the Viewport's SVG dump is --preview's"
+    );
+    checked
+}
+
+/// Acceptance 87 (capability 71; design, "Digest and staleness"): an
+/// edit that changes an operation's digest leaves its last runs in the
+/// Scene, flagged stale for the Viewport to draw faded, while the other
+/// operations stay current and keep their runs, shared rather than
+/// copied; when the new result lands it replaces them and the flag
+/// clears.
+#[test]
+fn stale_results_are_flagged_until_replaced() {
+    use std::sync::Arc;
+
+    let mut harness = Harness::from_project(plaque());
+    harness.generate();
+    let before = harness.app.scene().clone();
+    assert!(
+        before
+            .operations()
+            .iter()
+            .all(|o| !o.stale && !o.runs.is_empty())
+    );
+    let pocket = dc_project::OperationId::new("op1");
+
+    // Deepen the Panel pocket: only it is stale.
+    let mut op = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|o| *o.id() == pocket)
+        .unwrap()
+        .clone();
+    let dc_project::Operation::Pocket(p) = &mut op else {
+        panic!("op1 is the Panel pocket");
+    };
+    p.depth_mm = Some(5.0);
+    harness.run(Command::UpdateOperation(op)).unwrap();
+    let scene = harness.app.scene();
+    let edited = scene.operation(&pocket).unwrap();
+    let old = before.operation(&pocket).unwrap();
+    assert!(edited.stale, "the edited operation is stale");
+    assert!(
+        Arc::ptr_eq(&edited.runs, &old.runs),
+        "its last runs stay until the new result lands"
+    );
+    for (now, was) in scene.operations().iter().zip(before.operations()) {
+        if now.id != pocket {
+            assert!(!now.stale, "{} is untouched", now.id);
+            assert!(
+                Arc::ptr_eq(&now.runs, &was.runs),
+                "{} keeps its runs",
+                now.id
+            );
+        }
+    }
+
+    // The new result replaces them.
+    harness.generate();
+    let replaced = harness.app.scene().operation(&pocket).unwrap();
+    assert!(!replaced.stale, "the new result is current");
+    assert!(!Arc::ptr_eq(&replaced.runs, &old.runs));
+    let deepest = replaced
+        .runs
+        .iter()
+        .flat_map(|r| r.run.toolpath.moves.iter().map(|m| m.to.z))
+        .fold(f64::INFINITY, f64::min);
+    let thickness = harness.app.project().stock.thickness_mm.unwrap();
+    assert!(
+        approx_eq(deepest, thickness - 5.0, 1e-6),
+        "the new runs cut to the new depth: {deepest}"
     );
 }

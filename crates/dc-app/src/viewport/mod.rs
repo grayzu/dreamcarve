@@ -5,9 +5,10 @@
 //! dc-app" and "Module layout"): the camera, picking, the grid and the
 //! transform handles, as pure functions on the [`Scene`](crate::Scene),
 //! the project and the [`Camera`](camera::Camera). The shell's renderer
-//! only draws what these compute. Direction arrows and tab dragging join
-//! with slices 16 and 17.
+//! only draws what these compute: the direction arrows' placement
+//! ([`arrows`], slice 16) too. Tab dragging joins with slice 17.
 
+pub mod arrows;
 pub mod camera;
 pub mod grid;
 pub mod handles;

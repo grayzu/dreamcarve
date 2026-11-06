@@ -51,10 +51,15 @@ use dc_gcode::EmitOp;
 use dc_geometry::{Arc, EPS_MM, Point, Point3, Polyline, Vec2, Vertex};
 use dc_project::{Board, Operation, Project, Tool};
 
-/// Operation colours, by the operation's place in the preview, repeating
-/// after eight. Distinct on white and from the black shapes.
-const PALETTE: [&str; 8] = [
-    "#1f77b4", "#d62728", "#2ca02c", "#9467bd", "#ff7f0e", "#17becf", "#8c564b", "#e377c2",
+/// Operation colours, by the run's place in the preview, repeating after
+/// eight: `experience.md`'s light operation set (section 5, "Operation
+/// colours"; design open question 5), Matplotlib's tab10 hues in their
+/// order with green, purple, orange, cyan and pink darkened to at least
+/// 3.3:1 on the light Viewport. One table: the app's light Viewport draws
+/// these, so the screen and this file agree (acceptance 79). Distinct on
+/// white and from the black shapes.
+pub const PALETTE: [&str; 8] = [
+    "#1f77b4", "#d62728", "#2a8f2a", "#8e5fb8", "#d96a00", "#0e98a8", "#8c564b", "#c94fa8",
 ];
 /// The stock outline, as PureCutCNC draws it: grey, dashed.
 const STOCK_COLOUR: &str = "#7f7f7f";
