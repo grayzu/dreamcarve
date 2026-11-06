@@ -421,20 +421,24 @@ fn frame(
         || layers::grid(project, show_grid.then_some(grid)),
     );
     let stock_layer = view.layer(Layer::Stock, key(stock), || layers::stock(project));
-    let shapes_layer = view.layer(Layer::Shapes, key((scene.revision(), band)), || {
+    let shapes_layer = view.layer(Layer::Shapes, key((scene.shapes_revision(), band)), || {
         layers::shapes(scene, tolerance)
     });
-    let hover_layer = view.layer(Layer::Hover, key((scene.revision(), band, &hover)), || {
-        layers::highlighted(
-            scene,
-            &hover,
-            tolerance,
-            (StyleId::Hover, StyleId::HoverOpen),
-        )
-    });
+    let hover_layer = view.layer(
+        Layer::Hover,
+        key((scene.shapes_revision(), band, &hover)),
+        || {
+            layers::highlighted(
+                scene,
+                &hover,
+                tolerance,
+                (StyleId::Hover, StyleId::HoverOpen),
+            )
+        },
+    );
     let selection_layer = view.layer(
         Layer::Selection,
-        key((scene.revision(), band, &selected)),
+        key((scene.shapes_revision(), band, &selected)),
         || {
             layers::highlighted(
                 scene,

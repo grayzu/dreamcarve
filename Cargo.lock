@@ -855,6 +855,7 @@ dependencies = [
  "dc-import",
  "dc-job",
  "dc-project",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "toml",
@@ -1035,6 +1036,7 @@ name = "dreamcarve"
 version = "0.2.1"
 dependencies = [
  "clap",
+ "dc-app",
  "dc-cam",
  "dc-gcode",
  "dc-geometry",

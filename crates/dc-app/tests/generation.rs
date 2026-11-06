@@ -70,16 +70,25 @@ fn place(project: &mut Project, id: &str, instance: &str, profile: Polyline, x_m
 ///
 /// - `o2` a 3 mm Pocket of the rectangle with `t1`;
 /// - `o8` a rest Pocket of it with `t3`, reading `o2` (`rest_of`);
-/// - `o6` a V-Carve of the square from 3 mm down, its start plane the
-///   floor of `o2` (`cleared_start_plane`);
-/// - `o3` a countersink Drill of the 3 mm hole with the V-bit;
+/// - `o3` a countersink Drill of the 3 mm hole with the V-bit, which reads
+///   the floors before it;
 /// - `o5` a Bore of the 10 mm hole with `t3`;
 /// - `o4` an Engrave of the 10 mm hole with `t3`;
 /// - `o1` the sample's outside Profile of the rectangle, through, with one
 ///   placed tab and no tab request;
+/// - `o6` a V-Carve of the square from 3 mm down, its start plane the
+///   floor of `o2` (`cleared_start_plane`);
 /// - `o7` an Inlay of the square with the V-bit, its female only.
+///
+/// The two carves come last: they read every operation before them, so
+/// few mutations leave their digest alone, and each of their
+/// generations costs the most.
 pub fn every_kind() -> Project {
     let mut project = sample_project();
+    // Shown in inches, so the carves snap to the inch grid the
+    // post-processor's `decimal_places.inch` sets (`WrittenGrid`): a
+    // generator input outside the project's geometry.
+    project.display_units = dc_project::Units::Inch;
     project.tools.push(tool_v_bit_90());
     let mut small = project.tools[0].clone();
     small.id = ToolId::new("t3");
@@ -151,11 +160,11 @@ pub fn every_kind() -> Project {
     project.operations = vec![
         Operation::Pocket(rough),
         Operation::Pocket(rest),
-        Operation::VCarve(carve),
         Operation::Drill(countersink),
         Operation::Bore(bore),
         Operation::Engrave(engrave),
         Operation::Profile(profile),
+        Operation::VCarve(carve),
         Operation::Inlay(inlay),
     ];
     project
@@ -243,7 +252,17 @@ fn mutations(
         Value::Bool(b) => vec![Value::Bool(!b)],
         Value::Number(n) => {
             if let Some(i) = n.as_u64() {
-                vec![Value::from(i + 1)]
+                // Up one, down one, and to nothing: a post-processor's
+                // decimal places at 0 make the written grid 1 mm, which
+                // moves what a generator snaps to it.
+                let mut moved = vec![Value::from(i + 1)];
+                if i > 0 {
+                    moved.push(Value::from(i - 1));
+                }
+                if i > 1 {
+                    moved.push(Value::from(0));
+                }
+                moved
             } else {
                 let f = n.as_f64().unwrap_or(0.0);
                 vec![Value::from(f * 1.1 + 0.05)]
@@ -383,26 +402,26 @@ fn digest_covers_every_generator_input() {
 
 /// Acceptance 87 and the design's dependency rule: after an edit only the
 /// operations whose inputs it touched are pending. An Engrave reads its
-/// own record, tool and targets, so editing it regenerates it and the
-/// Inlay (which reads every earlier operation's record); editing the
-/// rough Pocket regenerates it, the rest Pocket that rests on it, the
-/// V-Carve whose start plane is its floor, the countersink (which reads
-/// earlier floors too) and the Inlay. A post-processor setting no
-/// generator reads regenerates nothing, and `finish` reruns after every
-/// change, since the order check reads everything.
+/// own record, tool and targets, so editing it regenerates it and the two
+/// carves after it (which read every earlier operation's record);
+/// editing the rough Pocket regenerates it, the rest Pocket that rests on
+/// it, the countersink (which reads earlier floors), and the two carves,
+/// whose start plane is its floor. A post-processor setting no generator
+/// reads regenerates nothing, and `finish` reruns after every change,
+/// since the order check reads everything.
 #[test]
 fn editing_one_operation_regenerates_only_dependents() {
     let mut harness = generated_every_kind();
     assert!(harness.app.generation().finished().is_some());
 
-    let mut engrave = harness.app.project().operations[5].clone();
+    let mut engrave = harness.app.project().operations[4].clone();
     let Operation::Engrave(e) = &mut engrave else {
         panic!("o4 is the Engrave");
     };
     e.depth_mm = Some(0.75);
     harness.run(Command::UpdateOperation(engrave)).unwrap();
-    assert_eq!(ops(&harness.app.pending()), ["o4", "o7"]);
-    for id in ["o2", "o8", "o6", "o3", "o5", "o1"] {
+    assert_eq!(ops(&harness.app.pending()), ["o4", "o6", "o7"]);
+    for id in ["o2", "o8", "o3", "o5", "o1"] {
         assert!(
             !harness.app.generation().is_stale(&op(id)),
             "{id} keeps its result"
@@ -423,7 +442,7 @@ fn editing_one_operation_regenerates_only_dependents() {
     };
     p.step_down_mm = Some(1.5);
     harness.run(Command::UpdateOperation(rough)).unwrap();
-    assert_eq!(ops(&harness.app.pending()), ["o2", "o8", "o6", "o3", "o7"]);
+    assert_eq!(ops(&harness.app.pending()), ["o2", "o8", "o3", "o6", "o7"]);
     harness.generate();
 
     let mut post = harness.app.project().post_processor.clone();
@@ -531,13 +550,13 @@ fn stop_clears_pending() {
     assert!(harness.app.generation().result(&running.op).is_none());
 
     // An edit regenerates what it touched (and what reads it).
-    let mut engrave = project.operations[5].clone();
+    let mut engrave = project.operations[4].clone();
     let Operation::Engrave(e) = &mut engrave else {
         panic!("o4 is the Engrave");
     };
     e.depth_mm = Some(0.75);
     harness.run(Command::UpdateOperation(engrave)).unwrap();
-    assert_eq!(ops(&harness.app.pending()), ["o4", "o7"]);
+    assert_eq!(ops(&harness.app.pending()), ["o4", "o6", "o7"]);
     harness.generate();
     assert!(!harness.app.generation().is_stale(&op("o4")));
     assert!(
@@ -549,7 +568,7 @@ fn stop_clears_pending() {
     harness.app.regenerate_all();
     assert_eq!(
         ops(&harness.app.pending()),
-        ["o2", "o8", "o6", "o3", "o5", "o4", "o1", "o7"]
+        ["o2", "o8", "o3", "o5", "o4", "o1", "o6", "o7"]
     );
     harness.generate();
     assert!(harness.app.pending().is_empty());

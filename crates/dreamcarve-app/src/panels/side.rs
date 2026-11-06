@@ -18,6 +18,7 @@ use crate::shell::window::{
 };
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::icon::Icon;
+use crate::widgets::spinner::spinner;
 
 /// A panel header's height, px.
 const HEADER_PX: f32 = 32.0;
@@ -99,6 +100,48 @@ fn rows<'a>(ui: &mut Ui, names: impl Iterator<Item = &'a str>) {
                     ui.horizontal_centered(|ui| {
                         ui.add_space(12.0);
                         text(ui, name, TextStyle::Body, palette.text_primary);
+                    });
+                });
+            }
+        });
+}
+
+/// The operations' rows, each with its status cell (capability 71;
+/// `experience.md`, section 7, "Status cell"): the spinner while the
+/// operation waits for its result. The rest of the row arrives with
+/// slice 10.
+fn operation_rows(ui: &mut Ui, state: &FrameState<'_>) {
+    let palette = Palette::current(ui);
+    let generation = state.app.generation();
+    let regenerating = state.app.strings().get(StrKey::AppGenerationRegenerating);
+    egui::ScrollArea::vertical()
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            for op in &state.app.project().operations {
+                ui.allocate_ui(egui::vec2(ui.available_width(), ROW_PX), |ui| {
+                    ui.set_min_height(ROW_PX);
+                    ui.horizontal_centered(|ui| {
+                        ui.add_space(12.0);
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(12.0);
+                            let (cell, _) =
+                                ui.allocate_exact_size(egui::vec2(24.0, ROW_PX), Sense::hover());
+                            if generation.is_regenerating(op.id()) {
+                                let mut inside =
+                                    ui.new_child(egui::UiBuilder::new().max_rect(cell).layout(
+                                        egui::Layout::centered_and_justified(
+                                            egui::Direction::LeftToRight,
+                                        ),
+                                    ));
+                                spinner(&mut inside, regenerating);
+                            }
+                            ui.with_layout(
+                                egui::Layout::left_to_right(egui::Align::Center),
+                                |ui| {
+                                    text(ui, op.name(), TextStyle::Body, palette.text_primary);
+                                },
+                            );
+                        });
                     });
                 });
             }
@@ -259,7 +302,7 @@ pub(crate) fn right(
                 CamTab::Operations if project.operations.is_empty() => {
                     empty_sentence(ui, strings.get(StrKey::AppPanelNoOperations));
                 }
-                CamTab::Operations => rows(ui, project.operations.iter().map(|op| op.name())),
+                CamTab::Operations => operation_rows(ui, state),
                 CamTab::Tools if project.tools.is_empty() => {
                     empty_sentence(ui, strings.get(StrKey::AppPanelNoTools));
                 }

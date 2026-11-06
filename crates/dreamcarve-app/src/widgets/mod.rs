@@ -6,3 +6,4 @@
 
 pub(crate) mod button;
 pub(crate) mod icon;
+pub(crate) mod spinner;

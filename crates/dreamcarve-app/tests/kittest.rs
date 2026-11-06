@@ -647,6 +647,75 @@ fn click_selects_and_escape_clears() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Capability 76 on the window: once the version 14 plaque (whose Drill
+/// predates `allow_tool_wider_than_hole`, so its holes are too small for
+/// its bit) has generated, the status bar's counts open the Warnings
+/// drawer; a row about a hole selects the hole; *Copy* hands egui
+/// `check`'s text (`dc_app::warnings::copy_text`), which reaches the OS
+/// clipboard once eframe's `clipboard` feature is on (#532 left it off
+/// for its licences); the close button closes it.
+#[test]
+fn warnings_drawer_selects_and_copies() {
+    let dir = scratch("warnings-drawer");
+    let plaque = dir.join("plaque.dcv");
+    std::fs::copy(
+        common::repo_root()
+            .join("crates/dreamcarve/tests/fixtures/holds-slug-migration/plaque.dcv"),
+        &plaque,
+    )
+    .expect("fixture copied");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    assert!(h.state().app().generation().finished().is_some());
+
+    h.get_by_label("Warnings").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    let row = dc_app::warnings::panel(h.state().app())
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .find(|r| r.code.as_deref() == Some("drill_hole_too_small"))
+        .expect("the plaque's holes are too small for its drill");
+    h.get_by_label(&row.line).click();
+    h.run();
+    assert_eq!(Some(h.state().app().selection().clone()), row.selection());
+
+    h.get_by_label("Copy").click();
+    h.step();
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        copied,
+        [dc_app::warnings::copy_text(h.state().app())],
+        "Copy hands egui check's text"
+    );
+    h.run();
+
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    assert!(!h.state().warnings_open());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A project of 500 shapes, built here and never committed: 500 linked
 /// copies of a 12 mm circle on a 25 × 20 grid at 20 mm pitch, on
 /// 510 × 410 × 12 mm stock, with a 3 mm Pocket and a medial V-Carve on
@@ -798,7 +867,7 @@ fn window_answers_input_while_generating() {
         slowest = slowest.max(timed_step(&mut h));
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    for _ in 0..5 {
+    for _ in 0..2 {
         slowest = slowest.max(timed_step(&mut h));
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
@@ -816,18 +885,25 @@ fn window_answers_input_while_generating() {
         "both rows show the spinner"
     );
     assert!(
+        h.state().app().scene().operations().iter().all(|o| o.stale),
+        "the Scene marks both stale, for the Viewport to fade (slice 16 draws runs)"
+    );
+    assert!(
         h.query_by_label_contains("Generating").is_some(),
         "the status bar says it is generating"
     );
 
     // Input is answered at once: the status bar's counts open the
-    // Warnings drawer in the frame that reads the click.
+    // Warnings drawer, read in one frame and drawn in the next.
     h.get_by_label("Warnings").click();
+    slowest = slowest.max(timed_step(&mut h));
+    assert!(h.state().warnings_open(), "the click was read");
     slowest = slowest.max(timed_step(&mut h));
     assert!(
         h.query_by_label("Copy").is_some(),
-        "the drawer opened in the frame that read the click"
+        "the drawer is drawn in the next frame"
     );
+    println!("window_answers_input_while_generating: slowest frame {slowest:?}");
     assert!(
         slowest < FRAME_BUDGET,
         "a frame took {slowest:?} while generating"

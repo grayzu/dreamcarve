@@ -8,3 +8,4 @@
 pub(crate) mod empty;
 pub(crate) mod side;
 pub(crate) mod unsaved;
+pub(crate) mod warnings;

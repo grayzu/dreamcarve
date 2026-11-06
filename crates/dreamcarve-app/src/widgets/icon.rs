@@ -42,6 +42,8 @@ pub enum Icon {
     PanelRightOpen,
     /// `lock`: a locked shape's padlock on the Viewport.
     Lock,
+    /// `info`: a hint or a note.
+    Info,
 }
 
 impl Icon {
@@ -65,6 +67,7 @@ impl Icon {
             Self::PanelLeftOpen => "panel-left-open",
             Self::PanelRightOpen => "panel-right-open",
             Self::Lock => "lock",
+            Self::Info => "info",
         }
     }
 
@@ -87,12 +90,13 @@ impl Icon {
             Self::PanelLeftOpen => '\u{e21d}',
             Self::PanelRightOpen => '\u{e434}',
             Self::Lock => '\u{e10b}',
+            Self::Info => '\u{e0f9}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 16] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -108,6 +112,7 @@ impl Icon {
         Self::PanelLeftOpen,
         Self::PanelRightOpen,
         Self::Lock,
+        Self::Info,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

@@ -8,13 +8,13 @@
 //! programs runs headless under `cargo test`. Enabled by the
 //! `test-support` feature for other crates' tests.
 
-use dc_job::{EstimateConfig, Finding, ProgramSplit, ProgramSummary};
+use dc_job::{EstimateConfig, Finding, ProgramSummary};
 use dc_project::Project;
 
 use crate::app::App;
 use crate::command::Command;
 use crate::error::CommandError;
-use crate::generation::JobResult;
+use crate::generation;
 use crate::prefs::Prefs;
 use crate::strings::Strings;
 
@@ -64,28 +64,10 @@ impl Harness {
     /// project's split, [`DATE`] and the default estimate settings: what
     /// the worker thread does, on this thread.
     pub fn generate(&mut self) {
-        loop {
-            let jobs = self.app.take_pending();
-            if jobs.is_empty() {
-                break;
-            }
-            for job in jobs {
-                let generated = dc_job::generate_operation(self.app.project(), &job.op);
-                self.app.accept(JobResult::Operation { job, generated });
-            }
-        }
-        if self.app.needs_finish()
-            && let Some(runs) = self.app.finish_input()
-        {
-            let finished = dc_job::finish(
-                self.app.project(),
-                &runs,
-                ProgramSplit::ProjectDefault,
-                DATE,
-                &EstimateConfig::default(),
-            );
-            let snapshot = self.app.snapshot();
-            self.app.accept(JobResult::Finished { snapshot, finished });
+        let estimate = EstimateConfig::default();
+        while let Some(work) = self.app.next_work() {
+            let result = generation::execute(self.app.project(), work, DATE, &estimate);
+            self.app.accept(result);
         }
     }
 

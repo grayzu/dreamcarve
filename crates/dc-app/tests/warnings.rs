@@ -323,10 +323,11 @@ fn copy_is_the_cli_text() {
             notes.len() + expected.lines.len() + 1,
             "{file}: {text}"
         );
-        assert_eq!(
-            text,
-            warnings::lines(&harness.app).join("\n") + "\n" + lines.last().unwrap() + "\n"
-        );
+        let panel: String = warnings::lines(&harness.app)
+            .iter()
+            .map(|l| format!("{l}\n"))
+            .collect();
+        assert_eq!(text, panel + lines.last().unwrap() + "\n", "{file}");
     }
 }
 
