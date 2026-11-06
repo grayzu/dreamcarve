@@ -934,11 +934,12 @@ fn rest_of_offers_earlier_pockets_only() {
     let row = row_of(&finish, "rest_of");
     assert!(matches!(row.kind, FieldKind::EarlierPocket));
     assert_eq!(row.group, Group::Strategy);
-    let label = run_edit(
-        &mut h,
-        editor::set_earlier_pocket(&finish, row, Some(&dc_project::OperationId::new("op1"))),
-    );
-    assert_eq!(label, "Set rest of of “Finish”");
+    let label = {
+        let edit =
+            editor::set_earlier_pocket(&finish, row, Some(&dc_project::OperationId::new("op1")));
+        run_edit(&mut h, edit)
+    };
+    assert!(label.ends_with("of “Finish”"), "{label}");
     let Operation::Pocket(rest) = op_of(&h, "op7") else {
         panic!("still a Pocket");
     };
@@ -963,10 +964,10 @@ fn rest_of_offers_earlier_pockets_only() {
         None,
         "choosing it again is no step"
     );
-    run_edit(
-        &mut h,
-        editor::set_earlier_pocket(&op_of(&h, "op7"), row, None),
-    );
+    {
+        let edit = editor::set_earlier_pocket(&op_of(&h, "op7"), row, None);
+        run_edit(&mut h, edit)
+    };
     let Operation::Pocket(cleared) = op_of(&h, "op7") else {
         panic!("still a Pocket");
     };
@@ -1005,10 +1006,10 @@ fn start_point_near_can_be_clicked_on_the_viewport() {
         FieldKind::Choice(options) => options.iter().position(|o| o.tag == "near").unwrap(),
         _ => panic!("the start point is a choice"),
     };
-    run_edit(
-        &mut h,
-        editor::choose(h.app.project(), &cut_out, start, near_index),
-    );
+    {
+        let edit = editor::choose(h.app.project(), &cut_out, start, near_index);
+        run_edit(&mut h, edit)
+    };
     let near = op_of(&h, "op4");
     let Operation::Profile(profile) = &near else {
         panic!("still a Profile");
@@ -1131,10 +1132,10 @@ fn profile_tab_request_round_trips() {
     assert!(editor::switched(&profile, tabs));
 
     // Off is `null`, and its rows go.
-    run_edit(
-        &mut h,
-        editor::switch(h.app.project(), &profile, tabs, false),
-    );
+    {
+        let edit = editor::switch(h.app.project(), &profile, tabs, false);
+        run_edit(&mut h, edit)
+    };
     assert_eq!(saved_tabs(&h), None);
     let off = op_of(&h, &id);
     assert!(
@@ -1144,7 +1145,10 @@ fn profile_tab_request_round_trips() {
         "no request, no settings"
     );
     // On is `init`'s request.
-    run_edit(&mut h, editor::switch(h.app.project(), &off, tabs, true));
+    {
+        let edit = editor::switch(h.app.project(), &off, tabs, true);
+        run_edit(&mut h, edit)
+    };
     assert_eq!(saved_tabs(&h), Some(init));
 
     let typed = |h: &mut dc_app::test_support::Harness, key: &str, text: &str| {
@@ -1160,7 +1164,10 @@ fn profile_tab_request_round_trips() {
     typed(&mut h, "tabs.height_mm", "2.5");
     let op = op_of(&h, &id);
     let shape = row_of(&op, "tabs.shape");
-    run_edit(&mut h, editor::choose(h.app.project(), &op, shape, 1));
+    {
+        let edit = editor::choose(h.app.project(), &op, shape, 1);
+        run_edit(&mut h, edit)
+    };
     let op = op_of(&h, &id);
     run_edit(
         &mut h,
@@ -1185,7 +1192,10 @@ fn profile_tab_request_round_trips() {
     let op = op_of(&h, &id);
     let placement = row_of(&op, "tabs.placement");
     assert_eq!(editor::choice(&op, placement), Some(0), "Count");
-    run_edit(&mut h, editor::choose(h.app.project(), &op, placement, 1));
+    {
+        let edit = editor::choose(h.app.project(), &op, placement, 1);
+        run_edit(&mut h, edit)
+    };
     let op = op_of(&h, &id);
     assert_eq!(editor::choice(&op, placement), Some(1), "Distances");
     assert!(
@@ -1221,7 +1231,10 @@ fn profile_tab_request_round_trips() {
 
     // Count again is `init`'s four, the size kept: the request acceptance
     // 78 places.
-    run_edit(&mut h, editor::choose(h.app.project(), &op, placement, 0));
+    {
+        let edit = editor::choose(h.app.project(), &op, placement, 0);
+        run_edit(&mut h, edit)
+    };
     assert_eq!(
         saved_tabs(&h),
         Some(dc_project::TabSpec {

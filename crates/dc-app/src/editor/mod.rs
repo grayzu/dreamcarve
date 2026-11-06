@@ -21,9 +21,10 @@ pub mod fields;
 mod set;
 pub mod targets;
 
+use dc_geometry::Point;
 use dc_job::{Finding, Tier};
-use dc_project::{Operation, Project, ToolId, Units};
-use serde_json::Value;
+use dc_project::{Operation, OperationId, Project, ToolId, Units};
+use serde_json::{Value, json};
 
 pub use fields::{ChoiceOption, FieldKind, Group, Row, ToolDefault, Unit};
 
@@ -59,7 +60,7 @@ pub const fn unit_suffix(row: &Row, units: Units) -> &'static str {
 /// `value`, a number of `row`'s kind, as its field shows it in `units`.
 fn number_text(row: &Row, value: f64, units: Units) -> String {
     match row.kind {
-        FieldKind::Length => units::field_text(value, units),
+        FieldKind::Length | FieldKind::LengthList => units::field_text(value, units),
         FieldKind::Rate => plain(units::to_display(value, units)),
         FieldKind::Percentage => plain(value * 100.0),
         _ => plain(value),
@@ -67,15 +68,20 @@ fn number_text(row: &Row, value: f64, units: Units) -> String {
 }
 
 /// The text `row`'s field shows for `op`: the value in the display units
-/// with no unit, or empty for `null`.
+/// with no unit, a list's values with commas between, or empty for
+/// `null`.
 #[must_use]
 pub fn value_text(project: &Project, op: &Operation, row: &Row) -> String {
-    match value_of(op, row) {
-        Some(Value::Number(n)) => n
+    let number = |value: &Value| {
+        value
             .as_f64()
             .map(|v| number_text(row, v, project.display_units))
-            .unwrap_or_default(),
+            .unwrap_or_default()
+    };
+    match value_of(op, row) {
+        Some(value @ Value::Number(_)) => number(&value),
         Some(Value::String(text)) => text,
+        Some(Value::Array(values)) => values.iter().map(number).collect::<Vec<_>>().join(", "),
         _ => String::new(),
     }
 }
@@ -133,6 +139,17 @@ fn parse_plain(text: &str, suffix: &str) -> Result<f64, CommandError> {
 fn parse(project: &Project, row: &Row, text: &str) -> Result<Value, CommandError> {
     let units = project.display_units;
     let trimmed = text.trim();
+    if matches!(row.kind, FieldKind::LengthList) {
+        // Commas separate the values, as the park point's X, Y does; a
+        // decimal comma is refused by each value's own parse.
+        return trimmed
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(|part| units::parse_length_mm(part, units).map(Value::from))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Value::Array);
+    }
     if trimmed.is_empty() {
         return Ok(Value::Null);
     }
@@ -276,7 +293,7 @@ pub fn switch(
     row: &Row,
     on: bool,
 ) -> Result<Option<Command>, CommandError> {
-    let FieldKind::Toggle(template) = row.kind else {
+    let Some(template) = row.kind.switch_template() else {
         return Err(CommandError::FieldRefused {
             field: row.key.to_owned(),
             reason: "it is not a switch".to_owned(),
@@ -314,6 +331,73 @@ pub fn reset(op: &Operation, row: &Row) -> Result<Option<Command>, CommandError>
 /// [`CommandError::FieldRefused`] when the file refuses it.
 pub fn set_tool(op: &Operation, row: &Row, tool: &ToolId) -> Result<Option<Command>, CommandError> {
     update(op, row, Value::from(tool.as_str()))
+}
+
+/// The Pockets `op` can rest on (functional spec, capability 13): the
+/// enabled Pockets before it in the list, in list order, by id and name.
+/// Never `op` itself or a Pocket after it, which validation refuses
+/// (`rest_of_invalid`); empty for any other kind. One whose targets differ
+/// is offered, and validation says so under the row, as a hand-edited file
+/// is told.
+#[must_use]
+pub fn earlier_pockets(project: &Project, op: &Operation) -> Vec<(OperationId, String)> {
+    if !matches!(op, Operation::Pocket(_)) {
+        return Vec::new();
+    }
+    project
+        .operations
+        .iter()
+        .take_while(|other| other.id() != op.id())
+        .filter(|other| matches!(other, Operation::Pocket(p) if p.enabled))
+        .map(|other| (other.id().clone(), other.name().to_owned()))
+        .collect()
+}
+
+/// The `rest_of` row's choice: `pocket`'s id, or `null` for none; `None`
+/// when `op` holds it already.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] when the row is not an earlier-Pocket
+/// row, or the file refuses it.
+pub fn set_earlier_pocket(
+    op: &Operation,
+    row: &Row,
+    pocket: Option<&OperationId>,
+) -> Result<Option<Command>, CommandError> {
+    if !matches!(row.kind, FieldKind::EarlierPocket) {
+        return Err(CommandError::FieldRefused {
+            field: row.key.to_owned(),
+            reason: "it does not name a Pocket".to_owned(),
+        });
+    }
+    update(
+        op,
+        row,
+        pocket.map_or(Value::Null, |id| Value::from(id.as_str())),
+    )
+}
+
+/// A click on the Viewport at `at_mm` (project space, Y-up, mm) while a
+/// point row's pick is armed: the row's point there; `None` when it is
+/// there already.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] when the row is not a point pick, or
+/// the file refuses it.
+pub fn pick_point(
+    op: &Operation,
+    row: &Row,
+    at_mm: Point,
+) -> Result<Option<Command>, CommandError> {
+    if !matches!(row.kind, FieldKind::PointPick) {
+        return Err(CommandError::FieldRefused {
+            field: row.key.to_owned(),
+            reason: "it does not take a point".to_owned(),
+        });
+    }
+    update(op, row, json!({ "x_mm": at_mm.x, "y_mm": at_mm.y }))
 }
 
 /// The findings located on an operation's rows, matched once

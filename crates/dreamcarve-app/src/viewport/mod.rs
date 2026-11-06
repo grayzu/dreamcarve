@@ -27,7 +27,9 @@
 //! instead of the selection and Escape disarms it (#536). While the
 //! operation editor's *Pick…* is armed, each click on a shape adds it to
 //! the operation's targets until Escape, and while its Targets group is
-//! hovered the targets draw in `shape.hover` (#539).
+//! hovered the targets draw in `shape.hover` (#539). While a point row's
+//! *Pick on the view* is armed, the next click sets that point (a
+//! Profile's start point) and disarms it, as the park point's does (#540).
 
 mod layers;
 pub(crate) mod renderer;
@@ -288,6 +290,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let selected = app.selection().instances().to_vec();
     let park_picking = project::park_pick_armed(ctx);
     let target_picking = editor::target_pick(ctx).is_some();
+    let point_picking = editor::point_pick(ctx).is_some();
     let mut disarm = false;
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
@@ -298,7 +301,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             actions.push(Action::FitView);
         }
         if !popup_open && input.consume_key(Modifiers::NONE, Key::Escape) {
-            if park_picking || target_picking {
+            if park_picking || target_picking || point_picking {
                 // Disarmed below: the context is locked inside `input_mut`.
                 disarm = true;
             } else {
@@ -339,6 +342,8 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     if disarm {
         if park_picking {
             project::arm_park_pick(ctx, false);
+        } else if point_picking {
+            editor::arm_point_pick(ctx, None);
         } else {
             editor::arm_target_pick(ctx, None);
         }
@@ -903,7 +908,10 @@ pub(crate) fn show(
                 moved |= scroll_and_pinch(ui, pane, pane_pos(pane, at), &mut camera);
             }
             let picking = editor::target_pick(ui.ctx());
-            if (project::park_pick_armed(ui.ctx()) || picking.is_some()) && response.hovered() {
+            let point = editor::point_pick(ui.ctx());
+            if (project::park_pick_armed(ui.ctx()) || picking.is_some() || point.is_some())
+                && response.hovered()
+            {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             if project::park_pick_armed(ui.ctx())
@@ -916,6 +924,17 @@ pub(crate) fn show(
                 view.clicks.reset();
                 let at_mm = camera.to_world(pane_pos(pane, at));
                 out.extend(project::park_at(app.project(), at_mm).map(Action::run));
+            } else if let Some(pick) = point
+                && response.clicked()
+                && let Some(at) = response.interact_pointer_pos()
+            {
+                // An armed click is the point row's (a Profile's start
+                // point), one click, not a selection.
+                editor::arm_point_pick(ui.ctx(), None);
+                view.drag = None;
+                view.clicks.reset();
+                let at_mm = camera.to_world(pane_pos(pane, at));
+                out.extend(editor::point_at(app.project(), &pick, at_mm));
             } else if let Some(op) = picking
                 && response.clicked()
                 && let Some(at) = response.interact_pointer_pos()

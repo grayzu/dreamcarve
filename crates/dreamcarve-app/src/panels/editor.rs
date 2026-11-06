@@ -22,6 +22,12 @@
 //!
 //! Clicking a Warnings row that names a field opens its operation here and
 //! focuses that field ([`request_focus`]).
+//!
+//! Slice 11 (#540): a point row (a Profile's start point near a point)
+//! arms the Viewport for one click ([`point_pick`]), as the park point's
+//! pick does; `rest_of` is a dropdown of the earlier enabled Pockets; a
+//! tab request is a switch with *Place tabs* beside it, disabled with its
+//! reason until slice 17 (#546), and its settings are ordinary rows.
 
 use dc_app::editor::{self, FieldKind, Group, Row, fields, targets};
 use dc_app::operations::Kind;
@@ -70,6 +76,44 @@ pub(crate) fn arm_target_pick(ctx: &egui::Context, op: Option<OperationId>) {
         }
         None => d.remove::<OperationId>(pick_id()),
     });
+}
+
+/// Where the Viewport's point pick is armed, for which operation and row.
+fn point_pick_id() -> Id {
+    Id::unique("dc.editor.point_pick")
+}
+
+/// The operation and the point row (by key path) the next Viewport click
+/// sets, while a point row's pick is armed (a Profile's *Start on the
+/// view*).
+pub(crate) fn point_pick(ctx: &egui::Context) -> Option<(OperationId, String)> {
+    ctx.data(|d| d.get_temp::<(OperationId, String)>(point_pick_id()))
+}
+
+/// Arms the Viewport's point pick for `op`'s row at `key`, or disarms it.
+pub(crate) fn arm_point_pick(ctx: &egui::Context, pick: Option<(OperationId, String)>) {
+    ctx.data_mut(|d| match pick {
+        Some(pick) => {
+            d.insert_temp(point_pick_id(), pick);
+        }
+        None => d.remove::<(OperationId, String)>(point_pick_id()),
+    });
+}
+
+/// The command a Viewport click at `at_mm` makes while `pick` is armed:
+/// the point row's point there.
+pub(crate) fn point_at(
+    project: &Project,
+    pick: &(OperationId, String),
+    at_mm: dc_geometry::Point,
+) -> Option<Action> {
+    let (id, key) = pick;
+    let op = project.operations.iter().find(|o| o.id() == id)?;
+    let row = fields::rows(op).into_iter().find(|r| r.key == key)?;
+    match editor::pick_point(op, row, at_mm) {
+        Ok(command) => command.map(Action::run),
+        Err(e) => Some(Action::Refused(e.to_string())),
+    }
 }
 
 /// Where this frame's hovered Targets group leaves its targets.
@@ -260,24 +304,32 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
                 | FieldKind::Angle
                 | FieldKind::Percentage
                 | FieldKind::Count
-                | FieldKind::Seconds => typed(ui, cx, row, id, tier, focused, out),
+                | FieldKind::Seconds
+                | FieldKind::LengthList => typed(ui, cx, row, id, tier, focused, out),
                 FieldKind::Choice(options) => choice(ui, cx, row, id, options, out),
                 FieldKind::Checkbox => checkbox(ui, cx, row, out),
                 FieldKind::Toggle(_) => switch(ui, cx, row, out),
+                FieldKind::TabRequest => tab_request(ui, cx, row, out),
                 FieldKind::ToolPicker => tool_picker(ui, cx, row, id, out),
+                FieldKind::EarlierPocket => earlier_pocket(ui, cx, row, id, out),
+                FieldKind::PointPick => point_pick_button(ui, cx, row),
                 FieldKind::InstanceList => {
                     // The Targets group's own block, under the row.
                     None
                 }
-                FieldKind::TabRequest
-                | FieldKind::ClearingList
-                | FieldKind::CutOut
-                | FieldKind::MaleBoard => block(ui, cx, row),
+                FieldKind::ClearingList | FieldKind::CutOut | FieldKind::MaleBoard => {
+                    block(ui, cx, row)
+                }
             }
         })
         .inner;
     if matches!(row.kind, FieldKind::InstanceList) {
         target_list(ui, cx, out);
+    }
+    if matches!(row.kind, FieldKind::PointPick)
+        && point_pick(ui.ctx()).is_some_and(|(op, key)| op == *cx.op.id() && key == row.key)
+    {
+        row::hint(ui, cx.strings.get(StrKey::EditorPickingPoint));
     }
     if focused {
         if let Some(response) = &response {
@@ -455,6 +507,106 @@ fn switch(ui: &mut Ui, cx: &Cx<'_>, row: &Row, out: &mut Vec<Action>) -> Option<
             editor::switch(cx.project, cx.op, row, !on),
             out,
         );
+    }
+    Some(response)
+}
+
+/// A tab request's switch, with *Place tabs* beside it: shown, and
+/// disabled with its reason, until slice 17 (#546) places requests from
+/// the editor (capability 69).
+fn tab_request(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    let response = switch(ui, cx, row, out);
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.add_enabled_ui(false, |ui| {
+            let spec = ButtonSpec::new(
+                ButtonKind::Secondary,
+                cx.strings.get(StrKey::EditorPlaceTabs),
+            )
+            .tooltip(cx.strings.get(StrKey::EditorPlaceTabsLater))
+            .enabled(false);
+            button(ui, spec);
+        });
+    });
+    response
+}
+
+/// `rest_of`: none, or one of the earlier enabled Pockets, in a dropdown.
+/// A file's `rest_of` that is not one of them (a later Pocket, written by
+/// hand) shows as chosen, by name, with validation's message under it.
+fn earlier_pocket(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    id: Id,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    label(ui, cx, row);
+    let none = cx.strings.get(StrKey::EditorRestOfNone);
+    let current = editor::value_text(cx.project, cx.op, row);
+    let selected = if current.is_empty() {
+        none.to_owned()
+    } else {
+        cx.project
+            .operations
+            .iter()
+            .find(|o| o.id().as_str() == current)
+            .map_or(current.clone(), |o| o.name().to_owned())
+    };
+    let offered = editor::earlier_pockets(cx.project, cx.op);
+    let mut picked: Option<Option<OperationId>> = None;
+    let width = ui.available_width();
+    let response = egui::ComboBox::from_id_salt(id)
+        .truncate()
+        .selected_text(selected)
+        .width(width)
+        .show_ui(ui, |ui| {
+            if ui.selectable_label(current.is_empty(), none).clicked() {
+                picked = Some(None);
+            }
+            for (pocket, name) in &offered {
+                if ui
+                    .selectable_label(pocket.as_str() == current, name)
+                    .clicked()
+                {
+                    picked = Some(Some(pocket.clone()));
+                }
+            }
+        })
+        .response
+        .accessible_name(cx.strings.get(row.label));
+    if let Some(pocket) = picked {
+        commit(
+            ui,
+            id.with("refused"),
+            editor::set_earlier_pocket(cx.op, row, pocket.as_ref()),
+            out,
+        );
+    }
+    Some(response)
+}
+
+/// A point row's *Start on the view*: arms the Viewport, whose next click
+/// sets the point (one click, as the park point's pick); clicked again,
+/// or Escape, disarms it.
+fn point_pick_button(ui: &mut Ui, cx: &Cx<'_>, row: &Row) -> Option<egui::Response> {
+    label(ui, cx, row);
+    let mine = (cx.op.id().clone(), row.key.to_owned());
+    let armed = point_pick(ui.ctx()).as_ref() == Some(&mine);
+    let kind = if armed {
+        ButtonKind::Primary
+    } else {
+        ButtonKind::Secondary
+    };
+    let spec = ButtonSpec::new(kind, cx.strings.get(StrKey::EditorPickPoint))
+        .icon(Icon::Crosshair, theme::ICON_SMALL_PX);
+    let response = button(ui, spec);
+    if response.clicked() {
+        arm_point_pick(ui.ctx(), (!armed).then_some(mine));
     }
     Some(response)
 }

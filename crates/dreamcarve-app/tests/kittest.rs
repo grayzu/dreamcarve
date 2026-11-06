@@ -1841,6 +1841,7 @@ fn warnings_row_focuses_its_field() {
 /// tabs* is shown, disabled until slice 17 (#546).
 #[test]
 fn start_point_click_on_the_viewport() {
+    use egui_kittest::kittest::NodeT as _;
     let dir = scratch("start-pick");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let dialogs = QueuedDialogs::default();

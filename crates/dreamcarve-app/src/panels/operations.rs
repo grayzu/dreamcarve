@@ -60,6 +60,11 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     {
         panels::editor::arm_target_pick(ui.ctx(), None);
     }
+    if let Some((picking, _)) = panels::editor::point_pick(ui.ctx())
+        && editing.is_none_or(|op| *op.id() != picking)
+    {
+        panels::editor::arm_point_pick(ui.ctx(), None);
+    }
     if let Some(op) = editing {
         let height = (ui.available_height() * 0.62).max(160.0);
         egui::Panel::bottom("operation_editor")
