@@ -48,7 +48,8 @@ pub fn copy_fixture(name: &str, dir: &Path) -> PathBuf {
 pub struct QueuedDialogs {
     answers: Arc<Mutex<VecDeque<Option<PathBuf>>>>,
     /// What each dialog was asked, in order: `open_project`,
-    /// `save_project <file name>`, `open_drawing`.
+    /// `save_project <file name>`, `open_drawing`, `open_library`,
+    /// `save_library <file name>`.
     pub asked: Arc<Mutex<Vec<String>>>,
 }
 
@@ -83,6 +84,14 @@ impl Dialogs for QueuedDialogs {
 
     fn open_drawing(&mut self, _title: &str) -> Option<PathBuf> {
         self.next("open_drawing".to_owned())
+    }
+
+    fn open_library(&mut self, _title: &str) -> Option<PathBuf> {
+        self.next("open_library".to_owned())
+    }
+
+    fn save_library(&mut self, _title: &str, file_name: &str) -> Option<PathBuf> {
+        self.next(format!("save_library {file_name}"))
     }
 }
 

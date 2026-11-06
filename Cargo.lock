@@ -854,6 +854,7 @@ dependencies = [
  "dc-geometry",
  "dc-import",
  "dc-job",
+ "dc-library",
  "dc-project",
  "serde_json",
  "thiserror 2.0.21",
@@ -1035,6 +1036,7 @@ name = "dreamcarve"
 version = "0.2.1"
 dependencies = [
  "clap",
+ "dc-app",
  "dc-cam",
  "dc-gcode",
  "dc-geometry",
@@ -1055,6 +1057,7 @@ dependencies = [
  "dc-geometry",
  "dc-import",
  "dc-job",
+ "dc-library",
  "dc-project",
  "dreamcarve-shell",
  "eframe",

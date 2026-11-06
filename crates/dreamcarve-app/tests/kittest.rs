@@ -434,3 +434,157 @@ fn theme_follows_system_and_both_palettes_apply() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 64 and acceptance 71 in the window (slice 8, #537):
+/// Project ▸ Tool Library… opens the sheet over the library in the config
+/// directory; *Import…* reads `tests/fixtures/fusion/sample.tools` in
+/// place, writes the library the CLI writes, and shows the report
+/// `tools import` prints in place of the table, with *Back*; ticking two
+/// rows and *Add 2 tools to project* copies them into the project under
+/// new ids as one undo step, as `tools add` does, and marks them "in
+/// project"; the search narrows the table without losing the ticks.
+#[test]
+fn library_window_adds_ticked_rows() {
+    let dir = scratch("library");
+    let config = dir.join("config");
+    // Opened in place and never saved: the project file is only read.
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    let before = h.state().app().project().clone();
+
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label_contains("tools.json").is_some(),
+        "the header names the library file"
+    );
+    assert!(
+        sheet.query_by_role(Role::CheckBox).is_none(),
+        "no library yet, so no rows"
+    );
+
+    // Import… the Fusion sample: the report replaces the table.
+    let sample = common::fixture("fusion/sample.tools");
+    dialogs.answer(&sample);
+    h.get_by_role(Role::Dialog).get_by_label("Import…").click();
+    h.run();
+    assert_eq!(dialogs.asked(), ["open_library"]);
+    let bytes = std::fs::read(&sample).unwrap();
+    let merged =
+        dc_app::library::import(&dc_library::Library::default(), &bytes, false).unwrap();
+    let sheet = h.get_by_role(Role::Dialog);
+    for line in merged.report.lines() {
+        assert!(
+            sheet.query_by_label(&line).is_some(),
+            "the report shows `{line}`"
+        );
+    }
+    assert!(
+        sheet
+            .query_by_label_contains("13 imported, 0 already present, 0 replaced, 10 skipped")
+            .is_some(),
+        "and the counts"
+    );
+    assert!(
+        sheet.query_by_role(Role::CheckBox).is_none(),
+        "in place of the table"
+    );
+    let written = std::fs::read_to_string(config.join("tools.json")).expect("library written");
+    assert_eq!(
+        written,
+        dc_library::save(&merged.library).unwrap(),
+        "the library file is the CLI's"
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Back").click();
+    h.run();
+
+    // Tick two rows; the primary action counts them.
+    for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::CheckBox, name)
+            .click();
+        h.run();
+    }
+    // A search hides a ticked row but keeps its tick.
+    h.get_by_role(Role::Dialog)
+        .get_by_role(Role::TextInput)
+        .focus();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role(Role::TextInput)
+        .type_text("drill");
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet
+            .query_by_role_and_label(Role::CheckBox, "1/4 in Flat End Mill")
+            .is_none(),
+        "the search hides the end mill"
+    );
+    assert!(
+        sheet
+            .query_by_role_and_label(Role::CheckBox, "5 mm Drill")
+            .is_some()
+    );
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Add 2 tools to project")
+        .click();
+    h.run();
+
+    let app = h.state().app();
+    let project = app.project();
+    assert_eq!(project.tools.len(), before.tools.len() + 2);
+    let by_name = |name: &str| {
+        merged
+            .library
+            .tools
+            .iter()
+            .find(|t| t.tool.name == name)
+            .unwrap()
+            .tool
+            .clone()
+    };
+    // Library order: the drill (lt6) before the end mill (lt11).
+    let drill = dc_project::Tool {
+        id: dc_project::ToolId::new("t4"),
+        ..by_name("5 mm Drill")
+    };
+    let end_mill = dc_project::Tool {
+        id: dc_project::ToolId::new("t5"),
+        ..by_name("1/4 in Flat End Mill")
+    };
+    assert_eq!(
+        project.tools[3..],
+        [drill, end_mill],
+        "the copies `tools add` makes"
+    );
+    assert_eq!(project.tools[..3], before.tools[..]);
+    assert_eq!(app.undo_label(), Some("Add 2 tools"), "one undo step");
+    assert!(app.is_dirty());
+
+    // With the search cleared, both rows are marked and no longer ticked.
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Clear the search")
+        .click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert_eq!(sheet.query_all_by_label("in project").count(), 2);
+    assert!(
+        sheet.query_by_label("Add to project").is_some(),
+        "nothing ticked"
+    );
+
+    // Escape closes the sheet; adding left the library file alone.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(
+        std::fs::read_to_string(config.join("tools.json")).unwrap(),
+        written
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
