@@ -44,7 +44,10 @@ fn no_colour_literal_outside_theme() {
     rust_files(&src, &mut files);
     assert!(files.len() > 5, "the scan found the sources: {files:?}");
     let theme_file = src.join("shell").join("theme.rs");
-    assert!(files.contains(&theme_file), "the theme module is where the spec puts it");
+    assert!(
+        files.contains(&theme_file),
+        "the theme module is where the spec puts it"
+    );
 
     let mut offences = Vec::new();
     for file in files.iter().filter(|f| **f != theme_file) {
@@ -87,10 +90,9 @@ fn parse_hex(hex: &str) -> Color32 {
 /// cells are not plain colours (the status triples, "as shape") are left
 /// to the next test.
 fn experience_tokens() -> Vec<(String, Color32, Color32)> {
-    let text = std::fs::read_to_string(
-        common::repo_root().join("docs/specs/phase-4/experience.md"),
-    )
-    .expect("experience.md readable");
+    let text =
+        std::fs::read_to_string(common::repo_root().join("docs/specs/phase-4/experience.md"))
+            .expect("experience.md readable");
     let mut rows = Vec::new();
     for line in text.lines() {
         let cells: Vec<&str> = line.split('|').map(str::trim).collect();
@@ -167,14 +169,25 @@ fn tokens_match_experience_md() {
     assert!(checked >= 21, "{checked} tokens checked");
 
     // The status rows: `text / stroke / tint` in each mode.
-    let text = std::fs::read_to_string(
-        common::repo_root().join("docs/specs/phase-4/experience.md"),
-    )
-    .unwrap();
+    let text =
+        std::fs::read_to_string(common::repo_root().join("docs/specs/phase-4/experience.md"))
+            .unwrap();
     let status = [
-        ("status.error", theme::LIGHT.status_error, theme::DARK.status_error),
-        ("status.warning", theme::LIGHT.status_warning, theme::DARK.status_warning),
-        ("status.info", theme::LIGHT.status_info, theme::DARK.status_info),
+        (
+            "status.error",
+            theme::LIGHT.status_error,
+            theme::DARK.status_error,
+        ),
+        (
+            "status.warning",
+            theme::LIGHT.status_warning,
+            theme::DARK.status_warning,
+        ),
+        (
+            "status.info",
+            theme::LIGHT.status_info,
+            theme::DARK.status_info,
+        ),
     ];
     for (token, light, dark) in status {
         let line = text

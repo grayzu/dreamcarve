@@ -11,6 +11,13 @@ license.workspace = true
 repository.workspace = true
 authors.workspace = true
 
+# Not in release archives yet (#532): a phase 3 release cut from main must
+# not ship an unfinished app, and THIRD-PARTY-LICENSES covers the CLI's
+# crates only. Slice 22 (release) turns this on with the app bundles, the
+# `.dcv` association (cargo-dist 0.33 has neither) and the licence texts.
+[package.metadata.dist]
+dist = false
+
 [lib]
 name = "dreamcarve_app"
 path = "src/lib.rs"

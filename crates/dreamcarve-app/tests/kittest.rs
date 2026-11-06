@@ -72,7 +72,9 @@ fn opens_plaque_renders_and_exports() {
         Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
             .renderer(WgpuTestRenderer::new())
-            .build_eframe(move |cc| dreamcarve_app::Shell::new(cc, options))
+            .build_eframe(move |cc| {
+                dreamcarve_app::Shell::new(cc, options).expect("the shell starts")
+            })
     } else {
         println!(
             "opens_plaque_renders_and_exports: no wgpu adapter on this machine, so the \
@@ -81,7 +83,9 @@ fn opens_plaque_renders_and_exports() {
         );
         Harness::builder()
             .with_size(egui::vec2(1280.0, 800.0))
-            .build_eframe(move |cc| dreamcarve_app::Shell::new(cc, options))
+            .build_eframe(move |cc| {
+                dreamcarve_app::Shell::new(cc, options).expect("the shell starts")
+            })
     };
     harness.run();
 
@@ -94,7 +98,10 @@ fn opens_plaque_renders_and_exports() {
         "the empty state is not shown over a project with shapes"
     );
     let title = harness.state().title().to_owned();
-    assert!(title.contains("plaque.dcv"), "the title names the file: {title}");
+    assert!(
+        title.contains("plaque.dcv"),
+        "the title names the file: {title}"
+    );
     assert!(!title.contains('•'), "and has no unsaved marker: {title}");
     // The opened file heads the recent list, and gui.toml says so.
     assert_eq!(harness.state().app().prefs().recent.first(), Some(&plaque));
@@ -149,7 +156,10 @@ fn widen_stock(harness: &mut Harness<'_, dreamcarve_app::Shell>) {
 
 /// Clicks `label` in the unsaved-changes sheet.
 fn click_in_sheet(harness: &mut Harness<'_, dreamcarve_app::Shell>, label: &str) {
-    harness.get_by_role(Role::Dialog).get_by_label(label).click();
+    harness
+        .get_by_role(Role::Dialog)
+        .get_by_label(label)
+        .click();
     harness.run();
 }
 
@@ -176,7 +186,10 @@ fn unsaved_changes_prompt() {
         "no sheet on a clean project"
     );
     widen_stock(&mut h);
-    assert!(h.state().title().contains('•'), "the title marks the change");
+    assert!(
+        h.state().title().contains('•'),
+        "the title marks the change"
+    );
     let edited = h.state().app().project().clone();
     press_close(&mut h);
     h.step();
@@ -197,9 +210,16 @@ fn unsaved_changes_prompt() {
         "the sheet names the file"
     );
     click_in_sheet(&mut h, "Cancel");
-    assert!(h.query_by_role(Role::Dialog).is_none(), "Cancel closes the sheet");
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "Cancel closes the sheet"
+    );
     assert!(!h.state().close_allowed(), "Cancel keeps the window open");
-    assert_eq!(h.state().app().project(), &edited, "and the project as it was");
+    assert_eq!(
+        h.state().app().project(),
+        &edited,
+        "and the project as it was"
+    );
     assert!(h.state().app().is_dirty());
 
     // Discard closes without writing.
@@ -335,12 +355,9 @@ fn theme_follows_system_and_both_palettes_apply() {
     let dialogs = QueuedDialogs::default();
     let mut h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
 
-    let (light, dark) = h.ctx.options(|o| {
-        (
-            o.light_style.visuals.clone(),
-            o.dark_style.visuals.clone(),
-        )
-    });
+    let (light, dark) = h
+        .ctx
+        .options(|o| (o.light_style.visuals.clone(), o.dark_style.visuals.clone()));
     assert_eq!(light.panel_fill, theme::LIGHT.surface_panel);
     assert_eq!(light.extreme_bg_color, theme::LIGHT.surface_sunken);
     assert_eq!(light.selection.bg_fill, theme::LIGHT.accent_soft);
@@ -355,11 +372,17 @@ fn theme_follows_system_and_both_palettes_apply() {
     h.input_mut().system_theme = Some(egui::Theme::Light);
     h.run();
     assert_eq!(h.ctx.theme(), egui::Theme::Light);
-    assert_eq!(h.ctx.global_style().visuals.panel_fill, theme::LIGHT.surface_panel);
+    assert_eq!(
+        h.ctx.global_style().visuals.panel_fill,
+        theme::LIGHT.surface_panel
+    );
     h.input_mut().system_theme = Some(egui::Theme::Dark);
     h.run();
     assert_eq!(h.ctx.theme(), egui::Theme::Dark);
-    assert_eq!(h.ctx.global_style().visuals.panel_fill, theme::DARK.surface_panel);
+    assert_eq!(
+        h.ctx.global_style().visuals.panel_fill,
+        theme::DARK.surface_panel
+    );
 
     // A Light preference wins over a dark OS, and is remembered.
     h.get_by_label("View").click();
@@ -402,7 +425,10 @@ fn theme_follows_system_and_both_palettes_apply() {
         Some(&"JetBrainsMono-Regular".to_owned())
     );
     assert!(
-        !fonts.font_data.keys().any(|k| k.contains("Ubuntu") || k.contains("Hack")),
+        !fonts
+            .font_data
+            .keys()
+            .any(|k| k.contains("Ubuntu") || k.contains("Hack")),
         "egui's own fonts are not bundled: {:?}",
         fonts.font_data.keys()
     );

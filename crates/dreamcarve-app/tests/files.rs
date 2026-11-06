@@ -20,6 +20,7 @@ use common::{QueuedDialogs, command_key, harness, options, scratch};
 use dreamcarve_app::files;
 use dreamcarve_shell::{Paths, gui_prefs};
 use eframe::egui;
+use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::Queryable as _;
 
 /// Twelve projects opened one after another: Recent keeps the last ten,
@@ -59,11 +60,17 @@ fn recent_lists_ten_and_drops_missing() {
     h.run();
     for path in &newest_first {
         let name = path.file_name().unwrap().to_str().unwrap();
-        assert!(h.query_by_label(name).is_some(), "Recent lists {name}");
+        assert!(
+            h.query_by_role_and_label(Role::Button, name).is_some(),
+            "Recent lists {name}"
+        );
     }
     for path in &paths[..2] {
         let name = path.file_name().unwrap().to_str().unwrap();
-        assert!(h.query_by_label(name).is_none(), "{name} fell off the list");
+        assert!(
+            h.query_by_role_and_label(Role::Button, name).is_none(),
+            "{name} fell off the list"
+        );
     }
     h.key_press(egui::Key::Escape);
     h.run();
@@ -79,14 +86,23 @@ fn recent_lists_ten_and_drops_missing() {
         .cloned()
         .collect();
     assert_eq!(listed, expected);
-    assert_eq!(prefs.recent, expected, "the missing files leave the preferences too");
+    assert_eq!(
+        prefs.recent, expected,
+        "the missing files leave the preferences too"
+    );
 
     h.get_by_label("File").click();
     h.run();
     h.get_by_label("Open Recent").hover();
     h.run();
-    assert!(h.query_by_label("project-12.dcv").is_none());
-    assert!(h.query_by_label("project-11.dcv").is_some());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "project-12.dcv")
+            .is_none()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "project-11.dcv")
+            .is_some()
+    );
     assert_eq!(h.state().app().prefs().recent, expected);
     std::fs::remove_dir_all(&dir).unwrap();
 }

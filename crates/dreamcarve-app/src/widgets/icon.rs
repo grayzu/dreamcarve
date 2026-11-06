@@ -1,0 +1,144 @@
+// Copyright 2026 The DreamCarve Contributors
+// SPDX-License-Identifier: Apache-2.0
+
+//! The Lucide icons the shell draws (`docs/specs/phase-4/experience.md`,
+//! section 6), by name and code point in the bundled `lucide.ttf`
+//! (`assets/icons/lucide/codepoints.json`, lucide-static 1.67.0).
+
+use eframe::egui::{self, FontFamily, FontId, Galley};
+
+use crate::shell::theme;
+
+/// An icon of the set, named as Lucide names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Icon {
+    /// `folder-open`: Open.
+    FolderOpen,
+    /// `save`: Save.
+    Save,
+    /// `undo-2`: Undo.
+    Undo,
+    /// `redo-2`: Redo.
+    Redo,
+    /// `file-input`: Import a drawing.
+    FileInput,
+    /// `image-plus`: Import a picture.
+    ImagePlus,
+    /// `maximize`: Fit.
+    Maximize,
+    /// `bookmark-plus`: the Tab tool.
+    BookmarkPlus,
+    /// `download`: Export.
+    Download,
+    /// `x`: close.
+    X,
+    /// `circle-x`: an error.
+    CircleX,
+    /// `triangle-alert`: a warning.
+    TriangleAlert,
+    /// `panel-left-open`: reopen the left column.
+    PanelLeftOpen,
+    /// `panel-right-open`: reopen the CAM panel.
+    PanelRightOpen,
+}
+
+impl Icon {
+    /// Lucide's name.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::FolderOpen => "folder-open",
+            Self::Save => "save",
+            Self::Undo => "undo-2",
+            Self::Redo => "redo-2",
+            Self::FileInput => "file-input",
+            Self::ImagePlus => "image-plus",
+            Self::Maximize => "maximize",
+            Self::BookmarkPlus => "bookmark-plus",
+            Self::Download => "download",
+            Self::X => "x",
+            Self::CircleX => "circle-x",
+            Self::TriangleAlert => "triangle-alert",
+            Self::PanelLeftOpen => "panel-left-open",
+            Self::PanelRightOpen => "panel-right-open",
+        }
+    }
+
+    /// The glyph's code point in `lucide.ttf`.
+    #[must_use]
+    pub const fn codepoint(self) -> char {
+        match self {
+            Self::FolderOpen => '\u{e247}',
+            Self::Save => '\u{e14d}',
+            Self::Undo => '\u{e2a1}',
+            Self::Redo => '\u{e2a0}',
+            Self::FileInput => '\u{e0c5}',
+            Self::ImagePlus => '\u{e1f7}',
+            Self::Maximize => '\u{e112}',
+            Self::BookmarkPlus => '\u{e23d}',
+            Self::Download => '\u{e0b2}',
+            Self::X => '\u{e1b2}',
+            Self::CircleX => '\u{e084}',
+            Self::TriangleAlert => '\u{e193}',
+            Self::PanelLeftOpen => '\u{e21d}',
+            Self::PanelRightOpen => '\u{e434}',
+        }
+    }
+
+    /// Every icon, for checking the code points.
+    #[cfg(test)]
+    pub const ALL: [Self; 14] = [
+        Self::FolderOpen,
+        Self::Save,
+        Self::Undo,
+        Self::Redo,
+        Self::FileInput,
+        Self::ImagePlus,
+        Self::Maximize,
+        Self::BookmarkPlus,
+        Self::Download,
+        Self::X,
+        Self::CircleX,
+        Self::TriangleAlert,
+        Self::PanelLeftOpen,
+        Self::PanelRightOpen,
+    ];
+
+    /// The glyph laid out at `size_px` in `colour`, ready to paint.
+    #[must_use]
+    pub fn galley(
+        self,
+        ui: &egui::Ui,
+        size_px: f32,
+        colour: egui::Color32,
+    ) -> std::sync::Arc<Galley> {
+        ui.painter().layout_no_wrap(
+            self.codepoint().to_string(),
+            FontId::new(size_px, FontFamily::Name(theme::ICONS.into())),
+            colour,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each icon's code point is the one the bundled font's map gives its
+    /// name, so a font update that renumbers the set fails here.
+    #[test]
+    fn codepoints_match_the_bundled_map() {
+        let map = include_str!("../../assets/icons/lucide/codepoints.json");
+        for icon in Icon::ALL {
+            let entry = format!("\"{}\": {},", icon.name(), u32::from(icon.codepoint()));
+            let last = format!("\"{}\": {}\n", icon.name(), u32::from(icon.codepoint()));
+            assert!(
+                map.contains(&entry) || map.contains(&last),
+                "{} is not {:#x} in codepoints.json",
+                icon.name(),
+                u32::from(icon.codepoint())
+            );
+        }
+    }
+}

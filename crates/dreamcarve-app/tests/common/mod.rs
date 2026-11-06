@@ -101,7 +101,7 @@ pub fn options(config: &Path, open: Option<PathBuf>, dialogs: &QueuedDialogs) ->
 pub fn harness(options: Options, width: f32, height: f32) -> Harness<'static, Shell> {
     let mut harness = Harness::builder()
         .with_size(egui::vec2(width, height))
-        .build_eframe(move |cc| Shell::new(cc, options));
+        .build_eframe(move |cc| Shell::new(cc, options).expect("the shell starts"));
     harness.run();
     harness
 }
