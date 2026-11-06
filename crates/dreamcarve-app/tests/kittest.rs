@@ -1582,6 +1582,7 @@ impl FrameTimes {
         assert!(n >= FRAME_SAMPLE, "only {n} frames were timed");
         let p95 = sorted[(n * 95).div_ceil(100) - 1];
         let slowest = sorted[n - 1];
+        // Printed before judging, so a failure on CI shows the spread.
         println!(
             "window_answers_input_while_generating: {n} frames, median {:?}, p95 {p95:?}, slowest {slowest:?}",
             sorted[n / 2]
@@ -1605,7 +1606,8 @@ impl FrameTimes {
 /// the next frame, well within the second the spec allows: the worker
 /// finishes the job it is on (design open question 4), and its result is
 /// dropped when it lands. *Regenerate All* then runs generation to its
-/// end, so the frames that accept each result are timed too.
+/// end, so the frames that accept each result are timed too, and runs it
+/// again until at least 60 frames are timed.
 ///
 /// Every frame from opening to the end is timed on the UI thread, one
 /// egui pass each (a click is three: hover, press, release), and the
@@ -1700,19 +1702,23 @@ fn window_answers_input_while_generating() {
     );
 
     // Regenerate All, from the drawer: generation runs to its end, and
-    // the frames that accept each result are timed with the rest.
-    frames.click(&mut h, "Regenerate All");
-    assert!(h.state().app().generation().busy(), "generation restarted");
+    // the frames that accept each result are timed with the rest; again
+    // until there are enough frames to judge, since a fast machine
+    // generates in fewer of them.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
-    while h.state().app().generation().finished().is_none() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "generation never finished"
-        );
-        frames.step(&mut h);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+    while frames.0.len() < FRAME_SAMPLE {
+        frames.click(&mut h, "Regenerate All");
+        assert!(h.state().app().generation().busy(), "generation restarted");
+        while h.state().app().generation().finished().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "generation never finished"
+            );
+            frames.step(&mut h);
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!h.state().app().generation().busy(), "generation finished");
     }
-    assert!(!h.state().app().generation().busy(), "generation finished");
     frames.assert_within_budget();
     let _ = std::fs::remove_dir_all(&dir);
 }
