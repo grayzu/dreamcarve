@@ -886,3 +886,115 @@ fn park_point_click_on_the_viewport() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Drops `path` on the window, as the OS hands a dropped file over.
+fn drop_file(h: &mut Harness<'_, dreamcarve_app::Shell>, path: &std::path::Path) {
+    h.input_mut().dropped_files.push(egui::DroppedFile {
+        path: Some(path.to_path_buf()),
+        ..Default::default()
+    });
+    h.run();
+}
+
+/// Capability 55 (#535): a dropped `.svg` opens the Import drawing sheet,
+/// which names the file and the shapes it holds and offers no options for
+/// an SVG; nothing is imported until *Import*, which adds the shapes as
+/// one undo step and selects them. A dropped DXF that declares no units
+/// opens the sheet with *Import* disabled and the importer's message
+/// until units are chosen. A dropped `.dcv` still opens the project
+/// (slice 3), through the unsaved-changes sheet when there are changes.
+#[test]
+fn drop_of_svg_opens_the_import_sheet() {
+    use egui_kittest::kittest::NodeT as _;
+
+    let dir = scratch("drop-drawing");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    let sign = common::fixture("sign.svg");
+    drop_file(&mut h, &sign);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label("Import drawing").is_some(),
+        "the sheet's title"
+    );
+    assert!(
+        sheet.query_by_label_contains("sign.svg").is_some(),
+        "the sheet names the file"
+    );
+    assert!(
+        sheet.query_by_label_contains("closed").is_some(),
+        "and counts its shapes"
+    );
+    assert!(
+        sheet.query_by_label("Join tolerance").is_none() && sheet.query_by_label("Units").is_none(),
+        "an SVG has no options"
+    );
+    assert!(
+        h.state().app().project().instances.is_empty(),
+        "nothing is imported before Import"
+    );
+
+    h.get_by_role(Role::Dialog).get_by_label("Import").click();
+    h.run();
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "Import closes the sheet"
+    );
+    let app = h.state().app();
+    let (import, _) = dc_import::import_svg(
+        &std::fs::read(&sign).unwrap(),
+        &dc_import::SvgImportOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(app.project().instances.len(), import.instances.len());
+    assert_eq!(
+        app.selection().instances().len(),
+        import.instances.len(),
+        "the new shapes are selected"
+    );
+    assert_eq!(app.undo_label(), Some("Import sign.svg"));
+    assert!(app.is_dirty());
+
+    // A DXF with no `$INSUNITS`: Import waits for the units.
+    let no_units = common::fixture("dxf/no_units.dxf");
+    drop_file(&mut h, &no_units);
+    let refusal = dc_import::import_dxf(
+        &std::fs::read(&no_units).unwrap(),
+        &dc_import::DxfImportOptions::new(),
+    )
+    .unwrap_err()
+    .to_string();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label_contains(&refusal).is_some(),
+        "the sheet shows the importer's message: {refusal}"
+    );
+    assert!(
+        sheet.query_by_label("Join tolerance").is_some(),
+        "a DXF has options"
+    );
+    assert!(
+        sheet.get_by_label("Import").accesskit_node().is_disabled(),
+        "Import is disabled until units are chosen"
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Cancel").click();
+    h.run();
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "Cancel closes the sheet"
+    );
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Import sign.svg"),
+        "and imports nothing"
+    );
+
+    // A dropped project still opens, asking first about the import.
+    let plaque = common::fixture("plaque.dcv");
+    drop_file(&mut h, &plaque);
+    click_in_sheet(&mut h, "Discard");
+    assert_eq!(h.state().app().source(), Some(plaque.as_path()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -1067,6 +1067,54 @@ mod tests {
         assert_eq!(result.bounds, None);
     }
 
+    /// The layer list the app's import sheet ticks (phase 4, capability
+    /// 55): every model-space layer in name order, with the closed and
+    /// open shapes it imports once stitched and deduped, and what on it
+    /// was not read. The list is the file's, whatever the filter keeps.
+    #[test]
+    fn layers_list_every_layer_whatever_the_filter() {
+        let (all, _) = import(fixture!("layers.dxf"));
+        let summary: Vec<(&str, usize, usize)> = all
+            .layers
+            .iter()
+            .map(|l| (l.name.as_str(), l.closed, l.open))
+            .collect();
+        assert_eq!(summary, [("0", 1, 0), ("a", 0, 2), ("b", 1, 0)]);
+        assert!(all.layers.iter().all(|l| l.skipped.is_empty()));
+        let only_b = DxfImportOptions {
+            layers: Some(vec!["b".to_owned()]),
+            ..DxfImportOptions::new()
+        };
+        let (filtered, _) = import_with(fixture!("layers.dxf"), only_b);
+        assert_eq!(names(&filtered), ["b"]);
+        assert_eq!(filtered.layers, all.layers);
+
+        // Unread entities are listed on their layer; a layer that holds
+        // nothing readable is listed with no shapes.
+        let (unsupported, _) = import(fixture!("unsupported.dxf"));
+        let listed: Vec<(&str, usize, usize, Vec<(&str, usize)>)> = unsupported
+            .layers
+            .iter()
+            .map(|l| {
+                let skipped = l.skipped.iter().map(|(k, n)| (k.as_str(), *n)).collect();
+                (l.name.as_str(), l.closed, l.open, skipped)
+            })
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("dims", 0, 0, vec![("DIMENSION", 1)]),
+                ("kept", 0, 1, vec![]),
+                ("notes", 0, 0, vec![("MTEXT", 1), ("TEXT", 1)]),
+            ]
+        );
+
+        // Stitched: the plaque's pocket is eight entities, one shape.
+        let (plaque, _) = import(include_bytes!("../../../tests/fixtures/plaque.dxf"));
+        let shapes: usize = plaque.layers.iter().map(|l| l.closed + l.open).sum();
+        assert_eq!(shapes, plaque.definitions.len());
+    }
+
     /// Block geometry on layer `0` belongs to the layer of the INSERT that
     /// places it, so the shapes are named `part` and `nested`, not `0`.
     #[test]
