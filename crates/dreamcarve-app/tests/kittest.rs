@@ -1993,3 +1993,42 @@ fn start_point_click_on_the_viewport() {
     assert_eq!(still.start, after.start);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// S18 in the editor (capability 68's Drill line, mock-up 07): the sign's
+/// countersink shows its depth, derived from the mouth and the V-bit
+/// (`2.5 + 6 / (2 · tan 45°)`), in a read-only Depth field where a Drill's
+/// typed depth would be, and typing there writes nothing.
+#[test]
+fn countersink_depth_shows_derived_read_only() {
+    use egui_kittest::kittest::NodeT as _;
+    let dir = scratch("countersink-derived");
+    let sign = copy_fixture("sign.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(sign), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Countersinks").click();
+    h.run();
+    let before = operation_of(&h, "op5");
+    let depth = h.get_by_role_and_label(Role::TextInput, "Depth");
+    let node = depth.accesskit_node();
+    assert!(node.is_disabled(), "the derived depth is read-only");
+    assert_eq!(node.value().as_deref(), Some("derived: 5.5"));
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Mouth diameter")
+            .is_some(),
+        "the countersink's own rows are shown"
+    );
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::TextInput, "Depth").click();
+    h.run();
+    h.event(egui::Event::Text("9".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert_eq!(operation_of(&h, "op5"), before, "nothing is typed");
+    assert_eq!(undo_steps(&h), steps);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
