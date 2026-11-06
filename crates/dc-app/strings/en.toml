@@ -479,6 +479,17 @@ picking_point = "Click on the view where the cut should start; Escape cancels"
 place_tabs = "Place tabs"
 place_tabs_later = "Placing tabs from the editor comes with a later release; `dreamcarve tabs place` places this request now."
 rest_of_none = "None"
+# Slice 13 (#542): a V-bit's cone under the tool picker, the clearing-pass
+# list, and the carve summary in the editor's status line.
+tool_cone = "cone height {value}"
+clearing_intro = "Cut before the V-bit, largest tool first; each is its own tool run."
+clearing_empty = "No clearing passes: the V-bit clears the floor itself."
+clearing_pass = "Pass {n}"
+clearing_grip = "Drag to reorder pass {n}"
+clearing_remove = "Remove pass {n}"
+clearing_add = "Add pass"
+clearing_add_hint = "picks the next smaller end mill"
+carve_summary = "check says"
 
 # The editor's groups, in capability 66's order.
 [editor.group]
@@ -587,6 +598,26 @@ rest_of = "Rest of"
 rest_of_help = "An earlier Pocket of the same shapes whose leftovers this one clears with a smaller bit."
 alternate_direction = "Alternate direction"
 alternate_direction_help = "Cut an open path's passes back and forth, saving a retract each pass."
+# Slice 13 (#542): the V-Carve's fields and each clearing pass's (the
+# V-Carve chapter's).
+flat_depth = "Flat depth"
+flat_depth_help = "Off carves every part of the shape to its full depth; on, no point is cut deeper than this below the start plane and the wide parts get a flat floor."
+start_depth = "Start depth"
+start_depth_help = "How far below the stock top the carve starts; 0 carves the stock top."
+start_plane_cleared = "Start plane cleared externally"
+start_plane_cleared_help = "Another program cleared the start plane, where no Pocket or V-Carve floor in this project does."
+v_carve_strategy = "Strategy"
+v_carve_strategy_help = "Along the shape's middle (Medial), or in rings stepping in from the outline (Offset)."
+ring_step_over = "Ring step-over"
+ring_step_over_help = "How far each ring steps in from the one outside it; small keeps the corners crisp."
+floor_step_over = "Floor stepover"
+floor_step_over_help = "How far apart the V-bit's rings on the flat floor are, as a share of its cut width there; empty takes the tool's."
+clearing = "Clearing passes"
+clearing_help = "End mills that clear the flat floor before the V-bit, largest first; each pass cuts only what the ones before it could not reach."
+pass_tool = "Tool"
+pass_tool_help = "The flat end mill this pass cuts with; its step-down and stepover set the passes."
+clearance = "Clearance"
+clearance_help = "How the pass clears the floor: rings stepping in from the wall, or parallel lines at an angle."
 
 # The choices' names.
 [editor.choice]
@@ -616,6 +647,7 @@ offset = "Offset"
 raster = "Raster"
 last = "Last"
 first = "First"
+medial = "Medial"
 
 # The Import drawing sheet (slice 6, #535; functional spec, capabilities
 # 51 and 55; mock-up 02).

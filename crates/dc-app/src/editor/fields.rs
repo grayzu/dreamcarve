@@ -34,7 +34,9 @@
 //! where they need one. Slice 11 (#540) fills the Pocket and the Engrave,
 //! and gives the Profile's tab request its own rows (`tabs.width_mm`, the
 //! internally tagged `tabs.placement` chosen as a variant is) and its
-//! start point a Viewport pick.
+//! start point a Viewport pick. Slice 13 (#542) fills the V-Carve, with a
+//! switched length for its flat depth and a table of its own for each
+//! clearing pass ([`CLEARING_PASS`]), edited at the pass's key path.
 
 use dc_project::{Operation, Project, Tool};
 use serde_json::{Value, json};
@@ -218,6 +220,12 @@ pub enum FieldKind {
     Text,
     /// A length, mm in the file, display units on screen.
     Length,
+    /// A length that is `null` while its switch is off (a V-Carve's flat
+    /// depth; an Inlay's outline rounding). Turning the switch on writes
+    /// nothing: the field opens empty and the length typed is the value,
+    /// so the app never sets a depth of its own (S20). Turning it off
+    /// writes `null`.
+    SwitchedLength,
     /// A feed rate, mm/min in the file.
     Rate,
     /// An angle in degrees.
@@ -325,7 +333,7 @@ impl Row {
     #[must_use]
     pub const fn unit(&self) -> Unit {
         match self.kind {
-            FieldKind::Length | FieldKind::LengthList => Unit::Length,
+            FieldKind::Length | FieldKind::SwitchedLength | FieldKind::LengthList => Unit::Length,
             FieldKind::Rate => Unit::Rate,
             FieldKind::Angle => Unit::Degrees,
             FieldKind::Percentage => Unit::Percent,
@@ -647,6 +655,23 @@ const WALL_PASSES: &[ChoiceOption] = &[
     tag(StrKey::EditorChoiceNone, "none"),
 ];
 
+/// A V-Carve's offset rings as the V-Carve chapter writes them: 0.5 mm
+/// apart, in `init`'s direction.
+fn v_carve_offset_template(_: &Project) -> Value {
+    let init = dc_job::project_from::default_profile(Vec::new(), dc_project::ToolId::new(""));
+    json!({ "step_over_mm": 0.5, "direction": init.direction })
+}
+
+/// A V-Carve's strategy (slice 13, #542).
+const V_CARVE_STRATEGIES: &[ChoiceOption] = &[
+    tag(StrKey::EditorChoiceMedial, "medial"),
+    variant(
+        StrKey::EditorChoiceOffset,
+        "offset",
+        v_carve_offset_template,
+    ),
+];
+
 // ── The tables. ────────────────────────────────────────────────────────
 
 /// Capability 68's Profile line, every field.
@@ -937,9 +962,142 @@ const DRILL: &[Row] = &[
 /// The rows slice 10 gives a Bore; slice 12 (#541) adds the rest.
 const BORE: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];
 
-/// The rows slice 10 gives a V-Carve, which has no `depth_mm`; slice 13
-/// (#542) adds the rest.
-const V_CARVE: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, SAFE_Z];
+/// Capability 68's V-Carve line, every field (slice 13, #542; mock-up
+/// 06, left). A V-Carve has no `depth_mm`: its depth follows its shapes,
+/// clamped by the flat depth, which is off at `null` and never set by the
+/// app (S20). The clearing passes are one block ([`CLEARING_PASS`] are
+/// each pass's rows).
+const V_CARVE: &[Row] = &[
+    NAME,
+    ENABLED,
+    TARGETS,
+    TOOL,
+    row(
+        Group::Depth,
+        "flat_depth_mm",
+        FieldKind::SwitchedLength,
+        StrKey::EditorFieldFlatDepth,
+        StrKey::EditorFieldFlatDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "start_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldStartDepth,
+        StrKey::EditorFieldStartDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "start_plane_cleared_externally",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldStartPlaneCleared,
+        StrKey::EditorFieldStartPlaneClearedHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Strategy,
+        "strategy",
+        FieldKind::Choice(V_CARVE_STRATEGIES),
+        StrKey::EditorFieldVCarveStrategy,
+        StrKey::EditorFieldVCarveStrategyHelp,
+    ),
+    row(
+        Group::Strategy,
+        "strategy.offset.step_over_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldRingStepOver,
+        StrKey::EditorFieldRingStepOverHelp,
+    ),
+    row(
+        Group::Strategy,
+        "strategy.offset.direction",
+        FieldKind::Choice(DIRECTIONS),
+        StrKey::EditorFieldDirection,
+        StrKey::EditorFieldDirectionHelp,
+    ),
+    tool_row(
+        Group::Strategy,
+        "step_over_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldFloorStepOver,
+        StrKey::EditorFieldFloorStepOverHelp,
+        ToolDefault::StepOver,
+    ),
+    row(
+        Group::Strategy,
+        "clearing",
+        FieldKind::ClearingList,
+        StrKey::EditorFieldClearing,
+        StrKey::EditorFieldClearingHelp,
+    ),
+    MACHINING_ORDER,
+    SAFE_Z,
+];
+
+/// One clearing pass's rows (capability 70; slice 13, #542), their key
+/// paths under the pass (`entry.ramp.angle_deg`): a V-Carve's and an
+/// Inlay's `clearing` items. The list's block walks them for each pass at
+/// its own key path ([`super::clearing::rows`], `clearing[1].tool`), with
+/// the renderers every row has. The tool is an end mill's; the strategy,
+/// direction and entry are a Pocket's.
+pub const CLEARING_PASS: &[Row] = &[
+    row(
+        Group::Strategy,
+        "tool",
+        FieldKind::ToolPicker,
+        StrKey::EditorFieldPassTool,
+        StrKey::EditorFieldPassToolHelp,
+    ),
+    row(
+        Group::Strategy,
+        "strategy",
+        FieldKind::Choice(CLEARANCE_STRATEGIES),
+        StrKey::EditorFieldClearance,
+        StrKey::EditorFieldClearanceHelp,
+    ),
+    row(
+        Group::Strategy,
+        "strategy.raster.angle_deg",
+        FieldKind::Angle,
+        StrKey::EditorFieldRasterAngle,
+        StrKey::EditorFieldRasterAngleHelp,
+    ),
+    row(
+        Group::Strategy,
+        "direction",
+        FieldKind::Choice(DIRECTIONS),
+        StrKey::EditorFieldDirection,
+        StrKey::EditorFieldDirectionHelp,
+    ),
+    row(
+        Group::Strategy,
+        "entry",
+        FieldKind::Choice(ENTRIES),
+        StrKey::EditorFieldEntry,
+        StrKey::EditorFieldEntryHelp,
+    ),
+    row(
+        Group::Strategy,
+        "entry.ramp.angle_deg",
+        FieldKind::Angle,
+        StrKey::EditorFieldRampAngle,
+        StrKey::EditorFieldRampAngleHelp,
+    ),
+    row(
+        Group::Strategy,
+        "entry.helix.diameter_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldHelixDiameter,
+        StrKey::EditorFieldHelixDiameterHelp,
+    ),
+    row(
+        Group::Strategy,
+        "entry.helix.angle_deg",
+        FieldKind::Angle,
+        StrKey::EditorFieldHelixAngle,
+        StrKey::EditorFieldHelixAngleHelp,
+    ),
+];
 
 /// The rows slice 10 gives an Inlay; slice 14 (#543) adds the rest.
 const INLAY: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];

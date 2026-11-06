@@ -43,11 +43,11 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use dc_app::editor::{self, FieldKind, Group, fields};
+use dc_app::editor::{self, FieldKind, Group, clearing, fields};
 use dc_app::operations::{self, Kind};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::Tier;
-use dc_project::{Entry, Operation, Project, Units};
+use dc_project::{Entry, Operation, OperationId, Project, ToolKind, Units};
 use serde_json::Value;
 
 /// The leaves of each kind's records that have no row yet (an entry holds
@@ -79,19 +79,8 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
             "through_cut_allowance_mm",
             "direction",
         ],
-        // Slice 13 (#542).
-        Kind::VCarve => &[
-            "flat_depth_mm",
-            "start_depth_mm",
-            "start_plane_cleared_externally",
-            "through_cut_allowance_mm",
-            "strategy",
-            "strategy.offset.step_over_mm",
-            "strategy.offset.direction",
-            "step_over_fraction",
-            "clearing",
-            "machining_order",
-        ],
+        // Complete in slice 13 (#542).
+        Kind::VCarve => &[],
         // Slice 14 (#543).
         Kind::Inlay => &[
             "glue_gap_mm",
@@ -400,6 +389,28 @@ fn other_value(
                 Value::from("op1")
             } else {
                 Value::Null
+            }
+        }
+        // A length whose switch is off at `null` (a V-Carve's flat depth):
+        // a length when off, off when on.
+        FieldKind::SwitchedLength => number.map_or(Value::from(2.5), |_| Value::Null),
+        // A clearing list: one pass of the project's first end mill when
+        // empty, empty otherwise.
+        FieldKind::ClearingList => {
+            if current.as_array().is_some_and(Vec::is_empty) {
+                let end_mill = project
+                    .tools
+                    .iter()
+                    .find(|t| t.cutter == ToolKind::EndMill)
+                    .expect("the sign has end mills");
+                serde_json::json!([{
+                    "tool": end_mill.id.as_str(),
+                    "strategy": { "raster": { "angle_deg": 30.0 } },
+                    "direction": "conventional",
+                    "entry": "plunge",
+                }])
+            } else {
+                Value::Array(Vec::new())
             }
         }
         FieldKind::Choice(_) | FieldKind::Toggle(_) => return None,
@@ -1260,4 +1271,380 @@ fn profile_tab_request_round_trips() {
         .is_err(),
         "a count is at most 255"
     );
+}
+
+// ── Slice 13 (#542): the V-Carve editor and the clearing-pass list. ───
+
+/// The tools of `op`'s clearing passes, by id.
+fn pass_tools(op: &Operation, list: &fields::Row) -> Vec<String> {
+    clearing::passes(op, list)
+        .iter()
+        .map(|p| p.tool.as_str().to_owned())
+        .collect()
+}
+
+/// The findings of `h` with `code`.
+fn coded(h: &dc_app::test_support::Harness, code: &str) -> Vec<dc_job::Finding> {
+    h.warnings()
+        .iter()
+        .filter(|f| f.code.as_deref() == Some(code))
+        .cloned()
+        .collect()
+}
+
+/// A clearing pass of `tool`, as the chapter's first.
+fn pass(tool: &str) -> dc_project::ClearingPass {
+    dc_project::ClearingPass {
+        tool: dc_project::ToolId::new(tool),
+        strategy: dc_project::ClearanceStrategy::Offset,
+        direction: dc_project::CutDirection::Climb,
+        entry: Entry::Plunge,
+    }
+}
+
+/// Acceptance 75 (capability 70): on the sign's Lettering (no flat depth,
+/// no passes), typing a flat depth and pressing *Add pass* twice writes
+/// the 6.35 mm end mill's pass and then the 3.175 mm one's, in that order
+/// in the file, each with `init`'s direction and entry and an offset
+/// clearance. Dragging the smaller above the larger is one step and shows
+/// `clearing_not_descending` under the list, as `check` reports it; undo
+/// puts the order back in one step. Dropping a pass where it was is no
+/// step, and *Remove* drops one pass.
+#[test]
+fn clearing_list_orders_and_warns() {
+    let mut h = dc_app::test_support::Harness::from_project(project());
+    let lettering = op_of(&h, "op3");
+    let list = row_of(&lettering, "clearing");
+    assert!(matches!(list.kind, FieldKind::ClearingList));
+    assert_eq!(list.group, Group::Strategy);
+    assert!(clearing::passes(&lettering, list).is_empty());
+
+    // The floor to clear: the flat depth is off at `null` until typed.
+    let flat = row_of(&lettering, "flat_depth_mm");
+    assert!(matches!(flat.kind, FieldKind::SwitchedLength));
+    assert_eq!(flat.group, Group::Depth);
+    assert!(!editor::switched(&lettering, flat));
+    let typed = editor::commit_text(h.app.project(), &lettering, flat, "2.5");
+    run_edit(&mut h, typed);
+    assert!(editor::switched(&op_of(&h, "op3"), flat));
+
+    for _ in 0..2 {
+        let op = op_of(&h, "op3");
+        let add = clearing::add(h.app.project(), &op, list);
+        run_edit(&mut h, add);
+    }
+    let op = op_of(&h, "op3");
+    assert_eq!(
+        pass_tools(&op, list),
+        ["t1", "t3"],
+        "6.35 mm, then 3.175 mm"
+    );
+    let init = dc_job::project_from::default_profile(Vec::new(), dc_project::ToolId::new(""));
+    for added in clearing::passes(&op, list) {
+        assert_eq!(added.strategy, dc_project::ClearanceStrategy::Offset);
+        assert_eq!(added.direction, init.direction);
+        assert_eq!(added.entry, init.entry);
+    }
+    let saved = dc_project::load(h.save().unwrap().as_bytes())
+        .expect("the project loads")
+        .project;
+    let Some(Operation::VCarve(carve)) = saved.operations.iter().find(|o| o.id().as_str() == "op3")
+    else {
+        panic!("the Lettering is saved");
+    };
+    let in_file: Vec<&str> = carve.clearing.iter().map(|p| p.tool.as_str()).collect();
+    assert_eq!(in_file, ["t1", "t3"], "the file holds them in that order");
+    assert!(coded(&h, "clearing_not_descending").is_empty());
+
+    // The smaller dragged above the larger: one step, and the warning.
+    let undo_before = h.app.undo_label().map(str::to_owned);
+    let drag = clearing::reorder(&op, list, 1, 0);
+    run_edit(&mut h, drag);
+    let op = op_of(&h, "op3");
+    assert_eq!(pass_tools(&op, list), ["t3", "t1"]);
+    let found = coded(&h, "clearing_not_descending");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].tier, Tier::Warning);
+    assert_eq!(
+        found[0].field.as_deref(),
+        Some("operations[op3].clearing[1].tool")
+    );
+    let located = editor::Located::of(h.warnings(), &op);
+    assert!(
+        located
+            .all(list)
+            .iter()
+            .any(|s| s.tier == Tier::Warning && s.message == found[0].message),
+        "under the list"
+    );
+    let built = dc_job::build(
+        h.app.project(),
+        dc_job::ProgramSplit::ProjectDefault,
+        dc_app::test_support::DATE,
+    );
+    assert!(
+        built
+            .findings
+            .warnings
+            .iter()
+            .any(|w| w.code.as_deref() == Some("clearing_not_descending")
+                && w.message == found[0].message),
+        "as check reports it"
+    );
+    assert_eq!(
+        clearing::reorder(&op, list, 0, 0).unwrap(),
+        None,
+        "dropped where it was"
+    );
+    h.app.undo();
+    assert_eq!(pass_tools(&op_of(&h, "op3"), list), ["t1", "t3"]);
+    assert_eq!(
+        h.app.undo_label().map(str::to_owned),
+        undo_before,
+        "the drag was one step"
+    );
+    assert!(coded(&h, "clearing_not_descending").is_empty());
+
+    let op = op_of(&h, "op3");
+    assert!(clearing::remove(&op, list, 5).is_err(), "no such pass");
+    let remove = clearing::remove(&op, list, 1);
+    run_edit(&mut h, remove);
+    assert_eq!(pass_tools(&op_of(&h, "op3"), list), ["t1"]);
+}
+
+/// Capability 70's *Add pass*: the end mill just smaller than the
+/// smallest pass's, the largest end mill for the first pass (the first
+/// listed of equals), never another cutter; when none is smaller the pass
+/// names no tool and validation says so under the list
+/// (`clearing_dangling_tool`).
+#[test]
+fn add_pass_picks_the_next_smaller_end_mill() {
+    let base = project();
+    let id = |s: &str| Some(dc_project::ToolId::new(s));
+    // The sign's end mills: t1 and t2 6.35 mm, t3 3.175 mm; t4 a 6.35 mm
+    // V-bit.
+    assert_eq!(clearing::next_smaller_end_mill(&base, &[]), id("t1"));
+    assert_eq!(
+        clearing::next_smaller_end_mill(&base, &[pass("t2")]),
+        id("t3")
+    );
+    assert_eq!(
+        clearing::next_smaller_end_mill(&base, &[pass("t2"), pass("t3")]),
+        None
+    );
+    assert_eq!(
+        clearing::next_smaller_end_mill(&base, &[pass("t3"), pass("t2")]),
+        None,
+        "smaller than every pass, not only the last"
+    );
+    assert_eq!(
+        clearing::next_smaller_end_mill(&base, &[pass("t2"), pass("")]),
+        id("t3"),
+        "a pass with no tool does not count"
+    );
+    // A smaller ball nose is not an end mill.
+    let mut with_ball = base.clone();
+    let mut ball = with_ball.tools[2].clone();
+    ball.id = dc_project::ToolId::new("t9");
+    ball.cutter = ToolKind::BallNose;
+    ball.diameter_mm = 1.5;
+    with_ball.tools.push(ball);
+    assert_eq!(
+        clearing::next_smaller_end_mill(&with_ball, &[pass("t3")]),
+        None
+    );
+    // No end mill at all: the first pass names none.
+    let mut no_mills = base.clone();
+    no_mills.tools.retain(|t| t.cutter != ToolKind::EndMill);
+    assert_eq!(clearing::next_smaller_end_mill(&no_mills, &[]), None);
+
+    // Through the list: the Background's 6.35 mm pass, then 3.175 mm,
+    // then none.
+    let mut h = dc_app::test_support::Harness::from_project(base);
+    let background = op_of(&h, "op2");
+    let list = row_of(&background, "clearing");
+    assert_eq!(pass_tools(&background, list), ["t2"]);
+    for _ in 0..2 {
+        let op = op_of(&h, "op2");
+        let add = clearing::add(h.app.project(), &op, list);
+        run_edit(&mut h, add);
+    }
+    let op = op_of(&h, "op2");
+    assert_eq!(pass_tools(&op, list), ["t2", "t3", ""]);
+    // `clearing_dangling_tool` is an error, which carries no code.
+    let dangling: Vec<dc_job::Finding> = h
+        .warnings()
+        .iter()
+        .filter(|f| f.field.as_deref() == Some("operations[op2].clearing[2].tool"))
+        .cloned()
+        .collect();
+    assert_eq!(dangling.len(), 1, "{dangling:?}");
+    assert_eq!(dangling[0].tier, Tier::Error);
+    assert!(
+        dangling[0].message.contains("which does not exist"),
+        "{}",
+        dangling[0].message
+    );
+    assert!(
+        editor::Located::of(h.warnings(), &op)
+            .all(list)
+            .iter()
+            .any(|s| s.tier == Tier::Error && s.message == dangling[0].message),
+        "validation says so under the list"
+    );
+}
+
+/// The rows of one clearing pass (capability 70: tool, clearance strategy,
+/// direction, entry) are a table of their own, edited at the pass's key
+/// path (`clearing[1].strategy`) through the editor's own functions: every
+/// leaf of every pass the table's choices reach has a row, each choice
+/// writes only its pass, and the tool picker offers the project's end
+/// mills only.
+#[test]
+fn clearing_pass_rows_cover_a_pass() {
+    let mut h = dc_app::test_support::Harness::from_project(project());
+    let background = op_of(&h, "op2");
+    let list = row_of(&background, "clearing");
+    let add = clearing::add(h.app.project(), &background, list);
+    run_edit(&mut h, add);
+    let op = op_of(&h, "op2");
+    let project = h.app.project().clone();
+
+    let offered: Vec<&str> = clearing::tools(&project)
+        .iter()
+        .map(|t| t.id.as_str())
+        .collect();
+    assert_eq!(offered, ["t1", "t2", "t3"], "end mills only");
+
+    // Every option of every choice, on the second pass.
+    let mut records = vec![op.clone()];
+    for slot in clearing::rows(&op, list, 1) {
+        assert!(slot.key().starts_with("clearing[1]."), "{}", slot.key());
+        if let FieldKind::Choice(options) = slot.row.kind {
+            for i in 0..options.len() {
+                if let Some(Command::UpdateOperation(next)) = slot.choose(&project, &op, i).unwrap()
+                {
+                    assert_eq!(
+                        clearing::passes(&next, list)[0],
+                        clearing::passes(&op, list)[0],
+                        "`{}` writes only its pass",
+                        slot.key()
+                    );
+                    records.push(next);
+                }
+            }
+        }
+    }
+    let mut reached: BTreeSet<String> = BTreeSet::new();
+    for record in &records {
+        let passes = clearing::passes(record, list);
+        for (index, each) in passes.iter().enumerate() {
+            let value = serde_json::to_value(each).unwrap();
+            let mut found = BTreeSet::new();
+            leaves(&value, "", &mut found);
+            let keys: Vec<&str> = clearing::rows(record, list, index)
+                .iter()
+                .map(|s| s.row.key)
+                .collect();
+            for leaf in found {
+                assert!(
+                    clearing::PASS.iter().any(|r| r.key == leaf),
+                    "pass leaf `{leaf}` has no row"
+                );
+                assert!(keys.contains(&leaf.as_str()), "`{leaf}` applies");
+                reached.insert(leaf);
+            }
+        }
+    }
+    for row in clearing::PASS {
+        assert!(
+            reached.contains(row.key),
+            "pass row `{}` is reached",
+            row.key
+        );
+    }
+
+    // A raster at 30° on the second pass, typed; then the first end mill.
+    let strategy = clearing::rows(&op, list, 1)
+        .into_iter()
+        .find(|s| s.row.key == "strategy")
+        .unwrap();
+    let raster = strategy.choose(&project, &op, 1);
+    run_edit(&mut h, raster);
+    let op = op_of(&h, "op2");
+    let angle = clearing::rows(&op, list, 1)
+        .into_iter()
+        .find(|s| s.row.key == "strategy.raster.angle_deg")
+        .expect("the raster's angle follows its strategy");
+    let typed = angle.commit_text(&project, &op, "30");
+    run_edit(&mut h, typed);
+    let op = op_of(&h, "op2");
+    assert_eq!(
+        clearing::passes(&op, list)[1].strategy,
+        dc_project::ClearanceStrategy::Raster { angle_deg: 30.0 }
+    );
+    assert_eq!(angle.value_text(&project, &op), "30");
+    let tool = clearing::rows(&op, list, 1)
+        .into_iter()
+        .find(|s| s.row.key == "tool")
+        .unwrap();
+    let picked = tool.set_tool(&op, &dc_project::ToolId::new("t1"));
+    run_edit(&mut h, picked);
+    assert_eq!(pass_tools(&op_of(&h, "op2"), list), ["t2", "t1"]);
+}
+
+/// The editor's status line is `check`'s carve summary for the edited
+/// operation, from the generation results the app already holds: the
+/// sign's two V-Carves' lines equal those `check` prints (deepest cut,
+/// flat floor, and the ridges where no clearing pass reaches); a Drill has
+/// none; and after an edit the line waits for the carve to regenerate,
+/// then is `check`'s for the edited project.
+#[test]
+fn carve_summary_matches_check() {
+    let base = project();
+    let check = |project: &Project, id: &str| -> Vec<String> {
+        let built = dc_job::build(
+            project,
+            dc_job::ProgramSplit::ProjectDefault,
+            dc_app::test_support::DATE,
+        );
+        let generated = built.generated.expect("the sign generates");
+        dc_job::describe_carves(project, &generated)
+            .into_iter()
+            .filter(|line| line.starts_with(&format!("V-Carve {id} ")))
+            .collect()
+    };
+    let mut h = dc_app::test_support::Harness::from_project(base.clone());
+    let summary = |h: &dc_app::test_support::Harness, id: &str| {
+        editor::carve_summary(&h.app, &OperationId::new(id))
+    };
+    assert!(summary(&h, "op2").is_empty(), "nothing before generation");
+    h.generate();
+    for id in ["op2", "op3"] {
+        let line = check(&base, id);
+        assert_eq!(line.len(), 1, "{id}: {line:?}");
+        assert_eq!(summary(&h, id), line, "{id}");
+    }
+    let background = &summary(&h, "op2")[0];
+    assert!(background.contains("deepest cut"), "{background}");
+    assert!(
+        background.contains("clamped at a flat depth of"),
+        "{background}"
+    );
+    assert!(
+        background.contains("where no clearing pass reaches"),
+        "{background}"
+    );
+    assert!(summary(&h, "op1").is_empty(), "a Drill has no carve line");
+
+    let lettering = op_of(&h, "op3");
+    let flat = row_of(&lettering, "flat_depth_mm");
+    let typed = editor::commit_text(h.app.project(), &lettering, flat, "1");
+    run_edit(&mut h, typed);
+    assert!(summary(&h, "op3").is_empty(), "stale until it regenerates");
+    h.generate();
+    let edited = h.app.project().clone();
+    let line = check(&edited, "op3");
+    assert!(line[0].contains("clamped at a flat depth of"), "{line:?}");
+    assert_eq!(summary(&h, "op3"), line);
 }
