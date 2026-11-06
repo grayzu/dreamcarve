@@ -1999,3 +1999,77 @@ fn eye_hides_one_operation_show_all_restores() {
     assert!(!app.can_undo(), "and nothing is in the history");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Capability 68's "Near a point: typed or clicked" (#540) through the
+/// window: with the plaque's Cut out starting near a point, *Pick on the
+/// view* arms the Viewport, and the next click there sets `start.near` to
+/// the project point the camera puts under the cursor, one undo step,
+/// selects nothing, and disarms it. Capability 69: the Profile's *Place
+/// tabs* is shown, disabled until slice 17 (#546).
+#[test]
+fn start_point_click_on_the_viewport() {
+    use egui_kittest::kittest::NodeT as _;
+    let dir = scratch("start-pick");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let dc_project::Operation::Profile(mut cut_out) = operation_of(&h, "op4") else {
+        panic!("the plaque's Cut out is a Profile");
+    };
+    cut_out.start = dc_project::StartAt::Near {
+        x_mm: 85.0,
+        y_mm: 60.0,
+    };
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateOperation(
+            dc_project::Operation::Profile(cut_out),
+        ))
+        .expect("the start is set");
+    h.run();
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    h.run();
+    assert!(
+        h.get_by_label("Place tabs").accesskit_node().is_disabled(),
+        "placing tabs is slice 17's"
+    );
+
+    h.get_by_label("Pick on the view").scroll_to_me();
+    h.run();
+    h.get_by_label("Pick on the view").click();
+    h.run();
+    let steps = undo_steps(&h);
+    // Empty stock near the plaque's bottom-left corner (stock 170 × 120).
+    let want = dc_geometry::Point::new(5.0, 4.0);
+    let at = common::on_screen(&h, want);
+    let under = world_at(&h, at);
+    common::click_at(&mut h, at, egui::Modifiers::NONE);
+    let dc_project::Operation::Profile(after) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    let dc_project::StartAt::Near { x_mm, y_mm } = after.start else {
+        panic!("still near a point: {:?}", after.start);
+    };
+    assert_near(
+        dc_geometry::Point::new(x_mm, y_mm),
+        under,
+        "the start is the point under the click",
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "one step");
+    assert_eq!(h.state().app().undo_label(), Some("Set start of “Cut out”"));
+    assert!(h.state().app().selection().is_empty(), "nothing selected");
+
+    // One click: the Viewport is disarmed after it. Empty stock near the
+    // bottom-right corner, clear of the Toolpaths card (#545).
+    let elsewhere = common::on_screen(&h, dc_geometry::Point::new(165.0, 5.0));
+    common::click_at(&mut h, elsewhere, egui::Modifiers::NONE);
+    let dc_project::Operation::Profile(still) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    assert_eq!(still.start, after.start);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
