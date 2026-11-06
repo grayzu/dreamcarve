@@ -1465,3 +1465,139 @@ fn window_answers_input_while_generating() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The operation `id` of the shell's project.
+fn operation_of(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> dc_project::Operation {
+    h.state()
+        .app()
+        .project()
+        .operations
+        .iter()
+        .find(|o| o.id().as_str() == id)
+        .cloned()
+        .unwrap_or_else(|| panic!("no operation {id}"))
+}
+
+/// Acceptance 86's last clause (capability 66; `experience.md`, section 7,
+/// "Text field with trailing unit"): typing three characters in an editor
+/// field changes nothing while the field has focus, and leaving it (Tab)
+/// is one undo step, labelled with the field. Clicking an operation's row
+/// opens it in the editor.
+#[test]
+fn field_commits_on_blur_not_per_keystroke() {
+    let dir = scratch("field-blur");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::Row, "Cut out").click();
+    h.run();
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op4"),
+        "the row opens the Profile in the editor"
+    );
+    let before = operation_of(&h, "op4");
+    let steps = undo_steps(&h);
+
+    h.get_by_role_and_label(Role::TextInput, "Depth").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    for typed in ["9", ".", "5"] {
+        h.event(egui::Event::Text(typed.to_owned()));
+        h.run();
+        assert_eq!(
+            operation_of(&h, "op4"),
+            before,
+            "typing `{typed}` changes nothing yet"
+        );
+        assert_eq!(undo_steps(&h), steps, "and adds no step");
+    }
+    h.key_press(egui::Key::Tab);
+    h.run();
+    let dc_project::Operation::Profile(after) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    assert_eq!(after.depth_mm, Some(9.5), "leaving the field writes it");
+    assert_eq!(undo_steps(&h), steps + 1, "as one step");
+    assert_eq!(h.state().app().undo_label(), Some("Set depth of “Cut out”"));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 67: the Targets group's *Pick…* arms the Viewport, and each
+/// click on a shape adds it to the operation's targets, one step each,
+/// without changing the selection, until Escape; after Escape a click
+/// selects as usual.
+#[test]
+fn pick_targets_until_escape() {
+    let dir = scratch("pick-targets");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::Row, "Border and squiggle")
+        .click();
+    h.run();
+    let targets = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
+        operation_of(h, "op5")
+            .targets()
+            .iter()
+            .map(|t| t.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(targets(&h), ["i9", "i10"]);
+    // A point of each shape's outline, where a click picks it.
+    let outline_point = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| {
+        let shape = h
+            .state()
+            .app()
+            .scene()
+            .shape(&dc_project::InstanceId::new(id))
+            .expect("the shape is drawn")
+            .clone();
+        common::on_screen(h, shape.flat[0].vertices()[0].point())
+    };
+
+    h.get_by_label("Pick…").click();
+    h.run();
+    let selection = h.state().app().selection().clone();
+    let steps = undo_steps(&h);
+    let square = outline_point(&h, "i4");
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+    assert_eq!(
+        targets(&h),
+        ["i9", "i10", "i4"],
+        "the click adds the square"
+    );
+    let pocket = outline_point(&h, "i2");
+    common::click_at(&mut h, pocket, egui::Modifiers::NONE);
+    assert_eq!(targets(&h), ["i9", "i10", "i4", "i2"], "and the next one");
+    assert_eq!(undo_steps(&h), steps + 2, "one step each");
+    assert_eq!(h.state().app().selection(), &selection, "nothing selected");
+
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let outline = outline_point(&h, "i1");
+    common::click_at(&mut h, outline, egui::Modifiers::NONE);
+    assert_eq!(
+        targets(&h),
+        ["i9", "i10", "i4", "i2"],
+        "Escape ended picking"
+    );
+    assert_eq!(
+        h.state().app().selection(),
+        &dc_app::Selection::Instances(vec![dc_project::InstanceId::new("i1")]),
+        "and a click selects again"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
