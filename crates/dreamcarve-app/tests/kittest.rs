@@ -809,3 +809,194 @@ fn click_selects_and_escape_clears() {
     assert_eq!(h.state().app().selection(), &dc_app::Selection::Nothing);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The undo steps the shell's app holds.
+fn undo_steps(h: &Harness<'_, dreamcarve_app::Shell>) -> usize {
+    h.state().app().history().undo_labels().count()
+}
+
+/// The transform of instance `id` in the shell's project.
+fn transform_of(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> dc_geometry::Transform {
+    h.state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == id)
+        .unwrap_or_else(|| panic!("the plaque has {id}"))
+        .transform
+}
+
+/// Two transforms agree to a millionth.
+fn assert_same_transform(got: dc_geometry::Transform, want: dc_geometry::Transform, what: &str) {
+    let close = got
+        .coeffs()
+        .iter()
+        .zip(want.coeffs())
+        .all(|(a, b)| (a - b).abs() < 1e-6);
+    assert!(close, "{what}: {got:?}, want {want:?}");
+}
+
+/// Capability 58 (`experience.md`, section 8, "Drag to move"): pressing
+/// on a shape and moving more than 4 px drags it; while the button is
+/// down the project and its history are untouched (the Viewport draws a
+/// preview transform, not a snapshot) and the status bar shows the
+/// travel; the release commits one `TransformInstances`, one undo step,
+/// moved by the pointer's travel in project millimetres (Y up). The
+/// arrow keys nudge the selection by 1 mm, 10 mm with Shift and 0.1 mm
+/// with Alt, a step each.
+#[test]
+fn drag_moves_on_release_as_one_step() {
+    let dir = scratch("drag-move");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let before = h.state().app().project().clone();
+    let steps = undo_steps(&h);
+    let square = transform_of(&h, "i4");
+    let px_per_mm = h.state().app().view().camera.px_per_mm;
+
+    // The square's left edge, dragged right and up in four frames.
+    let from = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    let travel = egui::vec2(60.0, -40.0);
+    h.event(egui::Event::PointerMoved(from));
+    h.event(egui::Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    for k in 1..=4_u8 {
+        let t = f32::from(k) / 4.0;
+        h.event(egui::Event::PointerMoved(from + travel * t));
+        h.run();
+        assert_eq!(
+            h.state().app().project(),
+            &before,
+            "frame {k}: the drag previews, it does not edit"
+        );
+        assert_eq!(undo_steps(&h), steps, "frame {k}: no undo step yet");
+    }
+    assert!(
+        h.query_by_label_contains("ΔX").is_some(),
+        "the status bar shows the travel"
+    );
+    h.event(egui::Event::PointerButton {
+        pos: from + travel,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+
+    assert_eq!(undo_steps(&h), steps + 1, "the release is one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("Move “square”"));
+    let dx = f64::from(travel.x) / px_per_mm;
+    let dy = -f64::from(travel.y) / px_per_mm;
+    assert_same_transform(
+        transform_of(&h, "i4"),
+        square.then(dc_geometry::Transform::translate(dx, dy)),
+        "the square moved by the pointer's travel",
+    );
+    assert_eq!(
+        h.state().app().selection().instances(),
+        [dc_project::InstanceId::new("i4")],
+        "the dragged shape is the selection"
+    );
+    assert_eq!(
+        transform_of(&h, "i2"),
+        before.instances[1].transform,
+        "nothing else moved"
+    );
+
+    // The arrow keys: 1 mm, 10 mm with Shift, 0.1 mm with Alt.
+    let at = transform_of(&h, "i4");
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowUp);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::ALT, egui::Key::ArrowLeft);
+    h.run();
+    assert_eq!(undo_steps(&h), steps + 4, "a step per nudge");
+    assert_same_transform(
+        transform_of(&h, "i4"),
+        at.then(dc_geometry::Transform::translate(0.9, 10.0)),
+        "nudged by 1, 10 and 0.1 mm",
+    );
+
+    // Undo walks back to the file as opened.
+    for _ in 0..4 {
+        h.state_mut().app_mut().undo();
+    }
+    assert_eq!(h.state().app().project(), &before);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 58 and acceptance 66: a locked shape can be selected but
+/// refuses every transform with the reason in the status bar: a drag
+/// moves nothing, a nudge moves nothing, and neither is an undo step.
+#[test]
+fn locked_refuses_with_status_message() {
+    let dir = scratch("drag-locked");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetInstanceFlags {
+            ids: vec![dc_project::InstanceId::new("i4")],
+            visible: None,
+            locked: Some(true),
+        })
+        .expect("locks the square");
+    h.run();
+    let locked = h.state().app().project().clone();
+    let steps = undo_steps(&h);
+    let message = "shape “square” is locked";
+
+    let from = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    common::drag(
+        &mut h,
+        from,
+        from + egui::vec2(50.0, 30.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(h.state().app().project(), &locked, "the drag moved nothing");
+    assert_eq!(undo_steps(&h), steps);
+    assert_eq!(
+        h.state().message(),
+        Some(message),
+        "the status bar says why"
+    );
+    assert!(
+        h.query_by_label(message).is_some(),
+        "and shows it: {:?}",
+        h.state().message()
+    );
+    assert_eq!(
+        h.state().app().selection().instances(),
+        [dc_project::InstanceId::new("i4")],
+        "a locked shape can still be selected"
+    );
+
+    // A nudge is refused the same way.
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(
+        h.state().app().project(),
+        &locked,
+        "the nudge moved nothing"
+    );
+    assert_eq!(undo_steps(&h), steps);
+    assert_eq!(h.state().message(), Some(message));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
