@@ -520,6 +520,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 **Generation and warnings (slice 9)**
 - `generation::digest_covers_every_generator_input`, `generation::editing_one_operation_regenerates_only_dependents`, `generation::results_from_an_old_snapshot_are_dropped`, `generation::stop_clears_pending` (acc 87).
 - `warnings::panel_equals_check_line_for_line` (acc 82, every fixture with expected `check` output), `warnings::located_rows_name_the_field`, `warnings::copy_is_the_cli_text`, `warnings::tiers_match_the_cli`.
+- `kittest::window_answers_input_while_generating` (acc 87). "Answers input within 100 ms" is read over every UI frame from opening the 500-shape project, through *Stop*, to the end of a *Regenerate All*, including the frames that accept results. Each egui pass is timed on its own, so a click counts as three passes. The test needs at least 60 frames, the 95th percentile within 100 ms and no frame over 250 ms. It does not take the single slowest frame because every kittest test runs its own window and worker in parallel on CI's few shared cores, so scheduling can delay a frame that has little work (#573).
 
 **Operations and editors (slices 10–15)**
 - `editor::fields_table_matches_the_records` (acc 73, table-driven over every kind), `editor::set_and_get_by_key_path_round_trip`, `editor::tool_derived_defaults_show_the_tools_value_and_write_null`, `editor::located_warning_matches_its_row`.
