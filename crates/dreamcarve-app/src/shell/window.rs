@@ -22,6 +22,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use dc_app::import::{DrawingFormat, Purpose};
 use dc_app::{App, Command, Prefs, StrKey, Strings};
 use dc_job::EstimateConfig;
 use dreamcarve_shell::{GuiPrefs, Paths, config, gui_prefs};
@@ -200,6 +201,10 @@ pub(crate) enum Action {
     Save,
     SaveAs,
     ImportDrawing,
+    /// File ▸ New from drawing… (capability 51).
+    NewFromDrawing,
+    /// Something the Import drawing sheet asked for.
+    ImportSheet(panels::import::Request),
     Undo,
     Redo,
     Quit,
@@ -291,6 +296,7 @@ enum Pending {
     Open,
     OpenPath(PathBuf),
     Example(Example),
+    NewFromDrawing,
 }
 
 /// Which tab of the CAM panel is showing.
@@ -312,6 +318,8 @@ pub struct Shell {
     sheet: Option<Pending>,
     /// The Tool Library sheet, while open.
     library: Option<panels::library::Sheet>,
+    /// The Import drawing sheet, while open.
+    import: Option<panels::import::Sheet>,
     empty_dismissed: bool,
     /// The status bar's last message.
     message: Option<String>,
@@ -393,6 +401,7 @@ impl Shell {
             written,
             sheet: None,
             library: None,
+            import: None,
             empty_dismissed: false,
             message,
             layout: Layout {
@@ -518,6 +527,15 @@ impl Shell {
             }
             Pending::OpenPath(path) => self.open_path(&path),
             Pending::Example(example) => self.open_example(example),
+            Pending::NewFromDrawing => {
+                let title = self
+                    .strings()
+                    .get(StrKey::AppDialogNewFromDrawingTitle)
+                    .to_owned();
+                if let Some(path) = self.dialogs.open_drawing(&title) {
+                    self.open_import(&path, Purpose::New);
+                }
+            }
         }
     }
 
@@ -626,40 +644,93 @@ impl Shell {
         }
     }
 
-    /// Imports the drawing at `path` into the project, placed as drawn.
-    fn import_path(&mut self, path: &Path) {
+    /// Opens the Import drawing sheet on the drawing at `path`, to import
+    /// into the project or, for `Purpose::New`, to make a new project
+    /// from; or says why not. The file is read here and parsed by the
+    /// sheet's model.
+    fn open_import(&mut self, path: &Path, purpose: Purpose) {
         let name = files::file_name(path);
-        let Some(kind @ (files::FileKind::Svg | files::FileKind::Dxf)) = files::kind(path) else {
-            self.message = Some(
-                self.strings()
-                    .fmt(StrKey::AppMessageNotADrawing, &[("name", &name)]),
-            );
+        let format = match files::kind(path) {
+            Some(files::FileKind::Svg) => DrawingFormat::Svg,
+            Some(files::FileKind::Dxf) => DrawingFormat::Dxf,
+            Some(files::FileKind::Picture) => {
+                self.message = Some(
+                    self.strings()
+                        .get(StrKey::AppEmptyPictureUnavailable)
+                        .to_owned(),
+                );
+                return;
+            }
+            _ => {
+                self.message = Some(
+                    self.strings()
+                        .fmt(StrKey::AppMessageNotADrawing, &[("name", &name)]),
+                );
+                return;
+            }
+        };
+        match files::read(path) {
+            Ok(bytes) => {
+                self.import = Some(panels::import::Sheet::new(
+                    path, &name, format, bytes, purpose,
+                ));
+            }
+            Err(e) => {
+                let reason = e.to_string();
+                self.message = Some(self.strings().fmt(
+                    StrKey::AppMessageImportFailed,
+                    &[("name", &name), ("reason", &reason)],
+                ));
+            }
+        }
+    }
+
+    /// What the Import drawing sheet asked for.
+    fn import_request(&mut self, request: panels::import::Request) {
+        let Some(sheet) = self.import.take() else {
             return;
         };
-        let result = files::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| files::read_drawing(kind, &bytes))
-            .and_then(|drawing| {
-                self.app
-                    .run(Command::ImportDrawing {
-                        drawing,
-                        name: name.clone(),
-                    })
-                    .map_err(|e| e.to_string())
-            });
-        self.message = Some(match result {
-            Ok(_) => {
-                let count = self.app.selection().instances().len().to_string();
-                self.strings().fmt(
-                    StrKey::AppMessageImported,
-                    &[("count", &count), ("name", &name)],
-                )
+        match request {
+            panels::import::Request::Close => {}
+            panels::import::Request::Choose => {
+                let title = self.strings().get(StrKey::AppDialogDrawingTitle).to_owned();
+                let purpose = sheet.model().purpose();
+                match self.dialogs.open_drawing(&title) {
+                    Some(path) => self.open_import(&path, purpose),
+                    None => self.import = Some(sheet),
+                }
             }
-            Err(reason) => self.strings().fmt(
-                StrKey::AppMessageImportFailed,
-                &[("name", &name), ("reason", &reason)],
-            ),
-        });
+            panels::import::Request::Confirm => {
+                let model = sheet.model();
+                let name = model.name().to_owned();
+                let result = match model.purpose() {
+                    Purpose::Import => self.app.import_drawing(model).map(|_| {
+                        let count = self.app.selection().instances().len().to_string();
+                        self.strings().fmt(
+                            StrKey::AppMessageImported,
+                            &[("count", &count), ("name", &name)],
+                        )
+                    }),
+                    Purpose::New => self.app.new_from_drawing(model).map(|()| {
+                        self.empty_dismissed = false;
+                        self.viewport.fit_on_next_frame();
+                        self.strings()
+                            .fmt(StrKey::AppMessageNewFromDrawing, &[("name", &name)])
+                    }),
+                };
+                match result {
+                    Ok(message) => self.message = Some(message),
+                    Err(e) => {
+                        let reason = e.to_string();
+                        self.message = Some(self.strings().fmt(
+                            StrKey::AppMessageImportFailed,
+                            &[("name", &name), ("reason", &reason)],
+                        ));
+                        self.import = Some(sheet);
+                    }
+                }
+            }
+        }
     }
 
     /// What the window's close button, dropped files and the keyboard ask
@@ -680,13 +751,21 @@ impl Shell {
                 .map(|f| f.path().to_path_buf())
                 .collect()
         });
+        // A drop never opens a sheet above another: a project replaces the
+        // Import drawing sheet, and nothing is taken while the
+        // unsaved-changes sheet or the Tool Library is open.
+        let other_sheet = self.sheet.is_some() || self.library.is_some();
         for path in dropped {
             match files::kind(&path) {
-                Some(files::FileKind::Project) => self.request(ctx, Pending::OpenPath(path)),
-                _ => self.import_path(&path),
+                _ if other_sheet => {}
+                Some(files::FileKind::Project) => {
+                    self.import = None;
+                    self.request(ctx, Pending::OpenPath(path));
+                }
+                _ => self.open_import(&path, Purpose::Import),
             }
         }
-        if self.sheet.is_none() && self.library.is_none() {
+        if self.sheet.is_none() && self.library.is_none() && self.import.is_none() {
             actions.extend(shortcuts(ctx));
             actions.extend(viewport::keys(ctx, &self.app));
         }
@@ -707,9 +786,11 @@ impl Shell {
             Action::ImportDrawing => {
                 let title = self.strings().get(StrKey::AppDialogDrawingTitle).to_owned();
                 if let Some(path) = self.dialogs.open_drawing(&title) {
-                    self.import_path(&path);
+                    self.open_import(&path, Purpose::Import);
                 }
             }
+            Action::NewFromDrawing => self.request(ctx, Pending::NewFromDrawing),
+            Action::ImportSheet(request) => self.import_request(request),
             Action::Undo => {
                 self.app.undo();
             }
@@ -1036,6 +1117,14 @@ impl eframe::App for Shell {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
         } else if let Some(sheet) = self.library.as_mut() {
             panels::library::show(&ctx, &self.app, &state.display_name, sheet, &mut actions);
+        } else if let Some(sheet) = self.import.as_mut() {
+            panels::import::show(
+                &ctx,
+                self.app.strings(),
+                self.app.project(),
+                sheet,
+                &mut actions,
+            );
         }
         self.cam_tab = cam_tab;
 

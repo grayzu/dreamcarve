@@ -14,7 +14,7 @@ mod round;
 pub mod svg;
 
 pub use dxf::{
-    DxfImport, DxfImportOptions, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
+    DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
     MAX_INSERT_DEPTH, import_dxf,
 };
 pub use svg::{

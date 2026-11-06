@@ -49,6 +49,10 @@ pub enum Layer {
     Grid,
     /// The stock's dashed outline.
     Stock,
+    // TODO(#544): `Bitmaps`, a textured quad per picture at its footprint,
+    // under the shapes (functional spec, capability 56). It waits for
+    // phase 3.4's `dc_project::Bitmap` (format 26); main is at format 25,
+    // so slice 6 (#535) builds the drawing half only.
     /// Every visible shape.
     Shapes,
     /// The direction arrows of every drawn toolpath.

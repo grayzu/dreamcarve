@@ -109,6 +109,13 @@ pub enum CommandError {
         /// Why it was refused.
         reason: String,
     },
+    /// The import sheet's *Import* is disabled: `reason` is what the sheet
+    /// shows (the importer's refusal, or nothing to import).
+    #[error("{reason}")]
+    NotImportable {
+        /// Why the drawing cannot be imported with these options.
+        reason: String,
+    },
     /// *Fit stock to shapes* with no visible shape to fit round.
     #[error("there are no visible shapes to fit the stock to")]
     NoShapes,
