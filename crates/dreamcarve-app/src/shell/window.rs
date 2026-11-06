@@ -206,6 +206,14 @@ pub(crate) enum Action {
     UserGuide,
     About,
     Answer(Answer),
+    /// Project ▸ Stock and Origin…: the Project panel, shown with nothing
+    /// selected.
+    ShowProject,
+    /// A panel section opened or closed, kept in `gui.toml`.
+    SetSection {
+        name: String,
+        open: bool,
+    },
     /// Run a command on the project; a refusal goes to the status bar.
     Run(Box<Command>),
     /// Show a refusal in the status bar.
@@ -226,6 +234,13 @@ pub(crate) enum Action {
     ZoomToSelection,
     /// Clear the selection (Escape).
     ClearSelection,
+}
+
+impl Action {
+    /// [`Action::Run`] of `command`.
+    pub(crate) fn run(command: Command) -> Self {
+        Self::Run(Box::new(command))
+    }
 }
 
 /// The unsaved-changes sheet's answers (`experience.md`, section 8,
@@ -670,6 +685,14 @@ impl Shell {
                 if let Err(e) = self.app.run(*command) {
                     self.message = Some(e.to_string());
                 }
+            }
+            Action::ShowProject => {
+                self.app.select(dc_app::Selection::Nothing);
+                self.app.prefs_mut().panels.left_open = true;
+                self.forced_open.0 = true;
+            }
+            Action::SetSection { name, open } => {
+                self.app.prefs_mut().sections.insert(name, open);
             }
             Action::Refused(reason) => self.message = Some(reason),
             Action::OpenLibrary => {

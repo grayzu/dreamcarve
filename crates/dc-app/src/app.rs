@@ -15,7 +15,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use dc_job::{EmitOp, Finding, Findings};
 use dc_project::{
     CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, OperationId, OriginXy,
-    OriginZ, Problem, Project, Stock, Units,
+    OriginZ, Problem, Project, SettingReset, Stock, Units,
 };
 
 use crate::command::Command;
@@ -55,6 +55,9 @@ pub struct App {
     validation: Findings,
     /// Validation's, generation's and `finish`'s findings, merged.
     findings: Vec<Finding>,
+    /// The settings the last command reset, when it switched the
+    /// post-processor (functional spec, capability 62).
+    last_resets: Vec<SettingReset>,
     /// What the Viewport draws, rebuilt with the snapshot and the results.
     scene: Scene,
 }
@@ -87,6 +90,7 @@ impl App {
             dirty: false,
             validation,
             findings: Vec::new(),
+            last_resets: Vec::new(),
             scene: Scene::default(),
         };
         app.refresh_findings();
@@ -164,6 +168,7 @@ impl App {
         self.selection = Selection::Nothing;
         self.source = path;
         self.saved = saved;
+        self.last_resets.clear();
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
@@ -230,6 +235,14 @@ impl App {
         let before = self.history.current();
         let after = command.apply(before)?;
         let label = command.label(&self.strings, before, &after);
+        // `apply` keeps only the project; what the switch reset is asked
+        // again, from the same pure function, for the panel to report.
+        self.last_resets = match &command {
+            Command::SwitchPost { id } => dc_project::switch_post(&before.post_processor, id)
+                .map(|(_, resets)| resets)
+                .unwrap_or_default(),
+            _ => Vec::new(),
+        };
         let new_instances: Vec<InstanceId> = after
             .instances
             .iter()
@@ -255,6 +268,7 @@ impl App {
     /// Steps back one snapshot; the label of the step undone.
     pub fn undo(&mut self) -> Option<String> {
         let label = self.history.undo()?;
+        self.last_resets.clear();
         self.snapshot_changed();
         Some(label)
     }
@@ -262,8 +276,18 @@ impl App {
     /// Steps forward one snapshot; the label of the step redone.
     pub fn redo(&mut self) -> Option<String> {
         let label = self.history.redo()?;
+        self.last_resets.clear();
         self.snapshot_changed();
         Some(label)
+    }
+
+    /// The settings the last command reset because the post-processor it
+    /// switched to cannot use them (functional spec, capability 62; the
+    /// rule of `export --post`, [`dc_project::switch_post`]). Empty after
+    /// any other command, an undo, a redo or an open.
+    #[must_use]
+    pub fn last_resets(&self) -> &[SettingReset] {
+        &self.last_resets
     }
 
     /// The label undo would report, for the Edit menu.
