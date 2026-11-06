@@ -856,6 +856,7 @@ dependencies = [
  "dc-job",
  "dc-library",
  "dc-project",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
  "toml",

@@ -14,3 +14,4 @@ pub(crate) mod side;
 pub(crate) mod tools;
 pub(crate) mod tree;
 pub(crate) mod unsaved;
+pub(crate) mod warnings;

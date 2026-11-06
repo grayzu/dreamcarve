@@ -21,6 +21,7 @@ pub mod tree;
 pub mod units;
 pub mod view;
 pub mod viewport;
+pub mod warnings;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -28,7 +29,9 @@ pub mod test_support;
 pub use app::{App, Opened};
 pub use command::Command;
 pub use error::CommandError;
-pub use generation::{Generation, Job, JobResult, OperationResult, SnapshotId};
+pub use generation::{
+    FinishJob, Generation, Job, JobResult, OperationResult, Progress, SnapshotId, Work,
+};
 pub use history::LabelledHistory;
 pub use prefs::{Panels, Prefs, Theme, WindowGeometry};
 pub use scene::Scene;

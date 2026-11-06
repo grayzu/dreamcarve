@@ -11,5 +11,6 @@ pub(crate) mod icon;
 pub(crate) mod row;
 pub(crate) mod section;
 pub(crate) mod segmented;
+pub(crate) mod spinner;
 pub(crate) mod toggle;
 pub(crate) mod unit_field;

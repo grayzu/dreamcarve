@@ -676,23 +676,27 @@ fn frame(
     let placed_key = placed.map(|t| t.coeffs().map(f64::to_bits));
     let shapes_layer = view.layer(
         Layer::Shapes,
-        key((scene.revision(), band, &moving)),
+        key((scene.shapes_revision(), band, &moving)),
         || layers::shapes(scene, tolerance, &moving),
     );
-    let hover_layer = view.layer(Layer::Hover, key((scene.revision(), band, &hover)), || {
-        layers::highlighted(
-            scene,
-            &hover,
-            tolerance,
-            (StyleId::Hover, StyleId::HoverOpen),
-            None,
-        )
-    });
+    let hover_layer = view.layer(
+        Layer::Hover,
+        key((scene.shapes_revision(), band, &hover)),
+        || {
+            layers::highlighted(
+                scene,
+                &hover,
+                tolerance,
+                (StyleId::Hover, StyleId::HoverOpen),
+                None,
+            )
+        },
+    );
     let mut drawn = selected.clone();
     drawn.extend(moving.iter().filter(|id| !selected.contains(id)).cloned());
     let selection_layer = view.layer(
         Layer::Selection,
-        key((scene.revision(), band, &drawn, &moving, placed_key)),
+        key((scene.shapes_revision(), band, &drawn, &moving, placed_key)),
         || {
             layers::highlighted(
                 scene,
