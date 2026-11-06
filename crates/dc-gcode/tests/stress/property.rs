@@ -523,15 +523,9 @@ const SEAT_GRID_MM: f64 = 0.1;
 /// stop `w / sin(θ/2)`, and one cell's diagonal of such a corner.
 pub fn written_grid_corner(case: &Case, female: &InlayOp, seat_at: Point) -> Option<String> {
     let project = &case.project;
-    if project.display_units != Units::Inch {
-        return None;
-    }
     let ToolKind::VBit { included_angle_deg } = project.tools.first()?.cutter else {
         return None;
     };
-    if included_angle_deg > 30.0 {
-        return None;
-    }
     let slope = (included_angle_deg / 2.0).to_radians().tan();
     let w_mm = project
         .post_processor
