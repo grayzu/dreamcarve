@@ -303,10 +303,7 @@ pub(crate) fn right(
                     empty_sentence(ui, strings.get(StrKey::AppPanelNoOperations));
                 }
                 CamTab::Operations => operation_rows(ui, state),
-                CamTab::Tools if project.tools.is_empty() => {
-                    empty_sentence(ui, strings.get(StrKey::AppPanelNoTools));
-                }
-                CamTab::Tools => rows(ui, project.tools.iter().map(|t| t.name.as_str())),
+                CamTab::Tools => crate::panels::tools::show(ui, state, out),
             }
         });
     Shown {

@@ -17,6 +17,8 @@
 mod instances;
 mod operations;
 
+pub(crate) use instances::copy_name;
+
 use dc_geometry::Transform;
 use dc_job::Drawing;
 use dc_project::{

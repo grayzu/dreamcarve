@@ -74,6 +74,15 @@ pub trait Dialogs {
     fn save_project(&mut self, title: &str, file_name: &str) -> Option<PathBuf>;
     /// Asks for a drawing to import.
     fn open_drawing(&mut self, title: &str) -> Option<PathBuf>;
+    /// Asks for a tool library to import: a Fusion `.tools` or `.json`,
+    /// or a DreamCarve library.
+    fn open_library(&mut self, _title: &str) -> Option<PathBuf> {
+        None
+    }
+    /// Asks where to export the tool library, suggesting `file_name`.
+    fn save_library(&mut self, _title: &str, _file_name: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// The OS's open and save dialogs, through `rfd` (design open question 3).
@@ -81,6 +90,7 @@ pub trait Dialogs {
 pub struct NativeDialogs {
     project_filter: String,
     drawing_filter: String,
+    library_filter: String,
 }
 
 impl NativeDialogs {
@@ -90,6 +100,7 @@ impl NativeDialogs {
         Self {
             project_filter: strings.get(StrKey::AppDialogProjectFilter).to_owned(),
             drawing_filter: strings.get(StrKey::AppDialogDrawingFilter).to_owned(),
+            library_filter: strings.get(StrKey::AppDialogLibraryFilter).to_owned(),
         }
     }
 }
@@ -115,6 +126,21 @@ impl Dialogs for NativeDialogs {
             .set_title(title)
             .add_filter(&self.drawing_filter, &["svg", "dxf"])
             .pick_file()
+    }
+
+    fn open_library(&mut self, title: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(&self.library_filter, &["tools", "json"])
+            .pick_file()
+    }
+
+    fn save_library(&mut self, title: &str, file_name: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(&self.library_filter, &["json"])
+            .set_file_name(file_name)
+            .save_file()
     }
 }
 
@@ -188,6 +214,16 @@ pub(crate) enum Action {
     UserGuide,
     About,
     Answer(Answer),
+    /// Run a command on the project; a refusal goes to the status bar.
+    Run(Box<Command>),
+    /// Show a refusal in the status bar.
+    Refused(String),
+    /// Open the Tool Library sheet.
+    OpenLibrary,
+    /// Something the Tool Library sheet asked for.
+    Library(panels::library::Request),
+    /// Copy a project tool into the library.
+    SaveToLibrary(dc_project::ToolId),
     /// The Viewport's camera after this frame's pan or zoom.
     SetCamera(dc_app::Camera),
     /// A click or marquee on the Viewport chose this selection.
@@ -247,6 +283,8 @@ pub struct Shell {
     written: GuiPrefs,
     /// The action the unsaved-changes sheet is asking about.
     sheet: Option<Pending>,
+    /// The Tool Library sheet, while open.
+    library: Option<panels::library::Sheet>,
     empty_dismissed: bool,
     /// The status bar's last message.
     message: Option<String>,
@@ -327,6 +365,7 @@ impl Shell {
             dialogs: options.dialogs,
             written,
             sheet: None,
+            library: None,
             empty_dismissed: false,
             message,
             layout: Layout {
@@ -612,7 +651,7 @@ impl Shell {
                 _ => self.import_path(&path),
             }
         }
-        if self.sheet.is_none() {
+        if self.sheet.is_none() && self.library.is_none() {
             actions.extend(shortcuts(ctx));
             actions.extend(viewport::keys(ctx));
         }
@@ -680,6 +719,41 @@ impl Shell {
                 ));
             }
             Action::Answer(answer) => self.answer(ctx, answer),
+            Action::Run(command) => {
+                if let Err(e) = self.app.run(*command) {
+                    self.message = Some(e.to_string());
+                }
+            }
+            Action::Refused(reason) => self.message = Some(reason),
+            Action::OpenLibrary => {
+                self.library = Some(panels::library::Sheet::open(
+                    self.config.as_ref(),
+                    self.app.strings(),
+                ));
+            }
+            Action::Library(panels::library::Request::Close) => self.library = None,
+            Action::Library(request) => {
+                if let Some(sheet) = self.library.as_mut()
+                    && let Some(message) = panels::library::perform(
+                        sheet,
+                        request,
+                        &mut self.app,
+                        self.config.as_ref(),
+                        self.dialogs.as_mut(),
+                    )
+                {
+                    self.message = Some(message);
+                }
+            }
+            Action::SaveToLibrary(id) => {
+                self.message = panels::library::save_to_library(
+                    &self.app,
+                    self.config.as_ref(),
+                    &id,
+                    self.library.as_mut(),
+                )
+                .or(self.message.take());
+            }
             Action::SetCamera(camera) => self.app.view_mut().camera = camera,
             Action::Select(selection) => self.app.select(selection),
             Action::FitView => {
@@ -911,6 +985,8 @@ impl eframe::App for Shell {
         let viewport = viewport::show(ui, &state, &mut self.viewport, &mut actions);
         if self.sheet.is_some() {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
+        } else if let Some(sheet) = self.library.as_mut() {
+            panels::library::show(&ctx, &self.app, &state.display_name, sheet, &mut actions);
         }
         self.cam_tab = cam_tab;
 

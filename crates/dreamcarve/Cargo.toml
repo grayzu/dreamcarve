@@ -29,8 +29,9 @@ dc-project.workspace = true
 dreamcarve-shell.workspace = true
 
 [dev-dependencies]
-# `tests/warnings_panel.rs` compares the app's Warnings panel with the
-# binary's `check` (phase 4 design, "Test harness").
+# `tests/gui_equality.rs` and `tests/warnings_panel.rs` compare the app's
+# output and Warnings panel with the binary's (phase 4 design, "Test
+# harness").
 dc-app = { workspace = true, features = ["test-support"] }
 # Tests re-lay out a .dcv by hand, as a user might (#76), and build phase
 # 2 operations from the fixture builders (#117).

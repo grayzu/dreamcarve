@@ -52,8 +52,8 @@ nothing else. `dc-job` is the pipeline both shells drive (phase 4 design,
 "Overview"): validation, generation, the order and tab checks, emission,
 program names, summaries, the preview, a project from a drawing, placed
 tabs. `dreamcarve-shell` is the file I/O the two binaries share (staged
-writes, the config directory, `config.toml`, `gui.toml`); it is not a
-`dc-*` crate.
+writes, the config directory, `config.toml`, `gui.toml`, the tool library
+file); it is not a `dc-*` crate.
 
 **Must**
 
