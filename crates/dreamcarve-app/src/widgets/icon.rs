@@ -40,6 +40,18 @@ pub enum Icon {
     PanelLeftOpen,
     /// `panel-right-open`: reopen the CAM panel.
     PanelRightOpen,
+    /// `info`: an unused tool's hint.
+    Info,
+    /// `search`: the library's search field.
+    Search,
+    /// `check`: a row already in the project.
+    Check,
+    /// `plus`: Add from library.
+    Plus,
+    /// `book-plus`: Save to library.
+    BookPlus,
+    /// `arrow-left`: Back.
+    ArrowLeft,
     /// `lock`: a locked shape's padlock on the Viewport.
     Lock,
 }
@@ -64,6 +76,12 @@ impl Icon {
             Self::TriangleAlert => "triangle-alert",
             Self::PanelLeftOpen => "panel-left-open",
             Self::PanelRightOpen => "panel-right-open",
+            Self::Info => "info",
+            Self::Search => "search",
+            Self::Check => "check",
+            Self::Plus => "plus",
+            Self::BookPlus => "book-plus",
+            Self::ArrowLeft => "arrow-left",
             Self::Lock => "lock",
         }
     }
@@ -86,13 +104,19 @@ impl Icon {
             Self::TriangleAlert => '\u{e193}',
             Self::PanelLeftOpen => '\u{e21d}',
             Self::PanelRightOpen => '\u{e434}',
+            Self::Info => '\u{e0f9}',
+            Self::Search => '\u{e151}',
+            Self::Check => '\u{e06c}',
+            Self::Plus => '\u{e13d}',
+            Self::BookPlus => '\u{e3f3}',
+            Self::ArrowLeft => '\u{e048}',
             Self::Lock => '\u{e10b}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 15] = [
+    pub const ALL: [Self; 21] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -107,6 +131,12 @@ impl Icon {
         Self::TriangleAlert,
         Self::PanelLeftOpen,
         Self::PanelRightOpen,
+        Self::Info,
+        Self::Search,
+        Self::Check,
+        Self::Plus,
+        Self::BookPlus,
+        Self::ArrowLeft,
         Self::Lock,
     ];
 

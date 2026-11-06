@@ -525,6 +525,35 @@ pub fn remove(lib: &mut Library, key: &str) -> Result<LibraryTool, LibraryError>
     Ok(lib.tools.remove(index))
 }
 
+/// `tool` as a project embeds it next to `project_tools`: every value
+/// kept, its number included, under the next free project id
+/// ([`next_project_tool_id`]). What `dreamcarve tools add` and the app's
+/// *Add to project* both write (ADR-0002: projects keep copies).
+#[must_use]
+pub fn project_copy(project_tools: &[Tool], tool: &Tool) -> Tool {
+    Tool {
+        id: next_project_tool_id(project_tools),
+        ..tool.clone()
+    }
+}
+
+/// The first `t<n>`, counting up from one past the highest such id in
+/// `tools`, that no tool has.
+#[must_use]
+pub fn next_project_tool_id(tools: &[Tool]) -> ToolId {
+    let highest = tools
+        .iter()
+        .filter_map(|t| t.id.as_str().strip_prefix('t')?.parse::<u64>().ok())
+        .max()
+        .unwrap_or(0);
+    let taken = |id: &str| tools.iter().any(|t| t.id.as_str() == id);
+    let id = (highest.saturating_add(1)..)
+        .map(|n| format!("t{n}"))
+        .find(|id| !taken(id))
+        .unwrap_or_else(|| format!("t{}", highest.saturating_add(1)));
+    ToolId::new(id)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -5,7 +5,8 @@
 //! not do (`docs/specs/phase-4/design.md`, "Overview" and "Module
 //! layout"): the staged write that puts every file of an export in place
 //! or none ([`staged`]), the user config directory ([`config_dir`]),
-//! `config.toml` ([`config`]) and the app's `gui.toml` ([`gui_prefs`]).
+//! `config.toml` ([`config`]), the app's `gui.toml` ([`gui_prefs`]) and
+//! the tool library file ([`library`]).
 //! Moved from the `dreamcarve` CLI, which keeps printing and exit codes;
 //! errors here are [`ShellError`]s, which the CLI prints as it printed its
 //! own.
@@ -17,6 +18,7 @@ pub mod config;
 pub mod config_dir;
 mod error;
 pub mod gui_prefs;
+pub mod library;
 pub mod staged;
 
 pub use config::{Config, ExportConfig};
