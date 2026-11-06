@@ -241,9 +241,13 @@ fn delete_removes_targets_and_tabs_and_warns() {
         .expect("places tabs");
     let placed = harness.app.project().clone();
     assert!(!placed.tabs.is_empty());
+    // Validation's `operation_has_no_targets`: an error, so the panel
+    // prints its message without the code, located at the targets.
     let no_targets = |h: &Harness| {
         h.warnings().iter().any(|f| {
-            f.code.as_deref() == Some("operation_has_no_targets") && f.op.as_ref() == Some(&op4)
+            f.field.as_deref() == Some("operations[op4].targets")
+                && f.op.as_ref() == Some(&op4)
+                && f.message.contains("Cut out")
         })
     };
     assert!(!no_targets(&harness));

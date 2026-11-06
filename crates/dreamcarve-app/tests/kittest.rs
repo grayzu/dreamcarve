@@ -1000,3 +1000,105 @@ fn locked_refuses_with_status_message() {
     assert_eq!(h.state().message(), Some(message));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 57 in the window (`experience.md`, section 8): a click on a
+/// Design Tree row selects the shape, Ctrl/⌘-click adds or removes one,
+/// Shift-click selects the range from the last click; a row's eye hides
+/// its shape in one step; a double-click renames in place, Enter commits
+/// as one undo step.
+#[test]
+fn design_tree_rows_select_hide_and_rename() {
+    let dir = scratch("tree-rows");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let options = options(&dir.join("config"), Some(plaque), &dialogs);
+    // Frames 1/60 s apart, so two clicks a frame apart are a double-click
+    // (egui's limit is 0.3 s; the harness's default step is 0.25 s).
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(1.0 / 60.0)
+        .build_eframe(move |cc| dreamcarve_app::Shell::new(cc, options).expect("the shell starts"));
+    h.run();
+    let selected = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
+        h.state()
+            .app()
+            .selection()
+            .instances()
+            .iter()
+            .map(|i| i.as_str().to_owned())
+            .collect()
+    };
+
+    // Double-click renames in place; Enter commits one step. Done first,
+    // so no earlier click in the harness counts toward the double-click.
+    let at = h.get_by_label("border").rect().center();
+    h.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false, true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run();
+    h.get_by_label("Rename border").type_text("frame");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let names: Vec<String> = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.name.clone())
+        .collect();
+    assert!(names.contains(&"frame".to_owned()), "renamed: {names:?}");
+    assert_eq!(h.state().app().undo_label(), Some("Rename “border”"));
+    assert_eq!(undo_steps(&h), 1, "the rename is one step");
+
+    h.get_by_label("square").click();
+    h.run();
+    assert_eq!(selected(&h), ["i4"], "a click selects the row's shape");
+    h.get_by_label("pocket")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run();
+    assert_eq!(selected(&h), ["i4", "i2"], "Ctrl/⌘-click adds");
+    h.get_by_label("holes-2")
+        .click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    assert_eq!(
+        selected(&h),
+        ["i4", "i2", "i3", "i5", "i6"],
+        "Shift-click adds the range from the last click"
+    );
+    h.get_by_label("square")
+        .click_modifiers(egui::Modifiers::COMMAND);
+    h.run();
+    assert_eq!(selected(&h), ["i2", "i3", "i5", "i6"], "and toggles");
+
+    // The island's eye: its row's third "Hide" (after the outline's and
+    // the pocket's); the section header's reads "Hide all".
+    let steps = undo_steps(&h);
+    h.query_all_by_label("Hide")
+        .nth(2)
+        .expect("each row has an eye")
+        .click();
+    h.run();
+    let island = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .project()
+            .instances
+            .iter()
+            .find(|i| i.id.as_str() == "i3")
+            .cloned()
+            .expect("the island")
+    };
+    assert!(!island(&h).visible, "the eye hid the island");
+    assert_eq!(h.state().app().undo_label(), Some("Hide “island”"));
+    assert_eq!(undo_steps(&h), steps + 1);
+
+    std::fs::remove_dir_all(&dir).unwrap();
+}

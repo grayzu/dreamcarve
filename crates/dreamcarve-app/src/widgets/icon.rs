@@ -54,6 +54,21 @@ pub enum Icon {
     ArrowLeft,
     /// `lock`: a locked shape's padlock on the Viewport.
     Lock,
+    /// `eye`: a shown row.
+    Eye,
+    /// `eye-off`: a hidden row.
+    EyeOff,
+    /// `lock-open`: an unlocked row on hover; the W/H padlock open.
+    LockOpen,
+    /// `link-2`: a linked copy.
+    Link2,
+    /// `bookmark`: a tab row.
+    Bookmark,
+    /// `flip-vertical-2`, mirrored about a vertical line: Mirror ↔ (Lucide
+    /// names a flip by its axis).
+    MirrorLeftRight,
+    /// `flip-horizontal-2`, mirrored about a horizontal line: Mirror ↕.
+    MirrorTopBottom,
 }
 
 impl Icon {
@@ -83,6 +98,13 @@ impl Icon {
             Self::BookPlus => "book-plus",
             Self::ArrowLeft => "arrow-left",
             Self::Lock => "lock",
+            Self::Eye => "eye",
+            Self::EyeOff => "eye-off",
+            Self::LockOpen => "lock-open",
+            Self::Link2 => "link-2",
+            Self::Bookmark => "bookmark",
+            Self::MirrorLeftRight => "flip-vertical-2",
+            Self::MirrorTopBottom => "flip-horizontal-2",
         }
     }
 
@@ -111,12 +133,19 @@ impl Icon {
             Self::BookPlus => '\u{e3f3}',
             Self::ArrowLeft => '\u{e048}',
             Self::Lock => '\u{e10b}',
+            Self::Eye => '\u{e0ba}',
+            Self::EyeOff => '\u{e0bb}',
+            Self::LockOpen => '\u{e10c}',
+            Self::Link2 => '\u{e103}',
+            Self::Bookmark => '\u{e060}',
+            Self::MirrorLeftRight => '\u{e360}',
+            Self::MirrorTopBottom => '\u{e35e}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 28] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -138,6 +167,13 @@ impl Icon {
         Self::BookPlus,
         Self::ArrowLeft,
         Self::Lock,
+        Self::Eye,
+        Self::EyeOff,
+        Self::LockOpen,
+        Self::Link2,
+        Self::Bookmark,
+        Self::MirrorLeftRight,
+        Self::MirrorTopBottom,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

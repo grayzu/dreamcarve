@@ -155,7 +155,7 @@ fn typed_x_y_w_h_rotation_mirror_produce_the_expected_transforms() {
     let scaled = placement_of(harness.app.project(), &ids);
     assert_near(centre(scaled.bounds), c, 1e-9, "the centre stays");
     assert!(
-        (scaled.bounds.height_mm() - 45.0).abs() < 1e-6,
+        (scaled.bounds.height_mm() - start.bounds.height_mm() / 2.0).abs() < 1e-9,
         "H follows W"
     );
     assert_eq!(harness.app.undo_label(), Some("Scale “coaster”"));
