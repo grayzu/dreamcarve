@@ -8,6 +8,7 @@
 
 pub(crate) mod button;
 pub(crate) mod icon;
+pub(crate) mod op_glyph;
 pub(crate) mod row;
 pub(crate) mod section;
 pub(crate) mod segmented;

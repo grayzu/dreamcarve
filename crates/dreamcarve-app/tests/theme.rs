@@ -35,8 +35,9 @@ fn rust_files(dir: &Path, out: &mut Vec<PathBuf>) {
 /// `experience.md` section 12: "no widget sets a colour literal
 /// (`Color32::from_rgb` outside `theme.rs` and the painter-glyph module is
 /// a bug)". A source scan of the app for colour constructors and named
-/// colours outside `shell/theme.rs`; the painter-glyph module arrives with
-/// the operation glyphs (slice 10) and is not exempt until then.
+/// colours outside `shell/theme.rs`. The painter-glyph module
+/// (`widgets/op_glyph.rs`, #539) takes its operation's colour from the
+/// palette, so it needs no exemption either.
 #[test]
 fn no_colour_literal_outside_theme() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
@@ -244,14 +245,14 @@ fn operation_colours_and_depth_ramp_match_experience_md() {
     let operations = numbered_rows("### Operation colours");
     assert_eq!(operations.len(), 8, "{operations:?}");
     for (k, row) in operations.iter().enumerate() {
-        assert_eq!(theme::LIGHT.operations[k], hex_in(&row[4]), "light {k}");
-        assert_eq!(theme::DARK.operations[k], hex_in(&row[6]), "dark {k}");
+        assert_eq!(theme::LIGHT.operation(k), hex_in(&row[4]), "light {k}");
+        assert_eq!(theme::DARK.operation(k), hex_in(&row[6]), "dark {k}");
         assert_eq!(
-            theme::LIGHT.operations[k],
+            theme::LIGHT.operation(k),
             parse_hex(dc_job::preview::PALETTE[k]),
             "light {k} is the preview's"
         );
-        assert_eq!(theme::LIGHT.operation(k + 8), theme::LIGHT.operations[k]);
+        assert_eq!(theme::LIGHT.operation(k + 8), theme::LIGHT.operation(k));
     }
     let ramp = numbered_rows("### Depth ramp");
     assert_eq!(ramp.len(), 5, "{ramp:?}");

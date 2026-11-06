@@ -276,14 +276,22 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
                     }
                 }
                 StrokeKind::Cut if visibility.cuts => {
-                    for pair in stroke.points(look.tolerance_mm).windows(2) {
-                        let [a, b] = pair else { continue };
-                        if xy(*a).distance_to(xy(*b)) <= XY_EPS_MM {
-                            continue;
+                    let mut push = |a: Point3, b: Point3| {
+                        if xy(a).distance_to(xy(b)) > XY_EPS_MM {
+                            let depth = look.ramp.map(|r| r.step(a.z.min(b.z)));
+                            let word = StyleWord::toolpath(StyleId::Cut, colour, depth, stale);
+                            cuts.push(segment(xy(a), xy(b), 0.0, word));
                         }
-                        let depth = look.ramp.map(|r| r.step(a.z.min(b.z)));
-                        let word = StyleWord::toolpath(StyleId::Cut, colour, depth, stale);
-                        cuts.push(segment(xy(*a), xy(*b), 0.0, word));
+                    };
+                    // A line needs no flattening, and most moves are lines.
+                    if stroke.arc.is_none() {
+                        push(stroke.from, stroke.to);
+                    } else {
+                        for pair in stroke.points(look.tolerance_mm).windows(2) {
+                            if let [a, b] = pair {
+                                push(*a, *b);
+                            }
+                        }
                     }
                 }
                 StrokeKind::Plunge if visibility.plunges => {

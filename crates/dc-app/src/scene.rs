@@ -143,8 +143,13 @@ fn operations(
                 (None, Some(stored)) => stored
                     .runs
                     .iter()
-                    .map(|run| SceneRun {
-                        marks: preview::marks(&preview::Run::from(run)),
+                    .enumerate()
+                    .map(|(k, run)| SceneRun {
+                        marks: stored
+                            .marks
+                            .get(k)
+                            .cloned()
+                            .unwrap_or_else(|| preview::marks(&preview::Run::from(run))),
                         run: run.clone(),
                     })
                     .collect(),

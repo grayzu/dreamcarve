@@ -277,7 +277,7 @@ pub fn styles(palette: &crate::theme::Palette) -> StyleTable {
             solid(palette.viewport_extents_centre, 1.0),
             dashed(palette.viewport_extents_edge, 1.0, 6.0, 4.0),
         ],
-        operations: palette.operations,
+        operations: std::array::from_fn(|k| palette.operation(k)),
         ramp: palette.depth_ramp,
     }
 }

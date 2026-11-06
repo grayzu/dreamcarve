@@ -373,9 +373,10 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
                 enabled: true,
                 disabled_reason: None,
                 tier: message.as_ref().map(|_| Tier::Error),
+                reset: None,
             },
         );
-        if let Some(text) = typed {
+        if let Some(text) = typed.committed {
             match dc_app::units::parse_length_mm(&text, display_units) {
                 Ok(tolerance_mm) => {
                     sheet.refused = None;

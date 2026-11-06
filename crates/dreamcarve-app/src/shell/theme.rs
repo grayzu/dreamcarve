@@ -174,9 +174,6 @@ pub struct Palette {
     pub viewport_extents_edge: Color32,
     /// The pill behind a caption on the Viewport.
     pub viewport_label_bg: Color32,
-    /// The operation colours (section 5, "Operation colours"), by the
-    /// run's place in the preview, repeating after eight.
-    pub operations: [Color32; 8],
     /// The depth ramp's five stops, stock top first (section 5, "Depth
     /// ramp"), interpolated in linear sRGB.
     pub depth_ramp: [Color32; 5],
@@ -243,7 +240,6 @@ pub const LIGHT: Palette = Palette {
     viewport_extents_centre: rgb(0x5B6472),
     viewport_extents_edge: rgb(0x8A929E),
     viewport_label_bg: rgba(0xFFFF_FFE0),
-    operations: preview_palette(),
     depth_ramp: [
         rgb(0xAFC2EE),
         rgb(0x7C98E0),
@@ -312,16 +308,6 @@ pub const DARK: Palette = Palette {
     viewport_extents_centre: rgb(0xA3ABB7),
     viewport_extents_edge: rgb(0x7B8491),
     viewport_label_bg: rgba(0x262B_33E6),
-    operations: [
-        rgb(0x5BA6EA),
-        rgb(0xF0605A),
-        rgb(0x5FC95F),
-        rgb(0xB48FE0),
-        rgb(0xFFA046),
-        rgb(0x4FD4E4),
-        rgb(0xC8907F),
-        rgb(0xF08FD2),
-    ],
     depth_ramp: [
         rgb(0xE4ECFF),
         rgb(0xBCCBF8),
@@ -351,16 +337,6 @@ impl Palette {
         } else {
             &LIGHT
         }
-    }
-
-    /// The colour of the preview's `k`th run (section 5, "Operation
-    /// colours"): the palette repeats after eight.
-    #[must_use]
-    pub fn operation(&self, k: usize) -> Color32 {
-        self.operations
-            .get(k % self.operations.len())
-            .copied()
-            .unwrap_or(self.viewport_shape)
     }
 
     /// Every single-colour token with the name `experience.md` gives it, for
@@ -468,6 +444,41 @@ impl Palette {
         )]
         let byte = |c: f32| (gamma(c).clamp(0.0, 1.0) * 255.0).round() as u8;
         Color32::from_rgb(byte(r), byte(g), byte(b))
+    }
+}
+
+/// The operation colours on the light Viewport (`experience.md`, section
+/// 5, "Operation colours", the light set the maintainer accepted with
+/// design open question 5): `dc_job::preview::PALETTE`, read at compile
+/// time, so the light Viewport and `--preview` share one table.
+pub const OPERATION_LIGHT: [Color32; 8] = preview_palette();
+
+/// The operation colours on the dark Viewport: section 5's dark set, the
+/// same hues in the same order.
+pub const OPERATION_DARK: [Color32; 8] = [
+    rgb(0x5BA6EA),
+    rgb(0xF0605A),
+    rgb(0x5FC95F),
+    rgb(0xB48FE0),
+    rgb(0xFFA046),
+    rgb(0x4FD4E4),
+    rgb(0xC8907F),
+    rgb(0xF08FD2),
+];
+
+impl Palette {
+    /// The colour of the operation at `index` in the list, the preview's:
+    /// the palette's eight in turn.
+    #[must_use]
+    pub fn operation(&self, index: usize) -> Color32 {
+        let set = if self.dark {
+            &OPERATION_DARK
+        } else {
+            &OPERATION_LIGHT
+        };
+        set.get(index % set.len())
+            .copied()
+            .unwrap_or(self.text_primary)
     }
 }
 
