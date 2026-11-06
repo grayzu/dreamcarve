@@ -1920,6 +1920,88 @@ fn eye_hides_one_operation_show_all_restores() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The tools of operation `id`'s clearing passes, by id.
+fn clearing_tools(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> Vec<String> {
+    match operation_of(h, id) {
+        dc_project::Operation::VCarve(carve) => carve
+            .clearing
+            .iter()
+            .map(|p| p.tool.as_str().to_owned())
+            .collect(),
+        other => panic!("{} is not a V-Carve", other.name()),
+    }
+}
+
+/// Capability 70 and acceptance 75 in the window (slice 13, #542): on the
+/// sign's Background, *Add pass* appends the 3.175 mm end mill's pass;
+/// dragging its grip above the first pass is one step and shows
+/// `clearing_not_descending`'s message under the list; the editor's foot
+/// shows `check`'s carve summary once the carve has generated.
+#[test]
+fn clearing_list_adds_and_drags() {
+    let dir = scratch("clearing-list");
+    let sign = copy_fixture("sign.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(sign), &dialogs),
+        1280.0,
+        2400.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Background")
+        .click();
+    h.run();
+    assert_eq!(clearing_tools(&h, "op2"), ["t2"]);
+    let steps = undo_steps(&h);
+
+    h.get_by_label("Add pass").click();
+    h.run();
+    assert_eq!(clearing_tools(&h, "op2"), ["t2", "t3"], "the next smaller");
+    assert_eq!(undo_steps(&h), steps + 1);
+
+    let first = h.get_by_label("Drag to reorder pass 1").rect().center();
+    let second = h.get_by_label("Drag to reorder pass 2").rect().center();
+    common::drag(
+        &mut h,
+        second,
+        first - egui::vec2(0.0, 12.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(clearing_tools(&h, "op2"), ["t3", "t2"], "dragged above");
+    assert_eq!(undo_steps(&h), steps + 2, "one step");
+    let warning = h
+        .state()
+        .app()
+        .warnings()
+        .iter()
+        .find(|f| f.code.as_deref() == Some("clearing_not_descending"))
+        .expect("validation warns")
+        .message
+        .clone();
+    assert!(
+        h.query_by_label(&warning).is_some(),
+        "the warning shows under the list"
+    );
+
+    // Generated, the foot shows check's line for the carve.
+    let op2 = dc_project::OperationId::new("op2");
+    for _ in 0..400 {
+        if !dc_app::editor::carve_summary(h.state().app(), &op2).is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        h.run();
+    }
+    let summary = dc_app::editor::carve_summary(h.state().app(), &op2);
+    assert_eq!(summary.len(), 1, "the carve generated");
+    h.run();
+    assert!(
+        h.query_by_label(&summary[0]).is_some(),
+        "the editor's foot shows {}",
+        summary[0]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Capability 68's "Near a point: typed or clicked" (#540) through the
 /// window: with the plaque's Cut out starting near a point, *Pick on the
 /// view* arms the Viewport, and the next click there sets `start.near` to
