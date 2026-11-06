@@ -14,6 +14,7 @@
 
 use crate::heightfield::{Cutter, Heightfield};
 use crate::run::{RunLabel, ToolRun};
+use dc_geometry::medial::point_in_loops;
 use dc_geometry::{Point, Polyline, Rect, Region, nearest_point};
 use dc_project::{Board, InlayOp, Project, ToolKind};
 use std::collections::VecDeque;
@@ -121,14 +122,42 @@ pub(crate) fn seat(
     cells
 }
 
+/// How finely the band's outer edges are flattened for [`beyond_band`],
+/// mm: far below a cell.
+const BAND_EDGE_TOLERANCE_MM: f64 = 1e-3;
+
 /// For each cell of the male's `field` (row by row from the bottom),
 /// whether its male point lies outside the outer edge of every region the
-/// male carves (`band`): board, which falls away when the piece is cut out
-/// (#554). Not yet: every cell is read by its height alone.
+/// male carves (`band`, the mirrored design's surround): board, which falls
+/// away when the piece is cut out (#554). Each region's outer is tested on
+/// its own, since a region may lie in another's hole (the band round a
+/// part inside a letter's counter).
 pub(crate) fn beyond_band(field: &Heightfield, band: &[Region]) -> Vec<bool> {
-    let _ = band;
+    let outers: Vec<(Polyline, Rect)> = band
+        .iter()
+        .filter_map(|r| {
+            let outer = r
+                .outer()
+                .polyline()
+                .with_arcs_flattened(BAND_EDGE_TOLERANCE_MM);
+            let bounds = outer.bounds()?;
+            Some((outer, bounds))
+        })
+        .collect();
     let (nx, ny) = field.size();
-    vec![false; nx * ny]
+    let mut beyond = Vec::with_capacity(nx * ny);
+    for j in 0..ny {
+        for i in 0..nx {
+            let p = field.sample(i, j);
+            let inside = outers.iter().any(|(outer, b)| {
+                (b.min.x..=b.max.x).contains(&p.x)
+                    && (b.min.y..=b.max.y).contains(&p.y)
+                    && point_in_loops(p, &[outer])
+            });
+            beyond.push(!inside);
+        }
+    }
+    beyond
 }
 
 /// How an inlay pair seats (#452), from its two sides' programs.
