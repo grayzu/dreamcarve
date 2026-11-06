@@ -1225,9 +1225,16 @@ orientation; DreamCarve's regions are normalised anyway.
      `vcarve::corner_groove_runs_on_to_the_written_grid`). Millimetres
      do not always reach either: the nearest grid point inside a 4.5°
      notch can be 0.008 mm from its tip, and line art `0x7a`'s plug stood
-     0.068 mm proud with the 15° bit (#559, open: a decision between
-     accepting the limit in millimetres, more places, or a crossing within
-     a unit).
+     0.068 mm proud with the 15° bit, 0.033 mm with four millimetre
+     places. The maintainer accepted the limit in every unit (#559,
+     2026-11-05; #438's criteria): a corner sharper than `N = 2 asin(w /
+     (SEAT_MM · tan(α/2) + w))` for the bit and the program's own `w`
+     (11.1° for the 15° bit at three millimetre places, 24.8° at four
+     inch places) may hold a plug more than `SEAT_MM` up, and the stress
+     sweep excuses a seat failure there (`property::written_grid_corner`).
+     The Inlay chapter gives the table and suggests
+     `decimal_places.mm = 4` for narrow-bit inlays with very sharp points;
+     the bundled post-processors keep their places.
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else

@@ -123,6 +123,11 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>) {
                     },
                 );
                 text(ui, &cursor, TextStyle::Small, secondary);
+                // A drag's travel, scale or angle (#534).
+                if let Some(drag) = &state.pointer.drag {
+                    rule(ui, palette);
+                    text(ui, drag, TextStyle::Small, palette.text_primary);
+                }
                 rule(ui, palette);
                 text(
                     ui,

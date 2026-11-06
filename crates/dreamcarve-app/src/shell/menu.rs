@@ -92,14 +92,7 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         Action::OpenLibrary,
                         out,
                     );
-                    item(
-                        ui,
-                        strings,
-                        StrKey::AppMenuFitStock,
-                        None,
-                        Action::FitStock,
-                        out,
-                    );
+                    placement_items(ui, state, out);
                 });
                 ui.menu_button(strings.get(StrKey::AppMenuHelp), |ui| {
                     item(
@@ -114,6 +107,52 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 });
             });
         });
+}
+
+/// The Project menu's *Centre on Stock* and *Fit Stock to Shapes…*
+/// (functional spec, capabilities 58 and 61): the fit's submenu takes the
+/// margin in place (capability 50a: no dialog), starting at `init`'s; the
+/// margin is not a project field, so it is kept in egui's memory.
+fn placement_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    let selected = state.app.selection().instances();
+    let centre = ui.add_enabled(
+        !selected.is_empty(),
+        Button::new(strings.get(StrKey::PlacementCentreOnStock)),
+    );
+    let centre = centre.on_disabled_hover_text(strings.get(StrKey::PlacementCentreOnStockNone));
+    if centre.clicked() {
+        out.push(Action::Run(Box::new(dc_app::Command::CentreOnStock(
+            selected.to_vec(),
+        ))));
+        ui.close();
+    }
+    ui.menu_button(strings.get(StrKey::AppMenuFitStock), |ui| {
+        let units = state.app.project().display_units;
+        let memory = egui::Id::unique("fit_stock_margin");
+        let margin: String = ui.data(|d| d.get_temp(memory)).unwrap_or_else(|| {
+            let decimals = match units {
+                dc_project::Units::Mm => 0,
+                dc_project::Units::Inch => 3,
+            };
+            dc_app::units::format(dc_job::project_from::STOCK_MARGIN_MM, units, decimals)
+        });
+        let mut typed = margin.clone();
+        ui.horizontal(|ui| {
+            ui.label(strings.get(StrKey::PlacementMargin));
+            ui.add(egui::TextEdit::singleline(&mut typed).desired_width(80.0));
+        });
+        if typed != margin {
+            ui.data_mut(|d| d.insert_temp(memory, typed.clone()));
+        }
+        if ui.button(strings.get(StrKey::PlacementFit)).clicked() {
+            match dc_app::units::parse_length_mm(&typed, units) {
+                Ok(margin_mm) => out.push(Action::FitStock { margin_mm }),
+                Err(e) => out.push(Action::Refused(e.to_string())),
+            }
+            ui.close();
+        }
+    });
 }
 
 fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {

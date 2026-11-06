@@ -4,7 +4,8 @@
 //! What each Viewport layer holds, as the renderer's segments
 //! (`docs/specs/phase-4/design.md`, "The Viewport renderer"; `experience.md`
 //! section 9): the grid and the axes over the stock, the stock's outline,
-//! the shapes, the hovered shape and the selection. Arcs are flattened
+//! the shapes, the hovered shape and the selection (drawn through a
+//! drag's preview transform while one is in progress). Arcs are flattened
 //! for display at a tolerance of a fraction of a pixel, fixed per zoom
 //! band (a doubling of the scale), so a layer is rebuilt when the band
 //! changes and not on every zoom step. Display only: nothing here reaches
@@ -12,7 +13,7 @@
 
 use dc_app::Scene;
 use dc_app::viewport::grid::Grid;
-use dc_geometry::{Point, Polyline};
+use dc_geometry::{Point, Polyline, Transform};
 use dc_project::{InstanceId, Project};
 
 use crate::viewport::renderer::{Segment, StyleId, gpu_f32};
@@ -137,11 +138,36 @@ pub(crate) fn stock(project: &Project) -> Vec<Segment> {
     out
 }
 
-/// Every visible shape: closed solid, open dashed, locked in its grey.
+/// `outline` flattened to `tolerance_mm`, then placed by `placed` (a drag's
+/// preview), pushed in `style`. Flattening first keeps an arc under an
+/// uneven scale drawable: display only, the command checks the arcs.
+fn push_placed(
+    out: &mut Vec<Segment>,
+    outline: &Polyline,
+    tolerance_mm: f64,
+    placed: Transform,
+    style: StyleId,
+) {
+    let flat = outline.with_arcs_flattened(tolerance_mm);
+    let points: Vec<Point> = flat
+        .vertices()
+        .iter()
+        .map(|v| placed.apply(v.point()))
+        .collect();
+    push_path(out, &points, flat.is_closed(), style);
+}
+
+/// Every visible shape but those in `moving` (drawn by the selection layer
+/// where a drag will put them): closed solid, open dashed, locked in its
+/// grey.
 #[must_use]
-pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64) -> Vec<Segment> {
+pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) -> Vec<Segment> {
     let mut out = Vec::new();
-    for shape in scene.shapes() {
+    for shape in scene
+        .shapes()
+        .iter()
+        .filter(|s| !moving.contains(&s.instance))
+    {
         for outline in &shape.outlines {
             let style = match (shape.locked, outline.is_closed()) {
                 (false, true) => StyleId::Shape,
@@ -155,22 +181,30 @@ pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64) -> Vec<Segment> {
     out
 }
 
-/// The shapes among `ids`, in `closed` / `open` styles.
+/// The shapes among `ids`, in `closed` / `open` styles; those among
+/// `preview`'s ids placed by its transform.
 #[must_use]
 pub(crate) fn highlighted(
     scene: &Scene,
     ids: &[InstanceId],
     tolerance_mm: f64,
     (closed, open): (StyleId, StyleId),
+    preview: Option<(&[InstanceId], Transform)>,
 ) -> Vec<Segment> {
     let mut out = Vec::new();
     for id in ids {
         let Some(shape) = scene.shape(id) else {
             continue;
         };
+        let placed = preview
+            .filter(|(moving, _)| moving.contains(id))
+            .map(|(_, t)| t);
         for outline in &shape.outlines {
             let style = if outline.is_closed() { closed } else { open };
-            push_outline(&mut out, outline, tolerance_mm, style);
+            match placed {
+                Some(t) => push_placed(&mut out, outline, tolerance_mm, t, style),
+                None => push_outline(&mut out, outline, tolerance_mm, style),
+            }
         }
     }
     out

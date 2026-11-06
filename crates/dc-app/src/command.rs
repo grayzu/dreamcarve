@@ -17,7 +17,9 @@
 mod instances;
 mod operations;
 
-pub(crate) use instances::copy_name;
+pub(crate) use instances::{
+    about, bounds as selection_bounds, centre, copy_name, find as find_instance,
+};
 
 use dc_geometry::Transform;
 use dc_job::Drawing;

@@ -114,3 +114,55 @@ pub fn checked_projects() -> Vec<Fixture> {
     all.extend(corpus_projects());
     all
 }
+
+/// The phase 1 coaster as `dreamcarve init fixtures/coaster.svg` writes
+/// it: the stock round the drawing with `init`'s margin, the placeholder
+/// tool and the Profile.
+pub fn coaster() -> Project {
+    let bytes = read(&repo_root().join("fixtures/coaster.svg"));
+    let (import, _warnings) =
+        dc_import::import_svg(&bytes, &SvgImportOptions::default()).expect("coaster imports");
+    let post = dc_project::latest_definition("grblhal")
+        .expect("grblHAL is bundled")
+        .default_ref();
+    dc_job::project_from::drawing(
+        "coaster",
+        Drawing::Svg(import),
+        post,
+        dc_project::Units::Mm,
+        true,
+    )
+    .expect("init makes the coaster")
+}
+
+/// Asserts two transforms agree coefficient by coefficient within `tol`.
+pub fn assert_same_transform(
+    got: dc_geometry::Transform,
+    want: dc_geometry::Transform,
+    tol: f64,
+    what: &str,
+) {
+    for (k, (a, b)) in got.coeffs().iter().zip(want.coeffs()).enumerate() {
+        assert!(
+            (a - b).abs() <= tol,
+            "{what}: coefficient {k} is {a}, want {b} ({got:?} vs {want:?})"
+        );
+    }
+}
+
+/// Asserts two points agree within `tol` mm.
+pub fn assert_near(got: dc_geometry::Point, want: dc_geometry::Point, tol: f64, what: &str) {
+    assert!(
+        got.distance_to(want) <= tol,
+        "{what}: {got:?}, want {want:?}"
+    );
+}
+
+/// The instance `id` of `project`.
+pub fn instance_of<'a>(project: &'a Project, id: &str) -> &'a dc_project::FeatureInstance {
+    project
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == id)
+        .unwrap_or_else(|| panic!("the project has instance {id}"))
+}
