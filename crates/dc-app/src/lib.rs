@@ -8,6 +8,7 @@ pub mod command;
 mod error;
 pub mod generation;
 pub mod history;
+pub mod import;
 pub mod library;
 pub mod prefs;
 pub mod project;

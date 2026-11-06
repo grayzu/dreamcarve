@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
-use dc_job::{EmitOp, Finding, Findings};
+use dc_job::{EmitOp, Finding, Findings, Tier};
 use dc_project::{
     CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, OperationId, OriginXy,
     OriginZ, Problem, Project, SettingReset, Stock, Units,
@@ -22,10 +22,11 @@ use crate::command::Command;
 use crate::error::CommandError;
 use crate::generation::{Generation, Job, JobResult, SnapshotId};
 use crate::history::LabelledHistory;
+use crate::import::DrawingImport;
 use crate::prefs::Prefs;
 use crate::scene::Scene;
 use crate::selection::Selection;
-use crate::strings::Strings;
+use crate::strings::{StrKey, Strings};
 use crate::view::View;
 
 /// The bundled post-processor a new project names (capability 51).
@@ -60,6 +61,13 @@ pub struct App {
     last_resets: Vec<SettingReset>,
     /// What the Viewport draws, rebuilt with the snapshot and the results.
     scene: Scene,
+    /// The last import's notes (functional spec, capability 55): the
+    /// importer's warnings, under the file's name, listed once among the
+    /// warnings until the next import, an open, *New*, or an undo past the
+    /// import.
+    import_notes: Vec<Finding>,
+    /// How many steps the history held after that import.
+    import_depth: usize,
 }
 
 /// What opening a file reported (capability 51): the migration notes and
@@ -92,6 +100,8 @@ impl App {
             findings: Vec::new(),
             last_resets: Vec::new(),
             scene: Scene::default(),
+            import_notes: Vec::new(),
+            import_depth: 0,
         };
         app.refresh_findings();
         app.rebuild_scene();
@@ -169,9 +179,87 @@ impl App {
         self.source = path;
         self.saved = saved;
         self.last_resets.clear();
+        self.import_notes.clear();
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
+    }
+
+    /// Imports the drawing `sheet` shows into the project, placed as
+    /// drawn, as one undo step (*Import plaque.dxf*), and selects the new
+    /// shapes (functional spec, capability 55). The importer's warnings
+    /// become the import's notes among [`App::warnings`], once.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] with the sheet's reason when its
+    /// *Import* is disabled; nothing changes.
+    pub fn import_drawing(&mut self, sheet: &DrawingImport) -> Result<String, CommandError> {
+        let command = sheet.command().ok_or_else(|| CommandError::NotImportable {
+            reason: sheet.blocked().unwrap_or_default(),
+        })?;
+        let label = self.run(command)?;
+        self.import_depth = self.history.undo_labels().count();
+        self.take_import_notes(sheet);
+        Ok(label)
+    }
+
+    /// Replaces the project with a new one round the drawing `sheet`
+    /// shows, as *New from drawing…* does (functional spec, capability 51
+    /// and open question 1): what `dreamcarve init` builds, named by the
+    /// file's stem, on grblHAL at its latest version in millimetres, with
+    /// the stock and the shapes only (no placeholder tool, no Profile).
+    /// The history is cleared and the project has no file yet, as after
+    /// *New*; the importer's warnings become its notes.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::NotImportable`] when the sheet's *Import* is
+    /// disabled, and [`CommandError::Job`] when `init` would refuse the
+    /// drawing (a stock past the coordinate limit); nothing changes.
+    pub fn new_from_drawing(&mut self, sheet: &DrawingImport) -> Result<(), CommandError> {
+        let drawing = sheet.drawing().ok_or_else(|| CommandError::NotImportable {
+            reason: sheet.blocked().unwrap_or_default(),
+        })?;
+        let post_processor = dc_project::latest_definition(DEFAULT_POST_ID)?.default_ref();
+        let project = dc_job::project_from::drawing(
+            sheet.stem(),
+            drawing.clone(),
+            post_processor,
+            Units::Mm,
+            false,
+        )?;
+        self.reset(project);
+        self.import_depth = 0;
+        self.take_import_notes(sheet);
+        Ok(())
+    }
+
+    /// The import's notes: each importer warning, under the file's name.
+    fn take_import_notes(&mut self, sheet: &DrawingImport) {
+        let name = sheet.name();
+        self.import_notes = sheet
+            .warnings()
+            .iter()
+            .map(|warning| Finding {
+                field: None,
+                code: None,
+                message: self.strings.fmt(
+                    StrKey::AppImportNote,
+                    &[("name", name), ("note", &warning.to_string())],
+                ),
+                tier: Tier::Warning,
+                op: None,
+                shape: None,
+            })
+            .collect();
+        self.refresh_findings();
+    }
+
+    /// The last import's notes, as [`App::warnings`] lists them.
+    #[must_use]
+    pub fn import_notes(&self) -> &[Finding] {
+        &self.import_notes
     }
 
     /// The current snapshot.
@@ -269,6 +357,9 @@ impl App {
     pub fn undo(&mut self) -> Option<String> {
         let label = self.history.undo()?;
         self.last_resets.clear();
+        if self.history.undo_labels().count() < self.import_depth {
+            self.import_notes.clear();
+        }
         self.snapshot_changed();
         Some(label)
     }
@@ -353,6 +444,7 @@ impl App {
         findings.extend(self.validation.errors.iter().cloned());
         findings.extend(self.validation.warnings.iter().cloned());
         findings.extend(self.generation.findings());
+        findings.extend(self.import_notes.iter().cloned());
         self.findings = findings;
     }
 
@@ -447,7 +539,8 @@ impl App {
     /// Validation's, generation's and `finish`'s findings for the current
     /// snapshot, merged in the order `check` prints them: validation,
     /// then each operation in project order, then the project-level
-    /// checks and the export warnings. Each carries its tier.
+    /// checks and the export warnings, then the last import's notes. Each
+    /// carries its tier.
     #[must_use]
     pub fn warnings(&self) -> &[Finding] {
         &self.findings

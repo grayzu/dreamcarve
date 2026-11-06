@@ -21,6 +21,8 @@ test-support = []
 [dependencies]
 dc-geometry.workspace = true
 dc-job.workspace = true
+# The Import drawing sheet parses the bytes the shell read (capability 55).
+dc-import.workspace = true
 # The Tool Library window's model: filtering, the import report, project
 # copies (capability 64).
 dc-library.workspace = true
@@ -38,8 +40,6 @@ toml.workspace = true
 # Cargo unifies features across the package, so the integration tests
 # see `test_support` through this dependency on the crate itself.
 dc-app = { path = ".", features = ["test-support"] }
-# The tests import drawings into fixture projects.
-dc-import.workspace = true
 dc-project = { workspace = true, features = ["test-support"] }
 
 [lints]

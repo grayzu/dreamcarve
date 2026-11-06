@@ -9,8 +9,7 @@
 //! card goes when a shape arrives or on its close button.
 //!
 //! *Import a picture* waits for phase 3.4's picture import and says so;
-//! *Import a drawing* imports with the importers' defaults until the import
-//! sheet (slice 6).
+//! *Import a drawing* opens the Import drawing sheet on the chosen file.
 
 use dc_app::StrKey;
 use eframe::egui::{self, Key, Modifiers, Rect, TextStyle, Ui};

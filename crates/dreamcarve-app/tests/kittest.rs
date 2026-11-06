@@ -887,12 +887,25 @@ fn park_point_click_on_the_viewport() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A file dropped on the window: a path on disk.
+#[derive(Debug)]
+struct Dropped(std::path::PathBuf);
+
+impl egui::DroppedFile for Dropped {
+    fn path(&self) -> &std::path::Path {
+        &self.0
+    }
+
+    fn bytes(&self) -> Result<Vec<u8>, String> {
+        std::fs::read(&self.0).map_err(|e| e.to_string())
+    }
+}
+
 /// Drops `path` on the window, as the OS hands a dropped file over.
 fn drop_file(h: &mut Harness<'_, dreamcarve_app::Shell>, path: &std::path::Path) {
-    h.input_mut().dropped_files.push(egui::DroppedFile {
-        path: Some(path.to_path_buf()),
-        ..Default::default()
-    });
+    h.input_mut()
+        .dropped_files
+        .push(std::sync::Arc::new(Dropped(path.to_path_buf())));
     h.run();
 }
 
@@ -901,7 +914,8 @@ fn drop_file(h: &mut Harness<'_, dreamcarve_app::Shell>, path: &std::path::Path)
 /// an SVG; nothing is imported until *Import*, which adds the shapes as
 /// one undo step and selects them. A dropped DXF that declares no units
 /// opens the sheet with *Import* disabled and the importer's message
-/// until units are chosen. A dropped `.dcv` still opens the project
+/// until units are chosen; closing the sheet imports nothing. A dropped
+/// `.dcv` still opens the project
 /// (slice 3), through the unsaved-changes sheet when there are changes.
 #[test]
 fn drop_of_svg_opens_the_import_sheet() {
@@ -928,7 +942,8 @@ fn drop_of_svg_opens_the_import_sheet() {
         "and counts its shapes"
     );
     assert!(
-        sheet.query_by_label("Join tolerance").is_none() && sheet.query_by_label("Units").is_none(),
+        sheet.query_all_by_label("Join tolerance").next().is_none()
+            && sheet.query_all_by_label("Units").next().is_none(),
         "an SVG has no options"
     );
     assert!(
@@ -972,18 +987,25 @@ fn drop_of_svg_opens_the_import_sheet() {
         "the sheet shows the importer's message: {refusal}"
     );
     assert!(
-        sheet.query_by_label("Join tolerance").is_some(),
+        sheet.query_all_by_label("Join tolerance").next().is_some(),
         "a DXF has options"
     );
     assert!(
         sheet.get_by_label("Import").accesskit_node().is_disabled(),
         "Import is disabled until units are chosen"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Cancel").click();
+    // No Cancel button (`experience.md`, section 13, item 9): the
+    // header's close button closes the sheet.
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label("Cancel")
+            .is_none()
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Close").click();
     h.run();
     assert!(
         h.query_by_role(Role::Dialog).is_none(),
-        "Cancel closes the sheet"
+        "Close closes the sheet"
     );
     assert_eq!(
         h.state().app().undo_label(),
@@ -996,5 +1018,48 @@ fn drop_of_svg_opens_the_import_sheet() {
     drop_file(&mut h, &plaque);
     click_in_sheet(&mut h, "Discard");
     assert_eq!(h.state().app().source(), Some(plaque.as_path()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 51 and acceptance 63 (#535): File ▸ New from Drawing… asks
+/// for a drawing, shows it in the same sheet, and *Create project* makes
+/// the project `dc_app::App::new_from_drawing` makes: `init`'s stock and
+/// shapes, no tool, no operation, no file yet.
+#[test]
+fn new_from_drawing_through_the_sheet() {
+    let dir = scratch("new-from-drawing");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let coaster = common::repo_root().join("fixtures/coaster.svg");
+    dialogs.answer(&coaster);
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("New from Drawing…").click();
+    h.run();
+    assert_eq!(dialogs.asked(), ["open_drawing"]);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(sheet.query_by_label("New from drawing").is_some());
+    sheet.get_by_label("Create project").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    let bytes = std::fs::read(&coaster).unwrap();
+    let model = dc_app::import::DrawingImport::open(
+        dc_app::import::DrawingFormat::Svg,
+        "coaster.svg",
+        bytes,
+        dc_app::import::Purpose::New,
+    );
+    let mut expected = dc_app::App::new(
+        dc_app::App::new_project().unwrap(),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    expected.new_from_drawing(&model).unwrap();
+    let app = h.state().app();
+    assert_eq!(app.project(), expected.project());
+    assert!(app.project().tools.is_empty() && app.project().operations.is_empty());
+    assert_eq!(app.source(), None);
+    assert!(!app.can_undo());
     std::fs::remove_dir_all(&dir).unwrap();
 }
