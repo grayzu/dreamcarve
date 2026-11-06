@@ -463,7 +463,11 @@ fn library_window_adds_ticked_rows() {
         "the header names the library file"
     );
     assert!(
-        sheet.query_by_role(Role::CheckBox).is_none(),
+        sheet
+            .query_by_label(
+                "The library is empty. Import a Fusion or DreamCarve library to fill it."
+            )
+            .is_some(),
         "no library yet, so no rows"
     );
 
@@ -474,8 +478,7 @@ fn library_window_adds_ticked_rows() {
     h.run();
     assert_eq!(dialogs.asked(), ["open_library"]);
     let bytes = std::fs::read(&sample).unwrap();
-    let merged =
-        dc_app::library::import(&dc_library::Library::default(), &bytes, false).unwrap();
+    let merged = dc_app::library::import(&dc_library::Library::default(), &bytes, false).unwrap();
     let sheet = h.get_by_role(Role::Dialog);
     for line in merged.report.lines() {
         assert!(
@@ -490,7 +493,9 @@ fn library_window_adds_ticked_rows() {
         "and the counts"
     );
     assert!(
-        sheet.query_by_role(Role::CheckBox).is_none(),
+        sheet
+            .query_by_role_and_label(Role::CheckBox, "5 mm Drill")
+            .is_none(),
         "in place of the table"
     );
     let written = std::fs::read_to_string(config.join("tools.json")).expect("library written");
@@ -504,6 +509,10 @@ fn library_window_adds_ticked_rows() {
 
     // Tick two rows; the primary action counts them.
     for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::CheckBox, name)
+            .scroll_to_me();
+        h.run();
         h.get_by_role(Role::Dialog)
             .get_by_role_and_label(Role::CheckBox, name)
             .click();

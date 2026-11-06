@@ -106,15 +106,24 @@ fn tools_import_report_equals_the_app() {
 #[test]
 fn tools_add_equals_the_app() {
     let dir = work_dir("tools_add_equals_the_app");
-    std::fs::copy(repo_root().join("fixtures/coaster.svg"), dir.join("coaster.svg"))
-        .expect("svg copied");
+    std::fs::copy(
+        repo_root().join("fixtures/coaster.svg"),
+        dir.join("coaster.svg"),
+    )
+    .expect("svg copied");
     run(&dir, &["init", "coaster.svg"]);
     let sample = repo_root().join("tests/fixtures/fusion/sample.tools");
-    run(&dir, &["tools", "import", sample.to_str().expect("utf-8 path")]);
+    run(
+        &dir,
+        &["tools", "import", sample.to_str().expect("utf-8 path")],
+    );
     let dcv = dir.join("coaster.dcv");
     let before = std::fs::read(&dcv).expect("dcv readable");
 
-    run(&dir, &["tools", "add", "coaster.dcv", "1/4 in Flat End Mill"]);
+    run(
+        &dir,
+        &["tools", "add", "coaster.dcv", "1/4 in Flat End Mill"],
+    );
     run(&dir, &["tools", "add", "coaster.dcv", "5 mm Drill"]);
     let cli = std::fs::read_to_string(&dcv).expect("dcv readable");
 
