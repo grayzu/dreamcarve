@@ -229,3 +229,88 @@ fn female_corners_reach_the_tip() {
     }
     assert!(failures.is_empty(), "corners missed: {failures:#?}");
 }
+
+/// #554 (lettering `0x97`'s males, 15° bit): a chain that runs along a wall
+/// into a corner is fitted onto the corner's axis. Where the medial axis
+/// joins a corner's tip to a node beside one of its walls, the stretch
+/// between runs along that wall; where the wall bends a little into the
+/// region on the way, the stretch's cone crosses it and is split at its
+/// worst point, on the wall, at the start plane. The rest of the way to
+/// the tip then lay on the wall, and fitting reads each point's axis from
+/// its nearest wall point, which is under it, so it left the stretch
+/// there: the groove ran along one wall at the surface and left the
+/// corner's wood beside it, and the plug stood 0.051 mm proud past the
+/// tip. Here a 30° corner at the origin, its upper wall bending 5° away
+/// from the lower one 0.02 mm out, has its tip joined to a node 0.004 mm
+/// below the upper wall 0.08 mm out. Along the corner's bisector the
+/// carve reaches within the axis tolerance of every point's own depth.
+#[test]
+fn chain_along_a_wall_into_a_corner_is_fitted_to_its_axis() {
+    let slope = slope_of(15.0);
+    let towards = |deg: f64, mm: f64| {
+        let r = deg.to_radians();
+        (r.cos() * mm, r.sin() * mm)
+    };
+    let bend = towards(30.0, 0.02);
+    let far = towards(35.0, 1.0);
+    let region = {
+        let contour = Contour::new(polygon(&[
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (bend.0 + far.0, bend.1 + far.1),
+            bend,
+        ]))
+        .expect("a corner");
+        nest(vec![contour]).expect("one region").0.remove(0)
+    };
+    let walls = Walls::new(
+        std::slice::from_ref(&region),
+        wall_tolerance_mm(dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM, slope),
+    );
+    // 0.06 mm along the upper wall from the bend, 0.004 mm below it.
+    let along = towards(35.0, 0.06);
+    let below = towards(-55.0, 0.004);
+    let node = Point::new(bend.0 + along.0 + below.0, bend.1 + along.1 + below.1);
+    let chain = graph(
+        &[(node.x, node.y, walls.clearance_mm(node)), (0.0, 0.0, 0.0)],
+        &[&[1], &[0]],
+    );
+    let depth = Depth {
+        start_plane_z_mm: 10.0,
+        flat_depth_mm: None,
+        slope,
+    };
+    let axis_mm = wall_tolerance_mm(medial::EDGE_MM, slope);
+    let tolerances = Tolerances {
+        simplify_mm: 0.0,
+        redundancy_mm: 0.0,
+        deepen_mm: Some(0.01),
+        axis_mm: Some(axis_mm),
+        written_mm: 0.0,
+        grid: None,
+    };
+    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]);
+    let mut moves: Vec<(Point3, Point3)> = Vec::new();
+    for run in &runs {
+        let mut from = run.start;
+        for step in &run.steps {
+            moves.push((from, step.to));
+            from = step.to;
+        }
+    }
+    for k in 1..=4 {
+        let d_mm = 0.004 * f64::from(k);
+        let (x, y) = towards(15.0, d_mm);
+        let m = Point::new(x, y);
+        let own_z = depth.z_mm(d_mm * 15.0_f64.to_radians().sin());
+        let low = moves
+            .iter()
+            .map(|&(a, b)| crate::heightfield::cone_low_mm(a, b, m, slope))
+            .fold(f64::INFINITY, f64::min);
+        let short_mm = slope * (low - own_z);
+        assert!(
+            short_mm <= axis_mm + 1e-4,
+            "{d_mm} mm along the bisector the carve stops {short_mm:.4} mm short of the walls: {moves:?}"
+        );
+    }
+}
