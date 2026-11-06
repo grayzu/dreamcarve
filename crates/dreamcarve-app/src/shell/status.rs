@@ -154,6 +154,20 @@ fn counts(ui: &mut Ui, state: &FrameState<'_>, palette: &Palette, out: &mut Vec<
     focus_ring(ui, &response);
 }
 
+/// The status bar's Z range while the program extents are shown
+/// (capability 74; `experience.md`, section 9): the tool centre's, in
+/// machine coordinates as `check` prints it.
+fn z_range(state: &FrameState<'_>) -> Option<String> {
+    let app = state.app;
+    if !app.view().visibility.extents {
+        return None;
+    }
+    let finished = app.generation().finished()?;
+    let extents = dc_app::view::program_extents(app.project(), finished)?;
+    let z = dc_app::view::range_label(extents.z?, extents.units);
+    Some(app.strings().fmt(StrKey::AppToolpathsZRange, &[("z", &z)]))
+}
+
 /// Draws the status bar.
 pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
@@ -238,6 +252,11 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 generation(ui, state, palette, out);
                 rule(ui, palette);
                 counts(ui, state, palette, out);
+                // Capability 74: the program's Z range beside its boxes.
+                if let Some(z) = z_range(state) {
+                    rule(ui, palette);
+                    text(ui, &z, TextStyle::Small, secondary);
+                }
                 if let Some((name, locked)) = &state.pointer.hover {
                     rule(ui, palette);
                     let label = if *locked {

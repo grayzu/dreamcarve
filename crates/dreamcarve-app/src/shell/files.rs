@@ -134,6 +134,7 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
             tab_marks: file.visibility.tab_marks,
             grid: file.visibility.grid,
             extents: file.visibility.extents,
+            only_selected: file.visibility.only_selected,
         },
         colour: match file.colour {
             gui_prefs::ColourMode::ByOperation => dc_app::ColourMode::ByOperation,
@@ -191,6 +192,7 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             tab_marks: prefs.visibility.tab_marks,
             grid: prefs.visibility.grid,
             extents: prefs.visibility.extents,
+            only_selected: prefs.visibility.only_selected,
         },
         colour: match prefs.colour {
             dc_app::ColourMode::ByOperation => gui_prefs::ColourMode::ByOperation,

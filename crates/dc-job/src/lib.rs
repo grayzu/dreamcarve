@@ -32,7 +32,10 @@ pub use build::{
 pub use error::JobError;
 pub use import::{Drawing, drawing_into};
 pub use names::{program_names, program_suffixes};
-pub use summary::{EstimateConfig, Estimates, describe_carves, describe_operations};
+pub use summary::{
+    EstimateConfig, Estimates, ProjectExtents, describe_carves, describe_operations,
+    project_extents,
+};
 
 // The `dc-cam` and `dc-gcode` types a shell needs, so the app's crates
 // list neither (functional spec, S20).

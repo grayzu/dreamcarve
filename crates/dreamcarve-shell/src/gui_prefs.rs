@@ -117,8 +117,8 @@ impl Default for Panels {
     }
 }
 
-/// What the Viewport draws of a toolpath. Everything but the arrows is
-/// on by default.
+/// What the Viewport draws of a toolpath. Everything but the arrows, the
+/// extents and *Only the selected operation* is on by default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Visibility {
@@ -138,6 +138,8 @@ pub struct Visibility {
     pub grid: bool,
     /// Each program's extents box.
     pub extents: bool,
+    /// Only the selected operation's toolpath.
+    pub only_selected: bool,
 }
 
 impl Default for Visibility {
@@ -151,6 +153,7 @@ impl Default for Visibility {
             tab_marks: true,
             grid: true,
             extents: false,
+            only_selected: false,
         }
     }
 }
@@ -272,6 +275,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "tab_marks",
         "grid",
         "extents",
+        "only_selected",
     ];
     let mut unknown = Vec::new();
     for (key, value) in table {

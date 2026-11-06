@@ -30,6 +30,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 
+use dc_job::preview::Marks;
 use dc_job::{EmitOp, EstimateConfig, Findings, Finished, Generated, ProgramSplit};
 use dc_project::{InstanceId, Operation, OperationId, Project, ToolId};
 use serde::Serialize;
@@ -92,6 +93,9 @@ pub enum JobResult {
         job: Job,
         /// Its runs and findings.
         generated: Generated,
+        /// Each run's marks (`dc_job::preview::marks`), found on the
+        /// worker so the window does not walk the toolpaths again.
+        marks: Vec<Marks>,
     },
     /// The project-level pass ([`dc_job::finish`]) over every operation's
     /// runs.
@@ -112,7 +116,16 @@ pub fn execute(project: &Project, work: Work, date: &str, estimate: &EstimateCon
     match work {
         Work::Operation(job) => {
             let generated = dc_job::generate_operation(project, &job.op);
-            JobResult::Operation { job, generated }
+            let marks = generated
+                .runs
+                .iter()
+                .map(|run| dc_job::preview::marks(&dc_job::preview::Run::from(run)))
+                .collect();
+            JobResult::Operation {
+                job,
+                generated,
+                marks,
+            }
         }
         Work::Finish(FinishJob {
             snapshot,
@@ -282,6 +295,9 @@ pub struct OperationResult {
     pub runs: Vec<EmitOp>,
     /// What generating found.
     pub findings: Findings,
+    /// Each run's marks, in `runs`' order (the worker's; empty when the
+    /// result was made without them, and the Scene finds them then).
+    pub marks: Vec<Marks>,
 }
 
 /// How far the current round of generation has got, for the status bar's
@@ -508,7 +524,11 @@ impl Generation {
     /// snapshot; `false` when it was dropped.
     pub fn accept(&mut self, result: JobResult) -> bool {
         match result {
-            JobResult::Operation { job, generated } => {
+            JobResult::Operation {
+                job,
+                generated,
+                marks,
+            } => {
                 if job.snapshot != self.snapshot || !self.in_flight.remove(&job.op) {
                     return false;
                 }
@@ -520,6 +540,7 @@ impl Generation {
                         digest: job.digest,
                         runs: generated.runs,
                         findings: generated.findings,
+                        marks,
                     },
                 );
                 if self.in_flight.is_empty() && self.pending().is_empty() {
@@ -690,6 +711,7 @@ mod tests {
             assert!(generation.accept(JobResult::Operation {
                 job,
                 generated: Generated::default(),
+                marks: Vec::new(),
             }));
         }
     }
@@ -705,6 +727,7 @@ mod tests {
             assert!(generation.accept(JobResult::Operation {
                 job,
                 generated: Generated::default(),
+                marks: Vec::new(),
             }));
         }
         assert!(generation.needs_finish());
@@ -732,6 +755,7 @@ mod tests {
             assert!(!generation.accept(JobResult::Operation {
                 job,
                 generated: Generated::default(),
+                marks: Vec::new(),
             }));
         }
         assert!(!generation.needs_finish());
@@ -749,6 +773,7 @@ mod tests {
             assert!(!opened.accept(JobResult::Operation {
                 job,
                 generated: Generated::default(),
+                marks: Vec::new(),
             }));
         }
     }

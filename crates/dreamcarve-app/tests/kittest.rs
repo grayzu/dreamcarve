@@ -1131,8 +1131,9 @@ fn park_point_click_on_the_viewport() {
     h.run();
     h.get_by_label("Click on the view").click();
     h.run();
-    // Empty stock near the plaque's top-right corner (stock 170 × 120).
-    let want = dc_geometry::Point::new(165.0, 115.0);
+    // Empty stock near the plaque's bottom-right corner (stock 170 × 120),
+    // clear of the Toolpaths card over the pane's top-right (#545).
+    let want = dc_geometry::Point::new(165.0, 5.0);
     let at = common::on_screen(&h, want);
     let under = world_at(&h, at);
     common::click_at(&mut h, at, egui::Modifiers::NONE);
@@ -1911,4 +1912,90 @@ fn warnings_row_focuses_its_field() {
     };
     assert_eq!(after.depth_mm, Some(7.0), "the depth field had the focus");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Clicks the Toolpaths card's button `label`: the rightmost of that name,
+/// since the Design Tree's group rows have a *Show all* and *Hide all* of
+/// their own, for shapes.
+fn click_card_button(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str) {
+    h.query_all_by_label(label)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {label} button"))
+        .click();
+    h.run();
+}
+
+/// Capability 73 (#545; `experience.md`, section 9, "Visibility card"):
+/// on the plaque, once generated, the Viewport draws every operation's
+/// toolpath, one buffer each. Closing one operation's eye in the
+/// Operations list (#539) drops that one and keeps
+/// the rest; the Toolpaths card's *Show all* draws them all again, *Hide
+/// all* none, and *Show all* restores them. A layer toggle in the card is
+/// remembered in the preferences. None of it touches the project: it
+/// stays clean, with nothing to undo.
+#[test]
+fn eye_hides_one_operation_show_all_restores() {
+    let dir = scratch("toolpath-eyes");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    let all: Vec<dc_project::OperationId> = h
+        .state()
+        .app()
+        .scene()
+        .operations()
+        .iter()
+        .map(|o| o.id.clone())
+        .collect();
+    assert_eq!(all.len(), 5, "the plaque's five operations");
+    assert_eq!(h.state().drawn_toolpaths(), all, "every toolpath is drawn");
+
+    // The Panel pocket's eye in the Operations list (#539).
+    let panel = dc_project::OperationId::new("op1");
+    h.get_by_label("Hide the toolpath of Panel").click();
+    h.run();
+    assert!(h.state().app().view().hidden_ops.contains(&panel));
+    let rest: Vec<_> = all.iter().filter(|id| **id != panel).cloned().collect();
+    assert_eq!(
+        h.state().drawn_toolpaths(),
+        rest,
+        "the eye hides that one alone"
+    );
+
+    click_card_button(&mut h, "Show all");
+    assert!(h.state().app().view().hidden_ops.is_empty());
+    assert_eq!(h.state().drawn_toolpaths(), all, "Show all restores it");
+
+    click_card_button(&mut h, "Hide all");
+    assert!(h.state().drawn_toolpaths().is_empty(), "Hide all hides all");
+    click_card_button(&mut h, "Show all");
+    assert_eq!(
+        h.state().drawn_toolpaths(),
+        all,
+        "and Show all brings them back"
+    );
+
+    h.get_by_label("Rapids").click();
+    h.run();
+    assert!(!h.state().app().view().visibility.rapids);
+    assert!(
+        !h.state().app().prefs().visibility.rapids,
+        "the toggle is remembered between sessions"
+    );
+
+    let app = h.state().app();
+    assert!(!app.is_dirty(), "the project is untouched");
+    assert!(!app.can_undo(), "and nothing is in the history");
+    let _ = std::fs::remove_dir_all(&dir);
 }

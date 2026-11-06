@@ -44,12 +44,13 @@ fn view_state_is_not_project_state() {
             tab_marks: false,
             grid: false,
             extents: false,
+            only_selected: false,
         };
         view.visibility = all_off;
         view.visibility.arrows = true;
         view.colour = ColourMode::ByDepth;
-        view.only_selected = true;
-        view.extents = true;
+        view.visibility.only_selected = true;
+        view.visibility.extents = true;
         view.hidden_ops.insert(OperationId::new("op4"));
         view.camera.centre_mm = Point::new(123.0, 45.0);
         view.camera.px_per_mm *= 4.0;
@@ -121,6 +122,7 @@ fn prefs_defaults_match_the_file_defaults() {
             tab_marks: true,
             grid: true,
             extents: false,
+            only_selected: false,
         }
     );
     assert_eq!(prefs.colour, ColourMode::ByOperation);

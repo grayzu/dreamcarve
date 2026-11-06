@@ -12,11 +12,15 @@
 //! emitted motion.
 
 use dc_app::Scene;
+use dc_app::scene::{SceneOperation, StrokeKind, strokes};
+use dc_app::view::{DepthRamp, Visibility};
+use dc_app::viewport::arrows::{ArrowCache, ArrowMove, ArrowVisibility, moves_of};
 use dc_app::viewport::grid::Grid;
-use dc_geometry::{Point, Polyline, Transform};
-use dc_project::{InstanceId, Project};
+use dc_geometry::{Point, Point3, Polyline, Rect, Transform};
+use dc_project::{Board, InstanceId, Project};
 
-use crate::viewport::renderer::{Segment, StyleId, gpu_f32};
+use crate::viewport::lod;
+use crate::viewport::renderer::{Segment, StyleId, StyleWord, gpu_f32};
 
 /// The most a flattened arc strays from the true one, screen pixels, at
 /// the least zoom of its band; under twice that at the most.
@@ -42,18 +46,25 @@ pub(crate) fn tolerance_mm(band: i32) -> f64 {
 }
 
 /// `a`–`b` as a segment starting `along_mm` along its outline.
-fn segment(a: Point, b: Point, along_mm: f64, style: StyleId) -> Segment {
+fn segment(a: Point, b: Point, along_mm: f64, style: impl Into<StyleWord>) -> Segment {
     Segment {
         a_mm: [gpu_f32(a.x), gpu_f32(a.y)],
         b_mm: [gpu_f32(b.x), gpu_f32(b.y)],
         along_mm: gpu_f32(along_mm),
-        style,
+        style: style.into(),
     }
+}
+
+/// A ring of `radius_mm` about `centre` (never under its style's least
+/// radius in pixels).
+fn ring(centre: Point, radius_mm: f64, style: StyleWord) -> Segment {
+    segment(centre, centre, radius_mm, style)
 }
 
 /// `points` as segments in order, closing back to the first when `closed`,
 /// the dash phase running on along the whole outline.
-fn push_path(out: &mut Vec<Segment>, points: &[Point], closed: bool, style: StyleId) {
+fn push_path(out: &mut Vec<Segment>, points: &[Point], closed: bool, style: impl Into<StyleWord>) {
+    let style = style.into();
     let closing = closed
         .then(|| points.last().zip(points.first()))
         .flatten()
@@ -207,6 +218,213 @@ pub(crate) fn highlighted(
             }
         }
     }
+    out
+}
+
+/// The coalescing length of zoom band `band`, mm: one pixel at the band's
+/// top scale, so a coalesced run never covers more than a pixel there and
+/// half of one at the band's bottom.
+#[must_use]
+pub(crate) fn lod_mm(band: i32) -> f64 {
+    1.0 / 2f64.powi(band.saturating_add(1))
+}
+
+/// The XY of `p`.
+const fn xy(p: Point3) -> Point {
+    Point::new(p.x, p.y)
+}
+
+/// A move with no more XY travel than this draws no line, mm.
+const XY_EPS_MM: f64 = 1e-9;
+
+/// How one operation's toolpath is drawn.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct ToolpathLook<'a> {
+    /// Which layers are on.
+    pub visibility: &'a Visibility,
+    /// The project's depth ramp, so cutting moves carry their step.
+    pub ramp: Option<&'a DepthRamp>,
+    /// The arc-flattening tolerance of the zoom band, mm.
+    pub tolerance_mm: f64,
+    /// The coalescing length of the zoom band, mm.
+    pub lod_mm: f64,
+}
+
+/// Operation `op`'s toolpath buffer: its runs' rapids, then cuts (each in
+/// the run's preview colour), then tab marks, plunge marks, and start
+/// points with their ticks or a Drill's holes, as `look` asks; everything
+/// faded while `op` is stale. Male board runs are left for slice 14.
+#[must_use]
+pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segment> {
+    let visibility = look.visibility;
+    let stale = op.stale;
+    let mut rapids = Vec::new();
+    let mut cuts = Vec::new();
+    let mut marks = Vec::new();
+    for (k, run) in op.runs.iter().enumerate() {
+        if run.run.board == Board::Male {
+            continue;
+        }
+        let colour = Some(op.colour + k);
+        let mut last_plunge: Option<Point> = None;
+        for stroke in strokes(&run.run.toolpath) {
+            match stroke.kind {
+                StrokeKind::Rapid if visibility.rapids => {
+                    if xy(stroke.from).distance_to(xy(stroke.to)) > XY_EPS_MM {
+                        let word = StyleWord::toolpath(StyleId::Rapid, None, None, stale);
+                        rapids.push(segment(xy(stroke.from), xy(stroke.to), 0.0, word));
+                    }
+                }
+                StrokeKind::Cut if visibility.cuts => {
+                    let mut push = |a: Point3, b: Point3| {
+                        if xy(a).distance_to(xy(b)) > XY_EPS_MM {
+                            let depth = look.ramp.map(|r| r.step(a.z.min(b.z)));
+                            let word = StyleWord::toolpath(StyleId::Cut, colour, depth, stale);
+                            cuts.push(segment(xy(a), xy(b), 0.0, word));
+                        }
+                    };
+                    // A line needs no flattening, and most moves are lines.
+                    if stroke.arc.is_none() {
+                        push(stroke.from, stroke.to);
+                    } else {
+                        for pair in stroke.points(look.tolerance_mm).windows(2) {
+                            if let [a, b] = pair {
+                                push(*a, *b);
+                            }
+                        }
+                    }
+                }
+                StrokeKind::Plunge if visibility.plunges => {
+                    let at = xy(stroke.to);
+                    if last_plunge.is_none_or(|p| p.distance_to(at) > XY_EPS_MM) {
+                        let word = StyleWord::toolpath(StyleId::Plunge, None, None, stale);
+                        marks.push(ring(at, 0.0, word));
+                    }
+                    last_plunge = Some(at);
+                }
+                _ => {}
+            }
+        }
+        if visibility.tab_marks {
+            let word = StyleWord::toolpath(StyleId::Tab, None, None, stale);
+            for tab in &run.marks.tab_marks {
+                push_outline_word(&mut marks, tab, look.tolerance_mm, word);
+            }
+        }
+        if visibility.start_points {
+            let circle = StyleWord::toolpath(StyleId::Mark, colour, None, stale);
+            let tick = StyleWord::toolpath(StyleId::Tick, colour, None, stale);
+            for start in &run.marks.start_points {
+                marks.push(ring(start.at, start.radius_mm, circle));
+                if let Some(direction) = start.direction {
+                    let end = start.at + direction * (2.0 * start.radius_mm);
+                    marks.push(segment(start.at, end, 0.0, tick));
+                }
+            }
+            for (hole, radius_mm) in &run.marks.holes {
+                marks.push(ring(*hole, *radius_mm, circle));
+            }
+        }
+    }
+    let mut out = lod::coalesce(&rapids, look.lod_mm);
+    out.extend(lod::coalesce(&cuts, look.lod_mm));
+    out.extend(marks);
+    out
+}
+
+/// `outline` flattened to `tolerance_mm` and pushed with `word`.
+fn push_outline_word(
+    out: &mut Vec<Segment>,
+    outline: &Polyline,
+    tolerance_mm: f64,
+    word: StyleWord,
+) {
+    let flat = outline.with_arcs_flattened(tolerance_mm);
+    let points: Vec<Point> = flat.vertices().iter().map(|v| v.point()).collect();
+    push_path(out, &points, flat.is_closed(), word);
+}
+
+/// A direction arrow's arm, logical pixels (`experience.md`, section 9:
+/// 6-px chevrons).
+const ARROW_ARM_PX: f64 = 6.0;
+/// The angle between a chevron's arm and its move, radians.
+const ARROW_HALF_ANGLE_RAD: f64 = 0.6;
+
+/// One drawn run's arrows: its cache key, its moves as the pass reads
+/// them, its colour and whether it is stale.
+pub(crate) struct ArrowRun<'a> {
+    pub key: u64,
+    pub moves: &'a [ArrowMove],
+    pub colour: usize,
+    pub stale: bool,
+}
+
+/// The direction arrows of `runs` at `px_per_mm`: a chevron at the middle
+/// of each move [`dc_app::viewport::arrows`] places an arrow on, pointing
+/// the way the cut goes, in the run's colour. Cuts only (capability 72:
+/// "Direction arrows along cuts").
+#[must_use]
+pub(crate) fn arrows(
+    runs: &[ArrowRun<'_>],
+    cache: &mut ArrowCache,
+    px_per_mm: f64,
+    visibility: &Visibility,
+) -> Vec<Segment> {
+    let mut out = Vec::new();
+    if px_per_mm <= 0.0 {
+        return out;
+    }
+    let gate = ArrowVisibility {
+        cuts: visibility.cuts,
+        rapids: false,
+    };
+    let arm_mm = ARROW_ARM_PX / px_per_mm;
+    let (sin, cos) = ARROW_HALF_ANGLE_RAD.sin_cos();
+    for run in runs {
+        let word = StyleWord::toolpath(StyleId::Tick, Some(run.colour), None, run.stale);
+        for arrow in &cache.placements(run.key, run.moves, px_per_mm, gate).cut {
+            let [fx, fy, tx, ty] = *arrow;
+            let (dx, dy) = (tx - fx, ty - fy);
+            let length = dx.hypot(dy);
+            if length <= 0.0 {
+                continue;
+            }
+            let (ux, uy) = (dx / length, dy / length);
+            let mid = Point::new((fx + tx) / 2.0 / px_per_mm, (fy + ty) / 2.0 / px_per_mm);
+            let tip = Point::new(mid.x + ux * arm_mm / 2.0, mid.y + uy * arm_mm / 2.0);
+            for side in [1.0, -1.0] {
+                // The move's direction turned by ± the half angle, back
+                // from the tip.
+                let (bx, by) = (ux * cos - side * uy * sin, uy * cos + side * ux * sin);
+                let end = Point::new(tip.x - bx * arm_mm, tip.y - by * arm_mm);
+                out.push(segment(tip, end, 0.0, word));
+            }
+        }
+    }
+    out
+}
+
+/// `toolpath`'s moves for the arrow pass at `tolerance_mm`.
+#[must_use]
+pub(crate) fn arrow_moves(toolpath: &dc_job::Toolpath, tolerance_mm: f64) -> Vec<ArrowMove> {
+    moves_of(toolpath, tolerance_mm)
+}
+
+/// The program extents (capability 74): the tool centre's box solid and,
+/// outside it, the bit edge's dashed.
+#[must_use]
+pub(crate) fn extents(centre: Rect, edge: Rect) -> Vec<Segment> {
+    let corners = |r: Rect| {
+        [
+            r.min,
+            Point::new(r.max.x, r.min.y),
+            r.max,
+            Point::new(r.min.x, r.max.y),
+        ]
+    };
+    let mut out = Vec::with_capacity(8);
+    push_path(&mut out, &corners(centre), true, StyleId::ExtentsCentre);
+    push_path(&mut out, &corners(edge), true, StyleId::ExtentsEdge);
     out
 }
 

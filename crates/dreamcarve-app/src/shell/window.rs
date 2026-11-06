@@ -261,6 +261,15 @@ pub(crate) enum Action {
     RegenerateAll,
     /// Open a page of the book (a warning code's chapter entry).
     OpenUrl(String),
+    /// What the Viewport draws of a toolpath (the Toolpaths card's
+    /// toggles): view state, kept in `gui.toml`.
+    SetVisibility(dc_app::Visibility),
+    /// How the Viewport colours toolpaths (the card's colour mode).
+    SetColour(dc_app::ColourMode),
+    /// Open every operation's eye (the card's *Show all*).
+    ShowAllToolpaths,
+    /// Close every operation's eye (the card's *Hide all*).
+    HideAllToolpaths,
     /// Show an operation in the editor (its row clicked).
     EditOperation(dc_project::OperationId),
     /// *Add ▸ kind* on these shapes, from the Operations tab or the Design
@@ -437,6 +446,14 @@ impl Shell {
     #[must_use]
     pub fn app(&self) -> &App {
         &self.app
+    }
+
+    /// The operations whose toolpaths the Viewport drew in the last
+    /// frame, bottom first: what an operation's eye, *Show all*, *Hide
+    /// all* and *Only the selected operation* change.
+    #[must_use]
+    pub fn drawn_toolpaths(&self) -> &[dc_project::OperationId] {
+        self.viewport.drawn()
     }
 
     /// The application state, to change.
@@ -877,6 +894,13 @@ impl Shell {
                 .or(self.message.take());
             }
             Action::SetCamera(camera) => self.app.view_mut().camera = camera,
+            Action::SetVisibility(visibility) => self.app.set_visibility(visibility),
+            Action::SetColour(colour) => self.app.set_colour(colour),
+            Action::ShowAllToolpaths => self.app.view_mut().show_all(),
+            Action::HideAllToolpaths => {
+                let scene = self.app.scene().clone();
+                self.app.view_mut().hide_all(&scene);
+            }
             Action::Select(selection) => self.app.select(selection),
             Action::FitView => {
                 let app = &self.app;
