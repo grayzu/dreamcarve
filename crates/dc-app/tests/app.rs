@@ -112,3 +112,61 @@ fn new_project_has_the_phase_1_defaults() {
         .collect();
     assert_eq!(errors, vec![Some("stock.thickness_mm".to_owned())]);
 }
+
+/// Acceptance 63 (capability 51, open question 1): *New from drawing* on
+/// `fixtures/coaster.svg` yields the project `dreamcarve init` writes for
+/// it with the placeholder tool and the Profile removed: the same stock,
+/// instances and post-processor, no tools, no operations. It replaces the
+/// open project and its history, and has no file yet.
+#[test]
+fn new_from_drawing_equals_init_without_defaults() {
+    use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
+
+    let bytes = read(&common::repo_root().join("fixtures/coaster.svg"));
+    let sheet = DrawingImport::open(
+        DrawingFormat::Svg,
+        "coaster.svg",
+        bytes.clone(),
+        Purpose::New,
+    );
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    harness
+        .run(Command::SetStock(Stock {
+            width_mm: 300.0,
+            height_mm: 200.0,
+            thickness_mm: Some(18.0),
+        }))
+        .expect("stock");
+    harness
+        .app
+        .new_from_drawing(&sheet)
+        .expect("a project from the coaster");
+
+    // What `init coaster.svg` builds (`crates/dreamcarve/src/init.rs`), its
+    // placeholder tool and Profile then removed.
+    let (import, _) =
+        dc_import::import_svg(&bytes, &dc_import::SvgImportOptions::default()).unwrap();
+    let post = dc_project::latest_definition("grblhal")
+        .unwrap()
+        .default_ref();
+    let mut init = dc_job::project_from::drawing(
+        "coaster",
+        dc_job::Drawing::Svg(import),
+        post,
+        Units::Mm,
+        true,
+    )
+    .unwrap();
+    assert_eq!((init.tools.len(), init.operations.len()), (1, 1));
+    init.tools.clear();
+    init.operations.clear();
+    let project = harness.app.project();
+    assert_eq!(project, &init);
+    assert_eq!(
+        dc_project::save(project).unwrap(),
+        dc_project::save(&init).unwrap()
+    );
+    assert!(project.tools.is_empty() && project.operations.is_empty());
+    assert!(!harness.app.can_undo(), "a new project has no history");
+    assert_eq!(harness.app.source(), None, "and no file yet");
+}

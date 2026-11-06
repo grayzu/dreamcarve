@@ -208,6 +208,24 @@ pub struct DxfImport {
     pub units: Option<DxfUnits>,
     /// Millimetres per drawing unit, as applied.
     pub mm_per_unit: f64,
+    /// Every model-space layer that holds a shape or an entity DreamCarve
+    /// does not read, in name order, whatever `options.layers` kept: the
+    /// list a caller offers to choose layers from (phase 4, capability 55).
+    pub layers: Vec<DxfLayer>,
+}
+
+/// One layer of a DXF and what importing it would bring in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DxfLayer {
+    /// The layer's name; `0` for the default layer.
+    pub name: String,
+    /// Closed shapes on it, once stitched and deduped.
+    pub closed: usize,
+    /// Open shapes on it, once stitched and deduped.
+    pub open: usize,
+    /// Entities on it DreamCarve does not read, per type name, as
+    /// [`ImportWarning::DxfEntitiesSkipped`] counts them.
+    pub skipped: BTreeMap<String, usize>,
 }
 
 /// Imports the DXF document in `bytes`.
@@ -268,6 +286,7 @@ pub fn import_dxf(
     }
 
     let skipped = walker.skipped;
+    let skipped_per_layer = walker.skipped_per_layer;
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
     }
@@ -278,17 +297,17 @@ pub fn import_dxf(
         warnings.push(ImportWarning::DxfBlockMissing { block });
     }
 
-    let shapes: Vec<Shape> = walker
-        .shapes
-        .into_iter()
-        .filter(|s| {
-            options
-                .layers
-                .as_ref()
-                .is_none_or(|layers| layers.contains(&s.layer))
-        })
-        .collect();
-    let shapes = stitch::stitch(stitch::dedupe(shapes), join_mm);
+    // Every layer is stitched, so the layer list counts what each would
+    // import; the filter applies after. Dedupe and stitching never cross
+    // layers and keep each layer's order, so this keeps the same shapes,
+    // in the same order, as filtering first.
+    let kept = |layer: &str| {
+        options
+            .layers
+            .as_ref()
+            .is_none_or(|layers| layers.iter().any(|l| l == layer))
+    };
+    let shapes = stitch::stitch(stitch::dedupe(walker.shapes), join_mm);
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
     // can leave a shape too few points.
@@ -297,7 +316,7 @@ pub fn import_dxf(
         .filter_map(|s| {
             let rounded = round::round_polyline(&s.polyline)
                 .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM));
-            if rounded.is_none() && s.polyline.is_closed() {
+            if rounded.is_none() && s.polyline.is_closed() && kept(&s.layer) {
                 warnings.push(ImportWarning::ZeroAreaDropped {
                     path: s.layer.clone(),
                     subpath: 0,
@@ -306,6 +325,8 @@ pub fn import_dxf(
             rounded.map(|polyline| Shape { polyline, ..s })
         })
         .collect();
+    let layers = layer_list(&shapes, skipped_per_layer);
+    let shapes: Vec<Shape> = shapes.into_iter().filter(|s| kept(&s.layer)).collect();
 
     // Names: the layer, numbered when the layer holds several shapes.
     let mut per_layer: BTreeMap<&str, usize> = BTreeMap::new();
@@ -356,9 +377,46 @@ pub fn import_dxf(
             bounds,
             units: declared,
             mm_per_unit,
+            layers,
         },
         warnings,
     ))
+}
+
+/// The layers of `shapes` (every layer's, stitched) and of the skipped
+/// entities, in name order.
+fn layer_list(
+    shapes: &[Shape],
+    skipped_per_layer: BTreeMap<String, BTreeMap<String, usize>>,
+) -> Vec<DxfLayer> {
+    let mut layers: BTreeMap<String, DxfLayer> = skipped_per_layer
+        .into_iter()
+        .map(|(name, skipped)| {
+            let layer = DxfLayer {
+                name: name.clone(),
+                closed: 0,
+                open: 0,
+                skipped,
+            };
+            (name, layer)
+        })
+        .collect();
+    for shape in shapes {
+        let layer = layers
+            .entry(shape.layer.clone())
+            .or_insert_with(|| DxfLayer {
+                name: shape.layer.clone(),
+                closed: 0,
+                open: 0,
+                skipped: BTreeMap::new(),
+            });
+        if shape.polyline.is_closed() {
+            layer.closed += 1;
+        } else {
+            layer.open += 1;
+        }
+    }
+    layers.into_values().collect()
 }
 
 /// The document in `bytes`, its text read as UTF-8, else, before R2007,
@@ -1065,6 +1123,51 @@ mod tests {
         let (result, _) = import_with(fixture!("layers.dxf"), filter(&["none"]));
         assert!(result.definitions.is_empty());
         assert_eq!(result.bounds, None);
+    }
+
+    /// The layer list the app's import sheet ticks (phase 4, capability
+    /// 55): every model-space layer in name order, with the closed and
+    /// open shapes it imports once stitched and deduped, and what on it
+    /// was not read. The list is the file's, whatever the filter keeps.
+    #[test]
+    fn layers_list_every_layer_whatever_the_filter() {
+        let (all, _) = import(fixture!("layers.dxf"));
+        let summary: Vec<(&str, usize, usize)> = all
+            .layers
+            .iter()
+            .map(|l| (l.name.as_str(), l.closed, l.open))
+            .collect();
+        assert_eq!(summary, [("0", 1, 0), ("a", 0, 2), ("b", 1, 0)]);
+        assert!(all.layers.iter().all(|l| l.skipped.is_empty()));
+        let only_b = DxfImportOptions {
+            layers: Some(vec!["b".to_owned()]),
+            ..DxfImportOptions::new()
+        };
+        let (filtered, _) = import_with(fixture!("layers.dxf"), only_b);
+        assert_eq!(names(&filtered), ["b"]);
+        assert_eq!(filtered.layers, all.layers);
+
+        // Unread entities are listed on their layer; a layer that holds
+        // nothing readable is listed with no shapes.
+        let (unsupported, _) = import(fixture!("unsupported.dxf"));
+        let listed: Vec<String> = unsupported
+            .layers
+            .iter()
+            .map(|l| format!("{} {} {} {:?}", l.name, l.closed, l.open, l.skipped))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                r#"dims 0 0 {"DIMENSION": 1}"#,
+                "kept 0 1 {}",
+                r#"notes 0 0 {"MTEXT": 1, "TEXT": 1}"#,
+            ]
+        );
+
+        // Stitched: the plaque's pocket is eight entities, one shape.
+        let (plaque, _) = import(include_bytes!("../../../tests/fixtures/plaque.dxf"));
+        let shapes: usize = plaque.layers.iter().map(|l| l.closed + l.open).sum();
+        assert_eq!(shapes, plaque.definitions.len());
     }
 
     /// Block geometry on layer `0` belongs to the layer of the INSERT that
