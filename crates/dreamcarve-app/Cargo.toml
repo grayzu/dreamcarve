@@ -1,0 +1,42 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+
+[package]
+name = "dreamcarve-app"
+description = "DreamCarve: the desktop app, a window on the same engine the dreamcarve CLI drives"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[lib]
+name = "dreamcarve_app"
+path = "src/lib.rs"
+
+[[bin]]
+name = "dreamcarve-app"
+path = "src/main.rs"
+
+# `dc-cam` and `dc-gcode` are reached through `dc-job` only (phase 4
+# functional spec, S20); `tests/manifest.rs` checks that neither is listed.
+[dependencies]
+# `--open <path>` and `--version`.
+clap.workspace = true
+dc-app.workspace = true
+dc-geometry.workspace = true
+# Import a drawing from the empty state and from a drop.
+dc-import.workspace = true
+dc-job.workspace = true
+dc-project.workspace = true
+# The config directory, `gui.toml` and staged writes of the `.dcv`.
+dreamcarve-shell.workspace = true
+eframe.workspace = true
+rfd.workspace = true
+
+[dev-dependencies]
+egui_kittest.workspace = true
+
+[lints]
+workspace = true
