@@ -14,6 +14,7 @@
 
 use crate::heightfield::{Cutter, Heightfield};
 use crate::run::{RunLabel, ToolRun};
+use dc_geometry::medial::point_in_loops;
 use dc_geometry::{Point, Polyline, Rect, Region, nearest_point};
 use dc_project::{Board, InlayOp, Project, ToolKind};
 use std::collections::VecDeque;
@@ -49,20 +50,31 @@ pub(crate) struct SeatCell {
 /// out. Wood left above the start plane in the band but joined to the
 /// plug is part of it, as it would bind. The plug's start plane stops the
 /// largest `need_mm` above the female's surface.
+///
+/// `beyond_band` marks, cell by cell (row by row from the bottom), the
+/// cells whose male point lies outside the band's outer edge: board
+/// whatever height a cell's centre reads (#554). A sliver of board between
+/// two parts' bands that nearly touch is cut by their V walls to a ridge
+/// narrower than a cell, whose centres can miss it; joined through its
+/// sampled heights alone it fell apart, and a piece of it was counted as
+/// plug (line art `0xa7`, 0.167 mm on a 0.1 mm grid, 0.033 mm on a
+/// 0.05 mm one).
 pub(crate) fn seat(
     female: &Heightfield,
     male: &Heightfield,
     start_plane_z_mm: f64,
+    beyond_band: &[bool],
 ) -> Vec<SeatCell> {
     let (nx, ny) = male.size();
     assert_eq!(female.size(), (nx, ny), "one grid for both sides");
+    assert_eq!(beyond_band.len(), nx * ny, "one mark per cell");
     let standing = |i: usize, j: usize| male.z_mm(i, j) > start_plane_z_mm + FLOOR_SLACK_MM;
     let mut outside = vec![false; nx * ny];
     let mut queue = VecDeque::new();
     for j in 0..ny {
         for i in 0..nx {
             let border = i == 0 || j == 0 || i == nx - 1 || j == ny - 1;
-            if border && standing(i, j) {
+            if (border && standing(i, j)) || beyond_band[j * nx + i] {
                 outside[j * nx + i] = true;
                 queue.push_back((i, j));
             }
@@ -108,6 +120,44 @@ pub(crate) fn seat(
         }
     }
     cells
+}
+
+/// How finely the band's outer edges are flattened for [`beyond_band`],
+/// mm: far below a cell.
+const BAND_EDGE_TOLERANCE_MM: f64 = 1e-3;
+
+/// For each cell of the male's `field` (row by row from the bottom),
+/// whether its male point lies outside the outer edge of every region the
+/// male carves (`band`, the mirrored design's surround): board, which falls
+/// away when the piece is cut out (#554). Each region's outer is tested on
+/// its own, since a region may lie in another's hole (the band round a
+/// part inside a letter's counter).
+pub(crate) fn beyond_band(field: &Heightfield, band: &[Region]) -> Vec<bool> {
+    let outers: Vec<(Polyline, Rect)> = band
+        .iter()
+        .filter_map(|r| {
+            let outer = r
+                .outer()
+                .polyline()
+                .with_arcs_flattened(BAND_EDGE_TOLERANCE_MM);
+            let bounds = outer.bounds()?;
+            Some((outer, bounds))
+        })
+        .collect();
+    let (nx, ny) = field.size();
+    let mut beyond = Vec::with_capacity(nx * ny);
+    for j in 0..ny {
+        for i in 0..nx {
+            let p = field.sample(i, j);
+            let inside = outers.iter().any(|(outer, b)| {
+                (b.min.x..=b.max.x).contains(&p.x)
+                    && (b.min.y..=b.max.y).contains(&p.y)
+                    && point_in_loops(p, &[outer])
+            });
+            beyond.push(!inside);
+        }
+    }
+    beyond
 }
 
 /// How an inlay pair seats (#452), from its two sides' programs.
@@ -228,7 +278,13 @@ pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> F
     let mut male_field =
         Heightfield::new(bounds, step_mm, top_mm(male_project), male_side.mirror_x_mm);
     male_field.cut_runs(male_runs, |run| cutter_of(male_project, run));
-    let cells = seat(&female_field, &male_field, male_side.start_plane_z_mm);
+    let beyond = beyond_band(&male_field, &male_side.targets.regions);
+    let cells = seat(
+        &female_field,
+        &male_field,
+        male_side.start_plane_z_mm,
+        &beyond,
+    );
     let worst = cells
         .iter()
         .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))
@@ -264,6 +320,7 @@ pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> F
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dc_geometry::{Contour, Vertex, nest};
 
     /// #501 (line art `0x30`'s V-wall male, 15° bit): a thin ridge of the
     /// board standing in the band is part of the board, not the plug, when
@@ -306,7 +363,76 @@ mod tests {
                 male.set_z_mm(i, j, z_mm);
             }
         }
-        let cells = seat(&female, &male, start_mm);
+        let cells = seat(&female, &male, start_mm, &vec![false; nx * ny]);
+        let worst = cells
+            .iter()
+            .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))
+            .expect("the plug has cells");
+        assert!(
+            (worst.need_mm - 0.02).abs() < 1e-9,
+            "the plug stands {:.3} mm proud at {:?}",
+            worst.need_mm,
+            worst.at
+        );
+    }
+
+    /// #554 (line art `0xa7`'s V-wall and open-edge males, 15° bit): a
+    /// sliver of board between two parts' bands that nearly touch is
+    /// board, though the cells along it miss it in places. The bands' V
+    /// walls cut the sliver to a ridge narrower than a cell, so a cell
+    /// centre now on it, now beside it, reads it, and the ridge read
+    /// through its cells fell apart: a piece of it, joined to the board
+    /// through no standing cell, was counted as plug, which stood
+    /// 0.167 mm proud on it (0.033 mm on a 0.05 mm grid). Here a 20 × 20
+    /// grid has board along its left and bottom edges and two bands either
+    /// side of a diagonal sliver 0.06 mm wide, which runs from the board
+    /// to the grid's far corner. The cells on the sliver stand 0.5 mm above
+    /// the start plane, but two of them read the floor, as if their centres
+    /// missed the ridge, so the cells between are joined to the board
+    /// through none. The plug, four cells 0.02 mm up in one band, is what
+    /// seats.
+    #[test]
+    fn sliver_of_board_between_two_bands_is_not_plug() {
+        let bounds = Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(1.9, 1.9),
+        };
+        let (top_mm, start_mm, floor_mm) = (10.0, 7.0, 6.5);
+        let female = Heightfield::new(bounds, 0.1, top_mm, None);
+        let mut male = Heightfield::new(bounds, 0.1, top_mm, None);
+        let square = |points: &[(f64, f64)]| {
+            let outline = Contour::new(Polyline::new(
+                points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
+                true,
+            ))
+            .expect("a valid outline");
+            nest(vec![outline]).expect("one region").0.remove(0)
+        };
+        // Either side of the sliver between y = x − 0.03 and y = x + 0.03.
+        let bands = [
+            square(&[(0.2, 0.17), (2.5, 0.17), (2.5, 2.47)]),
+            square(&[(0.17, 0.2), (2.47, 2.5), (0.17, 2.5)]),
+        ];
+        let (nx, ny) = male.size();
+        for j in 0..ny {
+            for i in 0..nx {
+                let board = i == 0 || j == 0;
+                let ridge = i == j && i != 4 && i != 12;
+                let plug = (15..17).contains(&i) && (3..5).contains(&j);
+                let z_mm = if board {
+                    top_mm
+                } else if ridge {
+                    start_mm + 0.5
+                } else if plug {
+                    start_mm + 0.02
+                } else {
+                    floor_mm
+                };
+                male.set_z_mm(i, j, z_mm);
+            }
+        }
+        let beyond = beyond_band(&male, &bands);
+        let cells = seat(&female, &male, start_mm, &beyond);
         let worst = cells
             .iter()
             .max_by(|a, b| a.need_mm.total_cmp(&b.need_mm))

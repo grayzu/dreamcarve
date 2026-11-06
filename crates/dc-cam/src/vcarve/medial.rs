@@ -1189,17 +1189,34 @@ impl Fit<'_> {
             k += 1.0;
             let x = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
             let (near_mm, w) = self.walls.nearest(x)?;
-            // #463: a point the stretch runs outside the walls at (within
-            // their slack) has its nearest wall behind it, and the disc
-            // from there would grow into the material.
-            if near_mm <= EPS_MM
-                || floor_mm.is_some_and(|f| near_mm >= f)
-                || !self.walls.holds(x, 0.0)
-            {
+            if floor_mm.is_some_and(|f| near_mm >= f) {
                 continue;
             }
-            let u = (x - w) * (1.0 / near_mm);
-            let radius_mm = self.walls.ball_radius_mm(w, u, near_mm + AXIS_REACH_MM);
+            // #463: a point the stretch runs outside the walls at (within
+            // their slack) has its nearest wall behind it, and the disc
+            // from there would grow into the material. #554: one on a wall
+            // has no way off it at all. Both seek the axis along the
+            // wall's own normal into the region, and only within the
+            // stretch's length: a stretch that runs along a wall into a
+            // corner (a corner's tip joined to a node beside one of its
+            // walls) has the corner's axis that near, `tan(θ/2)` of the
+            // way to the tip for a corner of angle `θ`, and is fitted onto
+            // it like any other. A disc that grows farther is the axis of
+            // some other part of the region, which other chains carve.
+            let (u, reach_mm, on_wall) = if near_mm > EPS_MM && self.walls.holds(x, 0.0) {
+                ((x - w) * (1.0 / near_mm), near_mm + AXIS_REACH_MM, false)
+            } else if near_mm <= self.walls.slack_mm() {
+                match self.walls.inward_normal(x) {
+                    Some(n) => (n, a.xy().distance_to(b.xy()), true),
+                    None => continue,
+                }
+            } else {
+                continue;
+            };
+            let radius_mm = self.walls.ball_radius_mm(w, u, reach_mm);
+            if on_wall && radius_mm >= reach_mm - EPS_MM {
+                continue;
+            }
             let m = w + u * radius_mm;
             let own_z = self.depth.z_mm(radius_mm);
             let short_mm = slope * (cone_low_mm(a, b, m, slope) - own_z);
