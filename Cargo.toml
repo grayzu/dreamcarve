@@ -14,6 +14,7 @@ members = [
     "crates/dc-app",
     "crates/dreamcarve-shell",
     "crates/dreamcarve",
+    "crates/dreamcarve-app",
     "tools/check-headers",
     "tools/doc-figures",
     "tools/gcode-conformance",
@@ -29,7 +30,7 @@ edition = "2024"
 # The minimum supported Rust version, not the toolchain the gates run on.
 # rust-toolchain.toml pins that newer lint toolchain (issue #151); the MSRV
 # stays lower so a build from source works on an older stable.
-rust-version = "1.94"
+rust-version = "1.95"
 license = "Apache-2.0"
 repository = "https://github.com/grayzu/dreamcarve"
 authors = ["The DreamCarve Contributors"]
@@ -88,6 +89,22 @@ zip = { version = "9.0", default-features = false, features = ["deflate-flate2-z
 # strategies nothing here uses. `std` keeps the regression files under
 # `proptest-regressions/`.
 proptest = { version = "1.12", default-features = false, features = ["std"] }
+
+# The app's window (phase 4 design, "The shell"; open question 1). Default
+# features are off: they bundle egui's own fonts (the app ships Inter,
+# JetBrains Mono and Lucide), system fonts and the glow renderer. `wgpu` is
+# the renderer the Viewport's line pass needs (slice 4); `accesskit` is the
+# accessibility tree the kittest tests drive; `links`, `x11` and `wayland`
+# are what a desktop window needs on each platform. `clipboard` stays off
+# until a slice copies text (#532): its `arboard` brings two BSL-1.0 crates
+# on Windows, which `deny.toml` does not allow.
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "links", "wayland", "wgpu", "x11"] }
+# Native open and save dialogs (phase 4 design, open question 3).
+rfd = "0.17"
+# The app's window tests (dev-dependency only; phase 4 design, "Test
+# harness"): egui's harness, driven through the accessibility tree, with the
+# wgpu renderer for the smoke test's one frame.
+egui_kittest = { version = "0.37", features = ["eframe", "snapshot", "wgpu"] }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

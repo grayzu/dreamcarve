@@ -10,7 +10,16 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+ignore = [
+    # The app's accessibility tree on Linux (eframe's `accesskit`, which the
+    # window tests drive; #532) reaches D-Bus through `zbus` 5, whose name
+    # and variant crates were folded into `zbus` 6 and marked unmaintained.
+    # Notices, not vulnerabilities; no release of `accesskit_unix` uses
+    # `zbus` 6 yet. Drop these when one does.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: merged into zbus 6; accesskit_unix still on zbus 5" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: merged into zbus 6; accesskit_unix still on zbus 5" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: merged into zbus 6; accesskit_unix still on zbus 5" },
+]
 
 [licenses]
 version = 2

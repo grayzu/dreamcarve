@@ -6,7 +6,7 @@
 # ignores it, so its clippy can miss lints CI raises.
 #
 # This is the lint toolchain, not the minimum supported Rust version. The MSRV
-# stays `rust-version` in Cargo.toml (1.94), so a build from source still works
+# stays `rust-version` in Cargo.toml (1.95), so a build from source still works
 # on an older stable. Pinning means a new stable release cannot break main on
 # its own: bump `channel` in its own pull request and fix any new lints there.
 

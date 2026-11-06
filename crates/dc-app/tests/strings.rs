@@ -74,14 +74,15 @@ fn rust_files(dir: &Path, out: &mut Vec<std::path::PathBuf>) {
     }
 }
 
-/// Every `StrKey::<Variant>` token in the GUI crates' sources: `dc-app`
-/// and, once slice 3 adds it, `dreamcarve-app`.
+/// Every `StrKey::<Variant>` token in the two GUI crates' sources, `dc-app`
+/// and the shell, `dreamcarve-app` (#532).
 fn used_variants() -> BTreeSet<String> {
     let mut files = Vec::new();
     for crate_dir in ["crates/dc-app/src", "crates/dreamcarve-app/src"] {
+        let before = files.len();
         rust_files(&common::repo_root().join(crate_dir), &mut files);
+        assert!(files.len() > before, "no sources scanned in {crate_dir}");
     }
-    assert!(!files.is_empty(), "no sources scanned");
     let mut used = BTreeSet::new();
     for file in files {
         let text = std::fs::read_to_string(&file).expect("source is readable");

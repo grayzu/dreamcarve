@@ -30,7 +30,7 @@ manual download against.
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs) 1.94 or newer, installed through rustup, which
+- [Rust](https://rustup.rs) 1.95 or newer, installed through rustup, which
   also provides `cargo`, `rustfmt`, and `clippy`. Inside the checkout, rustup
   uses the release `rust-toolchain.toml` pins and downloads it on first use.
 - Git.
