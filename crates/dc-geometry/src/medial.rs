@@ -356,6 +356,121 @@ pub fn refined_step_mm(resolved: &Resolution, graph: &MedialGraph) -> Option<f64
     (refined_mm < step_mm).then_some(refined_mm)
 }
 
+/// How many times its own width apart along one loop two stretches of
+/// it must lie for [`neck_mm`] to read the gap between them as a neck,
+/// not the two walls of a corner: a wedge's walls are `1 / sin(θ/2)`
+/// times their gap apart along it, so only a corner sharper than 14°
+/// counts.
+const NECK_ALONG_RATIO: f64 = 8.0;
+
+/// The narrowest neck of `region` narrower than `step_mm`, as the
+/// clearance at its middle (half its width), mm; `None` when it has none
+/// (#553). A neck is where the region passes between two stretches of
+/// its boundary that are not one corner: on two loops (a channel between
+/// two islands, or an island and the outer), or on one loop more than
+/// eight times their gap apart along it (a loop that comes near itself
+/// across the region; a corner's walls are that far apart only when it is
+/// sharper than 14°). Read from the boundary itself, arcs
+/// flattened within `tolerance_mm`, sampled every `step_mm`, from each
+/// sample to the nearest such stretch across the region.
+///
+/// [`bottleneck_mm`] reads a neck from the graph, which needs a node in
+/// it. A channel much narrower than the step can have none: the samples
+/// either side of it are a step apart along each wall, so every
+/// triangle across it has its circumcentre far outside it. A male
+/// Inlay's band round lettering is sampled every 0.33 mm, and two letters
+/// 0.06 mm apart left a channel between them with no node and no branch;
+/// the male cut nothing there and the plug stood the full 3.59 mm proud
+/// on the wood left across it.
+#[must_use]
+pub fn neck_mm(region: &Region, step_mm: f64, tolerance_mm: f64) -> Option<f64> {
+    neck_of_loops(&flattened_loops(region, tolerance_mm), step_mm)
+}
+
+/// [`neck_mm`] on `loops`, outer first.
+fn neck_of_loops(loops: &[Vec<Point>], step_mm: f64) -> Option<f64> {
+    if !(step_mm.is_finite() && step_mm > 0.0) {
+        return None;
+    }
+    let loops: Vec<Vec<Point>> = loops
+        .iter()
+        .map(|l| clean_loop(l.iter().copied()))
+        .filter(|l| l.len() >= 3)
+        .collect();
+    // Each piece of each loop: its loop, how far along the loop it starts,
+    // its length, and which side of it the region lies on (+1 left).
+    let mut segments: Vec<(Point, Point)> = Vec::new();
+    let mut pieces: Vec<(usize, f64, f64, f64)> = Vec::new();
+    let mut lengths_mm: Vec<f64> = Vec::new();
+    for (index, l) in loops.iter().enumerate() {
+        let area: f64 = edges(l).map(|(a, b)| a.x * b.y - b.x * a.y).sum();
+        let inside = if (area > 0.0) == (index == 0) {
+            1.0
+        } else {
+            -1.0
+        };
+        let resampled = resample_loop(l, step_mm, index);
+        let mut along_mm = 0.0;
+        for (&(a, _), &(b, _)) in resampled.iter().zip(resampled.iter().cycle().skip(1)) {
+            let length_mm = a.distance_to(b);
+            segments.push((a, b));
+            pieces.push((index, along_mm, length_mm, inside));
+            along_mm += length_mm;
+        }
+        lengths_mm.push(along_mm);
+    }
+    let grid = SegmentDistanceGrid::new(segments.clone(), step_mm * 2.0);
+    // A neck narrower than the step is less than two steps wide.
+    let reach_mm = 2.0 * step_mm;
+    let mut narrowest: Option<f64> = None;
+    for (s, &(p, b)) in segments.iter().enumerate() {
+        let Some(&(own, at_mm, _, inside)) = pieces.get(s) else {
+            continue;
+        };
+        let (contacts, _) = grid.contacts(p, narrowest.unwrap_or(reach_mm), 0.0);
+        for c in contacts {
+            let Some(&(other, from_mm, length_mm, other_inside)) = pieces.get(c.segment) else {
+                continue;
+            };
+            let Some(&(a2, b2)) = segments.get(c.segment) else {
+                continue;
+            };
+            let across = c.q - p;
+            // Across the region from both walls: into the region from
+            // `p`'s piece, and back into it from the other's.
+            let apart = c.d > EPS_MM
+                && (b - p).cross(across) * inside > 0.0
+                && (b2 - a2).cross(-across) * other_inside > 0.0
+                && (other != own
+                    || lengths_mm.get(own).is_some_and(|&loop_mm| {
+                        let along = (from_mm + c.t * length_mm - at_mm).abs();
+                        along.min(loop_mm - along) > NECK_ALONG_RATIO * c.d
+                    }));
+            if apart && narrowest.is_none_or(|n| c.d < n) {
+                narrowest = Some(c.d);
+            }
+        }
+    }
+    narrowest.map(|width_mm| width_mm / 2.0)
+}
+
+/// The step to sample `region` at again, mm, when it has a neck narrower
+/// than the step it was sampled at, `resolved.step_mm` ([`neck_mm`],
+/// #553), as [`refined_step_mm`] refines for a bottleneck: the neck's
+/// clearance, but no finer than the step over [`MAX_FEATURE_REFINEMENT`]
+/// nor the sample budget's floor; `None` when it has none, or the step
+/// cannot get finer. At a quarter of the step the neck has nodes, if off
+/// its axis, and the carve's fitting splits its chain onto the axis
+/// (#457).
+#[must_use]
+pub fn neck_step_mm(region: &Region, resolved: &Resolution, tolerance_mm: f64) -> Option<f64> {
+    let step_mm = resolved.step_mm;
+    let refined_mm = neck_mm(region, step_mm, tolerance_mm)?
+        .max(step_mm / MAX_FEATURE_REFINEMENT)
+        .max(resolved.budget_floor_mm);
+    (refined_mm < step_mm).then_some(refined_mm)
+}
+
 /// True when `p` is inside `loops` by the even-odd rule: inside an outer
 /// and not inside a hole in it, whatever the windings. Arcs are read as
 /// their chords; flatten first where that matters. A point exactly on an
