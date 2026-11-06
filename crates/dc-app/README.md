@@ -7,8 +7,11 @@ step, the selection, the view settings, the generation bookkeeping (each
 operation's digest, what is pending and stale, Stop and Regenerate all),
 the Warnings panel's rows (`check` on the project as it stands), the
 preferences record, the string table, units formatting and parsing, the
-Viewport's geometry (the `Scene` it draws, the camera with the one Y
-flip, picking, the grid and the transform handles), the Design Tree's
+Viewport's geometry (the `Scene` it draws, with each operation's runs and
+marks, the camera with the one Y flip, picking, the grid, the transform
+handles and the direction arrows' placement, ported from PureCutCNC),
+the toolpath display's view state (`view`: visibility, *By depth*'s ramp
+and legend, the program extents), the Design Tree's
 rows (`tree`), the Properties panel's placement fields (`properties`,
 with the mixed values of `mixed`, ported from PureCutCNC), the project
 tools' editing rules (`tools`) and the Tool Library window's model

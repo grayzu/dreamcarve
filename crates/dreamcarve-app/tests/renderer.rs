@@ -160,3 +160,69 @@ fn segment_quad_width_is_screen_constant() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// How many of `pixels` are within `tolerance` of `colour` in every
+/// channel.
+fn pixels_near(
+    pixels: impl Iterator<Item = [u8; 4]>,
+    colour: egui::Color32,
+    tolerance: u8,
+) -> usize {
+    let want = colour.to_array();
+    pixels
+        .filter(|p| (0..3).all(|k| p[k].abs_diff(want[k]) <= tolerance))
+        .count()
+}
+
+/// Capabilities 72 and 73 (#545), rendered: on the generated plaque the
+/// Viewport draws each operation's cuts in its colour of the theme's
+/// operation set, the preview's order; *By depth* recolours the cuts from
+/// the ramp, its deepest stop where the cut-out and the bores go through,
+/// with no buffer rebuilt (the colour mode is the camera uniform's).
+#[test]
+fn toolpaths_draw_in_operation_colours_and_by_depth() {
+    let dir = scratch("renderer-toolpaths");
+    let plaque = common::copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = wgpu_harness(
+        "toolpaths_draw_in_operation_colours_and_by_depth",
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    ) else {
+        std::fs::remove_dir_all(&dir).unwrap();
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.state_mut().app_mut().view_mut().visibility.grid = false;
+    h.run();
+    let palette = theme::Palette::of(h.ctx.theme());
+    let image = h.render().expect("a frame renders");
+    let runs = h.state().app().scene().operations().len();
+    for k in 0..runs {
+        let found = pixels_near(image.pixels().map(|p| p.0), palette.operation(k), 6);
+        assert!(found > 20, "run {k}'s colour: {found} pixels");
+    }
+    let deepest = *palette.depth_ramp.last().unwrap();
+    assert!(
+        pixels_near(image.pixels().map(|p| p.0), deepest, 6) < 20,
+        "by operation, no cut takes the ramp's colour"
+    );
+
+    h.state_mut()
+        .app_mut()
+        .set_colour(dc_app::ColourMode::ByDepth);
+    h.run();
+    let image = h.render().expect("a frame renders");
+    let found = pixels_near(image.pixels().map(|p| p.0), deepest, 6);
+    assert!(
+        found > 50,
+        "the through cuts take the deepest stop: {found}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

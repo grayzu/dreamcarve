@@ -9,9 +9,12 @@
 //!
 //! The one place a colour is written: every widget takes its colours from
 //! a [`Palette`] (section 13, item 1; `tests/theme.rs` scans for literals
-//! elsewhere). Operation colours and the depth ramp arrive with the
-//! toolpath display (slice 16). The Viewport's renderer takes its line
-//! colours from here too, as a style table (`viewport::renderer`).
+//! elsewhere). The operation colours and the depth ramp (slice 16) are
+//! here too: the light operation set is `dc_job::preview::PALETTE`, the
+//! CLI's preview colours, read at compile time, so the light Viewport and
+//! `--preview` share one table (design open question 5); the dark set is
+//! the app's alone. The Viewport's renderer takes its line colours from
+//! here, as a style table (`viewport::renderer`).
 
 use std::sync::Arc;
 
@@ -31,6 +34,44 @@ const fn rgb(hex: u32) -> Color32 {
 const fn rgba(hex: u32) -> Color32 {
     let [r, g, b, a] = hex.to_be_bytes();
     Color32::from_rgba_unmultiplied_const(r, g, b, a)
+}
+
+/// One hex digit's value; anything else is 0.
+const fn hex_digit(digit: u8) -> u8 {
+    match digit {
+        b'0'..=b'9' => digit - b'0',
+        b'a'..=b'f' => digit - b'a' + 10,
+        b'A'..=b'F' => digit - b'A' + 10,
+        _ => 0,
+    }
+}
+
+/// `#rrggbb` as written in `dc_job::preview::PALETTE`, opaque; anything
+/// else is transparent, which `tests/theme.rs` would catch.
+const fn hex(text: &str) -> Color32 {
+    match *text.as_bytes() {
+        [b'#', r1, r0, g1, g0, b1, b0] => Color32::from_rgb(
+            hex_digit(r1) * 16 + hex_digit(r0),
+            hex_digit(g1) * 16 + hex_digit(g0),
+            hex_digit(b1) * 16 + hex_digit(b0),
+        ),
+        _ => Color32::TRANSPARENT,
+    }
+}
+
+/// The light operation set: the preview's palette, one table.
+const fn preview_palette() -> [Color32; 8] {
+    let p = dc_job::preview::PALETTE;
+    [
+        hex(p[0]),
+        hex(p[1]),
+        hex(p[2]),
+        hex(p[3]),
+        hex(p[4]),
+        hex(p[5]),
+        hex(p[6]),
+        hex(p[7]),
+    ]
 }
 
 /// No colour: an unwashed button, a cleared fill.
@@ -121,6 +162,24 @@ pub struct Palette {
     pub viewport_shape_locked: Color32,
     /// The park point's crossed circle.
     pub viewport_park: Color32,
+    /// Rapids, thin and dashed.
+    pub viewport_rapid: Color32,
+    /// The mark where the tool feeds straight down.
+    pub viewport_plunge: Color32,
+    /// Tab marks, heavy.
+    pub viewport_tab: Color32,
+    /// The program extents' tool-centre box, solid.
+    pub viewport_extents_centre: Color32,
+    /// The program extents' bit-edge box, dashed, outside it.
+    pub viewport_extents_edge: Color32,
+    /// The pill behind a caption on the Viewport.
+    pub viewport_label_bg: Color32,
+    /// The operation colours (section 5, "Operation colours"), by the
+    /// run's place in the preview, repeating after eight.
+    pub operations: [Color32; 8],
+    /// The depth ramp's five stops, stock top first (section 5, "Depth
+    /// ramp"), interpolated in linear sRGB.
+    pub depth_ramp: [Color32; 5],
     /// The scrim under a sheet (section 8, "Sheets").
     pub scrim: Color32,
     /// Raised surfaces' shadow (section 12, "Visuals").
@@ -178,6 +237,20 @@ pub const LIGHT: Palette = Palette {
     viewport_shape_selected: rgb(0x2563D0),
     viewport_shape_locked: rgb(0x8A929E),
     viewport_park: rgb(0x5B6472),
+    viewport_rapid: rgb(0x8A929E),
+    viewport_plunge: rgb(0xC62E27),
+    viewport_tab: rgb(0x1C2128),
+    viewport_extents_centre: rgb(0x5B6472),
+    viewport_extents_edge: rgb(0x8A929E),
+    viewport_label_bg: rgba(0xFFFF_FFE0),
+    operations: preview_palette(),
+    depth_ramp: [
+        rgb(0xAFC2EE),
+        rgb(0x7C98E0),
+        rgb(0x4A68C9),
+        rgb(0x2A44A6),
+        rgb(0x1A2E8C),
+    ],
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_001F),
 };
@@ -233,6 +306,29 @@ pub const DARK: Palette = Palette {
     viewport_shape_selected: rgb(0x6AA3F2),
     viewport_shape_locked: rgb(0x7B8491),
     viewport_park: rgb(0xA3ABB7),
+    viewport_rapid: rgb(0x6E7786),
+    viewport_plunge: rgb(0xF2726A),
+    viewport_tab: rgb(0xF5F7FA),
+    viewport_extents_centre: rgb(0xA3ABB7),
+    viewport_extents_edge: rgb(0x7B8491),
+    viewport_label_bg: rgba(0x262B_33E6),
+    operations: [
+        rgb(0x5BA6EA),
+        rgb(0xF0605A),
+        rgb(0x5FC95F),
+        rgb(0xB48FE0),
+        rgb(0xFFA046),
+        rgb(0x4FD4E4),
+        rgb(0xC8907F),
+        rgb(0xF08FD2),
+    ],
+    depth_ramp: [
+        rgb(0xE4ECFF),
+        rgb(0xBCCBF8),
+        rgb(0x93A8F2),
+        rgb(0x6E86EE),
+        rgb(0x4A66E8),
+    ],
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_004D),
 };
@@ -255,6 +351,16 @@ impl Palette {
         } else {
             &LIGHT
         }
+    }
+
+    /// The colour of the preview's `k`th run (section 5, "Operation
+    /// colours"): the palette repeats after eight.
+    #[must_use]
+    pub fn operation(&self, k: usize) -> Color32 {
+        self.operations
+            .get(k % self.operations.len())
+            .copied()
+            .unwrap_or(self.viewport_shape)
     }
 
     /// Every single-colour token with the name `experience.md` gives it, for
@@ -290,7 +396,78 @@ impl Palette {
             ("viewport.shape.selected", self.viewport_shape_selected),
             ("viewport.shape.locked", self.viewport_shape_locked),
             ("viewport.park", self.viewport_park),
+            ("viewport.rapid", self.viewport_rapid),
+            ("viewport.plunge", self.viewport_plunge),
+            ("viewport.tab", self.viewport_tab),
+            ("viewport.extents.centre", self.viewport_extents_centre),
+            ("viewport.extents.edge", self.viewport_extents_edge),
+            ("viewport.label.bg", self.viewport_label_bg),
         ]
+    }
+}
+
+/// One sRGB channel, 0 to 1, as linear light.
+#[must_use]
+pub fn linear(gamma: f32) -> f32 {
+    if gamma <= 0.04045 {
+        gamma / 12.92
+    } else {
+        ((gamma + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+/// One linear channel, 0 to 1, as sRGB.
+#[must_use]
+pub fn gamma(linear: f32) -> f32 {
+    if linear <= 0.003_130_8 {
+        linear * 12.92
+    } else {
+        1.055 * linear.powf(1.0 / 2.4) - 0.055
+    }
+}
+
+/// The depth ramp of `stops` at `t` (0 at the stock top to 1 at the
+/// deepest cut) in linear light (section 5, "Depth ramp": "Five stops
+/// interpolated in linear sRGB").
+#[must_use]
+pub fn ramp_linear(stops: &[Color32; 5], t: f32) -> [f32; 3] {
+    let t = t.clamp(0.0, 1.0) * 4.0;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "t is in [0, 4]"
+    )]
+    let i = (t.floor() as usize).min(3);
+    #[allow(clippy::cast_precision_loss, reason = "i is under 4")]
+    let f = t - i as f32;
+    let lin = |c: &Color32| {
+        let [r, g, b, _] = c.to_normalized_gamma_f32();
+        [linear(r), linear(g), linear(b)]
+    };
+    let (a, b) = (
+        stops.get(i).map_or([0.0; 3], lin),
+        stops.get(i + 1).map_or([0.0; 3], lin),
+    );
+    [
+        a[0] + (b[0] - a[0]) * f,
+        a[1] + (b[1] - a[1]) * f,
+        a[2] + (b[2] - a[2]) * f,
+    ]
+}
+
+impl Palette {
+    /// The depth ramp's colour at `t`, 0 at the stock top to 1 at the
+    /// deepest cut: the legend bar's, and the renderer's texel.
+    #[must_use]
+    pub fn ramp_at(&self, t: f32) -> Color32 {
+        let [r, g, b] = ramp_linear(&self.depth_ramp, t);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a channel in [0, 1] times 255, rounded"
+        )]
+        let byte = |c: f32| (gamma(c).clamp(0.0, 1.0) * 255.0).round() as u8;
+        Color32::from_rgb(byte(r), byte(g), byte(b))
     }
 }
 
@@ -584,6 +761,33 @@ mod tests {
         assert_ne!(LIGHT.viewport_bg, DARK.viewport_bg);
         assert_eq!(LIGHT.text_on_accent, DARK.text_on_accent);
         const { assert!(!LIGHT.dark && DARK.dark) };
+    }
+
+    /// The ramp runs from its first stop to its last through the middle
+    /// one, interpolated in linear light.
+    #[test]
+    fn ramp_interpolates_its_stops_in_linear_light() {
+        let lin = |c: Color32| {
+            let [r, g, b, _] = c.to_normalized_gamma_f32();
+            [linear(r), linear(g), linear(b)]
+        };
+        for (t, stop) in [(0.0, 0), (0.5, 2), (1.0, 4)] {
+            let got = ramp_linear(&LIGHT.depth_ramp, t);
+            let want = lin(LIGHT.depth_ramp[stop]);
+            for k in 0..3 {
+                assert!(
+                    (got[k] - want[k]).abs() < 1e-6,
+                    "t {t}: {got:?} vs {want:?}"
+                );
+            }
+            assert_eq!(LIGHT.ramp_at(t), LIGHT.depth_ramp[stop], "t {t}");
+        }
+        let a = lin(LIGHT.depth_ramp[0]);
+        let b = lin(LIGHT.depth_ramp[1]);
+        let mid = ramp_linear(&LIGHT.depth_ramp, 0.125);
+        for k in 0..3 {
+            assert!((mid[k] - (a[k] + b[k]) / 2.0).abs() < 1e-6);
+        }
     }
 
     /// The type scale has no size under 12 px and only the spec's sizes

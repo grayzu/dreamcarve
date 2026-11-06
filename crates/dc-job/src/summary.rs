@@ -752,3 +752,50 @@ pub fn describe_extents(project: &Project, program: &Program, radius_mm: f64) ->
     }
     lines
 }
+
+/// A program's XY extents (#62) back in its board's project space, mm,
+/// Y-up: the boxes the app's Viewport draws (phase 4 functional spec,
+/// capability 74).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectExtents {
+    /// Where the tool centre goes.
+    pub centre: dc_geometry::Rect,
+    /// Where the cutter's edge reaches: `centre` widened by the radius of
+    /// the program's largest tool.
+    pub edge: dc_geometry::Rect,
+}
+
+/// `summary`'s extents, read in machine coordinates from its program as
+/// `check` prints them, mapped back through the post-processor's axes and
+/// the origin to project space; `None` when the program never moves in X
+/// and Y or its post-processor no longer resolves. A male board program's
+/// (#498) are on the male board's own project space.
+#[must_use]
+pub fn project_extents(
+    project: &Project,
+    summary: &crate::ProgramSummary,
+) -> Option<ProjectExtents> {
+    let on_board = match summary.program.board {
+        Board::Female => std::borrow::Cow::Borrowed(project),
+        Board::Male => {
+            let (inlay, _) = project.male_board()?;
+            std::borrow::Cow::Owned(project.on_male_board(inlay))
+        }
+    };
+    let post = on_board.post_processor.resolve().ok()?;
+    let transform = dc_gcode::transform::MachineTransform::new(&on_board, &post).ok()?;
+    let rect = |extents: &Extents| -> Option<dc_geometry::Rect> {
+        let (x, y) = (extents.x?, extents.y?);
+        let z = extents.z.map_or(0.0, |z| z.min);
+        let a = transform.to_project(dc_geometry::Point3::new(x.min, y.min, z), extents.units);
+        let b = transform.to_project(dc_geometry::Point3::new(x.max, y.max, z), extents.units);
+        Some(dc_geometry::Rect {
+            min: dc_geometry::Point::new(a.x.min(b.x), a.y.min(b.y)),
+            max: dc_geometry::Point::new(a.x.max(b.x), a.y.max(b.y)),
+        })
+    };
+    Some(ProjectExtents {
+        centre: rect(&summary.program.extents)?,
+        edge: rect(&summary.edge_extents)?,
+    })
+}

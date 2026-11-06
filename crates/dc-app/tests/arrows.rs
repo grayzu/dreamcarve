@@ -264,6 +264,10 @@ fn arcs_are_read_as_their_chords() {
 /// (`previewPrimitives.ts` at 9cd0325): canvas coordinates with the
 /// offset added, `hypot`, both neighbours computed eagerly. Written
 /// independently of `compute`, so the two cannot share a bug.
+#[allow(
+    clippy::manual_clamp,
+    reason = "transcribed as upstream writes it, `max(12, min(40, …))`"
+)]
 fn original_arrow_pass(
     moves: &[ArrowMove],
     scale: f64,

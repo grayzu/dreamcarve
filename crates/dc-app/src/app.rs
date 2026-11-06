@@ -26,7 +26,7 @@ use crate::prefs::Prefs;
 use crate::scene::Scene;
 use crate::selection::Selection;
 use crate::strings::Strings;
-use crate::view::View;
+use crate::view::{ColourMode, View, Visibility};
 
 /// The bundled post-processor a new project names (capability 51).
 const DEFAULT_POST_ID: &str = "grblhal";
@@ -87,10 +87,17 @@ impl App {
     pub fn new(project: Project, strings: Strings, prefs: Prefs) -> Self {
         let validation = dc_job::validation(&project);
         let generation = Generation::new(&project, !validation.has_errors());
+        // The toolpath display is remembered between sessions (capability
+        // 73); the camera and the hidden operations are this session's.
+        let view = View {
+            visibility: prefs.visibility,
+            colour: prefs.colour,
+            ..View::default()
+        };
         let mut app = Self {
             history: LabelledHistory::new(project),
             selection: Selection::Nothing,
-            view: View::default(),
+            view,
             generation,
             strings,
             prefs,
@@ -397,7 +404,13 @@ impl App {
     /// next revision.
     fn rebuild_scene(&mut self) {
         let revision = self.scene.revision().wrapping_add(1);
-        self.scene = Scene::build(self.history.current(), &self.generation, revision);
+        // The runs of a result that stands are the old Scene's, shared.
+        self.scene = Scene::rebuild(
+            self.history.current(),
+            &self.generation,
+            revision,
+            &self.scene,
+        );
     }
 
     /// What the Viewport draws and picks from: rebuilt when the snapshot
@@ -449,6 +462,21 @@ impl App {
     /// The view settings, to change. Not an undo step.
     pub fn view_mut(&mut self) -> &mut View {
         &mut self.view
+    }
+
+    /// Sets what the Viewport draws of a toolpath (the visibility card's
+    /// toggles), in the view and in the preferences `gui.toml` keeps. View
+    /// state: not an undo step, not in the file (acceptance 81).
+    pub fn set_visibility(&mut self, visibility: Visibility) {
+        self.view.visibility = visibility;
+        self.prefs.visibility = visibility;
+    }
+
+    /// Sets how the Viewport colours toolpaths, in the view and in the
+    /// preferences. View state, as [`App::set_visibility`].
+    pub fn set_colour(&mut self, colour: ColourMode) {
+        self.view.colour = colour;
+        self.prefs.colour = colour;
     }
 
     /// The preferences.
