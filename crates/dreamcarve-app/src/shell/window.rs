@@ -195,7 +195,10 @@ pub(crate) enum Action {
     Undo,
     Redo,
     Quit,
-    FitStock,
+    /// Fit the stock to the visible shapes with this margin, mm.
+    FitStock {
+        margin_mm: f64,
+    },
     SetTheme(dc_app::Theme),
     ToggleLeft,
     ToggleRight,
@@ -615,7 +618,7 @@ impl Shell {
         }
         if self.sheet.is_none() && self.library.is_none() {
             actions.extend(shortcuts(ctx));
-            actions.extend(viewport::keys(ctx));
+            actions.extend(viewport::keys(ctx, &self.app));
         }
     }
 
@@ -644,8 +647,7 @@ impl Shell {
                 self.app.redo();
             }
             Action::Quit => self.request(ctx, Pending::Close),
-            Action::FitStock => {
-                let margin_mm = dc_job::project_from::STOCK_MARGIN_MM;
+            Action::FitStock { margin_mm } => {
                 if let Err(e) = self.app.run(Command::FitStockToShapes { margin_mm }) {
                     self.message = Some(e.to_string());
                 }

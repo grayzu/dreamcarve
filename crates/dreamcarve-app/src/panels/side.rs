@@ -5,11 +5,12 @@
 //! sections 2 and 3): the left column, Design Tree over Properties, and
 //! the CAM panel with its Operations and Tools tabs, each resizable by its
 //! divider and collapsing to a 32-px strip, dragged below its minimum or
-//! when the window is under 1280 × 768. Their contents are this slice's
-//! read-only lists and empty sentences (capability 79); the tree, the
-//! editors and the lists' rows arrive with slices 5, 8 and 10.
+//! when the window is under 1280 × 768. The left column holds the Design
+//! Tree ([`panels::tree`]) and, with shapes selected, their placement
+//! ([`panels::properties`]); the Operations list's rows and editors
+//! arrive with slice 10.
 
-use dc_app::StrKey;
+use dc_app::{Selection, StrKey};
 use eframe::egui::{self, Rangef, Sense, TextStyle, Ui, Vec2};
 
 use crate::panels;
@@ -202,15 +203,30 @@ pub(crate) fn left(
                 .show(ui, |ui| {
                     // Fill the panel, or it shrinks to its content.
                     ui.set_min_height(ui.available_height());
-                    // Nothing selected: the Project panel (#536).
-                    if state.app.selection().is_empty() {
-                        let title =
-                            strings.fmt(StrKey::ProjectTitle, &[("name", &state.display_name)]);
-                        header(ui, &title);
-                        panels::project::show(ui, state, out);
-                    } else {
-                        header(ui, strings.get(StrKey::AppPanelProperties));
-                        empty_sentence(ui, strings.get(StrKey::AppPanelNoSelection));
+                    match state.app.selection() {
+                        // Nothing selected: the Project panel (#536).
+                        selection if selection.is_empty() => {
+                            let title =
+                                strings.fmt(StrKey::ProjectTitle, &[("name", &state.display_name)]);
+                            header(ui, &title);
+                            panels::project::show(ui, state, out);
+                        }
+                        // Instances: their placement (#534).
+                        Selection::Instances(ids) => {
+                            header(ui, &panels::properties::title(state, ids));
+                            panels::properties::show(ui, state, ids, out);
+                        }
+                        Selection::Tabs(ids) => {
+                            header(ui, strings.get(StrKey::AppPanelProperties));
+                            empty_sentence(
+                                ui,
+                                &panels::properties::tabs_sentence(state, ids.len()),
+                            );
+                        }
+                        _ => {
+                            header(ui, strings.get(StrKey::AppPanelProperties));
+                            empty_sentence(ui, strings.get(StrKey::AppPanelNoSelection));
+                        }
                     }
                 });
             header(ui, strings.get(StrKey::AppPanelDesignTree));
@@ -218,7 +234,7 @@ pub(crate) fn left(
             if instances.is_empty() {
                 empty_sentence(ui, strings.get(StrKey::AppPanelNoShapes));
             } else {
-                rows(ui, instances.iter().map(|i| i.name.as_str()));
+                panels::tree::show(ui, state, out);
             }
         });
     Shown {

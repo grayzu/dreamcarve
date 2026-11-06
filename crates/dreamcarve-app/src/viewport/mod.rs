@@ -14,8 +14,14 @@
 //! (open question 8). Selection: a click picks through
 //! `dc_app::viewport::pick`, a second click in place cycles, Shift adds,
 //! Ctrl/⌘ toggles, a drag from empty stock is a marquee, and the result is
-//! `dc_app`'s one selection. Every position is the camera's: Y flips
-//! once, in `dc_app::Camera::to_screen`, which the painter and the
+//! `dc_app`'s one selection. Transforms (#534): a drag from a shape moves
+//! the selection, a corner handle scales it about its centre, the rotation
+//! handle turns it; while the button is down the selection is drawn
+//! through a preview `Transform` in the draw (no snapshot is made), and
+//! the release commits one `TransformInstances`. The arrow keys nudge.
+//! A locked selection's handles are grey and every transform is refused
+//! with the reason in the status bar. Every position is the camera's: Y
+//! flips once, in `dc_app::Camera::to_screen`, which the painter and the
 //! pointer go through; the GPU never works in Y-down. While the Project
 //! panel's *Click on the view* is armed, a click sets the park point
 //! instead of the selection and Escape disarms it (#536).
@@ -29,16 +35,17 @@ use std::sync::Arc;
 
 use dc_app::viewport::camera::{self, Camera, Pos};
 use dc_app::viewport::grid::Grid;
+use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
-use dc_app::{App, ClickMode, StrKey};
-use dc_geometry::{Point, Rect as MmRect};
+use dc_app::{App, ClickMode, Command, Selection, StrKey};
+use dc_geometry::{Point, Rect as MmRect, Transform};
 use dc_project::InstanceId;
 use eframe::egui::{
     self, Key, Modifiers, MouseWheelSource, MouseWheelUnit, PointerButton, Pos2, Rect, Stroke,
     TextStyle, Ui,
 };
 
-use crate::panels::{empty, project};
+use crate::panels::{empty, project, properties};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::icon::Icon;
@@ -61,16 +68,56 @@ const CROSSHAIR_ARM_PX: f32 = 12.0;
 const CROSSHAIR_GAP_PX: f32 = 3.0;
 /// The park point's radius, px.
 const PARK_RADIUS_PX: f32 = 6.0;
+/// A transform handle's square and circle, px (`experience.md`, section 8).
+const HANDLE_PX: f32 = 8.0;
+/// The arrow keys' nudge, mm: plain, with Shift, with Alt (capability 54).
+const NUDGE_MM: f64 = 1.0;
+/// The nudge with Shift held, mm.
+const NUDGE_SHIFT_MM: f64 = 10.0;
+/// The nudge with Alt held, mm.
+const NUDGE_ALT_MM: f64 = 0.1;
+/// A drag whose change is within this of none commits nothing.
+const NO_CHANGE: f64 = 1e-12;
+
+/// What a press on the pane took hold of.
+#[derive(Debug, Clone, PartialEq)]
+enum Target {
+    /// A shape: a click on release, a move once dragged.
+    Shape(InstanceId),
+    /// A corner or the rotation handle of the selection.
+    Handle(Grab),
+}
 
 /// What the pointer is doing on the pane.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Drag {
     /// Panning: the middle button, or the primary with Space held.
     Pan { last: Pos2 },
     /// The primary button pressed on nothing: a marquee once it moves.
     Marquee { start: Pos2 },
-    /// The primary button pressed on a shape: a click on release.
-    Press { start: Pos2 },
+    /// The primary button pressed on a shape or a handle: a click on
+    /// release, a transform once it moves.
+    Press { start: Pos2, target: Target },
+    /// Transforming `ids` by `grab` from `start`, previewed until release.
+    Transform {
+        start: Pos2,
+        ids: Vec<InstanceId>,
+        handles: Handles,
+        grab: Grab,
+    },
+    /// A transform the selection refused (a locked shape): nothing until
+    /// the release.
+    Refused,
+}
+
+/// The selection drawn where the drag in progress will put it.
+#[derive(Debug, Clone, PartialEq)]
+struct Preview {
+    ids: Vec<InstanceId>,
+    /// Applied after each instance's own transform.
+    placed: Transform,
+    /// The change as the command will take it.
+    delta: Transform,
 }
 
 /// One layer's contents as last built, and what they were built from.
@@ -92,6 +139,10 @@ pub(crate) struct ViewportState {
     /// The camera is as Fit left it, so a resized pane fits again.
     fitted: bool,
     drag: Option<Drag>,
+    /// The transform being dragged, drawn but not yet a command.
+    preview: Option<Preview>,
+    /// The status bar's readout of the drag: ΔX ΔY, the scale, the angle.
+    readout: Option<String>,
     clicks: ClickCycle,
     /// The pointer's project point, when it is over the pane.
     cursor_mm: Option<Point>,
@@ -108,6 +159,8 @@ pub(crate) struct ViewportState {
 pub(crate) struct Pointer {
     pub cursor_mm: Option<Point>,
     pub hover: Option<(String, bool)>,
+    /// The drag in progress, as the status bar reads it.
+    pub drag: Option<String>,
 }
 
 /// A hash of `value`, a layer's cache key.
@@ -155,7 +208,7 @@ impl ViewportState {
         });
         let camera = app.view().camera;
         self.cursor_mm = over.map(|p| camera.to_world(pane_pos(pane, p)));
-        self.hover = match (over, self.drag) {
+        self.hover = match (over, &self.drag) {
             (Some(p), None | Some(Drag::Press { .. })) => {
                 match pick::pick(
                     app.scene(),
@@ -176,6 +229,7 @@ impl ViewportState {
                 let shape = app.scene().shape(id)?;
                 Some((shape.name.clone(), shape.locked))
             }),
+            drag: self.readout.clone(),
         }
     }
 
@@ -220,12 +274,15 @@ impl ViewportState {
 
 /// The keys the Viewport answers when no field has the keyboard
 /// (functional spec, capability 54): F fits, Shift F zooms to the
-/// selection, Escape clears it unless a menu or popup takes it.
-pub(crate) fn keys(ctx: &egui::Context) -> Vec<Action> {
+/// selection, Escape clears it unless a menu or popup takes it, the arrow
+/// keys nudge the selected shapes by 1 mm (10 with Shift, 0.1 with Alt),
+/// one undo step each, and Delete or Backspace deletes them.
+pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     if ctx.egui_wants_keyboard_input() {
         return Vec::new();
     }
     let popup_open = egui::Popup::is_any_open(ctx);
+    let selected = app.selection().instances().to_vec();
     let park_picking = project::park_pick_armed(ctx);
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
@@ -241,6 +298,36 @@ pub(crate) fn keys(ctx: &egui::Context) -> Vec<Action> {
             } else {
                 actions.push(Action::ClearSelection);
             }
+        }
+        if selected.is_empty() || popup_open {
+            return;
+        }
+        // Shift and Alt first: `consume_key` ignores extra Shift and Alt.
+        for (key, (dx, dy)) in [
+            (Key::ArrowLeft, (-1.0, 0.0)),
+            (Key::ArrowRight, (1.0, 0.0)),
+            (Key::ArrowDown, (0.0, -1.0)),
+            (Key::ArrowUp, (0.0, 1.0)),
+        ] {
+            for (modifiers, step_mm) in [
+                (Modifiers::SHIFT, NUDGE_SHIFT_MM),
+                (Modifiers::ALT, NUDGE_ALT_MM),
+                (Modifiers::NONE, NUDGE_MM),
+            ] {
+                while input.consume_key(modifiers, key) {
+                    actions.push(Action::Run(Box::new(Command::TransformInstances {
+                        ids: selected.clone(),
+                        delta: Transform::translate(dx * step_mm, dy * step_mm),
+                    })));
+                }
+            }
+        }
+        if input.consume_key(Modifiers::NONE, Key::Delete)
+            || input.consume_key(Modifiers::NONE, Key::Backspace)
+        {
+            actions.push(Action::Run(Box::new(Command::DeleteInstances(
+                selected.clone(),
+            ))));
         }
     });
     actions
@@ -301,8 +388,120 @@ fn scroll_and_pinch(ui: &Ui, pane: Rect, at: Pos, camera: &mut Camera) -> bool {
     moved
 }
 
+/// What a primary press at window point `pos` takes hold of: a handle of
+/// the selection, else the shape under it, else nothing (a marquee).
+fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) -> Option<Target> {
+    let app = state.app;
+    let at = pane_pos(pane, pos);
+    let selected = app.selection().instances();
+    if let Some(h) = handles::handles(app.project(), selected, camera)
+        && let Some(grab @ (Grab::Corner(_) | Grab::Rotate { .. })) =
+            handles::grab_at(&h, camera, at)
+    {
+        return Some(Target::Handle(grab));
+    }
+    match pick::pick(app.scene(), camera, at, PICK_TOLERANCE_PX, 0) {
+        Hit::Instance(id) => Some(Target::Shape(id)),
+        Hit::Nothing => None,
+    }
+}
+
+/// A press on `target` has moved past the slop: the transform it starts,
+/// or a refusal with the reason in the status bar. A press on a shape
+/// outside the selection selects it first and moves it alone.
+fn start_transform(
+    state: &FrameState<'_>,
+    camera: &Camera,
+    start: Pos2,
+    target: Target,
+    out: &mut Vec<Action>,
+) -> Drag {
+    let project = state.app.project();
+    let selected = state.app.selection().instances();
+    let (ids, grab) = match target {
+        Target::Shape(id) if selected.contains(&id) => (selected.to_vec(), Grab::Move),
+        Target::Shape(id) => {
+            out.push(Action::Select(Selection::Instances(vec![id.clone()])));
+            (vec![id], Grab::Move)
+        }
+        Target::Handle(grab) => (selected.to_vec(), grab),
+    };
+    if let Some(refusal) = handles::refusal(project, &ids) {
+        out.push(Action::Refused(refusal.to_string()));
+        return Drag::Refused;
+    }
+    match handles::handles(project, &ids, camera) {
+        Some(handles) => Drag::Transform {
+            start,
+            ids,
+            handles,
+            grab,
+        },
+        None => Drag::Refused,
+    }
+}
+
+/// `value_mm` for the status bar's readout: one decimal in mm, three in
+/// inches, as the cursor cell.
+fn readout_length(value_mm: f64, units: dc_project::Units) -> String {
+    let decimals = match units {
+        dc_project::Units::Mm => 1,
+        dc_project::Units::Inch => 3,
+    };
+    let text = format!("{:.decimals$}", dc_app::units::to_display(value_mm, units));
+    if text
+        .trim_start_matches('-')
+        .chars()
+        .all(|c| c == '0' || c == '.')
+    {
+        text.trim_start_matches('-').to_owned()
+    } else {
+        text
+    }
+}
+
+/// The status bar's text for a drag of `grab` giving `delta`.
+fn readout(state: &FrameState<'_>, grab: Grab, delta: Transform) -> String {
+    let strings = state.app.strings();
+    let units = state.app.project().display_units;
+    let [a, b, c, d, e, f] = delta.coeffs();
+    match grab {
+        Grab::Move => strings.fmt(
+            StrKey::PlacementMove,
+            &[
+                ("dx", &readout_length(e, units)),
+                ("dy", &readout_length(f, units)),
+            ],
+        ),
+        Grab::Corner(_) => strings.fmt(
+            StrKey::PlacementScale,
+            &[
+                ("x", &format!("{:.0}", a.hypot(b) * 100.0)),
+                ("y", &format!("{:.0}", c.hypot(d) * 100.0)),
+            ],
+        ),
+        Grab::Rotate { .. } => strings.fmt(
+            StrKey::PlacementRotate,
+            &[(
+                "angle",
+                &format!("{:.1}", dc_app::properties::rotation_deg(delta)),
+            )],
+        ),
+    }
+}
+
+/// Whether `t` changes nothing.
+fn is_identity(t: Transform) -> bool {
+    t.coeffs()
+        .iter()
+        .zip(Transform::IDENTITY.coeffs())
+        .all(|(a, b)| (a - b).abs() <= NO_CHANGE)
+}
+
 /// The pointer's gestures this frame: pans move `camera`, a click or a
-/// marquee pushes a new selection. Returns whether the camera moved.
+/// marquee pushes a new selection, a drag from a shape or a handle
+/// previews a transform and commits it on release. Returns whether the
+/// camera moved.
 fn gestures(
     ui: &Ui,
     pane: Rect,
@@ -326,6 +525,8 @@ fn gestures(
         });
     let Some(pos) = pos else {
         view.drag = None;
+        view.preview = None;
+        view.readout = None;
         return false;
     };
     let mut moved = false;
@@ -333,15 +534,9 @@ fn gestures(
         view.drag = Some(if middle_pressed || space {
             Drag::Pan { last: pos }
         } else {
-            match pick::pick(
-                state.app.scene(),
-                camera,
-                pane_pos(pane, pos),
-                PICK_TOLERANCE_PX,
-                0,
-            ) {
-                Hit::Nothing => Drag::Marquee { start: pos },
-                Hit::Instance(_) => Drag::Press { start: pos },
+            match press_target(state, camera, pane, pos) {
+                None => Drag::Marquee { start: pos },
+                Some(target) => Drag::Press { start: pos, target },
             }
         });
     }
@@ -357,11 +552,47 @@ fn gestures(
         }
         return moved;
     }
+
+    // A press that has moved 4 px starts its transform.
+    if let Some(Drag::Press { start, target }) = &view.drag
+        && start.distance(pos) >= CLICK_SLOP_PX
+    {
+        let (start, target) = (*start, target.clone());
+        view.drag = Some(start_transform(state, camera, start, target, out));
+        view.clicks.reset();
+    }
+    if let Some(Drag::Transform {
+        start,
+        ids,
+        handles,
+        grab,
+    }) = &view.drag
+    {
+        let grab = match grab {
+            Grab::Rotate { .. } => Grab::Rotate {
+                snap: modifiers.shift,
+            },
+            other => *other,
+        };
+        let uniform = !properties::proportions_free(ui.ctx()) && !modifiers.alt;
+        let from = camera.to_world(pane_pos(pane, *start));
+        let to = camera.to_world(pane_pos(pane, pos));
+        let delta = handles::drag_delta(handles, grab, from, to, uniform);
+        view.readout = Some(readout(state, grab, delta));
+        view.preview = Some(Preview {
+            ids: ids.clone(),
+            placed: handles::about_centre(handles, delta),
+            delta,
+        });
+    }
+
     if !released {
         return moved;
     }
     let mode = click_mode(modifiers);
     let selection = state.app.selection();
+    let preview = view.preview.take();
+    view.readout = None;
     match view.drag.take() {
         Some(Drag::Marquee { start }) if start.distance(pos) >= CLICK_SLOP_PX => {
             let (a, b) = (
@@ -376,9 +607,15 @@ fn gestures(
             view.clicks.reset();
             out.push(Action::Select(selection.boxed(&ids, mode)));
         }
-        // A drag that starts on a shape moves it, with the handles of
-        // slice 5 (#534); until then it does nothing.
-        Some(Drag::Press { start }) if start.distance(pos) >= CLICK_SLOP_PX => {}
+        // The release commits the drag: one command, one undo step.
+        Some(Drag::Transform { ids, .. }) => {
+            if let Some(preview) = preview.filter(|p| !is_identity(p.delta)) {
+                out.push(Action::Run(Box::new(Command::TransformInstances {
+                    ids,
+                    delta: preview.delta,
+                })));
+            }
+        }
         Some(Drag::Marquee { .. } | Drag::Press { .. }) => {
             let hit = view.clicks.click(
                 state.app.scene(),
@@ -388,7 +625,7 @@ fn gestures(
             );
             out.push(Action::Select(selection.clicked(&hit, mode)));
         }
-        Some(Drag::Pan { .. }) | None => {}
+        Some(Drag::Pan { .. } | Drag::Refused) | None => {}
     }
     moved
 }
@@ -428,26 +665,41 @@ fn frame(
         || layers::grid(project, show_grid.then_some(grid)),
     );
     let stock_layer = view.layer(Layer::Stock, key(stock), || layers::stock(project));
-    let shapes_layer = view.layer(Layer::Shapes, key((scene.revision(), band)), || {
-        layers::shapes(scene, tolerance)
-    });
+    // A drag in progress draws its shapes where the release will put them,
+    // through the preview transform, and not where the snapshot has them.
+    let moving: Vec<InstanceId> = view
+        .preview
+        .as_ref()
+        .map(|p| p.ids.clone())
+        .unwrap_or_default();
+    let placed = view.preview.as_ref().map(|p| p.placed);
+    let placed_key = placed.map(|t| t.coeffs().map(f64::to_bits));
+    let shapes_layer = view.layer(
+        Layer::Shapes,
+        key((scene.revision(), band, &moving)),
+        || layers::shapes(scene, tolerance, &moving),
+    );
     let hover_layer = view.layer(Layer::Hover, key((scene.revision(), band, &hover)), || {
         layers::highlighted(
             scene,
             &hover,
             tolerance,
             (StyleId::Hover, StyleId::HoverOpen),
+            None,
         )
     });
+    let mut drawn = selected.clone();
+    drawn.extend(moving.iter().filter(|id| !selected.contains(id)).cloned());
     let selection_layer = view.layer(
         Layer::Selection,
-        key((scene.revision(), band, &selected)),
+        key((scene.revision(), band, &drawn, &moving, placed_key)),
         || {
             layers::highlighted(
                 scene,
-                &selected,
+                &drawn,
                 tolerance,
                 (StyleId::Selected, StyleId::SelectedOpen),
+                placed.map(|t| (moving.as_slice(), t)),
             )
         },
     );
@@ -469,8 +721,62 @@ fn frame(
     }
 }
 
+/// The selection's transform handles (`experience.md`, section 8,
+/// "Transform handles"; section 13, item 17): a 1-px accent box, four
+/// 8-px corner squares and an 8-px rotation circle on its stem above the
+/// top's centre, all in `shape.locked` grey when a shape is locked. While
+/// a drag is in progress they follow its preview.
+fn transform_handles(
+    ui: &Ui,
+    painter: &egui::Painter,
+    pane: Rect,
+    state: &FrameState<'_>,
+    view: &ViewportState,
+    camera: &Camera,
+) {
+    let palette = Palette::current(ui);
+    let app = state.app;
+    let ids = view
+        .preview
+        .as_ref()
+        .map_or_else(|| app.selection().instances(), |p| p.ids.as_slice());
+    if !ids.iter().any(|id| app.scene().shape(id).is_some()) {
+        return;
+    }
+    let Some(h) = handles::handles(app.project(), ids, camera) else {
+        return;
+    };
+    let placed = view
+        .preview
+        .as_ref()
+        .map_or(Transform::IDENTITY, |p| p.placed);
+    let at = |p: Point| window_pos(pane, camera, placed.apply(p));
+    let colour = if h.locked {
+        palette.viewport_shape_locked
+    } else {
+        palette.accent
+    };
+    let stroke = Stroke::new(1.0, colour);
+    let corners: Vec<Pos2> = h.corners.iter().map(|c| at(*c)).collect();
+    painter.add(egui::Shape::closed_line(corners.clone(), stroke));
+    let top = Point::new((h.bounds.min.x + h.bounds.max.x) / 2.0, h.bounds.max.y);
+    let (stem, knob) = (at(top), at(h.rotation));
+    painter.line_segment([stem, knob], stroke);
+    for corner in corners {
+        painter.rect(
+            Rect::from_center_size(corner, egui::vec2(HANDLE_PX, HANDLE_PX)),
+            0.0,
+            palette.surface_raised,
+            stroke,
+            egui::StrokeKind::Middle,
+        );
+    }
+    painter.circle(knob, HANDLE_PX / 2.0, palette.surface_raised, stroke);
+}
+
 /// The overlay over the GPU layers: the origin crosshair and its label,
-/// the park point, a padlock by each locked shape, and the marquee.
+/// the park point, a padlock by each locked shape, the selection's
+/// handles, and the marquee.
 fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, camera: &Camera) {
     let palette = Palette::current(ui);
     let painter = ui.painter_at(pane);
@@ -517,6 +823,8 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
             palette.viewport_shape_locked,
         );
     }
+
+    transform_handles(ui, &painter, pane, state, view, camera);
 
     if let Some(Drag::Marquee { start }) = view.drag
         && let Some(now) = ui.input(|i| i.pointer.interact_pos())
@@ -591,6 +899,13 @@ pub(crate) fn show(
             }
             if camera != before {
                 out.push(Action::SetCamera(camera));
+            }
+            match view.drag {
+                Some(Drag::Refused) => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
+                Some(Drag::Transform { .. }) => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+                _ => {}
             }
 
             let painter = ui.painter_at(pane);
