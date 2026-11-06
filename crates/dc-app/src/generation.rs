@@ -203,7 +203,7 @@ fn push_once<'a, T: PartialEq + ?Sized>(list: &mut Vec<&'a T>, item: &'a T) {
 /// The digest of everything operation `op`'s generator reads in
 /// `project` (design, "Digest and staleness"), in a fixed order: the
 /// operation's record and, when it reads earlier operations
-/// ([`reads_earlier`]), the record of every operation before it; every
+/// (a rest Pocket, a countersink, a V-Carve or an Inlay), the record of every operation before it; every
 /// tool those records name (their own, their clearing passes', their
 /// cut-outs'); every instance they target and the definition each
 /// names; `stock`, `origin`, `heights`, `display_units`, the two
