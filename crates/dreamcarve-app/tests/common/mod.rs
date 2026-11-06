@@ -144,3 +144,115 @@ pub fn saved_form(path: &Path) -> String {
     let loaded = dc_project::load(&bytes).expect("fixture loads");
     dc_project::save(&loaded.project).expect("fixture saves")
 }
+
+/// Whether this machine has a wgpu adapter to render with, asked the way
+/// egui_kittest's renderer will ask (the backends `WGPU_BACKEND` allows).
+pub fn wgpu_adapter_available() -> bool {
+    use eframe::egui_wgpu::{WgpuSetup, wgpu};
+    let WgpuSetup::CreateNew(setup) = WgpuSetup::without_display_handle() else {
+        return false;
+    };
+    let instance = wgpu::Instance::new(setup.instance_descriptor);
+    let adapters = block_on(instance.enumerate_adapters(wgpu::Backends::all()));
+    !adapters.is_empty()
+}
+
+/// Runs a future that native wgpu completes without waiting.
+pub fn block_on<F: Future>(future: F) -> F::Output {
+    let mut future = std::pin::pin!(future);
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    loop {
+        if let std::task::Poll::Ready(out) = future.as_mut().poll(&mut cx) {
+            return out;
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// A shell on the wgpu renderer when this machine has an adapter, else
+/// `None`, having printed why `test` renders nothing.
+pub fn wgpu_harness(
+    test: &str,
+    options: Options,
+    width: f32,
+    height: f32,
+) -> Option<Harness<'static, Shell>> {
+    if !wgpu_adapter_available() {
+        println!(
+            "{test}: no wgpu adapter on this machine, so nothing is rendered (set WGPU_BACKEND \
+             or install Mesa's lavapipe to render)"
+        );
+        return None;
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(width, height))
+        .renderer(egui_kittest::wgpu::WgpuTestRenderer::new())
+        .build_eframe(move |cc| Shell::new(cc, options).expect("the shell starts"));
+    harness.run();
+    Some(harness)
+}
+
+/// Where project point `p` (mm) is on the window: the Viewport pane's
+/// corner plus the camera's screen position for it.
+pub fn on_screen(harness: &Harness<'_, Shell>, p: dc_geometry::Point) -> egui::Pos2 {
+    let pane = harness.state().layout().viewport;
+    let s = harness.state().app().view().camera.to_screen(p);
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "window coordinates, exact enough in f32"
+    )]
+    let at = pane.min + egui::vec2(s.x_px as f32, s.y_px as f32);
+    at
+}
+
+/// Where window point `at` is in the Viewport pane, as the camera reads it.
+pub fn in_pane(harness: &Harness<'_, Shell>, at: egui::Pos2) -> dc_app::viewport::camera::Pos {
+    let pane = harness.state().layout().viewport;
+    dc_app::viewport::camera::Pos::new(f64::from(at.x - pane.min.x), f64::from(at.y - pane.min.y))
+}
+
+/// A press and release of the primary button at `at`, with `modifiers`
+/// held.
+pub fn click_at(harness: &mut Harness<'_, Shell>, at: egui::Pos2, modifiers: egui::Modifiers) {
+    harness.event(egui::Event::PointerMoved(at));
+    harness.event(egui::Event::ModifiersChanged(modifiers));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers,
+        });
+    }
+    harness.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    harness.run();
+}
+
+/// A drag of `button` from `from` to `to`, a frame per step.
+pub fn drag(
+    harness: &mut Harness<'_, Shell>,
+    from: egui::Pos2,
+    to: egui::Pos2,
+    button: egui::PointerButton,
+) {
+    harness.event(egui::Event::PointerMoved(from));
+    harness.event(egui::Event::PointerButton {
+        pos: from,
+        button,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    for k in 1..=4_u8 {
+        let t = f32::from(k) / 4.0;
+        harness.event(egui::Event::PointerMoved(from + (to - from) * t));
+        harness.run();
+    }
+    harness.event(egui::Event::PointerButton {
+        pos: to,
+        button,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+}
