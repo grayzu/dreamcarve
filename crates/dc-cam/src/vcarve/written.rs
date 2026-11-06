@@ -28,7 +28,7 @@
 //! limit of the program's places, not of the generator.
 
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
-use crate::vcarve::medial::Depth;
+use crate::vcarve::medial::{Depth, FIT_SLACK_MM};
 use dc_geometry::{EPS_MM, Point, Point3};
 use dc_project::Project;
 
@@ -211,8 +211,19 @@ impl Snap<'_> {
     ///
     /// - as written stays inside the walls, `q` moved by up to the margin
     ///   ([`Walls::widening_clearance_holds`]);
-    /// - keeps the cone inside the walls ([`Walls::least_room`]) and the
-    ///   open edge, if any.
+    /// - keeps the cone inside the walls within [`FIT_SLACK_MM`]
+    ///   ([`Walls::least_room`]), and inside the open edge, if any.
+    ///
+    /// The cone is held to the slack fitting holds the chain's own
+    /// stretches to, not to [`EPS_MM`] (#565): `q` lies on a fitted
+    /// stretch, so its own cone may reach that far past a wall, and every
+    /// move to it ends there. Held to `EPS_MM`, a margin point 0.000025 mm
+    /// over refused every grid point, and line art `0x63`'s groove stopped
+    /// 0.024 mm short of a 3.8° spike's tip. The written path is still
+    /// held to the walls exactly, by the first test: no written move
+    /// crosses one. The cone's slack is what fitting already accepts, far
+    /// within the generator's own S17 check (the flatten tolerance) and
+    /// the safety pass's (a written unit more).
     fn fits(&self, g: Point3, q: Point3) -> bool {
         self.walls
             .widening_clearance_holds(g.xy(), q.xy(), self.grid.margin_mm())
@@ -220,7 +231,7 @@ impl Snap<'_> {
                 .walls
                 .least_room(g, q, self.depth.start_plane_z_mm, self.depth.slope)
                 .0
-                >= -EPS_MM
+                >= -FIT_SLACK_MM
             && self.edge.is_none_or(|edge| edge.allows(g, q))
     }
 }
@@ -325,7 +336,7 @@ mod tests {
         );
         let (room_mm, at) = walls.least_room(first, to, depth.start_plane_z_mm, depth.slope);
         assert!(
-            room_mm >= -crate::vcarve::medial::FIT_SLACK_MM,
+            room_mm >= -FIT_SLACK_MM,
             "the cone reaches {:.6} mm past a wall at {at:?}",
             -room_mm
         );

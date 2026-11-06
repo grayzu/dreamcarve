@@ -717,8 +717,8 @@ fn board_between_two_bands_is_not_plug() {
 ///   tolerance. It now cuts every piece fitting dropped the chains for
 ///   (dc-cam's `open_edge_male_cuts_a_floor_piece_a_hair_wide`).
 ///
-/// The full design through S1–S19 takes most of an hour in a release
-/// build, so it runs with the sweep.
+/// The full-size design, its female and the two males through S1–S19 and
+/// the seat check take 15 s in a release build, so it runs with the sweep.
 #[test]
 #[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
 fn males_of_line_art_0x63_with_a_clearing_pass_seat() {
