@@ -90,13 +90,18 @@ fn empty_sentence(ui: &mut Ui, sentence: &str) {
     });
 }
 
-/// Rows reading `names`, 26 px each, truncated to the panel.
+/// Rows reading `names`, 26 px each, truncated to the panel. Only the
+/// rows in view are laid out, so 500 shapes cost a frame what 20 do
+/// (acceptance 87).
 fn rows<'a>(ui: &mut Ui, names: impl Iterator<Item = &'a str>) {
     let palette = Palette::current(ui);
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .show(ui, |ui| {
-            for name in names {
+    let names: Vec<&str> = names.collect();
+    egui::ScrollArea::vertical().auto_shrink(false).show_rows(
+        ui,
+        ROW_PX,
+        names.len(),
+        |ui, range| {
+            for name in names.get(range).unwrap_or_default() {
                 ui.allocate_ui(egui::vec2(ui.available_width(), ROW_PX), |ui| {
                     ui.set_min_height(ROW_PX);
                     ui.horizontal_centered(|ui| {
@@ -105,7 +110,8 @@ fn rows<'a>(ui: &mut Ui, names: impl Iterator<Item = &'a str>) {
                     });
                 });
             }
-        });
+        },
+    );
 }
 
 /// The operations' rows, each with its status cell (capability 71;
