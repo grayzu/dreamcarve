@@ -481,29 +481,37 @@ const EXPLAINED_PROBLEMS: [&str; 1] = ["inlay_cut_out_no_room"];
 /// The seat check's grid step, mm, as [`carve`] reads every pair.
 const SEAT_GRID_MM: f64 = 0.1;
 
-/// The accepted limit of a four-place inch program at a very sharp corner
-/// (#499; accepted by the maintainer on #438): a description of the
-/// corner when `case` is an inch program with a narrow bit and its pair's
+/// The accepted limit of a program's written places at a very sharp corner
+/// (#499, #559; accepted by the maintainer on #438, for inch programs and
+/// then for millimetre ones): a description of the corner when `case`'s
 /// binding cell `seat_at` (the female's frame) lies where such a corner
-/// can hold the plug up; `None` otherwise, when the failure is a failure.
+/// can hold the plug up, for its bit and its program's places; `None`
+/// otherwise, when the failure is a failure.
 ///
 /// A program writes every point to its places, which can move it by `w =
-/// quantum / √2` (0.0018 mm at four inch places). So a groove into a
-/// corner of angle `θ` stops where its tip is `w` from both walls (#469),
-/// `w / sin(θ/2)` from the tip, unless a point the program writes exactly
-/// lies nearer inside (#499's grid start, which the grid's coarseness
-/// cannot promise). Above its start plane the plug keeps the wood beyond:
-/// `w (1/sin(θ/2) − 1)` sideways, `1 / tan(α/2)` times that in height.
-/// That stays within [`SEAT_MM`] for every corner exactly when `θ ≥ N` with
+/// quantum / √2`: 0.0007 mm at three millimetre places, 0.0018 mm at four
+/// inch places. So a groove into a corner of angle `θ` stops where its tip
+/// is `w` from both walls (#469), `w / sin(θ/2)` from the tip, unless a
+/// point the program writes exactly lies nearer inside (#499's grid
+/// start, which the grid's coarseness cannot promise). Above its start
+/// plane the plug keeps the wood beyond: `w (1/sin(θ/2) − 1)` sideways,
+/// `1 / tan(α/2)` times that in height. That stays within [`SEAT_MM`] for
+/// every corner exactly when `θ ≥ N` with
 ///
 /// `N = 2 asin(w / (SEAT_MM · tan(α/2) + w))`,
 ///
-/// 24.8° for the 15° bit and 13.6° for the 30° (6.7° and 4.0° for the 60°
-/// and 90°). The decision excuses the narrow bits in inch programs only:
-/// millimetre programs, on a grid 2.54 times finer that #499's grid start
-/// reaches into a 5° corner, are held to [`SEAT_MM`] everywhere, and so
-/// are the 60° and 90° bits. A corner sharper than `N` is a vertex of the
-/// design (as drawn, arcs
+/// for each bit from its own `α` and the program's own `w`:
+///
+/// | Bit | 3 mm places | 4 inch places |
+/// | --- | --- | --- |
+/// | 15° | 11.1° | 24.8° |
+/// | 30° | 5.7° | 13.6° |
+/// | 60° | 2.7° | 6.7° |
+/// | 90° | 1.6° | 4.0° |
+///
+/// Four millimetre places, which the Inlay chapter suggests for narrow-bit
+/// inlays with very sharp points, take the 15° bit's down to 1.2°. A
+/// corner sharper than `N` is a vertex of the design (as drawn, arcs
 /// flattened at the project's tolerance) whose two edges meet at less
 /// than `N` on either side: a point of the design, or a notch in it.
 ///
@@ -513,22 +521,16 @@ const SEAT_GRID_MM: f64 = 0.1;
 /// tan(α/2)` out from the outline (lettering `0x4f`'s bound 0.7 mm from
 /// its hairline point). So the cell must lie within that, the margin's
 /// stop `w / sin(θ/2)`, and one cell's diagonal of such a corner.
-pub fn inch_sharp_corner(case: &Case, female: &InlayOp, seat_at: Point) -> Option<String> {
+pub fn written_grid_corner(case: &Case, female: &InlayOp, seat_at: Point) -> Option<String> {
     let project = &case.project;
-    if project.display_units != Units::Inch {
-        return None;
-    }
     let ToolKind::VBit { included_angle_deg } = project.tools.first()?.cutter else {
         return None;
     };
-    if included_angle_deg > 30.0 {
-        return None;
-    }
     let slope = (included_angle_deg / 2.0).to_radians().tan();
     let w_mm = project
         .post_processor
         .decimal_places
-        .quantum_mm(Units::Inch)
+        .quantum_mm(project.display_units)
         * std::f64::consts::FRAC_1_SQRT_2;
     let sharpest_rad = 2.0 * (w_mm / (SEAT_MM * slope + w_mm)).asin();
     let plug_mm = female.depth_mm? - female.glue_gap_mm?;
@@ -711,13 +713,13 @@ pub fn carve(case: &Case, seats: Seats, full: bool) -> Outcome {
                     "the plug stands {:.3} mm proud at {:?} (the male's share {:.3} mm at {:?}); at most {SEAT_MM}",
                     f.seat_mm, f.seat_at, f.male_mm, f.male_at
                 );
-                let limit = inch_sharp_corner(case, inlay, f.seat_at);
+                let limit = written_grid_corner(case, inlay, f.seat_at);
                 match (known_issue(case, *kind), limit) {
                     (Some(issue), _) => out
                         .known
                         .push(format!("#{issue}: {kind:?} of {}\n  {what}", case.label)),
                     (None, Some(corner)) => out.known.push(format!(
-                        "inch limit (#438): {kind:?} of {}\n  {what}\n  {corner}",
+                        "written-grid limit (#438, #559): {kind:?} of {}\n  {what}\n  {corner}",
                         case.label
                     )),
                     (None, None) => fail(&mut out, *kind, what),

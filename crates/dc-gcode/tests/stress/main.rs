@@ -34,9 +34,10 @@
 //! and seed, which [`designs::line_art`] or [`lettering::lettering`]
 //! redraw, and [`designs::line_art_keeping`] narrows to a motif. Seat
 //! failures of an open issue are reported as known
-//! (`property::known_issue`), not failed, and so is a 15° or 30° bit's in
-//! an inch program by a corner too sharp for its written places, the
-//! limit the maintainer accepted on #438 (`property::inch_sharp_corner`).
+//! (`property::known_issue`), not failed, and so is one by a corner too
+//! sharp for the bit and the program's written places, the limit the
+//! maintainer accepted on #438 for inch programs and then, with #559, for
+//! millimetre ones (`property::written_grid_corner`).
 //! No regression file is written:
 //! a failing seed becomes a named test, with its minimal design, once its
 //! bug is understood.
@@ -475,14 +476,17 @@ fn lettering_outline_near_itself_is_merged() {
     );
 }
 
-/// #438 (the maintainer's decision on #499's limit): a narrow bit's seat
-/// failure in an inch program is excused only near a corner sharper than
-/// the written margin lets it seat ([`property::inch_sharp_corner`]). A
-/// 10° wedge 20 mm long, under the 15° bit's 24.8°: a binding cell
-/// 0.05 mm from its tip is excused; one 5 mm in along it is not, nor is
-/// the cell by the tip in a millimetre program or with the 60° bit.
+/// #438, #559 (the maintainer's decisions on #499's limit): a seat
+/// failure is excused only near a corner sharper than the written margin
+/// lets the bit seat at the program's places
+/// ([`property::written_grid_corner`]), `N = 2 asin(w / (SEAT_MM ·
+/// tan(α/2) + w))`. A 10° wedge 20 mm long: a binding cell 0.05 mm from
+/// its tip is excused with the 15° bit in an inch program (`N` 24.8°) and
+/// in a three-place millimetre one (11.1°); not in a four-place
+/// millimetre one (1.2°), nor with the 30° bit in millimetres (5.7°) or
+/// the 60° in inches (6.7°). A cell 5 mm in along it is never excused.
 #[test]
-fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
+fn grid_limit_excuses_only_a_corner_sharper_than_the_bit_and_places_allow() {
     let half = 5.0_f64.to_radians().tan() * 20.0;
     let wedge = dc_geometry::Polyline::new(
         vec![
@@ -496,31 +500,43 @@ fn inch_limit_excuses_only_a_narrow_bit_by_a_sharp_corner() {
         profiles: vec![wedge],
         notes: Vec::new(),
     };
-    let with = |units: dc_project::Units, angle_deg: f64| {
+    let with = |units: dc_project::Units, angle_deg: f64, mm_places: Option<u8>| {
         let mut c = case("line art", 0, design.clone());
         c.project.display_units = units;
         c.project.tools[0].cutter = dc_project::ToolKind::VBit {
             included_angle_deg: angle_deg,
         };
+        if let Some(places) = mm_places {
+            c.project.post_processor.decimal_places.mm = places;
+        }
         c
     };
     let female = |c: &property::Case| match c.ops.iter().find(|(k, _)| *k == Kind::Female) {
         Some((_, dc_project::Operation::Inlay(op))) => op.clone(),
         _ => panic!("the case has a female"),
     };
-    let inch = with(dc_project::Units::Inch, 15.0);
-    let place = |p: dc_geometry::Point| inch.project.instances[0].transform.apply(p);
+    let (inch, mm) = (dc_project::Units::Inch, dc_project::Units::Mm);
+    let inch_15 = with(inch, 15.0, None);
+    let place = |p: dc_geometry::Point| inch_15.project.instances[0].transform.apply(p);
     let (by_tip, far) = (
         place(dc_geometry::Point::new(0.05, 0.0)),
         place(dc_geometry::Point::new(5.0, 0.0)),
     );
-    let excused = |c: &property::Case, at| property::inch_sharp_corner(c, &female(c), at);
-    assert!(excused(&inch, by_tip).is_some(), "by the tip");
-    assert!(excused(&inch, far).is_none(), "5 mm in");
-    let mm = with(dc_project::Units::Mm, 15.0);
-    assert!(excused(&mm, by_tip).is_none(), "in millimetres");
-    let wide = with(dc_project::Units::Inch, 60.0);
-    assert!(excused(&wide, by_tip).is_none(), "with the 60° bit");
+    let excused = |c: &property::Case, at| property::written_grid_corner(c, &female(c), at);
+    for (name, c, by_the_tip) in [
+        ("15°, inch", with(inch, 15.0, None), true),
+        ("15°, mm", with(mm, 15.0, None), true),
+        ("15°, mm at four places", with(mm, 15.0, Some(4)), false),
+        ("30°, mm", with(mm, 30.0, None), false),
+        ("60°, inch", with(inch, 60.0, None), false),
+    ] {
+        assert_eq!(
+            excused(&c, by_tip).is_some(),
+            by_the_tip,
+            "{name}: by the tip"
+        );
+        assert!(excused(&c, far).is_none(), "{name}: 5 mm in");
+    }
 }
 
 /// #506 (found by the sweep): the male of lettering seed `0x2d` (15° bit,
@@ -691,6 +707,39 @@ fn males_reach_a_corner_their_axis_meets_along_a_wall() {
 fn board_between_two_bands_is_not_plug() {
     for kind in [Kind::MaleVWall, Kind::MaleOpenEdge] {
         let outcome = reproduce("line art", 0xa7, designs::line_art(0xa7), kind);
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{kind:?}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}
+
+/// #565 (found by the confirmation sweep on #438, behind #554): the males
+/// of line-art seed `0x63` (15° bit, millimetre program) with the end
+/// mill's clearing pass, an open edge or rounding, seat within 0.05 mm,
+/// and every program passes S1–S19. Two causes held them up:
+///
+/// - **The grid start refused every candidate** at a 3.8° pointed line
+///   end, 0.177 mm proud. The margin's point lay on a fitted stretch whose
+///   cone reached 0.000025 mm past a wall, within fitting's slack, and the
+///   grid start held each move to it to `−EPS_MM`. It now holds them to
+///   fitting's slack (dc-cam's
+///   `chain_end_past_a_wall_within_the_fit_slack_starts_on_the_grid`).
+/// - **A floor piece a hair wide went uncut** in a channel between two
+///   strokes, 0.101 mm proud. Fitting dropped its chains, but with an open
+///   edge the floor cut only pieces thicker than twice the project's
+///   tolerance. It now cuts every piece fitting dropped the chains for
+///   (dc-cam's `open_edge_male_cuts_a_floor_piece_a_hair_wide`).
+///
+/// The full-size design, its female and the two males through S1–S19 and
+/// the seat check take 15 s in a release build, so it runs with the sweep.
+#[test]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
+fn males_of_line_art_0x63_with_a_clearing_pass_seat() {
+    for kind in [Kind::MaleOpenEdge, Kind::MaleRounded] {
+        let outcome = reproduce("line art", 0x63, designs::line_art(0x63), kind);
         assert!(
             outcome.failures.is_empty() && outcome.known.is_empty(),
             "{kind:?}: {:?} {:?}",

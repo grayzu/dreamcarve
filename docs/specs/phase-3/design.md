@@ -1206,7 +1206,15 @@ orientation; DreamCarve's regions are normalised anyway.
      move to the margin's point stays inside as written: a fraction `t`
      along, the path keeps `t · w` from every wall, chords and arcs as
      drawn, since that point may move by `w` (`vcarve::written`). The
-     move also passes the cone test, and an open band edge's. No written
+     move also passes the cone test, within the slack fitting holds the
+     chains to (`FIT_SLACK_MM`, 0.0001 mm; #565), and an open band
+     edge's. The margin's point lies on a fitted stretch, so its own cone
+     can reach that far past a wall, and every move to it ends there:
+     held to `EPS_MM`, a margin point 0.000025 mm over refused every grid
+     point, and line art `0x63`'s plug stood 0.177 mm proud past a 3.8°
+     spike (`vcarve::written`'s
+     `chain_end_past_a_wall_within_the_fit_slack_starts_on_the_grid`).
+     The written path is held to the walls exactly as before. No written
      move crosses a wall, and S17 is unchanged. The grid limits it: a
      5° corner is `q / 11` wide `q` from its tip, so the nearest grid
      point inside can be several units in. The notch seats within
@@ -1217,9 +1225,16 @@ orientation; DreamCarve's regions are normalised anyway.
      `vcarve::corner_groove_runs_on_to_the_written_grid`). Millimetres
      do not always reach either: the nearest grid point inside a 4.5°
      notch can be 0.008 mm from its tip, and line art `0x7a`'s plug stood
-     0.068 mm proud with the 15° bit (#559, open: a decision between
-     accepting the limit in millimetres, more places, or a crossing within
-     a unit).
+     0.068 mm proud with the 15° bit, 0.033 mm with four millimetre
+     places. The maintainer accepted the limit in every unit (#559,
+     2026-11-05; #438's criteria): a corner sharper than `N = 2 asin(w /
+     (SEAT_MM · tan(α/2) + w))` for the bit and the program's own `w`
+     (11.1° for the 15° bit at three millimetre places, 24.8° at four
+     inch places) may hold a plug more than `SEAT_MM` up, and the stress
+     sweep excuses a seat failure there (`property::written_grid_corner`).
+     The Inlay chapter gives the table and suggests
+     `decimal_places.mm = 4` for narrow-bit inlays with very sharp points;
+     the bundled post-processors keep their places.
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else
@@ -1839,7 +1854,13 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
      stretches whose cone stays inside `B` at the stock top
      (`medial::runs_within`), its floor rings are clipped to `B ⊖ (D − G
      + P)·s`, and its boundary trace runs along the plug's foot only,
-     never round `B` (`floor::blocks_open`). `finish` runs
+     never round `B` (`floor::blocks_open`). A floor piece no pass
+     reaches is cut whole within `B ⊖ (D − G + P)·s`, noise dropped only
+     below the wall tolerance, the floors' own rule (#506, #565): its
+     medial chains are dropped, and at the project's tolerance a piece
+     under 0.02 mm wide in a channel between two strokes was cut by
+     nothing, and line art `0x63`'s plug stood 0.101 mm proud on it
+     (`inlay::open_edge_male_cuts_a_floor_piece_a_hair_wide`). `finish` runs
      `cone_in_material` a second time against `B` with the stock top as
      the plane. **V wall** (`open_edge: None`): the surround's outer edge
      gets a V wall too, as before. Changed in #448 after the

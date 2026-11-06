@@ -23,7 +23,7 @@ const COEFFICIENT_TOLERANCE: f64 = 1e-9;
 const DUPLICATE_OFFSET_MM: f64 = 10.0;
 
 /// The instance `id` of `project`.
-pub(super) fn find<'a>(
+pub(crate) fn find<'a>(
     project: &'a Project,
     id: &InstanceId,
 ) -> Result<&'a FeatureInstance, CommandError> {
@@ -78,7 +78,7 @@ fn require_unlocked(project: &Project, ids: &[InstanceId]) -> Result<(), Command
 ///
 /// An unknown instance or definition, a transform that cannot place a
 /// shape, or [`CommandError::NoShapes`] when no outline has a vertex.
-pub(super) fn bounds(project: &Project, ids: &[InstanceId]) -> Result<Rect, CommandError> {
+pub(crate) fn bounds(project: &Project, ids: &[InstanceId]) -> Result<Rect, CommandError> {
     let mut joint: Option<Rect> = None;
     for id in ids {
         let instance = find(project, id)?;
@@ -103,7 +103,7 @@ pub(super) fn bounds(project: &Project, ids: &[InstanceId]) -> Result<Rect, Comm
 }
 
 /// The centre of `rect`.
-fn centre(rect: Rect) -> Point {
+pub(crate) fn centre(rect: Rect) -> Point {
     Point::new(
         (rect.min.x + rect.max.x) / 2.0,
         (rect.min.y + rect.max.y) / 2.0,
@@ -112,7 +112,7 @@ fn centre(rect: Rect) -> Point {
 
 /// `delta` as a change about `about`: move the centre to the origin,
 /// apply, move it back.
-fn about(about: Point, delta: Transform) -> Transform {
+pub(crate) fn about(about: Point, delta: Transform) -> Transform {
     Transform::translate(-about.x, -about.y)
         .then(delta)
         .then(Transform::translate(about.x, about.y))
@@ -142,7 +142,12 @@ pub(super) fn transform(
         return Err(CommandError::SingularTransform);
     }
     let pivot = centre(bounds(project, ids)?);
-    Ok(shift_all(project, ids, about(pivot, delta)))
+    let next = shift_all(project, ids, about(pivot, delta));
+    // A change the shapes cannot take (an arc scaled unevenly, a reach
+    // past the coordinate limit) is refused here rather than saved as a
+    // project every generator rejects; `bounds` places each profile.
+    bounds(&next, ids)?;
+    Ok(next)
 }
 
 /// `CentreOnStock`: the selection's bounding box centred on the stock

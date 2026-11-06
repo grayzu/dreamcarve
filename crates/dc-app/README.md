@@ -8,8 +8,11 @@ operation's digest, what is pending and stale, Stop and Regenerate all),
 the Warnings panel's rows (`check` on the project as it stands), the
 preferences record, the string table, units formatting and parsing, the
 Viewport's geometry (the `Scene` it draws, the camera with the one Y
-flip, picking and the grid), the project tools' editing rules (`tools`)
-and the Tool Library window's model (`library`, ported from PureCutCNC).
+flip, picking, the grid and the transform handles), the Design Tree's
+rows (`tree`), the Properties panel's placement fields (`properties`,
+with the mixed values of `mixed`, ported from PureCutCNC), the project
+tools' editing rules (`tools`) and the Tool Library window's model
+(`library`, ported from PureCutCNC).
 
 Pure, as every `dc-*` crate: no file, terminal, clock or network I/O, no
 egui, no panics. `dc-cam` and `dc-gcode` are reached through `dc-job`
