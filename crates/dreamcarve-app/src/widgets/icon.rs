@@ -52,6 +52,8 @@ pub enum Icon {
     BookPlus,
     /// `arrow-left`: Back.
     ArrowLeft,
+    /// `lock`: a locked shape's padlock on the Viewport.
+    Lock,
 }
 
 impl Icon {
@@ -80,6 +82,7 @@ impl Icon {
             Self::Plus => "plus",
             Self::BookPlus => "book-plus",
             Self::ArrowLeft => "arrow-left",
+            Self::Lock => "lock",
         }
     }
 
@@ -107,12 +110,13 @@ impl Icon {
             Self::Plus => '\u{e13d}',
             Self::BookPlus => '\u{e3f3}',
             Self::ArrowLeft => '\u{e048}',
+            Self::Lock => '\u{e10b}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 21] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -133,6 +137,7 @@ impl Icon {
         Self::Plus,
         Self::BookPlus,
         Self::ArrowLeft,
+        Self::Lock,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

@@ -10,11 +10,13 @@ pub mod generation;
 pub mod history;
 pub mod library;
 pub mod prefs;
+pub mod scene;
 pub mod selection;
 pub mod strings;
 pub mod tools;
 pub mod units;
 pub mod view;
+pub mod viewport;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
@@ -25,6 +27,9 @@ pub use error::CommandError;
 pub use generation::{Generation, Job, JobResult, OperationResult, SnapshotId};
 pub use history::LabelledHistory;
 pub use prefs::{Panels, Prefs, Theme, WindowGeometry};
-pub use selection::Selection;
+pub use scene::Scene;
+pub use selection::{ClickMode, Selection};
 pub use strings::{StrKey, Strings};
-pub use view::{Camera, ColourMode, View, Visibility};
+pub use view::{ColourMode, View, Visibility};
+pub use viewport::camera::{Camera, Pos};
+pub use viewport::pick::Hit;

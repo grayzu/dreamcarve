@@ -8,6 +8,20 @@
 
 use dc_project::{InstanceId, OperationId, Project, TabId};
 
+use crate::viewport::pick::Hit;
+
+/// How a click on the Viewport changes the selection (functional spec,
+/// capability 75; `experience.md`, section 8, "Selection").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClickMode {
+    /// A plain click: the hit alone, or nothing.
+    Replace,
+    /// Shift-click: the hit added.
+    Add,
+    /// Ctrl/⌘-click: the hit in or out.
+    Toggle,
+}
+
 /// What the panels and the Viewport act on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Selection {
@@ -40,6 +54,54 @@ impl Selection {
             Self::Instances(ids) => ids.is_empty(),
             Self::Tabs(ids) => ids.is_empty(),
             Self::Operation(_) => false,
+        }
+    }
+
+    /// The selection after a click that hit `hit`. A plain click on
+    /// nothing clears; Shift or Ctrl on nothing keeps what there is. Adding
+    /// or toggling an instance to a selection of tabs or an operation
+    /// starts an instance selection.
+    #[must_use]
+    pub fn clicked(&self, hit: &Hit, mode: ClickMode) -> Self {
+        let Hit::Instance(id) = hit else {
+            return match mode {
+                ClickMode::Replace => Self::Nothing,
+                ClickMode::Add | ClickMode::Toggle => self.clone(),
+            };
+        };
+        let mut ids = self.instances().to_vec();
+        match mode {
+            ClickMode::Replace => ids = vec![id.clone()],
+            ClickMode::Add => {
+                if !ids.contains(id) {
+                    ids.push(id.clone());
+                }
+            }
+            ClickMode::Toggle => {
+                if ids.contains(id) {
+                    ids.retain(|i| i != id);
+                } else {
+                    ids.push(id.clone());
+                }
+            }
+        }
+        if ids.is_empty() {
+            Self::Nothing
+        } else {
+            Self::Instances(ids)
+        }
+    }
+
+    /// The selection after a marquee took `ids`: those alone, those added,
+    /// or each toggled, as [`Selection::clicked`] treats one.
+    #[must_use]
+    pub fn boxed(&self, ids: &[InstanceId], mode: ClickMode) -> Self {
+        match mode {
+            ClickMode::Replace if ids.is_empty() => Self::Nothing,
+            ClickMode::Replace => Self::Instances(ids.to_vec()),
+            ClickMode::Add | ClickMode::Toggle => ids.iter().fold(self.clone(), |sel, id| {
+                sel.clicked(&Hit::Instance(id.clone()), mode)
+            }),
         }
     }
 

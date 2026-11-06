@@ -183,6 +183,10 @@ about = "DreamCarve {version}"
 
 [app.viewport]
 origin = "0,0"
+cursor = "X {x}  Y {y}"
+hover_locked = "{name} · locked"
+fit_view = "Fit View"
+zoom_selection = "Zoom to Selection"
 
 # The CAM panel's Tools tab (slice 8, #537; functional spec, capability
 # 63): the toolbar, the rows, the editor's labels and the messages the

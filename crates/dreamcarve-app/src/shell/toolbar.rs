@@ -5,8 +5,8 @@
 //! 2, "Menu bar and toolbar"): 40 px on `surface.panel`, quiet buttons with
 //! a 20-px icon and a label in groups 16 px apart, the file name and the
 //! unsaved dot right of centre, and Export as the one primary button at
-//! the right end. What later slices bring (Picture, Fit, the Tab tool,
-//! Export) is shown disabled with the reason.
+//! the right end. What later slices bring (Picture, the Tab tool, Export)
+//! is shown disabled with the reason.
 
 use dc_app::StrKey;
 use eframe::egui::{self, Align, Layout, Sense, TextStyle, Ui};
@@ -80,12 +80,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable)),
                 );
                 ui.add_space(GROUP_GAP_PX);
-                button(
-                    ui,
-                    quiet(StrKey::AppToolbarFit, Icon::Maximize)
-                        .enabled(false)
-                        .tooltip(later),
-                );
+                if button(ui, quiet(StrKey::AppToolbarFit, Icon::Maximize)).clicked() {
+                    out.push(Action::FitView);
+                }
                 button(
                     ui,
                     quiet(StrKey::AppToolbarTabTool, Icon::BookmarkPlus)
