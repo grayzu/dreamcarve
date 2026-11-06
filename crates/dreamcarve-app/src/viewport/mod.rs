@@ -31,20 +31,25 @@
 //! *Pick on the view* is armed, the next click sets that point (a
 //! Profile's start point) and disarms it, as the park point's does (#540).
 
+mod card;
 mod layers;
+mod lod;
 pub(crate) mod renderer;
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
+use dc_app::view::{ColourMode, DepthLegend, DepthRamp, ProgramExtents};
+use dc_app::viewport::arrows::{ArrowCache, ArrowMove};
 use dc_app::viewport::camera::{self, Camera, Pos};
 use dc_app::viewport::grid::Grid;
 use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
 use dc_app::{App, ClickMode, Command, Selection, StrKey};
 use dc_geometry::{Point, Rect as MmRect, Transform};
-use dc_project::InstanceId;
+use dc_project::{InstanceId, OperationId};
 use eframe::egui::{
     self, Key, Modifiers, MouseWheelSource, MouseWheelUnit, PointerButton, Pos2, Rect, Stroke,
     TextStyle, Ui,
@@ -54,7 +59,7 @@ use crate::panels::{editor, empty, project, properties};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::icon::Icon;
-use renderer::{Frame, Layer, LayerData, StyleId};
+use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
 /// The gutter between the Viewport and its neighbours, px.
 const GUTTER_PX: i8 = 4;
@@ -154,8 +159,29 @@ pub(crate) struct ViewportState {
     /// The shape under the pointer.
     hover: Option<InstanceId>,
     layers: [Cached; Layer::ALL.len()],
-    styles: Option<(bool, u64, Arc<[renderer::Style; renderer::STYLE_COUNT]>)>,
+    /// Each operation's toolpath buffer as last built.
+    toolpaths: BTreeMap<OperationId, Cached>,
+    /// The direction arrows' placements, per run.
+    arrows: ArrowCache,
+    /// Each run's moves as the arrow pass reads them, by run key and
+    /// zoom band.
+    arrow_moves: BTreeMap<u64, (i32, Arc<Vec<ArrowMove>>)>,
+    /// The depth ramp, its legend and the program extents of a Scene
+    /// revision: scanning every move is not a per-frame cost.
+    derived: Option<Derived>,
+    styles: Option<(bool, u64, Arc<StyleTable>)>,
     next_version: u64,
+    /// The operations whose toolpaths the last frame drew, bottom first.
+    drawn: Vec<OperationId>,
+}
+
+/// What the Viewport reads of one Scene revision besides its layers.
+#[derive(Debug, Clone)]
+struct Derived {
+    revision: u64,
+    ramp: Option<DepthRamp>,
+    legend: Option<DepthLegend>,
+    extents: Option<ProgramExtents>,
 }
 
 /// What the status bar shows of the pointer: its project point and the
@@ -259,11 +285,56 @@ impl ViewportState {
         (cached.version, Arc::clone(&cached.data))
     }
 
-    /// The style table for `palette`, rebuilt when the theme changes.
-    fn styles(
+    /// The operations whose toolpaths the last frame drew, bottom first.
+    pub(crate) fn drawn(&self) -> &[OperationId] {
+        &self.drawn
+    }
+
+    /// The depth ramp, legend and extents of `app`'s Scene, computed once
+    /// per Scene revision.
+    fn derived(&mut self, app: &App) -> Derived {
+        let revision = app.scene().revision();
+        match &self.derived {
+            Some(d) if d.revision == revision => d.clone(),
+            _ => {
+                let project = app.project();
+                let scene = app.scene();
+                let derived = Derived {
+                    revision,
+                    ramp: DepthRamp::of(project, scene),
+                    legend: dc_app::view::depth_legend(project, scene),
+                    extents: app
+                        .generation()
+                        .finished()
+                        .and_then(|f| dc_app::view::program_extents(project, f)),
+                };
+                self.derived = Some(derived.clone());
+                derived
+            }
+        }
+    }
+
+    /// Operation `op`'s toolpath buffer, rebuilt by `build` when `key`
+    /// differs from the last build's.
+    fn toolpath(
         &mut self,
-        palette: &Palette,
-    ) -> (u64, Arc<[renderer::Style; renderer::STYLE_COUNT]>) {
+        op: &OperationId,
+        key: u64,
+        build: impl FnOnce() -> Vec<renderer::Segment>,
+    ) -> (u64, Arc<LayerData>) {
+        let next = self.next_version.wrapping_add(1);
+        let cached = self.toolpaths.entry(op.clone()).or_default();
+        if cached.key != Some(key) {
+            cached.key = Some(key);
+            cached.version = next;
+            cached.data = Arc::new(LayerData::new(&build()));
+            self.next_version = next;
+        }
+        (cached.version, Arc::clone(&cached.data))
+    }
+
+    /// The style table for `palette`, rebuilt when the theme changes.
+    fn styles(&mut self, palette: &Palette) -> (u64, Arc<StyleTable>) {
         match &self.styles {
             Some((dark, version, table)) if *dark == palette.dark => (*version, Arc::clone(table)),
             _ => {
@@ -732,6 +803,14 @@ fn frame(
             )
         },
     );
+    let derived = view.derived(app);
+    let toolpaths = toolpath_layers(state, view, band, &derived);
+    let arrows_layer = arrow_layer(state, view, camera, band);
+    let extents_on = app.view().visibility.extents;
+    let extents = derived.extents.filter(|_| extents_on);
+    let extents_layer = view.layer(Layer::Extents, key((derived.revision, extents_on)), || {
+        extents.map_or_else(Vec::new, |e| layers::extents(e.centre_mm, e.edge_mm))
+    });
     Frame {
         centre_mm: [
             renderer::gpu_f32(camera.centre_mm.x),
@@ -739,15 +818,177 @@ fn frame(
         ],
         px_per_mm: renderer::gpu_f32(camera.px_per_mm),
         minor_alpha: renderer::gpu_f32(grid.minor_alpha),
+        by_depth: app.view().colour == ColourMode::ByDepth,
         styles: view.styles(palette),
         layers: [
             grid_layer,
             stock_layer,
             shapes_layer,
+            arrows_layer,
+            extents_layer,
             hover_layer,
             selection_layer,
         ],
+        toolpaths,
     }
+}
+
+/// The operations whose toolpaths `app` draws, bottom first: every
+/// operation of the Scene with runs whose eye is open (and, with *Only the
+/// selected operation* on, the selected one), the selected operation last
+/// so it draws on top (`experience.md`, section 9).
+pub(crate) fn drawn_operations(app: &App) -> Vec<OperationId> {
+    let view = app.view();
+    let selection = app.selection();
+    let mut ids: Vec<OperationId> = app
+        .scene()
+        .operations()
+        .iter()
+        .filter(|o| !o.runs.is_empty() && view.shows(&o.id, selection))
+        .map(|o| o.id.clone())
+        .collect();
+    if let Selection::Operation(selected) = selection
+        && let Some(at) = ids.iter().position(|id| id == selected)
+    {
+        let top = ids.remove(at);
+        ids.push(top);
+    }
+    ids
+}
+
+/// One buffer per drawn operation (design: "cuts per operation (one
+/// buffer each, so an operation's eye toggles a draw call)"), rebuilt only
+/// when its result, its staleness, its colour, the zoom band, the depth
+/// ramp or a layer toggle changes.
+fn toolpath_layers(
+    state: &FrameState<'_>,
+    view: &mut ViewportState,
+    band: i32,
+    derived: &Derived,
+) -> Vec<ToolpathData> {
+    let app = state.app;
+    let visibility = app.view().visibility;
+    let drawn = drawn_operations(app);
+    let ramp = derived.ramp;
+    let ramp_key = ramp.map(|r| (r.top_z_mm.to_bits(), r.deepest_z_mm.to_bits()));
+    let flags = (
+        visibility.cuts,
+        visibility.rapids,
+        visibility.plunges,
+        visibility.start_points,
+        visibility.tab_marks,
+    );
+    let look = layers::ToolpathLook {
+        visibility: &visibility,
+        ramp: ramp.as_ref(),
+        tolerance_mm: layers::tolerance_mm(band),
+        lod_mm: layers::lod_mm(band),
+    };
+    let mut out = Vec::with_capacity(drawn.len());
+    for id in &drawn {
+        let Some(op) = app.scene().operation(id) else {
+            continue;
+        };
+        let layer_key = key((op.result_key(), op.stale, op.colour, band, ramp_key, flags));
+        let (version, data) = view.toolpath(id, layer_key, || layers::toolpath(op, look));
+        out.push(ToolpathData {
+            key: key(id),
+            version,
+            data,
+        });
+    }
+    // Forget the buffers of operations no longer in the Scene.
+    let present: Vec<&OperationId> = app.scene().operations().iter().map(|o| &o.id).collect();
+    view.toolpaths.retain(|id, _| present.contains(&id));
+    view.drawn = drawn;
+    out
+}
+
+/// The direction arrows of every drawn operation, one layer, rebuilt with
+/// the scale (their spacing is in pixels) and with what is drawn.
+fn arrow_layer(
+    state: &FrameState<'_>,
+    view: &mut ViewportState,
+    camera: &Camera,
+    band: i32,
+) -> (u64, Arc<LayerData>) {
+    let app = state.app;
+    let visibility = app.view().visibility;
+    let scene = app.scene();
+    let mut runs: Vec<(u64, &dc_job::Toolpath, usize, bool)> = Vec::new();
+    if visibility.arrows {
+        for id in &view.drawn {
+            let Some(op) = scene.operation(id) else {
+                continue;
+            };
+            for (k, run) in op.runs.iter().enumerate() {
+                if run.run.board == dc_project::Board::Female {
+                    runs.push((
+                        key((id, op.result_key(), k)),
+                        &run.run.toolpath,
+                        op.colour + k,
+                        op.stale,
+                    ));
+                }
+            }
+        }
+    }
+    let layer_key = key((
+        camera.px_per_mm.to_bits(),
+        visibility.cuts,
+        runs.iter().map(|r| (r.0, r.2, r.3)).collect::<Vec<_>>(),
+    ));
+    let tolerance = layers::tolerance_mm(band);
+    let keys: Vec<u64> = runs.iter().map(|r| r.0).collect();
+    view.arrow_moves.retain(|k, _| keys.contains(k));
+    view.arrows.retain(&keys);
+    let mut moves = Vec::with_capacity(runs.len());
+    for (run_key, toolpath, _, _) in &runs {
+        let cached = view
+            .arrow_moves
+            .get(run_key)
+            .filter(|(b, _)| *b == band)
+            .map(|(_, m)| Arc::clone(m));
+        let m = cached.unwrap_or_else(|| {
+            let m = Arc::new(layers::arrow_moves(toolpath, tolerance));
+            view.arrow_moves.insert(*run_key, (band, Arc::clone(&m)));
+            m
+        });
+        moves.push(m);
+    }
+    let px_per_mm = camera.px_per_mm;
+    let ViewportState {
+        layers: cached_layers,
+        arrows,
+        next_version,
+        ..
+    } = view;
+    let next = next_version.wrapping_add(1);
+    let Some(cached) = cached_layers.get_mut(Layer::Arrows.index()) else {
+        return (0, Arc::default());
+    };
+    if cached.key != Some(layer_key) {
+        let arrow_runs: Vec<layers::ArrowRun<'_>> = runs
+            .iter()
+            .zip(&moves)
+            .map(|((run_key, _, colour, stale), m)| layers::ArrowRun {
+                key: *run_key,
+                moves: m.as_slice(),
+                colour: *colour,
+                stale: *stale,
+            })
+            .collect();
+        cached.key = Some(layer_key);
+        cached.version = next;
+        cached.data = Arc::new(LayerData::new(&layers::arrows(
+            &arrow_runs,
+            arrows,
+            px_per_mm,
+            &visibility,
+        )));
+        *next_version = next;
+    }
+    (cached.version, Arc::clone(&cached.data))
 }
 
 /// The selection's transform handles (`experience.md`, section 8,
@@ -987,9 +1228,22 @@ pub(crate) fn show(
             let frame = frame(state, view, &camera, palette, &highlighted);
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
+            let derived = view.derived.clone();
+            if let Some(extents) = derived
+                .as_ref()
+                .and_then(|d| d.extents)
+                .filter(|_| app.view().visibility.extents)
+            {
+                let corner = Point::new(extents.edge_mm.min.x, extents.edge_mm.max.y);
+                let top_left = window_pos(pane, &camera, corner);
+                card::extents_caption(ui, &painter, app, &extents, top_left);
+            }
 
             if state.show_empty {
                 empty::card(ui, pane, state, out);
+            } else {
+                let legend = derived.and_then(|d| d.legend);
+                card::show(ui, pane, app, legend.as_ref(), out);
             }
             pane
         })

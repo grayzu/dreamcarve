@@ -280,6 +280,27 @@ hover_locked = "{name} · locked"
 fit_view = "Fit View"
 zoom_selection = "Zoom to Selection"
 
+# The toolpath display (slice 16, #545): the visibility card, the depth
+# legend, the program extents' caption and the status bar's Z range.
+[app.toolpaths]
+title = "Toolpaths"
+by_operation = "By operation"
+by_depth = "By depth"
+cuts = "Cuts"
+rapids = "Rapids"
+plunges = "Plunges"
+arrows = "Direction arrows"
+start_points = "Start points"
+tab_marks = "Tab marks"
+only_selected = "Only the selected operation"
+extents = "Program extents"
+show_all = "Show all"
+hide_all = "Hide all"
+legend = "Depth"
+stock_top = "stock top"
+extents_caption = "Program extents (bit edge, dashed)  X {x}  Y {y}"
+z_range = "Z {z}"
+
 # Generation on the worker and the Warnings drawer (slice 9, #538): the
 # status bar's generation cell, Stop and Regenerate All, a row's spinner,
 # and the drawer's title, actions, groups and tiers.
