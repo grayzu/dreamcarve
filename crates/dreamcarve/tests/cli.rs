@@ -7544,6 +7544,80 @@ mod preview {
             "a male cut is drawn off its board"
         );
     }
+
+    /// The light operation colours of `experience.md`, section 5,
+    /// "Operation colours": the table's "Light (proposed)" column, read
+    /// from the spec, in its order.
+    fn experience_light_set() -> Vec<String> {
+        let spec = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/specs/phase-4/experience.md"),
+        )
+        .expect("experience.md readable");
+        let section = spec
+            .split("### Operation colours")
+            .nth(1)
+            .expect("the Operation colours section");
+        section
+            .lines()
+            .filter_map(|line| {
+                let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+                let numbered = cells.get(1)?.parse::<u8>().is_ok();
+                let light = cells.get(4)?.trim_matches('`').to_lowercase();
+                numbered.then_some(light)
+            })
+            .take(8)
+            .collect()
+    }
+
+    /// Design open question 5, accepted (#545): one light table. The
+    /// preview `check --preview` writes colours its runs from
+    /// `experience.md`'s light operation set, the one the app's light
+    /// Viewport draws (`dreamcarve-app`'s theme reads the same table, and
+    /// its `tests/theme.rs` holds it to the same column), in the same
+    /// order, repeating after eight: on the plaque with four more copies
+    /// of its engraving, nine runs, the ninth in the first colour.
+    #[test]
+    fn palette_matches_the_app_light_set() {
+        let dir = work_dir("preview_palette_matches_the_app_light_set");
+        let dcv = copy_fixture(&dir, "plaque.dcv", "plaque.dcv");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&dcv).expect("dcv readable"))
+                .expect("dcv is JSON");
+        let operations = value["operations"].as_array_mut().expect("operations");
+        let engrave = operations
+            .iter()
+            .find(|o| o["kind"] == "engrave")
+            .expect("the plaque engraves")
+            .clone();
+        for k in 6..10 {
+            let mut copy = engrave.clone();
+            copy["id"] = serde_json::Value::String(format!("op{k}"));
+            copy["name"] = serde_json::Value::String(format!("Engraving {k}"));
+            operations.push(copy);
+        }
+        std::fs::write(&dcv, serde_json::to_string_pretty(&value).unwrap()).unwrap();
+
+        let out = run(&dir, &["check", "plaque.dcv", "--preview", "preview.svg"]);
+        assert!(
+            stdout(&out).contains("Wrote preview"),
+            "{}{}",
+            stdout(&out),
+            stderr(&out)
+        );
+        let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+        let strokes: Vec<&str> = svg
+            .split("<g id=")
+            .skip(1)
+            .filter(|g| g.contains("class=\"operation"))
+            .map(|g| svg_attr(g, "stroke"))
+            .collect();
+        let light = experience_light_set();
+        assert_eq!(light.len(), 8, "the spec's eight colours: {light:?}");
+        assert_eq!(strokes.len(), 9, "{svg}");
+        for (k, stroke) in strokes.iter().enumerate() {
+            assert_eq!(*stroke, light[k % 8], "run {k}'s colour");
+        }
+    }
 }
 
 /// #125, acceptance test 34's export half: the finished plaque project

@@ -204,3 +204,63 @@ fn tokens_match_experience_md() {
         }
     }
 }
+
+/// The rows of the `experience.md` table under `heading` whose first cell
+/// is a number: each row's cells.
+fn numbered_rows(heading: &str) -> Vec<Vec<String>> {
+    let text =
+        std::fs::read_to_string(common::repo_root().join("docs/specs/phase-4/experience.md"))
+            .unwrap();
+    let section = text.split(heading).nth(1).expect("the section");
+    let section = section.split("\n#").next().unwrap_or_default();
+    section
+        .lines()
+        .map(|l| {
+            l.split('|')
+                .map(|c| c.trim().to_owned())
+                .collect::<Vec<_>>()
+        })
+        .filter(|cells| {
+            cells
+                .get(1)
+                .and_then(|c| c.split_whitespace().next())
+                .is_some_and(|c| c.parse::<f64>().is_ok())
+        })
+        .collect()
+}
+
+/// The first backticked hex in `cell`.
+fn hex_in(cell: &str) -> Color32 {
+    parse_hex(cell.split('`').nth(1).expect("a backticked colour"))
+}
+
+/// Section 5, "Operation colours" and "Depth ramp" (design open question
+/// 5, accepted; #545): the light set is the proposed column and is the
+/// CLI's `dc_job::preview::PALETTE` (one table, so `--preview` and the
+/// light Viewport agree), the dark set is the app's own, and the ramp's
+/// five stops are the spec's in both modes.
+#[test]
+fn operation_colours_and_depth_ramp_match_experience_md() {
+    let operations = numbered_rows("### Operation colours");
+    assert_eq!(operations.len(), 8, "{operations:?}");
+    for (k, row) in operations.iter().enumerate() {
+        assert_eq!(theme::LIGHT.operations[k], hex_in(&row[4]), "light {k}");
+        assert_eq!(theme::DARK.operations[k], hex_in(&row[6]), "dark {k}");
+        assert_eq!(
+            theme::LIGHT.operations[k],
+            parse_hex(dc_job::preview::PALETTE[k]),
+            "light {k} is the preview's"
+        );
+        assert_eq!(theme::LIGHT.operation(k + 8), theme::LIGHT.operations[k]);
+    }
+    let ramp = numbered_rows("### Depth ramp");
+    assert_eq!(ramp.len(), 5, "{ramp:?}");
+    for (k, row) in ramp.iter().enumerate() {
+        assert_eq!(
+            theme::LIGHT.depth_ramp[k],
+            hex_in(&row[2]),
+            "light stop {k}"
+        );
+        assert_eq!(theme::DARK.depth_ramp[k], hex_in(&row[3]), "dark stop {k}");
+    }
+}
