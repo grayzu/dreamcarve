@@ -36,6 +36,8 @@ dc-geometry.workspace = true
 # Import a drawing from the empty state and from a drop.
 dc-import.workspace = true
 dc-job.workspace = true
+# The Tool Library sheet's library (capability 64).
+dc-library.workspace = true
 dc-project.workspace = true
 # The config directory, `gui.toml` and staged writes of the `.dcv`.
 dreamcarve-shell.workspace = true

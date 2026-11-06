@@ -247,7 +247,7 @@ pub(super) fn next_free_id(taken: &[&str], prefix: &str) -> String {
 /// `<name> (2)`, or the next suffix no name in `taken` has; a name that
 /// already carries a suffix counts from its base, so the copy of
 /// `Oval (2)` is `Oval (3)`.
-pub(super) fn copy_name(taken: &[&str], name: &str) -> String {
+pub(crate) fn copy_name(taken: &[&str], name: &str) -> String {
     let base = strip_suffix(name);
     (2u32..)
         .map(|k| format!("{base} ({k})"))

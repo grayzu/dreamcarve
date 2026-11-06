@@ -31,7 +31,7 @@ use crate::widgets::row::{self, GAP_PX, LABEL_PX};
 use crate::widgets::section::section;
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
-use crate::widgets::unit_field::{UnitField, unit_field};
+use crate::widgets::unit_field::{UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 12;

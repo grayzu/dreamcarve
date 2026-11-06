@@ -21,6 +21,9 @@ test-support = []
 [dependencies]
 dc-geometry.workspace = true
 dc-job.workspace = true
+# The Tool Library window's model: filtering, the import report, project
+# copies (capability 64).
+dc-library.workspace = true
 dc-project.workspace = true
 # Routes a typed unit string through `dc_project::units_input`'s
 # deserializer, so a field accepts what the file accepts.

@@ -87,6 +87,14 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     item(
                         ui,
                         strings,
+                        StrKey::AppMenuToolLibrary,
+                        None,
+                        Action::OpenLibrary,
+                        out,
+                    );
+                    item(
+                        ui,
+                        strings,
                         StrKey::AppMenuFitStock,
                         None,
                         Action::FitStock,

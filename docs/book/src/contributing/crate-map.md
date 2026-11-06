@@ -5,7 +5,8 @@ command line binary is `dreamcarve`, and the app (phase 4) will be
 `dreamcarve-app`. Library crates never panic, print, or do I/O: they take
 values and return `Result`s and warnings. The binaries do the terminal,
 clock and exit-code handling; the file I/O they share (staged writes, the
-config directory, `config.toml`, `gui.toml`) is `dreamcarve-shell`'s, a
+config directory, `config.toml`, `gui.toml`, `tools.json`) is
+`dreamcarve-shell`'s, a
 library that may do I/O and is therefore not a `dc-` crate.
 
 ## How the pieces fit
@@ -14,7 +15,7 @@ library that may do I/O and is therefore not a `dc-` crate.
 plaque.dxf ──dc-import──▶ definitions + instances ─┐
                                                    ├─▶ Project (dc-project) ──save/load──▶ plaque.dcv
    project_from::drawing (dc-job) ─────────────────┘
-tools.json ──dc-library──▶ Tool ──tools add (dreamcarve)──▶ a copy in the project
+tools.json ──dc-library──▶ Tool ──project_copy (tools add, the app's Add to project)──▶ a copy in the project
 
 plaque.dcv ──load (dc-project)──▶ Project ──dc-job::build (both shells call this)──▶ programs + findings
    build = validate (dc-project)
@@ -35,11 +36,11 @@ writes is the CLI's (phase 4 functional spec, S20).
 
 | Crate | Owns | Depends on |
 | --- | --- | --- |
-| `dreamcarve` | The command line: argument parsing, printing, the clock, exit codes, the tool library file, and the `tabs` command's flags. Thin: the pipeline is `dc-job`'s and the shared file I/O `dreamcarve-shell`'s. | every `dc-` crate, `dreamcarve-shell` |
-| `dreamcarve-shell` | The file I/O both binaries share: the staged write that puts every file of an export in place or none, the user config directory, `config.toml` and `gui.toml`. Reads and writes files; prints nothing. | `dc-job`, `dc-project` |
-| `dc-app` | The app's core (phase 4): one `History` of `Project` snapshots with a label per step, the `Command` enum whose `apply` makes the next snapshot, the selection, the view settings, the generation bookkeeping (what is pending, stale, finished), the string table and its generated `StrKey`, units formatting and parsing, the preferences record, and the headless test harness. No egui, no I/O. | `dc-job`, `dc-project`, `dc-geometry` |
+| `dreamcarve` | The command line: argument parsing, printing, the clock, exit codes, and the `tabs` command's flags. Thin: the pipeline is `dc-job`'s and the shared file I/O `dreamcarve-shell`'s. | every `dc-` crate, `dreamcarve-shell` |
+| `dreamcarve-shell` | The file I/O both binaries share: the staged write that puts every file of an export in place or none, the user config directory, `config.toml`, `gui.toml` and the tool library file `tools.json`. Reads and writes files; prints nothing. | `dc-job`, `dc-library`, `dc-project` |
+| `dc-app` | The app's core (phase 4): one `History` of `Project` snapshots with a label per step, the `Command` enum whose `apply` makes the next snapshot, the selection, the view settings, the generation bookkeeping (what is pending, stale, finished), the string table and its generated `StrKey`, units formatting and parsing, the preferences record, the project tools' editing rules and the Tool Library window's model, and the headless test harness. No egui, no I/O. | `dc-job`, `dc-library`, `dc-project`, `dc-geometry` |
 | `dc-job` | The job pipeline: `build` (validate, generate, check, emit) and its two halves `generate_operation` and `finish`; `Findings` with tiers; program names; the export summary's lines; the preview SVG and its marks; a project from a drawing; a drawing imported into a project; placed tabs. Re-exports the `dc-cam` and `dc-gcode` types a shell needs. | `dc-cam`, `dc-gcode`, `dc-import`, `dc-project`, `dc-geometry` |
-| `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools, and Fusion 360 import. Bytes in, values out; the binary owns `tools.json`. | `dc-project` |
+| `dc-library` | The tool library: its file format, load and save, adding, finding and removing tools, Fusion 360 import, importing a file with the per-tool report, and the copy a project embeds. Bytes in, values out; the shells own `tools.json`, through `dreamcarve-shell`. | `dc-project` |
 | `dc-gcode` | G-code emission, arc fitting, canned cycles, and the safety pass that parses every emitted program. | `dc-cam`, `dc-project`, `dc-geometry` |
 | `dc-cam` | Toolpath generators, sequencing and the operation-order warnings. Pure functions from project and operation to toolpath plus warnings. | `dc-project`, `dc-geometry` |
 | `dc-import` | Importers: SVG (flipped from Y-down into Y-up) and DXF (already Y-up, not flipped). | `dc-project`, `dc-geometry` |
@@ -154,9 +155,10 @@ the code they test.
 
 | Module | Contents |
 | --- | --- |
-| `lib.rs` | The crate's surface: `load`, `save`, `add`, `find`, `remove`, and `fusion`. |
-| `library.rs` | `Library`, `LibraryTool`, `LibraryToolId` (`lt<n>`), `LIBRARY_VERSION`; `load` (strict, validated), `save`, `add` (`Added` or `AlreadyPresent`), `replace`, `find` (by id, else unique name), `remove`. Validation rules ported from PureCutCNC `src/toolLibrary.ts`. |
+| `lib.rs` | The crate's surface: `load`, `save`, `add`, `find`, `remove`, `project_copy`, `fusion` and `import`. |
+| `library.rs` | `Library`, `LibraryTool`, `LibraryToolId` (`lt<n>`), `LIBRARY_VERSION`; `load` (strict, validated), `save`, `add` (`Added` or `AlreadyPresent`), `replace`, `find` (by id, else unique name), `remove`; `project_copy` and `next_project_tool_id`, the copy `tools add` and the app put in a project under the next `t<n>`. Validation rules ported from PureCutCNC `src/toolLibrary.ts`. |
 | `fusion.rs` | Fusion 360 library import: `import(&[u8])` reads a `.tools` zip (the `zip` crate, deflate only) or `.json` into `FusionImport { tools: Vec<ImportedTool>, skipped: Vec<Skipped> }`, one tool per preset, with `ImportNote`s for unset values and `SkipReason`s; `is_fusion_library` tells a Fusion file from a DreamCarve one. |
+| `import.rs` | `read` (a Fusion or DreamCarve file, by content) and `merge` (each tool added or replaced): the library after `tools import` and its `ImportReport`, whose `lines` and `summary` are what the CLI prints and the app's Tool Library shows. Moved from the CLI's `tools.rs`. |
 | `error.rs` | `LibraryError`. |
 
 ### `dc-job` (`crates/dc-job/src/`)
@@ -188,6 +190,8 @@ the code they test.
 | `strings.rs` | `Strings` and the generated `StrKey` (`build.rs` from `strings/en.toml`): `get` and `fmt` with `{name}` placeholders. |
 | `units.rs` | `format` and `format_rate` in the project's display units with the unit after the value; `parse_length_mm` and `parse_rate_mm_min` through `dc_project::units_input`, a bare number in the project's units. |
 | `prefs.rs` | `Prefs`, `Theme`, `WindowGeometry`, `Panels`: the record behind `gui.toml`, whose file is `dreamcarve-shell`'s. |
+| `tools.rs` | The CAM panel's Tools tab: `ToolField`, `field_text`, `field_unit` and `set_field` (a feed, plunge or RPM shown empty while unset, never prefilled), `unset_rates` with the file's message, `users` for *Remove*'s refusal, `unused_hint`, `add_from_library` (`tools add`'s copies), `duplicate`, `save_to_library`. |
+| `library.rs` | The Tool Library window's model, ported from PureCutCNC `src/components/cam/toolLibraryDialogModel.ts` with its tests: `Filter` and `KindFilter`, search over name, vendor and diameter, the "in project" marking, the ticked rows and `build_add`, and `import` with its report. |
 | `test_support.rs` | `Harness`: an `App` from fixture bytes, commands run, pending jobs executed inline with the real `dc_job` functions (`test-support` feature). |
 
 ### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)
@@ -198,6 +202,7 @@ the code they test.
 | `config_dir.rs` | `Paths`: the user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's) and the files in it. |
 | `config.rs` | `config.toml` (`[export]`, `[estimate]`): strict, a typo is an error at its line and column. |
 | `gui_prefs.rs` | `gui.toml`, the app's preferences: layout, visibility, recent files, theme. Lenient: a missing file is the defaults, an unknown key a note. |
+| `library.rs` | `tools.json`: `read` (a missing file is `None`), `write` (staged, creating the directory) and `export`. Moved from the CLI's `tools.rs`. |
 | `error.rs` | `ShellError`, whose messages are the CLI's. |
 
 ### `dreamcarve` (`crates/dreamcarve/src/`)
@@ -211,7 +216,7 @@ the code they test.
 | `export.rs` | `export`: `--post`, `--one-program`, `--programs-per-tool`, `--preview`, `--board`; the output paths, the staged write and the printed summary of what `dc_job::build` produced. |
 | `check.rs` | `check`, and its `--preview`. |
 | `config.rs` | `config path`, and the user config as the commands read it, through `dreamcarve-shell`. |
-| `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: reads and writes `tools.json` and, for `add`, the project. |
+| `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: `tools.json` through `dreamcarve-shell`, the report from `dc_library::import`, and for `add` the project. |
 | `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |
 | `clock.rs` | UTC dates from the system clock, with no date crate; `build.rs` includes it for `--version`. |
 
