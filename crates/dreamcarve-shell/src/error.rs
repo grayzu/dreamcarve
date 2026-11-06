@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use dc_library::LibraryError;
 use dc_project::PostProcessorError;
 
 use crate::config_dir::CONFIG_DIR_VAR;
@@ -83,6 +84,20 @@ pub enum ShellError {
         config: PathBuf,
         /// The post-processor's id.
         post: String,
+    },
+    /// The tool library file is not a library.
+    #[error("cannot load {}: {source}", path.display())]
+    LoadLibrary {
+        /// The library file.
+        path: PathBuf,
+        /// Why it does not load.
+        source: LibraryError,
+    },
+    /// A library could not be serialized.
+    #[error("{source}")]
+    SaveLibrary {
+        /// The serializer's error.
+        source: LibraryError,
     },
     /// The post-processor the config applies to could not be resolved.
     #[error(transparent)]

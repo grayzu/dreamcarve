@@ -1070,6 +1070,7 @@ name = "dreamcarve-shell"
 version = "0.2.1"
 dependencies = [
  "dc-job",
+ "dc-library",
  "dc-project",
  "serde",
  "thiserror 2.0.21",

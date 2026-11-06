@@ -13,15 +13,19 @@
 //!
 //! The crate takes bytes and returns values: [`load`] parses the library
 //! file, [`save`] writes it, [`add`], [`find`] and [`remove`] edit a
-//! library in memory. The `dreamcarve` binary owns the file at
-//! `<config dir>/tools.json`. Fusion 360 import is [`fusion`].
+//! library in memory. The shells own the file at `<config dir>/tools.json`
+//! (`dreamcarve-shell` reads and writes it for the CLI and the app).
+//! Fusion 360 import is [`fusion`]; [`import`] reads either kind of file
+//! into the library with the per-tool report both shells show, and
+//! [`project_copy`] is the copy `tools add` puts in a project.
 
 pub mod error;
 pub mod fusion;
+pub mod import;
 pub mod library;
 
 pub use error::LibraryError;
 pub use library::{
-    AddOutcome, LIBRARY_VERSION, Library, LibraryTool, LibraryToolId, add, find, load, remove,
-    replace, save, validate_tool,
+    AddOutcome, LIBRARY_VERSION, Library, LibraryTool, LibraryToolId, add, find, load,
+    next_project_tool_id, project_copy, remove, replace, save, validate_tool,
 };
