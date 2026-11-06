@@ -75,6 +75,24 @@ pub enum Icon {
     MirrorLeftRight,
     /// `flip-horizontal-2`, mirrored about a horizontal line: Mirror ↕.
     MirrorTopBottom,
+    /// `grip-vertical`: a list row's drag handle.
+    GripVertical,
+    /// `rotate-ccw`: reset a field to the tool's value.
+    RotateCcw,
+    /// `copy`: Duplicate an operation.
+    Copy,
+    /// `trash-2`: Delete an operation.
+    Trash2,
+    /// `cylinder`: an end mill.
+    Cylinder,
+    /// `circle-dot`: a ball-nose bit.
+    CircleDot,
+    /// `triangle`: a V-bit (drawn point down).
+    Triangle,
+    /// `pencil-line`: an engraving bit.
+    PencilLine,
+    /// `move-down`: a drill.
+    MoveDown,
 }
 
 impl Icon {
@@ -114,6 +132,15 @@ impl Icon {
             Self::Bookmark => "bookmark",
             Self::MirrorLeftRight => "flip-vertical-2",
             Self::MirrorTopBottom => "flip-horizontal-2",
+            Self::GripVertical => "grip-vertical",
+            Self::RotateCcw => "rotate-ccw",
+            Self::Copy => "copy",
+            Self::Trash2 => "trash-2",
+            Self::Cylinder => "cylinder",
+            Self::CircleDot => "circle-dot",
+            Self::Triangle => "triangle",
+            Self::PencilLine => "pencil-line",
+            Self::MoveDown => "move-down",
         }
     }
 
@@ -152,12 +179,21 @@ impl Icon {
             Self::Bookmark => '\u{e060}',
             Self::MirrorLeftRight => '\u{e360}',
             Self::MirrorTopBottom => '\u{e35e}',
+            Self::GripVertical => '\u{e0eb}',
+            Self::RotateCcw => '\u{e148}',
+            Self::Copy => '\u{e09e}',
+            Self::Trash2 => '\u{e18e}',
+            Self::Cylinder => '\u{e525}',
+            Self::CircleDot => '\u{e345}',
+            Self::Triangle => '\u{e192}',
+            Self::PencilLine => '\u{e4f0}',
+            Self::MoveDown => '\u{e48c}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 31] = [
+    pub const ALL: [Self; 40] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -189,6 +225,15 @@ impl Icon {
         Self::Bookmark,
         Self::MirrorLeftRight,
         Self::MirrorTopBottom,
+        Self::GripVertical,
+        Self::RotateCcw,
+        Self::Copy,
+        Self::Trash2,
+        Self::Cylinder,
+        Self::CircleDot,
+        Self::Triangle,
+        Self::PencilLine,
+        Self::MoveDown,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

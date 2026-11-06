@@ -4,12 +4,14 @@
 //! The panels and sheets (`docs/specs/phase-4/design.md`, "Module
 //! layout"): the side panels, the Design Tree, the Properties panel's
 //! placement fields, the empty state, the unsaved-changes sheet, the CAM
-//! panel's Tools tab, the Tool Library sheet and the Import drawing
-//! sheet.
+//! panel's Operations and Tools tabs, the operation editor, the Tool
+//! Library sheet and the Import drawing sheet.
 
+pub(crate) mod editor;
 pub(crate) mod empty;
 pub(crate) mod import;
 pub(crate) mod library;
+pub(crate) mod operations;
 pub(crate) mod project;
 pub(crate) mod properties;
 pub(crate) mod side;

@@ -25,7 +25,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::icon::Icon;
-use crate::widgets::unit_field::{FieldSpec, LABEL_PX, row, unit_field};
+use crate::widgets::unit_field::{LABEL_PX, UnitField, field as unit_field, row};
 
 /// Where the W/H padlock's state lives.
 fn padlock_id() -> Id {
@@ -93,15 +93,13 @@ fn field_row(
         ""
     };
     let id = Id::unique(("placement_field", name));
-    let (label, output) = row(ui, strings.get(key), |ui| {
+    let name = strings.get(key);
+    let (label, output) = row(ui, name, |ui| {
         unit_field(
             ui,
-            FieldSpec {
-                id,
-                text: &value,
-                unit: properties::field_unit(field, units),
-                hint,
-                error: None,
+            UnitField {
+                placeholder: hint,
+                ..UnitField::new(id, name, &value, properties::field_unit(field, units))
             },
         )
     });

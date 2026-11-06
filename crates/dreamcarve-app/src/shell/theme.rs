@@ -294,6 +294,51 @@ impl Palette {
     }
 }
 
+/// The operation colours on the light Viewport (`experience.md`, section
+/// 5, "Operation colours"): the CLI's preview palette (`dc_job::preview`),
+/// tab10 in its order, unchanged until the maintainer takes the tuned
+/// light set the section proposes, so the screen still matches the
+/// quick-start pictures by eye.
+pub const OPERATION_LIGHT: [Color32; 8] = [
+    rgb(0x1F77B4),
+    rgb(0xD62728),
+    rgb(0x2CA02C),
+    rgb(0x9467BD),
+    rgb(0xFF7F0E),
+    rgb(0x17BECF),
+    rgb(0x8C564B),
+    rgb(0xE377C2),
+];
+
+/// The operation colours on the dark Viewport: section 5's dark set, the
+/// same hues in the same order.
+pub const OPERATION_DARK: [Color32; 8] = [
+    rgb(0x5BA6EA),
+    rgb(0xF0605A),
+    rgb(0x5FC95F),
+    rgb(0xB48FE0),
+    rgb(0xFFA046),
+    rgb(0x4FD4E4),
+    rgb(0xC8907F),
+    rgb(0xF08FD2),
+];
+
+impl Palette {
+    /// The colour of the operation at `index` in the list, the preview's:
+    /// the palette's eight in turn.
+    #[must_use]
+    pub fn operation(&self, index: usize) -> Color32 {
+        let set = if self.dark {
+            &OPERATION_DARK
+        } else {
+            &OPERATION_LIGHT
+        };
+        set.get(index % set.len())
+            .copied()
+            .unwrap_or(self.text_primary)
+    }
+}
+
 /// The proportional face's family names: one family per weight, since
 /// egui has no weight property (section 12, "Fonts").
 pub const MEDIUM: &str = "medium";

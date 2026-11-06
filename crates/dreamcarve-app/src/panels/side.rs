@@ -7,8 +7,8 @@
 //! divider and collapsing to a 32-px strip, dragged below its minimum or
 //! when the window is under 1280 × 768. The left column holds the Design
 //! Tree ([`panels::tree`]) and, with shapes selected, their placement
-//! ([`panels::properties`]); the Operations list's rows and editors
-//! arrive with slice 10.
+//! ([`panels::properties`]); the CAM panel's Operations tab holds the
+//! list and the operation editor ([`panels::operations`]).
 
 use dc_app::{Selection, StrKey};
 use eframe::egui::{self, Rangef, Sense, TextStyle, Ui, Vec2};
@@ -18,14 +18,11 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{
     Action, CamTab, FrameState, LEFT_MIN_PX, RIGHT_MIN_PX, STRIP_PX, VIEWPORT_MIN_PX,
 };
-use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
-use crate::widgets::spinner::spinner;
 
 /// A panel header's height, px.
 const HEADER_PX: f32 = 32.0;
-/// A list row's height, px.
-const ROW_PX: f32 = 26.0;
 /// The gutter between regions, px.
 const GUTTER_PX: f32 = 4.0;
 
@@ -89,48 +86,6 @@ fn empty_sentence(ui: &mut Ui, sentence: &str) {
             .selectable(false),
         );
     });
-}
-
-/// The operations' rows, each with its status cell (capability 71;
-/// `experience.md`, section 7, "Status cell"): the spinner while the
-/// operation waits for its result. The rest of the row arrives with
-/// slice 10.
-fn operation_rows(ui: &mut Ui, state: &FrameState<'_>) {
-    let palette = Palette::current(ui);
-    let generation = state.app.generation();
-    let regenerating = state.app.strings().get(StrKey::AppGenerationRegenerating);
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .show(ui, |ui| {
-            for op in &state.app.project().operations {
-                ui.allocate_ui(egui::vec2(ui.available_width(), ROW_PX), |ui| {
-                    ui.set_min_height(ROW_PX);
-                    ui.horizontal_centered(|ui| {
-                        ui.add_space(12.0);
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.add_space(12.0);
-                            let (cell, _) =
-                                ui.allocate_exact_size(egui::vec2(24.0, ROW_PX), Sense::hover());
-                            if generation.is_regenerating(op.id()) {
-                                let mut inside =
-                                    ui.new_child(egui::UiBuilder::new().max_rect(cell).layout(
-                                        egui::Layout::centered_and_justified(
-                                            egui::Direction::LeftToRight,
-                                        ),
-                                    ));
-                                spinner(&mut inside, regenerating);
-                            }
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Center),
-                                |ui| {
-                                    text(ui, op.name(), TextStyle::Body, palette.text_primary);
-                                },
-                            );
-                        });
-                    });
-                });
-            }
-        });
 }
 
 /// A collapsed panel: a 32-px strip with the reopen button and the
@@ -304,13 +259,9 @@ pub(crate) fn right(
         .default_size(default)
         .frame(frame(palette))
         .show_collapsible(ui, &mut expanded, |ui| {
-            let project = state.app.project();
             tabs(ui, state, tab);
             match tab {
-                CamTab::Operations if project.operations.is_empty() => {
-                    empty_sentence(ui, strings.get(StrKey::AppPanelNoOperations));
-                }
-                CamTab::Operations => operation_rows(ui, state),
+                CamTab::Operations => panels::operations::show(ui, state, out),
                 CamTab::Tools => crate::panels::tools::show(ui, state, out),
             }
         });

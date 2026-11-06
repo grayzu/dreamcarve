@@ -10,7 +10,8 @@
 //! first, each with its tier glyph and word, its code in mono linking to
 //! the code's entry in the Warnings chapter, the message, and the field
 //! it is about. Clicking a row selects the operation or the shape it
-//! names (the editor that focuses the field is slice 10's). *Copy* puts
+//! names; a row on an operation's field opens the operation in the editor
+//! with that field focused (#539). *Copy* puts
 //! `check`'s text on the clipboard; *Regenerate All* forces generation.
 
 use dc_app::StrKey;
@@ -260,6 +261,13 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
         && let Some(selection) = row.selection()
     {
         out.push(Action::Select(selection));
+        // A row on an operation's field opens it in the editor there.
+        if let (Some(op), Some(field)) = (&row.op, &row.field) {
+            out.push(Action::FocusField {
+                op: op.clone(),
+                field: field.clone(),
+            });
+        }
     }
     response.on_hover_text(&row.message);
 
