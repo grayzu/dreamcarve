@@ -267,3 +267,7 @@ about = "DreamCarve {version}"
 
 [app.viewport]
 origin = "0,0"
+cursor = "X {x}  Y {y}"
+hover_locked = "{name} · locked"
+fit_view = "Fit View"
+zoom_selection = "Zoom to Selection"

@@ -4,8 +4,10 @@
 //! The status bar (functional spec, capability 50; `experience.md`,
 //! section 2, "Status bar"): 24 px on `surface.panel` under a rule; cells
 //! of 12-px text 12 px apart, split by 1-px rules: units, stock size,
-//! cursor (slice 4 fills it), generation state (slice 9 drives it), the
-//! error and warning counts with their glyphs, and the last message.
+//! cursor in project units (`experience.md`, section 9: `X 64.2  Y 51.8`,
+//! one decimal in mm, three in inches), generation state (slice 9 drives
+//! it), the error and warning counts with their glyphs, the shape under
+//! the pointer (section 8, "Hover"), and the last message.
 
 use dc_app::StrKey;
 use dc_job::Tier;
@@ -97,12 +99,30 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>) {
                 );
                 text(ui, &stock, TextStyle::Small, secondary);
                 rule(ui, palette);
-                text(
-                    ui,
-                    strings.get(StrKey::AppStatusCursorNone),
-                    TextStyle::Small,
-                    secondary,
+                let cursor = state.pointer.cursor_mm.map_or_else(
+                    || strings.get(StrKey::AppStatusCursorNone).to_owned(),
+                    |p| {
+                        let coordinate = |mm: f64| {
+                            let text =
+                                format!("{:.decimals$}", dc_app::units::to_display(mm, units));
+                            // No "-0.0" at the origin.
+                            if text
+                                .trim_start_matches('-')
+                                .chars()
+                                .all(|c| c == '0' || c == '.')
+                            {
+                                text.trim_start_matches('-').to_owned()
+                            } else {
+                                text
+                            }
+                        };
+                        strings.fmt(
+                            StrKey::AppViewportCursor,
+                            &[("x", &coordinate(p.x)), ("y", &coordinate(p.y))],
+                        )
+                    },
                 );
+                text(ui, &cursor, TextStyle::Small, secondary);
                 rule(ui, palette);
                 text(
                     ui,
@@ -140,6 +160,15 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>) {
                         StrKey::AppStatusWarnings,
                     );
                     count(ui, Icon::TriangleAlert, palette.status_warning.text, &label);
+                }
+                if let Some((name, locked)) = &state.pointer.hover {
+                    rule(ui, palette);
+                    let label = if *locked {
+                        strings.fmt(StrKey::AppViewportHoverLocked, &[("name", name)])
+                    } else {
+                        name.clone()
+                    };
+                    text(ui, &label, TextStyle::Small, palette.text_primary);
                 }
                 if let Some(message) = state.message {
                     rule(ui, palette);

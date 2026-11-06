@@ -190,6 +190,16 @@ pub(crate) enum Action {
         name: String,
         open: bool,
     },
+    /// The Viewport's camera after this frame's pan or zoom.
+    SetCamera(dc_app::Camera),
+    /// A click or marquee on the Viewport chose this selection.
+    Select(dc_app::Selection),
+    /// Fit the Viewport to the stock and shapes (F).
+    FitView,
+    /// Fit the Viewport to the selection (Shift F).
+    ZoomToSelection,
+    /// Clear the selection (Escape).
+    ClearSelection,
 }
 
 impl Action {
@@ -247,6 +257,8 @@ pub struct Shell {
     last_window: Option<Vec2>,
     /// Panels reopened from their strip in a window below the minimum.
     forced_open: (bool, bool),
+    /// The Viewport's gestures and layer caches.
+    viewport: viewport::ViewportState,
 }
 
 impl std::fmt::Debug for Shell {
@@ -284,6 +296,9 @@ impl Shell {
         };
         let prefs = files::prefs_from_file(&written);
         theme::apply(&cc.egui_ctx, prefs.theme);
+        if let Some(render_state) = cc.wgpu_render_state.as_ref() {
+            viewport::renderer::install(render_state);
+        }
         let app = App::new(App::new_project()?, Strings::english(), prefs);
         let mut shell = Self {
             app,
@@ -304,7 +319,9 @@ impl Shell {
             close_allowed: false,
             last_window: None,
             forced_open: (false, false),
+            viewport: viewport::ViewportState::default(),
         };
+        shell.viewport.fit_on_next_frame();
         if let Some(path) = options.open {
             shell.open_path(&path);
         }
@@ -379,6 +396,7 @@ impl Shell {
                 Ok(project) => {
                     self.app.reset(project);
                     self.empty_dismissed = false;
+                    self.viewport.fit_on_next_frame();
                 }
                 Err(e) => self.message = Some(e.to_string()),
             },
@@ -407,6 +425,7 @@ impl Shell {
             Ok(opened) => {
                 self.app.prefs_mut().push_recent(path.to_path_buf());
                 self.empty_dismissed = false;
+                self.viewport.fit_on_next_frame();
                 let count = opened.notes.len().to_string();
                 self.message = Some(if opened.notes.is_empty() {
                     self.strings()
@@ -444,6 +463,7 @@ impl Shell {
             Example::Coaster => coaster().map(|project| self.app.reset(project)),
         };
         self.empty_dismissed = false;
+        self.viewport.fit_on_next_frame();
         if let Err(reason) = result {
             self.message = Some(reason);
         }
@@ -558,6 +578,7 @@ impl Shell {
         }
         if self.sheet.is_none() {
             actions.extend(shortcuts(ctx));
+            actions.extend(viewport::keys(ctx));
         }
     }
 
@@ -635,6 +656,28 @@ impl Shell {
             }
             Action::SetSection { name, open } => {
                 self.app.prefs_mut().sections.insert(name, open);
+            }
+            Action::SetCamera(camera) => self.app.view_mut().camera = camera,
+            Action::Select(selection) => self.app.select(selection),
+            Action::FitView => {
+                let app = &self.app;
+                let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
+                self.app.view_mut().camera.fit(bounds);
+                self.viewport.mark_fitted(true);
+                ctx.request_repaint();
+            }
+            Action::ZoomToSelection => {
+                let selected = self.app.selection().instances();
+                if let Some(bounds) = self.app.scene().bounds_of(selected) {
+                    self.app.view_mut().camera.fit(bounds);
+                    self.viewport.mark_fitted(false);
+                    ctx.request_repaint();
+                }
+            }
+            Action::ClearSelection => {
+                self.app.select(dc_app::Selection::Nothing);
+                self.viewport.reset_clicks();
+                ctx.request_repaint();
             }
         }
     }
@@ -794,6 +837,8 @@ pub(crate) struct FrameState<'a> {
     pub display_name: String,
     pub message: Option<&'a str>,
     pub show_empty: bool,
+    /// The pointer over the Viewport, for the status bar.
+    pub pointer: viewport::Pointer,
 }
 
 impl eframe::App for Shell {
@@ -805,12 +850,16 @@ impl eframe::App for Shell {
 
         let size = ctx.content_rect().size();
         let (left_open, right_open) = self.panels_open(size);
+        let pointer = self
+            .viewport
+            .read_pointer(&ctx, self.layout.viewport, &self.app);
         let state = FrameState {
             app: &self.app,
             prefs: self.app.prefs(),
             display_name: self.display_name(),
             message: self.message.as_deref(),
             show_empty: self.app.project().instances.is_empty() && !self.empty_dismissed,
+            pointer,
         };
         menu::bar(ui, &state, &mut actions);
         toolbar::bar(ui, &state, &mut actions);
@@ -818,7 +867,7 @@ impl eframe::App for Shell {
         let left = panels::side::left(ui, &state, left_open, size, right_open, &mut actions);
         let mut cam_tab = self.cam_tab;
         let right = panels::side::right(ui, &state, right_open, size, &mut cam_tab, &mut actions);
-        let viewport = viewport::show(ui, &state, &mut actions);
+        let viewport = viewport::show(ui, &state, &mut self.viewport, &mut actions);
         if self.sheet.is_some() {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
         }

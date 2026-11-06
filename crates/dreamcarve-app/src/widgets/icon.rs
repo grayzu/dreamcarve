@@ -48,6 +48,8 @@ pub enum Icon {
     Crosshair,
     /// `info`: a hint.
     Info,
+    /// `lock`: a locked shape's padlock on the Viewport.
+    Lock,
 }
 
 impl Icon {
@@ -74,6 +76,7 @@ impl Icon {
             Self::ChevronDown => "chevron-down",
             Self::Crosshair => "crosshair",
             Self::Info => "info",
+            Self::Lock => "lock",
         }
     }
 
@@ -99,12 +102,13 @@ impl Icon {
             Self::ChevronDown => '\u{e06d}',
             Self::Crosshair => '\u{e0ac}',
             Self::Info => '\u{e0f9}',
+            Self::Lock => '\u{e10b}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 19] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -123,6 +127,7 @@ impl Icon {
         Self::ChevronDown,
         Self::Crosshair,
         Self::Info,
+        Self::Lock,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.
