@@ -116,7 +116,11 @@ fn add_from_library_equals_tools_add() {
         .map(|t| t.name.as_str())
         .collect();
     assert_eq!(names, ["5 mm Drill", "1/4 in Flat End Mill"]);
-    assert_eq!(harness.app.project().tools[5].feed_mm_min, None, "never filled");
+    assert_eq!(
+        harness.app.project().tools[5].feed_mm_min,
+        None,
+        "never filled"
+    );
 
     // Nothing ticked is nothing to do.
     assert!(tools::add_from_library(harness.app.project(), &lib, &BTreeSet::new()).is_none());
@@ -232,7 +236,10 @@ fn remove_in_use_is_refused_naming_operations() {
     );
 
     let refused = harness.run(Command::RemoveTool(t2.clone())).unwrap_err();
-    assert!(matches!(refused, CommandError::ToolInUse { .. }), "{refused:?}");
+    assert!(
+        matches!(refused, CommandError::ToolInUse { .. }),
+        "{refused:?}"
+    );
     assert_eq!(
         refused.to_string(),
         "tool “1/4 end mill” is used by “Panel”, “Square recess” and “Cut out”"
@@ -323,7 +330,10 @@ fn save_to_library() {
     assert_eq!(again, lib, "nothing changed");
 
     let marked = dc_app::library::annotate(&lib, &project.tools);
-    assert!(marked[0].in_project, "the saved tool is marked in the project");
+    assert!(
+        marked[0].in_project,
+        "the saved tool is marked in the project"
+    );
 
     // An edited copy with the same name is stored beside it, renamed so
     // `tools add <name>` stays unambiguous.
@@ -360,10 +370,22 @@ fn editor_fields_carry_units() {
         (ToolField::Flutes, "2", "", "2", ""),
         (ToolField::Number, "1", "", "1", ""),
     ] {
-        assert_eq!(tools::field_text(t2, field, Units::Mm), mm_text, "{field:?}");
+        assert_eq!(
+            tools::field_text(t2, field, Units::Mm),
+            mm_text,
+            "{field:?}"
+        );
         assert_eq!(tools::field_unit(field, Units::Mm), mm_unit, "{field:?}");
-        assert_eq!(tools::field_text(t2, field, Units::Inch), inch_text, "{field:?}");
-        assert_eq!(tools::field_unit(field, Units::Inch), inch_unit, "{field:?}");
+        assert_eq!(
+            tools::field_text(t2, field, Units::Inch),
+            inch_text,
+            "{field:?}"
+        );
+        assert_eq!(
+            tools::field_unit(field, Units::Inch),
+            inch_unit,
+            "{field:?}"
+        );
     }
     let quarter = tools::set_field(t2, ToolField::Diameter, "1/4 in", Units::Mm).unwrap();
     dc_geometry::assert_approx_eq!(quarter.diameter_mm, 6.35, 1e-9);

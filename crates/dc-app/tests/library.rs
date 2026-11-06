@@ -155,7 +155,11 @@ fn filter_and_search() {
     // Upstream's terms: whitespace is collapsed, and any term matching is
     // a match.
     assert_eq!(filter(&lib, &search("  ENDMILL   ball "), mm).len(), 3);
-    assert_eq!(filter(&lib, &search("   "), mm).len(), 4, "blank is no search");
+    assert_eq!(
+        filter(&lib, &search("   "), mm).len(),
+        4,
+        "blank is no search"
+    );
 
     // Search reads the vendor too (capability 64).
     let mut vendors = lib.clone();
@@ -261,9 +265,15 @@ fn in_project_marking() {
         .library;
     let mut project = plaque();
     assert!(annotate(&lib, &project.tools).iter().all(|s| !s.in_project));
-    let drill = lib.tools.iter().find(|t| t.tool.name == "5 mm Drill").unwrap();
+    let drill = lib
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "5 mm Drill")
+        .unwrap();
     let selected = BTreeSet::from([drill.id.clone()]);
-    project.tools.extend(build_add(&lib, &project.tools, &selected));
+    project
+        .tools
+        .extend(build_add(&lib, &project.tools, &selected));
     let marked: Vec<String> = annotate(&lib, &project.tools)
         .iter()
         .filter(|s| s.in_project)
@@ -402,7 +412,11 @@ fn fusion_import_report_equals_tools_import() {
     );
     let lib = merged.library;
     assert_eq!(lib.tools.len(), 13);
-    let drill = lib.tools.iter().find(|t| t.tool.name == "5 mm Drill").unwrap();
+    let drill = lib
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "5 mm Drill")
+        .unwrap();
     assert_eq!(drill.tool.feed_mm_min, None, "never defaulted");
 
     for replace in [false, true] {

@@ -8,9 +8,11 @@ pub mod command;
 mod error;
 pub mod generation;
 pub mod history;
+pub mod library;
 pub mod prefs;
 pub mod selection;
 pub mod strings;
+pub mod tools;
 pub mod units;
 pub mod view;
 
