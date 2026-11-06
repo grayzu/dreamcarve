@@ -331,8 +331,16 @@ fn lifted(ui: &Ui, at: egui::Pos2, row: &ListRow) {
 fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Action>) -> Rect {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
+    // The operation's own id, not the layout's: a status cell that comes
+    // or goes (the spinner's child) must not move a row's id between the
+    // frame a click is aimed and the frame it lands.
+    let response = ui.interact(
+        rect,
+        Id::unique(("dc.operations.row", row.id.as_str())),
+        Sense::click(),
+    );
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::ListItem, true, row.editing, &row.name)
     });
