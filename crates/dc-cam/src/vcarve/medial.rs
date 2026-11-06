@@ -141,7 +141,7 @@ fn sample_pieces(a: Point3, b: Point3) -> f64 {
 /// a tenth of a micrometre, ten times finer than a program writes. Where a
 /// wall bends between two points the overlap shrinks about fourfold per
 /// split, so a few splits reach it.
-const FIT_SLACK_MM: f64 = 1e-4;
+pub(crate) const FIT_SLACK_MM: f64 = 1e-4;
 
 /// How deep a carve cuts for a clearance: `min(clearance / slope, F)`
 /// below the start plane.

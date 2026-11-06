@@ -699,3 +699,36 @@ fn board_between_two_bands_is_not_plug() {
         );
     }
 }
+
+/// #565 (found by the confirmation sweep on #438, behind #554): the males
+/// of line-art seed `0x63` (15° bit, millimetre program) with the end
+/// mill's clearing pass, an open edge or rounding, seat within 0.05 mm,
+/// and every program passes S1–S19. Two causes held them up:
+///
+/// - **The grid start refused every candidate** at a 3.8° pointed line
+///   end, 0.177 mm proud. The margin's point lay on a fitted stretch whose
+///   cone reached 0.000025 mm past a wall, within fitting's slack, and the
+///   grid start held each move to it to `−EPS_MM`. It now holds them to
+///   fitting's slack (dc-cam's
+///   `chain_end_past_a_wall_within_the_fit_slack_starts_on_the_grid`).
+/// - **A floor piece a hair wide went uncut** in a channel between two
+///   strokes, 0.101 mm proud. Fitting dropped its chains, but with an open
+///   edge the floor cut only pieces thicker than twice the project's
+///   tolerance. It now cuts every piece fitting dropped the chains for
+///   (dc-cam's `open_edge_male_cuts_a_floor_piece_a_hair_wide`).
+///
+/// The full design through S1–S19 takes most of an hour in a release
+/// build, so it runs with the sweep.
+#[test]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
+fn males_of_line_art_0x63_with_a_clearing_pass_seat() {
+    for kind in [Kind::MaleOpenEdge, Kind::MaleRounded] {
+        let outcome = reproduce("line art", 0x63, designs::line_art(0x63), kind);
+        assert!(
+            outcome.failures.is_empty() && outcome.known.is_empty(),
+            "{kind:?}: {:?} {:?}",
+            outcome.failures,
+            outcome.known
+        );
+    }
+}
