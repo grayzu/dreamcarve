@@ -1115,7 +1115,22 @@ orientation; DreamCarve's regions are normalised anyway.
      them, above all into a junction where a corner's diagonal meets a
      spine, can run off the axis even unsimplified: on the "DC" female a
      serif end's junction node sat 0.048 mm along the spine from the true
-     one, and the plug stood 0.064 mm proud there. Where
+     one, and the plug stood 0.064 mm proud there. A point on a wall, or
+     outside it within the walls' slack, has no nearest-wall direction to
+     read its axis along, so it is read along the wall's own normal into
+     the region instead, and only within the stretch's length, the reach
+     of a corner's axis from its walls (#554). Where the medial axis joins
+     a corner's tip to a node beside one of its walls, the stretch between
+     runs along that wall, and splitting it where the wall bends a little
+     into the region puts a point on the wall at the start plane; the rest
+     of the way to the tip lay on the wall, out of the fit's reach, and the
+     margin below then stopped the groove that far short of the tip: the
+     plugs stood 0.340 and 0.051 mm proud past a pointed line end (line
+     art `0x63`) and an "e"'s slit (lettering `0x97`,
+     `vcarve::chain_along_a_wall_into_a_corner_is_fitted_to_its_axis`). A
+     disc that grows farther is another part's axis, which its own chains
+     carve; reading it, the "Rag" golden's chain into a nearly straight
+     tip detoured 1.2 mm to it and back. Where
      material may stand above the start plane (`engaged_from` above it;
      #452), a stretch is also read every 0.05 mm and split where it runs
      more than 0.01 mm shallower than a point's own depth there (a
@@ -1199,7 +1214,12 @@ orientation; DreamCarve's regions are normalised anyway.
      60° and 90° bits in a four-place inch program; the 30° and 15° bits
      can still stand 0.08 and 0.16 mm proud there in inches
      (`inlay::notch_seats_flush_with_narrow_bits`,
-     `vcarve::corner_groove_runs_on_to_the_written_grid`).
+     `vcarve::corner_groove_runs_on_to_the_written_grid`). Millimetres
+     do not always reach either: the nearest grid point inside a 4.5°
+     notch can be 0.008 mm from its tip, and line art `0x7a`'s plug stood
+     0.068 mm proud with the 15° bit (#559, open: a decision between
+     accepting the limit in millimetres, more places, or a crossing within
+     a unit).
    - **Blocks** (changed in #404): one `CutBlock` per run of chains the
      tool cuts without lifting (chains continued through a shared node or
      joined by a stay-down link; the link is a cut of the block), else

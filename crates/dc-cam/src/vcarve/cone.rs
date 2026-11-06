@@ -228,6 +228,23 @@ impl Walls {
     /// walls. The grid is searched outward until the nearest point found
     /// is no farther than the cells searched reach, so the answer is exact.
     pub(crate) fn nearest(&self, p: Point) -> Option<(f64, Point)> {
+        self.nearest_segment(p).map(|(d, q, _)| (d, q))
+    }
+
+    /// The unit normal, into the regions, of the wall nearest `p` (#554):
+    /// the regions lie left of every wall, outers counter-clockwise and
+    /// holes clockwise (ADR-0001). Where `p` is on a wall, its nearest
+    /// point is `p` itself, which gives no direction. At a vertex either
+    /// wall's.
+    pub(crate) fn inward_normal(&self, p: Point) -> Option<Vec2> {
+        let (_, _, index) = self.nearest_segment(p)?;
+        let &(a, b) = self.segments.get(index)?;
+        let along: Vec2 = b - a;
+        Vec2::new(-along.y, along.x).normalized()
+    }
+
+    /// [`Walls::nearest`] with the index of the segment it lies on.
+    fn nearest_segment(&self, p: Point) -> Option<(f64, Point, usize)> {
         let foot = |a: Point, b: Point| {
             let ab: Vec2 = b - a;
             let length_sq = ab.dot(ab);
@@ -241,10 +258,10 @@ impl Walls {
         let best_of = |indices: &[usize]| {
             indices
                 .iter()
-                .filter_map(|&i| self.segments.get(i))
-                .map(|&(a, b)| {
+                .filter_map(|&i| self.segments.get(i).map(|&s| (i, s)))
+                .map(|(i, (a, b))| {
                     let q = foot(a, b);
-                    (p.distance_to(q), q)
+                    (p.distance_to(q), q, i)
                 })
                 .min_by(|x, y| x.0.total_cmp(&y.0))
         };
@@ -252,7 +269,7 @@ impl Walls {
         let span_mm = self.cell_mm * (self.columns + self.rows) as f64;
         while margin_mm <= 2.0 * span_mm {
             let best = best_of(&self.near(p, p, margin_mm));
-            if best.is_some_and(|(d, _)| d <= margin_mm) {
+            if best.is_some_and(|(d, ..)| d <= margin_mm) {
                 return best;
             }
             margin_mm *= 2.0;

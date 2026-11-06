@@ -163,7 +163,10 @@ corner a few degrees wide, the nearest such point can be some way from
 the tip, and the plug keeps the wood the bit cannot reach:
 
 - **In millimetres** every bench bit seats within 0.05 mm, a 5° corner
-  included.
+  included. At a point sharper still the nearest such point can be
+  too far even in millimetres: a 15° bit's plug stood 0.068 mm proud
+  past the tip of a 4.5° notch
+  ([#559](https://github.com/grayzu/dreamcarve/issues/559)).
 - **In inches**, with a 15° or 30° bit, a corner sharper than about 25°
   (15° bit) or 14° (30° bit) can hold the plug up: by up to about
   0.16 mm with the 15° bit and 0.08 mm with the 30° at a 5° corner, and
