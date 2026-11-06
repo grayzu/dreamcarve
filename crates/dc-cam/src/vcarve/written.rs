@@ -28,7 +28,7 @@
 //! limit of the program's places, not of the generator.
 
 use crate::vcarve::cone::{OpenEdgeWalls, Walls};
-use crate::vcarve::medial::Depth;
+use crate::vcarve::medial::{Depth, FIT_SLACK_MM};
 use dc_geometry::{EPS_MM, Point, Point3};
 use dc_project::Project;
 
@@ -211,8 +211,19 @@ impl Snap<'_> {
     ///
     /// - as written stays inside the walls, `q` moved by up to the margin
     ///   ([`Walls::widening_clearance_holds`]);
-    /// - keeps the cone inside the walls ([`Walls::least_room`]) and the
-    ///   open edge, if any.
+    /// - keeps the cone inside the walls within [`FIT_SLACK_MM`]
+    ///   ([`Walls::least_room`]), and inside the open edge, if any.
+    ///
+    /// The cone is held to the slack fitting holds the chain's own
+    /// stretches to, not to [`EPS_MM`] (#565): `q` lies on a fitted
+    /// stretch, so its own cone may reach that far past a wall, and every
+    /// move to it ends there. Held to `EPS_MM`, a margin point 0.000025 mm
+    /// over refused every grid point, and line art `0x63`'s groove stopped
+    /// 0.024 mm short of a 3.8° spike's tip. The written path is still
+    /// held to the walls exactly, by the first test: no written move
+    /// crosses one. The cone's slack is what fitting already accepts, far
+    /// within the generator's own S17 check (the flatten tolerance) and
+    /// the safety pass's (a written unit more).
     fn fits(&self, g: Point3, q: Point3) -> bool {
         self.walls
             .widening_clearance_holds(g.xy(), q.xy(), self.grid.margin_mm())
@@ -220,7 +231,114 @@ impl Snap<'_> {
                 .walls
                 .least_room(g, q, self.depth.start_plane_z_mm, self.depth.slope)
                 .0
-                >= -EPS_MM
+                >= -FIT_SLACK_MM
             && self.edge.is_none_or(|edge| edge.allows(g, q))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dc_geometry::{Contour, Polyline, Region, Vertex, nest};
+
+    /// #565 (line art `0x63`'s open-edge and rounded males, 15° bit): a
+    /// chain end whose margin point `q` lies on a stretch that reaches past
+    /// a wall by no more than fitting allows (`FIT_SLACK_MM`) still gets a
+    /// grid start. Fitting holds a chain's stretches to the walls within
+    /// `FIT_SLACK_MM`, so the margin's point on one can carry that much of
+    /// overcut itself; every move from a grid point to it ends there, and
+    /// [`Snap::fits`] held the cone to `−EPS_MM`, so it refused every
+    /// candidate and the groove stayed `w / sin(θ/2)` short of the tip: the
+    /// plug stood 0.177 mm proud past a 3.8° pointed line end. Here a 4°
+    /// corner has its tip on the millimetre grid and its bisector along a
+    /// grid row; the chain's margin point is 0.000025 mm deeper than its
+    /// own depth, as `0x63`'s was. The chain then starts at a grid point
+    /// nearer the tip than `q`, written exactly, and the move from it keeps
+    /// the written margin (`Walls::widening_clearance_holds`) and the cone
+    /// within fitting's slack.
+    #[test]
+    fn chain_end_past_a_wall_within_the_fit_slack_starts_on_the_grid() {
+        let half = 2.0_f64.to_radians();
+        let tip = Point::new(10.0, 10.0);
+        let length_mm = 5.0;
+        let corner = Polyline::new(
+            vec![
+                Vertex::line(tip.x, tip.y),
+                Vertex::line(
+                    tip.x + length_mm * half.cos(),
+                    tip.y - length_mm * half.sin(),
+                ),
+                Vertex::line(
+                    tip.x + length_mm * half.cos(),
+                    tip.y + length_mm * half.sin(),
+                ),
+            ],
+            true,
+        );
+        let region: Region = nest(vec![Contour::new(corner).expect("a corner")])
+            .expect("one region")
+            .0
+            .remove(0);
+        let walls = Walls::new(std::slice::from_ref(&region), 1e-3);
+        let depth = Depth {
+            start_plane_z_mm: 10.0,
+            flat_depth_mm: None,
+            slope: 7.5_f64.to_radians().tan(),
+        };
+        let grid = WrittenGrid {
+            origin: Point::new(0.0, 0.0),
+            quantum_mm: 1e-3,
+        };
+        let snap = Snap {
+            walls: &walls,
+            depth: &depth,
+            grid,
+            edge: None,
+        };
+        let w = grid.margin_mm();
+        let on_axis = |d_mm: f64, overcut_mm: f64| {
+            Point3::new(
+                tip.x + d_mm,
+                tip.y,
+                depth.z_mm(d_mm * half.sin() + overcut_mm),
+            )
+        };
+        // The margin's point, where the bisector is `w` from both walls,
+        // its cone 0.000025 mm past them; then the chain on along it.
+        let q_mm = w / half.sin();
+        let q = on_axis(q_mm, 2.5e-5);
+        let next = on_axis(1.0, 0.0);
+        let end = Point3::new(tip.x, tip.y, depth.start_plane_z_mm);
+        let pieces = snapped_ends(Some(end), None, vec![vec![q, next]], &snap);
+        let first = pieces
+            .first()
+            .and_then(|piece| piece.first())
+            .copied()
+            .expect("a chain");
+        let off_grid = |v: f64| (v / grid.quantum_mm - (v / grid.quantum_mm).round()).abs();
+        assert!(
+            off_grid(first.x) < 1e-6 && off_grid(first.y) < 1e-6,
+            "the chain starts at {first:?}, off the grid"
+        );
+        assert!(
+            first.xy().distance_to(tip) < q_mm - 0.01,
+            "the chain starts {:.4} mm from the tip, the margin's point {q_mm:.4}",
+            first.xy().distance_to(tip)
+        );
+        let to = pieces
+            .first()
+            .and_then(|piece| piece.get(1))
+            .copied()
+            .expect("a move from the start");
+        assert!(
+            walls.widening_clearance_holds(first.xy(), to.xy(), w),
+            "the move from {first:?} to {to:?} can cross a wall as written"
+        );
+        let (room_mm, at) = walls.least_room(first, to, depth.start_plane_z_mm, depth.slope);
+        assert!(
+            room_mm >= -FIT_SLACK_MM,
+            "the cone reaches {:.6} mm past a wall at {at:?}",
+            -room_mm
+        );
     }
 }

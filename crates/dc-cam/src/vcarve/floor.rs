@@ -235,11 +235,12 @@ pub(crate) struct OpenFloor {
 }
 
 impl OpenFloor {
-    /// The parts of `regions` in [`OpenFloor::tip_room`], less noise.
-    fn within(&self, regions: &[Region], tolerance_mm: f64) -> Vec<Region> {
+    /// The parts of `regions` in [`OpenFloor::tip_room`] (arcs flattened
+    /// within `tolerance_mm`), less noise thinner than twice `noise_mm`.
+    fn within(&self, regions: &[Region], tolerance_mm: f64, noise_mm: f64) -> Vec<Region> {
         intersection(regions, &self.tip_room, tolerance_mm)
             .into_iter()
-            .filter(|r| !is_noise(r, tolerance_mm))
+            .filter(|r| !is_noise(r, noise_mm))
             .collect()
     }
 
@@ -299,15 +300,23 @@ pub(crate) fn blocks_open(
             }
             continue;
         };
-        let reachable = open.within(std::slice::from_ref(region), cut.tolerance_mm);
+        let one = std::slice::from_ref(region);
+        let reachable = open.within(one, cut.tolerance_mm, cut.tolerance_mm);
         if reaching.is_empty() {
-            for piece in &reachable {
-                out.extend(rings_clearing(piece, floor, cut, anchor)?);
+            // #565: a piece is noise only below the wall tolerance, the
+            // floors' own noise rule (`Floor::regions_of`, #506): the
+            // medial chains on every floor piece kept are dropped, so a
+            // piece dropped here is cut by nothing. A floor under 0.02 mm wide
+            // in a channel between two strokes is noise at the project's
+            // 0.01 mm, and line art `0x63`'s plug stood 0.101 mm proud on
+            // it. Without an open edge the piece is cut whole.
+            for piece in open.within(one, cut.tolerance_mm, cut.wall_tolerance_mm) {
+                out.extend(rings_clearing(&piece, floor, cut, anchor)?);
             }
             continue;
         }
         let left = rest::left_by(region, 0.0, &reaching, cut.tolerance_mm);
-        for piece in open.within(&left, cut.tolerance_mm) {
+        for piece in open.within(&left, cut.tolerance_mm, cut.tolerance_mm) {
             out.extend(rings_clearing(&piece, floor, cut, anchor)?);
         }
         for ring in rings_of(region, 0, anchor, |c| !open.is_edge(c)) {

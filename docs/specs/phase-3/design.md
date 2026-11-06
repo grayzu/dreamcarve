@@ -1206,7 +1206,15 @@ orientation; DreamCarve's regions are normalised anyway.
      move to the margin's point stays inside as written: a fraction `t`
      along, the path keeps `t · w` from every wall, chords and arcs as
      drawn, since that point may move by `w` (`vcarve::written`). The
-     move also passes the cone test, and an open band edge's. No written
+     move also passes the cone test, within the slack fitting holds the
+     chains to (`FIT_SLACK_MM`, 0.0001 mm; #565), and an open band
+     edge's. The margin's point lies on a fitted stretch, so its own cone
+     can reach that far past a wall, and every move to it ends there:
+     held to `EPS_MM`, a margin point 0.000025 mm over refused every grid
+     point, and line art `0x63`'s plug stood 0.177 mm proud past a 3.8°
+     spike (`vcarve::written`'s
+     `chain_end_past_a_wall_within_the_fit_slack_starts_on_the_grid`).
+     The written path is held to the walls exactly as before. No written
      move crosses a wall, and S17 is unchanged. The grid limits it: a
      5° corner is `q / 11` wide `q` from its tip, so the nearest grid
      point inside can be several units in. The notch seats within
@@ -1839,7 +1847,13 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
      stretches whose cone stays inside `B` at the stock top
      (`medial::runs_within`), its floor rings are clipped to `B ⊖ (D − G
      + P)·s`, and its boundary trace runs along the plug's foot only,
-     never round `B` (`floor::blocks_open`). `finish` runs
+     never round `B` (`floor::blocks_open`). A floor piece no pass
+     reaches is cut whole within `B ⊖ (D − G + P)·s`, noise dropped only
+     below the wall tolerance, the floors' own rule (#506, #565): its
+     medial chains are dropped, and at the project's tolerance a piece
+     under 0.02 mm wide in a channel between two strokes was cut by
+     nothing, and line art `0x63`'s plug stood 0.101 mm proud on it
+     (`inlay::open_edge_male_cuts_a_floor_piece_a_hair_wide`). `finish` runs
      `cone_in_material` a second time against `B` with the stock top as
      the plane. **V wall** (`open_edge: None`): the surround's outer edge
      gets a V wall too, as before. Changed in #448 after the
