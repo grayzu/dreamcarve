@@ -502,8 +502,9 @@ pub struct Located<'a> {
 
 impl<'a> Located<'a> {
     /// The findings of `findings` located on `op`'s rows: each at a field
-    /// under the row that holds it, and each of [`TARGET_CODES`] about
-    /// `op` under its Targets row.
+    /// under the row that holds it, and each of the generator's warnings
+    /// about a target of `op` it cannot cut (`drill_target_not_circle`,
+    /// `bore_no_room`, …) under its Targets row.
     #[must_use]
     pub fn of(findings: &'a [Finding], op: &Operation) -> Self {
         let rows = fields::rows(op);
