@@ -8,14 +8,17 @@
 //! toolpaths and the grid are slice 4's (#533); the empty-state card
 //! floats over it until a shape arrives (functional spec, capability 79).
 //!
-//! Y flips exactly once, in [`Fit::to_screen`] (`docs/rust-guidelines.md`,
-//! "GUI").
+//! Y flips exactly once, in [`Fit::to_screen`] and back in
+//! [`Fit::to_world`] (`docs/rust-guidelines.md`, "GUI"). The park point
+//! is drawn as its crossed circle and, while the Project panel's *Click on
+//! the view* is armed, a click on the pane sets it (#536); TODO(#533): the
+//! Viewport's camera replaces `Fit` for both.
 
 use dc_app::StrKey;
 use dc_geometry::Point;
 use eframe::egui::{self, Pos2, Rect, Stroke, TextStyle, Ui};
 
-use crate::panels::empty;
+use crate::panels::{empty, project};
 use crate::shell::theme::Palette;
 use crate::shell::window::{Action, FrameState};
 
@@ -58,7 +61,18 @@ impl Fit {
         let y = f64::from(self.pane_centre.y) - (p.y - self.centre_mm.y) * self.px_per_mm;
         egui::pos2(x as f32, y as f32)
     }
+
+    /// [`Fit::to_screen`]'s inverse: a pane pixel as a project point, mm.
+    fn to_world(self, s: Pos2) -> Point {
+        Point::new(
+            self.centre_mm.x + f64::from(s.x - self.pane_centre.x) / self.px_per_mm,
+            self.centre_mm.y - f64::from(s.y - self.pane_centre.y) / self.px_per_mm,
+        )
+    }
 }
+
+/// The park mark's radius, px.
+const PARK_RADIUS_PX: f32 = 6.0;
 
 /// Draws the Viewport in the central panel; returns its rectangle.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -> Rect {
@@ -70,7 +84,13 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -
                 .inner_margin(GUTTER_PX),
         )
         .show(ui, |ui| {
-            let (pane, _) = ui.allocate_exact_size(ui.available_size(), egui::Sense::hover());
+            let picking = project::park_pick_armed(ui.ctx());
+            let sense = if picking {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            };
+            let (pane, response) = ui.allocate_exact_size(ui.available_size(), sense);
             let painter = ui.painter_at(pane);
             painter.rect_filled(pane, 0.0, palette.viewport_bg);
             let project = state.app.project();
@@ -109,6 +129,35 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -
                 TextStyle::Small.resolve(ui.style()),
                 palette.text_secondary,
             );
+
+            // The park point: a crossed circle (`experience.md`, section 5).
+            let marks = dc_app::project::marks(project);
+            if let Some(park) = marks.park_mm {
+                let at = fit.to_screen(park);
+                let stroke = Stroke::new(1.5, palette.viewport_park);
+                painter.circle_stroke(at, PARK_RADIUS_PX, stroke);
+                let arm = PARK_RADIUS_PX * std::f32::consts::FRAC_1_SQRT_2;
+                painter.line_segment(
+                    [at + egui::vec2(-arm, -arm), at + egui::vec2(arm, arm)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [at + egui::vec2(-arm, arm), at + egui::vec2(arm, -arm)],
+                    stroke,
+                );
+            }
+
+            if picking {
+                response.ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    project::arm_park_pick(ui.ctx(), false);
+                } else if response.clicked()
+                    && let Some(at) = response.interact_pointer_pos()
+                {
+                    project::arm_park_pick(ui.ctx(), false);
+                    out.extend(project::park_at(project, fit.to_world(at)).map(Action::run));
+                }
+            }
 
             if state.show_empty {
                 empty::card(ui, pane, state, out);

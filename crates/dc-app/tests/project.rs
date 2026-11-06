@@ -47,9 +47,10 @@ fn type_into(harness: &mut Harness, field: Field, text: &str) {
         .unwrap_or_else(|e| panic!("{field:?} = {text:?} does not apply: {e}"));
 }
 
-/// Runs a choice's command, which must change something.
-fn choose(harness: &mut Harness, command: Option<Command>, what: &str) {
-    let command = command.unwrap_or_else(|| panic!("{what} changes nothing"));
+/// Runs the command `make` builds from the current snapshot, which must
+/// change something.
+fn choose(harness: &mut Harness, make: impl FnOnce(&Project) -> Option<Command>, what: &str) {
+    let command = make(harness.app.project()).unwrap_or_else(|| panic!("{what} changes nothing"));
     harness
         .run(command)
         .unwrap_or_else(|e| panic!("{what} does not apply: {e}"));
@@ -123,7 +124,7 @@ fn stock_origin_heights_write_the_fields() {
     for (preset, xy, (x_mm, y_mm)) in presets {
         choose(
             &mut h,
-            project::set_origin_xy(h.app.project(), preset),
+            |p| project::set_origin_xy(p, preset),
             &format!("{preset:?}"),
         );
         assert_eq!(h.app.project().origin.xy, xy, "{preset:?}");
@@ -144,12 +145,12 @@ fn stock_origin_heights_write_the_fields() {
     // Custom starts where the work zero was, then takes typed X and Y.
     choose(
         &mut h,
-        project::set_origin_xy(h.app.project(), OriginPreset::Centre),
+        |p| project::set_origin_xy(p, OriginPreset::Centre),
         "centre",
     );
     choose(
         &mut h,
-        project::set_origin_xy(h.app.project(), OriginPreset::Custom),
+        |p| project::set_origin_xy(p, OriginPreset::Custom),
         "custom",
     );
     assert_eq!(
@@ -175,7 +176,7 @@ fn stock_origin_heights_write_the_fields() {
     // Z zero.
     choose(
         &mut h,
-        project::set_origin_z(h.app.project(), OriginZ::StockBottom),
+        |p| project::set_origin_z(p, OriginZ::StockBottom),
         "stock bottom",
     );
     assert_eq!(h.app.project().origin.z, OriginZ::StockBottom);
@@ -240,7 +241,7 @@ fn stock_origin_heights_write_the_fields() {
     type_into(&mut h, Field::StockWidth, "300");
     choose(
         &mut h,
-        project::set_origin_xy(h.app.project(), OriginPreset::Centre),
+        |p| project::set_origin_xy(p, OriginPreset::Centre),
         "centre",
     );
     assert_eq!(project::fit_margin_text(Units::Mm), "10");
@@ -353,18 +354,14 @@ fn post_switch_keeps_settings() {
     type_into(&mut h, Field::SpindleDwell, "6");
     choose(
         &mut h,
-        project::set_tool_change_mode(h.app.project(), ToolChangeMode::M6),
+        |p| project::set_tool_change_mode(p, ToolChangeMode::M6),
         "M6",
     );
     let before = h.app.project().post_processor.clone();
     assert_approx_eq!(before.spindle_on_dwell_s, 6.0, EPS_MM);
     let (expected, expected_resets) = dc_project::switch_post(&before, "linuxcnc").expect("switch");
 
-    choose(
-        &mut h,
-        project::switch_post(h.app.project(), "linuxcnc"),
-        "linuxcnc",
-    );
+    choose(&mut h, |p| project::switch_post(p, "linuxcnc"), "linuxcnc");
     let post = &h.app.project().post_processor;
     assert_eq!(post, &expected);
     assert_eq!(post.id, "linuxcnc");
@@ -407,11 +404,7 @@ fn post_switch_keeps_settings() {
         project::newer_version(h.app.project()),
         Some(latest.version)
     );
-    choose(
-        &mut h,
-        project::switch_post(h.app.project(), "grblhal"),
-        "upgrade",
-    );
+    choose(&mut h, |p| project::switch_post(p, "grblhal"), "upgrade");
     assert_eq!(
         h.app.project().post_processor.definition_version,
         latest.version
@@ -429,7 +422,7 @@ fn post_switch_keeps_settings() {
     type_into(&mut h, Field::DecimalsInch, "5");
     choose(
         &mut h,
-        project::set_spindle_control(h.app.project(), SpindleControl::Manual),
+        |p| project::set_spindle_control(p, SpindleControl::Manual),
         "manual",
     );
     let post = &saved(&h).post_processor;
@@ -497,7 +490,7 @@ fn m6_and_canned_cycles_offered_per_definition() {
     let mut h = Harness::from_project(on_post(base, "linuxcnc"));
     choose(
         &mut h,
-        project::set_canned_cycles(h.app.project(), true),
+        |p| project::set_canned_cycles(p, true),
         "canned cycles",
     );
     assert!(saved(&h).post_processor.use_canned_cycles);

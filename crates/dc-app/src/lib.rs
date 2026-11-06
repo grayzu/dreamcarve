@@ -9,6 +9,7 @@ mod error;
 pub mod generation;
 pub mod history;
 pub mod prefs;
+pub mod project;
 pub mod selection;
 pub mod strings;
 pub mod units;

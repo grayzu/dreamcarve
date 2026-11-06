@@ -180,6 +180,23 @@ pub(crate) enum Action {
     UserGuide,
     About,
     Answer(Answer),
+    /// Run a command a panel built (the Project panel's fields, #536).
+    Run(Box<Command>),
+    /// Project ▸ Stock and Origin…: the Project panel, shown with nothing
+    /// selected.
+    ShowProject,
+    /// A panel section opened or closed, kept in `gui.toml`.
+    SetSection {
+        name: String,
+        open: bool,
+    },
+}
+
+impl Action {
+    /// [`Action::Run`] of `command`.
+    pub(crate) fn run(command: Command) -> Self {
+        Self::Run(Box::new(command))
+    }
 }
 
 /// The unsaved-changes sheet's answers (`experience.md`, section 8,
@@ -606,6 +623,19 @@ impl Shell {
                 ));
             }
             Action::Answer(answer) => self.answer(ctx, answer),
+            Action::Run(command) => {
+                if let Err(e) = self.app.run(*command) {
+                    self.message = Some(e.to_string());
+                }
+            }
+            Action::ShowProject => {
+                self.app.select(dc_app::Selection::Nothing);
+                self.app.prefs_mut().panels.left_open = true;
+                self.forced_open.0 = true;
+            }
+            Action::SetSection { name, open } => {
+                self.app.prefs_mut().sections.insert(name, open);
+            }
         }
     }
 

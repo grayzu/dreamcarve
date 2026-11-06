@@ -110,6 +110,8 @@ pub struct Palette {
     pub viewport_stock: Color32,
     /// The stock's fill, a shade off the background.
     pub viewport_stock_fill: Color32,
+    /// The park point's crossed circle.
+    pub viewport_park: Color32,
     /// The scrim under a sheet (section 8, "Sheets").
     pub scrim: Color32,
     /// Raised surfaces' shadow (section 12, "Visuals").
@@ -162,6 +164,7 @@ pub const LIGHT: Palette = Palette {
     viewport_axis: rgb(0x6B7380),
     viewport_stock: rgb(0x6B7380),
     viewport_stock_fill: rgb(0xFFFFFF),
+    viewport_park: rgb(0x5B6472),
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_001F),
 };
@@ -212,6 +215,7 @@ pub const DARK: Palette = Palette {
     viewport_axis: rgb(0x9AA3AF),
     viewport_stock: rgb(0x9AA3AF),
     viewport_stock_fill: rgb(0x1F242C),
+    viewport_park: rgb(0xA3ABB7),
     scrim: rgba(0x0000_0066),
     shadow: rgba(0x0000_004D),
 };
@@ -264,6 +268,7 @@ impl Palette {
             ("viewport.axis", self.viewport_axis),
             ("viewport.stock", self.viewport_stock),
             ("viewport.stock.fill", self.viewport_stock_fill),
+            ("viewport.park", self.viewport_park),
         ]
     }
 }

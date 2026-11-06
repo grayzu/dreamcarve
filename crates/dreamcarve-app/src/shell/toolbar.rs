@@ -100,7 +100,12 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             .icon(Icon::Download, theme::ICON_LARGE_PX)
                             .height(BUTTON_PX)
                             .enabled(false)
-                            .tooltip(later),
+                            // The CLI's refusal first (S20), as for an
+                            // unset thickness (#536).
+                            .tooltip(
+                                dc_app::project::export_refusal(state.app)
+                                    .map_or(later, |f| f.message.as_str()),
+                            ),
                     );
                     ui.add_space(ui.available_width() * 0.35);
                     if state.app.is_dirty() {
