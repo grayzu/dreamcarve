@@ -62,6 +62,35 @@ generated from Cargo.lock at release time.
 - delaunator 1.1 (ISC), https://github.com/mourner/delaunator-rs
   Copyright (c) 2018, Mapbox
 
+The dreamcarve-app binary bundles three typefaces and an icon set, under
+crates/dreamcarve-app/assets/ with their license texts and a README each
+giving the release and checksums:
+
+- Inter 4.1 (SIL Open Font License 1.1), https://github.com/rsms/inter
+  Copyright (c) 2016 The Inter Project Authors (https://github.com/rsms/inter)
+  Inter-Regular, Inter-Medium and Inter-SemiBold, modified: the tabular
+  figures (`tnum`) are frozen into the character map with OpenType Feature
+  Freezer; the license has no Reserved Font Name.
+- JetBrains Mono 2.304 (SIL Open Font License 1.1),
+  https://github.com/JetBrains/JetBrainsMono
+  Copyright 2020 The JetBrains Mono Project Authors
+  (https://github.com/JetBrains/JetBrainsMono)
+  JetBrainsMono-Regular, unmodified.
+- Lucide 1.67.0 (ISC), https://github.com/lucide-icons/lucide
+  Copyright (c) 2026 Lucide Icons and Contributors
+  The icons derived from Feather (MIT):
+  Copyright (c) 2013-present Cole Bemis
+  The icon font lucide.ttf, unmodified.
+
+Third-party crates the dreamcarve-app binary adds whose license requires
+attribution:
+
+- rfd 0.17 (MIT), https://github.com/PolyMeilex/rfd
+  Copyright (c) 2022 Bartłomiej Maryńczak
+
+The app is not in release archives yet; the release slice of phase 4
+extends THIRD-PARTY-LICENSES to its crates.
+
 When a third-party component is added, list it here with its name, version,
 license, and source URL if its license requires attribution.
 
