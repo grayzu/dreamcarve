@@ -40,7 +40,7 @@ pub fn read(paths: &Paths) -> Result<Option<Library>, ShellError> {
         .map(Some)
         .map_err(|source| ShellError::LoadLibrary {
             path: path.clone(),
-            source,
+            source: Box::new(source),
         })
 }
 
@@ -53,7 +53,9 @@ pub fn read(paths: &Paths) -> Result<Option<Library>, ShellError> {
 /// [`ShellError::Create`] when the directory cannot be made, and the
 /// staged write's errors.
 pub fn write(paths: &Paths, lib: &Library) -> Result<(), ShellError> {
-    let text = dc_library::save(lib).map_err(|source| ShellError::SaveLibrary { source })?;
+    let text = dc_library::save(lib).map_err(|source| ShellError::SaveLibrary {
+        source: Box::new(source),
+    })?;
     std::fs::create_dir_all(&paths.dir).map_err(|source| ShellError::Create {
         path: paths.dir.clone(),
         source,
@@ -69,7 +71,9 @@ pub fn write(paths: &Paths, lib: &Library) -> Result<(), ShellError> {
 /// [`ShellError::SaveLibrary`] when the library cannot be serialized, and
 /// the staged write's errors.
 pub fn export(lib: &Library, file: &Path) -> Result<(), ShellError> {
-    let text = dc_library::save(lib).map_err(|source| ShellError::SaveLibrary { source })?;
+    let text = dc_library::save(lib).map_err(|source| ShellError::SaveLibrary {
+        source: Box::new(source),
+    })?;
     StagedFile::write(file, text.as_bytes())?.commit()
 }
 

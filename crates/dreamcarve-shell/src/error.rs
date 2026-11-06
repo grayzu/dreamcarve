@@ -90,14 +90,15 @@ pub enum ShellError {
     LoadLibrary {
         /// The library file.
         path: PathBuf,
-        /// Why it does not load.
-        source: LibraryError,
+        /// Why it does not load; boxed, since it is large and the
+        /// other variants are not (clippy's `result_large_err`).
+        source: Box<LibraryError>,
     },
     /// A library could not be serialized.
     #[error("{source}")]
     SaveLibrary {
-        /// The serializer's error.
-        source: LibraryError,
+        /// The serializer's error, boxed as above.
+        source: Box<LibraryError>,
     },
     /// The post-processor the config applies to could not be resolved.
     #[error(transparent)]
