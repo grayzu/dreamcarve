@@ -15,6 +15,7 @@ pub mod strings;
 pub mod units;
 pub mod view;
 pub mod viewport;
+pub mod warnings;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

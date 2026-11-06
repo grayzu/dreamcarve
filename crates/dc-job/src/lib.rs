@@ -27,7 +27,7 @@ pub mod tabs;
 
 pub use build::{
     Built, Finding, Findings, Finished, Generated, ProgramSummary, Tier, build, build_board,
-    finish, generate_operation, validation,
+    finish, generate_operation, project_checks, validation,
 };
 pub use error::JobError;
 pub use import::{Drawing, drawing_into};

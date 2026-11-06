@@ -434,6 +434,22 @@ impl App {
     pub fn validation(&self) -> &Findings {
         &self.validation
     }
+
+    // TODO(#538): stubs until the slice's implementation.
+
+    /// The next work for the worker.
+    pub fn next_work(&mut self) -> Option<crate::generation::Work> {
+        self.take_pending()
+            .into_iter()
+            .next()
+            .map(crate::generation::Work::Operation)
+    }
+
+    /// Stops generation.
+    pub fn stop(&mut self) {}
+
+    /// Regenerates every operation.
+    pub fn regenerate_all(&mut self) {}
 }
 
 #[cfg(test)]

@@ -322,6 +322,12 @@ impl Shell {
         &mut self.app
     }
 
+    /// Whether the worker is running a job. TODO(#538): the worker.
+    #[must_use]
+    pub fn worker_busy(&self) -> bool {
+        false
+    }
+
     /// The last frame's layout.
     #[must_use]
     pub fn layout(&self) -> Layout {

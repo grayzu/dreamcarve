@@ -283,6 +283,78 @@ impl Generation {
     }
 }
 
+// TODO(#538): the stubs below are replaced by the slice's implementation.
+
+/// The digest of what `op`'s generator reads in `project`.
+#[must_use]
+pub fn digest(_project: &Project, _op: &OperationId) -> u64 {
+    0
+}
+
+/// Work for the worker.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Work {
+    /// Generate one operation.
+    Operation(Job),
+    /// Run the project-level pass.
+    Finish(FinishJob),
+}
+
+/// The project-level pass's input.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FinishJob {
+    /// The snapshot it is for.
+    pub snapshot: SnapshotId,
+    /// Every enabled operation's runs.
+    pub runs: Vec<EmitOp>,
+    /// Whether to emit.
+    pub emit: bool,
+}
+
+/// Runs `work` on `project`.
+#[must_use]
+pub fn execute(
+    project: &Project,
+    work: Work,
+    _date: &str,
+    _estimate: &dc_job::EstimateConfig,
+) -> JobResult {
+    match work {
+        Work::Operation(job) => {
+            let generated = dc_job::generate_operation(project, &job.op);
+            JobResult::Operation { job, generated }
+        }
+        Work::Finish(job) => JobResult::Finished {
+            snapshot: job.snapshot,
+            finished: Finished {
+                findings: Findings::default(),
+                programs: Vec::new(),
+                total_line: None,
+            },
+        },
+    }
+}
+
+impl Generation {
+    /// Whether `op` waits for a result.
+    #[must_use]
+    pub fn is_regenerating(&self, _op: &OperationId) -> bool {
+        false
+    }
+
+    /// Progress.
+    #[must_use]
+    pub fn progress(&self) -> Option<(usize, usize)> {
+        None
+    }
+
+    /// Whether anything is left to do.
+    #[must_use]
+    pub fn busy(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
