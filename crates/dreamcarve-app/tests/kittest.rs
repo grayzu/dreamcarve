@@ -434,3 +434,82 @@ fn theme_follows_system_and_both_palettes_apply() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 60 and acceptance 69 (#536): with nothing selected the
+/// Properties area is the Project panel, and the park point is typed or
+/// clicked on the Viewport. *Click on the view* arms the Viewport; the next
+/// click there sets `heights.park` to the project point under the cursor,
+/// one undo step, and disarms it. The Viewport centres the stock (slice 3's
+/// fitted view), so a click 40 px above the pane's centre lands at the
+/// stock's mid-width with a Y above its mid-height: project Y grows up
+/// (ADR-0001). Typing `20, 30` into the field and pressing Enter writes the
+/// same field.
+#[test]
+fn park_point_click_on_the_viewport() {
+    let dir = scratch("park");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert!(h.state().app().selection().is_empty());
+    assert!(
+        h.query_by_label("Project · plaque.dcv").is_some(),
+        "the Properties area is the Project panel"
+    );
+    assert_eq!(h.state().app().project().heights.park, None);
+
+    h.get_by_label("Click on the view").scroll_to_me();
+    h.run();
+    h.get_by_label("Click on the view").click();
+    h.run();
+    let pane = h.state().layout().viewport;
+    let at = pane.center() - egui::vec2(0.0, 40.0);
+    h.hover_at(at);
+    h.run();
+    h.drag_at(at);
+    h.run();
+    h.drop_at(at);
+    h.run();
+
+    let project = h.state().app().project();
+    let park = project.heights.park.expect("the click sets the park point");
+    let (width_mm, height_mm) = (project.stock.width_mm, project.stock.height_mm);
+    assert!(
+        (park.x_mm - width_mm / 2.0).abs() < 1.0,
+        "the click above the centre is at mid-width: {park:?} on {width_mm} mm"
+    );
+    assert!(
+        park.y_mm > height_mm / 2.0 && park.y_mm < height_mm,
+        "40 px up the screen is up the stock: {park:?} on {height_mm} mm"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Set heights"));
+
+    // One click: the Viewport is disarmed after it.
+    let centre = pane.center();
+    h.drag_at(centre);
+    h.run();
+    h.drop_at(centre);
+    h.run();
+    assert_eq!(h.state().app().project().heights.park, Some(park));
+
+    // The typed entry writes the same field.
+    h.get_by_role_and_label(Role::TextInput, "Park point")
+        .focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Park point")
+        .set_text_value_accesskit("20, 30");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(
+        h.state().app().project().heights.park,
+        Some(dc_project::ParkXy {
+            x_mm: 20.0,
+            y_mm: 30.0
+        })
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
