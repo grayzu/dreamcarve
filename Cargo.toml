@@ -133,6 +133,16 @@ float_cmp = "deny"
 [profile.dev.package.cavalier_contours]
 debug-assertions = false
 
+# Tests are built optimised. The geometry and toolpath tests are mostly
+# arithmetic, and unoptimised they ran about 45 minutes per CI job; the
+# dc-gcode property tests take 76 s unoptimised and 11 s here. Debug
+# assertions and overflow checks stay on, inherited from dev, and so does
+# the cavalier_contours override above. Rust does not reorder or fuse
+# floating-point operations, so results are the same at any opt-level.
+# `cargo build` and clippy keep the unoptimised dev profile.
+[profile.test]
+opt-level = 2
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"
