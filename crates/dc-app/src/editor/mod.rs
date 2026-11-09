@@ -33,10 +33,13 @@ use std::borrow::Cow;
 
 use dc_geometry::Point;
 use dc_job::{Finding, Tier};
-use dc_project::{DrillCycle, Operation, OperationId, Project, Tool, ToolId, ToolKind, Units};
+use dc_project::{
+    Board, DrillCycle, INLAY_MIN_PLUG_BASE_MM, Operation, OperationId, Project, Tool, ToolId,
+    ToolKind, Units,
+};
 use serde_json::{Value, json};
 
-pub use fields::{ChoiceOption, FieldKind, Group, Row, ToolDefault, Unit};
+pub use fields::{ChoiceOption, FieldKind, Group, Row, StockDefault, ToolDefault, Unit};
 
 use crate::app::App;
 use crate::command::Command;
@@ -233,10 +236,14 @@ impl<'r> Slot<'r> {
         strings: &Strings,
         op: &Operation,
     ) -> Option<String> {
-        let default = self.row.tool_default?;
         if !self.value(op)?.is_null() {
             return None;
         }
+        if let Some(stock) = self.row.stock_default {
+            let value = number_text(self.row, stock.of(&project.stock), project.display_units);
+            return Some(strings.fmt(StrKey::EditorStockValue, &[("value", &value)]));
+        }
+        let default = self.row.tool_default?;
         let tool = project.tools.iter().find(|t| t.id == *op.tool());
         let Some(value) = tool.and_then(|t| default.of(t)) else {
             return Some(strings.get(StrKey::EditorToolsUnset).to_owned());
@@ -373,7 +380,8 @@ impl<'r> Slot<'r> {
     /// [`can_reset`].
     #[must_use]
     pub fn can_reset(&self, op: &Operation) -> bool {
-        self.row.tool_default.is_some() && self.value(op).is_some_and(|v| !v.is_null())
+        (self.row.tool_default.is_some() || self.row.stock_default.is_some())
+            && self.value(op).is_some_and(|v| !v.is_null())
     }
 
     /// [`reset`].
@@ -548,12 +556,209 @@ pub fn offered_tools<'p>(project: &'p Project, op: &Operation) -> Vec<&'p Tool> 
         .collect()
 }
 
+/// A line the editor draws under a row: a hint, or an alert drawn in the
+/// error colour with its glyph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Note {
+    /// What it says.
+    pub text: String,
+    /// Whether it is an alert: red, with the error glyph.
+    pub alert: bool,
+}
+
+impl Note {
+    /// A hint.
+    fn hint(text: String) -> Self {
+        Self { text, alert: false }
+    }
+}
+
+/// The lines under `slot`'s control for `op` (mock-ups 06 and 07): under a
+/// tool picker, the chosen V-bit's cone height (for an Inlay's own tool,
+/// that one bit cuts both boards); under an Inlay's male board thickness,
+/// the board left under the band ([`male_base_mm`]), red below
+/// [`INLAY_MIN_PLUG_BASE_MM`]; for an Inlay's derived line, the male's
+/// planes ([`male_planes`]), the engagement red past the cone. Empty for
+/// any other row.
+#[must_use]
+pub fn notes(project: &Project, strings: &Strings, op: &Operation, slot: &Slot<'_>) -> Vec<Note> {
+    let units = project.display_units;
+    match (slot.row.kind, op) {
+        (FieldKind::ToolPicker, _) => {
+            let Some(cone) = slot
+                .tool(project, op)
+                .and_then(|tool| tool_note(project, strings, tool))
+            else {
+                return Vec::new();
+            };
+            let text = if matches!(op, Operation::Inlay(_)) && slot.key() == "tool" {
+                strings.fmt(StrKey::EditorInlayTool, &[("note", &cone)])
+            } else {
+                cone
+            };
+            vec![Note::hint(text)]
+        }
+        (FieldKind::InlayDerived, Operation::Inlay(inlay)) => {
+            let Some(planes) = male_planes(project, op) else {
+                return vec![Note::hint(
+                    strings.get(StrKey::EditorInlayPlanesUnset).to_owned(),
+                )];
+            };
+            let planes_line = strings.fmt(
+                StrKey::EditorInlayPlanes,
+                &[
+                    ("start", &length_text(planes.start_plane_mm, units)),
+                    ("floor", &length_text(planes.band_floor_mm, units)),
+                ],
+            );
+            let engagement = length_text(planes.engagement_mm, units);
+            let angle = project
+                .tools
+                .iter()
+                .find(|t| t.id == inlay.tool)
+                .and_then(|t| match t.cutter {
+                    ToolKind::VBit { included_angle_deg } => Some(included_angle_deg),
+                    _ => None,
+                });
+            let engagement_line = match (planes.cone_height_mm, angle) {
+                (Some(cone_mm), Some(angle)) => Note {
+                    text: strings.fmt(
+                        StrKey::EditorInlayEngagement,
+                        &[
+                            ("engagement", &engagement),
+                            ("angle", &plain(angle)),
+                            ("cone", &length_text(cone_mm, units)),
+                        ],
+                    ),
+                    alert: planes.exceeds_cone(),
+                },
+                _ => Note::hint(strings.fmt(
+                    StrKey::EditorInlayEngagementNoCone,
+                    &[("engagement", &engagement)],
+                )),
+            };
+            vec![Note::hint(planes_line), engagement_line]
+        }
+        (FieldKind::Length, Operation::Inlay(_)) if slot.key() == "male_board.thickness_mm" => {
+            male_base_mm(op).map_or_else(Vec::new, |base_mm| {
+                vec![Note {
+                    text: strings.fmt(
+                        StrKey::EditorInlayBase,
+                        &[
+                            ("base", &length_text(base_mm, units)),
+                            ("least", &length_text(INLAY_MIN_PLUG_BASE_MM, units)),
+                        ],
+                    ),
+                    alert: base_mm < INLAY_MIN_PLUG_BASE_MM,
+                }]
+            })
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// What the bench needs to see of an Inlay's male (capability 68a), mm
+/// below the male board's top, from `dc-project`'s own rules: its start
+/// plane ([`dc_project::InlayOp::male_start_plane_mm`]), its band's flat
+/// floor and the V-bit flank's engagement there (both
+/// [`dc_project::InlayOp::engagement_mm`] on the male board, the depth
+/// validation's cone check compares), and the V-bit's cone height.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MalePlanes {
+    /// `depth_mm − glue_gap_mm`: where the male's walls pass exactly
+    /// through the design's outline.
+    pub start_plane_mm: f64,
+    /// `start + plug_depth_mm`: the band's flat floor.
+    pub band_floor_mm: f64,
+    /// How deep the V-bit's flank engages: the band floor, since the
+    /// board above the start plane is the plug and is never cleared.
+    pub engagement_mm: f64,
+    /// The Inlay's V-bit's cone height; `None` when its tool is not a
+    /// V-bit with a cone.
+    pub cone_height_mm: Option<f64>,
+}
+
+impl MalePlanes {
+    /// Whether the flank engages deeper than the cone, as validation's
+    /// `v_bit_cone_exceeded` decides it.
+    #[must_use]
+    pub fn exceeds_cone(&self) -> bool {
+        self.cone_height_mm
+            .is_some_and(|cone_mm| self.engagement_mm > cone_mm + dc_geometry::EPS_MM)
+    }
+}
+
+/// [`MalePlanes`] of Inlay `op`; `None` for another kind, or until its
+/// depth, glue gap and plug depth are set.
+#[must_use]
+pub fn male_planes(project: &Project, op: &Operation) -> Option<MalePlanes> {
+    let Operation::Inlay(inlay) = op else {
+        return None;
+    };
+    let start_plane_mm = inlay.male_start_plane_mm()?;
+    let engagement_mm = inlay.engagement_mm(Board::Male)?;
+    let cone_height_mm = project
+        .tools
+        .iter()
+        .find(|t| t.id == inlay.tool)
+        .and_then(cone_height_mm);
+    Some(MalePlanes {
+        start_plane_mm,
+        band_floor_mm: engagement_mm,
+        engagement_mm,
+        cone_height_mm,
+    })
+}
+
+/// How much of Inlay `op`'s male board is left under its band's floor,
+/// mm: its thickness less the male's engagement, as validation's
+/// `inlay_plug_base_thin` takes it. `None` for another kind, or until the
+/// thickness and the values the floor needs are set.
+#[must_use]
+pub fn male_base_mm(op: &Operation) -> Option<f64> {
+    let Operation::Inlay(inlay) = op else {
+        return None;
+    };
+    Some(inlay.male_board.thickness_mm? - inlay.engagement_mm(Board::Male)?)
+}
+
+/// The tools the tool picker of `row` offers for `op`: an Inlay cut-out's
+/// the project's flat end mills ([`clearing::tools`]), as a clearing
+/// pass's; the operation's own Tool row's, [`offered_tools`].
+#[must_use]
+pub fn offered_for<'p>(project: &'p Project, op: &Operation, row: &Row) -> Vec<&'p Tool> {
+    if row.key == "cut_out.tool" {
+        clearing::tools(project)
+    } else {
+        offered_tools(project, op)
+    }
+}
+
+/// The ⟲ button's tooltip on `row`: the tool's value, or the stock's size.
+#[must_use]
+pub const fn reset_label(row: &Row) -> StrKey {
+    if row.stock_default.is_some() {
+        StrKey::EditorStockReset
+    } else {
+        StrKey::EditorReset
+    }
+}
+
 /// The line under a tool picker showing `tool`: a V-bit's cone height,
 /// `cone height 3.175 mm`, in the display units (the V-Carve chapter's
 /// `diameter / (2 tan(α/2))`, the depth past which the shank cuts); `None`
 /// for any other cutter, or a V-bit whose angle or diameter has no cone.
 #[must_use]
 pub fn tool_note(project: &Project, strings: &Strings, tool: &Tool) -> Option<String> {
+    let cone_mm = cone_height_mm(tool)?;
+    let text = length_text(cone_mm, project.display_units);
+    Some(strings.fmt(StrKey::EditorToolCone, &[("value", &text)]))
+}
+
+/// A V-bit's cone height, mm, `diameter / (2 tan(α/2))`, as validation's
+/// cone check takes it: `None` for another cutter, or a V-bit whose angle
+/// or diameter has no cone.
+fn cone_height_mm(tool: &Tool) -> Option<f64> {
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return None;
     };
@@ -561,17 +766,17 @@ pub fn tool_note(project: &Project, strings: &Strings, tool: &Tool) -> Option<St
         && included_angle_deg < 180.0
         && tool.diameter_mm.is_finite()
         && tool.diameter_mm > 0.0;
-    let cone_mm = tool.diameter_mm / (2.0 * (included_angle_deg.to_radians() / 2.0).tan());
-    if !(usable && cone_mm.is_finite()) {
-        return None;
-    }
-    let units = project.display_units;
-    let text = format!(
+    let cone_mm = tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
+    (usable && cone_mm.is_finite()).then_some(cone_mm)
+}
+
+/// `value_mm` in `units` with its suffix: `5.5 mm`.
+fn length_text(value_mm: f64, units: Units) -> String {
+    format!(
         "{} {}",
-        units::field_text(cone_mm, units),
+        units::field_text(value_mm, units),
         units::suffix(units)
-    );
-    Some(strings.fmt(StrKey::EditorToolCone, &[("value", &text)]))
+    )
 }
 
 /// `check`'s carve summary for operation `op` (slice 13, #542): the lines

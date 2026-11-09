@@ -350,13 +350,12 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .map(|_| Tier::Error)
         .or(status.map(|s| s.tier));
     let focused = cx.focus == Some(row.key);
-    let offered = editor::offered_tools(cx.project, cx.op);
+    let offered = editor::offered_for(cx.project, cx.op, row);
     let response = ui
         .horizontal(|ui| control(ui, cx, &slot, &offered, tier, focused, out))
         .inner;
     match row.kind {
         FieldKind::InstanceList => target_list(ui, cx, out),
-        FieldKind::ToolPicker => tool_note(ui, cx, &slot),
         FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
         // Nothing to derive it from: validation's message in place of the
         // number.
@@ -367,6 +366,15 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
             }
         }
         _ => {}
+    }
+    // The lines under it: a V-bit's cone, an Inlay's derived line and the
+    // board under its band, an alert in red with its glyph.
+    for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
+        if note.alert {
+            row::message(ui, Tier::Error, &note.text);
+        } else {
+            row::hint(ui, &note.text);
+        }
     }
     if matches!(row.kind, FieldKind::PointPick)
         && point_pick(ui.ctx()).is_some_and(|(op, key)| op == *cx.op.id() && key == row.key)
@@ -409,8 +417,9 @@ pub(super) fn control(
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let id = control_id(cx.op, slot.key());
-    // A derived value stands where the value it replaces would.
-    if slot.row.key.contains('.') && !matches!(slot.row.kind, FieldKind::CountersinkDepth) {
+    // A derived value stands where the value it replaces would; a male
+    // board's sizes are their group's own (`Row::indented`).
+    if slot.row.indented() {
         ui.add_space(NESTED_PX);
     }
     match slot.row.kind {
@@ -457,7 +466,11 @@ pub(super) fn control(
             label(ui, cx, slot);
             derived(ui, cx, slot.row, id)
         }
-        FieldKind::CutOut | FieldKind::MaleBoard => block(ui, cx, slot.row),
+        // The label; the derived lines are drawn under it.
+        FieldKind::InlayDerived => {
+            label(ui, cx, slot);
+            None
+        }
     }
 }
 
@@ -490,7 +503,7 @@ fn typed(
         .unwrap_or_default();
     let reset = slot
         .can_reset(cx.op)
-        .then(|| cx.strings.get(StrKey::EditorReset));
+        .then(|| cx.strings.get(editor::reset_label(row)));
     let name = cx.strings.get(row.label);
     if focused {
         ui.memory_mut(|m| m.request_focus(id));
@@ -933,22 +946,6 @@ fn tool_picker(
             ui.close();
         }
     });
-    Some(response)
-}
-
-/// A block a later slice edits in place: its label and a note.
-fn block(ui: &mut Ui, cx: &Cx<'_>, row: &Row) -> Option<egui::Response> {
-    let palette = Palette::current(ui);
-    label(ui, cx, &Slot::of(row));
-    let response = ui.add(
-        egui::Label::new(
-            egui::RichText::new(cx.strings.get(StrKey::EditorBlockLater))
-                .text_style(TextStyle::Small)
-                .color(palette.text_secondary),
-        )
-        .wrap()
-        .selectable(false),
-    );
     Some(response)
 }
 

@@ -745,3 +745,91 @@ fn hidden_toolpaths_are_not_picked() {
     harness.app.select(Selection::Operation(panel.clone()));
     assert_eq!(hit(&harness), Hit::Toolpath(panel));
 }
+
+/// Acceptance 75 with an Inlay (capability 72; slice 14, #543): the male
+/// board's shapes are the female's instances seen from the other board,
+/// so they are not instances to select. A click on one, on its outline or
+/// inside it, is `Hit::MaleBoardShape` of its Inlay, which selects the
+/// Inlay (and so opens it in the editor); no instance is a candidate
+/// there, and a marquee over the male board takes no instance. The same
+/// letter on the stock is still its instance. With the Inlay disabled
+/// there is no male board and nothing to hit.
+#[test]
+fn male_board_shape_selects_the_inlay() {
+    let project = common::load_dcv(&common::fixture("dc.dcv"));
+    let mut harness = Harness::from_project(project.clone());
+    let scene = harness.app.scene().clone();
+    let mut camera = view(SCALE_1);
+    camera.fit(dc_app::viewport::camera::fit_bounds(&project, &scene));
+    let board = scene.male_board().expect("the male board");
+    let op = dc_project::OperationId::new("op1");
+    let outline = &board.shapes[0].outlines[0];
+    let on = outline.vertices()[0].point();
+    let at = camera.to_screen(on);
+    assert!(
+        pick::candidates(&scene, &camera, at, PICK_TOLERANCE_PX).is_empty(),
+        "no instance under a male shape"
+    );
+    let hit = pick::pick(&scene, &camera, at, PICK_TOLERANCE_PX, 0);
+    assert_eq!(hit, Hit::MaleBoardShape(op.clone()));
+    // Inside a mirrored letter, away from its outline.
+    let bounds = board.shapes[0].bounds.unwrap();
+    let mut inside = None;
+    'search: for i in 1..40 {
+        for j in 1..40 {
+            let p = Point::new(
+                bounds.min.x + (bounds.max.x - bounds.min.x) * f64::from(i) / 40.0,
+                bounds.min.y + (bounds.max.y - bounds.min.y) * f64::from(j) / 40.0,
+            );
+            let s = camera.to_screen(p);
+            if pick::pick(&scene, &camera, s, 0.0, 0) == Hit::MaleBoardShape(op.clone()) {
+                inside = Some(s);
+                break 'search;
+            }
+        }
+    }
+    assert!(inside.is_some(), "a point inside the mirrored letter hits");
+
+    // A click selects the Inlay, whatever the modifier, and opens it.
+    let mut clicks = ClickCycle::default();
+    let clicked = clicks.click(&scene, &camera, at, PICK_TOLERANCE_PX);
+    assert_eq!(clicked, Hit::MaleBoardShape(op.clone()));
+    for mode in [ClickMode::Replace, ClickMode::Add, ClickMode::Toggle] {
+        assert_eq!(
+            Selection::Nothing.clicked(&clicked, mode),
+            Selection::Operation(op.clone()),
+            "{mode:?}"
+        );
+    }
+    harness
+        .app
+        .select(Selection::Nothing.clicked(&clicked, ClickMode::Replace));
+    assert_eq!(harness.app.selection(), &Selection::Operation(op.clone()));
+    assert_eq!(harness.app.editing(), Some(&op));
+    assert!(harness.app.selection().instances().is_empty());
+
+    // A marquee over the whole male board takes no instance.
+    assert!(pick::touching(&scene, board.frame).is_empty());
+
+    // The letter on the stock is its instance.
+    let d = scene
+        .shape(&InstanceId::new("i1"))
+        .expect("letter D on the stock");
+    let female = camera.to_screen(d.outlines[0].vertices()[0].point());
+    assert_eq!(
+        pick::pick(&scene, &camera, female, PICK_TOLERANCE_PX, 0),
+        Hit::Instance(InstanceId::new("i1"))
+    );
+
+    // Disabled: no male board, nothing there.
+    let mut disabled = project;
+    if let dc_project::Operation::Inlay(inlay) = &mut disabled.operations[0] {
+        inlay.enabled = false;
+    }
+    let scene = scene_of(disabled);
+    assert!(scene.male_board().is_none());
+    assert_eq!(
+        pick::pick(&scene, &camera, at, PICK_TOLERANCE_PX, 0),
+        Hit::Nothing
+    );
+}

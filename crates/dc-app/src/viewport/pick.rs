@@ -29,6 +29,11 @@
 //! operation's with *Only the selected operation* on. The cuts come from
 //! the Scene's [`crate::scene::CutIndex`], built with its runs.
 //!
+//! The male inlay board's shapes (slice 14, #543) are the female's
+//! instances seen from the other board, so they are never candidates: a
+//! click that finds no instance and lands on one, by the same tolerance
+//! and containment rules, is [`Hit::MaleBoardShape`] of its Inlay.
+//!
 //! Re-derived for Y-up: nothing here depends on direction. Distances and
 //! containment are taken in project millimetres, with the tolerance
 //! converted at the camera's scale, as upstream does; arcs are measured as
@@ -54,8 +59,7 @@ const TIE_PX: f64 = 0.5;
 /// place" for [`ClickCycle`], logical pixels.
 const SAME_PLACE_PX: f64 = 3.0;
 
-/// What a click on the Viewport lands on. The male board's shapes join
-/// with the slice that draws them (14).
+/// What a click on the Viewport lands on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
     /// A feature instance.
@@ -65,6 +69,9 @@ pub enum Hit {
     /// A cutting move of an operation's toolpath (#576): it opens the
     /// operation in the editor and leaves the shape selection alone.
     Toolpath(OperationId),
+    /// A shape on the male inlay board (slice 14, #543): it selects its
+    /// Inlay.
+    MaleBoardShape(OperationId),
     /// Empty stock or empty stage.
     Nothing,
 }
@@ -279,9 +286,34 @@ fn hits(
         .collect()
 }
 
+/// The Inlay whose shape on the male board is under pane point `at`: an
+/// outline within `tolerance_px`, else the inside of its closed outlines;
+/// the topmost (the last) where two are.
+#[must_use]
+pub fn male_board_shape(
+    scene: &Scene,
+    camera: &Camera,
+    at: Pos,
+    tolerance_px: f64,
+) -> Option<OperationId> {
+    let board = scene.male_board()?;
+    let p = camera.to_world(at);
+    let tolerance_mm = camera.px_to_mm(tolerance_px);
+    let near = |flat: &[Polyline], outlines: &[Polyline]| {
+        distance_mm(outlines, p).is_some_and(|d| d <= tolerance_mm) || inside(flat, p)
+    };
+    board
+        .shapes
+        .iter()
+        .rev()
+        .find(|shape| near(&shape.flat, &shape.outlines))
+        .map(|shape| shape.op.clone())
+}
+
 /// What a click at pane point `at` picks among the shapes and tabs: a
 /// placed tab within the tolerance ([`tabs::tab_at`]), else the
-/// `cycle`-th of [`candidates`], wrapping, or [`Hit::Nothing`]. No
+/// `cycle`-th of [`candidates`], wrapping; with none, the male board's
+/// shape there ([`male_board_shape`]); else [`Hit::Nothing`]. No
 /// toolpath: [`pick_with_cuts`] picks those too.
 #[must_use]
 pub fn pick(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64, cycle: usize) -> Hit {
@@ -305,7 +337,8 @@ pub fn pick_with_cuts(
     }
     let found = hits(scene, camera, at, tolerance_px, cuts);
     match found.len() {
-        0 => Hit::Nothing,
+        0 => male_board_shape(scene, camera, at, tolerance_px)
+            .map_or(Hit::Nothing, Hit::MaleBoardShape),
         n => found.into_iter().nth(cycle % n).unwrap_or(Hit::Nothing),
     }
 }
@@ -421,7 +454,8 @@ impl ClickCycle {
             _ => 0,
         };
         let hit = match found.len() {
-            0 => Hit::Nothing,
+            0 => male_board_shape(scene, camera, at, tolerance_px)
+                .map_or(Hit::Nothing, Hit::MaleBoardShape),
             n => found.get(index % n).cloned().unwrap_or(Hit::Nothing),
         };
         self.last = Some((at, found, index));

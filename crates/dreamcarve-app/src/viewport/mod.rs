@@ -84,6 +84,10 @@ const ZOOM_PER_POINT: f64 = 0.004;
 const CROSSHAIR_ARM_PX: f32 = 12.0;
 /// The gap at the crosshair's centre, px.
 const CROSSHAIR_GAP_PX: f32 = 3.0;
+/// The male board's origin mark, smaller than the stock's: its arm and
+/// its centre gap, px.
+const MALE_CROSSHAIR_ARM_PX: f32 = 8.0;
+const MALE_CROSSHAIR_GAP_PX: f32 = 2.0;
 /// The park point's radius, px.
 const PARK_RADIUS_PX: f32 = 6.0;
 /// A transform handle's square and circle, px (`experience.md`, section 8).
@@ -268,12 +272,18 @@ impl ViewportState {
             ),
             _ => Hit::Nothing,
         };
+        // A male board shape is its Inlay's, not an instance: the status
+        // bar names the board and the Inlay (`experience.md`, section 9).
+        let male = match &hit {
+            Hit::MaleBoardShape(op) => app.project().operations.iter().find(|o| o.id() == op),
+            _ => None,
+        };
         let hover_op;
         (self.hover, self.hover_tab, hover_op) = match hit {
             Hit::Instance(id) => (Some(id), None, None),
             Hit::Tab(id) => (None, Some(id), None),
             Hit::Toolpath(id) => (None, None, Some(id)),
-            Hit::Nothing => (None, None, None),
+            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None, None),
         };
         // A cut under the pointer names its operation, as a shape does.
         let hover_op = hover_op.and_then(|id| {
@@ -282,14 +292,23 @@ impl ViewportState {
         });
         Pointer {
             cursor_mm: self.cursor_mm,
-            hover: self
-                .hover
-                .as_ref()
-                .and_then(|id| {
-                    let shape = app.scene().shape(id)?;
-                    Some((shape.name.clone(), shape.locked))
-                })
-                .or(hover_op),
+            hover: male.map_or_else(
+                || {
+                    self.hover
+                        .as_ref()
+                        .and_then(|id| {
+                            let shape = app.scene().shape(id)?;
+                            Some((shape.name.clone(), shape.locked))
+                        })
+                        .or(hover_op)
+                },
+                |op| {
+                    let name = app
+                        .strings()
+                        .fmt(StrKey::AppViewportHoverMaleBoard, &[("name", op.name())]);
+                    Some((name, false))
+                },
+            ),
             drag: self.readout.clone(),
         }
     }
@@ -542,7 +561,9 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
     match pick::pick(app.scene(), camera, at, PICK_TOLERANCE_PX, 0) {
         Hit::Instance(id) => Some(Target::Shape(id)),
         Hit::Tab(id) => Some(Target::Tab(id)),
-        Hit::Toolpath(_) | Hit::Nothing => None,
+        // A male board shape is no instance to move: a click on it selects
+        // its Inlay on release. A cut is picked on release too (#576).
+        Hit::Toolpath(_) | Hit::MaleBoardShape(_) | Hit::Nothing => None,
     }
 }
 
@@ -846,7 +867,11 @@ fn frame(
         key((stock, origin_key, show_grid, grid.step_mm.to_bits())),
         || layers::grid(project, show_grid.then_some(grid)),
     );
-    let stock_layer = view.layer(Layer::Stock, key(stock), || layers::stock(project));
+    let stock_layer = view.layer(
+        Layer::Stock,
+        key((stock, scene.shapes_revision(), band)),
+        || layers::stock(project, scene, tolerance),
+    );
     // A drag in progress draws its shapes where the release will put them,
     // through the preview transform, and not where the snapshot has them.
     let moving: Vec<InstanceId> = view
@@ -964,18 +989,29 @@ fn toolpath_layers(
         visibility.start_points,
         visibility.tab_marks,
     );
+    let male_offset = app.scene().board_offset(dc_project::Board::Male);
     let look = layers::ToolpathLook {
         visibility: &visibility,
         ramp: ramp.as_ref(),
         tolerance_mm: layers::tolerance_mm(band),
         lod_mm: layers::lod_mm(band),
+        male_offset,
     };
+    let offset_key = male_offset.map(|o| (o.x.to_bits(), o.y.to_bits()));
     let mut out = Vec::with_capacity(drawn.len());
     for id in &drawn {
         let Some(op) = app.scene().operation(id) else {
             continue;
         };
-        let layer_key = key((op.result_key(), op.stale, op.colour, band, ramp_key, flags));
+        let layer_key = key((
+            op.result_key(),
+            op.stale,
+            op.colour,
+            band,
+            ramp_key,
+            flags,
+            offset_key,
+        ));
         let (version, data) = view.toolpath(id, layer_key, || layers::toolpath(op, look));
         out.push(ToolpathData {
             key: key(id),
@@ -1001,19 +1037,21 @@ fn arrow_layer(
     let app = state.app;
     let visibility = app.view().visibility;
     let scene = app.scene();
-    let mut runs: Vec<(u64, &dc_job::Toolpath, usize, bool)> = Vec::new();
+    let mut runs: Vec<(u64, &dc_job::Toolpath, usize, bool, dc_geometry::Vec2)> = Vec::new();
     if visibility.arrows {
         for id in &view.drawn {
             let Some(op) = scene.operation(id) else {
                 continue;
             };
             for (k, run) in op.runs.iter().enumerate() {
-                if run.run.board == dc_project::Board::Female {
+                // A male board run's arrows go where its moves are drawn.
+                if let Some(offset) = scene.board_offset(run.run.board) {
                     runs.push((
                         key((id, op.result_key(), k)),
                         &run.run.toolpath,
                         op.colour + k,
                         op.stale,
+                        offset,
                     ));
                 }
             }
@@ -1022,14 +1060,16 @@ fn arrow_layer(
     let layer_key = key((
         camera.px_per_mm.to_bits(),
         visibility.cuts,
-        runs.iter().map(|r| (r.0, r.2, r.3)).collect::<Vec<_>>(),
+        runs.iter()
+            .map(|r| (r.0, r.2, r.3, r.4.x.to_bits(), r.4.y.to_bits()))
+            .collect::<Vec<_>>(),
     ));
     let tolerance = layers::tolerance_mm(band);
     let keys: Vec<u64> = runs.iter().map(|r| r.0).collect();
     view.arrow_moves.retain(|k, _| keys.contains(k));
     view.arrows.retain(&keys);
     let mut moves = Vec::with_capacity(runs.len());
-    for (run_key, toolpath, _, _) in &runs {
+    for (run_key, toolpath, _, _, _) in &runs {
         let cached = view
             .arrow_moves
             .get(run_key)
@@ -1057,12 +1097,15 @@ fn arrow_layer(
         let arrow_runs: Vec<layers::ArrowRun<'_>> = runs
             .iter()
             .zip(&moves)
-            .map(|((run_key, _, colour, stale), m)| layers::ArrowRun {
-                key: *run_key,
-                moves: m.as_slice(),
-                colour: *colour,
-                stale: *stale,
-            })
+            .map(
+                |((run_key, _, colour, stale, offset), m)| layers::ArrowRun {
+                    key: *run_key,
+                    moves: m.as_slice(),
+                    colour: *colour,
+                    stale: *stale,
+                    offset: *offset,
+                },
+            )
             .collect();
         cached.key = Some(layer_key);
         cached.version = next;
@@ -1158,6 +1201,10 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         palette.text_secondary,
     );
 
+    if let Some(board) = state.app.scene().male_board() {
+        male_board_marks(ui, &painter, pane, state, board, camera);
+    }
+
     if let Some(park) = project.heights.park {
         let at = window_pos(pane, camera, Point::new(park.x_mm, park.y_mm));
         let stroke = Stroke::new(1.25, palette.viewport_park);
@@ -1206,6 +1253,56 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
             egui::StrokeKind::Inside,
         );
     }
+}
+
+/// The male board's origin mark, a smaller crosshair than the stock's, and
+/// its `Male board` caption in a label pill at its top-left, all in
+/// `viewport.male-board` (`experience.md`, section 9, "Male inlay board").
+fn male_board_marks(
+    ui: &Ui,
+    painter: &egui::Painter,
+    pane: Rect,
+    state: &FrameState<'_>,
+    board: &dc_app::scene::MaleBoardView,
+    camera: &Camera,
+) {
+    let palette = Palette::current(ui);
+    let origin = window_pos(pane, camera, board.origin_mm);
+    let stroke = Stroke::new(1.0, palette.viewport_male_board);
+    for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+        let dir = egui::vec2(dx, dy);
+        painter.line_segment(
+            [
+                origin + dir * MALE_CROSSHAIR_GAP_PX,
+                origin + dir * MALE_CROSSHAIR_ARM_PX,
+            ],
+            stroke,
+        );
+    }
+    let galley = painter.layout_no_wrap(
+        state
+            .app
+            .strings()
+            .get(StrKey::AppViewportMaleBoard)
+            .to_owned(),
+        TextStyle::Small.resolve(ui.style()),
+        palette.viewport_male_board,
+    );
+    let corner = window_pos(
+        pane,
+        camera,
+        Point::new(board.frame.min.x, board.frame.max.y),
+    );
+    let rect = Rect::from_min_size(
+        corner + egui::vec2(0.0, -galley.size().y - 8.0),
+        galley.size() + egui::vec2(12.0, 4.0),
+    );
+    painter.rect_filled(rect, 6.0, palette.viewport_label_bg);
+    painter.galley(
+        rect.min + egui::vec2(6.0, 2.0),
+        galley,
+        palette.viewport_male_board,
+    );
 }
 
 /// Draws the Viewport in the central panel; returns its rectangle.
@@ -1337,6 +1434,13 @@ pub(crate) fn show(
                 window_pos(pane, &camera, Point::new(stock.width_mm, stock.height_mm)),
             );
             painter.rect_filled(sheet, 0.0, palette.viewport_stock_fill);
+            if let Some(board) = app.scene().male_board() {
+                let male = Rect::from_two_pos(
+                    window_pos(pane, &camera, board.frame.min),
+                    window_pos(pane, &camera, board.frame.max),
+                );
+                painter.rect_filled(male, 0.0, palette.viewport_stock_fill);
+            }
             let highlighted = editor::highlighted_targets(ui.ctx());
             let frame = frame(state, view, &camera, palette, &highlighted);
             painter.add(renderer::callback(pane, frame));
