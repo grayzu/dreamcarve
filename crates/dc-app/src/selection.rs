@@ -63,6 +63,9 @@ impl Selection {
     /// starts an instance selection.
     #[must_use]
     pub fn clicked(&self, hit: &Hit, mode: ClickMode) -> Self {
+        if let Hit::Tab(tab) = hit {
+            return self.tab_clicked(tab, mode);
+        }
         let Hit::Instance(id) = hit else {
             return match mode {
                 ClickMode::Replace => Self::Nothing,
@@ -89,6 +92,42 @@ impl Selection {
             Self::Nothing
         } else {
             Self::Instances(ids)
+        }
+    }
+
+    /// The selected placed tabs, or none.
+    #[must_use]
+    pub fn tabs(&self) -> &[TabId] {
+        match self {
+            Self::Tabs(ids) => ids,
+            _ => &[],
+        }
+    }
+
+    /// The selection after a click on placed tab `tab` (slice 17): it
+    /// alone, added, or toggled, as an instance is. Adding or toggling a
+    /// tab to a selection of anything else starts a tab selection.
+    fn tab_clicked(&self, tab: &TabId, mode: ClickMode) -> Self {
+        let mut ids = self.tabs().to_vec();
+        match mode {
+            ClickMode::Replace => ids = vec![tab.clone()],
+            ClickMode::Add => {
+                if !ids.contains(tab) {
+                    ids.push(tab.clone());
+                }
+            }
+            ClickMode::Toggle => {
+                if ids.contains(tab) {
+                    ids.retain(|t| t != tab);
+                } else {
+                    ids.push(tab.clone());
+                }
+            }
+        }
+        if ids.is_empty() {
+            Self::Nothing
+        } else {
+            Self::Tabs(ids)
         }
     }
 

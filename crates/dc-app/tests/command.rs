@@ -116,6 +116,7 @@ fn kind(command: &Command) -> &'static str {
         Command::AddTab(_) => "AddTab",
         Command::MoveTab { .. } => "MoveTab",
         Command::UpdateTab(_) => "UpdateTab",
+        Command::UpdateTabs(_) => "UpdateTabs",
         Command::DeleteTabs(_) => "DeleteTabs",
         Command::CentreOnStock(_) => "CentreOnStock",
         Command::FitStockToShapes { .. } => "FitStockToShapes",
@@ -270,6 +271,19 @@ fn every_command() -> Vec<(Project, Command)> {
                 width_mm: 12.0,
                 ..first_tab.clone()
             }),
+        ),
+        (
+            with_tabs.clone(),
+            Command::UpdateTabs(
+                with_tabs
+                    .tabs
+                    .iter()
+                    .map(|t| PlacedTab {
+                        shape: TabShape::Smooth,
+                        ..t.clone()
+                    })
+                    .collect(),
+            ),
         ),
         (with_tabs.clone(), Command::DeleteTabs(vec![first_tab.id])),
         (plaque.clone(), Command::CentreOnStock(vec![instance("i4")])),

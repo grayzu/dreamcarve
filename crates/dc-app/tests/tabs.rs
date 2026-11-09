@@ -25,9 +25,7 @@ use dc_app::viewport::pick::{self, PICK_TOLERANCE_PX};
 use dc_app::viewport::tabs::{self, OutlinePoint};
 use dc_app::{Camera, Command, Hit, Selection};
 use dc_geometry::{Point, Polyline, Transform, Vec2, nearest_point};
-use dc_project::{
-    Operation, OperationId, PlacedTab, Project, TabPlacement, TabShape, TabSpec,
-};
+use dc_project::{Operation, OperationId, PlacedTab, Project, TabPlacement, TabShape, TabSpec};
 
 use common::coaster;
 
@@ -109,7 +107,11 @@ fn place_tabs_equals_tabs_place_and_clears_the_request() {
     let label = h.app.place_tabs(&op).expect("placed");
     assert_eq!(label, "Place 4 tabs");
     assert_eq!(h.app.undo_label(), Some("Place 4 tabs"));
-    assert_eq!(h.app.project().tabs, cli.tabs, "the tabs `tabs place` writes");
+    assert_eq!(
+        h.app.project().tabs,
+        cli.tabs,
+        "the tabs `tabs place` writes"
+    );
     match &h.app.project().operations[0] {
         Operation::Profile(p) => assert_eq!(p.tabs, None, "the request is cleared"),
         other => panic!("a Profile, not {}", other.kind()),
@@ -117,10 +119,7 @@ fn place_tabs_equals_tabs_place_and_clears_the_request() {
     // The saved file is what `place_request` (the CLI's `tabs place`)
     // leaves.
     let (placed, _) = dc_job::tabs::place_request(&project, &op).expect("place_request");
-    assert_eq!(
-        h.save().unwrap(),
-        dc_project::save(&placed).expect("saves")
-    );
+    assert_eq!(h.save().unwrap(), dc_project::save(&placed).expect("saves"));
     // A Profile with no request left has nothing to place.
     assert!(h.app.place_tabs(&op).is_err());
 
@@ -219,7 +218,8 @@ fn tab_drag_snaps_to_the_outline_in_definition_space() {
     );
 
     // Delete removes one; three are left.
-    h.run(Command::DeleteTabs(vec![tab.id.clone()])).expect("deleted");
+    h.run(Command::DeleteTabs(vec![tab.id.clone()]))
+        .expect("deleted");
     assert_eq!(h.app.project().tabs.len(), 3);
 }
 
@@ -299,7 +299,13 @@ fn add_tab_at_clicked_point_with_last_size() {
     // The new tab wins the pick over the coaster it sits on.
     let added_id = added.id.clone();
     let at = h.app.scene().tab(&added_id).expect("in the Scene").at_mm;
-    let hit = pick::pick(h.app.scene(), &camera, camera.to_screen(at), PICK_TOLERANCE_PX, 0);
+    let hit = pick::pick(
+        h.app.scene(),
+        &camera,
+        camera.to_screen(at),
+        PICK_TOLERANCE_PX,
+        0,
+    );
     assert_eq!(hit, Hit::Tab(added_id.clone()));
     assert_eq!(
         Selection::Nothing.clicked(&hit, dc_app::ClickMode::Replace),
@@ -334,12 +340,16 @@ fn hollow_when_no_profile_crosses() {
     let all: Vec<_> = h.app.project().tabs.iter().map(|t| t.id.clone()).collect();
     assert_eq!(tabs::hollow(h.app.project()), all);
 
-    h.run(Command::SetOperationEnabled { id: op, enabled: true })
-        .expect("enabled");
+    h.run(Command::SetOperationEnabled {
+        id: op,
+        enabled: true,
+    })
+    .expect("enabled");
     // A copy of the coaster no Profile targets: a tab on its outline is
     // hollow, and the Profile's own stay crossed.
     let original = h.app.project().instances[0].id.clone();
-    h.run(Command::DuplicateInstances(vec![original])).expect("duplicated");
+    h.run(Command::DuplicateInstances(vec![original]))
+        .expect("duplicated");
     let project = h.app.project().clone();
     let copy = project.instances.last().unwrap();
     let outline = &project.definitions[&copy.definition].profiles[0];

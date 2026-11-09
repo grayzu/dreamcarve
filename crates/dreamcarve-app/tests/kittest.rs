@@ -2116,8 +2116,8 @@ fn start_point_click_on_the_viewport() {
     h.get_by_role_and_label(Role::ListItem, "Cut out").click();
     h.run();
     assert!(
-        h.get_by_label("Place tabs").accesskit_node().is_disabled(),
-        "placing tabs is slice 17's"
+        !h.get_by_label("Place tabs").accesskit_node().is_disabled(),
+        "the Profile's tab request can be placed (#546)"
     );
 
     h.get_by_label("Pick on the view").scroll_to_me();
@@ -2255,5 +2255,74 @@ fn tab_tool_click_adds_a_tab() {
         h.state().app().selection(),
         &dc_app::Selection::Tabs(vec![added.id.clone()])
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 78 in the window (#546): the editor's *Place tabs* places
+/// the Cut out's request as one step; a tab dragged along the outline
+/// lands on the outline, previewed until the release commits one
+/// `MoveTab`, the other tabs untouched; Delete removes the selected tab.
+#[test]
+fn place_drag_and_delete_tabs() {
+    let dir = scratch("tab-drag");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    h.run();
+    h.get_by_label("Place tabs").scroll_to_me();
+    h.run();
+    h.get_by_label("Place tabs").click();
+    h.run();
+    let placed = h.state().app().project().tabs.clone();
+    assert!(!placed.is_empty(), "the request is placed");
+    assert_eq!(
+        h.state().app().undo_label().map(str::to_owned),
+        Some(format!("Place {} tabs", placed.len()))
+    );
+
+    // The lowest tab, on the plaque's bottom edge, dragged 15 mm along it.
+    let mark = h
+        .state()
+        .app()
+        .scene()
+        .tabs()
+        .iter()
+        .min_by(|a, b| a.at_mm.y.total_cmp(&b.at_mm.y))
+        .unwrap()
+        .clone();
+    let steps = undo_steps(&h);
+    let from = common::on_screen(&h, mark.at_mm);
+    let to = common::on_screen(
+        &h,
+        dc_geometry::Point::new(mark.at_mm.x + 15.0, mark.at_mm.y + 1.0),
+    );
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(undo_steps(&h), steps + 1, "one step on release");
+    assert_eq!(h.state().app().undo_label(), Some("Move tab"));
+    let project = h.state().app().project().clone();
+    let moved = project.tabs.iter().find(|t| t.id == mark.id).unwrap();
+    let (_, gap_mm) = dc_job::tabs::along_outline_mm(&project, moved).unwrap();
+    assert!(gap_mm < 1e-6, "on the outline: {gap_mm}");
+    let before = placed.iter().find(|t| t.id == mark.id).unwrap();
+    assert!((moved.x_mm - before.x_mm).abs() > 10.0, "it moved along");
+    for (a, b) in project.tabs.iter().zip(&placed) {
+        if a.id != mark.id {
+            assert_eq!(a, b, "the others stay");
+        }
+    }
+    assert_eq!(
+        h.state().app().selection(),
+        &dc_app::Selection::Tabs(vec![mark.id.clone()])
+    );
+
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(h.state().app().project().tabs.len(), placed.len() - 1);
+    assert_eq!(h.state().app().undo_label(), Some("Delete tab"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

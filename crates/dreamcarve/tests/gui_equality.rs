@@ -208,7 +208,10 @@ fn tabbed_coaster_exports_the_same_program() {
     );
     run(&dir, &["export", "coaster.dcv", "--date", DATE]);
     let cli = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
-    assert!(app_program(&mut harness) == cli, "placed: the program differs");
+    assert!(
+        app_program(&mut harness) == cli,
+        "placed: the program differs"
+    );
 
     // Drag the first tab an eighth of the way round, delete the second,
     // add one with the Tab tool's last-used size.
@@ -229,7 +232,9 @@ fn tabbed_coaster_exports_the_same_program() {
         })
         .expect("moved");
     harness
-        .run(dc_app::Command::DeleteTabs(vec![project.tabs[1].id.clone()]))
+        .run(dc_app::Command::DeleteTabs(vec![
+            project.tabs[1].id.clone(),
+        ]))
         .expect("deleted");
     let (at_mm, _) = outline
         .point_at(outline.length_mm() * 0.7)
@@ -249,5 +254,8 @@ fn tabbed_coaster_exports_the_same_program() {
     std::fs::write(dir.join("edited.dcv"), harness.save().expect("saves")).expect("written");
     run(&dir, &["export", "edited.dcv", "--date", DATE]);
     let cli = std::fs::read_to_string(dir.join("edited.nc")).expect("program written");
-    assert!(app_program(&mut harness) == cli, "edited: the program differs");
+    assert!(
+        app_program(&mut harness) == cli,
+        "edited: the program differs"
+    );
 }
