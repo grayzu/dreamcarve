@@ -49,7 +49,7 @@ use std::fmt::Write as _;
 use dc_cam::{Move, MoveKind, RunLabel, Toolpath};
 use dc_gcode::EmitOp;
 use dc_geometry::{Arc, EPS_MM, Point, Point3, Polyline, Vec2, Vertex};
-use dc_project::{Board, Operation, Project, Tool};
+use dc_project::{Board, Operation, OperationId, Project, Tool};
 
 /// Operation colours, by the run's place in the preview, repeating after
 /// eight: `experience.md`'s light operation set (section 5, "Operation
@@ -264,15 +264,26 @@ pub fn marks(run: &Run<'_>) -> Marks {
     .marks
 }
 
-/// Every enabled Inlay's design as its male cuts it (#498): its targets'
-/// closed outlines mirrored about their centre line
-/// ([`dc_cam::inlay::male_mirror`]), thin black, on the male board.
-fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
-    let _ = writeln!(
-        svg,
-        r##"<g class="male-shapes" fill="none" stroke="#000000" stroke-width="{}">"##,
-        fmt(SHAPE_STROKE_MM)
-    );
+/// One enabled Inlay's design as its male cuts it (#498).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaleShapes {
+    /// The Inlay.
+    pub op: OperationId,
+    /// Its targets' closed outlines placed and mirrored about their centre
+    /// line ([`dc_cam::inlay::male_mirror`]), in the male board's project
+    /// space, mm, Y-up.
+    pub outlines: Vec<Polyline>,
+}
+
+/// Every enabled Inlay's design as its male cuts it (#498), in list order:
+/// what [`render`] draws on the male board, and what the app's Viewport
+/// draws there. An Inlay whose male is not cut (its board's thickness
+/// unset) has none; one whose design cannot be mirrored (a missing
+/// instance, which validation reports) is left out, and so is an outline
+/// its transform cannot place.
+#[must_use]
+pub fn male_shapes(project: &Project) -> Vec<MaleShapes> {
+    let mut out = Vec::new();
     for op in &project.operations {
         let Operation::Inlay(inlay) = op else {
             continue;
@@ -283,6 +294,7 @@ fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
         let Ok(mirror) = dc_cam::inlay::male_mirror(project, &inlay.targets) else {
             continue;
         };
+        let mut outlines = Vec::new();
         for target in &inlay.targets {
             let Some(instance) = project.instances.iter().find(|i| &i.id == target) else {
                 continue;
@@ -291,16 +303,35 @@ fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
                 continue;
             };
             for profile in definition.profiles.iter().filter(|p| p.is_closed()) {
-                let Ok(placed) = instance
+                if let Ok(placed) = instance
                     .transform
                     .apply_polyline(profile)
                     .and_then(|p| mirror.apply_polyline(&p))
-                else {
-                    continue;
-                };
-                if let Some(d) = polyline_path(&placed, frame) {
-                    let _ = writeln!(svg, r#"<path class="male-shape" d="{d}"/>"#);
+                {
+                    outlines.push(placed);
                 }
+            }
+        }
+        out.push(MaleShapes {
+            op: inlay.id.clone(),
+            outlines,
+        });
+    }
+    out
+}
+
+/// Every enabled Inlay's design as its male cuts it ([`male_shapes`]),
+/// thin black, on the male board.
+fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
+    let _ = writeln!(
+        svg,
+        r##"<g class="male-shapes" fill="none" stroke="#000000" stroke-width="{}">"##,
+        fmt(SHAPE_STROKE_MM)
+    );
+    for shapes in male_shapes(project) {
+        for placed in &shapes.outlines {
+            if let Some(d) = polyline_path(placed, frame) {
+                let _ = writeln!(svg, r#"<path class="male-shape" d="{d}"/>"#);
             }
         }
     }

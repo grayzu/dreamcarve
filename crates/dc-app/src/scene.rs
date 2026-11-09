@@ -24,16 +24,23 @@
 //! flattens and coalesces them (`dreamcarve-app::viewport::lod`), never
 //! the toolpath itself.
 //!
-//! Not yet: bitmaps (no picture type before phase 3.4; slices 6 and 15)
-//! and the male board (slice 14), whose runs the Scene holds for the
-//! preview's SVG but the Viewport does not draw yet.
+//! With an enabled Inlay the Scene holds its male board (slice 14, #543;
+//! [`MaleBoardView`]): the board's frame, its origin mark and the Inlay's
+//! design mirrored as the generator mirrors it
+//! ([`dc_job::preview::male_shapes`]), all offset to the right of the
+//! stock by one stock width plus [`MALE_BOARD_GAP_MM`] for display only.
+//! The male runs stay in their board's own space, as `--preview` and the
+//! export read them; the Viewport adds [`Scene::board_offset`] as it
+//! draws them.
+//!
+//! Not yet: bitmaps (no picture type before phase 3.4; slices 6 and 15).
 
 use std::sync::Arc;
 
-use dc_geometry::{EPS_MM, Point, Point3, Polyline, Rect, Vec2};
+use dc_geometry::{EPS_MM, Point, Point3, Polyline, Rect, Transform, Vec2};
 use dc_job::preview::{self, Marks};
 use dc_job::{EmitOp, MoveKind, Toolpath};
-use dc_project::{InstanceId, OperationId, Project, TabId};
+use dc_project::{Board, InstanceId, Operation, OperationId, Project, TabId};
 
 use crate::generation::{Generation, SnapshotId};
 
@@ -56,6 +63,102 @@ pub struct Shape {
     pub flat: Vec<Polyline>,
     /// The outlines' bounding box, mm; `None` when they have no vertex.
     pub bounds: Option<Rect>,
+}
+
+/// The gap between the stock's right edge and the male board's left edge
+/// on the Viewport, mm (`docs/specs/phase-4/design.md`, "Data model →
+/// dc-app": "one stock-width plus 20 mm"). Display only.
+pub const MALE_BOARD_GAP_MM: f64 = 20.0;
+
+/// One Inlay's design on the male board, as its male cuts it: not an
+/// instance, and never selected as one (capability 72); a click on it
+/// selects the Inlay.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaleShape {
+    /// The Inlay.
+    pub op: OperationId,
+    /// Its targets' closed outlines, mirrored as the generator mirrors
+    /// them and offset onto the drawn male board, mm, arcs kept.
+    pub outlines: Vec<Polyline>,
+    /// `outlines` with every arc flattened to [`PICK_FLATTEN_MM`].
+    pub flat: Vec<Polyline>,
+    /// The outlines' bounding box, mm; `None` when they have no vertex.
+    pub bounds: Option<Rect>,
+}
+
+/// The male inlay board as the Viewport draws it (capability 72;
+/// `experience.md`, section 9, "Male inlay board"), in display
+/// coordinates: project millimetres moved right by [`MaleBoardView::offset`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaleBoardView {
+    /// The Inlay whose board it is: the first enabled one that cuts its
+    /// male, else the first enabled one.
+    pub op: OperationId,
+    /// Its name, for the status bar's hover readout.
+    pub name: String,
+    /// Where the board is drawn relative to where it is cut: one stock
+    /// width plus [`MALE_BOARD_GAP_MM`] to the right, mm.
+    pub offset: Vec2,
+    /// The board's outline, offset, mm.
+    pub frame: Rect,
+    /// Its origin mark: the origin preset's point on the board, offset.
+    pub origin_mm: Point,
+    /// Each Inlay's design as its male cuts it, offset; none while no
+    /// Inlay's male board thickness is set (the male board is empty).
+    pub shapes: Vec<MaleShape>,
+}
+
+/// The male board of `project`, when it has an enabled Inlay.
+fn male_board(project: &Project) -> Option<MaleBoardView> {
+    let (inlay, stock) = project.male_board().map_or_else(
+        || {
+            project.operations.iter().find_map(|op| match op {
+                Operation::Inlay(inlay) if inlay.enabled => {
+                    Some((inlay, inlay.male_board.stock(&project.stock)))
+                }
+                _ => None,
+            })
+        },
+        Some,
+    )?;
+    let offset = Vec2::new(project.stock.width_mm + MALE_BOARD_GAP_MM, 0.0);
+    let shift = Transform::translate(offset.x, offset.y);
+    let frame = Rect {
+        min: shift.apply(Point::new(0.0, 0.0)),
+        max: shift.apply(Point::new(stock.width_mm, stock.height_mm)),
+    };
+    let shapes = preview::male_shapes(project)
+        .into_iter()
+        .map(|design| {
+            let outlines: Vec<Polyline> = design
+                .outlines
+                .iter()
+                .filter_map(|o| shift.apply_polyline(o).ok())
+                .collect();
+            let flat = outlines
+                .iter()
+                .map(|o| o.with_arcs_flattened(PICK_FLATTEN_MM))
+                .collect();
+            let bounds = outlines
+                .iter()
+                .filter_map(Polyline::bounds)
+                .fold(None, |acc, b| Some(join(acc, b)));
+            MaleShape {
+                op: design.op,
+                outlines,
+                flat,
+                bounds,
+            }
+        })
+        .collect();
+    Some(MaleBoardView {
+        op: inlay.id.clone(),
+        name: inlay.name.clone(),
+        offset,
+        frame,
+        origin_mm: shift.apply(project.origin.xy.point_mm(&stock)),
+        shapes,
+    })
 }
 
 /// A placed tab, in project space.
@@ -136,6 +239,7 @@ pub struct Scene {
     tabs: Vec<TabMark>,
     operations: Vec<SceneOperation>,
     bounds: Option<Rect>,
+    male_board: Option<MaleBoardView>,
 }
 
 /// Each enabled operation of `project` with `generation`'s state and its
@@ -276,6 +380,7 @@ impl Scene {
             tabs,
             operations: operations(project, generation, &previous.operations),
             bounds,
+            male_board: male_board(project),
         }
     }
 
@@ -351,6 +456,31 @@ impl Scene {
         self.operations
             .iter()
             .flat_map(|o| o.runs.iter().map(|r| &r.run))
+    }
+
+    /// The stored runs that cut `board`, in list order: an Inlay's male
+    /// runs on [`Board::Male`] (#498), every other run on the stock. The
+    /// export dialog's per-board rows read them (slice 18).
+    pub fn runs_on(&self, board: Board) -> impl Iterator<Item = &EmitOp> {
+        self.runs().filter(move |r| r.board == board)
+    }
+
+    /// The male board, with an enabled Inlay (slice 14, #543).
+    #[must_use]
+    pub fn male_board(&self) -> Option<&MaleBoardView> {
+        self.male_board.as_ref()
+    }
+
+    /// Where the Viewport draws the runs that cut `board`, relative to
+    /// their project space, mm: nothing for the stock, the male board's
+    /// offset for its runs; `None` when there is no male board to draw
+    /// them on.
+    #[must_use]
+    pub fn board_offset(&self, board: Board) -> Option<Vec2> {
+        match board {
+            Board::Female => Some(Vec2::new(0.0, 0.0)),
+            Board::Male => self.male_board.as_ref().map(|b| b.offset),
+        }
     }
 
     /// The Viewport's SVG dump: `--preview`'s picture of the stored runs

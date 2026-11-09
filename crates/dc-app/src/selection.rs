@@ -60,9 +60,13 @@ impl Selection {
     /// The selection after a click that hit `hit`. A plain click on
     /// nothing clears; Shift or Ctrl on nothing keeps what there is. Adding
     /// or toggling an instance to a selection of tabs or an operation
-    /// starts an instance selection.
+    /// starts an instance selection. A shape on the male inlay board
+    /// selects its Inlay, whatever the modifier (capability 72).
     #[must_use]
     pub fn clicked(&self, hit: &Hit, mode: ClickMode) -> Self {
+        if let Hit::MaleBoardShape(op) = hit {
+            return Self::Operation(op.clone());
+        }
         if let Hit::Tab(tab) = hit {
             return self.tab_clicked(tab, mode);
         }

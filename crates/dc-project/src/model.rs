@@ -1171,11 +1171,19 @@ impl InlayOp {
     /// set.
     #[must_use]
     pub fn engagement_mm(&self, board: Board) -> Option<f64> {
-        let depth_mm = self.depth_mm?;
         match board {
-            Board::Female => Some(depth_mm),
-            Board::Male => Some(depth_mm - self.glue_gap_mm? + self.plug_depth_mm?),
+            Board::Female => self.depth_mm,
+            Board::Male => Some(self.male_start_plane_mm()? + self.plug_depth_mm?),
         }
+    }
+
+    /// How far below the male board's top its start plane is, millimetres:
+    /// `depth_mm − glue_gap_mm`, where the male's walls pass exactly
+    /// through the design's outline, so the plug is this tall. `None`
+    /// until both are set.
+    #[must_use]
+    pub fn male_start_plane_mm(&self) -> Option<f64> {
+        Some(self.depth_mm? - self.glue_gap_mm?)
     }
 
     /// Whether the male is cut (#498): its board's thickness is set.

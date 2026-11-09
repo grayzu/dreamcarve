@@ -164,13 +164,18 @@ impl Camera {
 }
 
 /// What Fit (F) frames (capability 72, "*Fit* (F) to the stock and
-/// shapes"): the stock's footprint and every visible shape's outlines.
+/// shapes"): the stock's footprint, the male board's beside it
+/// (`experience.md`, section 9: "Fit includes it") and every visible
+/// shape's outlines.
 #[must_use]
 pub fn fit_bounds(project: &Project, scene: &Scene) -> Rect {
-    let stock = Rect {
+    let mut stock = Rect {
         min: Point::new(0.0, 0.0),
         max: Point::new(project.stock.width_mm, project.stock.height_mm),
     };
+    if let Some(board) = scene.male_board() {
+        stock = stock.including(board.frame.min).including(board.frame.max);
+    }
     match scene.shapes_bounds() {
         Some(shapes) => stock.including(shapes.min).including(shapes.max),
         None => stock,

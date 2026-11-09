@@ -40,7 +40,11 @@
 //! read-only row ([`FieldKind::CountersinkDepth`]) in place of the typed
 //! one. Slice 13 (#542) fills the V-Carve, with a switched length for its
 //! flat depth and a table of its own for each clearing pass
-//! ([`CLEARING_PASS`]), edited at the pass's key path.
+//! ([`CLEARING_PASS`]), edited at the pass's key path. Slice 14 (#543)
+//! fills the Inlay: its values once, a Male board group whose width and
+//! height are the stock's while `null` ([`StockDefault`]), a derived line
+//! ([`FieldKind::InlayDerived`]), the clearing list, and a Cut-out group
+//! whose tabs are the Profile's tab rows at `cut_out.tabs`.
 
 use dc_project::{Operation, Project, Tool};
 use serde_json::{Value, json};
@@ -61,12 +65,16 @@ pub enum Group {
     Tool,
     /// Depths, step-downs, allowances.
     Depth,
+    /// An Inlay's male board (capability 68a; slice 14, #543).
+    MaleBoard,
     /// How the cut covers its shapes.
     Strategy,
     /// How the bit enters and leaves.
     EntryAndLeads,
     /// Corner relief and tabs.
     CornersAndTabs,
+    /// An Inlay's cut-out (capability 68; slice 14, #543).
+    CutOut,
     /// The machining order.
     Order,
     /// Safe Z and retracts.
@@ -74,15 +82,19 @@ pub enum Group {
 }
 
 impl Group {
-    /// The groups in capability 66's order, the only order they render in.
-    pub const ALL: [Self; 9] = [
+    /// The groups in capability 66's order, the only order they render in,
+    /// with an Inlay's Male board after Depth and its Cut-out before Order
+    /// (capability 68's Inlay line, mock-up 06).
+    pub const ALL: [Self; 11] = [
         Self::Identity,
         Self::Targets,
         Self::Tool,
         Self::Depth,
+        Self::MaleBoard,
         Self::Strategy,
         Self::EntryAndLeads,
         Self::CornersAndTabs,
+        Self::CutOut,
         Self::Order,
         Self::Heights,
     ];
@@ -95,9 +107,11 @@ impl Group {
             Self::Targets => StrKey::EditorGroupTargets,
             Self::Tool => StrKey::EditorGroupTool,
             Self::Depth => StrKey::EditorGroupDepth,
+            Self::MaleBoard => StrKey::EditorGroupMaleBoard,
             Self::Strategy => StrKey::EditorGroupStrategy,
             Self::EntryAndLeads => StrKey::EditorGroupEntryAndLeads,
             Self::CornersAndTabs => StrKey::EditorGroupCornersAndTabs,
+            Self::CutOut => StrKey::EditorGroupCutOut,
             Self::Order => StrKey::EditorGroupOrder,
             Self::Heights => StrKey::EditorGroupHeights,
         }
@@ -112,9 +126,11 @@ impl Group {
             Self::Targets => "operation.targets",
             Self::Tool => "operation.tool",
             Self::Depth => "operation.depth",
+            Self::MaleBoard => "operation.male_board",
             Self::Strategy => "operation.strategy",
             Self::EntryAndLeads => "operation.entry",
             Self::CornersAndTabs => "operation.corners",
+            Self::CutOut => "operation.cut_out",
             Self::Order => "operation.order",
             Self::Heights => "operation.heights",
         }
@@ -147,6 +163,27 @@ impl ToolDefault {
         match self {
             Self::StepDown => "step_down_mm",
             Self::StepOver => "step_over_fraction",
+        }
+    }
+}
+
+/// A stock value a `null` field defaults to: an Inlay's male board's width
+/// and height (capability 68a, *same as stock*).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StockDefault {
+    /// The stock's `width_mm`.
+    Width,
+    /// The stock's `height_mm`.
+    Height,
+}
+
+impl StockDefault {
+    /// The stock's value, mm.
+    #[must_use]
+    pub const fn of(self, stock: &dc_project::Stock) -> f64 {
+        match self {
+            Self::Width => stock.width_mm,
+            Self::Height => stock.height_mm,
         }
     }
 }
@@ -273,10 +310,12 @@ pub enum FieldKind {
     CountersinkDepth,
     /// A carve's clearing passes (capability 70).
     ClearingList,
-    /// An Inlay's cut-out.
-    CutOut,
-    /// An Inlay's male board (capability 68a).
-    MaleBoard,
+    /// An Inlay's derived line (capability 68a; slice 14, #543):
+    /// read-only, the male's start plane, its band floor and its flank's
+    /// engagement against the V-bit's cone ([`super::male_planes`]),
+    /// never typed and never stored. Keyed `male_board`, which every Inlay
+    /// record holds and no other row edits.
+    InlayDerived,
 }
 
 impl FieldKind {
@@ -284,7 +323,7 @@ impl FieldKind {
     /// under its key is its own.
     #[must_use]
     pub const fn is_block(self) -> bool {
-        matches!(self, Self::ClearingList | Self::CutOut | Self::MaleBoard)
+        matches!(self, Self::ClearingList)
     }
 
     /// What turning the row's switch on writes, for a switch: a feature
@@ -333,6 +372,8 @@ pub struct Row {
     pub help: StrKey,
     /// The tool's value a `null` here defaults to.
     pub tool_default: Option<ToolDefault>,
+    /// The stock's value a `null` here defaults to.
+    pub stock_default: Option<StockDefault>,
     /// A further rule, for a value the file holds and the generator
     /// ignores; the row applies only when it holds of the record.
     pub applies: Option<fn(&Value) -> bool>,
@@ -355,6 +396,17 @@ impl Row {
         }
     }
 
+    /// Whether its control is indented under the feature or variant its
+    /// key is nested in (`entry.ramp.angle_deg`). A derived value stands
+    /// where the value it replaces would, and a male board's sizes are
+    /// their own group's, so neither is.
+    #[must_use]
+    pub fn indented(&self) -> bool {
+        self.key.contains('.')
+            && !matches!(self.kind, FieldKind::CountersinkDepth)
+            && self.group != Group::MaleBoard
+    }
+
     /// Whether it applies to `record`: its path is there, and its rule
     /// holds.
     #[must_use]
@@ -372,7 +424,22 @@ const fn row(group: Group, key: &'static str, kind: FieldKind, label: StrKey, he
         label,
         help,
         tool_default: None,
+        stock_default: None,
         applies: None,
+    }
+}
+
+/// [`row`] defaulting to the stock's `default` while `null`.
+const fn stock_row(
+    group: Group,
+    key: &'static str,
+    label: StrKey,
+    help: StrKey,
+    default: StockDefault,
+) -> Row {
+    Row {
+        stock_default: Some(default),
+        ..row(group, key, FieldKind::Length, label, help)
     }
 }
 
@@ -1267,8 +1334,200 @@ pub const CLEARING_PASS: &[Row] = &[
     ),
 ];
 
-/// The rows slice 10 gives an Inlay; slice 14 (#543) adds the rest.
-const INLAY: &[Row] = &[NAME, ENABLED, TARGETS, TOOL, DEPTH, SAFE_Z];
+/// An Inlay's cut-out as it is switched on (the Inlay chapter's "Cutting
+/// the plug free"): the project's smallest flat end mill (the first
+/// listed of equals; `""` with none, which validation names), no tabs,
+/// and no allowance below the male board until the user types one.
+fn cut_out_template(project: &Project) -> Value {
+    let tool = super::clearing::tools(project)
+        .into_iter()
+        .filter(|t| t.diameter_mm.is_finite())
+        .fold(None::<&Tool>, |best, t| match best {
+            Some(b) if b.diameter_mm <= t.diameter_mm => Some(b),
+            _ => Some(t),
+        })
+        .map_or("", |t| t.id.as_str());
+    json!({ "tool": tool, "tabs": null, "through_cut_allowance_mm": 0.0 })
+}
+
+/// Capability 68's Inlay line and 68a, every field (slice 14, #543; mock-up
+/// 06, right): the values once, for both boards; the male board's sizes,
+/// the stock's while `null`, and its thickness, required for the male;
+/// the derived line under Depth; the clearing list (slice 13's block);
+/// the cut-out, off at `null`, with the Profile's tab rows at
+/// `cut_out.tabs`. No depth or thickness is ever written by the app
+/// (S20).
+const INLAY: &[Row] = &[
+    NAME,
+    ENABLED,
+    TARGETS,
+    TOOL,
+    row(
+        Group::Depth,
+        "depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldInlayDepth,
+        StrKey::EditorFieldInlayDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "glue_gap_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldGlueGap,
+        StrKey::EditorFieldGlueGapHelp,
+    ),
+    row(
+        Group::Depth,
+        "plug_depth_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldPlugDepth,
+        StrKey::EditorFieldPlugDepthHelp,
+    ),
+    row(
+        Group::Depth,
+        "margin_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMargin,
+        StrKey::EditorFieldMarginHelp,
+    ),
+    row(
+        Group::Depth,
+        "outline_rounding_mm",
+        FieldKind::SwitchedLength,
+        StrKey::EditorFieldOutlineRounding,
+        StrKey::EditorFieldOutlineRoundingHelp,
+    ),
+    THROUGH_CUT_ALLOWANCE,
+    row(
+        Group::Depth,
+        "male_board",
+        FieldKind::InlayDerived,
+        StrKey::EditorFieldInlayDerived,
+        StrKey::EditorFieldInlayDerivedHelp,
+    ),
+    stock_row(
+        Group::MaleBoard,
+        "male_board.width_mm",
+        StrKey::EditorFieldMaleWidth,
+        StrKey::EditorFieldMaleWidthHelp,
+        StockDefault::Width,
+    ),
+    stock_row(
+        Group::MaleBoard,
+        "male_board.height_mm",
+        StrKey::EditorFieldMaleHeight,
+        StrKey::EditorFieldMaleHeightHelp,
+        StockDefault::Height,
+    ),
+    row(
+        Group::MaleBoard,
+        "male_board.thickness_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMaleThickness,
+        StrKey::EditorFieldMaleThicknessHelp,
+    ),
+    tool_row(
+        Group::Strategy,
+        "step_over_fraction",
+        FieldKind::Percentage,
+        StrKey::EditorFieldFloorStepOver,
+        StrKey::EditorFieldFloorStepOverHelp,
+        ToolDefault::StepOver,
+    ),
+    row(
+        Group::Strategy,
+        "clearing",
+        FieldKind::ClearingList,
+        StrKey::EditorFieldClearing,
+        StrKey::EditorFieldInlayClearingHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out",
+        FieldKind::Toggle(cut_out_template),
+        StrKey::EditorFieldCutOut,
+        StrKey::EditorFieldCutOutHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tool",
+        FieldKind::ToolPicker,
+        StrKey::EditorFieldCutOutTool,
+        StrKey::EditorFieldCutOutToolHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs",
+        FieldKind::Toggle(tab_request_template),
+        StrKey::EditorFieldCutOutTabs,
+        StrKey::EditorFieldCutOutTabsHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.placement",
+        FieldKind::Choice(TAB_PLACEMENTS),
+        StrKey::EditorFieldTabPlacement,
+        StrKey::EditorFieldTabPlacementHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.placement.count",
+        FieldKind::Count,
+        StrKey::EditorFieldTabCount,
+        StrKey::EditorFieldTabCountHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.placement.distances_mm",
+        FieldKind::LengthList,
+        StrKey::EditorFieldTabDistances,
+        StrKey::EditorFieldTabDistancesHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.width_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldTabWidth,
+        StrKey::EditorFieldTabWidthHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.height_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldTabHeight,
+        StrKey::EditorFieldCutOutTabHeightHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.shape",
+        FieldKind::Choice(TAB_SHAPES),
+        StrKey::EditorFieldTabShape,
+        StrKey::EditorFieldTabShapeHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.on_holes",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldTabOnHoles,
+        StrKey::EditorFieldTabOnHolesHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.tabs.avoid_corners",
+        FieldKind::Checkbox,
+        StrKey::EditorFieldTabAvoidCorners,
+        StrKey::EditorFieldTabAvoidCornersHelp,
+    ),
+    row(
+        Group::CutOut,
+        "cut_out.through_cut_allowance_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldCutOutAllowance,
+        StrKey::EditorFieldCutOutAllowanceHelp,
+    ),
+    MACHINING_ORDER,
+    SAFE_Z,
+];
 
 /// Every row of `kind`, in render order (capability 68). Empty for a
 /// Photo V-Carve, which has no record before phase 3.4 (slice 15, #544).
