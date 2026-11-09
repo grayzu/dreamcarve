@@ -105,6 +105,10 @@ rfd = "0.17"
 # harness"): egui's harness, driven through the accessibility tree, with the
 # wgpu renderer for the smoke test's one frame.
 egui_kittest = { version = "0.37", features = ["eframe", "snapshot", "wgpu"] }
+# The clipboard window test (dev-dependency only, #581): reads the OS
+# clipboard back through arboard, the crate eframe's `clipboard` feature
+# copies with (through egui-winit), so already in the tree.
+arboard = { version = "3.7", default-features = false }
 
 # Lints shared by every crate (`docs/rust-guidelines.md`, "Toolchain and
 # workspace"). Tests and the `dreamcarve` binary relax the unwrap/expect/panic

@@ -2195,3 +2195,225 @@ fn countersink_depth_shows_derived_read_only() {
     assert_eq!(undo_steps(&h), steps);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Ticks library row `name` in the open Tool Library sheet.
+fn tick_library_row(h: &mut Harness<'_, dreamcarve_app::Shell>, name: &str) {
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, name)
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::CheckBox, name)
+        .click();
+    h.run();
+}
+
+/// #581, decision 2 (#537 deviation 7): the Tool Library's *Remove* asks
+/// first, naming the ticked tools, in place of the table (never a sheet
+/// above a sheet). *Cancel* keeps them and leaves the file alone;
+/// *Remove* takes them out of the library file. The library is outside
+/// project history, so the project does not change either way.
+#[test]
+fn library_remove_asks_and_names_the_tools() {
+    let dir = scratch("library-remove");
+    let config = dir.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    let bytes = std::fs::read(common::fixture("fusion/sample.tools")).unwrap();
+    let library = dc_app::library::import(&dc_library::Library::default(), &bytes, false)
+        .unwrap()
+        .library;
+    let written = dc_library::save(&library).unwrap();
+    std::fs::write(config.join("tools.json"), &written).unwrap();
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    let project = h.state().app().project().clone();
+
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    tick_library_row(&mut h, "1/4 in Flat End Mill");
+    tick_library_row(&mut h, "5 mm Drill");
+
+    // Remove asks, naming both in library order, and writes nothing yet.
+    let question = "Remove 2 tools from your library: 5 mm Drill, 1/4 in Flat End Mill? \
+                    Projects keep their copies.";
+    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    h.run();
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label(question)
+            .is_some(),
+        "the sheet asks, naming the tools"
+    );
+    assert_eq!(
+        std::fs::read_to_string(config.join("tools.json")).unwrap(),
+        written,
+        "nothing is removed before the answer"
+    );
+
+    // Cancel keeps them, still ticked.
+    h.get_by_role(Role::Dialog).get_by_label("Cancel").click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label(question).is_none(),
+        "the question goes"
+    );
+    for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        assert!(
+            sheet
+                .query_by_role_and_label(Role::CheckBox, name)
+                .is_some(),
+            "{name} is still in the library"
+        );
+    }
+    assert_eq!(
+        std::fs::read_to_string(config.join("tools.json")).unwrap(),
+        written,
+        "Cancel leaves the library file alone"
+    );
+
+    // Remove, then Remove: both go, from the file too.
+    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    h.run();
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label(question)
+            .is_some()
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(sheet.query_by_label(question).is_none());
+    for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        assert!(
+            sheet
+                .query_by_role_and_label(Role::CheckBox, name)
+                .is_none(),
+            "{name} is removed"
+        );
+    }
+    let mut expected = library.clone();
+    for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        let id = expected
+            .tools
+            .iter()
+            .find(|t| t.tool.name == name)
+            .unwrap()
+            .id
+            .clone();
+        dc_library::remove(&mut expected, id.as_str()).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(config.join("tools.json")).unwrap(),
+        dc_library::save(&expected).unwrap(),
+        "the file is the library without them"
+    );
+    assert_eq!(
+        h.state().app().project(),
+        &project,
+        "projects keep their copies"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #581, decision 3 (#538): the Warnings drawer's *Copy* reaches the OS
+/// clipboard. The shell hands egui `check`'s text; eframe's window loop
+/// gives it to egui-winit's clipboard, which is the OS clipboard (arboard)
+/// only with eframe's `clipboard` feature, and a store inside the process
+/// without it. The test checks the three links: *Copy* hands egui
+/// `check`'s text; the app's own (non-dev) dependencies reach arboard
+/// through egui-winit's `clipboard` feature; and the OS clipboard, through
+/// arboard, holds that text as copied. egui-winit's clipboard itself is
+/// not built here: its constructor is `unsafe`, which the workspace
+/// forbids. The last link is skipped, saying why, where the machine has
+/// no clipboard (Linux CI has no display server).
+#[test]
+fn warnings_copy_reaches_the_clipboard() {
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into());
+    let tree = std::process::Command::new(cargo)
+        .current_dir(common::repo_root())
+        .args(["tree", "--locked", "-p", "dreamcarve-app", "-i", "arboard"])
+        .args([
+            "-e",
+            "normal,features",
+            "--target",
+            "all",
+            "--color",
+            "never",
+        ])
+        .output()
+        .expect("cargo tree runs");
+    let tree = String::from_utf8_lossy(&tree.stdout);
+    assert!(
+        tree.contains("egui-winit feature \"clipboard\"")
+            && tree.contains("eframe feature \"clipboard\""),
+        "the app links arboard through eframe's `clipboard` feature:\n{tree}"
+    );
+
+    let dir = scratch("warnings-clipboard");
+    let plaque = dir.join("plaque.dcv");
+    std::fs::copy(
+        common::repo_root()
+            .join("crates/dreamcarve/tests/fixtures/holds-slug-migration/plaque.dcv"),
+        &plaque,
+    )
+    .expect("fixture copied");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    let check = dc_app::warnings::copy_text(h.state().app());
+    assert!(!check.is_empty(), "the plaque has findings to copy");
+
+    h.get_by_label("Warnings").click();
+    h.run();
+    h.get_by_label("Copy").click();
+    h.step();
+    let copied: Vec<String> = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .filter_map(|c| match c {
+            egui::OutputCommand::CopyText(text) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        copied,
+        std::slice::from_ref(&check),
+        "Copy hands egui check's text"
+    );
+
+    h.run();
+    std::fs::remove_dir_all(&dir).unwrap();
+
+    // What egui-winit's clipboard does with the command, with the feature on.
+    let Ok(mut os) = arboard::Clipboard::new() else {
+        println!(
+            "warnings_copy_reaches_the_clipboard: this machine has no clipboard (no \
+             display server), so the OS clipboard is not read back"
+        );
+        return;
+    };
+    for text in copied {
+        os.set_text(text).expect("the clipboard takes the text");
+    }
+    assert_eq!(
+        os.get_text().expect("the clipboard holds text"),
+        check,
+        "the OS clipboard holds check's text"
+    );
+}

@@ -453,8 +453,10 @@ fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, out: &mut Vec<Action>) 
     });
     combo.labelled_by(label.id);
     if chosen != current {
-        let next = tools::set_kind(tool, chosen);
-        out.push(Action::Run(Box::new(Command::UpdateTool(next))));
+        let tools::KindSwitch::Update(next) = tools::set_kind(tool, chosen) else {
+            return;
+        };
+        out.push(Action::Run(Box::new(Command::UpdateTool(*next))));
     }
     ui.add_space(4.0);
 }

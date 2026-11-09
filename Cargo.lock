@@ -1053,6 +1053,7 @@ dependencies = [
 name = "dreamcarve-app"
 version = "0.2.1"
 dependencies = [
+ "arboard",
  "clap",
  "dc-app",
  "dc-geometry",
@@ -3642,6 +3643,7 @@ name = "third-party-licenses"
 version = "0.2.1"
 dependencies = [
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

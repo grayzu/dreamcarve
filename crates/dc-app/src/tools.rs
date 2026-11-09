@@ -116,10 +116,37 @@ impl KindChoice {
 /// the app never fills in (S20).
 pub const NEW_V_BIT_ANGLE_DEG: f64 = 90.0;
 
+/// What choosing a cutter type does to a tool.
+#[derive(Debug, Clone, PartialEq)]
+pub enum KindSwitch {
+    /// Nothing: the tool already has that type.
+    Unchanged,
+    /// The tool with its new type.
+    Update(Box<Tool>),
+    /// The switch to V-bit is held until an included angle is typed.
+    HoldForAngle,
+}
+
+/// What choosing `choice` does to `tool`.
+#[must_use]
+pub fn set_kind(tool: &Tool, choice: KindChoice) -> KindSwitch {
+    KindSwitch::Update(Box::new(with_kind(tool, choice)))
+}
+
+/// The held switch of `tool` to V-bit, finished with the angle typed.
+///
+/// # Errors
+///
+/// [`CommandError::NotAQuantity`] when the text is not an angle.
+pub fn finish_v_bit(tool: &Tool, text: &str) -> Result<Option<Command>, CommandError> {
+    let _ = (tool, text);
+    Ok(None)
+}
+
 /// `tool` with cutter type `choice`. A V-bit keeps its angle; a tool
 /// turned into one starts at [`NEW_V_BIT_ANGLE_DEG`].
 #[must_use]
-pub fn set_kind(tool: &Tool, choice: KindChoice) -> Tool {
+fn with_kind(tool: &Tool, choice: KindChoice) -> Tool {
     let cutter = match (choice, &tool.cutter) {
         (KindChoice::VBit, ToolKind::VBit { included_angle_deg }) => ToolKind::VBit {
             included_angle_deg: *included_angle_deg,

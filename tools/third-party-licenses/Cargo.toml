@@ -23,5 +23,9 @@ path = "src/main.rs"
 [dependencies]
 thiserror.workspace = true
 
+[dev-dependencies]
+# `tests/deny_policy.rs` reads `deny.toml`.
+toml.workspace = true
+
 [lints]
 workspace = true
