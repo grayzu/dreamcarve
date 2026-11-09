@@ -2195,3 +2195,65 @@ fn countersink_depth_shows_derived_read_only() {
     assert_eq!(undo_steps(&h), steps);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Acceptance 78 (functional capability 69; `experience.md`, section 8,
+/// "Tab dragging"; #546): the toolbar's Tab tool arms the Viewport; a
+/// click on the square's outline adds a tab there, in the square's
+/// definition space, with the last-used size from the preferences, as one
+/// undo step. The tool stays armed until Escape; after it a click on the
+/// new tab selects the tab, which wins over the square it sits on.
+#[test]
+fn tab_tool_click_adds_a_tab() {
+    let dir = scratch("tab-tool");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let before = h.state().app().project().tabs.clone();
+    h.get_by_label("Tab tool").click();
+    h.run();
+
+    // The square's left edge (x 70, y 18–48 in project space).
+    let square = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    let under = world_at(&h, square);
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+
+    let project = h.state().app().project().clone();
+    assert_eq!(project.tabs.len(), before.len() + 1, "one tab added");
+    let added = project.tabs.last().unwrap().clone();
+    assert_eq!(added.instance.as_str(), "i4", "on the square");
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| i.id == added.instance)
+        .unwrap();
+    let placed = instance
+        .transform
+        .apply(dc_geometry::Point::new(added.x_mm, added.y_mm));
+    assert!(
+        (placed.x - 70.0).abs() < 1e-6 && (placed.y - under.y).abs() < 1e-2,
+        "the outline's point under the click: {placed:?}, clicked {under:?}"
+    );
+    let size = h.state().app().prefs().tab;
+    assert_eq!(
+        (added.width_mm, added.height_mm, added.shape),
+        (size.width_mm, size.height_mm, size.shape),
+        "the last-used size"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Add tab"));
+
+    // Escape disarms; a click on the tab selects it.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let tab = common::on_screen(&h, placed);
+    common::click_at(&mut h, tab, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().project().tabs.len(), before.len() + 1);
+    assert_eq!(
+        h.state().app().selection(),
+        &dc_app::Selection::Tabs(vec![added.id.clone()])
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
