@@ -507,7 +507,10 @@ mod tests {
     fn chapter_table_matches_the_shortcut_table() {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../docs/book/src/user-guide/keyboard.md");
-        let chapter = std::fs::read_to_string(&path).unwrap_or_default();
+        // A Windows checkout may carry CRLF line endings.
+        let chapter = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .replace("\r\n", "\n");
         let table = chapter
             .split_once(BEGIN)
             .and_then(|(_, rest)| rest.split_once(END))
