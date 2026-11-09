@@ -143,6 +143,9 @@ pub enum Command {
     },
     /// Replace the tab with the same id.
     UpdateTab(PlacedTab),
+    /// Replace each tab with the same id, one step (the Properties panel's
+    /// width, height or shape over several selected tabs).
+    UpdateTabs(Vec<PlacedTab>),
     /// Remove placed tabs.
     DeleteTabs(Vec<TabId>),
     /// Move instances so their joint bounding box is centred on the stock
@@ -321,6 +324,16 @@ impl Command {
                 instances::find(project, &tab.instance)?;
                 *find_tab_mut(&mut next, &tab.id)? = tab.clone();
             }
+            Self::UpdateTabs(tabs) => {
+                if tabs.is_empty() {
+                    return Err(CommandError::NothingSelected);
+                }
+                for tab in tabs {
+                    check_tab(tab)?;
+                    instances::find(project, &tab.instance)?;
+                    *find_tab_mut(&mut next, &tab.id)? = tab.clone();
+                }
+            }
             Self::DeleteTabs(ids) => {
                 if ids.is_empty() {
                     return Err(CommandError::NothingSelected);
@@ -454,6 +467,16 @@ impl Command {
             Self::AddTab(_) => plain(StrKey::CommandLabelAddTab),
             Self::MoveTab { .. } => plain(StrKey::CommandLabelMoveTab),
             Self::UpdateTab(_) => plain(StrKey::CommandLabelUpdateTab),
+            Self::UpdateTabs(tabs) => {
+                if tabs.len() == 1 {
+                    plain(StrKey::CommandLabelUpdateTab)
+                } else {
+                    strings.fmt(
+                        StrKey::CommandLabelUpdateTabs,
+                        &[("count", &tabs.len().to_string())],
+                    )
+                }
+            }
             Self::DeleteTabs(ids) => {
                 if ids.len() == 1 {
                     plain(StrKey::CommandLabelDeleteTab)

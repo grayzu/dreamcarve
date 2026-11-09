@@ -713,9 +713,9 @@ pub(super) fn tool_note(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) {
     }
 }
 
-/// A tab request's switch, with *Place tabs* beside it: shown, and
-/// disabled with its reason, until slice 17 (#546) places requests from
-/// the editor (capability 69).
+/// A tab request's switch, with *Place tabs* beside it (capability 69):
+/// it turns the request into placed tabs, as `tabs place` does, and is
+/// disabled with its reason while the request is off (#546).
 fn tab_request(
     ui: &mut Ui,
     cx: &Cx<'_>,
@@ -723,16 +723,21 @@ fn tab_request(
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
     let response = switch(ui, cx, &Slot::of(row), out);
+    let requested = matches!(cx.op, Operation::Profile(p) if p.tabs.is_some());
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui.add_enabled_ui(false, |ui| {
-            let spec = ButtonSpec::new(
-                ButtonKind::Secondary,
-                cx.strings.get(StrKey::EditorPlaceTabs),
-            )
-            .tooltip(cx.strings.get(StrKey::EditorPlaceTabsLater))
-            .enabled(false);
-            button(ui, spec);
-        });
+        let spec = ButtonSpec::new(
+            ButtonKind::Secondary,
+            cx.strings.get(StrKey::EditorPlaceTabs),
+        )
+        .tooltip(cx.strings.get(if requested {
+            StrKey::EditorPlaceTabsHelp
+        } else {
+            StrKey::EditorPlaceTabsOff
+        }))
+        .enabled(requested);
+        if button(ui, spec).clicked() {
+            out.push(Action::PlaceTabs(cx.op.id().clone()));
+        }
     });
     response
 }

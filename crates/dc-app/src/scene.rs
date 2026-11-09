@@ -6,7 +6,8 @@
 //! Every visible instance's outlines in project space, placed by the
 //! instance's transform exactly as the generators and the preview place
 //! them (`Transform::apply_polyline`), each placed tab's project-space
-//! point, and each enabled operation's generation state. The app rebuilds
+//! point with the enabled Profiles that cross it (none draws it hollow,
+//! slice 17), and each enabled operation's generation state. The app rebuilds
 //! it when the snapshot or a generation result changes, never per frame,
 //! so selecting, panning and zooming cost nothing here.
 //!
@@ -29,7 +30,7 @@
 
 use std::sync::Arc;
 
-use dc_geometry::{EPS_MM, Point, Point3, Polyline, Rect};
+use dc_geometry::{EPS_MM, Point, Point3, Polyline, Rect, Vec2};
 use dc_job::preview::{self, Marks};
 use dc_job::{EmitOp, MoveKind, Toolpath};
 use dc_project::{InstanceId, OperationId, Project, TabId};
@@ -64,6 +65,24 @@ pub struct TabMark {
     pub id: TabId,
     /// Its centre placed by its instance's transform, mm.
     pub at_mm: Point,
+    /// The instance whose outline holds it.
+    pub instance: InstanceId,
+    /// Its width along the outline, mm.
+    pub width_mm: f64,
+    /// The outline's direction at the point of it nearest the tab, a unit
+    /// vector in project space: the tab's span runs along it.
+    pub tangent: Vec2,
+    /// The enabled Profiles that cross it, in operation order
+    /// (`dc_job::tabs::crossed_by`, slice 17); empty draws it hollow.
+    pub crossed_by: Vec<OperationId>,
+}
+
+impl TabMark {
+    /// Whether no enabled Profile crosses it: the Viewport draws it hollow.
+    #[must_use]
+    pub fn hollow(&self) -> bool {
+        self.crossed_by.is_empty()
+    }
 }
 
 /// One tool run of an operation, as the Viewport draws it.
@@ -170,6 +189,27 @@ fn operations(
         .collect()
 }
 
+/// Every placed tab of `project` whose instance it has, placed, with the
+/// outline's direction at it and the enabled Profiles that cross it.
+fn tab_marks(project: &Project) -> Vec<TabMark> {
+    let mut crossings = crate::viewport::tabs::crossings(project);
+    project
+        .tabs
+        .iter()
+        .filter_map(|tab| {
+            let (at_mm, tangent) = crate::viewport::tabs::tab_frame(project, tab)?;
+            Some(TabMark {
+                id: tab.id.clone(),
+                at_mm,
+                instance: tab.instance.clone(),
+                width_mm: tab.width_mm,
+                tangent,
+                crossed_by: crossings.remove(&tab.id).unwrap_or_default(),
+            })
+        })
+        .collect()
+}
+
 /// The joint box of `a` and `b`.
 fn join(a: Option<Rect>, b: Rect) -> Rect {
     a.map_or(b, |a| a.including(b.min).including(b.max))
@@ -228,17 +268,7 @@ impl Scene {
                 bounds: shape_bounds,
             });
         }
-        let tabs = project
-            .tabs
-            .iter()
-            .filter_map(|tab| {
-                let instance = project.instances.iter().find(|i| i.id == tab.instance)?;
-                Some(TabMark {
-                    id: tab.id.clone(),
-                    at_mm: instance.transform.apply(Point::new(tab.x_mm, tab.y_mm)),
-                })
-            })
-            .collect();
+        let tabs = tab_marks(project);
         Self {
             revision,
             shapes_revision: revision,
@@ -295,6 +325,12 @@ impl Scene {
     #[must_use]
     pub fn tabs(&self) -> &[TabMark] {
         &self.tabs
+    }
+
+    /// The placed tab `id`, if it is in the Scene.
+    #[must_use]
+    pub fn tab(&self, id: &TabId) -> Option<&TabMark> {
+        self.tabs.iter().find(|t| t.id == *id)
     }
 
     /// The enabled operations, in list order.

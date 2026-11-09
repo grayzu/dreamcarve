@@ -10,6 +10,8 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use dc_project::TabShape;
+
 use crate::view::{ColourMode, Visibility};
 
 /// Everything the app remembers between sessions.
@@ -33,6 +35,31 @@ pub struct Prefs {
     pub export_dirs: BTreeMap<PathBuf, PathBuf>,
     /// Light or dark, or the system's choice.
     pub theme: Theme,
+    /// The last-used tab size, which the Tab tool adds tabs with
+    /// (functional spec, capability 69).
+    pub tab: TabSize,
+}
+
+/// A placed tab's width, height and shape, as the Tab tool adds it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TabSize {
+    /// Length along the outline, mm.
+    pub width_mm: f64,
+    /// Top above the stock bottom, mm.
+    pub height_mm: f64,
+    /// Cross-section.
+    pub shape: TabShape,
+}
+
+impl Default for TabSize {
+    /// `init`'s and `tabs place`'s: 8 × 3 mm, square-shouldered.
+    fn default() -> Self {
+        Self {
+            width_mm: 8.0,
+            height_mm: 3.0,
+            shape: TabShape::Rect,
+        }
+    }
 }
 
 impl Prefs {

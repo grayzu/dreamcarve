@@ -26,10 +26,11 @@
 //! even-odd over each outline flattened at [`crate::scene::PICK_FLATTEN_MM`].
 
 use dc_geometry::{Point, Polyline, Rect, point_segment_distance_mm};
-use dc_project::InstanceId;
+use dc_project::{InstanceId, TabId};
 
 use crate::scene::{Scene, Shape};
 use crate::viewport::camera::{Camera, Pos};
+use crate::viewport::tabs;
 
 /// How far from an outline a click still hits it, logical pixels
 /// (PureCutCNC's `pointNearProfile` default).
@@ -41,12 +42,14 @@ const TIE_PX: f64 = 0.5;
 /// place" for [`ClickCycle`], logical pixels.
 const SAME_PLACE_PX: f64 = 3.0;
 
-/// What a click on the Viewport lands on. Tabs, toolpaths and the male
-/// board's shapes join with the slices that draw them (17, 16, 14).
+/// What a click on the Viewport lands on. Toolpaths and the male board's
+/// shapes join with the slices that draw them (16, 14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
     /// A feature instance.
     Instance(InstanceId),
+    /// A placed tab (slice 17): it wins over the shape it sits on.
+    Tab(TabId),
     /// Empty stock or empty stage.
     Nothing,
 }
@@ -168,10 +171,14 @@ pub fn candidates(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) ->
         .collect()
 }
 
-/// What a click at pane point `at` picks: the `cycle`-th of
-/// [`candidates`], wrapping, or [`Hit::Nothing`].
+/// What a click at pane point `at` picks: a placed tab within the
+/// tolerance ([`tabs::tab_at`]), else the `cycle`-th of [`candidates`],
+/// wrapping, or [`Hit::Nothing`].
 #[must_use]
 pub fn pick(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64, cycle: usize) -> Hit {
+    if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
+        return Hit::Tab(tab);
+    }
     let found = candidates(scene, camera, at, tolerance_px);
     match found.len() {
         0 => Hit::Nothing,
@@ -267,6 +274,10 @@ pub struct ClickCycle {
 impl ClickCycle {
     /// What a click at pane point `at` picks, remembering it for the next.
     pub fn click(&mut self, scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) -> Hit {
+        if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
+            self.last = None;
+            return Hit::Tab(tab);
+        }
         let found = candidates(scene, camera, at, tolerance_px);
         let index = match &self.last {
             Some((pos, ids, index)) if pos.distance_to(at) <= SAME_PLACE_PX && *ids == found => {

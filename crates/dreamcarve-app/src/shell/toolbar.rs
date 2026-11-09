@@ -5,7 +5,8 @@
 //! 2, "Menu bar and toolbar"): 40 px on `surface.panel`, quiet buttons with
 //! a 20-px icon and a label in groups 16 px apart, the file name and the
 //! unsaved dot right of centre, and Export as the one primary button at
-//! the right end. What later slices bring (Picture, the Tab tool, Export)
+//! the right end. The Tab tool arms the Viewport's tab adding (#546).
+//! What later slices bring (Picture, Export)
 //! is shown disabled with the reason.
 
 use dc_app::StrKey;
@@ -83,12 +84,16 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 if button(ui, quiet(StrKey::AppToolbarFit, Icon::Maximize)).clicked() {
                     out.push(Action::FitView);
                 }
-                button(
-                    ui,
-                    quiet(StrKey::AppToolbarTabTool, Icon::BookmarkPlus)
-                        .enabled(false)
-                        .tooltip(later),
-                );
+                // The Tab tool (#546): armed, it shows as pressed.
+                let armed = crate::viewport::tab_tool::armed(ui.ctx());
+                let tab_tool = ButtonSpec {
+                    kind: if armed { Kind::Secondary } else { Kind::Quiet },
+                    ..quiet(StrKey::AppToolbarTabTool, Icon::BookmarkPlus)
+                }
+                .tooltip(strings.get(StrKey::AppToolbarTabToolHelp));
+                if button(ui, tab_tool).clicked() {
+                    crate::viewport::tab_tool::arm(ui.ctx(), !armed);
+                }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     button(

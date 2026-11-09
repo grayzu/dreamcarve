@@ -10,6 +10,9 @@
 //! Slice 8 (#537, acceptance 71): the Tool Library window's import report
 //! and library file are `tools import`'s, and a tool the app adds from the
 //! library is the copy `tools add` writes.
+//!
+//! Slice 17 (#546, acceptance 78): the tabs the app places, drags, deletes
+//! and adds export to the program the CLI writes for the saved file.
 
 #![allow(
     clippy::expect_used,
@@ -138,4 +141,121 @@ fn tools_add_equals_the_app() {
         harness.run(command).expect("added");
     }
     assert_eq!(harness.save().expect("saves"), cli);
+}
+
+/// The date the tab test's programs are headed with: the harness's.
+const DATE: &str = dc_app::test_support::DATE;
+
+/// `init`'s coaster in `dir` with the quick start's numbers filled in
+/// (the phase 1 test part's feeds, an 11.8 mm thickness and a depth
+/// through it), so it exports: `coaster.dcv`, with its tab request.
+fn ready_coaster(dir: &Path) -> PathBuf {
+    std::fs::copy(
+        repo_root().join("fixtures/coaster.svg"),
+        dir.join("coaster.svg"),
+    )
+    .expect("svg copied");
+    run(dir, &["init", "coaster.svg"]);
+    let dcv = dir.join("coaster.dcv");
+    let mut project = dc_project::load(&std::fs::read(&dcv).expect("dcv readable"))
+        .expect("dcv loads")
+        .project;
+    for tool in &mut project.tools {
+        tool.feed_mm_min = Some(1500.0);
+        tool.plunge_mm_min = Some(500.0);
+        tool.rpm = Some(18000);
+        tool.step_down_mm = Some(2.0);
+    }
+    project.stock.thickness_mm = Some(11.8);
+    for op in &mut project.operations {
+        if let dc_project::Operation::Profile(p) = op {
+            p.depth_mm = Some(12.0);
+            p.through_cut_allowance_mm = 0.2;
+        }
+    }
+    std::fs::write(&dcv, dc_project::save(&project).expect("saves")).expect("dcv written");
+    dcv
+}
+
+/// The one program the harness finished, as text.
+fn app_program(harness: &mut Harness) -> String {
+    harness.generate();
+    let programs = harness.programs();
+    assert_eq!(programs.len(), 1, "{:?}", harness.warnings());
+    programs[0].program.text.clone()
+}
+
+/// Acceptance 78 (functional capability 69; #546): *Place tabs* on the
+/// coaster's Profile saves the file `tabs place coaster.dcv <op>` saves,
+/// and the program the app finishes is the one `export` writes for it.
+/// Then a tab dragged along the outline, one deleted and one added with
+/// the Tab tool: the CLI exports the file the app saves to the program
+/// the app shows, byte for byte.
+#[test]
+fn tabbed_coaster_exports_the_same_program() {
+    let dir = work_dir("tabbed_coaster_exports_the_same_program");
+    let dcv = ready_coaster(&dir);
+    let before = std::fs::read(&dcv).expect("dcv readable");
+
+    let mut harness = Harness::open(&before).expect("the project opens");
+    let op = harness.app.project().operations[0].id().clone();
+    run(&dir, &["tabs", "place", "coaster.dcv", op.as_str()]);
+    harness.app.place_tabs(&op).expect("the request places");
+    assert_eq!(
+        harness.save().expect("saves"),
+        std::fs::read_to_string(&dcv).expect("dcv readable"),
+        "the file `tabs place` saves"
+    );
+    run(&dir, &["export", "coaster.dcv", "--date", DATE]);
+    let cli = std::fs::read_to_string(dir.join("coaster.nc")).expect("program written");
+    assert!(
+        app_program(&mut harness) == cli,
+        "placed: the program differs"
+    );
+
+    // Drag the first tab an eighth of the way round, delete the second,
+    // add one with the Tab tool's last-used size.
+    let project = harness.app.project().clone();
+    let first = project.tabs[0].clone();
+    let instance = &project.instances[0];
+    let outline = &project.definitions[&instance.definition].profiles[0];
+    let (target, _) = outline
+        .point_at(outline.length_mm() * 0.125)
+        .expect("a point");
+    let (x_mm, y_mm) =
+        dc_app::viewport::tabs::tab_drag(&project, &first, instance.transform.apply(target));
+    harness
+        .run(dc_app::Command::MoveTab {
+            id: first.id.clone(),
+            x_mm,
+            y_mm,
+        })
+        .expect("moved");
+    harness
+        .run(dc_app::Command::DeleteTabs(vec![
+            project.tabs[1].id.clone(),
+        ]))
+        .expect("deleted");
+    let (at_mm, _) = outline
+        .point_at(outline.length_mm() * 0.7)
+        .expect("a point");
+    let add = dc_app::viewport::tabs::add_tab(
+        harness.app.project(),
+        &dc_app::viewport::tabs::OutlinePoint {
+            instance: instance.id.clone(),
+            profile: 0,
+            at_mm,
+        },
+        harness.app.prefs().tab,
+    );
+    harness.run(add).expect("added");
+    assert_eq!(harness.app.project().tabs.len(), 4);
+
+    std::fs::write(dir.join("edited.dcv"), harness.save().expect("saves")).expect("written");
+    run(&dir, &["export", "edited.dcv", "--date", DATE]);
+    let cli = std::fs::read_to_string(dir.join("edited.nc")).expect("program written");
+    assert!(
+        app_program(&mut harness) == cli,
+        "edited: the program differs"
+    );
 }
