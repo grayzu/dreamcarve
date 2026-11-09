@@ -9,7 +9,7 @@
 //! for Ctrl on macOS (egui's [`Modifiers::COMMAND`]), and ⌥ for Alt.
 
 use dc_app::{StrKey, Strings};
-use eframe::egui::{InputState, Key, Modifiers};
+use eframe::egui::{self, InputState, Key, Modifiers};
 
 /// What a shortcut asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -370,26 +370,116 @@ pub fn binding(command: Command) -> Option<(Modifiers, Key)> {
     shortcut.keys.first().map(|key| (shortcut.modifiers, *key))
 }
 
-/// Whether `command`'s keys were pressed this frame, consuming them.
-/// Extra Shift or Alt is not ignored, so H and Shift H stay apart.
-pub fn consume(input: &mut InputState, command: Command) -> bool {
-    let _ = (input, command);
-    false
+/// How many times `command`'s keys were pressed this frame, consuming
+/// them (a held arrow repeats). The modifiers must match exactly, unlike
+/// egui's `consume_key`, so H and Shift H, or an arrow and Shift arrow,
+/// never take each other's presses.
+pub fn consume(input: &mut InputState, command: Command) -> usize {
+    of(command).map_or(0, |shortcut| {
+        shortcut
+            .keys
+            .iter()
+            .map(|key| consume_key(input, command, *key))
+            .sum()
+    })
 }
 
-/// The Keyboard chapter's table, as the book carries it between its
-/// `shortcuts` markers.
-#[must_use]
-pub fn chapter_table() -> String {
-    String::new()
+/// [`consume`] for one of `command`'s keys: an arrow, for a nudge's
+/// direction.
+pub fn consume_key(input: &mut InputState, command: Command, key: Key) -> usize {
+    let Some(shortcut) = of(command).filter(|s| s.keys.contains(&key)) else {
+        return 0;
+    };
+    let mut count = 0;
+    input.events.retain(|event| {
+        let hit = matches!(
+            event,
+            egui::Event::Key { key: pressed_key, modifiers, pressed: true, .. }
+                if *pressed_key == key && modifiers.matches_exact(shortcut.modifiers)
+        );
+        count += usize::from(hit);
+        !hit
+    });
+    count
+}
+
+/// A key's name in the book, for Windows and Linux, then for macOS.
+fn key_names(key: Key) -> (&'static str, &'static str) {
+    match key {
+        Key::Delete => ("Delete", "⌦"),
+        Key::Backspace => ("Backspace", "⌫"),
+        Key::Escape => ("Esc", "Esc"),
+        other => (other.name(), other.name()),
+    }
 }
 
 /// A shortcut's keys as the book writes them for Windows and Linux
-/// (`Ctrl+Shift+S`) and for macOS (`⇧⌘S`).
+/// (`Ctrl+Shift+S`, `Delete or Backspace`, `Shift+arrow keys`), and for
+/// macOS (`⇧⌘S`, `⌦ or ⌫`, `⇧ arrow keys`).
 #[must_use]
-pub fn keys_text(shortcut: &Shortcut, strings: &Strings) -> (String, String) {
-    let _ = (shortcut, strings);
-    (String::new(), String::new())
+pub fn keys_text(shortcut: &Shortcut) -> (String, String) {
+    let m = shortcut.modifiers;
+    let mut pc: Vec<&str> = Vec::new();
+    let mut mac = String::new();
+    for (held, name, glyph) in [
+        (m.command, "Ctrl", ""),
+        (m.alt, "Alt", "⌥"),
+        (m.shift, "Shift", "⇧"),
+    ] {
+        if held {
+            pc.push(name);
+            mac.push_str(glyph);
+        }
+    }
+    if m.command {
+        mac.push('⌘');
+    }
+    if shortcut.keys == ARROWS {
+        return if pc.is_empty() {
+            ("Arrow keys".to_owned(), "Arrow keys".to_owned())
+        } else {
+            (
+                format!("{}+arrow keys", pc.join("+")),
+                format!("{mac} arrow keys"),
+            )
+        };
+    }
+    let (pcs, macs): (Vec<String>, Vec<String>) = shortcut
+        .keys
+        .iter()
+        .map(|key| {
+            let (pc_key, mac_key) = key_names(*key);
+            let mut chord = pc.clone();
+            chord.push(pc_key);
+            (chord.join("+"), format!("{mac}{mac_key}"))
+        })
+        .unzip();
+    (pcs.join(" or "), macs.join(" or "))
+}
+
+/// The Keyboard chapter's table, as the book carries it between its
+/// `shortcuts` markers: one row per shortcut, in [`SHORTCUTS`]' order,
+/// with its keys on Windows and Linux and on macOS, what it does, and its
+/// menu row.
+#[must_use]
+pub fn chapter_table() -> String {
+    let strings = Strings::english();
+    let mut table =
+        String::from("| Windows and Linux | macOS | Does | Menu |\n| --- | --- | --- | --- |\n");
+    for shortcut in SHORTCUTS {
+        let (pc, mac) = keys_text(shortcut);
+        let menu = shortcut.menu.map_or_else(
+            || "—".to_owned(),
+            |(menu, label)| format!("{} ▸ {}", strings.get(menu.title()), strings.get(label)),
+        );
+        let does = if shortcut.available {
+            shortcut.does.to_owned()
+        } else {
+            format!("{} (arrives with the export sheet)", shortcut.does)
+        };
+        table.push_str(&format!("| {pc} | {mac} | {does} | {menu} |\n"));
+    }
+    table
 }
 
 #[cfg(test)]

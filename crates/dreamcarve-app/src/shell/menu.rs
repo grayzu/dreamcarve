@@ -9,9 +9,10 @@
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Button, Key, Modifiers, Ui};
 
+use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::files;
 use crate::shell::theme::Palette;
-use crate::shell::window::{Action, Example, FrameState, shortcut_text};
+use crate::shell::window::{Action, Example, FrameState, shortcut_action, shortcut_text};
 
 /// The menu bar's height, px.
 const HEIGHT_PX: f32 = 28.0;
@@ -157,13 +158,11 @@ fn placement_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
 
 fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    let command = Modifiers::COMMAND;
-    let shift_command = Modifiers::COMMAND | Modifiers::SHIFT;
     item(
         ui,
         strings,
         StrKey::AppMenuNew,
-        Some((command, Key::N)),
+        keyboard::binding(Shortcut::New),
         Action::New,
         out,
     );
@@ -184,7 +183,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui,
         strings,
         StrKey::AppMenuOpen,
-        Some((command, Key::O)),
+        keyboard::binding(Shortcut::Open),
         Action::Open,
         out,
     );
@@ -211,7 +210,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui,
         strings,
         StrKey::AppMenuSave,
-        Some((command, Key::S)),
+        keyboard::binding(Shortcut::Save),
         Action::Save,
         out,
     );
@@ -219,7 +218,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui,
         strings,
         StrKey::AppMenuSaveAs,
-        Some((shift_command, Key::S)),
+        keyboard::binding(Shortcut::SaveAs),
         Action::SaveAs,
         out,
     );
@@ -228,7 +227,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui,
         strings,
         StrKey::AppMenuImportDrawing,
-        Some((command, Key::I)),
+        keyboard::binding(Shortcut::Import),
         Action::ImportDrawing,
         out,
     );
@@ -237,13 +236,18 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Button::new(strings.get(StrKey::AppMenuImportPicture)),
     )
     .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
-    later(ui, strings, StrKey::AppMenuExport, Some((command, Key::E)));
+    later(
+        ui,
+        strings,
+        StrKey::AppMenuExport,
+        keyboard::binding(Shortcut::Export),
+    );
     ui.separator();
     item(
         ui,
         strings,
         StrKey::AppMenuQuit,
-        Some((command, Key::Q)),
+        keyboard::binding(Shortcut::Quit),
         Action::Quit,
         out,
     );
@@ -262,7 +266,7 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     item_text(
         ui,
         &undo,
-        Some((Modifiers::COMMAND, Key::Z)),
+        keyboard::binding(Shortcut::Undo),
         state.app.can_undo(),
         Action::Undo,
         out,
@@ -270,11 +274,53 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     item_text(
         ui,
         &redo,
-        Some((Modifiers::COMMAND | Modifiers::SHIFT, Key::Z)),
+        keyboard::binding(Shortcut::Redo),
         state.app.can_redo(),
         Action::Redo,
         out,
     );
+    // Capability 54: the selection's commands, each a row with its keys,
+    // running what the key does (`window::shortcut_action`).
+    ui.separator();
+    let app = state.app;
+    let selected = app.selection().instances();
+    let all_locked = !selected.is_empty()
+        && app
+            .project()
+            .instances
+            .iter()
+            .filter(|i| selected.contains(&i.id))
+            .all(|i| i.locked);
+    for (command, key) in [
+        (Shortcut::SelectAll, StrKey::AppMenuSelectAll),
+        (Shortcut::Duplicate, StrKey::AppMenuDuplicate),
+        (Shortcut::Delete, StrKey::AppMenuDelete),
+        (Shortcut::Hide, StrKey::AppMenuHide),
+        (Shortcut::Show, StrKey::AppMenuShow),
+        (
+            Shortcut::Lock,
+            if all_locked {
+                StrKey::AppMenuUnlock
+            } else {
+                StrKey::AppMenuLock
+            },
+        ),
+    ] {
+        if command == Shortcut::Hide {
+            ui.separator();
+        }
+        let mut button = Button::new(strings.get(key));
+        if let Some((modifiers, key)) = keyboard::binding(command) {
+            button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
+        }
+        let action = shortcut_action(app, command);
+        if ui.add_enabled(action.is_some(), button).clicked()
+            && let Some(action) = action
+        {
+            out.push(action);
+            ui.close();
+        }
+    }
 }
 
 fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
@@ -300,14 +346,14 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui,
         strings,
         StrKey::AppViewportFitView,
-        Some((Modifiers::NONE, Key::F)),
+        keyboard::binding(Shortcut::FitView),
         Action::FitView,
         out,
     );
     item_text(
         ui,
         strings.get(StrKey::AppViewportZoomSelection),
-        Some((Modifiers::SHIFT, Key::F)),
+        keyboard::binding(Shortcut::ZoomToSelection),
         !state.app.selection().instances().is_empty(),
         Action::ZoomToSelection,
         out,

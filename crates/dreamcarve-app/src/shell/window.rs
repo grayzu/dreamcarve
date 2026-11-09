@@ -26,8 +26,10 @@ use dc_app::import::{DrawingFormat, Purpose};
 use dc_app::{App, Command, Prefs, StrKey, Strings};
 use dc_job::EstimateConfig;
 use dreamcarve_shell::{GuiPrefs, Paths, config, gui_prefs};
-use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Vec2, ViewportCommand};
+use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Rect, Vec2, ViewportCommand};
 
+use crate::keyboard::{self, Command as Shortcut};
+use crate::shell::focus::{self, Region};
 use crate::shell::worker::{self, Worker};
 use crate::shell::{files, menu, status, theme, toolbar};
 use crate::{panels, viewport};
@@ -354,6 +356,8 @@ pub struct Shell {
     worker: Worker,
     /// Whether the Warnings drawer is open.
     warnings_open: bool,
+    /// Where the keyboard focus was after the last frame (#548).
+    focus: focus::Shown,
 }
 
 impl std::fmt::Debug for Shell {
@@ -434,6 +438,7 @@ impl Shell {
             viewport: viewport::ViewportState::default(),
             worker,
             warnings_open: false,
+            focus: focus::Shown::default(),
         };
         shell.viewport.fit_on_next_frame();
         if let Some(path) = options.open {
@@ -490,7 +495,7 @@ impl Shell {
     /// frame, or `None` when nothing has it.
     #[must_use]
     pub fn focus(&self) -> Option<crate::FocusRegion> {
-        None
+        self.focus.region
     }
 
     /// Where the last frame drew the keyboard focus ring: `None` when
@@ -498,7 +503,7 @@ impl Shell {
     /// section 8, "Keyboard focus").
     #[must_use]
     pub fn focus_ring(&self) -> Option<egui::Rect> {
-        None
+        self.focus.ring
     }
 
     /// The status bar's message.
@@ -796,8 +801,10 @@ impl Shell {
                 _ => self.open_import(&path, Purpose::Import),
             }
         }
-        if self.sheet.is_none() && self.library.is_none() && self.import.is_none() {
-            actions.extend(shortcuts(ctx));
+        let sheet_open = self.sheet.is_some() || self.library.is_some() || self.import.is_some();
+        focus::begin(ctx, sheet_open);
+        if !sheet_open {
+            actions.extend(shortcuts(ctx, &self.app));
             actions.extend(viewport::keys(ctx, &self.app));
         }
     }
@@ -1080,47 +1087,78 @@ fn coaster() -> Result<dc_project::Project, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The file and edit shortcuts (functional spec, capability 54; the rest
-/// arrive with slice 19). ⌘ on macOS, Ctrl elsewhere.
-fn shortcuts(ctx: &egui::Context) -> Vec<Action> {
-    let shift_command = Modifiers::COMMAND | Modifiers::SHIFT;
-    let bindings = [
-        (KeyboardShortcut::new(shift_command, Key::S), Action::SaveAs),
-        (KeyboardShortcut::new(shift_command, Key::Z), Action::Redo),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::S),
-            Action::Save,
-        ),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::Z),
-            Action::Undo,
-        ),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::O),
-            Action::Open,
-        ),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::N),
-            Action::New,
-        ),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::I),
-            Action::ImportDrawing,
-        ),
-        (
-            KeyboardShortcut::new(Modifiers::COMMAND, Key::Q),
-            Action::Quit,
-        ),
-    ];
-    let mut actions = Vec::new();
+/// The shortcuts read anywhere outside a sheet, even in a field: the
+/// file and history commands of [`keyboard::SHORTCUTS`] (capability 54).
+/// The selection's are the Viewport's (`viewport::keys`). ⌘ on macOS, Ctrl
+/// elsewhere.
+fn shortcuts(ctx: &egui::Context, app: &App) -> Vec<Action> {
+    // Most modifiers first, so Shift Ctrl S is never Ctrl S as well.
+    let mut table: Vec<&keyboard::Shortcut> = keyboard::SHORTCUTS
+        .iter()
+        .filter(|s| s.scope == keyboard::Scope::Anywhere)
+        .collect();
+    table.sort_by_key(|s| std::cmp::Reverse(modifier_count(s.modifiers)));
+    let mut pressed = Vec::new();
     ctx.input_mut(|input| {
-        for (shortcut, action) in bindings {
-            if input.consume_shortcut(&shortcut) {
-                actions.push(action);
+        for shortcut in table {
+            if keyboard::consume(input, shortcut.command) > 0 {
+                pressed.push(shortcut.command);
             }
         }
     });
-    actions
+    pressed
+        .into_iter()
+        .filter_map(|command| shortcut_action(app, command))
+        .collect()
+}
+
+/// How many modifiers `modifiers` holds.
+fn modifier_count(modifiers: Modifiers) -> usize {
+    [modifiers.command, modifiers.shift, modifiers.alt]
+        .into_iter()
+        .filter(|held| *held)
+        .count()
+}
+
+/// What `command` asks of the app now, as its key and its menu row both
+/// run it; `None` when it has nothing to act on (no selection, nothing
+/// visible) or is not in this build: Export, until slice 18 (#547). The
+/// nudges and Escape are the Viewport's (`viewport::keys`).
+pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
+    let project = app.project();
+    let selected = app.selection().instances();
+    let on_selection = |item: dc_app::tree::MenuItem| {
+        dc_app::tree::menu_command(project, item, selected).map(Action::run)
+    };
+    match command {
+        Shortcut::New => Some(Action::New),
+        Shortcut::Open => Some(Action::Open),
+        Shortcut::Save => Some(Action::Save),
+        Shortcut::SaveAs => Some(Action::SaveAs),
+        Shortcut::Import => Some(Action::ImportDrawing),
+        // TODO(#547): the export sheet.
+        Shortcut::Export => None,
+        Shortcut::Quit => Some(Action::Quit),
+        Shortcut::Undo => app.can_undo().then_some(Action::Undo),
+        Shortcut::Redo => app.can_redo().then_some(Action::Redo),
+        Shortcut::SelectAll => {
+            let visible: Vec<_> = project
+                .instances
+                .iter()
+                .filter(|i| i.visible)
+                .map(|i| i.id.clone())
+                .collect();
+            (!visible.is_empty()).then(|| Action::Select(dc_app::Selection::Instances(visible)))
+        }
+        Shortcut::Duplicate => on_selection(dc_app::tree::MenuItem::Duplicate),
+        Shortcut::Delete => on_selection(dc_app::tree::MenuItem::Delete),
+        Shortcut::Hide => on_selection(dc_app::tree::MenuItem::Hide),
+        Shortcut::Show => on_selection(dc_app::tree::MenuItem::Show),
+        Shortcut::Lock => dc_app::tree::toggle_locked(project, selected).map(Action::run),
+        Shortcut::FitView => Some(Action::FitView),
+        Shortcut::ZoomToSelection => (!selected.is_empty()).then_some(Action::ZoomToSelection),
+        Shortcut::Nudge | Shortcut::NudgeCoarse | Shortcut::NudgeFine | Shortcut::Escape => None,
+    }
 }
 
 /// The shortcut text a menu row or hint shows for `action`'s binding.
@@ -1156,6 +1194,27 @@ impl eframe::App for Shell {
         let pointer = self
             .viewport
             .read_pointer(&ctx, self.layout.viewport, &self.app);
+        // Each part of the window's rectangle, from the space it took, for
+        // Tab's walk (`shell::focus`).
+        let mut regions: Vec<(Region, Rect)> = Vec::new();
+        let mut before = ui.available_rect_before_wrap();
+        let mut took = |ui: &egui::Ui, region: Region, regions: &mut Vec<(Region, Rect)>| {
+            let after = ui.available_rect_before_wrap();
+            let rect = match region {
+                Region::Menu | Region::Toolbar => {
+                    Rect::from_x_y_ranges(before.x_range(), before.top()..=after.top())
+                }
+                Region::Status | Region::Drawer => {
+                    Rect::from_x_y_ranges(before.x_range(), after.bottom()..=before.bottom())
+                }
+                Region::Cam => {
+                    Rect::from_x_y_ranges(after.right()..=before.right(), before.y_range())
+                }
+                _ => Rect::from_x_y_ranges(before.left()..=after.left(), before.y_range()),
+            };
+            regions.push((region, rect));
+            before = after;
+        };
         let state = FrameState {
             app: &self.app,
             prefs: self.app.prefs(),
@@ -1165,17 +1224,38 @@ impl eframe::App for Shell {
             pointer,
             warnings_open: self.warnings_open,
         };
+        focus::mark(ui, Region::Menu);
         menu::bar(ui, &state, &mut actions);
+        took(ui, Region::Menu, &mut regions);
+        focus::mark(ui, Region::Toolbar);
         toolbar::bar(ui, &state, &mut actions);
+        took(ui, Region::Toolbar, &mut regions);
+        focus::mark(ui, Region::Status);
         status::bar(ui, &state, &mut actions);
+        took(ui, Region::Status, &mut regions);
+        // `side::left` marks its Properties and Design Tree.
         let left = panels::side::left(ui, &state, left_open, size, right_open, &mut actions);
+        took(ui, Region::Tree, &mut regions);
+        if let Some(properties) = left.properties {
+            if let Some((_, column)) = regions.last_mut() {
+                column.max.y = properties.top();
+            }
+            regions.push((Region::Properties, properties));
+        }
         let mut cam_tab = self.cam_tab;
+        focus::mark(ui, Region::Cam);
         let right = panels::side::right(ui, &state, right_open, size, &mut cam_tab, &mut actions);
+        took(ui, Region::Cam, &mut regions);
         // Between the side panels, over the Viewport's bottom.
         if self.warnings_open {
+            focus::mark(ui, Region::Drawer);
             panels::warnings::drawer(ui, &state, &mut actions);
+            took(ui, Region::Drawer, &mut regions);
         }
+        focus::mark(ui, Region::Viewport);
+        regions.push((Region::Viewport, ui.available_rect_before_wrap()));
         let viewport = viewport::show(ui, &state, &mut self.viewport, &mut actions);
+        focus::mark_end(ui);
         if self.sheet.is_some() {
             panels::unsaved::sheet(&ctx, self.app.strings(), &state.display_name, &mut actions);
         } else if let Some(sheet) = self.library.as_mut() {
@@ -1190,6 +1270,7 @@ impl eframe::App for Shell {
             );
         }
         self.cam_tab = cam_tab;
+        self.focus = focus::finish(ui, regions);
 
         // A panel the user dragged closed is a preference; one closed for
         // the window's size is not.
@@ -1197,6 +1278,7 @@ impl eframe::App for Shell {
         if let panels::side::Shown {
             width: Some(w),
             dragged_closed,
+            ..
         } = left
         {
             self.app.prefs_mut().panels.left_width = f64::from(w);
@@ -1207,6 +1289,7 @@ impl eframe::App for Shell {
         if let panels::side::Shown {
             width: Some(w),
             dragged_closed,
+            ..
         } = right
         {
             self.app.prefs_mut().panels.right_width = f64::from(w);

@@ -14,6 +14,7 @@ use dc_app::{Selection, StrKey};
 use eframe::egui::{self, Rangef, Sense, TextStyle, Ui, Vec2};
 
 use crate::panels;
+use crate::shell::focus::{self, Region};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{
     Action, CamTab, FrameState, LEFT_MIN_PX, RIGHT_MIN_PX, STRIP_PX, VIEWPORT_MIN_PX,
@@ -33,6 +34,9 @@ pub(crate) struct Shown {
     pub width: Option<f32>,
     /// The user dragged it below its minimum, closing it.
     pub dragged_closed: bool,
+    /// The left column's Properties panel, where it was drawn: the
+    /// Design Tree is the column above it (#548, for Tab's walk).
+    pub properties: Option<egui::Rect>,
 }
 
 /// `value` px as egui's `f32`. Panel widths are a few thousand pixels at
@@ -144,6 +148,7 @@ pub(crate) fn left(
 ) -> Shown {
     let strings = state.app.strings();
     if !open {
+        focus::mark(ui, Region::Tree);
         strip(
             ui,
             true,
@@ -155,6 +160,7 @@ pub(crate) fn left(
         return Shown {
             width: None,
             dragged_closed: false,
+            properties: None,
         };
     }
     let other = if right_open { RIGHT_MIN_PX } else { STRIP_PX };
@@ -162,6 +168,7 @@ pub(crate) fn left(
     let default = px(state.prefs.panels.left_width).clamp(LEFT_MIN_PX, max);
     let palette = Palette::current(ui);
     let mut expanded = true;
+    let mut properties = None;
     let response = egui::Panel::left("left_panel")
         .resizable(true)
         .drag_to_open(false)
@@ -174,13 +181,14 @@ pub(crate) fn left(
             // first frame does not know yet: the menu bar, toolbar and
             // status bar take 92 px.
             let properties_height = ((window.y - 92.0) * 0.45).max(120.0);
-            egui::Panel::bottom("properties")
+            let shown = egui::Panel::bottom("properties")
                 .resizable(true)
                 .show_separator_line(false)
                 .default_size(properties_height)
                 .size_range(Rangef::new(HEADER_PX + 40.0, f32::INFINITY))
                 .frame(frame(palette))
                 .show(ui, |ui| {
+                    focus::mark(ui, Region::Properties);
                     // Fill the panel, or it shrinks to its content.
                     ui.set_min_height(ui.available_height());
                     match state.app.selection() {
@@ -209,6 +217,10 @@ pub(crate) fn left(
                         }
                     }
                 });
+            properties = Some(shown.response.rect);
+            // Properties is drawn first, to take the column's bottom; Tab
+            // still walks the Design Tree first (`shell::focus`).
+            focus::mark(ui, Region::Tree);
             header(ui, strings.get(StrKey::AppPanelDesignTree));
             let instances = &state.app.project().instances;
             if instances.is_empty() {
@@ -220,6 +232,7 @@ pub(crate) fn left(
     Shown {
         width: response.map(|r| r.response.rect.width()),
         dragged_closed: !expanded,
+        properties,
     }
 }
 
@@ -245,6 +258,7 @@ pub(crate) fn right(
         return Shown {
             width: None,
             dragged_closed: false,
+            properties: None,
         };
     }
     let max = (window.x - LEFT_MIN_PX - VIEWPORT_MIN_PX - 2.0 * GUTTER_PX).max(RIGHT_MIN_PX);
@@ -268,6 +282,7 @@ pub(crate) fn right(
     Shown {
         width: response.map(|r| r.response.rect.width()),
         dragged_closed: !expanded,
+        properties: None,
     }
 }
 
