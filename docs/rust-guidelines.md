@@ -266,6 +266,9 @@ file); it is not a `dc-*` crate.
 - Licenses: Apache-2.0, MIT, BSD, Zlib, ISC, Unicode-3.0, or
   MPL-2.0 only when nothing else fits and the file-level copyleft is
   understood. GPL never; LGPL only after the review `AGENTS.md` requires.
+  BSL-1.0 is admitted by name only, for the app's Windows clipboard crates
+  (`clipboard-win`, `error-code`; `deny.toml`'s `exceptions`, #581); any
+  other crate under it needs the same review.
   `cargo deny check licenses advisories` runs in CI and is the gate.
 - A new dependency is justified in the PR description: what it replaces, why
   std or an existing dependency does not cover it, and its license line in

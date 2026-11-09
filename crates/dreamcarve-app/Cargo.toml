@@ -46,6 +46,8 @@ rfd.workspace = true
 
 [dev-dependencies]
 egui_kittest.workspace = true
+# `kittest::warnings_copy_reaches_the_clipboard` (#581).
+arboard.workspace = true
 
 [lints]
 workspace = true

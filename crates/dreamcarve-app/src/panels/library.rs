@@ -7,7 +7,8 @@
 //! read and written through `dreamcarve_shell::library` as the CLI's
 //! `tools` commands read and write it. A search field (name, vendor,
 //! diameter), a type filter and a table whose rows are ticked for *Add to
-//! project* or *Remove*; rows already in the project are marked.
+//! project* or *Remove*; rows already in the project are marked. *Remove*
+//! asks first, naming the ticked tools, in place of the table (#581).
 //! *Import…* reads a Fusion `.tools` or `.json` or a DreamCarve library and
 //! shows the per-tool report `tools import` prints in place of the table,
 //! with *Back* (never a sheet above a sheet); *Replace existing* is
@@ -60,6 +61,8 @@ pub(crate) struct Sheet {
     replace: bool,
     /// The last import's file name and report, shown in place of the table.
     report: Option<(String, ImportReport)>,
+    /// Whether *Remove* is asking first, in place of the table (#581).
+    confirm_remove: bool,
     /// The last action's message, and whether it is an error.
     message: Option<(String, bool)>,
 }
@@ -92,8 +95,25 @@ impl Sheet {
             ticked: BTreeSet::new(),
             replace: false,
             report: None,
+            confirm_remove: false,
             message: None,
         }
+    }
+
+    /// The names of the ticked tools, in library order: what *Remove*'s
+    /// question names.
+    fn ticked_names(&self) -> Vec<&str> {
+        self.library.as_ref().map_or_else(
+            |_| Vec::new(),
+            |library| {
+                library
+                    .tools
+                    .iter()
+                    .filter(|t| self.ticked.contains(&t.id))
+                    .map(|t| t.tool.name.as_str())
+                    .collect()
+            },
+        )
     }
 
     /// Takes `library` as the one on disk, dropping ticks on rows it no
@@ -166,7 +186,12 @@ pub(crate) fn show(
             body(ui, inner.y, app, project_name, sheet, out);
         });
     if response.should_close() {
-        out.push(Action::Library(Request::Close));
+        if sheet.confirm_remove {
+            // Escape, or a click on the scrim, answers the question first.
+            sheet.confirm_remove = false;
+        } else {
+            out.push(Action::Library(Request::Close));
+        }
     }
 }
 
@@ -185,7 +210,7 @@ fn body(
     ui.add_space(12.0);
     let readable = sheet.library.is_ok();
     let in_report = sheet.report.is_some();
-    if !in_report {
+    if !in_report && !sheet.confirm_remove {
         toolbar(ui, strings, sheet, readable, out);
         ui.add_space(8.0);
     }
@@ -199,6 +224,8 @@ fn body(
         ui.set_max_height(table_h);
         if let Some((name, report)) = &sheet.report {
             report_view(ui, strings, name, report, &sheet.path);
+        } else if sheet.confirm_remove {
+            remove_question(ui, strings, &sheet.ticked_names());
         } else {
             match &sheet.library {
                 Ok(library) => table(ui, app, library, &sheet.filter, &mut sheet.ticked),
@@ -282,7 +309,8 @@ fn toolbar(
             let remove = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryRemove))
                 .enabled(readable && !sheet.ticked.is_empty());
             if button(ui, remove).clicked() {
-                out.push(Action::Library(Request::Remove));
+                // The library is outside project history: ask first.
+                sheet.confirm_remove = true;
             }
             let export = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppLibraryExport))
                 .enabled(readable);
@@ -625,6 +653,24 @@ fn sentence(ui: &mut Ui, sentence: &str, colour: egui::Color32) {
     });
 }
 
+/// *Remove*'s question in place of the table (`experience.md`, section 8,
+/// "Destructive actions"; #581), naming the ticked tools: the library is
+/// outside project history, so a removal cannot be undone. The footer
+/// holds the answers.
+fn remove_question(ui: &mut Ui, strings: &Strings, names: &[&str]) {
+    let palette = Palette::current(ui);
+    let names_text = names.join(", ");
+    let count = names.len().to_string();
+    let question = match names {
+        [_] => strings.fmt(StrKey::AppLibraryRemoveAskOne, &[("names", &names_text)]),
+        _ => strings.fmt(
+            StrKey::AppLibraryRemoveAskMany,
+            &[("count", &count), ("names", &names_text)],
+        ),
+    };
+    sentence(ui, &question, palette.text_primary);
+}
+
 /// The import report in place of the table: a line per tool as `tools
 /// import` prints it, skipped items in the warning colour, tools left
 /// with an unset value in the error colour, then the counts.
@@ -683,6 +729,26 @@ fn footer(ui: &mut Ui, app: &App, project_name: &str, sheet: &mut Sheet, out: &m
                 if button(ui, back).clicked() {
                     sheet.report = None;
                 }
+                return;
+            }
+            if sheet.confirm_remove {
+                // *Remove* (destructive) is the answer on the right, with
+                // *Cancel* beside it.
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let remove =
+                        ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryRemove))
+                            .height(FOOTER_PX);
+                    if button(ui, remove).clicked() {
+                        sheet.confirm_remove = false;
+                        out.push(Action::Library(Request::Remove));
+                    }
+                    let cancel =
+                        ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppLibraryCancel))
+                            .height(FOOTER_PX);
+                    if button(ui, cancel).clicked() {
+                        sheet.confirm_remove = false;
+                    }
+                });
                 return;
             }
             let Ok(library) = &sheet.library else {
@@ -817,7 +883,7 @@ fn export(sheet: &Sheet, strings: &Strings, dialogs: &mut dyn Dialogs) -> Option
     })
 }
 
-/// *Remove*: the ticked tools out of the library, written at once.
+/// *Remove*, answered: the ticked tools out of the library, written at once.
 /// Projects keep their copies.
 fn remove(sheet: &mut Sheet, strings: &Strings, config: Option<&Paths>) -> Option<(String, bool)> {
     let paths = config?;

@@ -531,18 +531,24 @@ Controls:
   rows; `x` top-right. Empty lists show one 13-px text.secondary sentence
   centred in the list area, never a graphic.
 - **Destructive actions.** Delete, Remove and Duplicate never confirm; the
-  toast names the undo. The one confirmation is unsaved changes on close,
-  open or quit: a 420-px sheet with the file name, *Save*, *Discard* (red
-  text on hover) and *Cancel*; Enter is Save, Escape is Cancel. Remove on a
-  tool in use is refused inline: the button disables and its tooltip names
-  the operations.
+  toast names the undo. There are two confirmations. The first is unsaved
+  changes on close, open or quit: a 420-px sheet with the file name,
+  *Save*, *Discard* (red text on hover) and *Cancel*; Enter is Save, Escape
+  is Cancel. The second is the Tool Library's *Remove* (#581): the library
+  is outside project history, so a removal cannot be undone. The question
+  replaces the table in place and names the ticked tools ("Remove 2 tools
+  from your library: IDC 1/4 in Downcut, Amana 45771? Projects keep their
+  copies."), with *Remove* (destructive) and *Cancel* in the footer;
+  Escape is Cancel. Remove on a tool in use is refused inline: the button
+  disables and its tooltip names the operations.
 - **Sheets (import, export, Tool Library, unsaved changes).** A
   `surface.raised` panel centred over a `#00000066` scrim, 8-px radius,
   32-px header with title and `x`, the same sections, fields and
   validation as the panels, and a footer with the one primary action on
   the right and secondary actions on the left. Never a second sheet above
-  a sheet: the tool picker from an editor is a popover, and the Fusion
-  import report replaces the Tool Library's table in place with a *Back*.
+  a sheet: the tool picker from an editor is a popover, the Fusion import
+  report replaces the Tool Library's table in place with a *Back*, and so
+  does *Remove*'s question, with *Cancel*.
 - **Keyboard focus.** Tab walks top-left to bottom-right: toolbar, Design
   Tree, Properties, Viewport, CAM list, editor, status bar; inside a sheet
   it cycles within the sheet. Every focusable element shows the 2-px ring
