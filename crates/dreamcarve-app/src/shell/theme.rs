@@ -152,6 +152,8 @@ pub struct Palette {
     pub viewport_stock: Color32,
     /// The stock's fill, a shade off the background.
     pub viewport_stock_fill: Color32,
+    /// The male inlay board: its outline, origin mark and mirrored shapes.
+    pub viewport_male_board: Color32,
     /// A shape's outline, solid when closed, dashed when open.
     pub viewport_shape: Color32,
     /// The outline under the pointer.
@@ -229,6 +231,7 @@ pub const LIGHT: Palette = Palette {
     viewport_axis: rgb(0x6B7380),
     viewport_stock: rgb(0x6B7380),
     viewport_stock_fill: rgb(0xFFFFFF),
+    viewport_male_board: rgb(0x8A929E),
     viewport_shape: rgb(0x23272E),
     viewport_shape_hover: rgb(0x5B8DE8),
     viewport_shape_selected: rgb(0x2563D0),
@@ -297,6 +300,7 @@ pub const DARK: Palette = Palette {
     viewport_axis: rgb(0x9AA3AF),
     viewport_stock: rgb(0x9AA3AF),
     viewport_stock_fill: rgb(0x1F242C),
+    viewport_male_board: rgb(0x7B8491),
     viewport_shape: rgb(0xE6E9EE),
     viewport_shape_hover: rgb(0x8FBAF7),
     viewport_shape_selected: rgb(0x6AA3F2),
@@ -367,6 +371,7 @@ impl Palette {
             ("viewport.axis", self.viewport_axis),
             ("viewport.stock", self.viewport_stock),
             ("viewport.stock.fill", self.viewport_stock_fill),
+            ("viewport.male-board", self.viewport_male_board),
             ("viewport.shape", self.viewport_shape),
             ("viewport.shape.hover", self.viewport_shape_hover),
             ("viewport.shape.selected", self.viewport_shape_selected),

@@ -5,7 +5,10 @@
 //! (`docs/specs/phase-4/design.md`, "The Viewport renderer"; `experience.md`
 //! section 9): the grid and the axes over the stock, the stock's outline,
 //! the shapes, the hovered shape and the selection (drawn through a
-//! drag's preview transform while one is in progress). Arcs are flattened
+//! drag's preview transform while one is in progress). With an Inlay, the
+//! stock layer carries the male board beside it too (slice 14, #543): its
+//! dashed outline and the design mirrored on it, and its male runs are
+//! drawn moved onto it by the Scene's display offset. Arcs are flattened
 //! for display at a tolerance of a fraction of a pixel, fixed per zoom
 //! band (a doubling of the scale), so a layer is rebuilt when the band
 //! changes and not on every zoom step. Display only: nothing here reaches
@@ -16,7 +19,7 @@ use dc_app::scene::{SceneOperation, StrokeKind, strokes};
 use dc_app::view::{DepthRamp, Visibility};
 use dc_app::viewport::arrows::{ArrowCache, ArrowMove, ArrowVisibility, moves_of};
 use dc_app::viewport::grid::Grid;
-use dc_geometry::{Point, Point3, Polyline, Rect, Transform};
+use dc_geometry::{Point, Point3, Polyline, Rect, Transform, Vec2};
 use dc_project::{Board, InstanceId, Project};
 
 use crate::viewport::lod;
@@ -130,9 +133,11 @@ pub(crate) fn grid(project: &Project, grid: Option<Grid>) -> Vec<Segment> {
     out
 }
 
-/// The stock's dashed outline.
+/// The stock's dashed outline and, with an Inlay, the male board's
+/// beside it (`viewport.male-board`, dashed 6/4) with the design mirrored
+/// on it, its arcs flattened to `tolerance_mm`.
 #[must_use]
-pub(crate) fn stock(project: &Project) -> Vec<Segment> {
+pub(crate) fn stock(project: &Project, scene: &Scene, tolerance_mm: f64) -> Vec<Segment> {
     let (w, h) = (project.stock.width_mm, project.stock.height_mm);
     let mut out = Vec::with_capacity(4);
     push_path(
@@ -146,6 +151,20 @@ pub(crate) fn stock(project: &Project) -> Vec<Segment> {
         true,
         StyleId::Stock,
     );
+    if let Some(board) = scene.male_board() {
+        let (min, max) = (board.frame.min, board.frame.max);
+        push_path(
+            &mut out,
+            &[min, Point::new(max.x, min.y), max, Point::new(min.x, max.y)],
+            true,
+            StyleId::MaleBoard,
+        );
+        for shape in &board.shapes {
+            for outline in &shape.outlines {
+                push_outline(&mut out, outline, tolerance_mm, StyleId::MaleShape);
+            }
+        }
+    }
     out
 }
 
@@ -248,12 +267,16 @@ pub(crate) struct ToolpathLook<'a> {
     pub tolerance_mm: f64,
     /// The coalescing length of the zoom band, mm.
     pub lod_mm: f64,
+    /// Where a male board run is drawn relative to its board's space
+    /// ([`Scene::board_offset`]); `None` draws none.
+    pub male_offset: Option<Vec2>,
 }
 
 /// Operation `op`'s toolpath buffer: its runs' rapids, then cuts (each in
 /// the run's preview colour), then tab marks, plunge marks, and start
 /// points with their ticks or a Drill's holes, as `look` asks; everything
-/// faded while `op` is stale. Male board runs are left for slice 14.
+/// faded while `op` is stale. A male board run is drawn on the male
+/// board, moved by `look.male_offset` (display only).
 #[must_use]
 pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segment> {
     let visibility = look.visibility;
@@ -262,9 +285,14 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
     let mut cuts = Vec::new();
     let mut marks = Vec::new();
     for (k, run) in op.runs.iter().enumerate() {
-        if run.run.board == Board::Male {
-            continue;
-        }
+        let offset = match run.run.board {
+            Board::Female => Vec2::new(0.0, 0.0),
+            Board::Male => match look.male_offset {
+                Some(offset) => offset,
+                None => continue,
+            },
+        };
+        let on = |p: Point| p + offset;
         let colour = Some(op.colour + k);
         let mut last_plunge: Option<Point> = None;
         for stroke in strokes(&run.run.toolpath) {
@@ -272,7 +300,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
                 StrokeKind::Rapid if visibility.rapids => {
                     if xy(stroke.from).distance_to(xy(stroke.to)) > XY_EPS_MM {
                         let word = StyleWord::toolpath(StyleId::Rapid, None, None, stale);
-                        rapids.push(segment(xy(stroke.from), xy(stroke.to), 0.0, word));
+                        rapids.push(segment(on(xy(stroke.from)), on(xy(stroke.to)), 0.0, word));
                     }
                 }
                 StrokeKind::Cut if visibility.cuts => {
@@ -280,7 +308,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
                         if xy(a).distance_to(xy(b)) > XY_EPS_MM {
                             let depth = look.ramp.map(|r| r.step(a.z.min(b.z)));
                             let word = StyleWord::toolpath(StyleId::Cut, colour, depth, stale);
-                            cuts.push(segment(xy(a), xy(b), 0.0, word));
+                            cuts.push(segment(on(xy(a)), on(xy(b)), 0.0, word));
                         }
                     };
                     // A line needs no flattening, and most moves are lines.
@@ -298,7 +326,7 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
                     let at = xy(stroke.to);
                     if last_plunge.is_none_or(|p| p.distance_to(at) > XY_EPS_MM) {
                         let word = StyleWord::toolpath(StyleId::Plunge, None, None, stale);
-                        marks.push(ring(at, 0.0, word));
+                        marks.push(ring(on(at), 0.0, word));
                     }
                     last_plunge = Some(at);
                 }
@@ -308,21 +336,21 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
         if visibility.tab_marks {
             let word = StyleWord::toolpath(StyleId::Tab, None, None, stale);
             for tab in &run.marks.tab_marks {
-                push_outline_word(&mut marks, tab, look.tolerance_mm, word);
+                push_outline_word(&mut marks, tab, look.tolerance_mm, offset, word);
             }
         }
         if visibility.start_points {
             let circle = StyleWord::toolpath(StyleId::Mark, colour, None, stale);
             let tick = StyleWord::toolpath(StyleId::Tick, colour, None, stale);
             for start in &run.marks.start_points {
-                marks.push(ring(start.at, start.radius_mm, circle));
+                marks.push(ring(on(start.at), start.radius_mm, circle));
                 if let Some(direction) = start.direction {
                     let end = start.at + direction * (2.0 * start.radius_mm);
-                    marks.push(segment(start.at, end, 0.0, tick));
+                    marks.push(segment(on(start.at), on(end), 0.0, tick));
                 }
             }
             for (hole, radius_mm) in &run.marks.holes {
-                marks.push(ring(*hole, *radius_mm, circle));
+                marks.push(ring(on(*hole), *radius_mm, circle));
             }
         }
     }
@@ -332,15 +360,17 @@ pub(crate) fn toolpath(op: &SceneOperation, look: ToolpathLook<'_>) -> Vec<Segme
     out
 }
 
-/// `outline` flattened to `tolerance_mm` and pushed with `word`.
+/// `outline` flattened to `tolerance_mm`, moved by `offset`, and pushed
+/// with `word`.
 fn push_outline_word(
     out: &mut Vec<Segment>,
     outline: &Polyline,
     tolerance_mm: f64,
+    offset: Vec2,
     word: StyleWord,
 ) {
     let flat = outline.with_arcs_flattened(tolerance_mm);
-    let points: Vec<Point> = flat.vertices().iter().map(|v| v.point()).collect();
+    let points: Vec<Point> = flat.vertices().iter().map(|v| v.point() + offset).collect();
     push_path(out, &points, flat.is_closed(), word);
 }
 
@@ -351,12 +381,14 @@ const ARROW_ARM_PX: f64 = 6.0;
 const ARROW_HALF_ANGLE_RAD: f64 = 0.6;
 
 /// One drawn run's arrows: its cache key, its moves as the pass reads
-/// them, its colour and whether it is stale.
+/// them, its colour, whether it is stale, and where it is drawn relative
+/// to its board's space (a male board run's display offset).
 pub(crate) struct ArrowRun<'a> {
     pub key: u64,
     pub moves: &'a [ArrowMove],
     pub colour: usize,
     pub stale: bool,
+    pub offset: Vec2,
 }
 
 /// The direction arrows of `runs` at `px_per_mm`: a chevron at the middle
@@ -390,7 +422,8 @@ pub(crate) fn arrows(
                 continue;
             }
             let (ux, uy) = (dx / length, dy / length);
-            let mid = Point::new((fx + tx) / 2.0 / px_per_mm, (fy + ty) / 2.0 / px_per_mm);
+            let mid =
+                Point::new((fx + tx) / 2.0 / px_per_mm, (fy + ty) / 2.0 / px_per_mm) + run.offset;
             let tip = Point::new(mid.x + ux * arm_mm / 2.0, mid.y + uy * arm_mm / 2.0);
             for side in [1.0, -1.0] {
                 // The move's direction turned by ± the half angle, back

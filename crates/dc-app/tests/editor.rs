@@ -2363,10 +2363,8 @@ fn inlay_both_boards() {
         Some("same as stock: 80")
     );
     assert!(!editor::can_reset(&inlay, width));
-    run_edit(
-        &mut h,
-        editor::commit_text(h.app.project(), &inlay, width, "120"),
-    );
+    let edit = editor::commit_text(h.app.project(), &inlay, width, "120");
+    run_edit(&mut h, edit);
     let wide = op_of(&h, "op1");
     let Operation::Inlay(board) = &wide else {
         panic!("op1 is an Inlay");
@@ -2388,10 +2386,8 @@ fn inlay_both_boards() {
         None,
         "required: no default"
     );
-    run_edit(
-        &mut h,
-        editor::commit_text(h.app.project(), &inlay, thickness, ""),
-    );
+    let edit = editor::commit_text(h.app.project(), &inlay, thickness, "");
+    run_edit(&mut h, edit);
     let unset = op_of(&h, "op1");
     let Operation::Inlay(cleared) = &unset else {
         panic!("op1 is an Inlay");
@@ -2425,10 +2421,8 @@ fn inlay_both_boards() {
     assert!(base.is_empty(), "{base:?}");
 
     // Set to 18 mm: the male's runs, mirrored, on their board.
-    run_edit(
-        &mut h,
-        editor::commit_text(h.app.project(), &unset, thickness, "18"),
-    );
+    let edit = editor::commit_text(h.app.project(), &unset, thickness, "18");
+    run_edit(&mut h, edit);
     h.generate();
     assert!(coded(&h, "inlay_male_board_unset").is_empty());
     let both = op_of(&h, "op1");
@@ -2501,10 +2495,8 @@ fn inlay_both_boards() {
     assert_eq!(editor::male_base_mm(&both), Some(13.0));
 
     // A 3 mm plug depth: the male's flank engages 6 mm, past the cone.
-    run_edit(
-        &mut h,
-        editor::commit_text(h.app.project(), &both, row_of(&both, "plug_depth_mm"), "3"),
-    );
+    let edit = editor::commit_text(h.app.project(), &both, row_of(&both, "plug_depth_mm"), "3");
+    run_edit(&mut h, edit);
     let deep = op_of(&h, "op1");
     let planes = editor::male_planes(h.app.project(), &deep).unwrap();
     assert!((planes.engagement_mm - 6.0).abs() < 1e-9);
@@ -2528,10 +2520,8 @@ fn inlay_both_boards() {
 
     // A 10 mm male board under a 6 mm floor leaves 4 mm: red, as
     // validation's `inlay_plug_base_thin` warns.
-    run_edit(
-        &mut h,
-        editor::commit_text(h.app.project(), &deep, thickness, "10"),
-    );
+    let edit = editor::commit_text(h.app.project(), &deep, thickness, "10");
+    run_edit(&mut h, edit);
     let thin = op_of(&h, "op1");
     assert_eq!(editor::male_base_mm(&thin), Some(4.0));
     assert_eq!(

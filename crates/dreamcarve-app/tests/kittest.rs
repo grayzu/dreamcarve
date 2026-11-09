@@ -2195,3 +2195,60 @@ fn countersink_depth_shows_derived_read_only() {
     assert_eq!(undo_steps(&h), steps);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 68a in the window (slice 14, #543; mock-up 06, right): the
+/// lettered inlay's editor shows the Male board group, the width's *same
+/// as stock* placeholder, the derived line under Depth and the base under
+/// the band (12 − 5 = 7 mm); clearing the thickness writes `null`, in one
+/// step.
+#[test]
+fn inlay_editor_shows_the_male_board() {
+    let dir = scratch("inlay-editor");
+    let dc = copy_fixture("dc.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(dc), &dialogs),
+        1280.0,
+        900.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "DC").click();
+    h.run();
+    for label in [
+        "Inlay depth",
+        "Glue gap",
+        "Plug depth",
+        "Band margin",
+        "Board thickness",
+    ] {
+        assert!(
+            h.query_by_role_and_label(Role::TextInput, label).is_some(),
+            "{label} is shown"
+        );
+    }
+    assert!(
+        h.query_by_label("male start plane 3 mm · band floor 5 mm below the board top")
+            .is_some(),
+        "the derived line"
+    );
+    assert!(
+        h.query_by_label("base under the band 7 mm (at least 6 mm)")
+            .is_some(),
+        "the board left under the band, 12 − 5 mm"
+    );
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::TextInput, "Board thickness")
+        .focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.key_press(egui::Key::Backspace);
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+    let dc_project::Operation::Inlay(inlay) = operation_of(&h, "op1") else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(inlay.male_board.thickness_mm, None, "cleared to null");
+    assert_eq!(undo_steps(&h), steps + 1, "one step");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

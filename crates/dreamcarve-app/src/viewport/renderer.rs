@@ -129,12 +129,16 @@ pub enum StyleId {
     ExtentsCentre,
     /// The extents' bit-edge box, 1 px dashed 6/4.
     ExtentsEdge,
+    /// The male inlay board's outline, 1.25 px dashed 6/4 (slice 14).
+    MaleBoard,
+    /// A shape mirrored on the male inlay board, 1.25 px solid.
+    MaleShape,
 }
 
 /// The style table's rows, in [`StyleId`] order. The operation colours
 /// follow them in the buffer, eight rows from here (`shader.wgsl`'s
 /// `OP_BASE`).
-pub const STYLE_COUNT: usize = 20;
+pub const STYLE_COUNT: usize = 22;
 /// The operation colour rows after the styles.
 pub const OPERATION_COLOURS: usize = 8;
 
@@ -276,6 +280,8 @@ pub fn styles(palette: &crate::theme::Palette) -> StyleTable {
             solid(per_op, 1.25),
             solid(palette.viewport_extents_centre, 1.0),
             dashed(palette.viewport_extents_edge, 1.0, 6.0, 4.0),
+            dashed(palette.viewport_male_board, 1.25, 6.0, 4.0),
+            solid(palette.viewport_male_board, 1.25),
         ],
         operations: std::array::from_fn(|k| palette.operation(k)),
         ramp: palette.depth_ramp,
@@ -843,7 +849,7 @@ mod tests {
     fn shader_reads_the_operation_colours_after_the_styles() {
         let source = include_str!("shader.wgsl");
         assert!(source.contains("const OP_BASE: u32 = 0u;"));
-        assert_eq!(StyleId::ExtentsEdge as usize + 1, STYLE_COUNT);
+        assert_eq!(StyleId::MaleShape as usize + 1, STYLE_COUNT);
     }
 
     /// A style word keeps its parts apart: the row, the depth step, the
