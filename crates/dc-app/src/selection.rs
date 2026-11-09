@@ -66,6 +66,11 @@ impl Selection {
         if let Hit::Tab(tab) = hit {
             return self.tab_clicked(tab, mode);
         }
+        // A toolpath opens its operation in the editor (`App::edit`);
+        // the shapes stay selected (#576).
+        if let Hit::Toolpath(_) = hit {
+            return self.clone();
+        }
         let Hit::Instance(id) = hit else {
             return match mode {
                 ClickMode::Replace => Self::Nothing,

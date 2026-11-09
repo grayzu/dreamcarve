@@ -31,10 +31,10 @@ mod common;
 
 use std::collections::BTreeMap;
 
+use dc_app::scene::{StrokeKind, strokes};
 use dc_app::test_support::Harness;
 use dc_app::viewport::camera::{Camera, Pos};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
-use dc_app::scene::{StrokeKind, strokes};
 use dc_app::{ClickMode, Command, Scene, Selection};
 use dc_geometry::{Point, Polyline, Rect, Transform, Vec2};
 use dc_project::test_support::sample_project;

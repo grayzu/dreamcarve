@@ -19,6 +19,16 @@
 //! next one ([`ClickCycle`]), as capability 75 asks. Only what the Scene
 //! holds is picked, so a hidden shape never is and a locked one is.
 //!
+//! Toolpaths (#576): a click within the tolerance of a cutting move the
+//! Viewport draws picks that move's operation ([`Hit::Toolpath`]), but
+//! shapes whose outline is within the tolerance come first, as in
+//! PureCutCNC, where the outline is what a click aims at. A cut beats
+//! the inside of a shape, since a pocket's cuts all lie inside its shape.
+//! Only the cuts drawn are picked ([`shown_cuts`]): not an operation's
+//! whose eye is closed, none with *Cuts* off, and only the selected
+//! operation's with *Only the selected operation* on. The cuts come from
+//! the Scene's [`crate::scene::CutIndex`], built with its runs.
+//!
 //! Re-derived for Y-up: nothing here depends on direction. Distances and
 //! containment are taken in project millimetres, with the tolerance
 //! converted at the camera's scale, as upstream does; arcs are measured as
@@ -26,9 +36,11 @@
 //! even-odd over each outline flattened at [`crate::scene::PICK_FLATTEN_MM`].
 
 use dc_geometry::{Point, Polyline, Rect, point_segment_distance_mm};
-use dc_project::{InstanceId, TabId};
+use dc_project::{InstanceId, OperationId, TabId};
 
 use crate::scene::{Scene, Shape};
+use crate::selection::Selection;
+use crate::view::View;
 use crate::viewport::camera::{Camera, Pos};
 use crate::viewport::tabs;
 
@@ -42,14 +54,17 @@ const TIE_PX: f64 = 0.5;
 /// place" for [`ClickCycle`], logical pixels.
 const SAME_PLACE_PX: f64 = 3.0;
 
-/// What a click on the Viewport lands on. Toolpaths and the male board's
-/// shapes join with the slices that draw them (16, 14).
+/// What a click on the Viewport lands on. The male board's shapes join
+/// with the slice that draws them (14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
     /// A feature instance.
     Instance(InstanceId),
     /// A placed tab (slice 17): it wins over the shape it sits on.
     Tab(TabId),
+    /// A cutting move of an operation's toolpath (#576): it opens the
+    /// operation in the editor and leaves the shape selection alone.
+    Toolpath(OperationId),
     /// Empty stock or empty stage.
     Nothing,
 }
@@ -116,6 +131,18 @@ fn enclosed_by(inner: &Shape, outer: &Shape) -> bool {
 /// first on a tie.
 #[must_use]
 pub fn candidates(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) -> Vec<InstanceId> {
+    let (near, inside) = shapes_at(scene, camera, at, tolerance_px);
+    near.into_iter().chain(inside).collect()
+}
+
+/// [`candidates`] in two lists: the shapes with an outline within the
+/// tolerance, then those whose inside alone holds the point.
+fn shapes_at(
+    scene: &Scene,
+    camera: &Camera,
+    at: Pos,
+    tolerance_px: f64,
+) -> (Vec<InstanceId>, Vec<InstanceId>) {
     let p = camera.to_world(at);
     let tolerance_mm = camera.px_to_mm(tolerance_px);
     let tie_mm = camera.px_to_mm(TIE_PX);
@@ -165,27 +192,121 @@ pub fn candidates(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) ->
     let mut ranked: Vec<(usize, Candidate<'_>)> = enclosing.into_iter().zip(interior).collect();
     ranked.sort_by(|(ea, a), (eb, b)| eb.cmp(ea).then(b.order.cmp(&a.order)));
 
+    (
+        near.into_iter().map(|c| c.shape.instance.clone()).collect(),
+        ranked
+            .into_iter()
+            .map(|(_, c)| c.shape.instance.clone())
+            .collect(),
+    )
+}
+
+/// The operations whose cutting moves a click can land on: those the
+/// Viewport draws, in its draw order, bottom first (the selected
+/// operation last). None with *Cuts* off; never one whose eye is closed;
+/// with *Only the selected operation* on, only the selected one.
+#[must_use]
+pub fn shown_cuts(scene: &Scene, view: &View, selection: &Selection) -> Vec<OperationId> {
+    if !view.visibility.cuts {
+        return Vec::new();
+    }
+    let mut ids: Vec<OperationId> = scene
+        .operations()
+        .iter()
+        .filter(|o| !o.cuts.is_empty() && view.shows(&o.id, selection))
+        .map(|o| o.id.clone())
+        .collect();
+    if let Selection::Operation(selected) = selection
+        && let Some(at) = ids.iter().position(|id| id == selected)
+    {
+        let top = ids.remove(at);
+        ids.push(top);
+    }
+    ids
+}
+
+/// The operations among `cuts` with a cutting move within `tolerance_px`
+/// of pane point `at`, nearest first; on a tie, the one drawn on top.
+#[must_use]
+pub fn toolpaths_at(
+    scene: &Scene,
+    camera: &Camera,
+    at: Pos,
+    tolerance_px: f64,
+    cuts: &[OperationId],
+) -> Vec<OperationId> {
+    let p = camera.to_world(at);
+    let tolerance_mm = camera.px_to_mm(tolerance_px);
+    let tie_mm = camera.px_to_mm(TIE_PX);
+    let mut found: Vec<(usize, f64, &OperationId)> = cuts
+        .iter()
+        .enumerate()
+        .filter_map(|(order, id)| {
+            let d = scene.operation(id)?.cuts.distance_mm(p, tolerance_mm)?;
+            Some((order, d, id))
+        })
+        .collect();
+    found.sort_by(|(oa, da, _), (ob, db, _)| {
+        if (da - db).abs() <= tie_mm {
+            ob.cmp(oa)
+        } else {
+            da.total_cmp(db)
+        }
+    });
+    found.into_iter().map(|(_, _, id)| id.clone()).collect()
+}
+
+/// Everything under pane point `at` in the order clicks cycle through
+/// it: shapes with an outline within the tolerance, then the cuts among
+/// `cuts` within it, then shapes whose inside holds the point.
+fn hits(
+    scene: &Scene,
+    camera: &Camera,
+    at: Pos,
+    tolerance_px: f64,
+    cuts: &[OperationId],
+) -> Vec<Hit> {
+    let (near, inside) = shapes_at(scene, camera, at, tolerance_px);
+    let toolpaths = if cuts.is_empty() {
+        Vec::new()
+    } else {
+        toolpaths_at(scene, camera, at, tolerance_px, cuts)
+    };
     near.into_iter()
-        .chain(ranked.into_iter().map(|(_, c)| c))
-        .map(|c| c.shape.instance.clone())
+        .map(Hit::Instance)
+        .chain(toolpaths.into_iter().map(Hit::Toolpath))
+        .chain(inside.into_iter().map(Hit::Instance))
         .collect()
 }
 
-/// What a click at pane point `at` picks: a placed tab within the
-/// tolerance ([`tabs::tab_at`]), else the `cycle`-th of [`candidates`],
-/// wrapping, or [`Hit::Nothing`].
+/// What a click at pane point `at` picks among the shapes and tabs: a
+/// placed tab within the tolerance ([`tabs::tab_at`]), else the
+/// `cycle`-th of [`candidates`], wrapping, or [`Hit::Nothing`]. No
+/// toolpath: [`pick_with_cuts`] picks those too.
 #[must_use]
 pub fn pick(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64, cycle: usize) -> Hit {
+    pick_with_cuts(scene, camera, at, tolerance_px, cycle, &[])
+}
+
+/// [`pick`] with the cutting moves of the operations `cuts` (those drawn,
+/// [`shown_cuts`]) as candidates too: after the shapes whose outline is
+/// within the tolerance, before those whose inside holds the point.
+#[must_use]
+pub fn pick_with_cuts(
+    scene: &Scene,
+    camera: &Camera,
+    at: Pos,
+    tolerance_px: f64,
+    cycle: usize,
+    cuts: &[OperationId],
+) -> Hit {
     if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
         return Hit::Tab(tab);
     }
-    let found = candidates(scene, camera, at, tolerance_px);
+    let found = hits(scene, camera, at, tolerance_px, cuts);
     match found.len() {
         0 => Hit::Nothing,
-        n => found
-            .into_iter()
-            .nth(cycle % n)
-            .map_or(Hit::Nothing, Hit::Instance),
+        n => found.into_iter().nth(cycle % n).unwrap_or(Hit::Nothing),
     }
 }
 
@@ -268,17 +389,31 @@ pub fn touching(scene: &Scene, rect: Rect) -> Vec<InstanceId> {
 /// takes the next candidate down; anywhere else starts again at the first.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClickCycle {
-    last: Option<(Pos, Vec<InstanceId>, usize)>,
+    last: Option<(Pos, Vec<Hit>, usize)>,
 }
 
 impl ClickCycle {
-    /// What a click at pane point `at` picks, remembering it for the next.
+    /// What a click at pane point `at` picks among the shapes and tabs,
+    /// remembering it for the next.
     pub fn click(&mut self, scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) -> Hit {
+        self.click_with_cuts(scene, camera, at, tolerance_px, &[])
+    }
+
+    /// [`ClickCycle::click`] with the cutting moves of `cuts` as
+    /// candidates too, as [`pick_with_cuts`] orders them.
+    pub fn click_with_cuts(
+        &mut self,
+        scene: &Scene,
+        camera: &Camera,
+        at: Pos,
+        tolerance_px: f64,
+        cuts: &[OperationId],
+    ) -> Hit {
         if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
             self.last = None;
             return Hit::Tab(tab);
         }
-        let found = candidates(scene, camera, at, tolerance_px);
+        let found = hits(scene, camera, at, tolerance_px, cuts);
         let index = match &self.last {
             Some((pos, ids, index)) if pos.distance_to(at) <= SAME_PLACE_PX && *ids == found => {
                 index + 1
@@ -287,10 +422,7 @@ impl ClickCycle {
         };
         let hit = match found.len() {
             0 => Hit::Nothing,
-            n => found
-                .get(index % n)
-                .cloned()
-                .map_or(Hit::Nothing, Hit::Instance),
+            n => found.get(index % n).cloned().unwrap_or(Hit::Nothing),
         };
         self.last = Some((at, found, index));
         hit
