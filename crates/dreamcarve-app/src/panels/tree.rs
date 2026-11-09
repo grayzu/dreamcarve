@@ -6,7 +6,8 @@
 //! section, one 26-px row per instance in file order with its eye, its
 //! padlock (shown on hover unless locked), its name, the `open` and
 //! `link-2` badges and the count of operations targeting it; then the
-//! Tabs section, a row per outline holding placed tabs; then Pictures.
+//! Tabs section, a row per outline holding placed tabs with a row per tab
+//! under it (#546); then Pictures.
 //! Each header's eye and padlock act on every row in it.
 //!
 //! The rows come from `dc_app::tree`; a click, the context menu, an eye,
@@ -625,5 +626,63 @@ fn tab_row(ui: &mut Ui, state: &FrameState<'_>, row: &TabRow, out: &mut Vec<Acti
     );
     if response.clicked() {
         out.push(Action::Select(Selection::Tabs(row.tabs.clone())));
+    }
+    for tab in &row.tabs {
+        tab_item(ui, state, tab, out);
+    }
+}
+
+/// One placed tab under its outline's row (mock-up 08: its id and its
+/// point in project space): a click selects it, Shift adds it, Ctrl/⌘
+/// toggles it, and the Viewport selects the same tab.
+fn tab_item(ui: &mut Ui, state: &FrameState<'_>, id: &dc_project::TabId, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let project = state.app.project();
+    let selected = state.app.selection().tabs().contains(id);
+    let units = project.display_units;
+    let (x, y) = project
+        .tabs
+        .iter()
+        .find(|t| t.id == *id)
+        .and_then(|t| dc_job::tabs::tab_point(project, t))
+        .map_or_else(Default::default, |p| {
+            (
+                dc_app::units::field_text(p.x, units),
+                dc_app::units::field_text(p.y, units),
+            )
+        });
+    let label = strings.fmt(
+        StrKey::TreeTabItem,
+        &[("name", id.as_str()), ("x", &x), ("y", &y)],
+    );
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
+    let response = ui.interact(
+        rect,
+        Id::unique(("dc.tree.tab", id.as_str())),
+        Sense::click(),
+    );
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &label));
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, palette.accent_soft);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+    }
+    let left = rect.left() + 8.0 + ICON_BOX_PX + 8.0;
+    let width = rect.right() - MARGIN_PX - left;
+    let galley = truncated(ui, &label, &TextStyle::Body, palette.text_secondary, width);
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        palette.text_secondary,
+    );
+    if response.clicked() {
+        let modifiers = ui.input(|i| i.modifiers);
+        let hit = dc_app::Hit::Tab(id.clone());
+        out.push(Action::Select(
+            state.app.selection().clicked(&hit, mode(modifiers)),
+        ));
     }
 }

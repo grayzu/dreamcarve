@@ -204,12 +204,10 @@ pub(crate) fn left(
                             header(ui, &panels::properties::title(state, ids));
                             panels::properties::show(ui, state, ids, out);
                         }
+                        // Placed tabs: their size and shape (#546).
                         Selection::Tabs(ids) => {
-                            header(ui, strings.get(StrKey::AppPanelProperties));
-                            empty_sentence(
-                                ui,
-                                &panels::properties::tabs_sentence(state, ids.len()),
-                            );
+                            header(ui, &panels::properties::tabs_title(state, ids));
+                            panels::properties::tabs(ui, state, ids, out);
                         }
                         _ => {
                             header(ui, strings.get(StrKey::AppPanelProperties));

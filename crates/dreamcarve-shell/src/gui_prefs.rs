@@ -46,6 +46,42 @@ pub struct GuiPrefs {
     /// Where each project (by its path) last exported, so the next export
     /// starts there.
     pub export_dirs: BTreeMap<String, PathBuf>,
+    /// The last-used tab size, which the Tab tool adds tabs with.
+    pub tab: TabSize,
+}
+
+/// A placed tab's width, height and shape, as the Tab tool adds it.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TabSize {
+    /// Length along the outline, mm.
+    pub width_mm: f64,
+    /// Top above the stock bottom, mm.
+    pub height_mm: f64,
+    /// Cross-section.
+    pub shape: TabShape,
+}
+
+impl Default for TabSize {
+    /// `init`'s and `tabs place`'s: 8 × 3 mm, square-shouldered.
+    fn default() -> Self {
+        Self {
+            width_mm: 8.0,
+            height_mm: 3.0,
+            shape: TabShape::Rect,
+        }
+    }
+}
+
+/// A tab's cross-section.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TabShape {
+    /// Square-shouldered.
+    #[default]
+    Rect,
+    /// A smooth ramp up and down.
+    Smooth,
 }
 
 /// The app's appearance.
@@ -257,6 +293,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "colour",
         "recent",
         "export_dirs",
+        "tab",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -277,6 +314,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "extents",
         "only_selected",
     ];
+    const TAB: &[&str] = &["width_mm", "height_mm", "shape"];
     let mut unknown = Vec::new();
     for (key, value) in table {
         if !TOP.contains(&key.as_str()) {
@@ -287,6 +325,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
             "window" => WINDOW,
             "panels" => PANELS,
             "visibility" => VISIBILITY,
+            "tab" => TAB,
             _ => continue,
         };
         if let toml::Value::Table(inner) = value {
@@ -402,6 +441,11 @@ mod tests {
             export_dirs: [("/jobs/coaster.dcv".to_owned(), PathBuf::from("/jobs/out"))]
                 .into_iter()
                 .collect(),
+            tab: TabSize {
+                width_mm: 10.0,
+                height_mm: 2.5,
+                shape: TabShape::Smooth,
+            },
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);

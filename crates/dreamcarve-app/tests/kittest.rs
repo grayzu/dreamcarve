@@ -2116,8 +2116,8 @@ fn start_point_click_on_the_viewport() {
     h.get_by_role_and_label(Role::ListItem, "Cut out").click();
     h.run();
     assert!(
-        h.get_by_label("Place tabs").accesskit_node().is_disabled(),
-        "placing tabs is slice 17's"
+        !h.get_by_label("Place tabs").accesskit_node().is_disabled(),
+        "the Profile's tab request can be placed (#546)"
     );
 
     h.get_by_label("Pick on the view").scroll_to_me();
@@ -2681,6 +2681,18 @@ fn keyboard_shortcuts_reach_their_commands() {
     );
     reached.insert(Key::ZoomToSelection);
 
+    // T arms the Tab tool (#546): the next Escape disarms it rather than
+    // clearing the selection.
+    h.key_press(egui::Key::T);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(
+        !h.state().app().selection().is_empty(),
+        "T armed the Tab tool, so Escape disarmed it"
+    );
+    reached.insert(Key::TabTool);
+
     let count = h.state().app().project().instances.len();
     h.key_press(egui::Key::Delete);
     h.run();
@@ -2804,5 +2816,136 @@ fn focus_order_and_visible_ring() {
         h.state().focus_ring().is_some(),
         "Tab from it shows the ring"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 78 (functional capability 69; `experience.md`, section 8,
+/// "Tab dragging"; #546): the toolbar's Tab tool arms the Viewport; a
+/// click on the square's outline adds a tab there, in the square's
+/// definition space, with the last-used size from the preferences, as one
+/// undo step. The tool stays armed until Escape; after it a click on the
+/// new tab selects the tab, which wins over the square it sits on.
+#[test]
+fn tab_tool_click_adds_a_tab() {
+    let dir = scratch("tab-tool");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let before = h.state().app().project().tabs.clone();
+    h.get_by_label("Tab tool").click();
+    h.run();
+
+    // The square's left edge (x 70, y 18–48 in project space).
+    let square = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    let under = world_at(&h, square);
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+
+    let project = h.state().app().project().clone();
+    assert_eq!(project.tabs.len(), before.len() + 1, "one tab added");
+    let added = project.tabs.last().unwrap().clone();
+    assert_eq!(added.instance.as_str(), "i4", "on the square");
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| i.id == added.instance)
+        .unwrap();
+    let placed = instance
+        .transform
+        .apply(dc_geometry::Point::new(added.x_mm, added.y_mm));
+    assert!(
+        (placed.x - 70.0).abs() < 1e-6 && (placed.y - under.y).abs() < 1e-2,
+        "the outline's point under the click: {placed:?}, clicked {under:?}"
+    );
+    let size = h.state().app().prefs().tab;
+    assert_eq!(
+        (added.width_mm, added.height_mm, added.shape),
+        (size.width_mm, size.height_mm, size.shape),
+        "the last-used size"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Add tab"));
+
+    // Escape disarms; a click on the tab selects it.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let tab = common::on_screen(&h, placed);
+    common::click_at(&mut h, tab, egui::Modifiers::NONE);
+    assert_eq!(h.state().app().project().tabs.len(), before.len() + 1);
+    assert_eq!(
+        h.state().app().selection(),
+        &dc_app::Selection::Tabs(vec![added.id.clone()])
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Acceptance 78 in the window (#546): the editor's *Place tabs* places
+/// the Cut out's request as one step; a tab dragged along the outline
+/// lands on the outline, previewed until the release commits one
+/// `MoveTab`, the other tabs untouched; Delete removes the selected tab.
+#[test]
+fn place_drag_and_delete_tabs() {
+    let dir = scratch("tab-drag");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    h.run();
+    h.get_by_label("Place tabs").scroll_to_me();
+    h.run();
+    h.get_by_label("Place tabs").click();
+    h.run();
+    let placed = h.state().app().project().tabs.clone();
+    assert!(!placed.is_empty(), "the request is placed");
+    assert_eq!(
+        h.state().app().undo_label().map(str::to_owned),
+        Some(format!("Place {} tabs", placed.len()))
+    );
+
+    // The lowest tab, on the plaque's bottom edge, dragged 15 mm along it.
+    let mark = h
+        .state()
+        .app()
+        .scene()
+        .tabs()
+        .iter()
+        .min_by(|a, b| a.at_mm.y.total_cmp(&b.at_mm.y))
+        .unwrap()
+        .clone();
+    let steps = undo_steps(&h);
+    let from = common::on_screen(&h, mark.at_mm);
+    let to = common::on_screen(
+        &h,
+        dc_geometry::Point::new(mark.at_mm.x + 15.0, mark.at_mm.y + 1.0),
+    );
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(undo_steps(&h), steps + 1, "one step on release");
+    assert_eq!(h.state().app().undo_label(), Some("Move tab"));
+    let project = h.state().app().project().clone();
+    let moved = project.tabs.iter().find(|t| t.id == mark.id).unwrap();
+    let (_, gap_mm) = dc_job::tabs::along_outline_mm(&project, moved).unwrap();
+    assert!(gap_mm < 1e-6, "on the outline: {gap_mm}");
+    let before = placed.iter().find(|t| t.id == mark.id).unwrap();
+    assert!((moved.x_mm - before.x_mm).abs() > 10.0, "it moved along");
+    for (a, b) in project.tabs.iter().zip(&placed) {
+        if a.id != mark.id {
+            assert_eq!(a, b, "the others stay");
+        }
+    }
+    assert_eq!(
+        h.state().app().selection(),
+        &dc_app::Selection::Tabs(vec![mark.id.clone()])
+    );
+
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(h.state().app().project().tabs.len(), placed.len() - 1);
+    assert_eq!(h.state().app().undo_label(), Some("Delete tab"));
     std::fs::remove_dir_all(&dir).unwrap();
 }

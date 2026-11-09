@@ -48,6 +48,8 @@ pub enum Command {
     FitView,
     /// View ▸ Zoom to Selection.
     ZoomToSelection,
+    /// The toolbar's Tab tool, on or off (#546).
+    TabTool,
     /// Nudge the selection 1 mm.
     Nudge,
     /// Nudge the selection 10 mm.
@@ -335,6 +337,12 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Fit the Viewport to the selection",
         Scope::OutsideFields,
     ),
+    key_only(
+        Command::TabTool,
+        NONE,
+        &[Key::T],
+        "Turn the Tab tool on or off: a click on a shape's outline adds a tab",
+    ),
     key_only(Command::Nudge, NONE, ARROWS, "Nudge the selection 1 mm"),
     key_only(
         Command::NudgeCoarse,
@@ -352,7 +360,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Command::Escape,
         NONE,
         &[Key::Escape],
-        "Clear the selection, stop picking on the Viewport, or close a menu",
+        "Clear the selection, turn off the Tab tool, stop picking on the Viewport, or close a menu",
     ),
 ];
 

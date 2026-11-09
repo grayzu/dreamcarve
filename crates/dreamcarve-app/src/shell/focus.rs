@@ -142,7 +142,11 @@ fn end(regions: &[(Region, Rect)], forward: bool) -> Option<Region> {
     let mut drawn = Region::ORDER
         .into_iter()
         .filter(|r| regions.iter().any(|(d, _)| d == r));
-    if forward { drawn.next() } else { drawn.last() }
+    if forward {
+        drawn.next()
+    } else {
+        drawn.next_back()
+    }
 }
 
 /// The region whose rectangle holds the centre of widget `id`'s.
@@ -361,25 +365,26 @@ pub(crate) fn finish(ui: &Ui, regions: Vec<(Region, Rect)>) -> Shown {
     }
 
     let mut ring = None;
-    if router.keyboard && router.jump.is_none() && router.tab.is_none() {
-        if let Some(focused) = focused {
-            if let Some(response) = ctx.read_response(focused) {
-                let at = response.rect.expand(3.0);
-                let clip = region
-                    .and_then(|r| router.regions.iter().find(|(d, _)| *d == r))
-                    .map_or(ctx.content_rect(), |(_, rect)| rect.expand(EDGE_PX));
-                let palette = Palette::current(ui);
-                ctx.layer_painter(response.layer_id)
-                    .with_clip_rect(clip)
-                    .rect_stroke(
-                        at,
-                        6.0,
-                        Stroke::new(2.0, palette.focus_ring),
-                        StrokeKind::Middle,
-                    );
-                ring = Some(at);
-            }
-        }
+    if router.keyboard
+        && router.jump.is_none()
+        && router.tab.is_none()
+        && let Some(focused) = focused
+        && let Some(response) = ctx.read_response(focused)
+    {
+        let at = response.rect.expand(3.0);
+        let clip = region
+            .and_then(|r| router.regions.iter().find(|(d, _)| *d == r))
+            .map_or(ctx.content_rect(), |(_, rect)| rect.expand(EDGE_PX));
+        let palette = Palette::current(ui);
+        ctx.layer_painter(response.layer_id)
+            .with_clip_rect(clip)
+            .rect_stroke(
+                at,
+                6.0,
+                Stroke::new(2.0, palette.focus_ring),
+                StrokeKind::Middle,
+            );
+        ring = Some(at);
     }
     router.last = focused.map(|f| (f, region));
     store(ctx, router);

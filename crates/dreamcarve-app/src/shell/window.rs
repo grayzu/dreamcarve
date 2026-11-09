@@ -288,6 +288,10 @@ pub(crate) enum Action {
         op: dc_project::OperationId,
         field: String,
     },
+    /// *Place tabs* on a Profile (the editor's button, the operation's
+    /// menu): its request placed, what placing found in the Warnings
+    /// panel (#546).
+    PlaceTabs(dc_project::OperationId),
 }
 
 impl Action {
@@ -977,6 +981,15 @@ impl Shell {
                 panels::editor::request_focus(ctx, op, field);
                 self.show_operations();
             }
+            Action::PlaceTabs(op) => {
+                let notes = self.app.notes().len();
+                match self.app.place_tabs(&op) {
+                    // What placing found is in the drawer: open it.
+                    Ok(_) if self.app.notes().len() > notes => self.warnings_open = true,
+                    Ok(_) => {}
+                    Err(e) => self.message = Some(e.to_string()),
+                }
+            }
         }
     }
 
@@ -1148,16 +1161,28 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
                 .filter(|i| i.visible)
                 .map(|i| i.id.clone())
                 .collect();
-            (!visible.is_empty()).then(|| Action::Select(dc_app::Selection::Instances(visible)))
+            (!visible.is_empty()).then_some(Action::Select(dc_app::Selection::Instances(visible)))
         }
         Shortcut::Duplicate => on_selection(dc_app::tree::MenuItem::Duplicate),
-        Shortcut::Delete => on_selection(dc_app::tree::MenuItem::Delete),
+        Shortcut::Delete => {
+            // Selected tabs (#546) delete as one step, like shapes.
+            let tabs = app.selection().tabs();
+            if tabs.is_empty() {
+                on_selection(dc_app::tree::MenuItem::Delete)
+            } else {
+                Some(Action::run(dc_app::Command::DeleteTabs(tabs.to_vec())))
+            }
+        }
         Shortcut::Hide => on_selection(dc_app::tree::MenuItem::Hide),
         Shortcut::Show => on_selection(dc_app::tree::MenuItem::Show),
         Shortcut::Lock => dc_app::tree::toggle_locked(project, selected).map(Action::run),
         Shortcut::FitView => Some(Action::FitView),
         Shortcut::ZoomToSelection => (!selected.is_empty()).then_some(Action::ZoomToSelection),
-        Shortcut::Nudge | Shortcut::NudgeCoarse | Shortcut::NudgeFine | Shortcut::Escape => None,
+        Shortcut::TabTool
+        | Shortcut::Nudge
+        | Shortcut::NudgeCoarse
+        | Shortcut::NudgeFine
+        | Shortcut::Escape => None,
     }
 }
 

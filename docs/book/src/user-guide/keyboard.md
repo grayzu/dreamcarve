@@ -5,7 +5,7 @@ macOS. On macOS, ⌘ takes the place of Ctrl and ⌥ the place of Alt. Each
 menu row shows its shortcut at the right of the row.
 
 The shortcuts that act on the selection (Select All, Duplicate, Delete,
-Hide, Show, Lock, the arrows, F and Escape) do nothing while you are
+Hide, Show, Lock, the arrows, F, T and Escape) do nothing while you are
 typing in a field. In a field, Ctrl A selects the field's text, and the
 arrows move the text cursor. The file and undo shortcuts work everywhere
 except in an open sheet.
@@ -30,10 +30,11 @@ except in an open sheet.
 | L | L | Lock the selection, or unlock it when every shape in it is locked | Edit ▸ Lock |
 | F | F | Fit the Viewport to the stock and shapes | View ▸ Fit View |
 | Shift+F | ⇧F | Fit the Viewport to the selection | View ▸ Zoom to Selection |
+| T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
 | Arrow keys | Arrow keys | Nudge the selection 1 mm | — |
 | Shift+arrow keys | ⇧ arrow keys | Nudge the selection 10 mm | — |
 | Alt+arrow keys | ⌥ arrow keys | Nudge the selection 0.1 mm | — |
-| Esc | Esc | Clear the selection, stop picking on the Viewport, or close a menu | — |
+| Esc | Esc | Clear the selection, turn off the Tab tool, stop picking on the Viewport, or close a menu | — |
 <!-- shortcuts:end -->
 
 The table is generated from the app's own shortcut table, so it always
