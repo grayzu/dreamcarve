@@ -31,10 +31,11 @@
 //! even-odd over each outline flattened at [`crate::scene::PICK_FLATTEN_MM`].
 
 use dc_geometry::{Point, Polyline, Rect, point_segment_distance_mm};
-use dc_project::{InstanceId, OperationId};
+use dc_project::{InstanceId, OperationId, TabId};
 
 use crate::scene::{Scene, Shape};
 use crate::viewport::camera::{Camera, Pos};
+use crate::viewport::tabs;
 
 /// How far from an outline a click still hits it, logical pixels
 /// (PureCutCNC's `pointNearProfile` default).
@@ -46,12 +47,14 @@ const TIE_PX: f64 = 0.5;
 /// place" for [`ClickCycle`], logical pixels.
 const SAME_PLACE_PX: f64 = 3.0;
 
-/// What a click on the Viewport lands on. Tabs and toolpaths join with
-/// the slices that draw them (17, 16).
+/// What a click on the Viewport lands on. Toolpaths join with the slice
+/// that draws them (16).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Hit {
     /// A feature instance.
     Instance(InstanceId),
+    /// A placed tab (slice 17): it wins over the shape it sits on.
+    Tab(TabId),
     /// A shape on the male inlay board (slice 14, #543): it selects its
     /// Inlay.
     MaleBoardShape(OperationId),
@@ -200,11 +203,15 @@ pub fn male_board_shape(
         .map(|shape| shape.op.clone())
 }
 
-/// What a click at pane point `at` picks: the `cycle`-th of
-/// [`candidates`], wrapping; with none, the male board's shape there
+/// What a click at pane point `at` picks: a placed tab within the
+/// tolerance ([`tabs::tab_at`]), else the `cycle`-th of [`candidates`],
+/// wrapping; with none, the male board's shape there
 /// ([`male_board_shape`]); else [`Hit::Nothing`].
 #[must_use]
 pub fn pick(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64, cycle: usize) -> Hit {
+    if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
+        return Hit::Tab(tab);
+    }
     let found = candidates(scene, camera, at, tolerance_px);
     match found.len() {
         0 => male_board_shape(scene, camera, at, tolerance_px)
@@ -301,6 +308,10 @@ pub struct ClickCycle {
 impl ClickCycle {
     /// What a click at pane point `at` picks, remembering it for the next.
     pub fn click(&mut self, scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) -> Hit {
+        if let Some(tab) = tabs::tab_at(scene, camera, at, tolerance_px) {
+            self.last = None;
+            return Hit::Tab(tab);
+        }
         let found = candidates(scene, camera, at, tolerance_px);
         let index = match &self.last {
             Some((pos, ids, index)) if pos.distance_to(at) <= SAME_PLACE_PX && *ids == found => {

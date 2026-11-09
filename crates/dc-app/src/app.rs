@@ -15,7 +15,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use dc_job::{EmitOp, Finding, Findings};
 use dc_project::{
     CURRENT_VERSION, Heights, InstanceId, MachineOrigin, MigrationNote, OperationId, OriginXy,
-    OriginZ, Problem, Project, SettingReset, SourceMap, Stock, Units,
+    OriginZ, Problem, Project, SettingReset, SourceMap, Stock, TabId, Units,
 };
 
 use crate::command::Command;
@@ -366,8 +366,49 @@ impl App {
     ///
     /// The command's [`CommandError`]; nothing changes.
     pub fn run(&mut self, command: Command) -> Result<String, CommandError> {
+        let after = command.apply(self.history.current())?;
+        Ok(self.commit(&command, after))
+    }
+
+    /// *Place tabs* on Profile `op` (functional spec, capability 69): runs
+    /// [`Command::PlaceTabs`], `tabs place <dcv> <op>`'s placing, as one
+    /// step, and adds what placing found (an overlap, a layout covering
+    /// more than half a path, `tab_on_hole`) to the Warnings panel's notes,
+    /// as the CLI prints it, since generation does not warn about all of
+    /// it again.
+    ///
+    /// # Errors
+    ///
+    /// The command's [`CommandError`] (the operation is not a Profile,
+    /// holds no request, or cannot be placed); nothing changes.
+    pub fn place_tabs(&mut self, op: &OperationId) -> Result<String, CommandError> {
+        let (after, warnings) = dc_job::tabs::place_request(self.history.current(), op)?;
+        let label = self.commit(&Command::PlaceTabs { op: op.clone() }, after);
+        for w in &warnings {
+            let message = match w.op() {
+                Some(op) => format!("operation `{op}`: {w}"),
+                None => w.to_string(),
+            };
+            self.notes.push(format!("{}: {message}", w.code().as_str()));
+        }
+        Ok(label)
+    }
+
+    /// Pushes `after`, what `command` made of the current snapshot, under
+    /// its label and returns the label.
+    fn commit(&mut self, command: &Command, after: Project) -> String {
+        // A tab's size typed in the Properties panel is the size the Tab
+        // tool adds next (capability 69).
+        if let Command::UpdateTabs(tabs) = command
+            && let Some(tab) = tabs.last()
+        {
+            self.prefs.tab = crate::prefs::TabSize {
+                width_mm: tab.width_mm,
+                height_mm: tab.height_mm,
+                shape: tab.shape,
+            };
+        }
         let before = self.history.current();
-        let after = command.apply(before)?;
         let label = command.label(&self.strings, before, &after);
         // `apply` keeps only the project; what the switch reset is asked
         // again, from the same pure function, for the panel to report.
@@ -389,15 +430,21 @@ impl App {
             .filter(|o| !before.operations.iter().any(|b| b.id() == o.id()))
             .map(|o| o.id().clone())
             .collect();
+        let new_tabs: Vec<TabId> = match command {
+            Command::AddTab(tab) => vec![tab.id.clone()],
+            _ => Vec::new(),
+        };
         self.history.push(after, label.clone());
-        if !new_instances.is_empty() {
+        if !new_tabs.is_empty() {
+            self.selection = Selection::Tabs(new_tabs);
+        } else if !new_instances.is_empty() {
             self.selection = Selection::Instances(new_instances);
         } else if let [id] = new_operations.as_slice() {
             self.selection = Selection::Operation(id.clone());
             self.editing = Some(id.clone());
         }
         self.snapshot_changed();
-        Ok(label)
+        label
     }
 
     /// Steps back one snapshot; the label of the step undone.

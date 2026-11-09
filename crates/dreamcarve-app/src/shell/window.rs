@@ -286,6 +286,10 @@ pub(crate) enum Action {
         op: dc_project::OperationId,
         field: String,
     },
+    /// *Place tabs* on a Profile (the editor's button, the operation's
+    /// menu): its request placed, what placing found in the Warnings
+    /// panel (#546).
+    PlaceTabs(dc_project::OperationId),
 }
 
 impl Action {
@@ -954,6 +958,15 @@ impl Shell {
                 self.app.edit(Some(op.clone()));
                 panels::editor::request_focus(ctx, op, field);
                 self.show_operations();
+            }
+            Action::PlaceTabs(op) => {
+                let notes = self.app.notes().len();
+                match self.app.place_tabs(&op) {
+                    // What placing found is in the drawer: open it.
+                    Ok(_) if self.app.notes().len() > notes => self.warnings_open = true,
+                    Ok(_) => {}
+                    Err(e) => self.message = Some(e.to_string()),
+                }
             }
         }
     }

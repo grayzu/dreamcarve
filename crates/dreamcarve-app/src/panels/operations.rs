@@ -374,6 +374,18 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
             out.push(Action::run(Command::DeleteOperation(row.id.clone())));
             ui.close();
         }
+        // A Profile's tab request, placed as `tabs place` places it (#546).
+        let requested = state.app.project().operations.iter().any(|o| {
+            o.id() == &row.id && matches!(o, dc_project::Operation::Profile(p) if p.tabs.is_some())
+        });
+        if requested
+            && ui
+                .button(strings.get(StrKey::OperationsPlaceTabs))
+                .clicked()
+        {
+            out.push(Action::PlaceTabs(row.id.clone()));
+            ui.close();
+        }
     });
 
     let cell = |x: f32| {

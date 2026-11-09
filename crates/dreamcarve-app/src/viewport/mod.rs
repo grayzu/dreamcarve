@@ -30,11 +30,17 @@
 //! hovered the targets draw in `shape.hover` (#539). While a point row's
 //! *Pick on the view* is armed, the next click sets that point (a
 //! Profile's start point) and disarms it, as the park point's does (#540).
+//! Placed tabs (#546): a press on a tab (tabs win over the shape they sit
+//! on) drags it along its outline, previewed live and committed as one
+//! `MoveTab` on release; while the Tab tool is armed (the toolbar, T) a
+//! click on an outline adds a tab there, until Escape; Delete removes the
+//! selected tabs ([`tab_tool`]).
 
 mod card;
 mod layers;
 mod lod;
 pub(crate) mod renderer;
+pub(crate) mod tab_tool;
 
 use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
@@ -49,7 +55,7 @@ use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
 use dc_app::{App, ClickMode, Command, Selection, StrKey};
 use dc_geometry::{Point, Rect as MmRect, Transform};
-use dc_project::{InstanceId, OperationId};
+use dc_project::{InstanceId, OperationId, TabId};
 use eframe::egui::{
     self, Key, Modifiers, MouseWheelSource, MouseWheelUnit, PointerButton, Pos2, Rect, Stroke,
     TextStyle, Ui,
@@ -100,6 +106,9 @@ enum Target {
     Shape(InstanceId),
     /// A corner or the rotation handle of the selection.
     Handle(Grab),
+    /// A placed tab: a click on release, a drag along its outline once
+    /// moved.
+    Tab(TabId),
 }
 
 /// What the pointer is doing on the pane.
@@ -122,6 +131,8 @@ enum Drag {
     /// A transform the selection refused (a locked shape): nothing until
     /// the release.
     Refused,
+    /// Dragging placed tab `id` along its outline, previewed until release.
+    Tab { id: TabId },
 }
 
 /// The selection drawn where the drag in progress will put it.
@@ -162,6 +173,11 @@ pub(crate) struct ViewportState {
     cursor_mm: Option<Point>,
     /// The shape under the pointer.
     hover: Option<InstanceId>,
+    /// The placed tab under the pointer.
+    hover_tab: Option<TabId>,
+    /// The tab being dragged and where the release will put it, in
+    /// definition space.
+    tab_preview: Option<(TabId, f64, f64)>,
     layers: [Cached; Layer::ALL.len()],
     /// Each operation's toolpath buffer as last built.
     toolpaths: BTreeMap<OperationId, Cached>,
@@ -253,15 +269,16 @@ impl ViewportState {
             ),
             _ => Hit::Nothing,
         };
-        self.hover = match &hit {
-            Hit::Instance(id) => Some(id.clone()),
-            Hit::MaleBoardShape(_) | Hit::Nothing => None,
-        };
         // A male board shape is its Inlay's, not an instance: the status
         // bar names the board and the Inlay (`experience.md`, section 9).
         let male = match &hit {
             Hit::MaleBoardShape(op) => app.project().operations.iter().find(|o| o.id() == op),
             _ => None,
+        };
+        (self.hover, self.hover_tab) = match hit {
+            Hit::Instance(id) => (Some(id), None),
+            Hit::Tab(id) => (None, Some(id)),
+            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None),
         };
         Pointer {
             cursor_mm: self.cursor_mm,
@@ -381,6 +398,9 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let park_picking = project::park_pick_armed(ctx);
     let target_picking = editor::target_pick(ctx).is_some();
     let point_picking = editor::point_pick(ctx).is_some();
+    let tab_tool_armed = tab_tool::armed(ctx);
+    let selected_tabs = app.selection().tabs().to_vec();
+    let mut toggle_tab_tool = false;
     let mut disarm = false;
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
@@ -390,13 +410,25 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
         if input.consume_key(Modifiers::NONE, Key::F) {
             actions.push(Action::FitView);
         }
+        if !popup_open && input.consume_key(Modifiers::NONE, Key::T) {
+            toggle_tab_tool = true;
+        }
         if !popup_open && input.consume_key(Modifiers::NONE, Key::Escape) {
-            if park_picking || target_picking || point_picking {
+            if park_picking || target_picking || point_picking || tab_tool_armed {
                 // Disarmed below: the context is locked inside `input_mut`.
                 disarm = true;
             } else {
                 actions.push(Action::ClearSelection);
             }
+        }
+        if !selected_tabs.is_empty()
+            && !popup_open
+            && (input.consume_key(Modifiers::NONE, Key::Delete)
+                || input.consume_key(Modifiers::NONE, Key::Backspace))
+        {
+            actions.push(Action::Run(Box::new(Command::DeleteTabs(
+                selected_tabs.clone(),
+            ))));
         }
         if selected.is_empty() || popup_open {
             return;
@@ -429,8 +461,13 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             ))));
         }
     });
+    if toggle_tab_tool {
+        tab_tool::arm(ctx, !tab_tool_armed);
+    }
     if disarm {
-        if park_picking {
+        if tab_tool_armed {
+            tab_tool::arm(ctx, false);
+        } else if park_picking {
             project::arm_park_pick(ctx, false);
         } else if point_picking {
             editor::arm_point_pick(ctx, None);
@@ -510,6 +547,7 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
     }
     match pick::pick(app.scene(), camera, at, PICK_TOLERANCE_PX, 0) {
         Hit::Instance(id) => Some(Target::Shape(id)),
+        Hit::Tab(id) => Some(Target::Tab(id)),
         // A male board shape is no instance to move: a click on it selects
         // its Inlay on release.
         Hit::MaleBoardShape(_) | Hit::Nothing => None,
@@ -529,6 +567,13 @@ fn start_transform(
     let project = state.app.project();
     let selected = state.app.selection().instances();
     let (ids, grab) = match target {
+        // A tab drags along its outline, selected first.
+        Target::Tab(id) => {
+            if !state.app.selection().tabs().contains(&id) {
+                out.push(Action::Select(Selection::Tabs(vec![id.clone()])));
+            }
+            return Drag::Tab { id };
+        }
         Target::Shape(id) if selected.contains(&id) => (selected.to_vec(), Grab::Move),
         Target::Shape(id) => {
             out.push(Action::Select(Selection::Instances(vec![id.clone()])));
@@ -696,10 +741,20 @@ fn gestures(
         });
     }
 
+    if let Some(Drag::Tab { id }) = &view.drag {
+        let project = state.app.project();
+        view.tab_preview = project.tabs.iter().find(|t| t.id == *id).map(|tab| {
+            let to = camera.to_world(pane_pos(pane, pos));
+            let (x_mm, y_mm) = dc_app::viewport::tabs::tab_drag(project, tab, to);
+            (id.clone(), x_mm, y_mm)
+        });
+    }
+
     if !released {
         return moved;
     }
     let mode = click_mode(modifiers);
+    let tab_preview = view.tab_preview.take();
     let selection = state.app.selection();
     let preview = view.preview.take();
     view.readout = None;
@@ -734,6 +789,18 @@ fn gestures(
                 PICK_TOLERANCE_PX,
             );
             out.push(Action::Select(selection.clicked(&hit, mode)));
+        }
+        // The release commits the tab's new point: one `MoveTab`.
+        Some(Drag::Tab { id }) => {
+            let moved_tab = state.app.project().tabs.iter().any(|t| {
+                t.id == id
+                    && tab_preview.as_ref().is_some_and(|(_, x, y)| {
+                        (t.x_mm - x).abs() > NO_CHANGE || (t.y_mm - y).abs() > NO_CHANGE
+                    })
+            });
+            if moved_tab && let Some((id, x_mm, y_mm)) = tab_preview {
+                out.push(Action::Run(Box::new(Command::MoveTab { id, x_mm, y_mm })));
+            }
         }
         Some(Drag::Pan { .. } | Drag::Refused) | None => {}
     }
@@ -1141,6 +1208,17 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         );
     }
 
+    tab_tool::paint(
+        &painter,
+        palette,
+        pane,
+        state.app,
+        camera,
+        &tab_tool::Marks {
+            hover: view.hover_tab.as_ref(),
+            dragged: view.tab_preview.as_ref(),
+        },
+    );
     transform_handles(ui, &painter, pane, state, view, camera);
 
     if let Some(Drag::Marquee { start }) = view.drag
@@ -1247,7 +1325,11 @@ pub(crate) fn show(
             }
             let picking = editor::target_pick(ui.ctx());
             let point = editor::point_pick(ui.ctx());
-            if (project::park_pick_armed(ui.ctx()) || picking.is_some() || point.is_some())
+            let adding_tabs = tab_tool::armed(ui.ctx());
+            if (project::park_pick_armed(ui.ctx())
+                || picking.is_some()
+                || point.is_some()
+                || adding_tabs)
                 && response.hovered()
             {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
@@ -1273,6 +1355,15 @@ pub(crate) fn show(
                 view.clicks.reset();
                 let at_mm = camera.to_world(pane_pos(pane, at));
                 out.extend(editor::point_at(app.project(), &pick, at_mm));
+            } else if adding_tabs
+                && response.clicked()
+                && let Some(at) = response.interact_pointer_pos()
+            {
+                // The Tab tool's click adds a tab on the outline under it,
+                // and the tool stays armed until Escape.
+                view.drag = None;
+                view.clicks.reset();
+                out.extend(tab_tool::click(app, &camera, pane_pos(pane, at)).map(Action::run));
             } else if let Some(op) = picking
                 && response.clicked()
                 && let Some(at) = response.interact_pointer_pos()
@@ -1307,8 +1398,11 @@ pub(crate) fn show(
             }
             match view.drag {
                 Some(Drag::Refused) => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
-                Some(Drag::Transform { .. }) => {
+                Some(Drag::Transform { .. } | Drag::Tab { .. }) => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+                None if view.hover_tab.is_some() && !adding_tabs => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
                 }
                 _ => {}
             }

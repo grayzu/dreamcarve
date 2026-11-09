@@ -156,6 +156,14 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
             gui_prefs::Theme::Light => Theme::Light,
             gui_prefs::Theme::Dark => Theme::Dark,
         },
+        tab: dc_app::prefs::TabSize {
+            width_mm: file.tab.width_mm,
+            height_mm: file.tab.height_mm,
+            shape: match file.tab.shape {
+                gui_prefs::TabShape::Rect => dc_project::TabShape::Rect,
+                gui_prefs::TabShape::Smooth => dc_project::TabShape::Smooth,
+            },
+        },
     }
 }
 
@@ -204,6 +212,14 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
             .iter()
             .map(|(project, dir)| (project.display().to_string(), dir.clone()))
             .collect::<BTreeMap<_, _>>(),
+        tab: gui_prefs::TabSize {
+            width_mm: prefs.tab.width_mm,
+            height_mm: prefs.tab.height_mm,
+            shape: match prefs.tab.shape {
+                dc_project::TabShape::Rect => gui_prefs::TabShape::Rect,
+                dc_project::TabShape::Smooth => gui_prefs::TabShape::Smooth,
+            },
+        },
     }
 }
 
@@ -229,6 +245,8 @@ mod tests {
         prefs.panels.left_open = false;
         prefs.panels.right_width = 333.0;
         prefs.visibility.arrows = true;
+        prefs.tab.width_mm = 12.0;
+        prefs.tab.shape = dc_project::TabShape::Smooth;
         prefs.sections.insert("project.stock".to_owned(), false);
         prefs.recent = vec![PathBuf::from("/a.dcv"), PathBuf::from("/b.dcv")];
         prefs
