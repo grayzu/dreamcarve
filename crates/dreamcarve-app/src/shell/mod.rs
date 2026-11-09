@@ -6,6 +6,7 @@
 //! the theme.
 
 pub mod files;
+pub mod focus;
 pub(crate) mod menu;
 pub(crate) mod status;
 pub mod theme;

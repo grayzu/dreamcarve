@@ -486,6 +486,21 @@ impl Shell {
         &self.title
     }
 
+    /// The part of the window holding the keyboard focus after the last
+    /// frame, or `None` when nothing has it.
+    #[must_use]
+    pub fn focus(&self) -> Option<crate::FocusRegion> {
+        None
+    }
+
+    /// Where the last frame drew the keyboard focus ring: `None` when
+    /// nothing has the focus, or it came from a click (`experience.md`,
+    /// section 8, "Keyboard focus").
+    #[must_use]
+    pub fn focus_ring(&self) -> Option<egui::Rect> {
+        None
+    }
+
     /// The status bar's message.
     #[must_use]
     pub fn message(&self) -> Option<&str> {

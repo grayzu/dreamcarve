@@ -2492,3 +2492,317 @@ fn warnings_copy_reaches_the_clipboard() {
         "the OS clipboard holds check's text"
     );
 }
+
+/// The ids of the instances selected in the shell.
+fn selected_ids(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<String> {
+    h.state()
+        .app()
+        .selection()
+        .instances()
+        .iter()
+        .map(|i| i.as_str().to_owned())
+        .collect()
+}
+
+/// Instance `id` of the shell's project.
+fn instance_of(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> dc_project::FeatureInstance {
+    h.state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == id)
+        .cloned()
+        .unwrap_or_else(|| panic!("the project has {id}"))
+}
+
+/// Selects instance `id` as a click would.
+fn select_only(h: &mut Harness<'_, dreamcarve_app::Shell>, id: &str) {
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new(id),
+        ]));
+    h.run();
+}
+
+/// Acceptance 54 (functional spec, capability 54): every shortcut in
+/// `dreamcarve_app::keyboard::SHORTCUTS` reaches its command, and each with
+/// a menu row shows its keys in that row. Ctrl/⌘ E is listed and bound to
+/// nothing until slice 18 (#547) brings the export sheet: its row is
+/// disabled and pressing it asks no dialog.
+#[test]
+fn keyboard_shortcuts_reach_their_commands() {
+    use dreamcarve_app::keyboard::{self, Command as Key};
+
+    let dir = scratch("keyboard-shortcuts");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque.clone()), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let mut reached = std::collections::BTreeSet::new();
+
+    // Every menu row with a shortcut shows it: the row's accessible name
+    // is its label, then the keys as egui formats them for this platform.
+    for menu in [
+        keyboard::Menu::File,
+        keyboard::Menu::Edit,
+        keyboard::Menu::View,
+    ] {
+        let title = h.state().app().strings().get(menu.title()).to_owned();
+        h.get_by_label(&title).click();
+        h.run();
+        for shortcut in keyboard::SHORTCUTS {
+            let Some((row_menu, label)) = shortcut.menu else {
+                continue;
+            };
+            if row_menu != menu {
+                continue;
+            }
+            let keys = h.ctx.format_shortcut(&egui::KeyboardShortcut::new(
+                shortcut.modifiers,
+                shortcut.keys[0],
+            ));
+            let name = format!("{} {keys}", h.state().app().strings().get(label));
+            assert!(
+                h.query_by_label(&name).is_some(),
+                "{title} shows `{name}` for {:?}",
+                shortcut.command
+            );
+        }
+        h.key_press(egui::Key::Escape);
+        h.run();
+    }
+
+    // Selection and placement.
+    command_key(&h, egui::Key::A);
+    h.run();
+    let all: Vec<String> = h
+        .state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .filter(|i| i.visible)
+        .map(|i| i.id.as_str().to_owned())
+        .collect();
+    assert_eq!(selected_ids(&h), all, "Ctrl A selects every visible shape");
+    reached.insert(Key::SelectAll);
+
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().app().selection().is_empty(), "Escape clears it");
+    reached.insert(Key::Escape);
+
+    select_only(&mut h, "i4");
+    let count = h.state().app().project().instances.len();
+    command_key(&h, egui::Key::D);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count + 1,
+        "Ctrl D makes a linked copy"
+    );
+    reached.insert(Key::Duplicate);
+    command_key(&h, egui::Key::Z);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count,
+        "Ctrl Z undoes it"
+    );
+    reached.insert(Key::Undo);
+    shift_command_key(&h, egui::Key::Z);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count + 1,
+        "Shift Ctrl Z redoes it"
+    );
+    reached.insert(Key::Redo);
+    command_key(&h, egui::Key::Z);
+    h.run();
+
+    select_only(&mut h, "i4");
+    h.key_press(egui::Key::H);
+    h.run();
+    assert!(!instance_of(&h, "i4").visible, "H hides the selection");
+    reached.insert(Key::Hide);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::H);
+    h.run();
+    assert!(instance_of(&h, "i4").visible, "Shift H shows it");
+    reached.insert(Key::Show);
+    h.key_press(egui::Key::L);
+    h.run();
+    assert!(instance_of(&h, "i4").locked, "L locks the selection");
+    h.key_press(egui::Key::L);
+    h.run();
+    assert!(!instance_of(&h, "i4").locked, "and L again unlocks it");
+    reached.insert(Key::Lock);
+
+    for (modifiers, step_mm, command) in [
+        (egui::Modifiers::NONE, 1.0, Key::Nudge),
+        (egui::Modifiers::SHIFT, 10.0, Key::NudgeCoarse),
+        (egui::Modifiers::ALT, 0.1, Key::NudgeFine),
+    ] {
+        let before = transform_of(&h, "i4");
+        h.key_press_modifiers(modifiers, egui::Key::ArrowRight);
+        h.run();
+        assert_same_transform(
+            transform_of(&h, "i4"),
+            before.then(dc_geometry::Transform::translate(step_mm, 0.0)),
+            &format!("{command:?} moves {step_mm} mm"),
+        );
+        reached.insert(command);
+    }
+
+    h.key_press(egui::Key::F);
+    h.run();
+    let bounds =
+        dc_app::viewport::camera::fit_bounds(h.state().app().project(), h.state().app().scene());
+    assert_same_view(camera(&h), fitted(&h, bounds), "F fits the view");
+    reached.insert(Key::FitView);
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::F);
+    h.run();
+    let ids = h.state().app().selection().instances().to_vec();
+    let bounds = h
+        .state()
+        .app()
+        .scene()
+        .bounds_of(&ids)
+        .expect("i4 has bounds");
+    assert_same_view(
+        camera(&h),
+        fitted(&h, bounds),
+        "Shift F zooms to the selection",
+    );
+    reached.insert(Key::ZoomToSelection);
+
+    let count = h.state().app().project().instances.len();
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(
+        h.state().app().project().instances.len(),
+        count - 1,
+        "Delete deletes the selection"
+    );
+    reached.insert(Key::Delete);
+    command_key(&h, egui::Key::Z);
+    h.run();
+
+    // Files: Save writes, Save As asks where, Open and Import ask what.
+    command_key(&h, egui::Key::S);
+    h.run();
+    assert!(!h.state().app().is_dirty(), "Ctrl S saves");
+    reached.insert(Key::Save);
+    shift_command_key(&h, egui::Key::S);
+    h.run();
+    command_key(&h, egui::Key::O);
+    h.run();
+    command_key(&h, egui::Key::I);
+    h.run();
+    command_key(&h, egui::Key::E);
+    h.run();
+    assert_eq!(
+        dialogs.asked(),
+        ["save_project plaque.dcv", "open_project", "open_drawing"],
+        "Shift Ctrl S, Ctrl O and Ctrl I ask; Ctrl E asks nothing yet (#547)"
+    );
+    reached.extend([Key::SaveAs, Key::Open, Key::Import, Key::Export]);
+
+    command_key(&h, egui::Key::N);
+    h.run();
+    assert!(
+        h.state().app().project().instances.is_empty(),
+        "Ctrl N starts a new project"
+    );
+    reached.insert(Key::New);
+    command_key(&h, egui::Key::Q);
+    h.run();
+    assert!(h.state().close_allowed(), "Ctrl Q quits a saved project");
+    reached.insert(Key::Quit);
+
+    let listed: std::collections::BTreeSet<_> =
+        keyboard::SHORTCUTS.iter().map(|s| s.command).collect();
+    assert_eq!(reached, listed, "every shortcut in the table was pressed");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `experience.md`, section 8, "Keyboard focus", and section 11: Tab walks
+/// the window top-left to bottom-right (menu bar, toolbar, Design Tree,
+/// Properties, Viewport, CAM panel, status bar) and wraps; Shift Tab walks
+/// back. The 2-px ring shows for keyboard focus only: a click into a
+/// field focuses it with no ring, and Tab from there draws it again.
+#[test]
+fn focus_order_and_visible_ring() {
+    use dreamcarve_app::FocusRegion as R;
+
+    let dir = scratch("focus-order");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert_eq!(h.state().focus(), None, "nothing has the focus at first");
+
+    // Tab until the walk comes back to the menu bar.
+    let mut walked: Vec<R> = Vec::new();
+    for _ in 0..1000 {
+        h.key_press(egui::Key::Tab);
+        h.run();
+        let Some(region) = h.state().focus() else {
+            continue;
+        };
+        assert!(
+            h.state().focus_ring().is_some(),
+            "Tab's focus in {region:?} shows the ring"
+        );
+        if walked.last() != Some(&region) {
+            walked.push(region);
+        }
+        if walked.len() > 1 && region == R::Menu {
+            break;
+        }
+    }
+    assert_eq!(
+        walked,
+        [
+            R::Menu,
+            R::Toolbar,
+            R::Tree,
+            R::Properties,
+            R::Viewport,
+            R::Cam,
+            R::Status,
+            R::Menu
+        ],
+        "Tab walks the panels in order and wraps"
+    );
+
+    // Shift Tab from the first stop goes back to the status bar.
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::Tab);
+    h.run();
+    assert_eq!(h.state().focus(), Some(R::Status), "Shift Tab walks back");
+
+    // A click into a field focuses it with no ring.
+    let width = h.get_by_role_and_label(Role::TextInput, "Width").rect();
+    common::click_at(&mut h, width.center(), egui::Modifiers::NONE);
+    assert_eq!(
+        h.state().focus(),
+        Some(R::Properties),
+        "the click focuses the field"
+    );
+    assert_eq!(h.state().focus_ring(), None, "a click shows no ring");
+    h.key_press(egui::Key::Tab);
+    h.run();
+    assert!(
+        h.state().focus_ring().is_some(),
+        "Tab from it shows the ring"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
