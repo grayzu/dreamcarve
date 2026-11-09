@@ -1363,8 +1363,8 @@ fn new_from_drawing_through_the_sheet() {
 /// its bit) has generated, the status bar's counts open the Warnings
 /// drawer; a row about a hole selects the hole; *Copy* hands egui
 /// `check`'s text (`dc_app::warnings::copy_text`), which reaches the OS
-/// clipboard once eframe's `clipboard` feature is on (#532 left it off
-/// for its licences); the close button closes it.
+/// clipboard (`warnings_copy_reaches_the_clipboard`, #581); the close
+/// button closes it.
 #[test]
 fn warnings_drawer_selects_and_copies() {
     let dir = scratch("warnings-drawer");
@@ -2194,6 +2194,81 @@ fn countersink_depth_shows_derived_read_only() {
     assert_eq!(operation_of(&h, "op5"), before, "nothing is typed");
     assert_eq!(undo_steps(&h), steps);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// #581, decision 1, in the window: choosing *V-bit* for an end mill in
+/// the Tools tab changes nothing in the project and shows an empty,
+/// required *Angle* field; typing an angle makes the switch, one undo
+/// step; leaving the field empty discards it.
+#[test]
+fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
+    let dir = scratch("v-bit-hold");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let required = "Type the included angle to make this tool a V-bit";
+    let choose_v_bit = |h: &mut Harness<'_, dreamcarve_app::Shell>| {
+        h.get_by_label("1/4 end mill").click();
+        h.run();
+        h.get_by_label("Type").click();
+        h.run();
+        h.get_by_label("V-bit").click();
+        h.run();
+    };
+    h.get_by_label("Tools · 3").click();
+    h.run();
+    let before = h.state().app().project().clone();
+    let steps = undo_steps(&h);
+
+    // Held: nothing changes, and the angle field asks.
+    choose_v_bit(&mut h);
+    assert_eq!(h.state().app().project(), &before, "no project change");
+    assert_eq!(undo_steps(&h), steps);
+    assert!(h.query_by_label(required).is_some(), "the field asks");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Angle")
+            .is_some()
+    );
+
+    // Left empty: discarded.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label(required).is_none(), "the hold is dropped");
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Angle")
+            .is_none()
+    );
+    assert_eq!(h.state().app().project(), &before);
+
+    // Typed: the switch, one undo step.
+    choose_v_bit(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Angle")
+        .type_text("60");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let t2 = h
+        .state()
+        .app()
+        .project()
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == "t2")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        t2.cutter,
+        dc_project::ToolKind::VBit {
+            included_angle_deg: 60.0
+        }
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert!(h.query_by_label(required).is_none());
+    std::fs::remove_dir_all(&dir).ok();
 }
 
 /// Ticks library row `name` in the open Tool Library sheet.

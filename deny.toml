@@ -34,7 +34,14 @@ allow = [
     "Unicode-3.0",
 ]
 # MPL-2.0 is allowed only per crate, with a comment, after review.
-exceptions = []
+exceptions = [
+    # BSL-1.0, for these two crates only and never in `allow` (#581): the
+    # app's clipboard, eframe `clipboard` -> egui-winit `clipboard` ->
+    # arboard (MIT OR Apache-2.0) -> clipboard-win -> error-code, Windows
+    # only. Any other BSL-1.0 crate still needs review.
+    { crate = "clipboard-win", allow = ["BSL-1.0"] },
+    { crate = "error-code", allow = ["BSL-1.0"] },
+]
 confidence-threshold = 0.9
 
 [bans]

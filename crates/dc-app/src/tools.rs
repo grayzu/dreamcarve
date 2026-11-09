@@ -110,58 +110,73 @@ impl KindChoice {
     }
 }
 
-/// The included angle a tool turned into a V-bit starts with, degrees,
-/// until the user types its own: the angle field shows at once. An angle
-/// is the cutter's shape, not a feed, plunge rate, RPM or depth, which
-/// the app never fills in (S20).
-pub const NEW_V_BIT_ANGLE_DEG: f64 = 90.0;
-
-/// What choosing a cutter type does to a tool.
+/// What choosing a cutter type in the editor does to a tool.
 #[derive(Debug, Clone, PartialEq)]
 pub enum KindSwitch {
     /// Nothing: the tool already has that type.
     Unchanged,
-    /// The tool with its new type.
+    /// The tool with its new type: one [`Command::UpdateTool`].
     Update(Box<Tool>),
-    /// The switch to V-bit is held until an included angle is typed.
+    /// The switch to V-bit is held: the project does not change until an
+    /// included angle is typed ([`finish_v_bit`]). The angle sets how deep
+    /// a V-Carve cuts, so a default would be an invented value, as a feed
+    /// would be (S20; #581).
     HoldForAngle,
 }
 
-/// What choosing `choice` does to `tool`.
+/// What choosing `choice` in the type dropdown does to `tool`. A V-bit
+/// keeps its angle; any other tool turned into one is held until its
+/// angle is typed.
 #[must_use]
 pub fn set_kind(tool: &Tool, choice: KindChoice) -> KindSwitch {
-    KindSwitch::Update(Box::new(with_kind(tool, choice)))
-}
-
-/// The held switch of `tool` to V-bit, finished with the angle typed.
-///
-/// # Errors
-///
-/// [`CommandError::NotAQuantity`] when the text is not an angle.
-pub fn finish_v_bit(tool: &Tool, text: &str) -> Result<Option<Command>, CommandError> {
-    let _ = (tool, text);
-    Ok(None)
-}
-
-/// `tool` with cutter type `choice`. A V-bit keeps its angle; a tool
-/// turned into one starts at [`NEW_V_BIT_ANGLE_DEG`].
-#[must_use]
-fn with_kind(tool: &Tool, choice: KindChoice) -> Tool {
     let cutter = match (choice, &tool.cutter) {
-        (KindChoice::VBit, ToolKind::VBit { included_angle_deg }) => ToolKind::VBit {
-            included_angle_deg: *included_angle_deg,
-        },
-        (KindChoice::VBit, _) => ToolKind::VBit {
-            included_angle_deg: NEW_V_BIT_ANGLE_DEG,
-        },
+        (KindChoice::VBit, ToolKind::VBit { .. }) => return KindSwitch::Unchanged,
+        (KindChoice::VBit, _) => return KindSwitch::HoldForAngle,
         (KindChoice::EndMill, _) => ToolKind::EndMill,
         (KindChoice::BallNose, _) => ToolKind::BallNose,
         (KindChoice::Engraver, _) => ToolKind::Engraver,
         (KindChoice::Drill, _) => ToolKind::Drill,
     };
-    Tool {
+    if cutter == tool.cutter {
+        return KindSwitch::Unchanged;
+    }
+    KindSwitch::Update(Box::new(Tool {
         cutter,
         ..tool.clone()
+    }))
+}
+
+/// The held switch of `tool` to V-bit ([`KindSwitch::HoldForAngle`]),
+/// finished with the included angle typed in its field: the switch and
+/// the angle as one command, so one undo step. `None` when the field was
+/// left empty, which discards the switch.
+///
+/// # Errors
+///
+/// [`CommandError::NotAQuantity`] when the text is not an angle in
+/// (0°, 180°).
+pub fn finish_v_bit(tool: &Tool, text: &str) -> Result<Option<Command>, CommandError> {
+    if text.trim().is_empty() {
+        return Ok(None);
+    }
+    let included_angle_deg = included_angle(text)?;
+    Ok(Some(Command::UpdateTool(Tool {
+        cutter: ToolKind::VBit { included_angle_deg },
+        ..tool.clone()
+    })))
+}
+
+/// An included angle as typed, degrees, with or without `°` or `deg`:
+/// strictly between 0° and 180°, as V-Carve and Inlay need it.
+fn included_angle(text: &str) -> Result<f64, CommandError> {
+    let angle = decimal(without(without(text, "°"), "deg"))?;
+    if angle > 0.0 && angle < 180.0 {
+        Ok(angle)
+    } else {
+        Err(refused(
+            text,
+            "an included angle is more than 0° and less than 180°",
+        ))
     }
 }
 
@@ -303,9 +318,8 @@ pub fn set_field(
         ToolField::Diameter => next.diameter_mm = units::parse_length_mm(text, units)?,
         ToolField::Angle => {
             if let ToolKind::VBit { .. } = tool.cutter {
-                let angle = decimal(without(without(text, "°"), "deg"))?;
                 next.cutter = ToolKind::VBit {
-                    included_angle_deg: angle,
+                    included_angle_deg: included_angle(text)?,
                 };
             }
         }

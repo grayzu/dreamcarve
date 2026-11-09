@@ -8,13 +8,16 @@
 //! RPM and the `unused_tool` hint when no operation uses it; under the
 //! list, the selected tool's editor, every field with its unit. Feed,
 //! plunge and RPM are empty while the file holds `null`, never prefilled,
-//! and show the error state with the file's message (S20). *Remove* is
-//! disabled while an operation uses the tool, its tooltip naming them.
+//! and show the error state with the file's message (S20). Switching a
+//! tool to V-bit writes no default angle: the switch is held, with an
+//! empty, required *Angle* field, until an angle is typed (#581). *Remove*
+//! is disabled while an operation uses the tool, its tooltip naming them.
 //!
 //! The tab holds no project data: it reads the snapshot and emits
-//! commands. Which row is selected is view state, kept in egui's memory.
+//! commands. Which row is selected, and a held switch, are view state,
+//! kept in egui's memory.
 
-use dc_app::tools::{self, KindChoice, ToolField};
+use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
 use dc_project::{Project, Tool, ToolId, ToolKind, Units};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
@@ -75,12 +78,44 @@ fn select(ui: &Ui, tool: &ToolId, count: usize) {
     });
 }
 
+/// The tool whose switch to V-bit is held until its included angle is
+/// typed (#581): view state, in egui's memory. The project does not
+/// change until then.
+fn pending_v_bit_id() -> Id {
+    Id::unique("tools_tab_pending_v_bit")
+}
+
+/// The tool held for an angle, when there is one.
+fn pending_v_bit(ui: &Ui) -> Option<ToolId> {
+    ui.data(|d| d.get_temp(pending_v_bit_id()))
+}
+
+/// Holds tool `tool`'s switch to V-bit, or (`None`) drops the held one.
+fn set_pending_v_bit(ui: &Ui, tool: Option<&ToolId>) {
+    ui.data_mut(|d| {
+        if let Some(id) = tool {
+            d.insert_temp(pending_v_bit_id(), id.clone());
+        } else {
+            d.remove::<ToolId>(pending_v_bit_id());
+        }
+    });
+}
+
+/// The id of tool `tool`'s field `field`.
+fn field_id(tool: &ToolId, field: ToolField) -> Id {
+    Id::unique(("tool_field", tool.as_str(), field.file_name()))
+}
+
 /// Draws the tab under the CAM panel's tab strip.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let app = state.app;
     let strings = app.strings();
     let project = app.project();
     let current = selected(ui, project);
+    // Moving to another tool discards a held switch.
+    if pending_v_bit(ui).is_some_and(|held| current.as_ref() != Some(&held)) {
+        set_pending_v_bit(ui, None);
+    }
     ui.add_space(8.0);
     toolbar(ui, strings, project, current.as_ref(), out);
     ui.add_space(8.0);
@@ -360,10 +395,19 @@ fn kind_glyph(ui: &Ui, rect: Rect, kind: &ToolKind, colour: egui::Color32) {
     }
 }
 
-/// The selected tool's fields, then *Save to library*.
+/// The selected tool's fields, then *Save to library*. While the tool's
+/// switch to V-bit is held, its *Angle* field shows empty, required and
+/// in the error state; a typed angle makes the switch, and leaving it
+/// empty discards it (#581).
 fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut Vec<Action>) {
+    let held = pending_v_bit(ui).as_ref() == Some(&tool.id)
+        && !matches!(tool.cutter, ToolKind::VBit { .. });
     let unset = tools::unset_rates(tool);
+    let angle_required = strings.get(StrKey::AppToolsAngleRequired);
     let error_for = |file_field: &str| {
+        if held && file_field == ToolField::Angle.file_name() {
+            return Some(angle_required);
+        }
         unset
             .iter()
             .find(|(f, _)| *f == file_field)
@@ -384,7 +428,9 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         (ToolField::ProductId, StrKey::AppToolsProductId),
     ]
     .into_iter()
-    .filter(|(field, _)| *field != ToolField::Angle || matches!(tool.cutter, ToolKind::VBit { .. }))
+    .filter(|(field, _)| {
+        *field != ToolField::Angle || held || matches!(tool.cutter, ToolKind::VBit { .. })
+    })
     .collect();
     for (field, key) in fields {
         let value = tools::field_text(tool, field, units);
@@ -393,7 +439,7 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         } else {
             ""
         };
-        let id = Id::unique(("tool_field", tool.id.as_str(), field.file_name()));
+        let id = field_id(&tool.id, field);
         let name = strings.get(key);
         let error = error_for(field.file_name());
         let (label, output) = row(ui, name, |ui| {
@@ -411,8 +457,25 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
             output
         });
         let response = output.response.labelled_by(label.id);
+        let left = response.lost_focus();
         response.on_hover_text(field.file_name());
-        if let Some(typed) = output.committed {
+        if held && field == ToolField::Angle {
+            // The held switch: a typed angle makes it, one undo step; the
+            // field left empty (or Escape) discards it; a refusal keeps it.
+            match output
+                .committed
+                .map(|typed| tools::finish_v_bit(tool, &typed))
+            {
+                Some(Ok(Some(command))) => {
+                    set_pending_v_bit(ui, None);
+                    out.push(Action::Run(Box::new(command)));
+                }
+                Some(Ok(None)) => set_pending_v_bit(ui, None),
+                Some(Err(e)) => out.push(Action::Refused(e.to_string())),
+                None if left => set_pending_v_bit(ui, None),
+                None => {}
+            }
+        } else if let Some(typed) = output.committed {
             match tools::set_field(tool, field, &typed, units) {
                 Ok(next) if next != *tool => {
                     out.push(Action::Run(Box::new(Command::UpdateTool(next))));
@@ -424,7 +487,7 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         ui.add_space(4.0);
         if field == ToolField::Name {
             // The type, then (for a V-bit) the angle it enables.
-            kind_row(ui, strings, tool, out);
+            kind_row(ui, strings, tool, held, out);
         }
     }
     ui.add_space(8.0);
@@ -437,8 +500,14 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
 }
 
 /// The type dropdown: the five cutters; a V-bit shows its angle field.
-fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, out: &mut Vec<Action>) {
-    let current = KindChoice::of(&tool.cutter);
+/// Choosing *V-bit* for another type holds the switch (`held` from then
+/// on) and moves the focus to the empty *Angle* field.
+fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, held: bool, out: &mut Vec<Action>) {
+    let current = if held {
+        KindChoice::VBit
+    } else {
+        KindChoice::of(&tool.cutter)
+    };
     let mut chosen = current;
     let (label, combo) = row(ui, strings.get(StrKey::AppToolsKind), |ui| {
         egui::ComboBox::from_id_salt(("tool_kind", tool.id.as_str()))
@@ -453,10 +522,18 @@ fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, out: &mut Vec<Action>) 
     });
     combo.labelled_by(label.id);
     if chosen != current {
-        let tools::KindSwitch::Update(next) = tools::set_kind(tool, chosen) else {
-            return;
-        };
-        out.push(Action::Run(Box::new(Command::UpdateTool(*next))));
+        set_pending_v_bit(ui, None);
+        match tools::set_kind(tool, chosen) {
+            KindSwitch::Unchanged => {}
+            KindSwitch::Update(next) => {
+                out.push(Action::Run(Box::new(Command::UpdateTool(*next))));
+            }
+            KindSwitch::HoldForAngle => {
+                set_pending_v_bit(ui, Some(&tool.id));
+                ui.memory_mut(|m| m.request_focus(field_id(&tool.id, ToolField::Angle)));
+                ui.ctx().request_repaint();
+            }
+        }
     }
     ui.add_space(4.0);
 }

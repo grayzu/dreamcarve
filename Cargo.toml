@@ -95,10 +95,11 @@ proptest = { version = "1.12", default-features = false, features = ["std"] }
 # JetBrains Mono and Lucide), system fonts and the glow renderer. `wgpu` is
 # the renderer the Viewport's line pass needs (slice 4); `accesskit` is the
 # accessibility tree the kittest tests drive; `links`, `x11` and `wayland`
-# are what a desktop window needs on each platform. `clipboard` stays off
-# until a slice copies text (#532): its `arboard` brings two BSL-1.0 crates
-# on Windows, which `deny.toml` does not allow.
-eframe = { version = "0.37", default-features = false, features = ["accesskit", "links", "wayland", "wgpu", "x11"] }
+# are what a desktop window needs on each platform. `clipboard` lets the
+# Warnings drawer's *Copy* reach the OS clipboard (#581): its `arboard`
+# brings two BSL-1.0 crates on Windows, `clipboard-win` and `error-code`,
+# which `deny.toml` admits by name only.
+eframe = { version = "0.37", default-features = false, features = ["accesskit", "clipboard", "links", "wayland", "wgpu", "x11"] }
 # Native open and save dialogs (phase 4 design, open question 3).
 rfd = "0.17"
 # The app's window tests (dev-dependency only; phase 4 design, "Test
