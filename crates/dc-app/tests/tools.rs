@@ -22,11 +22,11 @@ mod common;
 use std::collections::BTreeSet;
 
 use dc_app::test_support::{DATE, Harness};
-use dc_app::tools::{self, ToolField};
+use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
 use dc_app::{Command, CommandError};
 use dc_job::{ProgramSplit, Tier};
 use dc_library::{AddOutcome, Library, LibraryToolId};
-use dc_project::{Project, Tool, ToolId, Units};
+use dc_project::{Project, Tool, ToolId, ToolKind, Units};
 
 use common::{fixture, plaque, plaque_bytes, read};
 
@@ -398,16 +398,167 @@ fn editor_fields_carry_units() {
     assert!(tools::set_field(t2, ToolField::Diameter, "", Units::Mm).is_err());
     let vendor = tools::set_field(t2, ToolField::Vendor, "Amana", Units::Mm).unwrap();
     assert_eq!(vendor.vendor.as_deref(), Some("Amana"));
-    let angle = tools::set_kind(t2, tools::KindChoice::VBit);
-    assert!(matches!(
-        angle.cutter,
-        dc_project::ToolKind::VBit { included_angle_deg } if included_angle_deg > 0.0
-    ));
+    let angle = Tool {
+        cutter: ToolKind::VBit {
+            included_angle_deg: 90.0,
+        },
+        ..t2.clone()
+    };
     let sixty = tools::set_field(&angle, ToolField::Angle, "60", Units::Mm).unwrap();
     assert_eq!(
         sixty.cutter,
-        dc_project::ToolKind::VBit {
+        ToolKind::VBit {
             included_angle_deg: 60.0
         }
     );
+}
+
+/// #581, decision 1 (#537 deviation 4): choosing *V-bit* for an end mill
+/// changes nothing in the project. The switch is held until an included
+/// angle in (0°, 180°) is typed; the switch with that angle is one
+/// command and one undo step; an empty field discards it. Switching away
+/// from a V-bit, or to the type a tool already has, is not held.
+#[test]
+fn switching_to_v_bit_holds_until_an_angle_is_typed() {
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let before = harness.app.project().clone();
+    let undo_before = harness.app.undo_label().map(str::to_owned);
+    let t2 = tool(&before, "t2").clone();
+    assert_eq!(t2.cutter, ToolKind::EndMill);
+
+    // The switch itself writes nothing.
+    assert_eq!(
+        tools::set_kind(&t2, KindChoice::VBit),
+        KindSwitch::HoldForAngle
+    );
+    assert_eq!(harness.app.project(), &before, "no project change");
+    assert_eq!(
+        harness.app.undo_label().map(str::to_owned),
+        undo_before,
+        "no undo step"
+    );
+
+    // Leaving the field empty discards the pending switch.
+    assert_eq!(tools::finish_v_bit(&t2, "").unwrap(), None);
+    assert_eq!(tools::finish_v_bit(&t2, "   ").unwrap(), None);
+
+    // An angle outside (0°, 180°), or not a number, is refused.
+    for bad in ["0", "180", "-30", "200°", "sixty", "6,5"] {
+        assert!(
+            tools::finish_v_bit(&t2, bad).is_err(),
+            "`{bad}` is not an included angle"
+        );
+    }
+
+    // A typed angle makes the switch: one command, one undo step.
+    let command = tools::finish_v_bit(&t2, "60°")
+        .expect("60° is an angle")
+        .expect("and something to do");
+    harness.run(command).expect("the switch runs");
+    assert_eq!(
+        tool(harness.app.project(), "t2").cutter,
+        ToolKind::VBit {
+            included_angle_deg: 60.0
+        }
+    );
+    harness.app.undo().expect("one step to undo");
+    assert_eq!(harness.app.project(), &before, "one undo step restores it");
+
+    // A V-bit keeps its angle; switching away is immediate.
+    let v_bit = Tool {
+        cutter: ToolKind::VBit {
+            included_angle_deg: 30.0,
+        },
+        ..t2.clone()
+    };
+    assert_eq!(
+        tools::set_kind(&v_bit, KindChoice::VBit),
+        KindSwitch::Unchanged
+    );
+    assert_eq!(
+        tools::set_kind(&v_bit, KindChoice::EndMill),
+        KindSwitch::Update(Box::new(t2.clone()))
+    );
+    assert_eq!(
+        tools::set_kind(&t2, KindChoice::EndMill),
+        KindSwitch::Unchanged
+    );
+    assert_eq!(
+        tools::set_kind(&t2, KindChoice::Drill),
+        KindSwitch::Update(Box::new(Tool {
+            cutter: ToolKind::Drill,
+            ..t2.clone()
+        }))
+    );
+}
+
+/// #581, decision 1: no code path writes an included angle the user did
+/// not type. The model: a type switch never produces a V-bit with an
+/// angle it made up. The source: outside test code, `dc-app` and the app
+/// never build a V-bit from a number literal or a named default.
+#[test]
+fn no_default_v_bit_angle_is_written() {
+    let t2 = tool(&plaque(), "t2").clone();
+    for start in [
+        ToolKind::EndMill,
+        ToolKind::BallNose,
+        ToolKind::Engraver,
+        ToolKind::Drill,
+    ] {
+        let from = Tool {
+            cutter: start.clone(),
+            ..t2.clone()
+        };
+        for choice in KindChoice::ALL {
+            if let KindSwitch::Update(next) = tools::set_kind(&from, choice) {
+                assert!(
+                    !matches!(next.cutter, ToolKind::VBit { .. }),
+                    "{start:?} → {choice:?} wrote a V-bit angle nobody typed"
+                );
+            }
+        }
+    }
+
+    let root = common::repo_root();
+    let mut offenders = Vec::new();
+    for dir in ["crates/dc-app/src", "crates/dreamcarve-app/src"] {
+        for path in rust_files(&root.join(dir)) {
+            let text = String::from_utf8(read(&path)).expect("UTF-8 source");
+            // Unit tests sit at the end of a file, after `#[cfg(test)]`.
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (n, line) in code.lines().enumerate() {
+                let Some((_, value)) = line.split_once("included_angle_deg:") else {
+                    continue;
+                };
+                let value = value.trim_start();
+                let literal = value.starts_with(|c: char| c.is_ascii_digit());
+                let named = value.starts_with(|c: char| c.is_ascii_uppercase());
+                if literal || named {
+                    offenders.push(format!("{}:{}: {}", path.display(), n + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "a V-bit angle nobody typed: {offenders:#?}"
+    );
+}
+
+/// Every `.rs` file under `dir`, recursively.
+fn rust_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut files = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())) {
+            let path = entry.expect("a directory entry").path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
 }
