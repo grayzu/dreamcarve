@@ -313,3 +313,125 @@ fn stale_results_are_flagged_until_replaced() {
         "the new runs cut to the new depth: {deepest}"
     );
 }
+
+/// Slice 14 (#543; design spec, "Data model → dc-app", `Scene`; functional
+/// spec, capability 72, acceptance 76): with an Inlay the male board is
+/// drawn to the right of the stock, offset by one stock width plus 20 mm,
+/// for display only. On the lettered inlay fixture (a 110 × 80 mm stock,
+/// the male board the stock's size) its frame is (130, 0)–(240, 80), its
+/// origin mark is the origin preset's point on it, offset, and its shapes
+/// are the Inlay's targets mirrored as the generator mirrors them
+/// (`dc_job::preview::male_shapes`, the preview's), offset. Nothing of the
+/// offset reaches the project or the runs: the male runs stay in their
+/// board's own space, the Scene's SVG equals the CLI's preview, and the
+/// file is unchanged. A male board of its own size keeps the same offset;
+/// Fit takes it in; without an enabled Inlay there is none.
+#[test]
+fn male_board_sits_beside_the_stock_in_display_only() {
+    let fixture = common::fixture("dc.dcv");
+    let bytes = common::read(&fixture);
+    let mut harness = Harness::open(&bytes).expect("the fixture opens");
+    harness.generate();
+    let project = harness.app.project().clone();
+    let scene = harness.app.scene();
+    let board = scene.male_board().expect("an Inlay's male board");
+    assert_eq!(board.op, dc_project::OperationId::new("op1"));
+    assert_eq!(board.name, "DC");
+    assert!(approx_eq(board.offset.x, 110.0 + 20.0, EPS_MM));
+    assert!(approx_eq(board.offset.y, 0.0, EPS_MM));
+    assert!(approx_eq(board.frame.min.x, 130.0, EPS_MM));
+    assert!(approx_eq(board.frame.min.y, 0.0, EPS_MM));
+    assert!(approx_eq(board.frame.max.x, 240.0, EPS_MM));
+    assert!(approx_eq(board.frame.max.y, 80.0, EPS_MM));
+    assert!(approx_eq(board.origin_mm.x, 130.0, EPS_MM));
+    assert!(approx_eq(board.origin_mm.y, 0.0, EPS_MM));
+
+    // The design mirrored as the generator mirrors it, then offset.
+    let shift = Transform::translate(130.0, 0.0);
+    let want: Vec<_> = dc_job::preview::male_shapes(&project)
+        .into_iter()
+        .flat_map(|m| {
+            assert_eq!(m.op, board.op);
+            m.outlines
+        })
+        .map(|o| shift.apply_polyline(&o).unwrap())
+        .collect();
+    let got: Vec<_> = board
+        .shapes
+        .iter()
+        .flat_map(|s| s.outlines.iter().cloned())
+        .collect();
+    assert!(!want.is_empty());
+    assert_eq!(got, want);
+    for shape in &board.shapes {
+        assert_eq!(shape.op, board.op);
+        assert_eq!(shape.flat.len(), shape.outlines.len());
+        let bounds = shape.bounds.expect("a mirrored shape has a box");
+        assert!(bounds.min.x >= 130.0 && bounds.max.x <= 240.0, "{bounds:?}");
+    }
+
+    // Display only: the male runs are in their board's space, the SVG is
+    // the CLI's, and the file is the fixture's.
+    let males: Vec<_> = scene.runs_on(dc_project::Board::Male).collect();
+    assert!(!males.is_empty());
+    for run in &males {
+        for m in &run.toolpath.moves {
+            assert!(
+                m.to.x <= 110.0 + 10.0,
+                "{:?} is on the board, not offset",
+                m.to
+            );
+        }
+    }
+    let built = dc_job::build(
+        &project,
+        dc_job::ProgramSplit::ProjectDefault,
+        dc_app::test_support::DATE,
+    );
+    let generated = built.generated.expect("the fixture generates");
+    assert_eq!(
+        scene.preview_svg(&project),
+        dc_job::preview::render_generated(&project, &generated)
+    );
+    assert_eq!(
+        harness.save().expect("it saves"),
+        dc_project::save(&common::load_dcv(&fixture)).expect("the fixture saves")
+    );
+    assert!(!harness.app.is_dirty());
+
+    // Fit frames both boards.
+    let fit = dc_app::viewport::camera::fit_bounds(&project, scene);
+    assert!(approx_eq(fit.max.x, 240.0, EPS_MM), "{fit:?}");
+
+    // A male board of its own size: the same offset, its own frame.
+    let mut sized = project.clone();
+    if let dc_project::Operation::Inlay(inlay) = &mut sized.operations[0] {
+        inlay.male_board.width_mm = Some(150.0);
+        inlay.male_board.height_mm = Some(60.0);
+    }
+    let sized_scene = Harness::from_project(sized).app.scene().clone();
+    let board = sized_scene.male_board().expect("still one");
+    assert!(approx_eq(board.frame.min.x, 130.0, EPS_MM));
+    assert!(approx_eq(board.frame.max.x, 280.0, EPS_MM));
+    assert!(approx_eq(board.frame.max.y, 60.0, EPS_MM));
+
+    // No enabled Inlay, no male board.
+    let mut disabled = project.clone();
+    if let dc_project::Operation::Inlay(inlay) = &mut disabled.operations[0] {
+        inlay.enabled = false;
+    }
+    assert!(
+        Harness::from_project(disabled)
+            .app
+            .scene()
+            .male_board()
+            .is_none()
+    );
+    assert!(
+        Harness::from_project(plaque())
+            .app
+            .scene()
+            .male_board()
+            .is_none()
+    );
+}

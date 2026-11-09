@@ -36,6 +36,11 @@
 //! countersink's depth, derived and shown, never typed (S18), and the
 //! generator's warnings about a target the kind cannot cut, under the
 //! Targets group.
+//!
+//! Slice 14 (#543) completes the Inlay: its values once, the Male board
+//! and Cut-out groups (capability 68a, which add two groups to capability
+//! 66's nine for the Inlay alone), the derived line under Depth and the
+//! base under the band, both computed from `dc-project`'s own rules.
 
 #![allow(
     clippy::panic,
@@ -72,21 +77,8 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
         Kind::Drill | Kind::Bore => &[],
         // Complete in slice 13 (#542).
         Kind::VCarve => &[],
-        // Slice 14 (#543).
-        Kind::Inlay => &[
-            "glue_gap_mm",
-            "plug_depth_mm",
-            "margin_mm",
-            "outline_rounding_mm",
-            "through_cut_allowance_mm",
-            "male_board.width_mm",
-            "male_board.height_mm",
-            "male_board.thickness_mm",
-            "clearing",
-            "step_over_fraction",
-            "cut_out",
-            "machining_order",
-        ],
+        // Complete in slice 14 (#543).
+        Kind::Inlay => &[],
         // Slice 15 (#544): no record before phase 3.4.
         Kind::PhotoVCarve => &[],
     }
@@ -441,9 +433,11 @@ fn groups_render_in_the_fixed_order() {
             Group::Targets,
             Group::Tool,
             Group::Depth,
+            Group::MaleBoard,
             Group::Strategy,
             Group::EntryAndLeads,
             Group::CornersAndTabs,
+            Group::CutOut,
             Group::Order,
             Group::Heights,
         ]
@@ -2200,4 +2194,371 @@ fn carve_summary_matches_check() {
     let line = check(&edited, "op3");
     assert!(line[0].contains("clamped at a flat depth of"), "{line:?}");
     assert_eq!(summary(&h, "op3"), line);
+}
+
+/// The lettered inlay fixture: one Inlay (`op1`) cutting the letters D and
+/// C into both boards from one set of values (#498): 4 mm deep, a 1 mm
+/// glue gap, a 2 mm plug depth, an 8 mm margin, the 60° 6.35 mm V-bit, a
+/// 12 mm male board the stock's size, and a cut-out with four tabs.
+fn inlay_fixture() -> dc_app::test_support::Harness {
+    dc_app::test_support::Harness::from_project(common::load_dcv(&common::fixture("dc.dcv")))
+}
+
+/// The texts of `notes`, and whether any is drawn as an alert.
+fn texts(notes: &[editor::Note]) -> (Vec<String>, bool) {
+    (
+        notes.iter().map(|n| n.text.clone()).collect(),
+        notes.iter().any(|n| n.alert),
+    )
+}
+
+/// `check`'s `inlay_male_mirrored` for `project`, as the CLI prints it.
+fn cli_mirrored(project: &Project) -> Vec<String> {
+    let built = dc_job::build(
+        project,
+        dc_job::ProgramSplit::ProjectDefault,
+        dc_app::test_support::DATE,
+    );
+    built
+        .findings
+        .warnings
+        .iter()
+        .chain(&built.findings.errors)
+        .filter(|f| f.code.as_deref() == Some("inlay_male_mirrored"))
+        .map(|f| f.message.clone())
+        .collect()
+}
+
+/// Acceptance 76 (capabilities 68, 68a and 72), the editor's and the
+/// Scene's half (the export dialog's rows are slice 18's). The fixture's
+/// Inlay shows its values once (no side to choose) and a Male board
+/// group. With the male board's thickness cleared, the generator's
+/// `inlay_male_board_unset` sits under the thickness, the male board
+/// carries no shapes and no runs, and every run is the female's. With it
+/// set to 18 mm the male's runs come back tagged with their board, the
+/// male board shows the design mirrored as the generator mirrors it, and
+/// `inlay_male_mirrored` names the X the CLI prints (55 mm, the board's
+/// middle). The derived line under Depth shows the male's start plane
+/// (4 − 1 = 3 mm), its band floor (3 + 2 = 5 mm) and the flank's
+/// engagement against the 60° bit's 5.4993 mm cone, red once a 3 mm plug
+/// depth takes it to 6 mm; the base under the band is 18 − 5 = 13 mm,
+/// red below 6 mm (`inlay_plug_base_thin`'s threshold). Width and height
+/// show *same as stock* while `null` and write `null` back with ⟲.
+#[test]
+fn inlay_both_boards() {
+    let strings = Strings::english();
+    let mut h = inlay_fixture();
+    let inlay = op_of(&h, "op1");
+
+    // The values once, in capability 68's groups; no side.
+    let shown: Vec<(Group, Vec<&str>)> = fields::groups(&inlay)
+        .into_iter()
+        .map(|(g, rows)| (g, rows.into_iter().map(|r| r.key).collect()))
+        .collect();
+    assert_eq!(
+        shown,
+        vec![
+            (Group::Identity, vec!["name", "enabled"]),
+            (Group::Targets, vec!["targets"]),
+            (Group::Tool, vec!["tool"]),
+            (
+                Group::Depth,
+                vec![
+                    "depth_mm",
+                    "glue_gap_mm",
+                    "plug_depth_mm",
+                    "margin_mm",
+                    "outline_rounding_mm",
+                    "through_cut_allowance_mm",
+                    "male_board",
+                ]
+            ),
+            (
+                Group::MaleBoard,
+                vec![
+                    "male_board.width_mm",
+                    "male_board.height_mm",
+                    "male_board.thickness_mm",
+                ]
+            ),
+            (Group::Strategy, vec!["step_over_fraction", "clearing"]),
+            (
+                Group::CutOut,
+                vec![
+                    "cut_out",
+                    "cut_out.tool",
+                    "cut_out.tabs",
+                    "cut_out.tabs.placement",
+                    "cut_out.tabs.placement.count",
+                    "cut_out.tabs.width_mm",
+                    "cut_out.tabs.height_mm",
+                    "cut_out.tabs.shape",
+                    "cut_out.tabs.on_holes",
+                    "cut_out.tabs.avoid_corners",
+                    "cut_out.through_cut_allowance_mm",
+                ]
+            ),
+            (Group::Order, vec!["machining_order"]),
+            (Group::Heights, vec!["safe_z_mm"]),
+        ]
+    );
+    assert!(matches!(
+        row_of(&inlay, "outline_rounding_mm").kind,
+        FieldKind::SwitchedLength
+    ));
+    assert!(matches!(
+        row_of(&inlay, "clearing").kind,
+        FieldKind::ClearingList
+    ));
+    let derived = row_of(&inlay, "male_board");
+    assert!(matches!(derived.kind, FieldKind::InlayDerived));
+    assert!(editor::commit_text(h.app.project(), &inlay, derived, "4").is_err());
+    // Labels unique within the editor (they are the controls' names).
+    let mut labels: Vec<&str> = fields::rows(&inlay)
+        .iter()
+        .map(|r| strings.get(r.label))
+        .collect();
+    labels.sort_unstable();
+    let count = labels.len();
+    labels.dedup();
+    assert_eq!(labels.len(), count, "{labels:?}");
+
+    // The cut-out's tool picker offers the project's end mills; the
+    // Inlay's own, V-bits.
+    let offered = |h: &dc_app::test_support::Harness, key: &str| -> Vec<String> {
+        let op = op_of(h, "op1");
+        editor::offered_for(h.app.project(), &op, row_of(&op, key))
+            .iter()
+            .map(|t| t.id.as_str().to_owned())
+            .collect()
+    };
+    assert_eq!(offered(&h, "tool"), ["t3"]);
+    assert_eq!(offered(&h, "cut_out.tool"), ["t1", "t2"]);
+    // One bit for both boards, its cone under the picker.
+    let (tool_note, _) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &inlay,
+        &editor::Slot::of(row_of(&inlay, "tool")),
+    ));
+    assert_eq!(
+        tool_note,
+        ["one bit for both boards · cone height 5.4993 mm"]
+    );
+
+    // Width and height: the stock's while `null`, typed, and back.
+    let width = row_of(&inlay, "male_board.width_mm");
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &inlay, width).as_deref(),
+        Some("same as stock: 110")
+    );
+    assert_eq!(
+        editor::placeholder(
+            h.app.project(),
+            &strings,
+            &inlay,
+            row_of(&inlay, "male_board.height_mm")
+        )
+        .as_deref(),
+        Some("same as stock: 80")
+    );
+    assert!(!editor::can_reset(&inlay, width));
+    run_edit(
+        &mut h,
+        editor::commit_text(h.app.project(), &inlay, width, "120"),
+    );
+    let wide = op_of(&h, "op1");
+    let Operation::Inlay(board) = &wide else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(board.male_board.width_mm, Some(120.0));
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &wide, width),
+        None
+    );
+    assert!(editor::can_reset(&wide, width));
+    run_edit(&mut h, editor::reset(&wide, width));
+    assert_eq!(op_of(&h, "op1"), inlay, "⟲ writes null again");
+
+    // Thickness cleared: the generator's warning under the field, the
+    // male board empty, every run the female's.
+    let thickness = row_of(&inlay, "male_board.thickness_mm");
+    assert_eq!(
+        editor::placeholder(h.app.project(), &strings, &inlay, thickness),
+        None,
+        "required: no default"
+    );
+    run_edit(
+        &mut h,
+        editor::commit_text(h.app.project(), &inlay, thickness, ""),
+    );
+    let unset = op_of(&h, "op1");
+    let Operation::Inlay(cleared) = &unset else {
+        panic!("op1 is an Inlay");
+    };
+    assert_eq!(cleared.male_board.thickness_mm, None);
+    h.generate();
+    let warning = coded(&h, "inlay_male_board_unset");
+    assert_eq!(warning.len(), 1, "{:?}", h.warnings());
+    assert_eq!(
+        warning[0].field.as_deref(),
+        Some("operations[op1].male_board.thickness_mm")
+    );
+    let under = editor::Located::of(h.warnings(), &unset)
+        .status(row_of(&unset, "male_board.thickness_mm"))
+        .expect("a message under the thickness");
+    assert_eq!(under.message, warning[0].message);
+    let scene = h.app.scene();
+    let board = scene.male_board().expect("the board is drawn");
+    assert!(board.shapes.is_empty(), "the male board is empty");
+    assert!(scene.runs().count() > 0);
+    assert!(scene.runs().all(|r| r.board == dc_project::Board::Female));
+    assert_eq!(scene.runs_on(dc_project::Board::Male).count(), 0);
+    assert!(coded(&h, "inlay_male_mirrored").is_empty());
+    // No base to show while the board is unmeasured.
+    let (base, _) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &unset,
+        &editor::Slot::of(row_of(&unset, "male_board.thickness_mm")),
+    ));
+    assert!(base.is_empty(), "{base:?}");
+
+    // Set to 18 mm: the male's runs, mirrored, on their board.
+    run_edit(
+        &mut h,
+        editor::commit_text(h.app.project(), &unset, thickness, "18"),
+    );
+    h.generate();
+    assert!(coded(&h, "inlay_male_board_unset").is_empty());
+    let both = op_of(&h, "op1");
+    let project = h.app.project().clone();
+    let scene = h.app.scene();
+    assert!(
+        scene.runs_on(dc_project::Board::Male).count() > 0,
+        "the male's runs"
+    );
+    assert!(scene.runs_on(dc_project::Board::Female).count() > 0);
+    let board = scene.male_board().expect("the male board");
+    assert_eq!(board.op, OperationId::new("op1"));
+    assert!(!board.shapes.is_empty(), "the design, mirrored");
+    let mirrored = coded(&h, "inlay_male_mirrored");
+    assert_eq!(mirrored.len(), 1, "{:?}", h.warnings());
+    assert_eq!(
+        vec![mirrored[0].message.clone()],
+        cli_mirrored(&project),
+        "the X the CLI prints"
+    );
+    assert!(
+        mirrored[0].message.contains("mirrored about X = 55 mm"),
+        "{}",
+        mirrored[0].message
+    );
+
+    // The derived line: start plane, band floor, engagement and cone.
+    let planes = editor::male_planes(&project, &both).expect("every value is set");
+    assert!((planes.start_plane_mm - 3.0).abs() < 1e-9);
+    assert!((planes.band_floor_mm - 5.0).abs() < 1e-9);
+    assert!((planes.engagement_mm - 5.0).abs() < 1e-9);
+    let cone = 6.35 / (2.0 * 30f64.to_radians().tan());
+    assert!((planes.cone_height_mm.unwrap() - cone).abs() < 1e-9);
+    assert!(!planes.exceeds_cone());
+    let line = |h: &dc_app::test_support::Harness| {
+        let op = op_of(h, "op1");
+        texts(&editor::notes(
+            h.app.project(),
+            &strings,
+            &op,
+            &editor::Slot::of(row_of(&op, "male_board")),
+        ))
+    };
+    assert_eq!(
+        line(&h),
+        (
+            vec![
+                "male start plane 3 mm · band floor 5 mm below the board top".to_owned(),
+                "flank engagement 5 mm of the 60° bit's 5.4993 mm cone".to_owned(),
+            ],
+            false
+        )
+    );
+    let base = |h: &dc_app::test_support::Harness| {
+        let op = op_of(h, "op1");
+        texts(&editor::notes(
+            h.app.project(),
+            &strings,
+            &op,
+            &editor::Slot::of(row_of(&op, "male_board.thickness_mm")),
+        ))
+    };
+    assert_eq!(
+        base(&h),
+        (
+            vec!["base under the band 13 mm (at least 6 mm)".to_owned()],
+            false
+        )
+    );
+    assert_eq!(editor::male_base_mm(&both), Some(13.0));
+
+    // A 3 mm plug depth: the male's flank engages 6 mm, past the cone.
+    run_edit(
+        &mut h,
+        editor::commit_text(h.app.project(), &both, row_of(&both, "plug_depth_mm"), "3"),
+    );
+    let deep = op_of(&h, "op1");
+    let planes = editor::male_planes(h.app.project(), &deep).unwrap();
+    assert!((planes.engagement_mm - 6.0).abs() < 1e-9);
+    assert!(planes.exceeds_cone());
+    let (lines, alert) = line(&h);
+    assert!(alert, "red when the engagement exceeds the cone: {lines:?}");
+    assert_eq!(
+        lines[1],
+        "flank engagement 6 mm of the 60° bit's 5.4993 mm cone"
+    );
+    // Validation agrees: its cone error, on the plug depth.
+    h.generate();
+    assert!(
+        h.warnings().iter().any(
+            |f| f.field.as_deref() == Some("operations[op1].plug_depth_mm")
+                && f.message.contains("cone")
+        ),
+        "{:?}",
+        h.warnings()
+    );
+
+    // A 10 mm male board under a 6 mm floor leaves 4 mm: red, as
+    // validation's `inlay_plug_base_thin` warns.
+    run_edit(
+        &mut h,
+        editor::commit_text(h.app.project(), &deep, thickness, "10"),
+    );
+    let thin = op_of(&h, "op1");
+    assert_eq!(editor::male_base_mm(&thin), Some(4.0));
+    assert_eq!(
+        base(&h),
+        (
+            vec!["base under the band 4 mm (at least 6 mm)".to_owned()],
+            true
+        )
+    );
+    h.generate();
+    assert_eq!(coded(&h, "inlay_plug_base_thin").len(), 1);
+
+    // A value missing: no planes, and the line says what to set.
+    let mut bare = thin.clone();
+    if let Operation::Inlay(i) = &mut bare {
+        i.glue_gap_mm = None;
+    }
+    assert!(editor::male_planes(h.app.project(), &bare).is_none());
+    let (lines, alert) = texts(&editor::notes(
+        h.app.project(),
+        &strings,
+        &bare,
+        &editor::Slot::of(row_of(&bare, "male_board")),
+    ));
+    assert_eq!(
+        lines,
+        ["set the inlay depth, glue gap and plug depth to see the male's planes"]
+    );
+    assert!(!alert);
 }
