@@ -31,13 +31,11 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use dc_job::summary::{
-    before_you_start, board_heading, by_board, changes_tools, describe_carves, describe_extents,
-    describe_operations, largest_tool_radius_mm, one_program, tool_radius_mm,
-};
-use dc_job::{Built, EmitOp, Estimates, Finding, Program, preview, program_suffixes};
+use dc_job::report::{Written, export_report};
+use dc_job::summary::by_board;
+use dc_job::{Built, Estimates, Finding, Program, preview, program_suffixes};
 use dc_project::{Board, PostProcessorRef, Project, ResetReason, SettingReset, SourceMap};
-use dreamcarve_shell::{StagedFile, commit_all};
+use dreamcarve_shell::{StagedFile, commit_all, is_preview};
 
 use crate::cli::{ExportArgs, Failure, lookup_post, read_file, switch_post, today_utc};
 use crate::config;
@@ -154,7 +152,6 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
         )));
     }
 
-    let boards = by_board(&project);
     let outputs = output_paths(args.output.as_deref(), &args.dcv, &project, &programs)?;
     if outputs.iter().any(|output| same_file(output, &args.dcv)) {
         return Err(Failure::error(format!(
@@ -201,31 +198,22 @@ pub fn run(args: &ExportArgs) -> Result<ExitCode, Failure> {
     // The programs are written; the estimate only reads them.
     let estimates = Estimates::new(&project, &programs, estimate_settings);
     let generated = generated.unwrap_or_default();
-    match (programs.as_slice(), outputs.as_slice()) {
-        ([program], [output]) if !boards => report(
-            &project,
-            program,
-            output,
-            args,
-            switched.as_ref(),
-            &estimates,
-            &generated,
-        )?,
-        _ => report_runs(
-            &project,
-            &programs,
-            &outputs,
-            args,
-            switched.as_ref(),
-            &estimates,
-            &generated,
-        )?,
-    }
-    for line in describe_carves(&project, &generated) {
+    let outputs: Vec<String> = outputs.iter().map(|o| o.display().to_string()).collect();
+    let preview = args.preview.as_ref().map(|p| p.display().to_string());
+    let switched = switched
+        .as_ref()
+        .map(|switched| switched_lines(&project, args, switched))
+        .unwrap_or_default();
+    let written = Written {
+        programs: &programs,
+        outputs: &outputs,
+        split: args.split(),
+        generated: &generated,
+        preview: preview.as_deref(),
+        switched: &switched,
+    };
+    for line in export_report(&project, &written, &estimates) {
         outln!("{line}")?;
-    }
-    if let Some(preview) = &args.preview {
-        outln!("Wrote preview {}.", preview.display())?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -257,20 +245,6 @@ pub fn check_preview_path(preview: &Path, dcv: &Path) -> Result<(), Failure> {
         )));
     }
     Ok(())
-}
-
-/// Whether the file at `path` starts as [`preview::render`] writes it:
-/// its first kilobyte holds [`preview::MARKER`].
-fn is_preview(path: &Path) -> bool {
-    use std::io::Read as _;
-    let Ok(file) = std::fs::File::open(path) else {
-        return false;
-    };
-    let mut head = Vec::new();
-    if file.take(1024).read_to_end(&mut head).is_err() {
-        return false;
-    }
-    String::from_utf8_lossy(&head).contains(preview::MARKER)
 }
 
 /// Refuses a `--preview` path that is one of the program paths `outputs`.
@@ -355,170 +329,6 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// Prints the export summary of one program: the file written, one line
-/// per exported operation, the program's extents (#62), its estimated run
-/// time (capability 30), the tool to fit and set work zero with before
-/// starting (#57), then every pause and tool change with its line number
-/// and message, because the controller or sender may not show the message
-/// (design step 8).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "what was written, for what, and what generated it, each needed"
-)]
-fn report(
-    project: &Project,
-    program: &Program,
-    output: &Path,
-    args: &ExportArgs,
-    switched: Option<&Switched>,
-    estimates: &Estimates,
-    generated: &[EmitOp],
-) -> Result<(), Failure> {
-    outln!(
-        "Wrote {} ({} lines, post-processor {}).",
-        output.display(),
-        program.text.lines().count(),
-        project.post_processor.id
-    )?;
-    report_post_and_operations(project, args, switched, generated)?;
-    for line in describe_extents(project, program, largest_tool_radius_mm(project)) {
-        outln!("{line}")?;
-    }
-    outln!("{}", estimates.program_line(0))?;
-    // #57: the program does not stop for the first tool.
-    outln!("Before you start: {}", before_you_start(program, 0, true))?;
-    // #283: `G53` moves to a machine position, which is right only on a
-    // homed machine; the program cannot check that.
-    if let Some(z) = &program.machine_lift {
-        outln!(
-            "Before you start: home the machine; this program moves to machine Z {z} (G53).{}",
-            limits_note(project)
-        )?;
-    }
-    report_tool_length_offset(project)?;
-    report_scaling(project)?;
-    report_pauses(program, "")?;
-    // #95: the user chose one program with M6, in the project or with
-    // `--one-program`; it stops only if the sender lets M6 through or
-    // stops for it itself.
-    if one_program(project, args.split()) && changes_tools(project) {
-        outln!(
-            "This program changes tools with M6, so your sender must stop at M6; see \"One program with M6\" in the post-processors chapter."
-        )?;
-    }
-    Ok(())
-}
-
-/// #308: the post-processor's condition for a `G53` lift outside the
-/// travel to stop before it moves, with a leading space, or nothing.
-fn limits_note(project: &Project) -> String {
-    dc_gcode::machine_lift_limits_note(&project.post_processor.id)
-        .map(|note| format!(" {note}"))
-        .unwrap_or_default()
-}
-
-/// Prints the export summary of the programs of tool runs (#95): the files
-/// in the order to run them, with what to do before each, then one line
-/// per exported operation, then each program's extents (#62), estimated
-/// run time and pauses, then the total run time (capability 30).
-#[allow(
-    clippy::too_many_arguments,
-    reason = "what was written, for what, and what generated it, each needed"
-)]
-fn report_runs(
-    project: &Project,
-    programs: &[Program],
-    outputs: &[PathBuf],
-    args: &ExportArgs,
-    switched: Option<&Switched>,
-    estimates: &Estimates,
-    generated: &[EmitOp],
-) -> Result<(), Failure> {
-    let boards = by_board(project);
-    if programs.len() == 1 {
-        outln!("Wrote 1 program:")?;
-    } else {
-        outln!("Wrote {} programs; run them in this order:", programs.len())?;
-    }
-    let mut k = 0;
-    let mut board = None;
-    for (program, output) in programs.iter().zip(outputs) {
-        // #498: each board is its own setup, its programs counted afresh.
-        if boards && board != Some(program.board) {
-            board = Some(program.board);
-            k = 0;
-            outln!("{}", board_heading(project, program.board))?;
-        }
-        // The first program sets work zero; a later one keeps X and Y and
-        // sets Z zero with its new bit, whose length differs (#43).
-        let before = before_you_start(program, k, false);
-        k += 1;
-        outln!("  {k}. {}  Before you start: {before}", output.display())?;
-    }
-    // #283: every program of the export ends with the same lift.
-    if let Some(z) = programs.iter().find_map(|p| p.machine_lift.as_ref()) {
-        outln!(
-            "Before you start: home the machine; each program moves to machine Z {z} (G53).{}",
-            limits_note(project)
-        )?;
-    }
-    report_tool_length_offset(project)?;
-    report_scaling(project)?;
-    outln!("Post-processor {}.", project.post_processor.id)?;
-    report_post_and_operations(project, args, switched, generated)?;
-    let mut board = None;
-    for (k, (program, output)) in programs.iter().zip(outputs).enumerate() {
-        // #498: each board's programs together, with the board's total.
-        if boards && board != Some(program.board) {
-            if let Some(done) = board {
-                report_board_total(programs, estimates, done)?;
-            }
-            board = Some(program.board);
-            outln!("{}", board_heading(project, program.board))?;
-        }
-        outln!(
-            "{} ({} lines):",
-            output.display(),
-            program.text.lines().count()
-        )?;
-        for line in describe_extents(project, program, tool_radius_mm(project, program)) {
-            outln!("  {line}")?;
-        }
-        outln!("  {}", estimates.program_line(k))?;
-        report_pauses(program, "  ")?;
-    }
-    if let Some(done) = board {
-        report_board_total(programs, estimates, done)?;
-    }
-    if let Some(total) = estimates.total_line() {
-        outln!("{total}")?;
-    }
-    Ok(())
-}
-
-/// Prints the estimated time of `board`'s programs, when it has more than
-/// one and they are not all of the export (#498).
-fn report_board_total(
-    programs: &[Program],
-    estimates: &Estimates,
-    board: Board,
-) -> Result<(), Failure> {
-    let ks: Vec<usize> = programs
-        .iter()
-        .enumerate()
-        .filter(|(_, p)| p.board == board)
-        .map(|(k, _)| k)
-        .collect();
-    if ks.len() > 1
-        && ks.len() < programs.len()
-        && let Some(line) =
-            estimates.total_of(&ks, &format!("Estimated {} board time", board.as_str()))
-    {
-        outln!("{line}")?;
-    }
-    Ok(())
-}
-
 /// What `--post` replaced: the old reference, and the settings the switch
 /// reset (`None` with `--reset-settings`, which resets them all).
 pub struct Switched {
@@ -528,102 +338,37 @@ pub struct Switched {
     resets: Option<Vec<SettingReset>>,
 }
 
-/// Prints that `--post` updated the project, from which post-processor
-/// version to which (`grblhal v1 → v2`, #106), whether it kept the user's
-/// settings, and each one it reset and why (#277); then one line per
-/// exported operation.
-fn report_post_and_operations(
-    project: &Project,
-    args: &ExportArgs,
-    switched: Option<&Switched>,
-    generated: &[EmitOp],
-) -> Result<(), Failure> {
-    if let Some(Switched { old, resets }) = switched {
-        let new = &project.post_processor;
-        let to = if new.id == old.id {
-            format!("v{}", new.definition_version)
-        } else {
-            format!("{} v{}", new.id, new.definition_version)
+/// That `--post` updated the project, from which post-processor version
+/// to which (`grblhal v1 → v2`, #106), whether it kept the user's
+/// settings, and each one it reset and why (#277): the lines the report
+/// prints before the operations.
+fn switched_lines(project: &Project, args: &ExportArgs, switched: &Switched) -> Vec<String> {
+    let Switched { old, resets } = switched;
+    let new = &project.post_processor;
+    let to = if new.id == old.id {
+        format!("v{}", new.definition_version)
+    } else {
+        format!("{} v{}", new.id, new.definition_version)
+    };
+    let settings = match resets {
+        Some(_) => "keeping your settings",
+        None => "with its default settings",
+    };
+    let mut lines = vec![format!(
+        "Updated {}: post-processor {} v{} → {to}, {settings}.",
+        args.dcv.display(),
+        old.id,
+        old.definition_version
+    )];
+    for reset in resets.iter().flatten() {
+        let why = match reset.reason {
+            ResetReason::NoM6 => "has no M6 tool change",
+            ResetReason::NoCannedCycles => "has no canned cycles",
         };
-        let settings = match resets {
-            Some(_) => "keeping your settings",
-            None => "with its default settings",
-        };
-        outln!(
-            "Updated {}: post-processor {} v{} → {to}, {settings}.",
-            args.dcv.display(),
-            old.id,
-            old.definition_version
-        )?;
-        for reset in resets.iter().flatten() {
-            let why = match reset.reason {
-                ResetReason::NoM6 => "has no M6 tool change",
-                ResetReason::NoCannedCycles => "has no canned cycles",
-            };
-            outln!(
-                "  Reset {} {} → {}: post-processor {} {why}.",
-                reset.setting,
-                reset.from,
-                reset.to,
-                new.id
-            )?;
-        }
+        lines.push(format!(
+            "  Reset {} {} → {}: post-processor {} {why}.",
+            reset.setting, reset.from, reset.to, new.id
+        ));
     }
-    for line in describe_operations(project, generated) {
-        outln!("  {line}")?;
-    }
-    Ok(())
-}
-
-/// The post-processors whose programs leave the tool length offset
-/// (`G43.1`) alone: grblHAL and GRBL fold an active offset into the work
-/// zero the user sets (`G10 L20`), so a `G49` after the user zeroes Z
-/// would move every Z by it (#279; `dc-project/src/definitions/README.md`,
-/// "Header modal state").
-const KEEPS_TOOL_LENGTH_OFFSET: [&str; 2] = ["grblhal", "grbl"];
-
-/// Prints, for a program that leaves the tool length offset alone, when
-/// to set one (functional spec, capability 29).
-fn report_tool_length_offset(project: &Project) -> Result<(), Failure> {
-    if KEEPS_TOOL_LENGTH_OFFSET.contains(&project.post_processor.id.as_str()) {
-        outln!(
-            "This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero."
-        )?;
-    }
-    Ok(())
-}
-
-/// Prints, for a grblHAL program whose header cancels scaling with `G50`,
-/// that grblHAL's `G50` misses a scale that leaves X at 1, so to soft-reset
-/// after any `G51` and check `$G` (#320; [`dc_gcode::scaling_note`]). It is
-/// printed, not written into the program.
-fn report_scaling(project: &Project) -> Result<(), Failure> {
-    // The project was exported with this post-processor, so it resolves.
-    let note = project
-        .post_processor
-        .resolve()
-        .ok()
-        .and_then(|post| dc_gcode::scaling_note(&post));
-    if let Some(note) = note {
-        outln!("{note}")?;
-    }
-    Ok(())
-}
-
-/// Prints every pause and tool change of `program`, each line after
-/// `indent`.
-fn report_pauses(program: &Program, indent: &str) -> Result<(), Failure> {
-    if program.pauses.is_empty() {
-        return Ok(());
-    }
-    outln!("{indent}Pauses and tool changes; resume each with cycle start:")?;
-    for pause in &program.pauses {
-        let message = if pause.message.is_empty() {
-            "(no message)"
-        } else {
-            pause.message.as_str()
-        };
-        outln!("{indent}  line {}: {message}", pause.line)?;
-    }
-    Ok(())
+    lines
 }

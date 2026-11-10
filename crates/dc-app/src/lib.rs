@@ -7,6 +7,7 @@ pub mod app;
 pub mod command;
 pub mod editor;
 mod error;
+pub mod export;
 pub mod generation;
 pub mod history;
 pub mod import;

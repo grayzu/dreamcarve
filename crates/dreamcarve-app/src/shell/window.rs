@@ -84,6 +84,10 @@ pub trait Dialogs {
     fn save_library(&mut self, _title: &str, _file_name: &str) -> Option<PathBuf> {
         None
     }
+    /// Asks for the folder to export G-code to, starting in `start`.
+    fn export_folder(&mut self, _title: &str, _start: Option<&Path>) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// The OS's open and save dialogs, through `rfd` (design open question 3).
@@ -142,6 +146,15 @@ impl Dialogs for NativeDialogs {
             .add_filter(&self.library_filter, &["json"])
             .set_file_name(file_name)
             .save_file()
+    }
+
+    fn export_folder(&mut self, title: &str, start: Option<&Path>) -> Option<PathBuf> {
+        let dialog = rfd::FileDialog::new().set_title(title);
+        match start {
+            Some(dir) => dialog.set_directory(dir),
+            None => dialog,
+        }
+        .pick_folder()
     }
 }
 
@@ -290,6 +303,10 @@ pub(crate) enum Action {
     /// menu): its request placed, what placing found in the Warnings
     /// panel (#546).
     PlaceTabs(dc_project::OperationId),
+    /// Open the export sheet (File ▸ Export…, the toolbar, ⌘E; #547).
+    OpenExport,
+    /// Something the export sheet asked for.
+    Export(panels::export::Request),
 }
 
 impl Action {
@@ -340,6 +357,11 @@ pub struct Shell {
     library: Option<panels::library::Sheet>,
     /// The Import drawing sheet, while open.
     import: Option<panels::import::Sheet>,
+    /// The export sheet, while open (#547).
+    export: Option<panels::export::Sheet>,
+    /// `config.toml`'s `[estimate]`: the estimates' settings, as the CLI
+    /// reads them (capability 78).
+    estimate: EstimateConfig,
     empty_dismissed: bool,
     /// The status bar's last message.
     message: Option<String>,
@@ -422,6 +444,8 @@ impl Shell {
             sheet: None,
             library: None,
             import: None,
+            export: None,
+            estimate,
             empty_dismissed: false,
             message,
             layout: Layout {
@@ -470,6 +494,15 @@ impl Shell {
     #[must_use]
     pub fn worker_busy(&self) -> bool {
         self.worker.busy()
+    }
+
+    /// Whether the export sheet is building its plan, or will once
+    /// generation is over (#547).
+    #[must_use]
+    pub fn export_planning(&self) -> bool {
+        self.export
+            .as_ref()
+            .is_some_and(|sheet| sheet.planning(&self.app))
     }
 
     /// Whether the Warnings drawer is open.
@@ -774,7 +807,7 @@ impl Shell {
         // A drop never opens a sheet above another: a project replaces the
         // Import drawing sheet, and nothing is taken while the
         // unsaved-changes sheet or the Tool Library is open.
-        let other_sheet = self.sheet.is_some() || self.library.is_some();
+        let other_sheet = self.sheet.is_some() || self.library.is_some() || self.export.is_some();
         for path in dropped {
             match files::kind(&path) {
                 _ if other_sheet => {}
@@ -785,7 +818,11 @@ impl Shell {
                 _ => self.open_import(&path, Purpose::Import),
             }
         }
-        if self.sheet.is_none() && self.library.is_none() && self.import.is_none() {
+        if self.sheet.is_none()
+            && self.library.is_none()
+            && self.import.is_none()
+            && self.export.is_none()
+        {
             actions.extend(shortcuts(ctx));
             actions.extend(viewport::keys(ctx, &self.app));
         }
@@ -959,6 +996,15 @@ impl Shell {
                 panels::editor::request_focus(ctx, op, field);
                 self.show_operations();
             }
+            Action::OpenExport => {
+                self.export = Some(panels::export::Sheet::open(
+                    &self.app,
+                    dreamcarve_shell::clock::today_utc(),
+                    self.estimate,
+                ));
+                ctx.request_repaint();
+            }
+            Action::Export(request) => self.export_request(request),
             Action::PlaceTabs(op) => {
                 let notes = self.app.notes().len();
                 match self.app.place_tabs(&op) {
@@ -966,6 +1012,38 @@ impl Shell {
                     Ok(_) if self.app.notes().len() > notes => self.warnings_open = true,
                     Ok(_) => {}
                     Err(e) => self.message = Some(e.to_string()),
+                }
+            }
+        }
+    }
+
+    /// What the export sheet asked for.
+    fn export_request(&mut self, request: panels::export::Request) {
+        use panels::export::Request;
+        match request {
+            Request::Close => self.export = None,
+            Request::ChooseFolder => {
+                let title = self.strings().get(StrKey::ExportChooseTitle).to_owned();
+                let start = self
+                    .export
+                    .as_ref()
+                    .and_then(|s| s.dir().map(Path::to_path_buf));
+                if let Some(dir) = self.dialogs.export_folder(&title, start.as_deref())
+                    && let Some(sheet) = self.export.as_mut()
+                {
+                    sheet.set_dir(dir);
+                }
+            }
+            Request::Export => {
+                if let Some(sheet) = self.export.as_mut()
+                    && let Some(message) = panels::export::export(sheet, &mut self.app)
+                {
+                    self.message = Some(message);
+                }
+            }
+            Request::ShowInFolder => {
+                if let Some(sheet) = &self.export {
+                    panels::export::show_in_folder(sheet);
                 }
             }
         }
@@ -1106,6 +1184,10 @@ fn shortcuts(ctx: &egui::Context) -> Vec<Action> {
             Action::ImportDrawing,
         ),
         (
+            KeyboardShortcut::new(Modifiers::COMMAND, Key::E),
+            Action::OpenExport,
+        ),
+        (
             KeyboardShortcut::new(Modifiers::COMMAND, Key::Q),
             Action::Quit,
         ),
@@ -1137,6 +1219,9 @@ pub(crate) struct FrameState<'a> {
     pub pointer: viewport::Pointer,
     /// Whether the Warnings drawer is open, for View ▸ Warnings.
     pub warnings_open: bool,
+    /// The estimates' settings, for the status bar's total and an
+    /// operation row's hover (capability 78).
+    pub estimate: &'a EstimateConfig,
 }
 
 impl eframe::App for Shell {
@@ -1162,6 +1247,7 @@ impl eframe::App for Shell {
             show_empty: self.app.project().instances.is_empty() && !self.empty_dismissed,
             pointer,
             warnings_open: self.warnings_open,
+            estimate: &self.estimate,
         };
         menu::bar(ui, &state, &mut actions);
         toolbar::bar(ui, &state, &mut actions);
@@ -1186,6 +1272,8 @@ impl eframe::App for Shell {
                 sheet,
                 &mut actions,
             );
+        } else if let Some(sheet) = self.export.as_mut() {
+            panels::export::show(&ctx, &self.app, &state.display_name, sheet, &mut actions);
         }
         self.cam_tab = cam_tab;
 

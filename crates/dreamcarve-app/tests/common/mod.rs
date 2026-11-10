@@ -49,7 +49,7 @@ pub struct QueuedDialogs {
     answers: Arc<Mutex<VecDeque<Option<PathBuf>>>>,
     /// What each dialog was asked, in order: `open_project`,
     /// `save_project <file name>`, `open_drawing`, `open_library`,
-    /// `save_library <file name>`.
+    /// `save_library <file name>`, `export_folder`.
     pub asked: Arc<Mutex<Vec<String>>>,
 }
 
@@ -92,6 +92,10 @@ impl Dialogs for QueuedDialogs {
 
     fn save_library(&mut self, _title: &str, file_name: &str) -> Option<PathBuf> {
         self.next(format!("save_library {file_name}"))
+    }
+
+    fn export_folder(&mut self, _title: &str, _start: Option<&Path>) -> Option<PathBuf> {
+        self.next("export_folder".to_owned())
     }
 }
 

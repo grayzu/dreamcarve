@@ -232,7 +232,10 @@ fn board_tick_filters_without_saving() {
 #[test]
 fn errors_disable_warnings_do_not() {
     let mut harness = Harness::open(&plaque_bytes()).unwrap();
-    let mut tool = harness.app.project().tools[0].clone();
+    // The first operation's tool: the plaque has one tool it never uses.
+    let project = harness.app.project();
+    let used = project.operations[0].run_tools()[0].clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
     tool.feed_mm_min = None;
     harness.run(Command::UpdateTool(tool)).unwrap();
     harness.generate();

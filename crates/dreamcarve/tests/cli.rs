@@ -21,9 +21,6 @@ use std::process::{Command, Output, Stdio};
 
 use dc_geometry::{Point, Polyline, Rect, Transform, assert_approx_eq};
 
-#[path = "../src/clock.rs"]
-#[allow(dead_code, reason = "the test uses only the timestamp")]
-mod clock;
 use dc_gcode::MachineMove;
 use dc_project::test_support::{sample_drill, sample_pocket};
 use dc_project::{
@@ -32,6 +29,7 @@ use dc_project::{
     Project, Side, SpindleControl, StartAt, TabPlacement, TabShape, TabSpec, ToolChangeMode,
     ToolId, ToolKind, load, save,
 };
+use dreamcarve_shell::clock;
 
 /// The date every compared program is exported with.
 const FIXED_DATE: &str = "2026-10-15";

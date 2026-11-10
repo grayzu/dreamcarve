@@ -176,6 +176,24 @@ pub fn commit_all(staged: Vec<StagedFile>) -> Result<(), ShellError> {
     Ok(())
 }
 
+/// Whether the file at `path` starts as `dc_job::preview::render` writes
+/// it: its first kilobyte holds [`dc_job::preview::MARKER`]. An export
+/// writes a preview over an existing file only when it is one, never over
+/// the drawing the project came from (addendum A5). Moved from the CLI's
+/// `export` so the app makes the same check (#547).
+#[must_use]
+pub fn is_preview(path: &Path) -> bool {
+    use std::io::Read as _;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::new();
+    if file.take(1024).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    String::from_utf8_lossy(&head).contains(dc_job::preview::MARKER)
+}
+
 /// What was at an export destination before [`commit_all`] replaced it,
 /// kept under a temporary name in the same directory.
 struct Backup {

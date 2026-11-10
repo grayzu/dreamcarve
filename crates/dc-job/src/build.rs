@@ -635,6 +635,29 @@ pub fn finish(
 ) -> Finished {
     let mut findings = project_checks(project, generated);
     let programs = emit(project, generated, split, date, &mut findings);
+    let (programs, total_line) = summarize(project, generated, programs, split, estimate);
+    Finished {
+        findings,
+        programs,
+        total_line,
+    }
+}
+
+/// The rows of `programs`, emitted from `generated` (every enabled
+/// operation's runs, or one board's) with `split`: each program's name
+/// under the project's name, operations, edge extents, estimate with the
+/// user's `estimate` settings and the step before it, as [`finish`] lists
+/// them; and the `Estimated total time: …` line when there are several.
+/// The second half of [`finish`], for a shell that built the programs
+/// with [`build`] itself (the app's export, which builds afresh).
+#[must_use]
+pub fn summarize(
+    project: &Project,
+    generated: &[EmitOp],
+    programs: Vec<Program>,
+    split: ProgramSplit,
+    estimate: &EstimateConfig,
+) -> (Vec<ProgramSummary>, Option<String>) {
     let estimates = Estimates::new(project, &programs, *estimate);
     let names = program_names(project, &project.name, &programs);
     let groups = program_operations(project, generated, split);
@@ -669,11 +692,7 @@ pub fn finish(
             summary
         })
         .collect();
-    Finished {
-        findings,
-        programs,
-        total_line: estimates.total_line(),
-    }
+    (programs, estimates.total_line())
 }
 
 /// The operations of each program, as [`dc_gcode::emit_programs`] divides

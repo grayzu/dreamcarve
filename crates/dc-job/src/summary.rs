@@ -166,7 +166,7 @@ pub fn describe_estimate(label: &str, estimate: &Estimate, settings: &EstimateCo
     let rapids = settings
         .rapid_mm_min
         .map(|rate| (estimate.rapid_mm / rate * SECONDS_PER_MINUTE * scale, rate));
-    let total_s = cutting_s + dwells_s + rapids.map_or(0.0, |(s, _)| s);
+    let total_s = estimated_s(estimate, settings);
     let mut parts = format!(
         "cutting {}, dwells {}",
         duration(cutting_s),
@@ -196,6 +196,24 @@ pub fn describe_estimate(label: &str, estimate: &Estimate, settings: &EstimateCo
 }
 
 const SECONDS_PER_MINUTE: f64 = 60.0;
+
+/// The total time of `estimate` with the user's `settings`, s: what
+/// [`describe_estimate`]'s line starts with. Cutting and dwells, and the
+/// rapids when a rapid rate is set, times the scale factor.
+#[must_use]
+pub fn estimated_s(estimate: &Estimate, settings: &EstimateConfig) -> f64 {
+    let scale = settings.scale_factor;
+    let rapids_s = settings.rapid_mm_min.map_or(0.0, |rate| {
+        estimate.rapid_mm / rate * SECONDS_PER_MINUTE * scale
+    });
+    estimate.feed_s * scale + estimate.dwell_s * scale + rapids_s
+}
+
+/// [`estimated_s`] as [`describe_estimate`] writes it: `14 min 5 s`.
+#[must_use]
+pub fn describe_estimated_time(estimate: &Estimate, settings: &EstimateConfig) -> String {
+    duration(estimated_s(estimate, settings))
+}
 
 /// `seconds`, rounded to the second, as `1 h 2 min 3 s`, `14 min 5 s` or
 /// `13 s`.

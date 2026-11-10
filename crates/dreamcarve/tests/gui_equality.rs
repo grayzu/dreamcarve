@@ -426,11 +426,10 @@ fn app_export_equals_cli_export_on_six_posts() {
     let compared: usize = std::thread::scope(|scope| {
         let handles: Vec<_> = fixtures
             .iter()
-            .flat_map(|(name, bytes)| {
-                POSTS.iter().map(|post| {
-                    let root = &root;
-                    scope.spawn(move || export_case(root, name, bytes, post))
-                })
+            .flat_map(|(name, bytes)| POSTS.iter().map(move |post| (*name, bytes, *post)))
+            .map(|(name, bytes, post)| {
+                let root = &root;
+                scope.spawn(move || export_case(root, name, bytes, post))
             })
             .collect();
         handles

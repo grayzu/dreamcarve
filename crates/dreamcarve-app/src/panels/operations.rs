@@ -362,6 +362,23 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
     if response.clicked() {
         out.push(Action::EditOperation(row.id.clone()));
     }
+    // Capability 78: the estimated time of the program it is cut in, the
+    // CLI's number, on hover.
+    let times = dc_app::export::operation_times(state.app, &row.id, state.estimate);
+    let response = if times.is_empty() {
+        response
+    } else {
+        let lines: Vec<String> = times
+            .iter()
+            .map(|(name, time)| {
+                strings.fmt(
+                    StrKey::ExportOperationEstimate,
+                    &[("name", name), ("time", time)],
+                )
+            })
+            .collect();
+        response.on_hover_text(lines.join("\n"))
+    };
     response.context_menu(|ui| {
         if ui
             .button(strings.get(StrKey::OperationsDuplicate))

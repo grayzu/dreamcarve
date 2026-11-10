@@ -2,18 +2,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! UTC dates from the system clock, with no date crate: the program header's
-//! date and the build time in `--version`. `build.rs` includes this file too.
+//! date, which the CLI's `export` and the app's export sheet both write
+//! ([`today_utc`]), and the build time in the CLI's `--version`. Moved from
+//! `crates/dreamcarve/src/clock.rs` for the app (#547); the CLI's
+//! `build.rs` includes this file too.
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Seconds since 1970-01-01 UTC; 0 when the clock is before then.
+#[must_use]
 pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
 }
 
+/// Today's date in UTC as `YYYY-MM-DD`, for a program header.
+#[must_use]
+pub fn today_utc() -> String {
+    date_utc(now_secs())
+}
+
 /// The UTC date of `secs` as `YYYY-MM-DD`.
+#[must_use]
 pub fn date_utc(secs: u64) -> String {
     let (y, m, d) = civil_from_days(days(secs));
     format!("{y:04}-{m:02}-{d:02}")
@@ -21,10 +32,7 @@ pub fn date_utc(secs: u64) -> String {
 
 /// The UTC time of `secs` as one number, `YYYYMMDDHHMMSS`, which sorts in
 /// time order.
-#[allow(
-    dead_code,
-    reason = "build.rs and the tests use it; the binary does not"
-)]
+#[must_use]
 pub fn timestamp_utc(secs: u64) -> String {
     let (y, m, d) = civil_from_days(days(secs));
     let of_day = secs % 86_400;

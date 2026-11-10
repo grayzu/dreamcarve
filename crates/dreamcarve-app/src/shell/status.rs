@@ -7,8 +7,9 @@
 //! cursor in project units (`experience.md`, section 9: `X 64.2  Y 51.8`,
 //! one decimal in mm, three in inches), generation state (*Generating k
 //! of n…* and Stop), the counts of each tier with their glyphs (the button
-//! that opens the Warnings drawer), the shape under
-//! the pointer (section 8, "Hover"), and the last message.
+//! that opens the Warnings drawer), the programs' estimated time
+//! (capability 78), the shape under the pointer (section 8, "Hover"), and
+//! the last message.
 
 use dc_app::{StrKey, warnings};
 use dc_project::Units;
@@ -252,6 +253,14 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 generation(ui, state, palette, out);
                 rule(ui, palette);
                 counts(ui, state, palette, out);
+                // Capability 78: every program's estimated time, the CLI's
+                // numbers.
+                if let Some(time) = dc_app::export::total_time(state.app, state.estimate) {
+                    rule(ui, palette);
+                    let label = strings.fmt(StrKey::ExportStatusTotal, &[("time", &time)]);
+                    text(ui, &label, TextStyle::Small, secondary)
+                        .on_hover_text(strings.get(StrKey::ExportStatusTotalHelp));
+                }
                 // Capability 74: the program's Z range beside its boxes.
                 if let Some(z) = z_range(state) {
                     rule(ui, palette);
