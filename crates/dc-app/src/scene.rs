@@ -37,7 +37,9 @@
 
 use std::sync::Arc;
 
-use dc_geometry::{EPS_MM, Point, Point3, Polyline, Rect, Transform, Vec2};
+use dc_geometry::{
+    EPS_MM, Point, Point3, Polyline, Rect, Segment, Transform, Vec2, point_segment_distance_mm,
+};
 use dc_job::preview::{self, Marks};
 use dc_job::{EmitOp, MoveKind, Toolpath};
 use dc_project::{Board, InstanceId, Operation, OperationId, Project, TabId};
@@ -217,6 +219,9 @@ pub struct SceneOperation {
     /// Its stored result's runs, in cut order; empty before the first
     /// result and after a generation error.
     pub runs: Arc<[SceneRun]>,
+    /// Its runs' cutting moves as clicks pick them (#576), built with
+    /// `runs` and shared with them.
+    pub cuts: Arc<CutIndex>,
     /// Which result `runs` are: its snapshot and digest.
     result: Option<(SnapshotId, u64)>,
 }
@@ -242,6 +247,107 @@ pub struct Scene {
     male_board: Option<MaleBoardView>,
 }
 
+/// How many lines one chunk of a [`CutIndex`] holds: consecutive moves
+/// lie close together, so a chunk's box is small and most chunks are
+/// passed over by their box alone.
+const CHUNK_LINES: usize = 64;
+
+/// One run of consecutive cutting lines and the box around them.
+#[derive(Debug, Clone, PartialEq)]
+struct CutChunk {
+    bounds: Rect,
+    lines: Vec<(Point, Point)>,
+}
+
+/// An operation's cutting moves on the female board as a click picks them
+/// (#576): every cut the Viewport draws, arcs flattened to
+/// [`PICK_FLATTEN_MM`], in chunks of consecutive lines with their boxes.
+/// Built once per result, when the Scene takes its runs, so a hover or a
+/// click only measures the chunks whose box it falls near.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct CutIndex {
+    chunks: Vec<CutChunk>,
+}
+
+impl CutIndex {
+    /// The index of `runs`' cutting moves. The male board's runs are left
+    /// out: they are drawn moved onto the male board, where a click picks
+    /// the board's shape and so the Inlay (`Hit::MaleBoardShape`, #543).
+    #[must_use]
+    pub fn of(runs: &[SceneRun]) -> Self {
+        let mut lines: Vec<(Point, Point)> = Vec::new();
+        for run in runs
+            .iter()
+            .filter(|r| r.run.board != dc_project::Board::Male)
+        {
+            for stroke in strokes(&run.run.toolpath) {
+                if stroke.kind != StrokeKind::Cut {
+                    continue;
+                }
+                let points = stroke.points(PICK_FLATTEN_MM);
+                for pair in points.windows(2) {
+                    if let [a, b] = pair
+                        && xy(*a).distance_to(xy(*b)) > XY_EPS_MM
+                    {
+                        lines.push((xy(*a), xy(*b)));
+                    }
+                }
+            }
+        }
+        let chunks = lines
+            .chunks(CHUNK_LINES)
+            .filter_map(|chunk| {
+                let (first, _) = chunk.first()?;
+                let bounds = chunk.iter().fold(
+                    Rect {
+                        min: *first,
+                        max: *first,
+                    },
+                    |b, (a, c)| b.including(*a).including(*c),
+                );
+                Some(CutChunk {
+                    bounds,
+                    lines: chunk.to_vec(),
+                })
+            })
+            .collect();
+        Self { chunks }
+    }
+
+    /// Whether it holds no cut.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty()
+    }
+
+    /// The distance from `p` to the nearest cut, mm, when one is within
+    /// `within_mm`.
+    #[must_use]
+    pub fn distance_mm(&self, p: Point, within_mm: f64) -> Option<f64> {
+        self.chunks
+            .iter()
+            .filter(|c| {
+                p.x >= c.bounds.min.x - within_mm
+                    && p.x <= c.bounds.max.x + within_mm
+                    && p.y >= c.bounds.min.y - within_mm
+                    && p.y <= c.bounds.max.y + within_mm
+            })
+            .flat_map(|c| c.lines.iter())
+            .map(|(start, end)| {
+                point_segment_distance_mm(
+                    Segment {
+                        start: *start,
+                        end: *end,
+                        bulge: 0.0,
+                    },
+                    p,
+                )
+            })
+            .filter(|d| *d <= within_mm)
+            .reduce(f64::min)
+    }
+}
+
 /// Each enabled operation of `project` with `generation`'s state and its
 /// stored runs, those of `previous` reused where their result stands.
 fn operations(
@@ -261,22 +367,26 @@ fn operations(
             let kept = previous
                 .iter()
                 .find(|p| p.id == *op.id() && p.result == result && result.is_some());
-            let runs: Arc<[SceneRun]> = match (kept, stored) {
-                (Some(kept), _) => Arc::clone(&kept.runs),
-                (None, Some(stored)) => stored
-                    .runs
-                    .iter()
-                    .enumerate()
-                    .map(|(k, run)| SceneRun {
-                        marks: stored
-                            .marks
-                            .get(k)
-                            .cloned()
-                            .unwrap_or_else(|| preview::marks(&preview::Run::from(run))),
-                        run: run.clone(),
-                    })
-                    .collect(),
-                (None, None) => Arc::from(Vec::new()),
+            let (runs, cuts): (Arc<[SceneRun]>, Arc<CutIndex>) = match (kept, stored) {
+                (Some(kept), _) => (Arc::clone(&kept.runs), Arc::clone(&kept.cuts)),
+                (None, Some(stored)) => {
+                    let runs: Arc<[SceneRun]> = stored
+                        .runs
+                        .iter()
+                        .enumerate()
+                        .map(|(k, run)| SceneRun {
+                            marks: stored
+                                .marks
+                                .get(k)
+                                .cloned()
+                                .unwrap_or_else(|| preview::marks(&preview::Run::from(run))),
+                            run: run.clone(),
+                        })
+                        .collect();
+                    let cuts = Arc::new(CutIndex::of(&runs));
+                    (runs, cuts)
+                }
+                (None, None) => (Arc::from(Vec::new()), Arc::default()),
             };
             let scene_op = SceneOperation {
                 id: op.id().clone(),
@@ -285,6 +395,7 @@ fn operations(
                 stale: !generation.is_current(op.id()),
                 colour,
                 runs,
+                cuts,
                 result,
             };
             colour += scene_op.runs.len();
