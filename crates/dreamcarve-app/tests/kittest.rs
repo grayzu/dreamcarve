@@ -3348,3 +3348,44 @@ fn snapshot_workspace_light_and_dark() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Where in the last frame's paint order the first text shape containing
+/// `needle` is.
+fn painted_at(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Option<usize> {
+    h.output().shapes.iter().position(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text().contains(needle))
+    })
+}
+
+/// `experience.md` section 8, "Sheets" (#549 review): a sheet sits above
+/// everything on the Viewport, the depth legend included. In *By depth*,
+/// with the export sheet open, the legend's labels paint before (under)
+/// the sheet's title and its scrim.
+#[test]
+fn depth_legend_paints_under_a_sheet() {
+    let dir = scratch("legend-under-sheet");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    h.query_all_by_label("By depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the card's By depth segment")
+        .click();
+    h.run();
+    assert!(painted_at(&h, "stock top").is_some(), "the legend is drawn");
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    let legend = painted_at(&h, "stock top").expect("the legend is still drawn");
+    let sheet = painted_at(&h, "Export G-code").expect("the sheet's title");
+    assert!(
+        legend < sheet,
+        "the legend ({legend}) paints under the sheet ({sheet})"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
