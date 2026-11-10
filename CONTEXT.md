@@ -53,6 +53,36 @@ between a user-set top and bottom over a user-set footprint. Not a mesh.
 _Avoid_: Depth map, grayscale relief, bump map, height field (that is the
 simulation's internal grid)
 
+**Image Prep**:
+Making an SVG easy to inlay before `init` (`dreamcarve image-prep`, opt-in):
+strokes become areas, fills are resolved, line art can be turned into the
+spaces between its lines, and specks and jagged runs are cleaned up. It reads
+and writes SVG, takes no tool, stock or final size, and every threshold is a
+percentage of the design's height. The checks `init` always runs report the
+same problems and change nothing.
+_Avoid_: Cleanup, vectorize, trace (tracing a picture is a different, deferred
+job), repair
+
+**Ink**:
+Everything a drawing paints, once strokes are areas and fills are resolved:
+the lettering of a logo, or the lines of line art. In regions mode the ink is
+subtracted from the art's outline, so it becomes the board left standing
+between the pockets.
+_Avoid_: Stroke (a stroke is one way ink is drawn), black
+
+**Piece**:
+One connected area of Image Prep's result with its holes: what `image-prep`
+writes as one path. The report speaks of pieces, holes and the thinnest piece.
+(The geometry crate's `Region` is the same thing in code; "region" in
+`--regions` means the enclosed spaces between lines.)
+_Avoid_: Island (a piece inside a hole), blob
+
+**Speck**:
+A piece or hole whose widest point, the diameter of the largest circle that
+fits in it, is under `--min-detail` of the design's height. Image Prep drops a
+speck piece and fills a speck hole.
+_Avoid_: Noise, artifact, dust
+
 ### Machining
 
 **Operation**:
@@ -208,6 +238,16 @@ end mill that frees the plug from its board, On line half `margin_mm` out
 from the mirrored design, in the band's flat floor, from the floor through
 the board, with tabs.
 _Avoid_: Plug cutout, profile (it is part of the Inlay, not an operation)
+
+**Boundary**:
+The closed shapes an Inlay's `boundary` lists (format 26): instances, drawn
+by the user round the design, whose union is the outer edge of the male's
+band in place of the computed edge (`margin_mm` and `outline_rounding_mm`,
+which it replaces). Mirrored with the design on the male board, ignored by the
+female. Its narrowest band, the least distance from the design to its edge,
+stands in for the margin in the band's rules.
+_Avoid_: Outline, frame (the "DC" fixture's frame is a drawing that can be
+used as one), plug stock offset (Corbin's computed margin)
 
 **Engrave**:
 An operation that follows an open or closed path with the tool centre on the

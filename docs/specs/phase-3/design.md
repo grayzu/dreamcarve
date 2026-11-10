@@ -12,11 +12,18 @@ axis they rest on is a new `dc-geometry` module ported from PureCutCNC's
 come in through `dc-import` and live in the project as **bitmaps**, a new
 list beside the instances. `dc-gcode` gains the cone test (S17), the
 countersink rule (S18) and the groove rule (S19). The CLI gains `init` on
-a picture and an `image` command. The format moves through versions 20 to 26, one per sub-phase and three more for the Inlay's cut-out, band rounding and one-file form ("Sub-phases"); phase 2's last changes took 16 to 19 (changed in spec sync 1).
+a picture and an `image` command. Sub-phase 3.4 (inserted 2026-11-10) adds
+the opt-in `image-prep` command and the always-on import checks, both in
+`dc-import::prep` on new `dc-geometry` measures, and a user-drawn
+boundary for the male Inlay's band. The format moves through versions 20
+to 27, one per sub-phase that changes the file and three more for the
+Inlay's cut-out, band rounding and one-file form ("Sub-phases"); phase 2's
+last changes took 16 to 19 (changed in spec sync 1).
 
 ```
-SVG / DXF ──dc-import──▶ FeatureDefinitions ─┐
-PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v26, dc-project)
+SVG ─dc-import::prep (opt-in, 3.4)─▶ clean SVG ─┐
+SVG / DXF ──dc-import──▶ FeatureDefinitions ─┤  (init: dc-import::prep::findings, always)
+PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v27, dc-project)
 user edits .dcv ─────────────────────────────┘        │
                                                       ▼
    dc-cam::{profile, pocket, drill (+ countersink), engrave,
@@ -36,7 +43,7 @@ change hands is stated where it happens: the offset strategy's ring
 direction (as Pocket's), a picture's row order (its top row is at the
 highest Y), and the male Inlay's mirror (about X, in place, on its male board).
 
-Three things in this phase are **not** ports:
+Five things in this phase are **not** ports:
 
 - **Clearing passes and the V-bit floor** (functional 39, 40) follow
   VCarve's "Use Clearance Tools" and Corbin's pocket setup; PureCutCNC
@@ -49,6 +56,15 @@ Three things in this phase are **not** ports:
   of its that enters the repository is the G-code its command line writes
   on DreamCarve's own fixture pictures, captured as goldens the way
   PureCutCNC's programs are.
+- **Image prep** (functional 49a to 49e) extends PureCutCNC's SVG
+  import, which reads paint intent and warns about text, clips, masks and
+  ambiguous nesting (`svg.ts`, `classifier.ts`), but has no stroke-to-
+  outline, fill resolution, speck filter or smoothing: those are composed
+  from usvg's stroker, `i_overlay`, `cavalier_contours` and the medial axis
+  this phase already ports, with no new dependency.
+- **The drawn boundary** (49f) follows the public documentation of
+  VCarve's and Corbin's inlay workflows, as the rest of Inlay does,
+  and is composed from the same band functions #448 and #495 built.
 
 ## PureCutCNC sources
 
@@ -60,6 +76,8 @@ Three things in this phase are **not** ports:
 | `dc-cam::drill` countersink | `src/engine/toolpaths/drilling.ts` (`countersinkTipDepth`, `resolveCountersinkDepth`, `emitCountersinkPlunge`, the mouth-vs-hole skip), `drillingCountersink.test.ts` | Depth from the start plane (functional 44), not from a feature's own top face. The `maxCutDepth` check becomes the cone-height check from the tool's diameter (DreamCarve tools have no max cut depth). Never a `DrillHole` cycle record (stays `Expanded`). |
 | `dc-cam::vcarve` tests | `vcarveMedial/vcarveMedial.test.ts` (22 tests), `resolution.test.ts` (5), `noiseRegression.test.ts` (2) | Ported; the text fixtures ("Rag", "g", the `gA` project) are captured as polygon JSON by the parity tool from PureCutCNC's resolver, since DreamCarve has no fonts until phase 5. |
 | `tests/golden/vcarve-*` | captured via `tools/parity/` from `v_carve_medial` and `v_carve` operations | See "Golden corpus". |
+| `dc-import::prep::walk` (the visible-geometry walk, the import checks) | `src/import/svg.ts` (`hasVisiblePaint`, the cumulative opacity and fill/stroke presentation tracking, `inspectSvgContent`'s text, clip-path, mask, filter and pattern warnings), `src/import/classifier.ts` (the touching, intersecting and duplicate ambiguity rules; alternating nesting; smallest container) | The importer (`svg.rs`) is already a port of `svg.ts`; the walk reuses its paint-intent rule, so `init`, the checks and `image-prep` decide "painted" in one function. Upstream's classifier assigns line, add and subtract roles for the GUI; DreamCarve's `init` reads geometry whatever the paint (phase 1), so only its ambiguity detection is reused, as findings: crossing outlines are an overlap, a filled path inside a filled path a separate-path hole. The nesting itself stays `dc_geometry::nest`'s. Positions in findings are Y-up millimetres. |
+| `dc-import::prep::stroke`, `dc-geometry::{fill, width, simplify}` | none | PureCutCNC follows lines and does not turn a stroke into an area, resolves fills with Clipper's rule only, and has no speck filter or smoothing. Designed here from the libraries "Image prep" names. |
 
 Files in the first column that port logic carry the upstream attribution
 header. `dc-cam::inlay`, `dc-cam::photo`, `dc-import::bitmap`,
@@ -68,28 +86,31 @@ carry the DreamCarve header.
 
 ## Data model
 
-### dc-project (format versions 20 to 26)
+### dc-project (format versions 20 to 27)
 
 One version per sub-phase ("Sub-phases"): 20 adds the V-Carve kind with
 its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23 the
 male Inlay's cut-out (added in 3.3 on 2026-10-30, #443), 24 the male
 Inlay's outline rounding (added in 3.3 on 2026-10-31, #448), 25 the
 one-file Inlay, whose `side` gives way to a `male_board` (added in 3.3
-on 2026-11-02, #498), 26 `bitmaps` and the Photo V-Carve kind (24 until
-#448, 25 until #498). Every step but 25 is additive, and a file from an
-earlier version exports the same bytes. Step 25 replaces a field: a
+on 2026-11-02, #498), 26 the Inlay's drawn `boundary` (added in 3.4 on
+2026-11-10, #449), 27 `bitmaps` and the Photo V-Carve kind (24 until
+#448, 25 until #498, 26 until the boundary: sub-phase 3.4 ships before
+Photo V-Carve, so the boundary took the next number and Photo moved up).
+Every step but 25 is additive, and a file from an earlier version exports
+the same bytes. Step 25 replaces a field: a
 female file exports the same programs, and a male file the same male
 programs, both under the board's program names, but a male file now
 also cuts the female ("Migrations").
 
 ```rust
-pub const CURRENT_VERSION: u32 = 26;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443), 24 (rounding, #448) and 25 (one-file Inlay, #498) in 3.3, 26 in 3.4
+pub const CURRENT_VERSION: u32 = 27;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443), 24 (rounding, #448) and 25 (one-file Inlay, #498) in 3.3, 26 (drawn boundary, #449) in 3.4, 27 (bitmaps, Photo V-Carve) in 3.5
                                        // (phase 2 ended at 19: tool vendor, Drill hole width, Bore, stock to leave)
 
 pub struct Project {
     // phase 2 fields unchanged, plus:
     /// Pictures placed on the stock (functional 46), saved after
-    /// `instances`. `init` on a drawing: empty; migration: empty.
+    /// `instances`. `init` on a drawing: empty; migration: empty. Format 27.
     pub bitmaps: Vec<Bitmap>,
 }
 
@@ -200,6 +221,15 @@ pub struct InlayOp {
     /// migration, rounding by the edge pass's radius alone when the edge
     /// is open. Above 0 when set (`inlay_outline_rounding`).
     pub outline_rounding_mm: Option<f64>,
+    /// The male's drawn band edge (format 26, #449; functional 49f): the
+    /// instances whose closed outlines, united, are the edge of the band,
+    /// in place of "the design grown by `margin_mm`, closed by
+    /// `outline_rounding_mm`". Empty by default and on migration: the
+    /// computed band, unchanged. Saved right after `outline_rounding_mm`
+    /// as `"boundary": []` or `["i3"]`. With one or more, `margin_mm` and
+    /// `outline_rounding_mm` are ignored (`inlay_margin_ignored`, "Drawn
+    /// boundary"). The female ignores it.
+    pub boundary: Vec<InstanceId>,
     pub clearing: Vec<ClearingPass>,      // functional 40; on both boards
     pub step_over_fraction: Option<f64>,  // V-bit floor, as VCarveOp
     pub machining_order: MachiningOrder,
@@ -217,6 +247,8 @@ impl InlayOp {
     pub fn engagement_mm(&self, board: Board) -> Option<f64>;
     /// Whether the male is cut: its board's thickness is set (#498).
     pub const fn cuts_male(&self) -> bool;
+    /// Whether the band's edge is drawn (`boundary` is not empty, #449).
+    pub fn has_boundary(&self) -> bool;
 }
 
 /// The board an Inlay's male is cut from (format 25, #498; "Algorithms →
@@ -306,8 +338,10 @@ before cannot contain, so they bump the version only. `v22_to_v23`
 inserts `"cut_out": null` after `safe_z_mm` in every Inlay (#443),
 `v23_to_v24` inserts `"outline_rounding_mm": null` after `margin_mm` in
 every Inlay (#448), `v24_to_v25` replaces each Inlay's `side`, in its
-place, with its `male_board` (#498), and `v25_to_v26` inserts
-`"bitmaps": []` after `instances`. A file from any earlier version
+place, with its `male_board` (#498), `v25_to_v26` inserts
+`"boundary": []` after `outline_rounding_mm` in every Inlay (#449), and
+`v26_to_v27` inserts `"bitmaps": []` after `instances` (it was
+`v25_to_v26` until the boundary took 26). A file from any earlier version
 exports the same bytes as the same project written at the current
 version; a male Inlay with a fitting clearing pass from version 22 or 23
 exports differently from the build that wrote it (#448 changed its band
@@ -329,9 +363,10 @@ operations[op1] `DC` was the male of a two-file inlay pair (format 24);
 for the pair from the design and set its male_board``.
 
 Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25}/sample.dcv`,
-each holding the kinds its version has; `v24` is the previous version's
-and `v25` the current one's until sub-phase 3.4 adds `v26`.
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26}/sample.dcv`,
+each holding the kinds its version has; `v25` is the previous version's
+and `v26` the current one's until sub-phase 3.5 adds `v27`. The `v26`
+sample's Inlay lists a boundary instance.
 
 **Validation** (`validate.rs`), errors unless marked:
 
@@ -345,7 +380,8 @@ and `v25` the current one's until sub-phase 3.4 adds `v26`.
   `tool_out_of_range` for such a tool, so the angle is named once (#413).
 - `operation_value_unset` extended to `flat_depth_mm`'s neighbours that are
   required: Inlay `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, and
-  `margin_mm` once the male is cut (its board's thickness set, #498);
+  `margin_mm` once the male is cut (its board's thickness set, #498) and
+  no `boundary` is listed (#449);
   Photo `max_depth_mm`.
 - `v_bit_cone_exceeded` (functional 39, 44, 47): a V-Carve or Inlay whose
   flat depth (or, with none, the deepest medial clearance: generator-time
@@ -397,8 +433,8 @@ and `v25` the current one's until sub-phase 3.4 adds `v26`.
   `thickness − (depth − gap + plug) < 6`,
   `dc_project::INLAY_MIN_PLUG_BASE_MM`; at `plug_depth_mm`; the male
   board's thickness since #498, never the stock's),
-  `inlay_margin_positive` (`margin_mm <= 0` with the male cut; at
-  `margin_mm`), `inlay_outline_rounding` (format 24, #448:
+  `inlay_margin_positive` (`margin_mm <= 0` with the male cut and no
+  boundary; at `margin_mm`), `inlay_outline_rounding` (format 24, #448:
   `outline_rounding_mm` set and not a positive finite number; at
   `outline_rounding_mm`).
   An Inlay's `v_bit_cone_exceeded` is on `InlayOp::engagement_mm(board)`
@@ -423,13 +459,36 @@ and `v25` the current one's until sub-phase 3.4 adds `v26`.
   own rules (its margin, its cone, its cut-out, its plug base) apply only
   once the male is cut; an unset thickness is the generator's warning
   `inlay_male_board_unset`, not a validation problem.
+- The boundary (format 26, #449; functional 49f), checked once the male is
+  cut and only when `boundary` is not empty, each located at
+  `operations[i].boundary[j]` for the entry it names (`operations[i].boundary`
+  for the list). All of it is geometry on the project, derived with
+  `dc_geometry` and `dc_project::inlay::drawn_band` ("Drawn boundary"),
+  which validation, the generator and the safety pass share, as
+  `male_band` is shared:
+  `inlay_boundary_unknown` (an id that is no instance; as
+  `dangling_tool`), `inlay_boundary_open` (an instance of the list with no
+  closed profile, or any open profile among its profiles: the message
+  names the profile index), `inlay_boundary_is_target` (an id that is also
+  in `targets`), `inlay_boundary_crosses_design` (the drawn edge crosses
+  or touches the design, or some part of it lies outside: the point and
+  the depth, `BandClearance::Crosses`; checked on the design after near
+  parts are merged), `inlay_boundary_empty` (warning: a listed instance
+  none of whose shapes holds any part of the design),
+  `inlay_boundary_hole_ignored` (warning: a boundary shape has a hole),
+  `inlay_margin_ignored` (warning: `margin_mm` or `outline_rounding_mm` is
+  set with a boundary; at the field set; `outline_rounding_mm`'s own
+  `inlay_outline_rounding` range check still runs, so a bad value is not
+  hidden by being ignored). The female ignores the whole list: nothing is
+  checked until the male is cut, as for the margin.
 - The cut-out (format 23, #443), checked once the male is cut (#498;
   until then the female ignores it, and `inlay_cut_out_needs_male`,
   the error for a cut-out on a female side, is gone with `side`):
   `cutter_not_flat` for its tool (at `cut_out.tool`), `inlay_cut_out_no_room` (the floor ring narrower than
   the tool's diameter `d`: `M + EPS_MM < P·tan(α/2) + d` with an open
   band edge, `M + EPS_MM < 2·P·tan(α/2) + d` with a V wall, #448; at
-  `margin_mm`, naming the margin needed,
+  `margin_mm`, or at `boundary` with a drawn band, where `M` is the
+  narrowest band, naming the margin needed,
   `MaleBand::cut_out_margin_needed_mm` of `dc_project::male_band`). Its tool is a used tool, so its
   rates and step-down are required; its tabs follow a Profile's tab
   request rules, its allowance is 0 or more, and an unknown tool is
@@ -635,7 +694,14 @@ generator-side S17 result from `cone_in_material`, raised by the V
 generators on their own output before `sequence` returns it: a library
 crate never hands back a toolpath it has proven wrong), `ConeArcMove {
 op, shape, x_mm, y_mm, z_mm }` (#463: an arc in a V toolpath, which that
-test is not written for).
+test is not written for). Sub-phase 3.4 adds the Inlay warnings
+`InlayMarginIgnored (op, field)`, `InlayBoundaryEmpty (op, instance,
+instance_name)` and `InlayBoundaryHoleIgnored (op, instance,
+instance_name, profile)`, and the error `CamError::InlayBoundary { op,
+problem: BoundaryProblem }` (`Unknown { instance }`, `Open { instance,
+profile }`, `IsTarget { instance }`, `CrossesDesign { x_mm, y_mm,
+distance_mm }`, "Drawn boundary"), which validation reports under the
+codes above.
 
 ### dc-gcode
 
@@ -694,6 +760,121 @@ is unmeasured is `NotOnMaleBoard`, two Inlays on different male boards
 emitter on the plain-moves path (S18; upstream does the same by recording
 no cycle).
 
+### dc-geometry (sub-phase 3.4)
+
+New modules, all pure functions on `Polyline`, `Contour` and `Region`, no
+tool or stock knowledge, `i_overlay` for booleans and `cavalier_contours`
+for offsets as before. Every result is canonical (outers CCW, holes CW,
+each contour from its lowest-then-leftmost vertex, regions ordered by
+it), so the same shapes in any order give the same `Vec`.
+
+```rust
+// dc-geometry::fill (new)
+/// An SVG fill rule. Own type; i_overlay's `FillRule` stays private.
+pub enum FillRule { NonZero, EvenOdd }
+/// The area a set of subpaths fills under `rule`: open subpaths are
+/// closed (an SVG fill closes them), arcs flattened within `tolerance_mm`,
+/// self-overlap and winding resolved in one i_overlay pass with the
+/// subject only (`FloatOverlay`, `OverlayRule::Subject`, the rule's
+/// `FillRule`; or the `SimplifyShape` helper, whichever i_overlay 9.x
+/// exposes, decided in the slice), so the result is disjoint regions
+/// with their holes.
+pub fn resolve_fill(subpaths: &[Polyline], rule: FillRule, tolerance_mm: f64) -> Vec<Region>;
+/// Paths' areas, each from `resolve_fill`, joined as `init` would read
+/// them: areas that cross (share area, neither inside the other's area)
+/// are united, in groups by transitive crossing; then every contour of
+/// every group goes through `nest`, so an area wholly inside another's
+/// material is a hole of it (an island path) and one inside a hole is a
+/// piece of its own. `GeometryError::ContoursCross` cannot happen after
+/// the unions; if it does it is the new `GeometryError::Unresolved`.
+pub fn merge_fills(paths: Vec<Vec<Region>>, tolerance_mm: f64) -> Result<Vec<Region>, GeometryError>;
+/// The art's outline (49c, step 4): every region's outer contour, holes
+/// dropped, united.
+pub fn ink_outline(ink: &[Region], tolerance_mm: f64) -> Vec<Region>;
+/// The enclosed spaces between the lines: `difference(ink_outline(ink), ink)`.
+pub fn spaces_between(ink: &[Region], tolerance_mm: f64) -> Vec<Region>;
+/// How many regions of `ink` enclose no space (no hole): `prep_regions_open_ink`.
+pub fn ink_without_spaces(ink: &[Region]) -> usize;
+
+// dc-geometry::width (new)
+/// Whether the widest point of `region` is under `width_mm`: the diameter
+/// of the largest circle that fits in it (inside its outer, outside its
+/// holes). Exact by erosion: `floor_regions(&[region], width_mm / 2, tol)`
+/// is empty exactly when no circle of that radius fits, so it needs no
+/// medial axis and costs one offset.
+pub fn is_narrower_than(region: &Region, width_mm: f64, tolerance_mm: f64) -> bool;
+/// A hole's widest point is under `width_mm`: the same test on the hole
+/// as a region of its own (the largest circle that fits in the hole).
+pub fn hole_is_narrower_than(hole: &Contour, width_mm: f64, tolerance_mm: f64) -> bool;
+/// The width along a region's length: for every edge of its medial axis
+/// between nodes that are joined to two or more others (the tips at
+/// corners, clearance falling to 0, are leaves and excluded), `2 ×` the
+/// mean clearance, weighted by the edge's length. `None` for a region too
+/// small for an axis. From `medial_axis`, at `resolution`'s step refined
+/// by `refined_step_mm` (#475), so a hairline in a large piece is seen.
+pub fn local_widths(region: &Region, tolerance_mm: f64) -> Option<WidthProfile>;
+pub struct WidthProfile { /* (width_mm, length_mm) samples, sorted */ }
+impl WidthProfile {
+    /// The length-weighted median width, mm.
+    pub fn median_mm(&self) -> f64;
+    /// The narrowest width, mm.
+    pub fn min_mm(&self) -> f64;
+}
+/// The narrowest gap between `regions`, searching no farther than
+/// `reach_mm`: the least distance between two outlines of different
+/// regions or, within one, between two stretches more than `8 · gap`
+/// apart along it, which is `merge_near_parts`'s own search (its grid and
+/// `closest_points`, and `self_band` for one line against itself) with the
+/// reach raised from 0.05 mm to `reach_mm`. `None` when nothing lies
+/// within the reach.
+pub fn narrowest_gap(regions: &[Region], reach_mm: f64, tolerance_mm: f64) -> Option<Gap>;
+pub struct Gap { pub width_mm: f64, pub x_mm: f64, pub y_mm: f64 }
+
+// dc-geometry::simplify (new)
+/// Douglas-Peucker on a closed contour with at least three vertices left:
+/// every dropped vertex is within `tolerance_mm` of the kept chord, so a
+/// corner of two segments longer than `2 · tolerance_mm` is kept (its
+/// apex is the farthest vertex from the chord that would cut it). Arcs
+/// are flattened first (the prepared outline is polygonal). Deterministic:
+/// the two anchors are the contour's lowest-then-leftmost vertex and the
+/// vertex farthest from it.
+pub fn simplify(contour: &Contour, tolerance_mm: f64) -> Contour;
+/// `simplify` on every contour of every region; the regions whose
+/// simplified contours cross a contour of another region, or themselves,
+/// are returned unsimplified, with their indices in the second element
+/// (`prep_smooth_skipped`).
+pub fn simplify_regions(regions: &[Region], tolerance_mm: f64) -> (Vec<Region>, Vec<usize>);
+
+// dc-geometry::carve (the drawn band, 3.4; "Drawn boundary")
+/// A drawn band: each boundary region's outer contour, holes dropped
+/// (a hole would leave board standing in the band, #484), united.
+pub fn drawn_band(boundary: &[Region], tolerance_mm: f64) -> Vec<Region>;
+/// A band closed by `rounding_mm`, `(B ⊕ r) ⊖ r`, round joins: the
+/// closing `rounded_band` ends with, on an edge that was drawn instead of
+/// grown. `rounded_band(regions, M, R)` is now `closed_band(offset of the
+/// design's outers by M + R, R)`, and unchanged for every input.
+pub fn closed_band(band: &[Region], rounding_mm: f64, tolerance_mm: f64) -> Vec<Region>;
+/// Where a design stands in a band.
+pub enum BandClearance {
+    /// Every part of `design` is inside `band` with its outlines at least
+    /// `narrowest_mm` from the band's edge, nearest at `(x_mm, y_mm)`.
+    Inside { narrowest_mm: f64, x_mm: f64, y_mm: f64 },
+    /// Some part of `design` crosses or touches the edge (within
+    /// `EPS_MM`), or lies outside; the worst point and how far past the
+    /// edge it is.
+    Crosses { x_mm: f64, y_mm: f64, depth_mm: f64 },
+}
+pub fn band_clearance(design: &[Region], band: &[Region], tolerance_mm: f64) -> BandClearance;
+```
+
+`resolve_fill` and `merge_fills` are the whole of "resolve fills" and
+cost one i_overlay pass per path plus one per crossing group;
+`is_narrower_than` and `simplify` are linear in vertices after the offset.
+Only `local_widths` and `narrowest_gap` build a medial axis or a grid, and
+they run once, on the final pieces, for the report (and `local_widths` on
+the ink for 49c's `--regions` suggestion), never in the cleanup steps,
+which use the erosion test.
+
 ### dc-import
 
 ```rust
@@ -718,6 +899,94 @@ checked on the header before any image data is decoded, with
 `png::Decoder::set_limits` and `zune_jpeg::DecoderOptions::set_max_width
 / set_max_height` set to the same bound so a lying header cannot
 allocate past it), `ImageFormatMismatch { extension, found }`.
+
+**Image prep (3.4).** `dc-import::prep` is the whole of functional 49a to
+49e, as pure functions: bytes in, values out, no I/O (`docs/rust-guidelines.md`,
+"Crate boundaries"). It adds no dependency ("Image prep", "Libraries").
+
+```rust
+pub mod prep {
+    /// Default `--min-detail`, percent of the design's height (functional
+    /// 49d; a proposal, confirmed by the calibration slice and the
+    /// maintainer, open question 16).
+    pub const DEFAULT_MIN_DETAIL_PCT: f64 = 0.2;
+    /// Default `--smooth`, percent of the design's height (open question 17).
+    pub const DEFAULT_SMOOTH_PCT: f64 = 0.05;
+    /// Largest threshold either flag takes, percent.
+    pub const MAX_THRESHOLD_PCT: f64 = 5.0;
+    /// Prepared outlines are polygons within this fraction of the design's
+    /// height of the true curves (0.005 %), never finer than
+    /// `MIN_FLATTEN_TOLERANCE_MM`.
+    pub const FLATTEN_FRACTION: f64 = 5.0e-5;
+    /// `--regions` is suggested when the ink's median width is under this
+    /// percentage of the height (49c).
+    pub const REGIONS_SUGGESTED_BELOW_PCT: f64 = 2.0;
+    /// A filled piece whose box covers this fraction of the drawing's box
+    /// is flagged as a probable page background.
+    pub const BACKGROUND_COVER_FRACTION: f64 = 0.98;
+    /// The report's guide width, mm (49e); informational.
+    pub const REPORT_MIN_FEATURE_MM: f64 = 1.5;
+    /// The heights the report scales the widths to, mm.
+    pub const REPORT_HEIGHTS_MM: [f64; 3] = [100.0, 200.0, 300.0];
+    /// `narrowest_gap` searches this fraction of the height.
+    pub const GAP_REACH_FRACTION: f64 = 0.25;
+
+    pub enum PrepMode { Shapes, Regions }
+    pub struct PrepOptions {
+        pub mode: PrepMode,
+        pub min_detail_pct: f64,          // 0 ..= MAX_THRESHOLD_PCT; 0 turns the step off
+        pub smooth_pct: f64,              // likewise
+        pub max_vertices: usize,          // as SvgImportOptions, on the flattened input
+    }
+
+    /// The 49a checks on an SVG, as `init` runs them: one warning per
+    /// kind found, in a fixed order. Nothing is changed or refused.
+    pub fn findings(bytes: &[u8], options: &SvgImportOptions) -> Result<Vec<ImportWarning>, ImportError>;
+    /// The two measures that make sense on shapes already in a project
+    /// (`shapes_overlap`, `feature_below_size`), for `check`; `dc-job`
+    /// calls it on the instances' regions, which it already builds.
+    pub fn design_findings(regions: &[Region], height_mm: f64) -> Vec<ImportWarning>;
+
+    /// An SVG prepared (49b to 49d): the pieces, the page, the report.
+    pub struct Prepared {
+        pub pieces: Vec<Region>,          // canonical order; Y-up mm, origin at the page's bottom-left
+        pub page_width_mm: f64,
+        pub page_height_mm: f64,
+        pub report: PrepReport,
+    }
+    pub fn prepare(bytes: &[u8], options: &PrepOptions) -> Result<(Prepared, Vec<ImportWarning>), ImportError>;
+    /// The SVG text of `prepared` ("Image prep", step 8): millimetres, one
+    /// filled path per piece, no metadata, no version, no time.
+    pub fn write_svg(prepared: &Prepared) -> String;
+}
+```
+
+`PrepReport` is data only (counts, millimetres, `Option`s for what could not
+be measured): `mode`, `read` (paths, hidden, unpainted, zero_opacity,
+display_none, text, images, clip_paths, masks), `strokes` (count, least and
+greatest width), `design_height_mm`, `pieces`, `holes`, `dropped_pieces`,
+`filled_holes`, `min_detail_mm`, `smoothed_vertices`, `smooth_mm`,
+`ink_median_width_mm`, `thinnest_piece_mm`, `narrowest_gap_mm`, and for
+each of those two widths `at_heights_mm: [f64; 3]` (`width ÷ design height × h`
+for each `h` of `REPORT_HEIGHTS_MM`) and `reaches_guide_at_mm`
+(`REPORT_MIN_FEATURE_MM ÷ (width ÷ design height)`). Rendering it as text is
+`dc_job::prep_report::render(&PrepReport) -> String`, in `dc-job` as every
+summary is, so the GUI can show the same lines; the format is in "Report
+format and codes" below.
+
+`ImportWarning` gains the variants of the table "Report format and codes",
+and a method `code(&self) -> &'static str` for every variant, the
+existing ones included (a code per variant, with `TextIgnored`,
+`ImagesIgnored`, `ClipPathIgnored` and `MaskIgnored` sharing
+`svg_object_not_convertible`; `PaintServerIgnored` is
+`svg_paint_server_ignored` and the DXF ones `dxf_*`), so `init` prints
+`warning: <code>: <message>` like every other command (functional 49a).
+The existing messages gain their fix ("convert text to paths in your
+drawing program", "trace images in Inkscape first"). `ImportError` gains
+`PrepThresholdRange { flag, value_pct }`, `PrepNothingLeft` and
+`PrepOutputUnreadable { reason }`; the CLI's `prep_not_svg` is a usage
+failure of its own, since the library sees bytes and the extension is the
+CLI's.
 
 ### CLI
 
@@ -793,6 +1062,51 @@ data URI is re-encoded from the decoded PNG bytes, not pasted from the
 file's string, and passed through `escape_xml` like every attribute, so
 nothing untrusted reaches the SVG text (security review L5); the chapter
 says a preview with pictures can be large.
+
+**Image prep and the checks (3.4).**
+
+```
+dreamcarve image-prep <svg> [-o <svg>] [--regions] [--min-detail <pct>] [--smooth <pct>]
+dreamcarve init <svg> ...        # now also prints the 49a checks
+dreamcarve check <dcv> ...       # now also prints shapes_overlap, feature_below_size
+```
+
+`image-prep` is in `crates/dreamcarve/src/prep.rs` and takes no machining
+option, by construction (a test asserts `--help` lists none). It does, in
+this order, and writes nothing until the last step:
+
+1. Checks the input's extension and first bytes: `.png`, `.jpg`, `.jpeg`
+   or a PNG or JPEG signature is a usage failure (exit 2) naming Inkscape's
+   Trace Bitmap, `prep_not_svg`; any other extension is read as SVG and a
+   parse failure is an error (exit 1) from `ImportError`.
+2. Works out the output path: `-o`, or the input's stem plus `-inlay.svg`
+   beside it. An existing file is an error, as `init`'s is; the SVG is
+   written through `dreamcarve-shell`'s `StagedFile`, so an interrupted run
+   leaves no partial file.
+3. Reads the file, calls `dc_import::prep::prepare` and `write_svg`. The
+   thresholds are `f64` flags parsed by clap and checked again by the
+   library (`PrepThresholdRange`, exit 2).
+4. Prints each warning as `warning: <code>: <message>` on stderr, then the
+   report on stdout (`dc_job::prep_report::render`), then `Wrote <path>`.
+   Exit 0 when it wrote; a warning never changes the exit status.
+
+`init` on an SVG calls `prep::findings` after its own import and prints the
+result with the importer's warnings, in the order of functional 49a; the
+project it writes and its exit status do not depend on them. `init` on a
+DXF is unchanged: the checks need an SVG's paint and paths. `check` calls
+`prep::design_findings` on the regions of every instance of the project,
+with the design's height from their joint bounding box, and prints the
+two findings it can make with the errors and warnings it already prints
+(`shapes_overlap` is also an error where an operation's targets cross; the
+finding is for the user who has no operation yet).
+
+`check` and `export` summarise an Inlay with a boundary on the male's
+line: `band: drawn boundary i7, narrowest band 10.000 mm (open edge, edge
+pass t2)` in place of `band: margin 8.000 mm, rounding 10.000 mm`.
+`--preview` draws each boundary instance on the male board, mirrored with
+the design, as a dashed outline of class `male-boundary`, under the male's
+runs; its legend entry is "boundary (male board)". A preview of a project
+with no boundary is unchanged.
 
 ## Algorithms
 
@@ -1354,7 +1668,7 @@ orientation; DreamCarve's regions are normalised anyway.
      step_over_fraction flattens them`, `vcarve::floor_ridges`), the
      corner ridge only where it is higher; the Inlay chapter sets
      `glue_gap_mm` above the female's corner ridge. Covering the corners
-     instead, so the straight-run ridge holds everywhere, is #527 (3.6).
+     instead, so the straight-run ridge holds everywhere, is #527 (3.7, Release).
      The chapter recommends
      0.1 for a V-bit's `step_over_fraction`. A floor region that is
      noise at the flatten tolerance (Pocket's `is_noise`), or a region
@@ -1869,7 +2183,9 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
      wasted V-bit time on waste wood and kept the clearing end mill `P·s`
      plus the floor's ring short of the edge, and the plain offset copied
      every notch of the design (the dip over an M, the pinches between
-     letters). A user-drawn boundary is #449.
+     letters). A user-drawn boundary is sub-phase 3.4's (format 26, #449;
+     "Drawn boundary"); it replaces `design ⊕ (M + R')` as the source of
+     `B` and changes nothing after it.
    - **Clipped to the board** (#495; maintainer decision 2026-11-02: the
      band only gives the plug room, and nothing outside it matters).
      Where `B` runs past the stock rectangle it is clipped to the board,
@@ -1992,6 +2308,356 @@ values, so they cannot drift apart: until format 25 an `InlayOp` cut one
    band is clipped `R_v` inside the board and the board stands beyond
    it, so the path stays closed and frees the plug from it. Room as
    step 4.
+
+### Image prep (dc-import::prep, dc-geometry::{fill, width, simplify})
+
+Functional 49a to 49e. `design_height_mm` below is `H`; every threshold is
+`pct / 100 · H`. Everything is millimetres, Y-up; the importer's flip
+(`y' = page_height − y`) is applied once on the way in and undone once on
+the way out.
+
+**The walk (shared with the checks).** One function,
+`prep::walk::walk(bytes)`, parses with usvg under the importer's options
+(no I/O) and visits every path of the tree with its absolute transform,
+its fill (paint, rule, opacity), its stroke (width, caps, joins, miter
+limit, dashes, opacity) and the product of its ancestors' opacities. It
+classifies each path, in this precedence, as **hidden** (not
+`visibility: visible`, or an ancestor opacity product of 0), **unpainted**
+(no fill and no stroke that paint anything: `none`, or fill-opacity or
+stroke-opacity 0, or stroke width 0) or **painted**; the paint-intent
+rule is `svg.rs`'s `hasVisiblePaint` port, so `init`, the findings and
+`image-prep` agree on what is drawn. usvg drops `display:none` subtrees
+and text before the walk sees them, so those counts come from the raw
+document in `inspect_root`'s pass (which already counts text and images),
+extended to count `display:none` elements and `clipPath` and `mask` uses.
+Inkscape's guides are not graphics and never reach the tree; a layer the
+user hides is `display:none`. The walk returns the painted paths in
+document order, with bounds, and the counts the report prints.
+`findings` is the walk plus the measures of "Import checks" below;
+`prepare` is the walk plus the steps here.
+
+1. **Design height and tolerance.** `H` is the height of the bounding box
+   of every painted path's fill path and of its stroke outline (step 2),
+   taken exactly from the curves (`kurbo::Shape::bounding_box`), so it is
+   known before anything is flattened. Nothing painted, or `H` not above 0
+   or not finite, is `PrepNothingLeft`. The flatten tolerance is
+   `max(FLATTEN_FRACTION · H, MIN_FLATTEN_TOLERANCE_MM)`, relative to the
+   design because the user scales the result afterwards and a fixed
+   0.01 mm would be 0.04 mm after a fourfold enlargement. The vertex cap is
+   checked on `estimated_vertices` before flattening, as the importer does.
+2. **Strokes become areas.** For each painted path with a stroke, the
+   stroke is built in user space, before the transform, since SVG applies
+   the transform to the stroked shape and a non-uniform scale widens a
+   stroke unevenly: `tiny_skia_path::Path::stroke(&Stroke { width,
+   miter_limit, line_cap, line_join, dash }, res_scale)`, with `res_scale`
+   the transform's scale so curved joins are fine enough, then the
+   result is moved by the path's absolute transform and the importer's
+   px-to-mm map. The stroker is usvg's: tiny-skia's, the one resvg draws
+   strokes with, so the prepared shape is the one the user sees in a
+   browser or Inkscape, miter limit fallback and dash phase included
+   (`prep::stroke`). Its output is a nonzero-winding outline that overlaps
+   itself at joins and ends; it is resolved in step 3 with `NonZero`. A
+   stroke the stroker cannot produce (it returns `None`) is skipped with
+   `prep_stroke_failed` naming the path. A zero-length subpath with round
+   or square caps is a dot, with butt caps nothing, as SVG says.
+3. **Fills resolved, ink made.** Each painted path's fill subpaths and its
+   stroke outline are flattened (`dc_geometry::flatten`) and resolved with
+   `resolve_fill`: the fill under the path's own rule (`fill-rule`), the
+   stroke under `NonZero`. A path with both has its two areas united.
+   Then:
+   - the **filled** areas of all paths go through `merge_fills`: areas
+     that cross are united, and an area wholly inside another's material is
+     a hole of it, as `nest` reads every nested outline, so the prepared
+     file means what `init` would read of the original (open question 20);
+   - the **stroke** areas are united with the result and with each other,
+     never nested: a stroke over a filled area is ink on ink, and a stroked
+     ring is a ring whatever lies inside it.
+   The union is **the ink**: disjoint regions with their holes (`i_overlay`
+   `Union`, as `dc_geometry::union`). `prep_background_shape` is raised
+   here: a filled region whose box covers `BACKGROUND_COVER_FRACTION` of
+   the ink's box and has holes or sits behind the rest.
+4. **The mode.** `Shapes`: the result is the ink. `Regions`:
+   `spaces_between(ink)`, that is `difference(ink_outline(ink), ink)`; the
+   ink's regions without a hole are counted (`ink_without_spaces`,
+   `prep_regions_open_ink`); a result that is empty is
+   `PrepNothingLeft`. The suggestion (`prep_regions_suggested`) is made
+   in `Shapes` mode when the length-weighted median of `local_widths` over
+   the ink is under `REGIONS_SUGGESTED_BELOW_PCT` of `H`.
+5. **Clean up** (thresholds in mm: `d = min_detail_pct/100 · H`, `ε =
+   smooth_pct/100 · H`), in this order, each step off at 0:
+   a. *Holes.* Every hole of every region for which
+      `hole_is_narrower_than(hole, d)` is removed (the region is rebuilt
+      without it, `prep_hole_filled` with the count and the widest filled).
+   b. *Pieces.* Every region for which `is_narrower_than(region, d)` is
+      dropped (`prep_speck_dropped`, with the count and the widest
+      dropped). Both tests are one erosion by `d/2` (`floor_regions`), so no
+      medial axis is built; a hairline is a piece whose largest inscribed
+      circle is under `d`, which an erosion empties whatever its length.
+      Pieces and holes at or above `d` are never changed, however narrow a
+      neck they have: narrow places are measured and reported, not
+      repaired (functional 49d).
+   c. *Smooth.* `simplify_regions(regions, ε)`: Douglas-Peucker per
+      contour, which keeps every corner between segments longer than `2ε`
+      and never rounds one, then a crossing check of the result against
+      itself and its neighbours with `nest`'s overlap test; a region whose
+      simplified contours cross are put back unsimplified and counted
+      (`prep_smooth_skipped`). Run once, not to a fixed point. The count of
+      vertices removed goes to the report.
+   d. *Re-resolve.* The pieces are united with themselves once (`NonZero`)
+      to shed slivers the steps left, then `nest` must succeed on them
+      (`GeometryError::ContoursCross` here is a defect and is
+      `PrepOutputUnreadable`, not a warning).
+   Both thresholds are checked against `0..=MAX_THRESHOLD_PCT` before any
+   work (`PrepThresholdRange`); `smooth_pct > min_detail_pct / 2` with a
+   non-zero `min_detail_pct` warns `prep_smooth_exceeds_detail`; the order
+   of holes before pieces before smoothing is so that smoothing sees the
+   final shapes and a speck is not first rounded and then dropped.
+6. **Report.** Counts as the steps went; then, on the final pieces,
+   `local_widths` per piece, the **thinnest piece** the least of the
+   pieces' median widths (the median, so a tapering tip, whose clearance
+   falls to 0 at the corner, does not count), and `narrowest_gap(pieces,
+   GAP_REACH_FRACTION · H)`; in `Regions` mode that gap is the ridge,
+   since the ink was subtracted. `at_heights_mm` and `reaches_guide_at_mm`
+   by the formulae in the API. The report is informational and nothing
+   enforces a figure.
+7. **Canonical order.** Regions in `dc_geometry`'s canonical order, so the
+   output does not depend on the order paths had in the file, and `id`s
+   `piece-1`, `piece-2`, … follow it.
+8. **Write and verify.** `write_svg`:
+
+   ```text
+   <?xml version="1.0" encoding="UTF-8"?>
+   <svg xmlns="http://www.w3.org/2000/svg" width="200mm" height="100mm" viewBox="0 0 200 100">
+     <path id="piece-1" d="M 10 90 L … Z M … Z" fill="#000000" fill-rule="evenodd"/>
+   </svg>
+   ```
+
+   one `<path>` per piece, its outer first and its holes after as further
+   subpaths, `fill-rule="evenodd"` so a hole is a hole whatever its
+   winding, `M`/`L`/`Z` only, numbers to four decimals (0.1 µm) with
+   negative zero written `0`, `\n` line ends, Y flipped back
+   (`y_svg = page_height_mm − y`), the page the input's size in
+   millimetres with a one-to-one `viewBox`, no `<metadata>`, no `<desc>`,
+   no version string (the build's version carries a time and would break
+   determinism), no stroke attribute anywhere. Then `prepare` reads its own
+   output back through `import_svg` (the importer, default options) and
+   `nest`, and requires the same number of pieces and holes and the
+   area of each piece within `perimeter · tolerance`; a mismatch is
+   `PrepOutputUnreadable` and nothing is returned, because a library crate
+   never hands back what it has proven wrong.
+
+**Determinism and limits.** No `HashMap` iteration, no clock, no
+randomness; `i_overlay`, `cavalier_contours` and `delaunator` are as
+deterministic as the rest of the engine. The vertex cap is the importer's
+(`MAX_IMPORT_VERTICES`, 5 000 000, on the flattened input) with the output
+bounded by it too; `prep::runs_in_seconds_on_traced_scale_art` is a
+loose bound on 100 000 vertices, as `s17_check_is_fast_on_the_sign` is.
+
+**Import checks** (`prep::findings`, `design_findings`; 49a). Each is one
+measure over the walk's painted paths (or, for `design_findings`, a
+project's regions), each produces one warning with a count and the first
+example, and none changes anything.
+
+| Code | Measure |
+| --- | --- |
+| `shapes_overlap` | pairs of regions (from different painted paths) whose areas cross: `nest`'s overlap test on the filled regions and the stroke areas; the point is the middle of the crossing's box, Y-up |
+| `svg_hole_as_separate_path` | a painted path whose filled region lies wholly inside the material of another painted path's filled region (both with a visible fill) |
+| `svg_stroke_only_path` | a painted path with a stroke and no visible fill; the width is the stroke's, in mm, after the transform's scale along the stroke's normal (the mean of the two axis scales) |
+| `svg_hidden_object` | the walk's hidden, unpainted, zero-opacity and `display:none` counts, naming the first object by id or its layer's |
+| `svg_object_not_convertible` | the existing text, image, clip-path and mask counts, with the fix |
+| `feature_below_size` | regions or holes whose widest point is under `DEFAULT_MIN_DETAIL_PCT` of `H` (`is_narrower_than`, `hole_is_narrower_than`), the count and the smallest; `H` from the painted bounds |
+
+`findings` flattens at the importer's tolerance (0.01 mm), not at
+`FLATTEN_FRACTION`, since it only measures; it costs one extra parse and
+flatten of the SVG that `init` already read; `init` on a DXF does not run
+it. The messages that `image-prep`
+fixes end with ``; `dreamcarve image-prep` would fix this``.
+
+**Libraries and the dependency policy.** No new dependency, so no `NOTICE`
+change and no `cargo deny` change.
+
+| Job | Used | Considered and not used |
+| --- | --- | --- |
+| SVG parse, transforms, `use`, CSS | `usvg` (already) | |
+| Stroke to outline | `tiny_skia_path::Path::stroke` and `dash`, through usvg's `tiny_skia_path` re-export `svg.rs` already imports (BSD-3-Clause, already in the third-party listing) | `kurbo::stroke` (MIT/Apache, already a dependency): a second stroker for one job needs an ADR (`docs/rust-guidelines.md`, "Dependencies"), and tiny-skia's is what the SVG renderers the user sees the file in use; the call is isolated in `prep::stroke`, so it can switch if tiny-skia-path's API ever stops exposing it |
+| Fill rules, union, difference, nesting | `i_overlay` (already; `FillRule::{NonZero, EvenOdd}`) | `clipper2`, `geo`: a second boolean crate |
+| Erosion for the speck test, `floor_regions` | `cavalier_contours` through `dc_geometry::offset` (already) | |
+| Local widths | `dc_geometry::medial` on `delaunator` (already, this phase) | a distance-transform raster: resolution-dependent and not deterministic across scales |
+| Smoothing | an in-house Douglas-Peucker (`dc_geometry::simplify`, about sixty lines, deterministic anchors) | `geo`'s `Simplify`; `kurbo::simplify`, which fits Béziers and would write curves the polygon output does not want |
+| Tracing PNG and JPEG | deferred (functional, out of scope) | Potrace and anything GPL or LGPL; a future permissive tracer (for example `vtracer`, MIT) gets its own review and spec |
+
+**Calibration of the defaults** (slice 21f). `DEFAULT_MIN_DETAIL_PCT` and
+`DEFAULT_SMOOTH_PCT` are proposals (open questions 16, 17) chosen from
+data, not from taste, and the choice is recorded where a reviewer can
+rerun it, in `tests/fixtures/prep/README.md`. The procedure:
+
+1. Fixtures, all synthetic and committed: `speckled-dc.svg` (the "DC"
+   monogram with seeded specks and pinholes of widest point 0.05 to 0.8 %
+   of `H` and a few intended details: the serif tips and the D's counter,
+   from 0.9 % of `H`), `jagged-dc.svg` (the same letters flattened and
+   jittered by seeded steps of 0.01 to 0.1 % of `H`, as a trace jitters),
+   `ring-cross.svg` and `compass.svg`.
+2. A sweep, `min_detail` in {0.05, 0.1, 0.2, 0.3, 0.5, 1.0} and `smooth` in
+   {0, 0.02, 0.05, 0.1, 0.2}, scoring: every seeded speck at or below
+   `1.5 ×` the threshold gone; no intended detail gone; the smoothed
+   jitter's vertex count down at least 80 % with every output vertex within
+   `ε` of the input; and no changed area over 0.1 % of the design.
+3. The smallest `min_detail` that removes the seeded specks, and the
+   smallest `smooth` that meets the vertex reduction, are the defaults,
+   rounded up to one significant figure, with `smooth ≤ min_detail / 2`
+   so the two never fight. The table goes in the README.
+4. The maintainer's own traced art is run locally with the proposal and
+   the neighbouring values, and the result reported on the slice's issue
+   (never committed); the proposal stands or the maintainer moves it.
+
+`prep::defaults::fixtures_keep_their_intent_at_the_defaults` pins the
+result, so a later change to a constant fails the sweep's own scoring.
+
+**Report format and codes.** `render` writes the text of functional 49e,
+one line per fact, in this order, a line omitted when it has nothing to say
+(no strokes, no drops): `Prepared <in> → <out> (<mode>)`, `Read:`,
+`Strokes made into areas:`, `Design height:`, `Result:`, `Dropped:`,
+`Thinnest piece:`, `Narrowest gap` (with `, the board ridge between
+pockets` in regions mode), `At 100 / 200 / 300 mm tall:`, and `The
+thinnest piece` or `The narrowest gap reaches 1.5 mm at <h> mm tall.`
+Numbers: millimetres to two decimals (three below 1 mm), percentages to
+two, counts plain. The warnings:
+
+| Code | Severity | Params | When |
+| --- | --- | --- | --- |
+| `shapes_overlap` | warning | count, first, second, x_mm, y_mm | `init`, `check` |
+| `svg_hole_as_separate_path` | warning | count, inner, outer | `init`, `image-prep` |
+| `svg_stroke_only_path` | warning | count, first, width_mm | `init`, `image-prep` |
+| `svg_hidden_object` | warning | count, first, reason (`display_none`, `hidden`, `zero_opacity`, `unpainted`) | `init`, `image-prep` |
+| `svg_object_not_convertible` | warning | kind (`text`, `image`, `clip_path`, `mask`), count, group | `init`, `image-prep` |
+| `feature_below_size` | warning | count, smallest_mm, threshold_mm, height_mm | `init`, `check` |
+| `prep_regions_suggested` | warning | median_width_mm, height_mm | `image-prep`, default mode |
+| `prep_regions_open_ink` | warning | count | `image-prep`, regions mode |
+| `prep_background_shape` | warning | path, covers | `image-prep` |
+| `prep_stroke_failed` | warning | path | `image-prep` |
+| `prep_speck_dropped` | warning | count, largest_mm, threshold_mm | `image-prep` |
+| `prep_hole_filled` | warning | count, largest_mm | `image-prep` |
+| `prep_smooth_skipped` | warning | count | `image-prep` |
+| `prep_smooth_exceeds_detail` | warning | smooth_pct, min_detail_pct | `image-prep` |
+| `prep_threshold_range` | error | flag, value_pct | `image-prep` |
+| `prep_nothing_left` | error | | `image-prep` |
+| `prep_output_unreadable` | error | reason | `image-prep` |
+| `prep_not_svg` | error (usage) | extension | `image-prep`, the CLI |
+
+`prep_speck_dropped` and `prep_hole_filled` are warnings, not report lines
+only, because dropping a piece is a change to the art the user should see
+named even when the default threshold did it.
+
+### Drawn boundary (dc-project::inlay, dc-geometry::carve, dc-cam::inlay)
+
+Functional 49f. It changes where the male's band edge `B` comes from and
+nothing downstream of `B`; every rule of "Inlay" steps 4 and 6 and of the
+safety pass that reads `B` reads the same `B`.
+
+**The band's source.** One function, `dc_project::inlay::band_edge(project,
+op, mirror) -> Option<Vec<Region>>`, returns `B`, before clipping to the
+board, for the male in project space; the generator's step 4 and the
+safety pass both call it in place of their two direct calls of
+`rounded_band`, and with no boundary it returns exactly what they computed
+(`inlay::no_boundary_is_byte_for_byte_unchanged`, the golden `dc.dcv`
+programs and the stress corpus). With a boundary:
+
+1. `boundary_regions(project, op)` collects, for each listed id, the
+   instance's regions in project space (its definition's profiles under
+   its transform, nested as `nest` reads them; the function the targets use),
+   or the problem (`BoundaryProblem`): an unknown id, an open profile, an
+   id that is also a target. Open profiles are an error, not skipped,
+   because a boundary the user meant and lost would silently fall back to
+   nothing.
+2. `drawn_band` takes the outers, drops holes (`inlay_boundary_hole_ignored`
+   names the instance and profile) and unites the shapes.
+3. `band_clearance(design, drawn)` on the design after
+   `merge_near_parts` (the same design the female and the male use):
+   `Crosses` is `inlay_boundary_crosses_design` with the point; `Inside`
+   gives `narrowest_mm`, the least distance from the design's outlines to
+   the band's edge, and the point it is at. A shape of the list that holds
+   no part of the design is `inlay_boundary_empty`.
+4. The mirror: `Transform::mirror_x_about(cx)` with `cx` the targets'
+   joint bounding-box centre, the design's own (functional 49f, open
+   question 11), applied to the drawn band. Mirroring is an isometry, so
+   steps 1 to 3 run once on the drawn geometry and the clearance is the
+   male's too.
+5. `closed_band(mirrored, R', tolerance)` with the edge rounding `R'` of
+   `male_band`: `R' = r_edge` with an open edge, 0 with a V wall
+   (`outline_rounding_mm` is ignored, and so is `margin_mm`). So an open
+   edge fills a notch of the drawn outline narrower than the end mill and
+   leaves a V wall's edge exactly as drawn; the end mill rounds a convex
+   corner of the drawn edge by its radius, as it rounds any band's, and
+   that is the tool's shape, not a deviation (the end mill's cut is
+   `B ⊖ r ⊕ r ⊆ B`, inside the drawn edge but for the notches the closing
+   filled). `B` so closed is the drawn outline everywhere the tool can
+   follow it, and differs from it only where a notch narrower than the
+   tool is filled.
+
+**`male_band` with a boundary.** The value `margin_mm`, `M`, that
+`MaleBand` carries and every rule reads becomes the narrowest band from
+step 3: `BandSource::Drawn { narrowest_mm }` beside the existing
+`BandSource::Computed { margin_mm, outline_rounding_mm }`, and
+`MaleBand::margin_mm` is that figure in both. The rules that read it are
+unchanged in form and are worded for the narrowest band: the edge pass is
+the first whose end mill fits `M − P·s ≥ 2r` and the flank `(D − G + 2P)·s`
+stays inside `M` (so the whole drawn edge is open or the whole edge is a
+V wall: one decision from the least room, not a mixed edge, which keeps
+the generator and the safety pass one rule), `inlay_band_edge_v_wall`
+names `max(P·s + 2·r_min, (D − G + 2P)·s)`, `inlay_cut_out_no_room`
+names `P·s + 2r` or `2·P·s + 2r` from `MaleBand::cut_out_margin_needed_mm`
+and is located at `boundary`. `male_band` reads the project's geometry
+now (it read values only), which dc-project can do: it already depends on
+`dc-geometry`, and `cleared_start_plane` reads geometry there.
+
+**The generator** (step 4's bullets are otherwise unchanged): the
+surround is `B` clipped to the male board (#495, unchanged: the
+board is `MaleBand::board`, `inlay_band_clipped` names the edges the
+drawn band runs past and the narrowest band left, `InlayTooNearEdge`
+reads the board's edge and the design only) less the design with
+`difference_within`; the open edge, the clearing runs, the V-bit's cuts
+restricted to `B`, the floor, the cut-out path `inset_outers(B, i)` with
+`i = MaleBand::cut_out_inset_mm(d)`, and its open paths on a clipped band
+are exactly as for a computed band, because they are functions of `B`,
+`M`, `P`, `s` and the tools. The cut-out's passes, tabs and allowance are
+untouched. The female never reads `boundary`; `inlay::boundary_female_is_unchanged`
+asserts move for move equality with the same Inlay and an empty list.
+
+**Why `M` is the narrowest band.** The rules that decide the edge's kind
+(does the end mill fit the floor ring, does the flank stay inside, is
+there room for the cut-out) are conditions on the band's width at its
+narrowest, for a computed band as well: a computed `B` is at least `M`
+from the design everywhere and exactly `M` at its nearest, which is why
+the rules were written in `M`. A drawn band is at least its narrowest
+band from the design and no less, so the same conditions on that figure
+are the same safe conditions. It is conservative where the drawn band
+is wide in places (an oval round a lettered word has 20 mm at its ends
+and 8 mm at its sides: the edge pass is decided by the 8, and where the
+band is wide the open edge's end mill clears all of it, which a rule on
+the local width would permit too). A per-stretch rule is possible and is
+not proposed: it makes the safety pass and the generator two edge
+decisions that must agree along every stretch.
+
+**Safety pass** ("Safety pass", S17 and S9). `material.rs` re-derives the
+male's band by `dc_project::inlay::band_edge` and `merge_near_parts` and
+the rest as before, then clips; it never calls `dc_cam`. That derivation
+reads the boundary instances from the project, so a project whose
+boundary instance has moved since an export no longer matches the program
+and S17 and S9 fail it (`safety::moved_boundary_fails_the_old_program`),
+which is the intended failure: a stale program is refused. The
+`S17` open-edge test, the clearing run's floor (`surround_floor_regions`
+out to `B`) and the cut-out's ring `inset_outers(B, i)` use the same `B`.
+Tolerances as for a computed band: the project's for the edge, the V-bit's
+wall tolerance for the design (`dc_geometry::wall_tolerance_mm`, #478).
+
+**Stress** (`crates/dc-gcode/tests/stress`). The harness draws, for
+a seeded subset of its Inlay cases, a boundary: an oval or a rounded
+rectangle 2 to 12 mm clear of the design's bounding box, and a contour
+following the design 3 to 8 mm out; one or two shapes; with and without
+clearing and a cut-out; and each case must export, pass S1 to S19 and seat
+within 0.05 mm like the computed bands. A boundary that cannot satisfy the
+checks (too tight) is expected to fail validation with
+`inlay_boundary_crosses_design` and is counted as such, not as a failure.
 
 ### Bitmap import and storage (dc-import::bitmap, dc-project::bitmap)
 
@@ -2161,6 +2827,10 @@ against the male board.
     hold against `B` with that top as the plane: a V-bit move whose disc
     at the stock top, `(top − z)·s`, crosses `B` fails as
     `ConeOffMaterial`.
+  - **Drawn boundary** (3.4, #449): the same tests against the band
+  `dc_project::inlay::band_edge` derives from the boundary instances in
+  the project ("Drawn boundary"), not a number stored with the program: a
+  boundary moved after export fails the old program.
   A failure is `ConeOffMaterial` with the overlap and the worst point in
   project space, or `ConeHeightExceeded`. `tol` is S9's slack (#408):
   the program's rounding, plus the flatten tolerance (the generator
@@ -2334,16 +3004,17 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 ## Module layout
 
 ```
-crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole), merge.rs (merge_near_parts, MergedParts, NearParts; #479), transform.rs (+ mirror_x_about)}
-crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, MaleBoard, Board, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v25_to_v26, MigrationNote, migrate_with_notes), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479; Project::on_male_board, Project::male_board; #498), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
+crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole; 3.4: drawn_band, closed_band, band_clearance, BandClearance), fill.rs (FillRule, resolve_fill, merge_fills, ink_outline, spaces_between, ink_without_spaces; 3.4), width.rs (is_narrower_than, hole_is_narrower_than, local_widths, WidthProfile, narrowest_gap, Gap; 3.4), simplify.rs (simplify, simplify_regions; 3.4), merge.rs (merge_near_parts, MergedParts, NearParts; #479), transform.rs (+ mirror_x_about)}
+crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, MaleBoard, Board, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v26_to_v27, MigrationNote, migrate_with_notes), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (3.4: band_edge, drawn_band, boundary_regions, BoundaryProblem, BandSource; male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479; Project::on_male_board, Project::male_board; #498), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
-crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}}
-crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), preview.rs (+ <image>, the male board)}
-tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}}
+crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}, prep.rs (3.4: PrepOptions, Prepared, findings, design_findings, prepare, write_svg), prep/{walk.rs (visible geometry, paint intent), findings.rs, stroke.rs (tiny-skia stroker wrapper), run.rs (the pipeline), report.rs (PrepReport), write.rs}}
+crates/dc-job/src/prep_report.rs (render the report; 3.4)
+crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), preview.rs (+ <image>, the male board, the boundary), prep.rs (image-prep; 3.4)}
+tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}, prep-fixture.ts (the 3.4 drawings)}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}}
-crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26}/sample.dcv
+tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, speckled-dc.svg, jagged-dc.svg}}
+crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv
 crates/dreamcarve/tests/{fixtures,expected}/inlay-migration/ (the two-file pairs of formats 23 and 24 and their programs, #498)
 ```
 
@@ -2367,6 +3038,9 @@ New dependencies, all `[workspace.dependencies]` with
   and not used: its default features pull a dozen codecs, and two small
   decoders cover PNG and JPEG.
 - `base64` 0.23 (MIT/Apache-2.0): the stored PNG's text form. `dc-project`.
+
+Sub-phase 3.4 adds no dependency ("Image prep", "Libraries and the
+dependency policy").
 
 `NOTICE` entries as their licenses require (ISC needs the copyright line;
 the others are already represented by their license files in the
@@ -2434,7 +3108,7 @@ for V operations.
 - The cut-out along the floor's outer edge (#461): `inlay::cut_out_hugs_the_band_edge` (open edge, plain and `R` 6: every cut point `r` from `B` within the tolerance and inside it; above the floor the swept disc inside `B`), `inlay::cut_out_hugs_the_slope_foot_with_a_v_wall` (every point `P·s + r` from `B`), `inlay::cut_out_no_room`, `inlay::open_edge_needs_the_pass_and_the_flank_inside_the_band` (`MaleBand::cut_out_inset_mm`), `carve::inset_outers_runs_inside_the_band_edge` (dc-geometry); `safety::cut_out_off_the_floor_ring_fails` and `safety::cut_out_off_the_open_edge_ring_fails` (on the path passes; in the ring off it, where the cut-out ran before, fails), `safety::cut_out_plunge_into_a_tab_fails`, `safety::generated_cut_outs_pass`; `cli::lettered_inlay_fits_its_board` (the tutorial's cut-out `r` from `B`, inside it); `inlay::plug_seats_flush` unchanged.
 - The band and the cut-out clipped to the stock (#495): `inlay::band_is_clipped_to_the_stock` (a star 2 mm from the left edge, `M` 8, a 3.175 mm 60° V-bit and a 1.5 mm end mill: no run's tool past the stock, the clearing floor out to the board's edge, `inlay_band_clipped` naming the left edge and 2 mm), `inlay::v_wall_band_is_clipped_inside_the_board` (clipped `R_v` inside it), `inlay::cut_out_runs_edge_to_edge_when_clipped` (open paths, their ends `r` inside the edge, every cut on them and on the stock, the tabs on them), `inlay::clipped_male_still_seats` (`plug_seats_flush`'s 0.05 mm), `inlay::design_too_near_the_edge_is_explained` (the bench's bits: `InlayTooNearEdge`, 4.330 mm needed), `inlay::unclipped_band_is_unchanged` (the tutorial's "DC" and the star: the surround and `B` as before, the same runs on stock ten times the size), `carve::band_on_board_clips_only_what_runs_past`, `carve::without_rect_sides_opens_outlines_along_the_board` (dc-geometry), `inlay::band_is_clipped_to_the_board` (dc-project); `safety::clipped_band_is_derived_from_the_project` (S17 and S9 refuse past the clipped band on 60 mm stock and pass on 100 mm), `safety::cut_out_off_the_stock_still_fails` (the unclipped cut-out on the narrow stock fails S7; a cut along the dropped stretch fails S9).
 - Near parts merged (#479): `inlay::near::male_of_parts_closer_than_the_written_precision_seats` (squares 0.001 mm apart), `inlay::near::male_of_a_pinch_seats` (a circle 0.005 mm from a square, 60° and 90°), `inlay::near::male_of_a_merged_pinch_seats_at_every_gap` (0.01, 0.012, 0.02 and 0.04 mm, 60°), `inlay::near::male_of_a_corner_beside_a_curve_seats` (0.016 and 0.03 mm), `inlay::near::male_of_parts_a_hair_apart_seats` (0.003 mm), `inlay::near::parts_closer_than_the_merge_distance_merge_and_warn` (one region a side, one `inlay_parts_merged` a side, the female's pocket across the gap), `inlay::near::parts_a_tenth_apart_are_not_merged` (0.1 mm: two regions, no warning, the female's ridge stands to the stock top, the pair seats); `merge::squares_a_hair_apart_merge`, `merge::circle_at_a_pinch_merges`, `merge::merging_ends_a_gap_in_a_corner`, `merge::island_near_its_hole_merges_and_a_thin_web_does_not`, `merge::touching_parts_and_no_distance_merge_nothing`, `merge::merging_keeps_inward_corners_away_from_the_gap` (dc-geometry); `safety::female_holds_merged_parts_as_one_shape` (a cut over the 0.001 mm gap passes, over a 0.1 mm gap fails S17), `safety::generated_near_parts_pass_the_safety_pass`; the stress tests' `known_issue` no longer excuses near touches.
-- One-file Inlay (#498): `migrate::v24_to_v25_female_gets_an_unset_male_board`, `migrate::v24_to_v25_male_gets_the_stock_as_its_male_board`, `migrate::version_24_fixture_loads`, `serialize::inlay_male_board_round_trips`, `serialize::photo_v_carve_is_format_26` (pins the chain the 3.4 slice renumbers); `validate::male_board_size_must_be_positive`, `validate::male_board_thickness_must_be_positive`, `validate::cut_out_no_longer_needs_a_side`, `validate::inlays_share_one_male_board`; `inlay::both_boards_from_one_operation` (the female's runs, then the male's, each tagged), `inlay::male_runs_wait_for_the_board_thickness` (unset: no male runs, `inlay_male_board_unset` at `operations[i].male_board.thickness_mm`), `inlay::male_board_defaults_to_the_stock_in_xy`, `inlay::plug_base_thin_reads_the_male_board` (stock 18 mm, male board 8 mm with `D 4, G 1, P 2`: warns); `inlay::female_and_male_walls_mate` and `inlay::plug_seats_flush` unchanged in meaning, now from one project; `safety::male_program_is_held_to_the_male_boards_bottom` (male board 8 mm: a cut-out through 8.2 mm passes, through 12 mm fails S1), `safety::male_program_stays_on_the_male_board` (S7 against the male board's XY), `safety::generated_inlays_pass_on_both_boards`, `safety::origin_preset_applies_to_the_male_board` (centre origin: the male programs' XY are about the male board's centre); `cli::v24_male_project_exports_the_same_male_programs` (the old `star-male.dcv` and `dc-male.dcv`, migrated, export the committed male programs byte for byte under the new names), `cli::v24_female_project_exports_the_same_female_programs`, `cli::export::programs_are_grouped_by_board` (names, order, `k` restarting per board), `cli::export::board_flag_exports_one_board`, `cli::export::two_inlays_share_one_male_board`, `cli::export::no_inlay_keeps_todays_names`, `cli::preview::male_board_drawn_beside_the_stock`, `cli::lettered_inlay_exports_both_boards`, `quick_start::inlay_pair_chapter_runs` (one file). The stress harness (`crates/dc-gcode/tests/stress`) builds one-project Inlays: the female case with an unset male board, each male case cutting both boards from its one Inlay on a male board the stock's size, its thickness drawn from 10–14 mm on a separate RNG stream, and seating its own two boards.
+- One-file Inlay (#498): `migrate::v24_to_v25_female_gets_an_unset_male_board`, `migrate::v24_to_v25_male_gets_the_stock_as_its_male_board`, `migrate::version_24_fixture_loads`, `serialize::inlay_male_board_round_trips`, `serialize::photo_v_carve_is_format_26` (pins the chain; the 3.4 boundary slice renames it `…_format_27`); `validate::male_board_size_must_be_positive`, `validate::male_board_thickness_must_be_positive`, `validate::cut_out_no_longer_needs_a_side`, `validate::inlays_share_one_male_board`; `inlay::both_boards_from_one_operation` (the female's runs, then the male's, each tagged), `inlay::male_runs_wait_for_the_board_thickness` (unset: no male runs, `inlay_male_board_unset` at `operations[i].male_board.thickness_mm`), `inlay::male_board_defaults_to_the_stock_in_xy`, `inlay::plug_base_thin_reads_the_male_board` (stock 18 mm, male board 8 mm with `D 4, G 1, P 2`: warns); `inlay::female_and_male_walls_mate` and `inlay::plug_seats_flush` unchanged in meaning, now from one project; `safety::male_program_is_held_to_the_male_boards_bottom` (male board 8 mm: a cut-out through 8.2 mm passes, through 12 mm fails S1), `safety::male_program_stays_on_the_male_board` (S7 against the male board's XY), `safety::generated_inlays_pass_on_both_boards`, `safety::origin_preset_applies_to_the_male_board` (centre origin: the male programs' XY are about the male board's centre); `cli::v24_male_project_exports_the_same_male_programs` (the old `star-male.dcv` and `dc-male.dcv`, migrated, export the committed male programs byte for byte under the new names), `cli::v24_female_project_exports_the_same_female_programs`, `cli::export::programs_are_grouped_by_board` (names, order, `k` restarting per board), `cli::export::board_flag_exports_one_board`, `cli::export::two_inlays_share_one_male_board`, `cli::export::no_inlay_keeps_todays_names`, `cli::preview::male_board_drawn_beside_the_stock`, `cli::lettered_inlay_exports_both_boards`, `quick_start::inlay_pair_chapter_runs` (one file). The stress harness (`crates/dc-gcode/tests/stress`) builds one-project Inlays: the female case with an unset male board, each male case cutting both boards from its one Inlay on a male board the stock's size, its thickness drawn from 10–14 mm on a separate RNG stream, and seating its own two boards.
 
 **dc-cam — order**
 - `order::start_depth_matching_an_earlier_pocket_is_quiet`, `order::start_depth_without_a_pocket_is_an_error_unless_acknowledged` (M2; was `…_warns`), `order::acknowledged_start_depth_is_quiet`, `order::start_depth_with_a_shallower_pocket_names_it` (a warning), `order::disabled_pocket_does_not_count`, `order::countersink_start_depth_is_checked_too`, `order::photo_footprint_is_checked_too`, `order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`, `order::validation_and_check_agree_on_the_containing_pocket`, `order::countersink_on_a_v_carve_floor_at_another_depth_warns_mismatch` (#426).
@@ -2465,15 +3139,53 @@ for V operations.
 - `golden::photo_raster_inch`, `golden::photo_raster_metric` (groove for groove, 0.01 mm XY, 0.05 mm Z, after the frame map and, for the inch case, × 25.4).
 - `golden::phase_1_and_2_cases_are_unchanged` (every earlier golden still passes: the `sequence` change for Photo links and the 3D block Z reading touch shared code).
 
+**Sub-phase 3.4: image prep and the drawn boundary.** Fixtures are the
+synthetic drawings of "Module layout", drawn by `tools/parity/prep-fixture.ts`
+and committed as SVG; the numbers in the assertions are acceptance 61a to
+61s's.
+
+*dc-geometry — fill, width, simplify, the drawn band*
+- `fill::nonzero_and_even_odd_differ_on_nested_same_winding` (400 and 300 mm²), `fill::opposite_winding_leaves_a_hole_under_nonzero`, `fill::open_subpath_is_closed_by_its_fill`, `fill::self_overlapping_stroke_outline_resolves_to_one_region` (a stroker outline with a loop at a join), `fill::result_is_canonical_whatever_the_input_order`.
+- `fill::crossing_areas_are_united_and_nested_ones_are_holes` (150 and 300 mm²), `fill::three_way_crossing_group_is_one_region`, `fill::area_inside_a_hole_is_a_piece_of_its_own`, `fill::merge_fills_never_leaves_crossing_contours` (property, `proptest`: random rectangles and circles, `nest` succeeds on the result).
+- `fill::ink_outline_drops_holes_and_unites_components`, `fill::spaces_between_a_ring_and_a_cross_are_four_regions` (2243 ± 1 mm², congruent within 0.5), `fill::spaces_between_leaves_an_ink_island_as_a_hole`, `fill::ink_without_spaces_counts_a_floating_cross`.
+- `width::widest_point_of_a_circle_is_its_diameter`, `width::widest_point_of_a_bar_is_its_width`, `width::a_hairline_is_narrower_than_a_speck_threshold_whatever_its_length`, `width::erosion_test_agrees_with_the_medial_clearance` (property: random convex polygons, `is_narrower_than(r, d)` iff twice the greatest medial clearance is under `d`, within the tolerance), `width::hole_test_reads_the_hole_not_the_piece`.
+- `width::local_widths_of_a_stroke_are_its_width` (2 mm bar, median 2.000 ± 0.02), `width::a_tapering_tip_does_not_lower_the_median`, `width::a_hairline_in_a_large_piece_is_measured` (the #475 case: refined sampling finds it), `width::median_is_length_weighted`.
+- `width::narrowest_gap_between_two_bars` (0.5 mm), `width::narrowest_gap_across_a_notch_of_one_piece`, `width::a_gap_beyond_the_reach_is_none`, `width::narrowest_gap_is_the_ridge_between_pockets` (the ring and cross spaces, 2.000 ± 0.02).
+- `simplify::a_staircase_collapses_within_the_tolerance`, `simplify::a_corner_is_kept`, `simplify::every_dropped_vertex_is_within_the_tolerance` (property), `simplify::a_crossing_result_is_returned_unsimplified_and_listed`, `simplify::a_contour_keeps_three_vertices`, `simplify::anchors_are_deterministic`.
+- `carve::drawn_band_is_the_union_of_the_outers`, `carve::drawn_band_drops_holes` (a ring-shaped boundary: the hole is band), `carve::band_clearance_of_a_star_in_a_square` (10.000 mm, at a tip), `carve::band_clearance_reports_a_crossing_with_its_point_and_depth`, `carve::a_boundary_touching_the_design_is_a_crossing`, `carve::a_design_part_outside_is_a_crossing`, `carve::closed_band_rounds_inward_corners_only`, `carve::rounded_band_is_unchanged_by_the_refactor` (every existing `rounded_band` test, byte for byte), `carve::drawn_band_clips_to_the_board_like_a_computed_one`.
+
+*dc-import — prep*
+- Walk: `prep::walk::hidden_unpainted_and_zero_opacity_are_counted` (`display:none` from the raw document, `visibility:hidden`, group opacity 0, fill and stroke `none`, fill-opacity and stroke-opacity 0), `prep::walk::painted_paths_keep_their_fill_rule`, `prep::walk::text_images_clip_paths_and_masks_are_counted_with_their_fix`, `prep::walk::same_paint_rule_as_the_importer` (every case of `svg::tests::every_paint_variant_imports_exactly_one_shape`, ported from `svg.test.ts`: the walk classifies each as the importer's paint intent does), `prep::walk::transforms_and_use_are_applied`.
+- Findings (49a, acceptance 61a): `prep::findings::overlap_names_the_pair_and_where`, `prep::findings::separate_hole_needs_both_paths_filled`, `prep::findings::an_unfilled_frame_is_not_reported`, `prep::findings::stroke_only_gives_the_width_in_mm`, `prep::findings::hidden_object_names_the_layer`, `prep::findings::not_convertible_names_the_fix`, `prep::findings::feature_below_size_counts_and_names_the_smallest`, `prep::findings::a_clean_drawing_has_none`, `prep::findings::codes_are_stable` (the table's strings), `prep::findings::messages_that_image_prep_fixes_name_it`, `prep::findings::design_findings_read_a_projects_regions` (the two kinds `check` repeats), `warning::existing_import_warnings_have_codes`.
+- Stroke (49c step 2, 61c): `prep::stroke::round_caps_add_pi` (43.14 ± 0.05), `prep::stroke::butt_caps` (40.00), `prep::stroke::square_caps` (44.00), `prep::stroke::miter_join_at_a_right_angle` (80.00), `prep::stroke::round_join_at_a_right_angle` (79.79 ± 0.05), `prep::stroke::miter_limit_falls_back_to_a_bevel` (the SVG rule), `prep::stroke::dashes_give_one_piece_each`, `prep::stroke::a_non_uniform_scale_widens_unevenly`, `prep::stroke::stroke_under_rotation_keeps_its_width`, `prep::stroke::a_zero_width_stroke_is_skipped`, `prep::stroke::a_zero_length_subpath_is_a_dot_only_with_round_or_square_caps`, `prep::stroke::stroker_failure_warns_and_skips`.
+- Run (49c, 49d; 61d to 61f): `prep::run::overlapping_squares_are_one_piece`, `prep::run::an_island_path_becomes_a_hole`, `prep::run::fill_rule_is_per_path`, `prep::run::a_stroke_over_a_fill_is_one_piece_not_a_hole`, `prep::run::a_stroked_ring_round_a_filled_dot_keeps_both`, `prep::run::shapes_mode_of_the_ring_and_cross_is_one_piece_with_four_holes` (584.3 ± 1 mm²), `prep::run::regions_mode_of_the_ring_and_cross` (four pieces, 2243 ± 1, ink and pieces together the 30 mm disc within 1), `prep::run::regions_mode_with_a_floating_cross_warns_open_ink`, `prep::run::regions_mode_output_never_overlaps_ink`, `prep::run::specks_and_hairlines_are_dropped`, `prep::run::small_holes_are_filled`, `prep::run::pieces_at_the_threshold_are_kept`, `prep::run::zero_min_detail_keeps_everything`, `prep::run::narrow_necks_in_big_pieces_are_not_repaired`, `prep::run::smooth_removes_a_staircase_and_keeps_corners`, `prep::run::smooth_that_would_cross_is_skipped_with_a_warning`, `prep::run::smooth_zero_leaves_the_staircase`, `prep::run::threshold_out_of_range_is_an_error`, `prep::run::smooth_above_half_the_detail_warns`, `prep::run::nothing_visible_is_an_error`, `prep::run::everything_dropped_is_an_error`, `prep::run::background_shape_is_flagged`, `prep::run::regions_suggested_for_thin_ink_and_not_for_thick`, `prep::run::flatten_tolerance_scales_with_the_height`, `prep::run::vertex_cap_is_enforced`, `prep::run::output_is_independent_of_document_order`, `prep::run::same_input_twice_is_identical`, `prep::run::crlf_input_gives_the_same_bytes`.
+- Report (49e, 61h): `prep::report::design_height_and_counts`, `prep::report::widths_scale_to_100_200_300` (3.33 / 6.67 / 10.00), `prep::report::reaching_height_for_the_guide_width` (45 mm), `prep::report::ridge_is_the_narrowest_gap_in_regions_mode`, `prep::report::thinnest_piece_is_the_least_median`, `prep::report::unmeasurable_widths_are_none`, `prep_report::render_matches_the_example` (dc-job: the text of 49e, line for line), `prep_report::omits_lines_with_nothing_to_say`.
+- Write (49b, 61g): `prep::write::declares_millimetres_and_the_input_page`, `prep::write::paths_are_filled_and_never_stroked`, `prep::write::y_is_flipped_back_so_an_f_is_an_f`, `prep::write::a_lone_rectangle_round_trips`, `prep::write::numbers_are_normalised` (no `-0`), `prep::write::no_version_time_or_metadata`, `prep::write::output_reads_back_through_the_importer_and_nest` (every fixture), `prep::write::unreadable_output_is_an_error_and_nothing_is_returned` (a corrupted `Prepared`), `prep::write::init_on_the_output_prints_no_findings`.
+- `prep::defaults::fixtures_keep_their_intent_at_the_defaults` (the calibration's scoring, slice 21f), `prep::runs_in_seconds_on_traced_scale_art` (100 000 vertices, a loose bound).
+
+*dc-project and dc-cam — the boundary (format 26)*
+- `migrate::v25_to_v26_adds_an_empty_boundary`, `migrate::v26_to_v27_adds_an_empty_bitmap_list` (was `v25_to_v26_…`; the Photo slice owns it), `migrate::version_25_fixture_loads`, `migrate::a_v25_project_exports_the_same_programs`, `serialize::inlay_boundary_round_trips`, `serialize::boundary_is_an_array_after_outline_rounding`, `serialize::photo_v_carve_is_format_27` (the renamed `…_format_26`).
+- `validate::boundary_unknown_instance_is_error`, `validate::boundary_open_profile_is_error`, `validate::boundary_that_is_a_target_is_error`, `validate::boundary_crossing_the_design_is_error_with_the_point`, `validate::boundary_touching_the_design_is_error`, `validate::boundary_with_no_design_inside_warns`, `validate::boundary_hole_warns`, `validate::margin_is_not_required_with_a_boundary`, `validate::margin_with_a_boundary_warns_ignored`, `validate::bad_outline_rounding_is_still_an_error_with_a_boundary`, `validate::boundary_may_run_past_the_board`, `validate::female_only_inlay_ignores_the_boundary` (no checks until the male is cut), `validate::several_boundaries_are_a_union`, `validate::cut_out_room_reads_the_narrowest_band`.
+- `inlay::male_band_reads_the_narrowest_band_of_a_drawn_boundary` (10.000 for the star in an 80 mm square), `inlay::drawn_boundary_opens_the_edge_by_the_same_rules` (open exactly when `M − P·s ≥ 2r` and the flank fits, on the narrowest band), `inlay::band_edge_is_one_function_for_the_generator_and_the_safety_pass`, `inlay::no_boundary_is_byte_for_byte_unchanged` (the star, the lettered pair's goldens and the stress corpus).
+- `inlay::boundary_replaces_margin_and_rounding` (61l), `inlay::boundary_male_cuts_stay_inside_the_band`, `inlay::boundary_is_mirrored_with_the_design` (61m: the rooms swap, the edge is the drawn frame mirrored about X = 55), `inlay::boundary_edge_pass_sweeps_to_the_boundary` (the end mill's outermost path is the square less 1.5875 mm), `inlay::boundary_v_wall_without_clearing`, `inlay::boundary_cut_out_hugs_the_edge` (1.5875 mm in, 0.01), `inlay::boundary_cut_out_no_room_names_5_484` (68 mm square, V wall), `inlay::boundary_clipped_to_the_board_warns_and_stays_on_it`, `inlay::boundary_female_is_unchanged` (move for move), `inlay::several_boundaries_make_one_band` (61o), `inlay::boundary_walls_mate_and_the_plug_seats_flush` (`plug_seats_flush` with a square, an oval, and a contour 4 mm round the lettering, within 0.05 mm), `inlay::a_notch_narrower_than_the_end_mill_is_filled_and_the_pair_seats`.
+- `safety::boundary_band_is_derived_from_the_instance`, `safety::moved_boundary_fails_the_old_program` (61r), `safety::cut_out_off_the_boundary_ring_fails`, `safety::v_bit_across_a_drawn_open_edge_fails_s17`, `safety::generated_boundary_males_pass_s17_and_s9` (several shapes, with and without clearing and a cut-out, clipped), `safety::s17_uses_no_generator` (unchanged, still green), and the stress harness's boundary cases ("Drawn boundary").
+
+*dreamcarve (integration)*
+- `cli::init_prints_the_import_checks` (61a), `cli::init_project_is_unchanged_by_the_checks` (byte for byte against the project the previous build wrote), `cli::check_repeats_overlap_and_size_findings`, `cli::a_clean_drawing_prints_no_checks`, `cli::dxf_init_is_unchanged`.
+- `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`.
+- `cli::line_art_to_inlay_end_to_end` (61k: `ring-cross.svg` → `--regions` → `init` → Inlay with a circular boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `quick_start::line_art_chapter_runs` (the chapter's commands).
+
+
 ## Sub-phases
 
-The phase is delivered as five sub-phases, one feature at a time, so each
-can be followed, tested and iterated on its own (decided 2026-10-28). Each
-is a GitHub milestone (`3.1 V-Carve`, …), lands its own format version,
-and ends with a bench check. Slices follow phase 2's practice: one issue
+The phase is delivered as seven sub-phases, one feature at a time, so each
+can be followed, tested and iterated on its own (decided 2026-10-28; 3.4
+Image Prep inserted and the later ones renumbered 2026-11-10). Each
+is a GitHub milestone (`3.1 V-Carve`, …), lands its own format version
+where it changes the file, and ends with a bench check. Slices follow phase 2's practice: one issue
 and one PR each, with a Tests section drawn from the test plan;
 dependencies in brackets. No tag between sub-phases (`docs/plan.md`,
-"Versioning"); `v0.3.0` comes at 3.5.
+"Versioning"); `v0.3.0` comes at 3.7.
 
 ### 3.1 V-Carve (format v20)
 
@@ -2590,7 +3302,7 @@ Goal: the lettered inlay pair cut and fitted.
     ("Algorithms → Inlay", steps 4 and 6; along its outer edge since
     #461), S17 against the
     open edge and S9 on the open floor; the lettered pair rounded by
-    10 mm. A user-drawn boundary is deferred to #449. Tests: the #448
+    10 mm. A user-drawn boundary is deferred to #449 (3.4). Tests: the #448
     group of the test plan, `cli::lettered_inlay_female_and_male_export`,
     `cli::lettered_inlay_fits_its_board`,
     `cli::v23_project_exports_the_same_program`,
@@ -2612,21 +3324,99 @@ Goal: the lettered inlay pair cut and fitted.
     the CLI's per-board names, grouping, `--board` and preview, the one
     tutorial project `tests/fixtures/dc.dcv` (the old pairs kept as
     migration fixtures in `crates/dreamcarve/tests/fixtures/inlay-migration/`).
-    Photo V-Carve moves to format v26. Tests: the #498 group of the test
+    Photo V-Carve moves to format v26 (it is v27 since 3.4's boundary
+    took 26). Tests: the #498 group of the test
     plan. [20d]
 21. **3.3 bench check.** Test part 2 cut, fitted and recorded. Exit:
     acceptance 56 and 57 green.
 
-### 3.4 Photo V-Carve (format v26)
+### 3.4 Image Prep (format v26)
+
+Inserted 2026-11-10 at the maintainer's request (#462, #449): preparing
+artwork is the hardest part of an inlay, so it comes before Photo V-Carve.
+It renumbers Photo V-Carve to 3.5 (format v27), Tapered Ball Nose to 3.6
+and Release to 3.7. Slice numbers continue from 21 with letters, as 13a
+and 20a to 20e do, so the numbers of the Photo and Release slices, which
+other issues cite, stay what they were.
+
+Goal: line art prepared with `image-prep --regions` and inlaid inside a
+drawn oval, the compass cut and fitted. Two independent halves (the checks
+and `image-prep`; the boundary) that meet at the bench: slices 21a, 21b
+and 21i start at once.
+
+21a. **Fill resolution.** `dc-geometry::fill`. Tests: the fill group.
+    [none]
+21b. **Widths, gaps and simplification.** `dc-geometry::{width,
+    simplify}`. Tests: the width and simplify groups. [none]
+21c. **The walk and the import checks** (49a; #462, slice 1).
+    `dc-import::prep::{walk, findings}`, `ImportWarning` variants and
+    `code()` (the existing variants gain codes and their fixes),
+    `design_findings`, `init` prints, `check` repeats the two,
+    `tests/fixtures/prep/{messy,clean}.svg` and the drawing script. Tests:
+    the walk and findings groups, `cli::init_prints_the_import_checks`,
+    `cli::init_project_is_unchanged_by_the_checks`,
+    `cli::check_repeats_overlap_and_size_findings`,
+    `cli::a_clean_drawing_prints_no_checks`, `cli::dxf_init_is_unchanged`,
+    `warning::existing_import_warnings_have_codes`. [21b, for
+    `feature_below_size`]
+21d. **Stroke to area.** `dc-import::prep::stroke` on usvg's stroker.
+    Tests: the stroke group. [21c, for the walk's stroke data]
+21e. **The pipeline and the report.** `prep::prepare`: steps 1 to 7 of
+    "Image prep", `PrepReport`, the warnings and errors, `ring-cross.svg`.
+    Tests: the run and report groups (not `defaults`). [21a to 21d]
+21f. **Calibrate the defaults.** The sweep of "Calibration of the
+    defaults", `speckled-dc.svg`, `jagged-dc.svg`, the README table, the
+    constants, the maintainer's check on their own art reported on the
+    issue. Tests: `prep::defaults::fixtures_keep_their_intent_at_the_defaults`,
+    `prep::runs_in_seconds_on_traced_scale_art`. [21e] The maintainer
+    confirms the two values here (open questions 16, 17).
+21g. **The writer and `image-prep`.** `prep::write_svg` with its
+    read-back check, `dc_job::prep_report`, the CLI command. Tests: the
+    write group, `prep_report::*`, the `cli::image_prep_*` tests and
+    `cli::image_prep_then_init_has_no_warnings`. [21e]
+21h. **Image prep docs.** The chapter "Preparing artwork", Importing and
+    Shapes-holes-islands updates, Warnings (49g), the quick start's
+    "From line art" with `compass.svg`, the inlay quick start's pointer,
+    `cli::line_art_to_inlay_end_to_end` (the ring and cross, once the
+    boundary has landed; before it, with the computed band),
+    `quick_start::line_art_chapter_runs`. [21g; 21l for the boundary step]
+21i. **Format v26 and the boundary model.** `InlayOp::boundary`,
+    `v25_to_v26` (and the Photo chain's `v26_to_v27` named for the later
+    slice), `serialize::photo_v_carve_is_format_27`'s rename, the
+    validation rules, `Project`'s boundary geometry (`boundary_regions`,
+    `BoundaryProblem`), `dc-geometry::carve::{drawn_band, closed_band,
+    band_clearance}`. Tests: the migrate, serialize and validate groups of
+    "the boundary", the `carve::` boundary tests. [3.3]
+21j. **The drawn band in the generator.** `dc_project::inlay::band_edge`,
+    `male_band`'s `BandSource`, step 4 and 6 reading `B` from it,
+    `inlay_margin_ignored`, `inlay_boundary_*` warnings, the male's summary
+    line and the preview. No change with no boundary. Tests: the `inlay::`
+    boundary group, `cli::boundary_summary_line`,
+    `cli::preview_draws_the_boundary_on_the_male_board`,
+    `cli::v25_project_exports_the_same_programs`. [21i]
+21k. **Safety for the drawn band.** S17 and S9 on `band_edge`, the stress
+    harness's boundary cases. Tests: the `safety::` boundary group and the
+    stress cases. [21j]
+21l. **Boundary docs and fixtures.** The Inlay chapter's boundary
+    section, the project file (v26), the dc fixtures' boundary variant
+    (`tests/fixtures/dc-boundary.dcv`: the frame as boundary), the
+    compass's oval. Tests: `cli::compass_inlay_exports_both_boards`,
+    `quick_start::inlay_pair_chapter_runs` unchanged. [21j, 21k]
+21m. **3.4 bench check.** Test part 3, the line-art inlay, cut, fitted and
+    recorded; the maintainer's own line art prepared and cut beside it if
+    they choose. Exit: acceptance 61a to 61s green, the defaults
+    confirmed.
+
+### 3.5 Photo V-Carve (format v27)
 
 Goal: a photograph carved.
 
-22. **Format v26: bitmaps and Photo V-Carve** (v24 until #448, v25
-    until #498). `Bitmap`, `BitmapId`,
+22. **Format v27: bitmaps and Photo V-Carve** (v24 until #448, v25
+    until #498, v26 until 3.4's boundary). `Bitmap`, `BitmapId`,
     `MAX_BITMAP_SIDE_PX`, `Bitmap::header` and `pixels` with their limits,
-    `PhotoVCarveOp`, `PhotoStrategy`, `v25_to_v26`, validation; the `png`
+    `PhotoVCarveOp`, `PhotoStrategy`, `v26_to_v27`, validation; the `png`
     and `base64` dependencies. Tests: the dc-project bitmap and Photo
-    tests with the M4 additions. [3.3]
+    tests with the M4 additions. [3.4]
 23. **Bitmap import and the CLI.** `dc-import::bitmap` with `png` and
     `zune-jpeg`; `init` on a picture; `image add`/`list`; the preview
     image. Tests: the dc-import bitmap group, `cli::init_on_a_picture_*`,
@@ -2639,15 +3429,22 @@ Goal: a photograph carved.
 25. **Photo goldens.** `tools/parity/photo/capture.py` and the two
     RasterCarve cases. Tests: `golden::photo_*`. [24]
 26. **Photo docs.** Photo V-Carve chapter, Images chapter (`image`,
-    pictures in the file), The project file (v26),
+    pictures in the file), The project file (v27),
     `cli::photo_quick_start_runs`. [23, 24]
-27. **3.4 bench check.** Test part 3 cut and recorded. Exit: acceptance
+27. **3.5 bench check.** Test part 4 cut and recorded. Exit: acceptance
     58 to 60 green.
 
-### 3.5 Release
+### 3.6 Tapered Ball Nose
+
+Specified separately (#445), with its own spec and slices; its format
+number, if it needs one, follows Photo V-Carve's. Nothing in 3.4 or 3.5
+depends on it.
+
+### 3.7 Release
 
 28. **Docs sweep.** `CONTEXT.md` terms (Flat Depth, Start Depth, Clearing,
-    Inlay, Glue Gap, Plug Depth, Photo V-Carve, Bitmap, Countersink), the
+    Inlay, Glue Gap, Plug Depth, Photo V-Carve, Bitmap, Countersink; Image
+    Prep, Ink, Piece, Speck and Boundary came with the 3.4 spec), the
     Porting and Golden-corpus contributing chapters, Crate map, Tool
     library (V-bit angles, cone height). [all]
 29. **Exit-criteria audit and tag.** The audit as phase 2's (#255), the
@@ -2685,8 +3482,34 @@ writes.
 
 ## Open questions
 
-None for the maintainer. Two points the design decided and the
-functional spec now records (both edited in the same PR):
+**Sub-phase 3.4 (2026-11-10).** The maintainer's questions are in the
+functional spec's table "Sub-phase 3.4: open for the maintainer's review"
+(9 to 24: the format number, #449's six, the two thresholds, the
+suggestion threshold, height against longest side, nesting against
+paint, backgrounds, gaps, polygon output, the stand-in fixture). The
+design adds these, which the implementer can settle in the slice but the
+maintainer may want a say in:
+
+- **Tolerance of the polygon output** (`FLATTEN_FRACTION`, 0.005 % of the
+  height): 0.01 mm at 200 mm tall, `init`'s own default flatten tolerance,
+  and finer for smaller art. A different fraction changes no behaviour,
+  only file size and how far a later enlargement magnifies the error.
+- **One edge decision for a drawn band** (open edge or V wall from the
+  narrowest band) against a per-stretch decision. Recommended: one,
+  because the generator and the safety pass must agree on every stretch
+  and one decision is one comparison ("Drawn boundary", "Why `M` is the
+  narrowest band"). It costs an open edge on a boundary that is narrow in
+  one place and generous elsewhere.
+- **`ImportWarning` as the warning type for the checks and `image-prep`,**
+  with `code()` on every variant, against a `PrepWarning` of its own. One
+  warning type per crate is the guideline; `init` already prints the
+  importer's.
+- **`design_findings` on every instance** for `check`, including ones no
+  operation targets. Recommended; a project's shapes are the user's design
+  whether or not an operation uses them yet.
+
+**Decided earlier.** Two points the design decided and the
+functional spec records (both edited in the same PR):
 
 - Acceptance 59 and capability 47: the groove family passes through the
   picture's **top-left** corner, RasterCarve's origin, not the

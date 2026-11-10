@@ -12,8 +12,11 @@ areas a flat floor, which an end-mill Pocket can clear first. Inlay makes
 the matched female pocket and male plug of that carve, mirrored and set at
 the depths the technique needs. Photo V-Carve carves a grayscale image as
 parallel V-bit lines whose depth follows the pixels. A Drill can countersink
-with a V-bit. Every program passes the phase 1 and 2 safety rules and the
-new ones below.
+with a V-bit. `dreamcarve image-prep` cleans an SVG for inlay work before
+`init`, and `init` itself reports what in a drawing will trouble an inlay.
+An Inlay can take a closed shape the user has drawn as the outer edge of
+its male's band. Every program passes the phase 1 and 2 safety rules and
+the new ones below.
 
 Where VCarve Pro and PureCutCNC differ in how a feature is presented, this
 spec follows VCarve's vocabulary and option set and PureCutCNC's algorithm,
@@ -62,6 +65,20 @@ the plug.
 raises `glue_gap_mm` to 1.5 and re-exports only the male board
 (`export --board male`), as Corbin's fit procedure says: change one
 number, cut again.
+- **Maya** has line art of an eagle, a trace drawn as strokes. `init`
+imports the strokes as bare centrelines, which no Inlay can use, and
+`init` says so, and says that `dreamcarve image-prep` would fix it. At
+50 mm tall the ink is 0.35 mm wide at the median; at 200 mm, 1.41 mm, and
+four fifths of it is still narrower than 1.5 mm. She runs `image-prep
+eagle.svg --regions`: the spaces between the lines become the shapes to
+inlay, the lines stay as the board between the pockets, and the report
+says the narrowest ridge between two pockets is 0.56 % of the design's
+height, 1.7 mm at 300 mm tall. She scales the result, runs `init`, adds an
+Inlay and draws an oval round the eagle as its `boundary`, so the male
+board's plug band is the oval she drew. She cuts the pair, and the eagle's
+feathers show as dark wood in light, separated by thin ridges of the
+light board. (The eagle is the maintainer's own art. It motivates this
+section and is never committed; the tests use synthetic drawings.)
 - **Jo** carves a photo of their dog. `dreamcarve init dog.jpg --width 100`
 writes a project holding the picture, placed at the origin 100 mm wide
 with its height from the picture's proportions, and one Photo V-Carve
@@ -75,9 +92,13 @@ the pocket, in the same project.
 ## Capabilities
 
 Numbering continues from phase 2's capability 37, which still holds with
-phase 1's nine. Vocabulary is `CONTEXT.md`'s; this phase adds **Flat
+phase 1's nine. Phase 4's capabilities continue from 49 (its spec was
+written first), so the sub-phase 3.4 capabilities and acceptance tests
+below carry letters: 49a to 49g, 61a to 61s, as capability 13a and 50a
+do. Vocabulary is `CONTEXT.md`'s; this phase adds **Flat
 Depth**, **Start Depth**, **Clearing**, **Inlay**, **Glue Gap**,
-**Plug Depth**, **Photo V-Carve**, **Bitmap** and **Countersink**, defined
+**Plug Depth**, **Photo V-Carve**, **Bitmap**, **Countersink**, **Image
+Prep**, **Ink**, **Piece** and **Boundary**, defined
 in the capabilities that introduce them; `CONTEXT.md` gains them before the
 tag (exit criteria). "The user can" means by editing the `.dcv` or running the CLI; there
 is no GUI in this phase.
@@ -294,7 +315,8 @@ is no GUI in this phase.
     inward curves are no tighter than the radius and notches and gaps
     narrower than about twice it fill. Used by the male; the female
     ignores it.
-    A user-drawn boundary, as VCarve's and Corbin's, is #449.
+    A user-drawn boundary, as VCarve's and Corbin's, is capability 49f
+    (sub-phase 3.4, format 26).
      On the stock the female is a V-Carve of its targets with
      `flat_depth_mm: depth_mm` and start depth 0, move for move. On the
      male board the targets are **mirrored** left to right in place,
@@ -508,6 +530,253 @@ is no GUI in this phase.
  PureCutCNC's exported programs, so it is compared directly. Nothing
  from RasterCarve but those programs enters the repository.
 
+### Image prep and the drawn boundary (sub-phase 3.4)
+
+Preparing artwork is the hardest part of making an inlay (#462). A drawing
+that looks right still trips the Inlay: letters overlap, a hole is a
+separate path, line art is drawn as strokes, and hidden layers, specks and
+hairlines ride along. This sub-phase adds checks that tell the user (49a),
+an opt-in command that fixes it (49b to 49e), and the drawn boundary that
+lets the user shape the male's band (49f). It changes no machine output
+by itself: the Inlay cuts what it always cut from whatever the drawing
+says. The sources are PureCutCNC's import (`src/import/svg.ts`, whose
+paint-intent and content warnings the checks extend, and `classifier.ts`,
+whose nesting and ambiguity rules are `init`'s already) and the public
+documentation of VCarve's and Corbin's inlay workflows for the boundary.
+PureCutCNC has no stroke-to-outline, speck or smoothing step: those are
+designed here.
+
+49a. **Import checks** (`init` and `check`; #462, slice 1; always on,
+ changing nothing). Reading an SVG, `init` reports, one warning per kind,
+ each saying what it found, where, and what to do:
+    - `shapes_overlap`: outlines of different paths cross. It names the
+    first pair by id and where they meet, and the count. (An outline that
+    crosses itself is already refused, and overlapping shapes are already
+    an error where an operation targets them; this tells the user at
+    `init`, before an operation exists.)
+    - `svg_hole_as_separate_path`: a filled closed path lies wholly
+    inside another filled path. They are two shapes in the project, and
+    the inner one is a hole only in an operation that targets both, as
+    "Shapes, holes, and islands" says of every nested outline; a Pocket of
+    the outer path alone would cut across it. The warning names both paths
+    and says `image-prep` makes them one path with a hole. (An unfilled
+    frame drawn round a design is not reported.)
+    - `svg_stroke_only_path`: a path has a stroke and no fill. `init`
+    imports its centreline, an open path no Inlay or V-Carve can cut; the
+    warning gives the stroke's width and says that `image-prep` turns
+    strokes into shapes.
+    - `svg_hidden_object`: an object that is not drawn (`display:none`,
+    `visibility:hidden`, zero opacity, or neither filled nor stroked).
+    `init` imports geometry whatever its paint, so a hidden layer is
+    imported and would be cut; the warning names it and says `image-prep`
+    skips such objects.
+    - `svg_object_not_convertible`, the existing text, image, clip-path
+    and mask warnings with a fix added to each (convert text
+    to paths, expand clips and masks, trace images in Inkscape first):
+    live text, images, clip paths and masks cannot become shapes, and
+    `image-prep` skips them too, with counts.
+    - `feature_below_size`: pieces or holes whose widest point is under
+    the default `--min-detail` (49d) of the design's height, as a count
+    and the smallest. A speck a few hundredths of a millimetre across is
+    never worth carving, and traced art is full of them.
+
+ Each message that `image-prep` would fix names `dreamcarve image-prep`.
+ `init` prints them as `warning: <code>: <message>`, as `check` and
+ `export` print theirs, and its exit status and the project it writes are
+ exactly what they were without the checks. `check` repeats the two that
+ still apply to a project, `shapes_overlap` and `feature_below_size`,
+ read from the project's shapes; the others need the drawing's paint and
+ paths and are `init`'s alone. A clean drawing prints none of them.
+49b. **`image-prep`** (`dreamcarve image-prep design.svg [-o
+ design-inlay.svg] [--regions] [--min-detail <pct>] [--smooth <pct>]`;
+ #462). Reads one SVG and writes one SVG that is easy to inlay, and
+ prints a report (49e). The decisions that shape it, agreed with the
+ maintainer on 2026-11-01:
+    - **Opt-in.** Nothing requires it: `init` takes any SVG, and a clean
+    CAD drawing needs none of it. Cleanup changes the art (it merges
+    shapes, drops specks, converts line art), so it is the user's visible
+    choice, and the generators must handle any valid design whether or
+    not it was prepared.
+    - **A clean SVG only.** The output takes no tool, stock, depth or
+    final size, and the command has no option for any. Every threshold is
+    a percentage of the **design's height**, the height of the visible
+    geometry's bounding box, strokes included; the report prints that
+    height. The user scales the result, in a drawing program or with the
+    `init` margin they already use, and runs `init` as today.
+    - **SVG in, SVG out.** PNG and JPEG are refused with a message that
+    says to trace in Inkscape ("Trace Bitmap") first. Tracing a picture is
+    deferred, and any future tracer must be permissively licensed (Potrace
+    is GPL).
+    - **Where the output goes.** `-o` names it; by default the file is
+    the input's name with `-inlay` added, in the same folder. An existing
+    file is never overwritten (as `init` never overwrites a `.dcv`).
+    - **At the input's size.** The page keeps its physical size and the
+    shapes their place on it, so the output lies over the input. It
+    declares millimetres.
+    - **The output** is filled shapes only: one path per piece with its
+    holes. No strokes, text, images, clip paths, masks, gradients or
+    hidden objects remain. Curves are written as straight segments within
+    a tolerance of 0.005 % of the design's height (0.01 mm at 200 mm tall),
+    so a circle in the input is a many-sided polygon in the output; the
+    chapter says so.
+49c. **What it does**, in this order (design spec, "Image prep"). A
+ **piece** is one connected area of the result with its holes; **ink** is
+ everything the drawing paints, after step 2.
+    1. *Visible geometry only.* Hidden layers, hidden or unpainted
+    objects, zero-opacity objects and guides are skipped and counted.
+    Text, images, clip paths and masks cannot be converted and are
+    reported as such, with the fix.
+    2. *Strokes become areas.* A stroked path becomes the filled outline
+    of its stroke, using the stroke's own width, caps, joins, miter limit
+    and dashes, under the path's transform. (`init` imports such a path
+    as a bare centreline.)
+    3. *Fills are resolved.* Each path's own fill rule (nonzero or
+    even-odd) decides what it fills; paths that cross are merged; a path
+    wholly inside another path's area is a hole of it, the rule `init`
+    applies to every nested outline, so a ring drawn as two paths comes
+    out as one piece with a hole. What remains is disjoint pieces, each
+    with its holes. Paint colour does not decide what is a shape.
+    4. *The mode.* By default the filled shapes are the inlay: lettering
+    and logos. With `--regions` the **enclosed spaces between the lines**
+    are the inlay instead, which is the line-art case: the art's outline
+    (the ink's outer boundary, its holes filled) minus the ink. The ink
+    stays as the board between the pockets, and the existing Inlay cuts
+    the result unchanged: one female pocket per space, and one male
+    carrying all the plugs. An ink line that closes off no space leaves
+    nothing to cut there, and the report says how many ink components do
+    not (`prep_regions_open_ink`). The report suggests `--regions`
+    (`prep_regions_suggested`) when the ink is mostly thin line work,
+    its median width under 2 % of the design's height.
+    5. *Clean up* (49d), relative to the design's height.
+    6. *Write* the result (49b).
+49d. **Thresholds** (`--min-detail <pct>`, `--smooth <pct>`; both a
+ percentage of the design's height, from 0 to 5, 0 turning the step off,
+ and a value outside the range an error, `prep_threshold_range`).
+    - `--min-detail` (default **0.2**) drops a piece, and fills a hole,
+    whose widest point, the diameter of the largest circle that fits in
+    it, is under the threshold: a speck, or a hairline that is nowhere
+    wider. It never thins or widens anything above it; narrow places in
+    larger pieces are reported (49e), not changed.
+    - `--smooth` (default **0.05**) replaces runs of tiny segments with a
+    straight one where the result stays within the threshold of the
+    original outline, which takes the staircase out of traced edges. It
+    never rounds a corner: a corner between two long segments is
+    kept, and the result never crosses itself or another piece (a piece
+    where it would is left unsmoothed, `prep_smooth_skipped`). A
+    `--smooth` above half of a non-zero `--min-detail` warns
+    `prep_smooth_exceeds_detail`: smoothing that large could remove what
+    the other step keeps.
+
+ The defaults are proposals, chosen from synthetic fixtures and traced
+ art as the design spec's calibration slice describes, and the maintainer
+ confirms them in review (open questions 16 and 17).
+49e. **The report** (printed by `image-prep`; informational, nothing in
+ it is enforced). It states: what was read and skipped, with counts and
+ reasons (hidden, unpainted, zero opacity, text, images, clip paths,
+ masks); how many strokes became areas and their widths; the design's
+ height; the number of pieces and holes; what was dropped, filled or
+ smoothed and by what threshold in millimetres; **the thinnest piece**
+ (its typical width, the median of its widths along its length, so a
+ tapering tip does not count) and **the narrowest gap** between pieces,
+ each in millimetres and as a share of the height, where in `--regions`
+ mode the narrowest gap is the board ridge between two pockets; what
+ those two widths become at 100, 200 and 300 mm tall; and the height at
+ which each reaches 1.5 mm (below it the feature is narrower than that).
+ Example, in
+ `--regions` mode:
+
+ ```text
+ Prepared eagle.svg → eagle-inlay.svg (regions)
+   Read: 214 paths, of them 3 hidden and 12 unpainted skipped; 0 text, 0 images, 0 clip paths, 0 masks
+   Strokes made into areas: 187, 0.35 to 1.20 mm wide
+   Design height: 98.40 mm
+   Result: 41 pieces, 6 holes
+   Dropped: 17 pieces below 0.20 % of the height (0.197 mm), 3 holes filled; smoothed within 0.05 % (0.049 mm)
+   Thinnest piece: 3.10 mm (3.15 % of the height)
+   Narrowest gap, the board ridge between pockets: 0.55 mm (0.56 %)
+   At 100 / 200 / 300 mm tall: thinnest piece 3.15 / 6.30 / 9.45 mm; narrowest gap 0.56 / 1.12 / 1.68 mm
+   The narrowest gap reaches 1.5 mm at 268 mm tall.
+ ```
+
+ The 1.5 mm figure is a guide for what a V-bit inlay holds well, not a
+ limit. Warnings print as `warning: <code>: <message>` after it.
+49f. **Drawn boundary** (`boundary` on Inlay, format 26; #449; the
+ maintainer: "should not be complicated"). VCarve's inlay method and
+ Corbin's add-in have the user draw a boundary vector round the plug, and
+ the maintainer's first test design already had an oval drawn round its
+ letters; their public documentation is the behaviour reference, and
+ nothing learned by inspecting either product's output or files is used.
+ An Inlay's `boundary` lists instances, by id, whose closed outlines
+ together draw the **outer edge of the male's band**, in place of the
+ computed edge (the design grown by `margin_mm` and rounded by
+ `outline_rounding_mm`). The default is empty: the computed band, unchanged.
+    - **The band** is the area inside the boundary less the mirrored
+    design, as the computed band is: every hole of the design is carved
+    and the design stands. A hole in a boundary shape is ignored
+    (`inlay_boundary_hole_ignored`), since a hole would leave board
+    standing in the band and hold the plug off the pocket (#484).
+    - **It replaces `margin_mm` and `outline_rounding_mm`.** With a
+    boundary they are ignored and need not be set (a set one warns
+    `inlay_margin_ignored`). What the band's rules read from the margin
+    is the boundary's **narrowest band**, the least distance from the
+    design to the boundary: whether an end mill fits the band's floor
+    to cut its edge upright, whether the V-bit's flank stays inside, and
+    the cut-out's room. The end mill rounds a convex corner of the
+    boundary by its own radius, as it always rounds the band's.
+    - **It is mirrored with the design.** The user draws it round the
+    design as it appears; the male uses it mirrored about the same
+    vertical line as the design (the centre of the targets' bounding box),
+    so it always lies round the plug the way it was drawn, and the room to
+    the boundary on each side swaps sides with the design's. `check` and
+    `export` say so with the same note (`inlay_male_mirrored`).
+    - **The female ignores it.**
+    - **Checks**, errors unless marked, each naming the operation and
+    `operations[i].boundary`: an id that is no instance
+    (`inlay_boundary_unknown`); an outline that is open
+    (`inlay_boundary_open`); an instance that is also a target
+    (`inlay_boundary_is_target`); a boundary that crosses or touches the
+    design, so some part of the design is not strictly inside it
+    (`inlay_boundary_crosses_design`, naming the nearest point and the
+    distance); a boundary shape that holds no part of the design
+    (warning `inlay_boundary_empty`). The boundary may run past the male
+    board: the band is clipped to the board as 45 says
+    (`inlay_band_clipped`), and the design must still stand clear of the
+    board's edge (`InlayTooNearEdge`). It need not lie inside the stock.
+    - **Several.** Every listed shape counts: the band's edge is their
+    union, and each part of the design must lie inside that union, not
+    necessarily one shape. Use one oval round everything, or one shape
+    round each separate group.
+    - **The cut-out runs inside it**, exactly as inside the computed
+    band: with an open edge the tool's centre is one radius inside the
+    boundary, so its edge runs along the end mill's wall, and the freed
+    piece's outline is the boundary inset by the tool's diameter (3.175 mm
+    for a 1/8 in end mill; more with a V wall, where the floor ends at
+    the slope's foot). The user draws the boundary that much larger when
+    the finished plug's size matters, and the chapter says so. A narrow
+    band gives the same `inlay_cut_out_no_room` and
+    `inlay_band_edge_v_wall` as a narrow margin, from the narrowest band.
+    - The boundary is an ordinary instance, so another operation may cut
+    it (a Profile of the oval on the female board, say); `init` writes
+    the drawing's shapes as instances as always, and the user names the
+    one to use.
+49g. **Warnings and errors** of 49a to 49f, stable snake\_case codes with
+ named parameters, printed as 25 says and listed in the Warnings chapter:
+ `shapes_overlap`, `svg_hole_as_separate_path`, `svg_stroke_only_path`,
+ `svg_hidden_object`, `svg_object_not_convertible`, `feature_below_size`
+ (`init` and `check`); `prep_regions_suggested`, `prep_regions_open_ink`,
+ `prep_background_shape` (one filled shape covers nearly all of the
+ drawing, probably a page background: delete it in the drawing program),
+ `prep_smooth_skipped`, `prep_smooth_exceeds_detail`,
+ `prep_stroke_failed` (a stroke the stroker could not turn into an area,
+ skipped), `prep_speck_dropped`, `prep_hole_filled` (`image-prep`);
+ errors `prep_threshold_range`, `prep_nothing_left` (nothing visible, or
+ everything dropped), `prep_not_svg` (a picture was given),
+ `prep_output_unreadable` (the written SVG did not read back, which would
+ be a defect, so nothing is written); `inlay_boundary_unknown`,
+ `inlay_boundary_open`, `inlay_boundary_is_target`,
+ `inlay_boundary_crosses_design` (errors), `inlay_boundary_empty`,
+ `inlay_boundary_hole_ignored`, `inlay_margin_ignored` (warnings).
+
 ## Out of scope
 
 The GUI (phase 4). Text: letters come in as SVG outlines (phase 5 draws
@@ -530,7 +799,17 @@ does before the toolpath. Heightmap carving, where brightness is a surface
 rather than a groove depth (phase 7, Surface operations). 16-bit and TIFF
 pictures (read as 8-bit; TIFF in phase 7 with heightmaps). Canned cycles
 for a countersink. Depth passes on a carve: one pass whatever the depth
-(42). Fluting, texture and prism toolpaths (post-1.0).
+(42). Fluting, texture and prism toolpaths (post-1.0). In 3.4:
+tracing a PNG or JPEG into outlines (deferred; Inkscape's Trace Bitmap does
+it today, and a tracer DreamCarve adds must be permissively licensed, since
+Potrace is GPL); colour separation into several woods; closing gaps in line
+art so that nearly closed spaces count; widening or thickening thin
+features (the report says where they are, and nothing is enforced);
+repairing live text, clip paths or masks (convert and expand them in the
+drawing program); recovering arcs in prepared output; changing what `init`
+imports (the checks only report); an `image-prep` option for any machining
+value; and a boundary that is not an existing instance (drawing it is
+phase 5).
 
 ## Acceptance tests
 
@@ -712,6 +991,165 @@ Numbering continues from phase 2's 47.
  inset lettering, the two countersinks and the tabbed outline, and each
  program passes S1–S19.
 
+Sub-phase 3.4 (lettered, as the capabilities are; every fixture is a
+synthetic drawing under `tests/fixtures/prep/`, drawn by a script, and no
+artwork of the maintainer's is committed):
+
+61a. **Import checks.** `messy.svg`, a 100 mm tall page holding two
+ filled 10 mm squares that overlap by 4 mm, a filled 20 mm square with a
+ filled 10 mm square inside it as a separate path, a 1.2 mm stroke-only
+ polyline, a layer with `display:none` holding a square, one `<text>`, one
+ `<image>`, a clip-path group and a 0.1 mm filled dot. `init` prints one
+ warning for each of `shapes_overlap` (naming the two squares' ids and the
+ overlap), `svg_hole_as_separate_path` (naming the nested pair),
+ `svg_stroke_only_path` (1.200 mm), `svg_hidden_object` (naming the
+ layer), the text, image and clip-path warnings each with its fix, and
+ `feature_below_size` (one piece under 0.200 mm, 0.2 % of the design's
+ 100 mm, the fixture's shapes spanning the page's height); each that
+ `image-prep` would fix names `dreamcarve image-prep`.
+ The `.dcv` it writes and its exit status equal what the same build wrote
+ before the checks, byte for byte (the checks change nothing). `clean.svg`
+ (the monogram "DC", one compound path per letter) prints none. `check` on
+ `messy.dcv` prints `shapes_overlap` and `feature_below_size` and none of
+ the SVG-only codes.
+61b. **Visible geometry only.** `image-prep messy.svg` reports the hidden
+ layer (1 object), the text, the image and the clip path as skipped or
+ not convertible, each with its fix, and the output holds none of them:
+ the hidden square's area is not in it.
+61c. **Strokes become areas.** A 2 mm wide, 20 mm long line prepares to
+ one piece of area 43.14 mm² (2 × 20 + π, within 0.05) with round caps,
+ 40.00 with butt caps and 44.00 with square caps (within 0.01); a
+ polyline of two 20 mm legs at a right angle, 2 mm wide, butt caps,
+ prepares to 80.00 mm² with a miter join and 79.79 mm² (within 0.05) with
+ a round join; a dashed 2 mm line gives one piece per dash, each as long
+ as the dash; a stroke under a non-uniform scale is as wide as the
+ transform makes it along each axis.
+61d. **Fills are resolved.** Two 10 mm squares overlapping by 5 mm give
+ one piece of 150 mm². A 20 mm square and a 10 mm square centred in it,
+ as two separate paths, give one piece of 300 mm² with one hole. The same
+ two squares in one path wound the same way fill solid under nonzero
+ (400 mm², no hole) and leave a hole under even-odd (300 mm², one
+ hole), as the SVG rules say. Output piece order and ids follow position,
+ not document order.
+61e. **Regions mode, line art in a ring.** `ring-cross.svg`: a circle of
+ radius 29 mm stroked 2 mm (ink from radius 28 to 30), and two crossing
+ straight lines 58 mm long, 2 mm wide, through its centre, on a 60 mm
+ tall drawing. Default mode prepares one piece (the ink, 584.3 mm² within
+ 1) with four holes. With `--regions` it prepares four pieces, congruent
+ to within 0.5 mm² of each other, together 2243 mm² (within 1), none of
+ them overlapping ink (the pieces and the ink together are the disc of
+ radius 30 mm, 2827 mm², within 1), and the report's narrowest gap is
+ 2.000 mm (within 0.02). The same art with the cross cut short of the
+ ring by 1 mm prepares under `--regions` to one piece, a pocket with the
+ cross as its hole, and warns `prep_regions_open_ink` (one ink component,
+ the cross, encloses no space).
+61f. **Clean-up.** On a 100 mm tall design: a 0.1 mm filled dot is dropped
+ and a 0.3 mm dot kept at the default `--min-detail` (0.2 % is 0.2 mm), a
+ 0.1 mm hole in a piece is filled and a 0.3 mm hole kept, and
+ `--min-detail 0` keeps all four; a long thin line 0.1 mm wide and 40 mm
+ long, nowhere wider, is dropped (a hairline), and one 0.5 mm wide is
+ kept. A 40 mm straight edge drawn as a staircase of 0.5 mm steps 0.02 mm
+ high prepares, with the default `--smooth` (0.05 mm here), to a straight
+ edge with no vertex between its two corners, no output point farther
+ than 0.05 mm from the original outline, while a 90° corner of the same piece stays within 0.001 mm of its
+ place; `--smooth 0` leaves the staircase. `--min-detail 6` and
+ `--smooth -1` are `prep_threshold_range`; `--smooth 0.2` with the
+ default `--min-detail` warns `prep_smooth_exceeds_detail`.
+61g. **The output file.** A 200 × 100 mm page prepares to a file declaring
+ 200 mm × 100 mm and a millimetre `viewBox`; every shape is a filled
+ `<path>` with no stroke, text, image, clip path, mask, gradient or hidden
+ object; a lone rectangle prepares to the same rectangle (bounding box
+ within 0.01 mm, area equal); a letter "F" is still an "F" and in the same
+ place (no flip, no shift); an existing output file is not overwritten
+ (an error naming it); a PNG or JPEG input is `prep_not_svg` and says to
+ trace in Inkscape; malformed SVG is an error and no file is written.
+ `init` on the output prints none of the 49a warnings and imports one
+ shape per piece.
+61h. **The report.** On `ring-cross.svg` the report names a design height
+ of 60.00 mm and, in `--regions` mode, a narrowest gap of 2.000 mm (3.33 %
+ of the height), 3.33 / 6.67 / 10.00 mm at 100 / 200 / 300 mm tall,
+ reaching 1.5 mm at 45 mm tall; in default mode a thinnest piece of
+ 2.000 mm. The same art with 1 mm strokes (about 1.7 % of the height),
+ prepared in default mode, warns `prep_regions_suggested`; the 2 mm
+ version does not. A filled rectangle over 98 % of the drawing's box warns
+ `prep_background_shape`. The report prints counts of what was dropped
+ and filled that agree with 61f.
+61i. **Determinism.** The same input prepared twice gives the same bytes;
+ so do the same paths in reverse document order, and the same drawing
+ saved with CRLF line ends.
+61j. **No machining inputs.** `image-prep --help` lists no tool, stock,
+ depth, feed or size option, and the output of 61g is the same whatever
+ the project it is later used in.
+61k. **Line art to inlay, end to end.** `ring-cross.svg` prepared with
+ `--regions`, `init`, an Inlay (60° 6.35 mm V-bit, a 3.175 mm end mill as
+ clearing pass, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`) with
+ a circular boundary 8 mm beyond the pockets: `init` prints no 49a
+ warning, both boards export with every program passing S1–S19, and the
+ pair seats within 0.05 mm as in 57. The male is one board carrying four
+ plugs, and the female four pockets.
+61l. **Boundary replaces the margin.** The star fixture (60 mm tip to
+ tip), the Inlay of 57 (`depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm:
+ 2`, the 60° 6.35 mm V-bit) and a boundary of one 80 mm square centred on
+ the star, 10 mm from each tip, on a 100 × 100 mm male board: with
+ `margin_mm: 8` still set `check` warns `inlay_margin_ignored`; with
+ `margin_mm: null` and `outline_rounding_mm: null` it exports without a
+ warning of that kind. Every male cutting point's cone at the start plane
+ lies inside the square and outside the mirrored star, except inside the
+ mirrored circle, which is carved as a hole is; no cutting point is below
+ Z −5. With `clearing: [t2]` (3.175 mm end mill) the end mill's outermost
+ path at Z −5 is the square inset by its radius, 1.5875 mm, within 0.01
+ mm, its walls vertical, and the square's corners are cut with that
+ radius; no V-bit cut comes within its cone's radius at the male board's
+ top (2.887 mm) of the square. Without clearing the square's edge is a V
+ wall, as a computed band's is. The female's toolpath is move for move what
+ it is with no boundary.
+61m. **Mirrored with the design.** The "DC" project of the lettered pair
+ (`fixtures/dc.dcv`) with a boundary of its 90 × 60 mm frame moved 3 mm
+ right: the room from the letters to the boundary is about 5.3 mm on the
+ left and 11.3 mm on the right as drawn, and on the male the mirrored
+ letters stand with about 11.3 mm on the left and 5.3 mm on the right, the
+ band's edge being the drawn frame mirrored about X = 55 (within the
+ flatten tolerance); `check` prints `inlay_male_mirrored` at X = 55 mm.
+61n. **Boundary checks.** On the star: a boundary smaller than the star,
+ or one passing through a tip, is `inlay_boundary_crosses_design` naming
+ the nearest point; an open polyline, `inlay_boundary_open`; an instance
+ that is also a target, `inlay_boundary_is_target`; an id the project does
+ not have, `inlay_boundary_unknown`; a second boundary shape that holds no
+ part of the design, `inlay_boundary_empty` (a warning that does not stop
+ export); a boundary shape with a hole round the star's circle, the hole
+ ignored with `inlay_boundary_hole_ignored` and the band cut through it as
+ band; each located at `operations[i].boundary`. The same star with no
+ boundary exports as before, byte for byte.
+61o. **Several boundaries.** Two stars 120 mm apart, each with its own
+ 80 mm square boundary: the male's band is the two squares less the
+ stars; a boundary that holds only one star is `inlay_boundary_crosses_design`
+ for the other; one 260 × 100 mm oval round both gives one band.
+61p. **Boundary, cut-out and the board's edge.** With the boundary of 61l,
+ `clearing: [t2]` and a cut-out by t2 with four tabs: every point of the
+ cut-out's tool-centre path is 1.5875 mm inside the square, within 0.01
+ mm (as 57, #461), and the freed plug's outline is the square inset by
+ 3.175 mm. With a 68 mm square (4 mm clear of each tip) and no clearing,
+ `inlay_cut_out_no_room` names 5.484 mm (2 · P · tan(α/2) + the tool's
+ diameter), the figure `margin_mm: 4` gives. A
+ boundary that runs 6 mm past the male board's left edge is clipped to it,
+ warns `inlay_band_clipped` as 57's does, and nothing is cut past the
+ board.
+61q. **Format 26.** A format 25 project loads, migrates with
+ `boundary: []` in every Inlay, and exports the same bytes as before; a
+ project with a boundary saves and loads unchanged; Photo V-Carve's
+ files are format 27.
+61r. **Safety re-derives from the instance.** A male program exported for
+ a boundary and then checked against the same project with the boundary
+ instance moved 5 mm, so that some cuts lie outside the new band, fails
+ S17 and S9 (the open-edge end mill's cuts, the cut-out's ring); the
+ program exported after the move passes. The check never calls a
+ generator (S17's rule, unchanged).
+61s. **Bench stand-in.** The line-art inlay's synthetic fixture
+ (`tests/fixtures/prep/compass.svg`, see Test parts), prepared with
+ `--regions`, then an Inlay with a drawn oval boundary, exports both
+ boards with every program passing S1–S19, seats within 0.05 mm, and
+ every cut lies inside its 110 × 80 mm board with at least 3 mm to spare.
+
 ## Safety requirements
 
 S1–S16 apply to every operation and every post-processor. New in this
@@ -753,6 +1191,22 @@ move from one groove to the next is at `stepover_retract_mm` above the
 start plane as a feed move, and only a retract to safe Z or a rise to
 the clearance height is a rapid, so S2 holds unchanged. Checked on the
 parsed program.
+- **S17 and S9 with a drawn boundary (3.4, #449).** A male Inlay with a
+`boundary` is held to the band that boundary draws, re-derived by the
+safety pass from the boundary instances in the project (mirrored with the
+design, holes dropped, clipped to the male board) with the same pure
+geometry the generator uses, never by calling a generator: the V-bit's
+cone at the start plane stays inside the band less the design; with an
+open edge the cone at the male board's top stays inside the band's edge;
+the end mill clearing the floor, and the cut-out, stay inside the floor
+rings that band gives. A boundary changed after export therefore fails
+the old program (61r). No new rule number: the rule is S17's and S9's,
+applied to a band the user drew.
+- **`image-prep` is not a safety layer.** It writes an SVG, never motion.
+Every program cut from its output passes S1–S19 exactly as one cut from
+any drawing does, and the generators handle an unprepared drawing as they
+always did (the stress tests, #464, cover that): preparing art helps the
+user and hides no generator defect.
 - **S2, S6, S7 unchanged.** A start plane below the stock top changes no
 rule: the descent to it is a plunge at the plunge rate. S6 reads a
 groove's samples as the straight cuts they are. S7 holds a picture's
@@ -760,8 +1214,9 @@ grooves, widened by the groove width at their depth, inside the stock.
 
 ## Test parts
 
-Three parts, all cut on grblHAL. Record date, outcome and deviations
-after each.
+Four parts, all cut on grblHAL. Record date, outcome and deviations
+after each. They follow the sub-phases: the sign (3.2), the lettered
+inlay pair (3.3), the line-art inlay (3.4) and the photo (3.5).
 
 ### Sign: raised oval, inset lettering
 
@@ -886,6 +1341,44 @@ their height.
 
 **Cut record:** not yet cut.
 
+### Line-art inlay
+
+**Compass.** The sub-phase 3.4 bench check: line art prepared by
+`image-prep --regions` and inlaid inside a drawn oval. The drawing is
+`tests/fixtures/prep/compass.svg` (drawn by a script, like the others): a
+70 mm tall compass in line work, an outer ring, a cross of four straight
+lines and four diagonals to the ring, every stroke 2.5 mm wide (3.6 % of
+its height), so the board ridges between the pockets are 2.5 mm. It stands
+for the maintainer's eagle line art, which is not committed; a bench check
+may substitute the user's own art, prepared as the "Preparing artwork"
+chapter says, and an oval drawn round it. The oval is a second path in the
+SVG, drawn 96 × 84 mm round the ring, which `init` imports as an instance
+the Inlay names as its `boundary`.
+
+| Item | Value |
+| --- | --- |
+| Female board | a light hardwood (maple, oak), nominal 12 mm, 130 × 100 mm stock |
+| Male board | a contrasting dark hardwood (walnut), nominal 12 mm, 130 × 100 mm |
+| T1 | 60° V-bit, 6.35 mm diameter, as the lettered pair's |
+| T2 | 3.175 mm two-flute upcut end mill, as the lettered pair's |
+| Preparation | `image-prep compass.svg --regions`, then `init`; the report's narrowest gap, 2.5 mm, is the ridge the cut should show |
+| Inlay | `op1`, targets the prepared pockets, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `boundary` the oval, `margin_mm` and `outline_rounding_mm` `null`, `step_over_fraction: 0.1`; clearing pass t2 `offset`, climb, ramp 15°; `cut_out` by t2 with four tabs |
+| Safe Z | 10 mm |
+| Controller | grblHAL, one program per tool run |
+
+**Procedure:** as the lettered pair's, from the preparation on: cut the
+female, then the male, free the plug (the cut-out runs 1.5875 mm inside
+the oval, so the plug's outline is the oval less 3.175 mm all round), test
+fit, glue, clamp, saw off the backing, plane flush.
+
+**Success:** after planing, no visible gap round any pocket (a 0.1 mm
+feeler gauge does not enter); the compass's lines read as ridges of the
+light board, within 0.2 mm of the 2.5 mm the report gave; each ridge is
+unbroken; the oval plug's outline is the drawn oval inset by the end mill's
+diameter, within 0.3 mm.
+
+**Cut record:** not yet cut.
+
 ### Photo V-carve
 
 **Photo.** A photograph of the user's choice with good contrast, 100 mm
@@ -912,6 +1405,17 @@ picture and settings within the tolerance of acceptance 60.
 
 ## Documentation deliverables
 
+- User Guide (3.4): a new chapter "Preparing artwork" (what goes wrong in
+drawings, the `init` checks and each code, `image-prep` with a
+shapes-mode and a line-art workflow, tracing a picture in Inkscape first,
+the two thresholds, the report and how to read it, why circles come back
+as polygons, what to do about a page background); Inlay updated (the
+drawn boundary: drawing it, naming it, mirrored, the cut-out's inset,
+several, clipping, replacing margin and rounding); Importing and Shapes,
+holes and islands updated (the checks); Warnings updated with every code
+in capability 49g; The project file updated (format 26, `boundary`).
+Quick start: the inlay pair's "Preparing your own design" points to the
+chapter, and a new section "From line art" runs `compass.svg` end to end.
 - User Guide: V-Carve operation (medial lines, flat depth, clearing
 passes, start depth, one pass, the offset strategy, choosing a bit angle);
 Inlay (the method, the four values and what each changes, the two
@@ -929,22 +1433,27 @@ test part.
 medial lines and offset rings; Golden corpus how-to for the RasterCarve
 cases (what is captured, what is not, and why); Crate map updated.
 - `CONTEXT.md`: the terms this phase adds, with their PureCutCNC, VCarve
-and Corbin names.
+and Corbin names. Image Prep, Ink, Piece, Speck and Boundary were added
+with the 3.4 spec.
 
 ## Exit criteria
 
 Delivered as sub-phases 3.1 V-Carve, 3.2 Countersink, 3.3 Inlay, 3.4
-Photo V-Carve and 3.5 Release, each a GitHub milestone with its own
-format version and bench check (design spec, "Sub-phases"); the tag
-comes at 3.5.
+Image Prep, 3.5 Photo V-Carve, 3.6 Tapered Ball Nose and 3.7 Release,
+each a GitHub milestone with its own bench check and, where it changes the
+file, its own format version (design spec, "Sub-phases"); the tag comes
+at 3.7. (3.4 was inserted on 2026-11-10, at the maintainer's request:
+preparing artwork is the hardest part of an inlay. It renumbers Photo
+V-Carve from 3.4 to 3.5, Tapered Ball Nose, specified separately in #445,
+is 3.6, and Release moves from 3.5 to 3.7.)
 
 - [ ] All acceptance tests and safety tests green on all three OSes.
 - [ ] Golden parity cases captured and passing: the PureCutCNC V-carve
 
   cases and the RasterCarve photo cases.
-- [ ] The three test parts cut on grblHAL and recorded above, the inlay
+- [ ] The four test parts cut on grblHAL and recorded above, the inlay
 
-  pair fitted.
+  pairs fitted.
 - [ ] Quick start and every chapter above published.
 - [ ] `CONTEXT.md` updated.
 - [ ] `v0.3.0` tagged with binaries.
@@ -965,3 +1474,29 @@ capabilities above, and the record stays here.
 | 6   | `init` on a picture (46): wanted, or `image add` only?                                                                                                                                                                         | Answered 2026-10-26: agreed, both. |
 | 7   | Test-part bits: which V-bits does the bench have?                                                                                                                                                                              | Answered 2026-10-26: 1/4 in (6.35 mm) 15°, 30°, 60° and 90°. Every test part and acceptance test uses those; a 90° bit's cone height is 3.175 mm, which caps the sign's flat depth at 2.5 mm and its countersinks at 6 mm. |
 | 8   | Countersink depth measured from the stock top (the hole's top), as here, or from the top of an instance with its own `z_top_mm` once that field is read (PureCutCNC measures from each target's own top face)?                 | Answered 2026-10-26: from the hole's top, which must allow for a hole in a pocket floor. So a countersink has a `start_depth_mm` like a carve's (44), checked against an earlier Pocket by `start_depth_mismatch` (41). |
+
+### Sub-phase 3.4: open for the maintainer's review
+
+Added with the 3.4 spec (2026-11-10). Each row has a recommendation and
+its reason; the maintainer answers in review, and the decisions are then
+folded into capabilities 49a to 49g like the table above. Questions 10 to
+15 are #449's, in its order.
+
+| #   | Question | Recommendation |
+| --- | -------- | -------------- |
+| 9   | Which format number does the boundary take? Photo V-Carve was 26 until 3.4 was inserted; 3.4 lands before it. | The boundary is format 26 (an additive `boundary: []`) and Photo V-Carve moves to 27, since 3.4 ships first and the chain is one version per sub-phase that changes the file. Nothing of Photo's is built, so the renumbering costs a few lines of spec, and `serialize::photo_v_carve_is_format_26` is renamed when its slice lands. A later number for the boundary would leave 26 empty for no reason. |
+| 10  | #449: does the boundary replace `margin_mm` (and `outline_rounding_mm`), or does `margin_mm` stay as the minimum band? | Replace (49f). One source for the band's edge: a drawn edge cannot also be "the design grown by M", and a second number that must agree with the picture is a way to fail an export for a reason the user cannot see. What the margin's rules need (an end mill fits, the flank stays inside, the cut-out has room) is read from the narrowest band the drawn edge leaves, which the generator can measure exactly, so the rules lose nothing. With a boundary the margin may be `null`; a set one warns `inlay_margin_ignored` rather than silently winning. `margin_mm` stays the way to ask for a computed band. |
+| 11  | #449: is the boundary mirrored with the design, or used as placed? | Mirrored with the design, about the same line (49f). The user draws "round what you see", and the plug is the design mirrored; as placed, the boundary would no longer bear the relation to the design that the user drew: a boundary that follows the design's shape (a contour a few millimetres out, the usual way to draw one) would cross the mirrored design, and an off-centre oval would sit on the wrong side of it (3 mm right of centre in the drawing, with 5.3 mm of room on the left and 11.3 on the right, would give those rooms to the wrong ends of the lettering). Mirroring is an isometry, so the checks run once on what was drawn. |
+| 12  | #449: validation. | Closed, a project instance, not a target, and the design strictly inside it, each a named error (49f); a boundary that crosses or touches the design is the one hard geometric error. Not required: inside the stock (the band is clipped to the board, #495, and only the design must stay clear of the board's edge) and a minimum room (the existing `inlay_band_edge_v_wall` and `inlay_cut_out_no_room` already say what a narrow band costs, from the measured narrowest band). The issue's draft asked for the design grown by `P·s` plus the tool's diameter: for an end mill that is the open edge's condition, which decides the edge's kind, not whether the male can be cut, so it is a warning that already exists rather than a new error. |
+| 13  | #449: one boundary per disjoint part, or one overall? | A list of instances, whose union is the edge (49f), so one oval round everything and one shape round each group both work and need no extra field. Each design part must be inside the union, not inside one particular shape. A list costs nothing over one id (`targets` is one already), and it spares the user from unioning shapes in the drawing program. |
+| 14  | #449: the cut-out on the boundary, inside it, or mid ring? | Inside it, exactly as inside the computed band (49f; #461): tool centre one radius in with an open edge, the slope's foot plus a radius in with a V wall. The kerf then lies inside the band's flat floor, so above the floor it cuts nothing the carve left, and the freed plug has no knife edge. Cutting on the boundary would put half the tool in uncut board, and the mid-ring path was replaced in #461 for the maintainer's reason. The price is that the finished plug is the drawn outline inset by the tool's diameter, which the chapter says plainly. |
+| 15  | #449: safety. | The safety pass derives the band from the boundary instances in the project, as it does for #448, with dc-geometry and the shared `male_band` only, never a generator; so a boundary edited after export fails the old program (61r). No new S number. |
+| 16  | Default `--min-detail`. | 0.2 (percent of the design's height): 0.4 mm at 200 mm tall, 0.1 mm at 50 mm. It is the level below which traced art's specks live: Inkscape's Trace Bitmap suppresses specks of 2 px by default, which is 0.2 % of a 1000 px picture, and a V-bit cannot meaningfully carve a piece whose widest point is a few tenths of a millimetre. A proposal: the calibration slice (design spec, slice 21f) runs the synthetic fixtures and traced art at 0.1, 0.2, 0.3 and 0.5 and keeps the smallest value at which the specks go and no intended detail (a serif tip, a counter) does; the README records the sweep, and the value changes here if the sweep says so. The maintainer's own art, which is not committed, is the check on the bench. |
+| 17  | Default `--smooth`. | 0.05 (percent of the height): 0.1 mm at 200 mm tall. Traced edges jitter by about a pixel, 0.05 to 0.1 % of a 1000 px picture; this takes the staircase out and stays within a quarter of the speck threshold, so smoothing cannot remove what `--min-detail` keeps (`prep_smooth_exceeds_detail` warns above half). Chosen by the same sweep. |
+| 18  | When does the report suggest `--regions`? | When the ink's median width is under 2 % of the height (49c). The eagle is 0.7 %, a bold serif letter about 8 %, a plain stroke monogram 3 to 4 %. A suggestion only; the user decides. |
+| 19  | "Relative to the design's height": a wide, short design (a banner 400 × 40 mm) makes every threshold a tenth of what its width would give. | Keep the height, as decided on 2026-11-01, and print it in the report so a surprise is visible. If the maintainer prefers, the longer side is a one-line change in the design (`design_scale_mm`), but it makes the report's "at 100, 200 and 300 mm tall" figures ambiguous for a wide design, which is why height is recommended. |
+| 20  | Nested paths: a path inside another is a hole (as `init` reads it, 49c step 3), whatever the paint, or should paint order and colour decide (a white shape on a black one is a hole, a black one on black is solid)? | Nesting, as `init` does: the prepared file then means exactly what `init` will read, one rule in both places. Reading paint order and colour is the start of colour separation (deferred, see out of scope), and it needs a rule for every colour pair. `svg_hole_as_separate_path` tells the user when two filled paths nest, so the surprise is reported. |
+| 21  | Page backgrounds. A white rectangle behind the art covers the page, so the art nests inside it and becomes holes, or, in `--regions`, makes the ink a solid. | The report flags a filled shape over 98 % of the drawing's box (`prep_background_shape`) and the chapter says to delete it. Do you want a `--skip <svg id>` option (repeatable) as well? Recommended yes, as a small explicit switch that needs no colour logic; left out of 49b until you say so, because the list of options you agreed on is shorter. |
+| 22  | Line art with small gaps in its outline encloses nothing, so `--regions` finds no spaces there. | Not in 3.4: the report counts ink components that enclose no space (`prep_regions_open_ink`) and the chapter says to close the line in the drawing program. A `--close-gaps <pct>` that closes the ink by half of the gap before finding spaces is the natural follow-up; it changes the art more than anything here, so it waits for a real need. |
+| 23  | Circles and arcs in the input come out as polygons (the pipeline's booleans are polygonal). Is that acceptable? | Yes for inlay work: V-Carve flattens its regions before the medial axis anyway, and the tolerance, 0.005 % of the height, is finer than the carve's own. It matters for a Drill on circles from prepared art, so the chapter says: drill holes come from the original drawing. Passing an untouched path's curves through to the output is possible and listed as out of scope for 3.4. |
+| 24  | The synthetic `compass.svg` as the committed stand-in for the maintainer's eagle (test part 3). | Yes, as 49 and the test part say: the eagle is the motivating case and the bench check may use it, but nothing of it is committed. The compass has the same shape of problem: thin ink, many pockets, ridges of a known width. |
