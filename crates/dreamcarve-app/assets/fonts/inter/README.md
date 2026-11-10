@@ -34,10 +34,30 @@ pyftfeatfreeze -f tnum extras/ttf/Inter-SemiBold.ttf Inter-SemiBold.ttf
 
 Afterwards the ten digits of each weight share one advance width (1328,
 1327 and 1325 units for Regular, Medium and SemiBold), and the names are
-unchanged. SHA-256 of the files as committed:
+unchanged.
+
+Inter's `tnum` also gives punctuation a tabular form. For most of it the
+change is a few units, but the hyphen grows from 942 to 1328 units, which
+spaced out every hyphenated word (`holes-1`, `Bottom-left`). The visual
+review (#549) mapped U+002D back to the proportional `hyphen` glyph in
+each file, with fontTools 4.60.1; the true minus U+2212, which numbers
+use, stays tabular:
+
+```python
+from fontTools.ttLib import TTFont
+for path in ["Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-SemiBold.ttf"]:
+    font = TTFont(path)
+    for table in font["cmap"].tables:
+        if table.isUnicode() and table.cmap.get(0x2D) == "hyphen.tf":
+            table.cmap[0x2D] = "hyphen"
+    font.save(path)
+```
+
+`theme::figures_are_tabular_and_hyphens_are_not` checks both. SHA-256 of
+the files as committed:
 
 | File | SHA-256 |
 | --- | --- |
-| `Inter-Regular.ttf` | `f473801df83b94aca759501dd148ae60309ed82e897121b1e6c3c03b8dc344f2` |
-| `Inter-Medium.ttf` | `64fb3479e46903c636e199ef8b28970f125ed512801a5f200ca209ca5f1769fa` |
-| `Inter-SemiBold.ttf` | `636654b1db022e7332d6f2e48c17e670ba4a099f8f6bac97f61abde949c9c1c9` |
+| `Inter-Regular.ttf` | `1fb20b6265de25599122da86b1f52933245da15a48a89759f927c28f09a194a0` |
+| `Inter-Medium.ttf` | `fc227267da6b66eb5ccd1cb5e2035c1c64db672c62590191b6f40ba7bed02a12` |
+| `Inter-SemiBold.ttf` | `088c12b393f84f65df270ac1cc32fea12a2b00d475b099639e878a89bf925c18` |
