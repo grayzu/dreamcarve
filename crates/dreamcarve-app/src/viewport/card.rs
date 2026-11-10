@@ -143,14 +143,32 @@ fn body(ui: &mut Ui, app: &App, visibility: Visibility, colour: ColourMode, out:
 /// The depth legend left of `card`: the ramp as a 12 × 160 px bar, a tick
 /// and a label at the stock top, each operation's depth and the deepest
 /// cut, labels that would overlap stacked to the right; on a
-/// `viewport.label.bg` pill so it reads over the toolpaths.
+/// `viewport.label.bg` pill so it reads over the toolpaths. Drawn in its
+/// own non-interactive area rather than a bare layer: egui orders areas, so
+/// a sheet opened later stacks above it (#549), where a bare layer would
+/// paint over the sheet.
 fn draw_legend(ui: &Ui, pane: Rect, card: Rect, app: &App, legend: &DepthLegend) {
+    egui::Area::new(egui::Id::unique("toolpaths_legend"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pane.min)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            let painter = ui.painter().clone();
+            paint_legend(ui, &painter, pane, card, app, legend);
+        });
+}
+
+/// [`draw_legend`]'s painting, on `painter`.
+fn paint_legend(
+    ui: &Ui,
+    painter: &egui::Painter,
+    pane: Rect,
+    card: Rect,
+    app: &App,
+    legend: &DepthLegend,
+) {
     let palette = Palette::current(ui);
     let strings = app.strings();
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::unique("toolpaths_legend"),
-    ));
     let small = TextStyle::Small.resolve(ui.style());
     let title = painter.layout_no_wrap(
         strings.get(StrKey::AppToolpathsLegend).to_owned(),
