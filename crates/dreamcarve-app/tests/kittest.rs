@@ -3290,3 +3290,61 @@ fn clicking_a_cut_opens_its_operation() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `experience.md` section 13 and design question 2 (#549): the plaque's
+/// workspace, generated, with its Panel pocket open in the editor, in a
+/// 1280 × 800 window, compared with the committed pair
+/// `tests/snapshots/workspace_light.png` and `workspace_dark.png` under
+/// `kittest.toml`'s thresholds. Linux only: font rasterisation differs per
+/// OS, so the other two run the behaviour tests without image comparison.
+/// Like every rendering test it says so and renders nothing where the
+/// machine has no wgpu adapter (CI's Linux job needs Mesa's lavapipe).
+/// `UPDATE_SNAPSHOTS=1` rewrites the pair; a mismatch leaves
+/// `<name>.new.png` and `<name>.diff.png` beside it.
+#[test]
+fn snapshot_workspace_light_and_dark() {
+    if !cfg!(target_os = "linux") {
+        println!(
+            "snapshot_workspace_light_and_dark: image snapshots are compared on Linux only \
+             (design question 2)"
+        );
+        return;
+    }
+    let dir = scratch("snapshot-workspace");
+    // Opened in place and never saved: the fixture is only read.
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = common::wgpu_harness(
+        "snapshot_workspace_light_and_dark",
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    ) else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    assert!(h.query_by_label("Panel · Pocket").is_some(), "the editor");
+
+    let mut failures = Vec::new();
+    for (theme, name) in [
+        (egui::Theme::Light, "workspace_light"),
+        (egui::Theme::Dark, "workspace_dark"),
+    ] {
+        h.input_mut().system_theme = Some(theme);
+        h.run();
+        assert_eq!(h.ctx.theme(), theme);
+        if let Err(err) = h.try_snapshot(name) {
+            failures.push(format!("{name}: {err}"));
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
