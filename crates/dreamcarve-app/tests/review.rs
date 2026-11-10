@@ -170,6 +170,11 @@ fn scenes(dir: &Path) -> bool {
         ]));
     h.run();
     shoot(&mut h, "06-shape-selected");
+    // The Add menu: every operation kind's glyph.
+    click(&mut h, "Add");
+    shoot(&mut h, "06b-add-menu");
+    h.key_press(egui::Key::Escape);
+    h.run();
     h.key_press(egui::Key::Escape);
     h.run();
     for (name, scene) in [
@@ -220,7 +225,14 @@ fn scenes(dir: &Path) -> bool {
         .expect("the card's By depth segment")
         .click();
     h.run();
+    click(&mut h, "Program extents");
     shoot(&mut h, "16-minimum-window-by-depth");
+    click(&mut h, "Program extents");
+    h.query_all_by_label("By operation")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the card's By operation segment")
+        .click();
+    h.run();
     drop(h);
 
     // The sign: Drill and V-Carve.
