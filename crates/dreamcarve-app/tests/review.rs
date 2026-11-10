@@ -175,6 +175,17 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "06b-add-menu");
     h.key_press(egui::Key::Escape);
     h.run();
+    // The same shape locked: grey handles and the padlock.
+    let lock = |locked: bool| dc_app::Command::SetInstanceFlags {
+        ids: vec![dc_project::InstanceId::new("i4")],
+        visible: None,
+        locked: Some(locked),
+    };
+    h.state_mut().app_mut().run(lock(true)).unwrap();
+    h.run();
+    shoot(&mut h, "06c-locked-shape");
+    h.state_mut().app_mut().run(lock(false)).unwrap();
+    h.run();
     h.key_press(egui::Key::Escape);
     h.run();
     for (name, scene) in [
