@@ -63,9 +63,11 @@ use eframe::egui::{
     TextStyle, Ui,
 };
 
+use crate::keyboard::{self, Command as Shortcut};
 use crate::panels::{editor, empty, project, properties};
+use crate::shell::focus;
 use crate::shell::theme::{self, Palette};
-use crate::shell::window::{Action, FrameState};
+use crate::shell::window::{Action, FrameState, shortcut_action};
 use crate::widgets::icon::Icon;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
@@ -398,35 +400,52 @@ impl ViewportState {
 }
 
 /// The keys the Viewport answers when no field has the keyboard
-/// (functional spec, capability 54): F fits, Shift F zooms to the
-/// selection, Escape clears it unless a menu or popup takes it, the arrow
-/// keys nudge the selected shapes by 1 mm (10 with Shift, 0.1 with Alt),
-/// one undo step each, and Delete or Backspace deletes them.
+/// (functional spec, capability 54), read through the shortcut table
+/// ([`keyboard::SHORTCUTS`]): F fits, Shift F zooms to the selection,
+/// Ctrl/⌘ A selects every visible shape, Ctrl/⌘ D duplicates the
+/// selection, H hides it, Shift H shows it, L locks or unlocks it, Delete
+/// or Backspace deletes it, the arrow keys nudge it by 1 mm (10 with
+/// Shift, 0.1 with Alt), one undo step each, T turns the Tab tool on or
+/// off, and Escape clears the selection unless a menu or popup takes the
+/// key, the Tab tool or a pick is armed, or the key just left a
+/// focused control (a field's Escape restores the field and no more). The
+/// arrows are the Viewport's only while no other control has the focus,
+/// since they move between a list's rows.
 pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
-    if ctx.egui_wants_keyboard_input() {
+    if ctx.text_edit_focused() {
         return Vec::new();
     }
     let popup_open = egui::Popup::is_any_open(ctx);
+    let arrows_free = focus::keys_free(ctx);
+    let escape_left_widget = focus::escape_left_widget(ctx);
     let selected = app.selection().instances().to_vec();
     let park_picking = project::park_pick_armed(ctx);
     let target_picking = editor::target_pick(ctx).is_some();
     let point_picking = editor::point_pick(ctx).is_some();
     let tab_tool_armed = tab_tool::armed(ctx);
-    let selected_tabs = app.selection().tabs().to_vec();
     let mut toggle_tab_tool = false;
     let mut disarm = false;
+    let mut pressed = Vec::new();
     let mut actions = Vec::new();
     ctx.input_mut(|input| {
-        if input.consume_key(Modifiers::SHIFT, Key::F) {
-            actions.push(Action::ZoomToSelection);
+        for command in [
+            Shortcut::ZoomToSelection,
+            Shortcut::FitView,
+            Shortcut::SelectAll,
+            Shortcut::Duplicate,
+            Shortcut::Show,
+            Shortcut::Hide,
+            Shortcut::Lock,
+            Shortcut::Delete,
+        ] {
+            if !popup_open && keyboard::consume(input, command) > 0 {
+                pressed.push(command);
+            }
         }
-        if input.consume_key(Modifiers::NONE, Key::F) {
-            actions.push(Action::FitView);
-        }
-        if !popup_open && input.consume_key(Modifiers::NONE, Key::T) {
+        if !popup_open && keyboard::consume(input, Shortcut::TabTool) > 0 {
             toggle_tab_tool = true;
         }
-        if !popup_open && input.consume_key(Modifiers::NONE, Key::Escape) {
+        if !popup_open && keyboard::consume(input, Shortcut::Escape) > 0 && !escape_left_widget {
             if park_picking || target_picking || point_picking || tab_tool_armed {
                 // Disarmed below: the context is locked inside `input_mut`.
                 disarm = true;
@@ -434,31 +453,22 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
                 actions.push(Action::ClearSelection);
             }
         }
-        if !selected_tabs.is_empty()
-            && !popup_open
-            && (input.consume_key(Modifiers::NONE, Key::Delete)
-                || input.consume_key(Modifiers::NONE, Key::Backspace))
-        {
-            actions.push(Action::Run(Box::new(Command::DeleteTabs(
-                selected_tabs.clone(),
-            ))));
-        }
-        if selected.is_empty() || popup_open {
+        if selected.is_empty() || popup_open || !arrows_free {
             return;
         }
-        // Shift and Alt first: `consume_key` ignores extra Shift and Alt.
-        for (key, (dx, dy)) in [
-            (Key::ArrowLeft, (-1.0, 0.0)),
-            (Key::ArrowRight, (1.0, 0.0)),
-            (Key::ArrowDown, (0.0, -1.0)),
-            (Key::ArrowUp, (0.0, 1.0)),
+        for (command, step_mm) in [
+            (Shortcut::NudgeCoarse, NUDGE_SHIFT_MM),
+            (Shortcut::NudgeFine, NUDGE_ALT_MM),
+            (Shortcut::Nudge, NUDGE_MM),
         ] {
-            for (modifiers, step_mm) in [
-                (Modifiers::SHIFT, NUDGE_SHIFT_MM),
-                (Modifiers::ALT, NUDGE_ALT_MM),
-                (Modifiers::NONE, NUDGE_MM),
+            for (key, (dx, dy)) in [
+                (Key::ArrowLeft, (-1.0, 0.0)),
+                (Key::ArrowRight, (1.0, 0.0)),
+                (Key::ArrowDown, (0.0, -1.0)),
+                (Key::ArrowUp, (0.0, 1.0)),
             ] {
-                while input.consume_key(modifiers, key) {
+                let presses = keyboard::consume_key(input, command, key);
+                for _ in 0..presses {
                     actions.push(Action::Run(Box::new(Command::TransformInstances {
                         ids: selected.clone(),
                         delta: Transform::translate(dx * step_mm, dy * step_mm),
@@ -466,14 +476,12 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
                 }
             }
         }
-        if input.consume_key(Modifiers::NONE, Key::Delete)
-            || input.consume_key(Modifiers::NONE, Key::Backspace)
-        {
-            actions.push(Action::Run(Box::new(Command::DeleteInstances(
-                selected.clone(),
-            ))));
-        }
     });
+    actions.extend(
+        pressed
+            .into_iter()
+            .filter_map(|command| shortcut_action(app, command)),
+    );
     if toggle_tab_tool {
         tab_tool::arm(ctx, !tab_tool_armed);
     }
@@ -1322,6 +1330,10 @@ pub(crate) fn show(
         .show(ui, |ui| {
             let (pane, response) =
                 ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+            // Tab stops on the Viewport (#548): named for screen readers.
+            let viewport_name = state.app.strings().get(StrKey::AppViewportName);
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::Canvas, true, viewport_name));
             let app = state.app;
             let before = app.view().camera;
             let mut camera = before;
