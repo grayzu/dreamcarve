@@ -168,10 +168,9 @@ places:
 | --- | --- | --- | --- |
 | 15° | 11° | 1.2° | 25° |
 | 30° | 5.7° | 0.6° | 14° |
-| 60° | 2.7° | 0.3° | 6.7° |
-| 90° | 1.6° | 0.2° | 4° |
 
-A corner sharper than the table's angle *can* hold the plug up, not
+The 60° and 90° bits have no such limit: DreamCarve holds them to the
+0.05 mm seat at every corner. A corner sharper than the table's angle *can* hold the plug up, not
 always: whether it does depends on where the corner's tip falls between
 the points the program can write.
 

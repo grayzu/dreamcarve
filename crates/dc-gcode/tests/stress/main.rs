@@ -483,8 +483,8 @@ fn lettering_outline_near_itself_is_merged() {
 /// tan(α/2) + w))`. A 10° wedge 20 mm long: a binding cell 0.05 mm from
 /// its tip is excused with the 15° bit in an inch program (`N` 24.8°) and
 /// in a three-place millimetre one (11.1°); not in a four-place
-/// millimetre one (1.2°), nor with the 30° bit in millimetres (5.7°) or
-/// the 60° in inches (6.7°). A cell 5 mm in along it is never excused.
+/// millimetre one (1.2°), nor with the 30° bit in millimetres (5.7°).
+/// A cell 5 mm in along it is never excused.
 #[test]
 fn grid_limit_excuses_only_a_corner_sharper_than_the_bit_and_places_allow() {
     let half = 5.0_f64.to_radians().tan() * 20.0;
@@ -528,7 +528,6 @@ fn grid_limit_excuses_only_a_corner_sharper_than_the_bit_and_places_allow() {
         ("15°, mm", with(mm, 15.0, None), true),
         ("15°, mm at four places", with(mm, 15.0, Some(4)), false),
         ("30°, mm", with(mm, 30.0, None), false),
-        ("60°, inch", with(inch, 60.0, None), false),
     ] {
         assert_eq!(
             excused(&c, by_tip).is_some(),
@@ -536,6 +535,48 @@ fn grid_limit_excuses_only_a_corner_sharper_than_the_bit_and_places_allow() {
             "{name}: by the tip"
         );
         assert!(excused(&c, far).is_none(), "{name}: 5 mm in");
+    }
+}
+
+/// #589 (the maintainer's decision): the written-grid exception covers
+/// the 15° and 30° bits only; the 60° and 90° bits are held to `SEAT_MM`
+/// everywhere. A 3° wedge, 20 mm long, has a corner sharper than `N` for
+/// all four bits in an inch program (24.8°, 13.6°, 6.7°, 4.0°); a binding
+/// cell 0.05 mm from its tip is excused with the 15° and 30° bits and
+/// not with the 60° or 90°.
+#[test]
+fn written_grid_corner_excuses_only_narrow_bits() {
+    let half = 1.5_f64.to_radians().tan() * 20.0;
+    let wedge = dc_geometry::Polyline::new(
+        vec![
+            dc_geometry::Vertex::line(0.0, 0.0),
+            dc_geometry::Vertex::line(20.0, -half),
+            dc_geometry::Vertex::line(20.0, half),
+        ],
+        true,
+    );
+    let design = Design {
+        profiles: vec![wedge],
+        notes: Vec::new(),
+    };
+    for (angle_deg, excused) in [(15.0, true), (30.0, true), (60.0, false), (90.0, false)] {
+        let mut c = case("line art", 0, design.clone());
+        c.project.display_units = dc_project::Units::Inch;
+        c.project.tools[0].cutter = dc_project::ToolKind::VBit {
+            included_angle_deg: angle_deg,
+        };
+        let female = match c.ops.iter().find(|(k, _)| *k == Kind::Female) {
+            Some((_, dc_project::Operation::Inlay(op))) => op.clone(),
+            _ => panic!("the case has a female"),
+        };
+        let at = c.project.instances[0]
+            .transform
+            .apply(dc_geometry::Point::new(0.05, 0.0));
+        assert_eq!(
+            property::written_grid_corner(&c, &female, at).is_some(),
+            excused,
+            "{angle_deg}° bit"
+        );
     }
 }
 
