@@ -11,11 +11,13 @@
 //! A library as well as a binary so the window tests
 //! (`tests/kittest.rs`) can build the [`Shell`] in egui's harness.
 
+pub mod keyboard;
 mod panels;
 mod shell;
 mod viewport;
 mod widgets;
 
 pub use shell::files;
+pub use shell::focus::Region as FocusRegion;
 pub use shell::theme;
 pub use shell::window::{Dialogs, Layout, NativeDialogs, Options, PanelShown, Shell};

@@ -31,6 +31,7 @@
 - [Configuration](user-guide/configuration.md)
 - [Tool library](user-guide/tool-library.md)
 - [Warnings](user-guide/warnings.md)
+- [Keyboard shortcuts](user-guide/keyboard.md)
 - [Safety](user-guide/safety.md)
 
 # Contributing
