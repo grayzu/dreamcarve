@@ -3389,3 +3389,56 @@ fn depth_legend_paints_under_a_sheet() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The window rectangles of the last frame's text shapes whose text
+/// contains `needle`.
+fn text_rects(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Vec<egui::Rect> {
+    h.output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// #549, first comment (seen by slice 16): at the minimum window, 1280 ×
+/// 768, in *By depth* with *Program extents* on, the depth legend must
+/// not cover the extents caption. The caption moves under the bit-edge
+/// box when its place at the box's top-left is under the legend or the
+/// card.
+#[test]
+fn depth_legend_leaves_the_extents_caption_readable() {
+    let dir = scratch("legend-caption");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        768.0,
+    );
+    settle_export(&mut h);
+    h.query_all_by_label("By depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the card's By depth segment")
+        .click();
+    h.run();
+    h.get_by_label("Program extents").click();
+    h.run();
+    let caption = text_rects(&h, "Program extents (bit edge");
+    assert_eq!(caption.len(), 1, "the caption is drawn once: {caption:?}");
+    let legend = ["stock top", "Screw holes, Cut out"]
+        .iter()
+        .flat_map(|label| text_rects(&h, label))
+        .reduce(|a, b| a.union(b))
+        .expect("the legend's labels");
+    assert!(
+        !caption[0].intersects(legend),
+        "the caption {:?} is clear of the legend {legend:?}",
+        caption[0]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
