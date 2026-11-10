@@ -1458,21 +1458,26 @@ pub(crate) fn show(
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
             let derived = view.derived.clone();
+            let covers: Vec<Rect> = if state.show_empty {
+                empty::card(ui, pane, state, out);
+                Vec::new()
+            } else {
+                let legend = derived.as_ref().and_then(|d| d.legend.clone());
+                let (card, legend) = card::show(ui, pane, app, legend.as_ref(), out);
+                std::iter::once(card).chain(legend).collect()
+            };
+            // After the card and legend, so the caption can step out from
+            // under them; it stays on the pane's layer, below both.
             if let Some(extents) = derived
                 .as_ref()
                 .and_then(|d| d.extents)
                 .filter(|_| app.view().visibility.extents)
             {
-                let corner = Point::new(extents.edge_mm.min.x, extents.edge_mm.max.y);
-                let top_left = window_pos(pane, &camera, corner);
-                card::extents_caption(ui, &painter, app, &extents, top_left);
-            }
-
-            if state.show_empty {
-                empty::card(ui, pane, state, out);
-            } else {
-                let legend = derived.and_then(|d| d.legend);
-                card::show(ui, pane, app, legend.as_ref(), out);
+                let edge = Rect::from_two_pos(
+                    window_pos(pane, &camera, extents.edge_mm.min),
+                    window_pos(pane, &camera, extents.edge_mm.max),
+                );
+                card::extents_caption(ui, &painter, app, &extents, edge, &covers);
             }
             pane
         })
