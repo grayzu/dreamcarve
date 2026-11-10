@@ -252,6 +252,22 @@ impl Icon {
     }
 }
 
+/// A dropdown's chevron (`experience.md`, section 7, "Dropdown"): Lucide
+/// `chevron-down` at 16 px in the control's text colour, painted into the
+/// icon slot `ComboBox::icon` gives, in place of egui's filled triangle
+/// (#549).
+pub(crate) fn combo_chevron(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    visuals: &egui::style::WidgetVisuals,
+    _open: bool,
+) {
+    let colour = visuals.fg_stroke.color;
+    let galley = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, colour);
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, colour);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

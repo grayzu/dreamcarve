@@ -40,6 +40,7 @@ use eframe::egui::{self, Align, Layout, Stroke, TextStyle, Ui};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row;
 
@@ -437,7 +438,7 @@ fn body(ui: &mut Ui, app: &App, display_name: &str, sheet: &mut Sheet, out: &mut
                 StrKey::ExportPreview,
                 &[("name", &dc_app::export::preview_name(sheet.stem.trim()))],
             );
-            ui.checkbox(&mut sheet.preview, preview_label);
+            checkbox(ui, "export.preview", &mut sheet.preview, &preview_label);
             ui.add_space(12.0);
             match sheet.current(app) {
                 Some(ready) if !busy => {
@@ -565,6 +566,7 @@ fn post(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         );
         let mut picked = None;
         egui::ComboBox::from_id_salt("export.post")
+            .icon(crate::widgets::icon::combo_chevron)
             .truncate()
             .selected_text(project_model::post_label(strings, project))
             .width(ui.available_width())
@@ -614,6 +616,7 @@ fn split(ui: &mut Ui, app: &App, sheet: &mut Sheet) {
             None,
         );
         egui::ComboBox::from_id_salt("export.split")
+            .icon(crate::widgets::icon::combo_chevron)
             .truncate()
             .selected_text(label_of(sheet.split))
             .width(ui.available_width())
@@ -652,8 +655,18 @@ fn boards(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet) {
             strings.get(StrKey::ExportBoardsHelp),
             None,
         );
-        ui.checkbox(&mut sheet.boards.female, strings.get(StrKey::ExportFemale));
-        ui.checkbox(&mut sheet.boards.male, strings.get(StrKey::ExportMale));
+        checkbox(
+            ui,
+            "export.female",
+            &mut sheet.boards.female,
+            strings.get(StrKey::ExportFemale),
+        );
+        checkbox(
+            ui,
+            "export.male",
+            &mut sheet.boards.male,
+            strings.get(StrKey::ExportMale),
+        );
     });
 }
 

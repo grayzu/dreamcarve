@@ -33,6 +33,7 @@ use eframe::egui::{self, Align, Layout, Sense, Shape, Stroke, StrokeKind, TextSt
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row;
 use crate::widgets::unit_field::{UnitField, field as unit_field};
@@ -314,6 +315,7 @@ fn options(ui: &mut Ui, strings: &Strings, display_units: Units, sheet: &mut She
             (None, None) => strings.get(StrKey::AppImportUnitsChoose).to_owned(),
         };
         let dropdown = egui::ComboBox::from_id_salt("import_units")
+            .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width())
             .selected_text(selected)
             .show_ui(ui, |ui| {
@@ -444,7 +446,9 @@ fn layers(ui: &mut Ui, strings: &Strings, model: &mut DrawingImport) {
         .show(ui, |ui| {
             for (name, label, readable) in rows {
                 let mut ticked = readable && model.is_ticked(&name);
-                let response = ui.add_enabled(readable, egui::Checkbox::new(&mut ticked, label));
+                let response = ui
+                    .add_enabled_ui(readable, |ui| checkbox(ui, &name, &mut ticked, &label))
+                    .inner;
                 if !readable {
                     response.on_disabled_hover_text(strings.get(StrKey::AppImportLayerNotRead));
                 } else if response.changed() {

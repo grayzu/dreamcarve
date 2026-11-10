@@ -23,6 +23,7 @@ use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
+use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
 use crate::widgets::spinner::spinner;
@@ -459,7 +460,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
     check.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::CheckBox, true, row.enabled, &check_name)
     });
-    checkbox(ui, check_rect, row.enabled, check.hovered());
+    paint_box(ui, check_rect, row.enabled, check.hovered(), true);
     if check.clicked() {
         out.push(Action::run(Command::SetOperationEnabled {
             id: row.id.clone(),
@@ -620,33 +621,6 @@ fn hover_text(summary: &str, row: &ListRow) -> String {
         .chain(row.messages.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-/// The 16-px checkbox (section 7): `border.strong` box, `accent` with a
-/// white tick when checked.
-fn checkbox(ui: &Ui, rect: Rect, checked: bool, hovered: bool) {
-    let palette = Palette::current(ui);
-    if checked {
-        ui.painter().rect_filled(rect, 3.0, palette.accent);
-        let tick = Icon::Check.galley(ui, 12.0, palette.text_on_accent);
-        ui.painter().galley(
-            rect.center() - tick.size() / 2.0,
-            tick,
-            palette.text_on_accent,
-        );
-    } else {
-        let stroke = if hovered {
-            palette.text_secondary
-        } else {
-            palette.border_strong
-        };
-        ui.painter().rect_stroke(
-            rect,
-            3.0,
-            Stroke::new(1.0, stroke),
-            egui::StrokeKind::Inside,
-        );
-    }
 }
 
 /// `icon` centred in `rect`.
