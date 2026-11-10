@@ -571,7 +571,8 @@ fn status_cell(ui: &mut Ui, state: &FrameState<'_>, rect: Rect, row: &ListRow) {
                 Sense::hover(),
             );
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &text));
-            let glyph_galley = Icon::TriangleAlert.galley(ui, 12.0, palette.status_warning.stroke);
+            let glyph_galley =
+                Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
             let count_galley = ui.painter().layout_no_wrap(
                 count.to_string(),
                 TextStyle::Small.resolve(ui.style()),

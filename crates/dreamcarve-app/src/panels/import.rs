@@ -599,7 +599,8 @@ fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
     for warning in warnings {
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
-            let glyph = Icon::TriangleAlert.galley(ui, 12.0, palette.status_warning.stroke);
+            let glyph =
+                Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
             let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
             ui.painter()
                 .galley(rect.min, glyph, palette.status_warning.stroke);
