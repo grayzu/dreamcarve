@@ -280,7 +280,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
         egui::pos2(rect.left() + MARGIN_PX + 8.0, rect.center().y),
         egui::vec2(16.0, 16.0),
     );
-    kind_glyph(ui, glyph, &tool.cutter, palette.text_secondary);
+    super::editor::paint_tool_icon(ui, glyph.center(), &tool.cutter, palette.text_secondary);
     let text_left = glyph.right() + 8.0;
     let text_w = rect.right() - STATUS_PX - 8.0 - text_left;
     let line = |s: &str, style: TextStyle, colour, y: f32| {
@@ -342,56 +342,6 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
         let id = ui.make_persistent_id(("tool_status", tool.id.as_str()));
         ui.interact(cell, id, Sense::hover())
             .on_hover_text(messages.join("\n"));
-    }
-}
-
-/// The cutter's glyph, drawn in `colour` within `rect` (16 px): a flat
-/// end, a round end, a point, a fine point, a drill's tip.
-fn kind_glyph(ui: &Ui, rect: Rect, kind: &ToolKind, colour: egui::Color32) {
-    let painter = ui.painter();
-    let stroke = Stroke::new(1.5, colour);
-    let (l, r, t, b, c) = (
-        rect.left() + 4.0,
-        rect.right() - 4.0,
-        rect.top() + 1.0,
-        rect.bottom() - 1.0,
-        rect.center().x,
-    );
-    let shank = |bottom: f32| {
-        painter.line_segment([egui::pos2(l, t), egui::pos2(l, bottom)], stroke);
-        painter.line_segment([egui::pos2(r, t), egui::pos2(r, bottom)], stroke);
-    };
-    match kind {
-        ToolKind::EndMill => {
-            shank(b);
-            painter.line_segment([egui::pos2(l, b), egui::pos2(r, b)], stroke);
-        }
-        ToolKind::BallNose => {
-            let radius = (r - l) / 2.0;
-            shank(b - radius);
-            let arc: Vec<egui::Pos2> = (0..=8_u8)
-                .map(|k| {
-                    let a = std::f32::consts::PI * f32::from(k) / 8.0;
-                    egui::pos2(c + radius * a.cos(), b - radius + radius * a.sin())
-                })
-                .collect();
-            painter.add(egui::Shape::line(arc, stroke));
-        }
-        ToolKind::VBit { .. } => {
-            shank(rect.center().y);
-            painter.line_segment([egui::pos2(l, rect.center().y), egui::pos2(c, b)], stroke);
-            painter.line_segment([egui::pos2(r, rect.center().y), egui::pos2(c, b)], stroke);
-        }
-        ToolKind::Engraver => {
-            shank(t + 4.0);
-            painter.line_segment([egui::pos2(l, t + 4.0), egui::pos2(c, b)], stroke);
-            painter.line_segment([egui::pos2(r, t + 4.0), egui::pos2(c, b)], stroke);
-        }
-        ToolKind::Drill => {
-            shank(b - 3.0);
-            painter.line_segment([egui::pos2(l, b - 3.0), egui::pos2(c, b)], stroke);
-            painter.line_segment([egui::pos2(r, b - 3.0), egui::pos2(c, b)], stroke);
-        }
     }
 }
 
@@ -511,6 +461,7 @@ fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, held: bool, out: &mut V
     let mut chosen = current;
     let (label, combo) = row(ui, strings.get(StrKey::AppToolsKind), |ui| {
         egui::ComboBox::from_id_salt(("tool_kind", tool.id.as_str()))
+            .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width())
             .selected_text(kind_label(strings, current))
             .show_ui(ui, |ui| {
