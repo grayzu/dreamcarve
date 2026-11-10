@@ -1232,6 +1232,8 @@ orientation; DreamCarve's regions are normalised anyway.
      (11.1° for the 15° bit at three millimetre places, 24.8° at four
      inch places) may hold a plug more than `SEAT_MM` up, and the stress
      sweep excuses a seat failure there (`property::written_grid_corner`).
+     The exception covers the 15° and 30° bits only; the 60° and 90°
+     bits are held to `SEAT_MM` everywhere (#589, 2026-11-10).
      The Inlay chapter gives the table and suggests
      `decimal_places.mm = 4` for narrow-bit inlays with very sharp points;
      the bundled post-processors keep their places.

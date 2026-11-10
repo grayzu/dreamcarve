@@ -506,8 +506,9 @@ const SEAT_GRID_MM: f64 = 0.1;
 /// | --- | --- | --- |
 /// | 15° | 11.1° | 24.8° |
 /// | 30° | 5.7° | 13.6° |
-/// | 60° | 2.7° | 6.7° |
-/// | 90° | 1.6° | 4.0° |
+///
+/// The 60° and 90° bits are not excused: they are held to `SEAT_MM`
+/// everywhere (#589).
 ///
 /// Four millimetre places, which the Inlay chapter suggests for narrow-bit
 /// inlays with very sharp points, take the 15° bit's down to 1.2°. A
@@ -526,6 +527,9 @@ pub fn written_grid_corner(case: &Case, female: &InlayOp, seat_at: Point) -> Opt
     let ToolKind::VBit { included_angle_deg } = project.tools.first()?.cutter else {
         return None;
     };
+    if included_angle_deg > 30.0 {
+        return None;
+    }
     let slope = (included_angle_deg / 2.0).to_radians().tan();
     let w_mm = project
         .post_processor
