@@ -305,6 +305,10 @@ pub(crate) enum Action {
     /// menu): its request placed, what placing found in the Warnings
     /// panel (#546).
     PlaceTabs(dc_project::OperationId),
+    /// A click on an operation's cut in the Viewport (#576): the
+    /// operation in the editor, the CAM panel on Operations, its row
+    /// scrolled into view. The shape selection stays.
+    ShowOperation(dc_project::OperationId),
     /// Open the export sheet (File ▸ Export…, the toolbar, ⌘E; #547).
     OpenExport,
     /// Something the export sheet asked for.
@@ -1015,6 +1019,11 @@ impl Shell {
             Action::FocusField { op, field } => {
                 self.app.edit(Some(op.clone()));
                 panels::editor::request_focus(ctx, op, field);
+                self.show_operations();
+            }
+            Action::ShowOperation(op) => {
+                self.app.edit(Some(op.clone()));
+                panels::operations::reveal(ctx, op);
                 self.show_operations();
             }
             Action::OpenExport => {

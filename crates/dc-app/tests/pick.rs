@@ -31,13 +31,16 @@ mod common;
 
 use std::collections::BTreeMap;
 
+use dc_app::scene::{StrokeKind, strokes};
 use dc_app::test_support::Harness;
 use dc_app::viewport::camera::{Camera, Pos};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
 use dc_app::{ClickMode, Command, Scene, Selection};
 use dc_geometry::{Point, Polyline, Rect, Transform, Vec2};
 use dc_project::test_support::sample_project;
-use dc_project::{DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, Project};
+use dc_project::{
+    DefinitionId, FeatureDefinition, FeatureInstance, InstanceId, OperationId, Project,
+};
 
 use common::plaque;
 
@@ -530,6 +533,217 @@ fn hidden_is_not_picked_locked_is() {
         matches!(refused, Err(dc_app::CommandError::Locked { .. })),
         "{refused:?}"
     );
+}
+
+/// The plaque, generated, and a camera at 5 px/mm over it (tolerance
+/// 1.6 mm).
+fn generated_plaque() -> (Harness, Camera) {
+    let mut harness = Harness::from_project(plaque());
+    harness.generate();
+    let mut camera = view(5.0);
+    camera.centre_mm = Point::new(60.0, 50.0);
+    (harness, camera)
+}
+
+/// The XY of `p`.
+fn xy(p: dc_geometry::Point3) -> Point {
+    Point::new(p.x, p.y)
+}
+
+/// The midpoints of operation `op`'s cutting lines on the female board,
+/// as the Viewport draws them.
+fn cut_midpoints(scene: &Scene, op: &str) -> Vec<Point> {
+    let op = scene
+        .operation(&OperationId::new(op))
+        .unwrap_or_else(|| panic!("{op} is in the Scene"));
+    op.runs
+        .iter()
+        .filter(|r| r.run.board == dc_project::Board::Female)
+        .flat_map(|r| strokes(&r.run.toolpath))
+        .filter(|s| s.kind == StrokeKind::Cut && s.arc.is_none())
+        .filter(|s| xy(s.from).distance_to(xy(s.to)) > 1.0)
+        .map(|s| Point::new((s.from.x + s.to.x) / 2.0, (s.from.y + s.to.y) / 2.0))
+        .collect()
+}
+
+/// The distance from `p` to the nearest cutting move of every operation
+/// but `except`, mm.
+fn other_cuts_mm(scene: &Scene, except: &str, p: Point) -> f64 {
+    scene
+        .operations()
+        .iter()
+        .filter(|o| o.id.as_str() != except)
+        .flat_map(|o| o.runs.iter())
+        .flat_map(|r| strokes(&r.run.toolpath))
+        .filter(|s| s.kind == StrokeKind::Cut)
+        .flat_map(|s| {
+            s.points(0.01)
+                .windows(2)
+                .map(|w| (xy(w[0]), xy(w[1])))
+                .collect::<Vec<_>>()
+        })
+        .map(|(start, end)| {
+            dc_geometry::point_segment_distance_mm(
+                dc_geometry::Segment {
+                    start,
+                    end,
+                    bulge: 0.0,
+                },
+                p,
+            )
+        })
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The distance from `p` to the nearest shape outline, mm.
+fn outlines_mm(scene: &Scene, p: Point) -> f64 {
+    scene
+        .shapes()
+        .iter()
+        .flat_map(|s| s.outlines.iter())
+        .flat_map(Polyline::segments)
+        .map(|seg| dc_geometry::point_segment_distance_mm(seg, p))
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// A point on the Panel pocket's raster (op1) with no outline and no
+/// other operation's cut within twice the tolerance.
+fn panel_raster_point(scene: &Scene, camera: &Camera) -> Point {
+    let clear_mm = 2.0 * camera.px_to_mm(PICK_TOLERANCE_PX);
+    cut_midpoints(scene, "op1")
+        .into_iter()
+        .find(|p| outlines_mm(scene, *p) > clear_mm && other_cuts_mm(scene, "op1", *p) > clear_mm)
+        .expect("the Panel's raster has a line away from every outline")
+}
+
+/// Functional capability 72, "clicking a toolpath selects its operation"
+/// (#576; design spec test plan): on the plaque, a click on the Panel
+/// pocket's raster line away from any outline picks the Pocket, though
+/// the point is inside the pocket's shapes; the shape selection does not
+/// change.
+#[test]
+fn toolpath_hit_selects_its_operation() {
+    let (harness, camera) = generated_plaque();
+    let scene = harness.app.scene();
+    let panel = OperationId::new("op1");
+    let p = panel_raster_point(scene, &camera);
+    let at = camera.to_screen(p);
+    let cuts = pick::shown_cuts(scene, harness.app.view(), harness.app.selection());
+    assert_eq!(cuts.len(), 5, "every operation's cuts are drawn");
+
+    let hit = pick::pick_with_cuts(scene, &camera, at, PICK_TOLERANCE_PX, 0, &cuts);
+    assert_eq!(hit, Hit::Toolpath(panel.clone()));
+    assert!(
+        !pick::candidates(scene, &camera, at, PICK_TOLERANCE_PX).is_empty(),
+        "the point is inside a shape, which the cut beats"
+    );
+    let mut clicks = ClickCycle::default();
+    assert_eq!(
+        clicks.click_with_cuts(scene, &camera, at, PICK_TOLERANCE_PX, &cuts),
+        Hit::Toolpath(panel)
+    );
+
+    // The shape selection stays as it was, whatever the modifier.
+    let square = Selection::Instances(vec![InstanceId::new("i4")]);
+    for mode in [ClickMode::Replace, ClickMode::Add, ClickMode::Toggle] {
+        assert_eq!(square.clicked(&hit, mode), square, "{mode:?}");
+    }
+    assert_eq!(
+        Selection::Nothing.clicked(&hit, ClickMode::Replace),
+        Selection::Nothing
+    );
+
+    // Without the cuts (`pick`), the same point picks the shape.
+    assert!(matches!(
+        pick::pick(scene, &camera, at, PICK_TOLERANCE_PX, 0),
+        Hit::Instance(_)
+    ));
+}
+
+/// Shapes win over toolpaths within the tolerance (#576, as in
+/// PureCutCNC): a click on the border's engraving, which runs on the
+/// border's outline, picks the border; clicks in place cycle on to the
+/// Engrave.
+#[test]
+fn shape_wins_over_toolpath_within_tolerance() {
+    let (harness, camera) = generated_plaque();
+    let scene = harness.app.scene();
+    let engrave = OperationId::new("op5");
+    let p = cut_midpoints(scene, "op5")
+        .into_iter()
+        .find(|p| outlines_mm(scene, *p) < 0.01)
+        .expect("the Engrave cuts on an outline");
+    let at = camera.to_screen(p);
+    let cuts = pick::shown_cuts(scene, harness.app.view(), harness.app.selection());
+    let shapes = pick::candidates(scene, &camera, at, PICK_TOLERANCE_PX);
+    let first = shapes
+        .first()
+        .expect("an outline is under the point")
+        .clone();
+
+    assert_eq!(
+        pick::pick_with_cuts(scene, &camera, at, PICK_TOLERANCE_PX, 0, &cuts),
+        Hit::Instance(first.clone()),
+        "the shape wins"
+    );
+    let mut clicks = ClickCycle::default();
+    let seen: Vec<Hit> = (0..shapes.len() + 2)
+        .map(|_| clicks.click_with_cuts(scene, &camera, at, PICK_TOLERANCE_PX, &cuts))
+        .collect();
+    assert_eq!(seen[0], Hit::Instance(first));
+    assert!(
+        seen.contains(&Hit::Toolpath(engrave)),
+        "clicks in place cycle to the toolpath: {seen:?}"
+    );
+}
+
+/// Hidden toolpaths are never picked (#576): not with the operation's eye
+/// closed, not with *Cuts* off, not with *Only the selected operation* on
+/// and another operation selected.
+#[test]
+fn hidden_toolpaths_are_not_picked() {
+    let (mut harness, camera) = generated_plaque();
+    let panel = OperationId::new("op1");
+    let p = panel_raster_point(harness.app.scene(), &camera);
+    let at = camera.to_screen(p);
+    let hit = |harness: &Harness| {
+        let app = &harness.app;
+        let cuts = pick::shown_cuts(app.scene(), app.view(), app.selection());
+        pick::pick_with_cuts(app.scene(), &camera, at, PICK_TOLERANCE_PX, 0, &cuts)
+    };
+    let toolpath = |h: &Hit| matches!(h, Hit::Toolpath(_));
+    assert_eq!(hit(&harness), Hit::Toolpath(panel.clone()));
+
+    // The eye.
+    harness.app.toggle_hidden(&panel);
+    assert!(!toolpath(&hit(&harness)), "eye closed: {:?}", hit(&harness));
+    harness.app.toggle_hidden(&panel);
+    assert_eq!(hit(&harness), Hit::Toolpath(panel.clone()));
+
+    // *Cuts* off.
+    let shown = harness.app.view().visibility;
+    harness.app.set_visibility(dc_app::Visibility {
+        cuts: false,
+        ..shown
+    });
+    assert!(!toolpath(&hit(&harness)), "cuts off: {:?}", hit(&harness));
+    harness.app.set_visibility(shown);
+
+    // *Only the selected operation*, with another selected, then this one.
+    harness.app.set_visibility(dc_app::Visibility {
+        only_selected: true,
+        ..shown
+    });
+    harness
+        .app
+        .select(Selection::Operation(OperationId::new("op2")));
+    assert!(
+        !toolpath(&hit(&harness)),
+        "another operation selected: {:?}",
+        hit(&harness)
+    );
+    harness.app.select(Selection::Operation(panel.clone()));
+    assert_eq!(hit(&harness), Hit::Toolpath(panel));
 }
 
 /// Acceptance 75 with an Inlay (capability 72; slice 14, #543): the male

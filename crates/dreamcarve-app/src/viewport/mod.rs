@@ -14,7 +14,9 @@
 //! (open question 8). Selection: a click picks through
 //! `dc_app::viewport::pick`, a second click in place cycles, Shift adds,
 //! Ctrl/⌘ toggles, a drag from empty stock is a marquee, and the result is
-//! `dc_app`'s one selection. Transforms (#534): a drag from a shape moves
+//! `dc_app`'s one selection. A click on a drawn cut away from any outline
+//! opens its operation in the editor and leaves the selection (#576).
+//! Transforms (#534): a drag from a shape moves
 //! the selection, a corner handle scales it about its centre, the rotation
 //! handle turns it; while the button is down the selection is drawn
 //! through a preview `Transform` in the draw (no snapshot is made), and
@@ -262,12 +264,13 @@ impl ViewportState {
         let camera = app.view().camera;
         self.cursor_mm = over.map(|p| camera.to_world(pane_pos(pane, p)));
         let hit = match (over, &self.drag) {
-            (Some(p), None | Some(Drag::Press { .. })) => pick::pick(
+            (Some(p), None | Some(Drag::Press { .. })) => pick::pick_with_cuts(
                 app.scene(),
                 &camera,
                 pane_pos(pane, p),
                 PICK_TOLERANCE_PX,
                 0,
+                &pick::shown_cuts(app.scene(), app.view(), app.selection()),
             ),
             _ => Hit::Nothing,
         };
@@ -277,19 +280,29 @@ impl ViewportState {
             Hit::MaleBoardShape(op) => app.project().operations.iter().find(|o| o.id() == op),
             _ => None,
         };
-        (self.hover, self.hover_tab) = match hit {
-            Hit::Instance(id) => (Some(id), None),
-            Hit::Tab(id) => (None, Some(id)),
-            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None),
+        let hover_op;
+        (self.hover, self.hover_tab, hover_op) = match hit {
+            Hit::Instance(id) => (Some(id), None, None),
+            Hit::Tab(id) => (None, Some(id), None),
+            Hit::Toolpath(id) => (None, None, Some(id)),
+            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None, None),
         };
+        // A cut under the pointer names its operation, as a shape does.
+        let hover_op = hover_op.and_then(|id| {
+            let op = app.scene().operation(&id)?;
+            Some((op.name.clone(), false))
+        });
         Pointer {
             cursor_mm: self.cursor_mm,
             hover: male.map_or_else(
                 || {
-                    self.hover.as_ref().and_then(|id| {
-                        let shape = app.scene().shape(id)?;
-                        Some((shape.name.clone(), shape.locked))
-                    })
+                    self.hover
+                        .as_ref()
+                        .and_then(|id| {
+                            let shape = app.scene().shape(id)?;
+                            Some((shape.name.clone(), shape.locked))
+                        })
+                        .or(hover_op)
                 },
                 |op| {
                     let name = app
@@ -557,8 +570,8 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
         Hit::Instance(id) => Some(Target::Shape(id)),
         Hit::Tab(id) => Some(Target::Tab(id)),
         // A male board shape is no instance to move: a click on it selects
-        // its Inlay on release.
-        Hit::MaleBoardShape(_) | Hit::Nothing => None,
+        // its Inlay on release. A cut is picked on release too (#576).
+        Hit::Toolpath(_) | Hit::MaleBoardShape(_) | Hit::Nothing => None,
     }
 }
 
@@ -790,13 +803,19 @@ fn gestures(
             }
         }
         Some(Drag::Marquee { .. } | Drag::Press { .. }) => {
-            let hit = view.clicks.click(
-                state.app.scene(),
+            let app = state.app;
+            let hit = view.clicks.click_with_cuts(
+                app.scene(),
                 camera,
                 pane_pos(pane, pos),
                 PICK_TOLERANCE_PX,
+                &pick::shown_cuts(app.scene(), app.view(), selection),
             );
-            out.push(Action::Select(selection.clicked(&hit, mode)));
+            match hit {
+                // A cut opens its operation; the shapes stay selected.
+                Hit::Toolpath(id) => out.push(Action::ShowOperation(id)),
+                hit => out.push(Action::Select(selection.clicked(&hit, mode))),
+            }
         }
         // The release commits the tab's new point: one `MoveTab`.
         Some(Drag::Tab { id }) => {

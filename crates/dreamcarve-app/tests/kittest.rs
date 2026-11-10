@@ -3191,3 +3191,102 @@ fn place_drag_and_delete_tabs() {
     assert_eq!(h.state().app().undo_label(), Some("Delete tab"));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A window point on operation `op`'s cuts, well inside the pane, that
+/// the Viewport picks as that cut, with no shape outline within twice
+/// the pick tolerance.
+fn on_a_cut(h: &Harness<'_, dreamcarve_app::Shell>, op: &dc_project::OperationId) -> egui::Pos2 {
+    use dc_app::viewport::pick::{self, PICK_TOLERANCE_PX};
+    let app = h.state().app();
+    let camera = app.view().camera;
+    let pane = h.state().layout().viewport.shrink(20.0);
+    let cuts = pick::shown_cuts(app.scene(), app.view(), app.selection());
+    let clear_mm = camera.px_to_mm(2.0 * PICK_TOLERANCE_PX);
+    let away = |p: dc_geometry::Point| {
+        app.scene()
+            .shapes()
+            .iter()
+            .flat_map(|s| s.outlines.iter())
+            .flat_map(dc_geometry::Polyline::segments)
+            .all(|seg| dc_geometry::point_segment_distance_mm(seg, p) > clear_mm)
+    };
+    app.scene()
+        .operation(op)
+        .expect("the operation is in the Scene")
+        .runs
+        .iter()
+        .flat_map(|r| dc_app::scene::strokes(&r.run.toolpath))
+        .filter(|s| s.kind == dc_app::scene::StrokeKind::Cut && s.arc.is_none())
+        .map(|s| dc_geometry::Point::new((s.from.x + s.to.x) / 2.0, (s.from.y + s.to.y) / 2.0))
+        .filter(|p| away(*p))
+        .map(|p| common::on_screen(h, p))
+        .find(|at| {
+            pane.contains(*at)
+                && pick::pick_with_cuts(
+                    app.scene(),
+                    &camera,
+                    common::in_pane(h, *at),
+                    PICK_TOLERANCE_PX,
+                    0,
+                    &cuts,
+                ) == dc_app::Hit::Toolpath(op.clone())
+        })
+        .expect("a cut away from every outline")
+}
+
+/// Functional capability 72 (#576): on the generated plaque, hovering
+/// the Panel pocket's raster away from every outline names the operation
+/// in the status bar, and a click on it opens the Pocket in the editor;
+/// the shape selection is unchanged.
+#[test]
+fn clicking_a_cut_opens_its_operation() {
+    let dir = scratch("toolpath-click");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+
+    // Select the square first: the click on the cut must leave it.
+    let square = common::on_screen(&h, dc_geometry::Point::new(70.0, 33.0));
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+    let selected = h.state().app().selection().clone();
+    assert_eq!(selected.instances().len(), 1, "the square is selected");
+    assert_eq!(h.state().app().editing(), None);
+
+    let panel = dc_project::OperationId::new("op1");
+    let at = on_a_cut(&h, &panel);
+
+    // Hovering names the operation in the status bar.
+    let named = |h: &Harness<'_, dreamcarve_app::Shell>| h.query_all_by_label("Panel").count();
+    let before = named(&h);
+    h.event(egui::Event::PointerMoved(at));
+    h.run();
+    assert_eq!(named(&h), before + 1, "the status bar names the Panel");
+
+    common::click_at(&mut h, at, egui::Modifiers::NONE);
+    assert_eq!(
+        h.state().app().editing(),
+        Some(&panel),
+        "the click opens the Panel in the editor"
+    );
+    assert_eq!(
+        h.state().app().selection(),
+        &selected,
+        "the shape selection is unchanged"
+    );
+    assert!(
+        h.query_by_label("Panel · Pocket").is_some(),
+        "the editor shows the Pocket"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

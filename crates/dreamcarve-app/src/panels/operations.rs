@@ -248,6 +248,17 @@ fn kind_item(
     response
 }
 
+/// Where the list keeps the row it is to scroll into view.
+fn reveal_id() -> Id {
+    Id::unique("dc.operations.reveal")
+}
+
+/// Scrolls the list to operation `op`'s row at its next frame (a click
+/// on the operation's cut, #576).
+pub(crate) fn reveal(ctx: &egui::Context, op: OperationId) {
+    ctx.data_mut(|d| d.insert_temp(reveal_id(), op));
+}
+
 /// The rows, with the drag that reorders them.
 fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
@@ -361,6 +372,10 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
     }
     if response.clicked() {
         out.push(Action::EditOperation(row.id.clone()));
+    }
+    if ui.data(|d| d.get_temp::<OperationId>(reveal_id())).as_ref() == Some(&row.id) {
+        ui.data_mut(|d| d.remove::<OperationId>(reveal_id()));
+        response.scroll_to_me(None);
     }
     // Capability 78: the estimated time of the program it is cut in, the
     // CLI's number, on hover.
