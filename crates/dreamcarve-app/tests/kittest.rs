@@ -31,11 +31,12 @@ use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::Queryable as _;
 use egui_kittest::{Harness, wgpu::WgpuTestRenderer};
 
-/// Acceptance 92 (three platforms), until slice 18 brings export: the app
-/// launches with `--open plaque.dcv`, shows the plaque (not the empty
-/// state), renders one frame through wgpu, and saves the project to a new
-/// path byte-identical to what the CLI's serializer writes (acceptance
-/// 62). The file is the phase 2 quick start's.
+/// Acceptance 92 (three platforms): the app launches with `--open
+/// plaque.dcv`, shows the plaque (not the empty state), renders one frame
+/// through wgpu, saves the project to a new path byte-identical to what
+/// the CLI's serializer writes (acceptance 62), and exports it: ⌘E, then
+/// *Export* writes the programs `dc_app::export::plan` builds beside it
+/// (#547). The file is the phase 2 quick start's.
 #[test]
 fn opens_plaque_renders_and_exports() {
     let dir = scratch("smoke");
@@ -105,6 +106,34 @@ fn opens_plaque_renders_and_exports() {
     assert_eq!(written, saved_form(&plaque));
     assert_eq!(harness.state().app().source(), Some(copy.as_path()));
     assert!(!harness.state().app().is_dirty());
+
+    // Export: every program the plan lists, beside the project.
+    settle_export(&mut harness);
+    command_key(&harness, egui::Key::E);
+    harness.run();
+    settle_export(&mut harness);
+    harness
+        .get_by_role(Role::Dialog)
+        .get_by_label("Export")
+        .click();
+    harness.run();
+    let options = dc_app::export::Options::new(
+        &dreamcarve_shell::clock::today_utc(),
+        dc_job::EstimateConfig::default(),
+    );
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(harness.state().app(), &options)
+    else {
+        panic!("the plaque has generated");
+    };
+    for (name, text) in ready.files("plaque-copy", false) {
+        let written = std::fs::read_to_string(dir.join(&name)).expect("program written");
+        assert!(written == text, "{name} is the plan's program");
+    }
+    harness
+        .get_by_role(Role::Dialog)
+        .get_by_label("Close")
+        .click();
+    harness.run();
 
     // Closing a clean project closes at once and remembers the session.
     press_close(&mut harness);
@@ -1424,6 +1453,153 @@ fn warnings_drawer_selects_and_copies() {
     h.get_by_label("Close the Warnings drawer").click();
     h.run();
     assert!(!h.state().warnings_open());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Waits until generation is over and the export sheet's plan is ready,
+/// stepping the window.
+fn settle_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while h.state().app().generation().busy()
+        || h.state().worker_busy()
+        || h.state().export_planning()
+    {
+        assert!(std::time::Instant::now() < deadline, "the export settles");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+}
+
+/// Capability 77 and acceptance 84 in the window (#547): ⌘E opens the
+/// export sheet, which lists the programs `dc_app::export::plan` builds
+/// and writes them beside the project. A program whose destination
+/// cannot be replaced (a folder is in the way) stops the export with
+/// nothing written: every file or none. Cleared, *Export* writes them all,
+/// and the result sheet lists them with *Show in folder*; the project
+/// file is never written. A tool without a feed shows the CLI's error and
+/// a disabled *Export*.
+#[test]
+fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
+    use egui_kittest::kittest::NodeT as _;
+
+    let dir = scratch("export-sheet");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let project_bytes = std::fs::read(&plaque).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque.clone()), &dialogs),
+        1280.0,
+        900.0,
+    );
+    settle_export(&mut h);
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label_contains("Export G-code").is_some(),
+        "the title"
+    );
+
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    let names = ready.names("plaque");
+    assert!(names.len() > 1, "the plaque writes a program per tool");
+    for name in &names {
+        assert!(
+            h.get_by_role(Role::Dialog).query_by_label(name).is_some(),
+            "the sheet lists {name}"
+        );
+    }
+
+    // A folder where the last program goes: nothing is written.
+    let blocker = dir.join(names.last().unwrap());
+    std::fs::create_dir_all(blocker.join("keep")).unwrap();
+    let naming = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.get_by_role(Role::Dialog)
+            .query_all_by_label_contains(names.last().unwrap())
+            .count()
+    };
+    let named = naming(&h);
+    h.get_by_role(Role::Dialog).get_by_label("Export").click();
+    h.run();
+    for name in &names[..names.len() - 1] {
+        assert!(!dir.join(name).exists(), "{name} was not written");
+    }
+    assert!(blocker.join("keep").is_dir(), "the folder is untouched");
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label_contains("Nothing was written")
+            .is_some(),
+        "the sheet says nothing was written"
+    );
+    assert_eq!(naming(&h), named + 1, "the failure names the file");
+
+    std::fs::remove_dir_all(&blocker).unwrap();
+    h.get_by_role(Role::Dialog).get_by_label("Export").click();
+    h.run();
+    for ((name, text), program) in ready.files("plaque", false).iter().zip(&names) {
+        assert_eq!(name, program);
+        let written = std::fs::read_to_string(dir.join(name)).expect("program written");
+        assert!(written == *text, "{name} is the plan's program");
+    }
+    let result = h.get_by_role(Role::Dialog);
+    assert!(result.query_by_label("Show in folder").is_some());
+    assert!(
+        result
+            .query_all_by_label_contains(&names[0])
+            .next()
+            .is_some(),
+        "the result names the files"
+    );
+    assert_eq!(
+        std::fs::read(&plaque).unwrap(),
+        project_bytes,
+        "export never writes the project"
+    );
+    assert!(!h.state().app().is_dirty());
+    assert_eq!(
+        h.state().app().prefs().export_dirs.get(&plaque),
+        Some(&dir),
+        "the folder is remembered for this project"
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Close").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    // A tool without a feed: the CLI's error, and Export disabled.
+    // The first operation's tool: the plaque has one tool it never uses.
+    let project = h.state().app().project();
+    let used = project.operations[0].run_tools()[0].clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    h.state_mut()
+        .app_mut()
+        .run(Command::UpdateTool(tool))
+        .unwrap();
+    settle_export(&mut h);
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    let built = dc_job::build(
+        h.state().app().project(),
+        dc_job::ProgramSplit::ProjectDefault,
+        &date,
+    );
+    let error = &built.findings.errors[0].message;
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label_contains(error).is_some(),
+        "the error is listed: {error}"
+    );
+    assert!(
+        sheet.get_by_label("Export").accesskit_node().is_disabled(),
+        "Export is disabled"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2773,13 +2949,22 @@ fn keyboard_shortcuts_reach_their_commands() {
     h.run();
     command_key(&h, egui::Key::I);
     h.run();
-    command_key(&h, egui::Key::E);
-    h.run();
     assert_eq!(
         dialogs.asked(),
         ["save_project plaque.dcv", "open_project", "open_drawing"],
-        "Shift Ctrl S, Ctrl O and Ctrl I ask; Ctrl E asks nothing yet (#547)"
+        "Shift Ctrl S, Ctrl O and Ctrl I ask"
     );
+    command_key(&h, egui::Key::E);
+    h.run();
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label_contains("Export G-code")
+            .is_some(),
+        "Ctrl E opens the export sheet (#547)"
+    );
+    h.get_by_role(Role::Dialog).get_by_label("Close").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
     reached.extend([Key::SaveAs, Key::Open, Key::Import, Key::Export]);
 
     command_key(&h, egui::Key::N);

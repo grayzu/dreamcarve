@@ -5,8 +5,8 @@
 //! 2, "Menu bar and toolbar"): 40 px on `surface.panel`, quiet buttons with
 //! a 20-px icon and a label in groups 16 px apart, the file name and the
 //! unsaved dot right of centre, and Export as the one primary button at
-//! the right end. The Tab tool arms the Viewport's tab adding (#546).
-//! What later slices bring (Picture, Export)
+//! the right end, which opens the export sheet (#547). The Tab tool arms
+//! the Viewport's tab adding (#546). Picture, which a later slice brings,
 //! is shown disabled with the reason.
 
 use dc_app::StrKey;
@@ -41,7 +41,6 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let strings = state.app.strings();
-                let later = strings.get(StrKey::AppToolbarLater);
                 let quiet = |key: StrKey, icon: Icon| {
                     ButtonSpec::new(Kind::Quiet, strings.get(key))
                         .icon(icon, theme::ICON_LARGE_PX)
@@ -96,19 +95,19 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 }
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    button(
-                        ui,
+                    // Opens the export sheet, which lists what blocks the
+                    // export; the hover gives the CLI's refusal first
+                    // (S20), as for an unset thickness (#536).
+                    let mut export =
                         ButtonSpec::new(Kind::Primary, strings.get(StrKey::AppToolbarExport))
                             .icon(Icon::Download, theme::ICON_LARGE_PX)
-                            .height(BUTTON_PX)
-                            .enabled(false)
-                            // The CLI's refusal first (S20), as for an
-                            // unset thickness (#536).
-                            .tooltip(
-                                dc_app::project::export_refusal(state.app)
-                                    .map_or(later, |f| f.message.as_str()),
-                            ),
-                    );
+                            .height(BUTTON_PX);
+                    if let Some(refusal) = dc_app::project::export_refusal(state.app) {
+                        export = export.tooltip(refusal.message.as_str());
+                    }
+                    if button(ui, export).clicked() {
+                        out.push(Action::OpenExport);
+                    }
                     ui.add_space(ui.available_width() * 0.35);
                     if state.app.is_dirty() {
                         let (rect, response) =

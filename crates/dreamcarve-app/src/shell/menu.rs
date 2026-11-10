@@ -48,16 +48,6 @@ fn item_text(
     }
 }
 
-/// A row for something a later slice brings, disabled with the reason.
-fn later(ui: &mut Ui, strings: &Strings, key: StrKey, shortcut: Option<(Modifiers, Key)>) {
-    let mut button = Button::new(strings.get(key));
-    if let Some((modifiers, key)) = shortcut {
-        button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
-    }
-    ui.add_enabled(false, button)
-        .on_disabled_hover_text(strings.get(StrKey::AppToolbarLater));
-}
-
 /// Draws the menu bar.
 pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
@@ -236,11 +226,13 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Button::new(strings.get(StrKey::AppMenuImportPicture)),
     )
     .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
-    later(
+    item(
         ui,
         strings,
         StrKey::AppMenuExport,
         keyboard::binding(Shortcut::Export),
+        Action::OpenExport,
+        out,
     );
     ui.separator();
     item(

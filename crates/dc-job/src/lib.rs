@@ -22,12 +22,13 @@ pub mod import;
 pub mod names;
 pub mod preview;
 pub mod project_from;
+pub mod report;
 pub mod summary;
 pub mod tabs;
 
 pub use build::{
     Built, Finding, Findings, Finished, Generated, ProgramSummary, Tier, build, build_board,
-    finish, generate_operation, project_checks, validation,
+    finish, generate_operation, project_checks, summarize, validation,
 };
 pub use error::JobError;
 pub use import::{Drawing, drawing_into};

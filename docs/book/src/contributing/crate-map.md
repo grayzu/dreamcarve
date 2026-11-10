@@ -166,9 +166,10 @@ the code they test.
 | Module | Contents |
 | --- | --- |
 | `lib.rs` | The crate's surface, and the re-exports of the `dc-cam` and `dc-gcode` types a shell needs (`Toolpath`, `Move`, `Warning`, `EmitOp`, `Program`, `ProgramSplit`, `Estimate`, `Extents`, the error types). |
-| `build.rs` | `build` and `build_board`, the whole pipeline without writing, which `export` and `check` share; its halves for the app, `validation`, `generate_operation` and `finish`; `Finding` (field, code, message, `Tier`, operation, shape), `Findings`, `Built`, `Finished` and `ProgramSummary`. Moved from the CLI's `export.rs`. |
+| `build.rs` | `build` and `build_board`, the whole pipeline without writing, which `export` and `check` share; its halves for the app, `validation`, `generate_operation` and `finish`, and `summarize`, the program rows of a build; `Finding` (field, code, message, `Tier`, operation, shape), `Findings`, `Built`, `Finished` and `ProgramSummary`. Moved from the CLI's `export.rs`. |
 | `names.rs` | `program_names` and `program_suffixes`: `<stem>.nc`, `<stem>-<k>-T<n>.nc`, `<stem>-female-<k>-T<n>.nc`. |
 | `summary.rs` | The export summary's lines: each operation and its depth, a carve's deepest cut and floor ridges, extents and edge extents, the cycle-time `Estimates` and `EstimateConfig`, board headings, what to do before a program starts. |
+| `report.rs` | `export_report`: the lines `export` prints once its files are written (run order, operations, extents, estimates, pauses, totals), which the app's export result sheet shows. Moved from the CLI's `export.rs`. |
 | `preview.rs` | The toolpath preview SVG of `--preview` (`render`), a pure function of the project and the generated toolpaths, ported from PureCutCNC `src/engine/designPrint/svg.ts`; `marks`, the tab marks, start points and holes it draws, as geometry for the app's Viewport. |
 | `project_from.rs` | `drawing`: the project `init` writes for a drawing, with or without the placeholder tool and Profile; `fit_stock`, the stock it sizes round some bounds at a margin, which the app's *Fit stock to shapes* reuses. |
 | `import.rs` | `Drawing` (an SVG or DXF import) and `drawing_into`: a drawing's shapes appended to a project, placed as drawn, under fresh ids. |
@@ -195,13 +196,15 @@ the code they test.
 | `operations.rs` | The Operations list: `Kind` (the eight kinds), `add_menu` (the kinds the selection can take, then the rest with the reason), `new_operation` (the selection, the first fitting tool, `<Kind> <n>`, the CLI's defaults with every depth `null`), `add`, `reorder`, and `rows` with each row's detail line and status cell. |
 | `editor/` | The operation editor. `fields.rs`, ported from PureCutCNC `src/components/cam/operationFields.ts`: `Group` in capability 66's order, `FieldKind` (one shell renderer each), `Row` (group, key path, kind, label, help, tool default, rule) and each kind's `table`; `rows`, `groups`, and `row_for`, which matches a located finding to its row by key path. `set.rs`: `record`, `get` and `set` by key path through `serde_json::Value`, read back by the file's deserializer. `targets.rs`: the Targets group's add, replace and remove. `mod.rs`: each row's text, tool-derived placeholder, choice, switch, reset and located message, and the `UpdateOperation` each edit is. |
 | `import.rs` | The Import drawing sheet's model: `DrawingImport` over the bytes the shell read, re-read through `dc-import` whenever an option changes (DXF units, required when the file declares none; join tolerance; ticked layers), with the summary, the layer list, the importer's refusal that disables *Import*, its warnings, the outlines for the preview and the `ImportDrawing` command. `App::import_drawing` runs it and keeps the warnings as the import's notes; `App::new_from_drawing` is `project_from::drawing` without defaults. |
+| `export.rs` | The export plan (#547): `plan` waits while any operation is pending or stale, then builds the snapshot afresh with `dc_job::build_board` (S20); `Options` (program split override, board ticks, date), `Ready` with the rows, findings, preview, file names under a stem and the CLI's report; `total_time` and `operation_times`, the estimates outside the sheet. |
 | `test_support.rs` | `Harness`: an `App` from fixture bytes, commands run, pending jobs executed inline with the real `dc_job` functions (`test-support` feature). |
 
 ### `dreamcarve-shell` (`crates/dreamcarve-shell/src/`)
 
 | Module | Contents |
 | --- | --- |
-| `staged.rs` | `StagedFile` and `commit_all`: every file of an export written to a temporary name beside its destination and renamed into place at the end, or none (#71). Moved from the CLI's `cli.rs`. |
+| `staged.rs` | `StagedFile` and `commit_all`: every file of an export written to a temporary name beside its destination and renamed into place at the end, or none (#71); `is_preview`, the check before a preview is written over an existing file. Moved from the CLI's `cli.rs` and `export.rs`. |
+| `clock.rs` | UTC dates from the system clock, with no date crate: `today_utc` for a program header, which the CLI and the app's export both write; the CLI's `build.rs` includes it for `--version`. Moved from the CLI. |
 | `config_dir.rs` | `Paths`: the user config directory (`DREAMCARVE_CONFIG_DIR` or the platform's) and the files in it. |
 | `config.rs` | `config.toml` (`[export]`, `[estimate]`): strict, a typo is an error at its line and column. |
 | `gui_prefs.rs` | `gui.toml`, the app's preferences: layout, visibility, recent files, theme. Lenient: a missing file is the defaults, an unknown key a note. |
@@ -221,7 +224,6 @@ the code they test.
 | `config.rs` | `config path`, and the user config as the commands read it, through `dreamcarve-shell`. |
 | `tools.rs` | `tools list`, `add`, `import`, `export`, `remove`: `tools.json` through `dreamcarve-shell`, the report from `dc_library::import`, and for `add` the project. |
 | `tabs.rs` | `tabs place`, `list`, `clear`: the project's placed tabs. |
-| `clock.rs` | UTC dates from the system clock, with no date crate; `build.rs` includes it for `--version`. |
 
 Behaviour tests for the binary are in `crates/dreamcarve/tests/`: `cli.rs`
 for every command, with committed programs in `tests/expected/`, and

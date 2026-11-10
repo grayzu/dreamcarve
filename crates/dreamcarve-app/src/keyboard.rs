@@ -110,9 +110,9 @@ pub struct Shortcut {
     pub does: &'static str,
     /// Where it is read.
     pub scope: Scope,
-    /// Whether this build has the command. Export's dialog arrives with
-    /// slice 18 (#547); until then Ctrl/⌘ E is bound to nothing and its
-    /// menu row is disabled.
+    /// Whether this build has the command; the chapter notes one that
+    /// does not. Every command is in this build since the export sheet
+    /// (#547).
     pub available: bool,
 }
 
@@ -227,8 +227,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         "Import an SVG or DXF drawing",
         Scope::Anywhere,
     ),
-    // Export's dialog is slice 18's (#547): the binding is listed, and
-    // the handler skips it until then.
+    // Opens the export sheet (#547).
     Shortcut {
         command: Command::Export,
         modifiers: COMMAND,
@@ -236,7 +235,7 @@ pub const SHORTCUTS: &[Shortcut] = &[
         menu: Some((Menu::File, StrKey::AppMenuExport)),
         does: "Export the G-code programs",
         scope: Scope::Anywhere,
-        available: false,
+        available: true,
     },
     menu_row(
         Command::Quit,

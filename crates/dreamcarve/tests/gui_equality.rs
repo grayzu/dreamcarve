@@ -13,6 +13,12 @@
 //!
 //! Slice 17 (#546, acceptance 78): the tabs the app places, drags, deletes
 //! and adds export to the program the CLI writes for the saved file.
+//!
+//! Slice 18 (#547, acceptance 83; S20): what the export sheet writes is
+//! what `dreamcarve export` writes for the file the app saves, byte for
+//! byte, on every post-processor, with and without the program-split
+//! override, the preview included; and the result sheet's text is the
+//! CLI's report.
 
 #![allow(
     clippy::expect_used,
@@ -258,4 +264,178 @@ fn tabbed_coaster_exports_the_same_program() {
         app_program(&mut harness) == cli,
         "edited: the program differs"
     );
+}
+
+/// The six bundled post-processors (acceptance 83).
+const POSTS: [&str; 6] = ["generic", "grbl", "grblhal", "linuxcnc", "mach3", "uccnc"];
+
+/// The program splits the sheet offers, with the CLI flag of each
+/// override: as the project says, one program per tool, one program with
+/// `M6`.
+const SPLITS: [(dc_job::ProgramSplit, Option<&str>); 3] = [
+    (dc_job::ProgramSplit::ProjectDefault, None),
+    (
+        dc_job::ProgramSplit::ProgramPerTool,
+        Some("--programs-per-tool"),
+    ),
+    (dc_job::ProgramSplit::OneProgram, Some("--one-program")),
+];
+
+/// Runs `dreamcarve` with `args` in `dir`; its exit code, stdout and
+/// stderr.
+fn run_any(dir: &Path, args: &[&str]) -> (Option<i32>, String, String) {
+    let out: Output = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
+        .current_dir(dir)
+        .env("DREAMCARVE_CONFIG_DIR", config_dir(dir))
+        .args(args)
+        .output()
+        .expect("binary runs");
+    (
+        out.status.code(),
+        String::from_utf8(out.stdout).expect("utf-8 stdout"),
+        String::from_utf8(out.stderr).expect("utf-8 stderr"),
+    )
+}
+
+/// The files in `dir`, sorted, but the project and the config directory.
+fn written(dir: &Path, project: &str) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .expect("dir readable")
+        .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
+        .filter(|n| n != project && n != "config")
+        .collect();
+    names.sort();
+    names
+}
+
+/// One fixture on one post-processor: the app opens `bytes`, switches to
+/// `post` with the Project panel's command (an undoable project change)
+/// and saves; for each split the CLI exports that saved file with the
+/// date pinned and the preview asked for, and the app's plan for the same
+/// snapshot must give the same files, byte for byte, the same report, or
+/// the same refusal with nothing written.
+fn export_case(root: &Path, name: &str, bytes: &[u8], post: &str) -> usize {
+    let mut harness = Harness::open(bytes).expect("the project opens");
+    if harness.app.project().post_processor.id != post {
+        harness
+            .run(dc_app::Command::SwitchPost {
+                id: post.to_owned(),
+            })
+            .expect("the post-processor switches");
+    }
+    harness.generate();
+    let saved = harness.save().expect("saves");
+    let project_file = format!("{name}.dcv");
+    let preview = dc_app::export::preview_name(name);
+    let mut compared = 0;
+    for (split, flag) in SPLITS {
+        let dir = root.join(format!("{name}-{post}-{}", flag.unwrap_or("default")));
+        std::fs::create_dir_all(&dir).expect("case dir");
+        std::fs::write(dir.join(&project_file), &saved).expect("project written");
+        let mut args = vec![
+            "export",
+            project_file.as_str(),
+            "--date",
+            DATE,
+            "--preview",
+            preview.as_str(),
+        ];
+        args.extend(flag);
+        let (code, stdout, stderr) = run_any(&dir, &args);
+
+        let options = dc_app::export::Options {
+            split,
+            ..dc_app::export::Options::new(DATE, dc_job::EstimateConfig::default())
+        };
+        let ready = match dc_app::export::plan(&harness.app, &options) {
+            dc_app::export::Plan::Ready(ready) => ready,
+            dc_app::export::Plan::Waiting => panic!("{name} {post}: the plan waits"),
+        };
+        let case = format!(
+            "{name} on {post}, {}",
+            flag.unwrap_or("as the project says")
+        );
+        match ready.blocked() {
+            None => {
+                assert_eq!(code, Some(0), "{case}: the CLI failed: {stderr}");
+                let files = ready.files(name, true);
+                let mut expected: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
+                expected.sort();
+                assert_eq!(written(&dir, &project_file), expected, "{case}: the files");
+                for (file, text) in &files {
+                    let cli = std::fs::read_to_string(dir.join(file)).expect("file written");
+                    assert!(cli == *text, "{case}: {file} differs from the CLI's");
+                    compared += 1;
+                }
+                let names = ready.names(name);
+                let mut report = ready.report(&names, Some(&preview)).join("\n");
+                report.push('\n');
+                assert_eq!(
+                    stdout, report,
+                    "{case}: the result sheet is the CLI's report"
+                );
+            }
+            Some(reason) => {
+                assert_eq!(
+                    code,
+                    Some(1),
+                    "{case}: the CLI exported what the app refuses"
+                );
+                assert!(
+                    stderr.contains(&reason),
+                    "{case}: the CLI's refusal names `{reason}`: {stderr}"
+                );
+                assert!(
+                    written(&dir, &project_file).is_empty(),
+                    "{case}: nothing is written"
+                );
+            }
+        }
+        // The program split override is never saved.
+        assert_eq!(harness.save().expect("saves"), saved, "{case}");
+    }
+    compared
+}
+
+/// Acceptance 83 (S20): the coaster, plaque, sign and inlay fixture, each
+/// on all six post-processors, as the project says and with each
+/// program-split override, exported from the app equal what
+/// `dreamcarve export --date` writes for the saved file, byte for byte,
+/// preview included. The fixtures are read where they live.
+#[test]
+fn app_export_equals_cli_export_on_six_posts() {
+    let root = work_dir("app_export_equals_cli_export_on_six_posts");
+    let coaster_dir = root.join("coaster-init");
+    std::fs::create_dir_all(&coaster_dir).expect("dir");
+    let coaster = std::fs::read(ready_coaster(&coaster_dir)).expect("coaster readable");
+    let fixtures: Vec<(&str, Vec<u8>)> = vec![
+        ("coaster", coaster),
+        (
+            "plaque",
+            std::fs::read(repo_root().join("tests/fixtures/plaque.dcv")).expect("plaque"),
+        ),
+        (
+            "sign",
+            std::fs::read(repo_root().join("tests/fixtures/sign.dcv")).expect("sign"),
+        ),
+        (
+            "dc",
+            std::fs::read(repo_root().join("tests/fixtures/dc.dcv")).expect("inlay"),
+        ),
+    ];
+    let compared: usize = std::thread::scope(|scope| {
+        let handles: Vec<_> = fixtures
+            .iter()
+            .flat_map(|(name, bytes)| POSTS.iter().map(move |post| (*name, bytes, *post)))
+            .map(|(name, bytes, post)| {
+                let root = &root;
+                scope.spawn(move || export_case(root, name, bytes, post))
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("case passes"))
+            .sum()
+    });
+    assert!(compared > 0, "some files were compared");
 }

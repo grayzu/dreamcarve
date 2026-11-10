@@ -21,7 +21,7 @@ use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 use dreamcarve_shell::ShellError;
 
 use crate::output::{self, errln, outln};
-use crate::{check, clock, config, export, init, tabs, tools};
+use crate::{check, config, export, init, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -455,5 +455,5 @@ pub fn read_file(path: &Path) -> Result<Vec<u8>, Failure> {
 
 /// Today's date in UTC as `YYYY-MM-DD`, for the program header.
 pub fn today_utc() -> String {
-    clock::date_utc(clock::now_secs())
+    dreamcarve_shell::clock::today_utc()
 }

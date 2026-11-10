@@ -5,11 +5,12 @@
 //! layout"): the side panels, the Design Tree, the Properties panel's
 //! placement fields, the empty state, the unsaved-changes sheet, the CAM
 //! panel's Operations and Tools tabs, the operation editor, the Tool
-//! Library sheet and the Import drawing sheet.
+//! Library sheet, the Import drawing sheet and the export sheet.
 
 pub(crate) mod clearing;
 pub(crate) mod editor;
 pub(crate) mod empty;
+pub(crate) mod export;
 pub(crate) mod import;
 pub(crate) mod library;
 pub(crate) mod operations;

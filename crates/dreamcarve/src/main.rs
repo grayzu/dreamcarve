@@ -21,7 +21,6 @@ use std::process::ExitCode;
 
 mod check;
 mod cli;
-mod clock;
 mod config;
 mod export;
 mod init;

@@ -12,7 +12,7 @@
 use std::path::Path;
 use std::process::Command;
 
-#[path = "src/clock.rs"]
+#[path = "../dreamcarve-shell/src/clock.rs"]
 #[allow(dead_code, reason = "the build script uses only the timestamp")]
 mod clock;
 
