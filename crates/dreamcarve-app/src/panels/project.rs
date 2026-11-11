@@ -3,7 +3,7 @@
 
 //! Project Settings (`docs/specs/phase-4/functional.md`, capabilities 53,
 //! 60, 61 and 62; mock-up `03-stock-origin.svg`): the body of the upper
-//! collapsible panel of the left column's lower half ([`panels::side`]),
+//! collapsible panel of the left column's lower half (`panels::side`),
 //! which Project ▸ Project Settings… opens. Units first, a `mm` / `in`
 //! segmented control (#615), then five sections: Stock, Origin, Heights,
 //! Tolerances (folded away) and Post-processor. Every row edits the
