@@ -331,6 +331,7 @@ fn blocking_line_names_the_error_count() {
         .operations
         .iter()
         .flat_map(dc_project::Operation::run_tools)
+        .cloned()
         .collect();
     used.sort();
     used.dedup();

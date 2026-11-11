@@ -1660,6 +1660,8 @@ fn plaque_export_sheet(
 /// are the status bar's and the drawer's, not listed here.
 #[test]
 fn export_sheet_has_no_preview_warnings_total_or_note() {
+    use egui_kittest::kittest::NodeT as _;
+
     let (dir, mut h) = plaque_export_sheet("export-trimmed");
     open_program_details(&mut h);
     let sheet = h.get_by_role(Role::Dialog);
@@ -1713,6 +1715,9 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
 /// plan's, in run order: file name, estimate and the step before each.
 #[test]
 fn program_details_start_closed() {
+    use eframe::egui::accesskit::Toggled;
+    use egui_kittest::kittest::NodeT as _;
+
     let (dir, mut h) = plaque_export_sheet("export-details");
     let date = dreamcarve_shell::clock::today_utc();
     let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
@@ -1723,7 +1728,11 @@ fn program_details_start_closed() {
     assert!(names.len() > 1);
 
     let header = h.get_by_role(Role::Dialog).get_by_label("Program Details");
-    assert_eq!(header.accesskit_node().is_selected(), Some(false), "closed");
+    assert_eq!(
+        header.accesskit_node().toggled(),
+        Some(Toggled::False),
+        "closed"
+    );
     for name in &names {
         assert!(
             h.get_by_role(Role::Dialog).query_by_label(name).is_none(),
@@ -1744,8 +1753,8 @@ fn program_details_start_closed() {
         sheet
             .get_by_label("Program Details")
             .accesskit_node()
-            .is_selected(),
-        Some(true),
+            .toggled(),
+        Some(Toggled::True),
         "open"
     );
     // The rows, top to bottom, are the plan's programs in run order.
