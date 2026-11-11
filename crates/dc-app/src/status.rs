@@ -12,9 +12,10 @@
 
 use dc_geometry::Point;
 use dc_job::EstimateConfig;
-use dc_project::Units;
+use dc_project::{OperationId, Units};
 
 use crate::app::App;
+use crate::selection::Selection;
 use crate::strings::{StrKey, Strings};
 use crate::warnings::{self, Counts, Level};
 
@@ -103,8 +104,14 @@ pub struct StatusBar {
     pub drag: Option<String>,
     /// The shape under the pointer.
     pub hover: Option<String>,
-    /// The last status message.
+    /// The last status message, or, while an operation that carves is
+    /// selected and nothing newer has been said, its carve summary
+    /// (capability 76a): `Lettering · deepest cut 1.658 mm, no flat
+    /// depth`.
     pub message: Option<String>,
+    /// The operation whose carve summary [`Self::message`] is: clicking
+    /// the cell opens the Warnings drawer at its note.
+    pub message_op: Option<OperationId>,
 }
 
 impl StatusBar {
@@ -152,6 +159,7 @@ pub fn cells(app: &App, inputs: &Inputs<'_>) -> StatusBar {
             Units::Inch => StrKey::AppStatusInch,
         })
         .to_owned();
+    let (message, message_op) = message(app, inputs.message);
     StatusBar {
         units,
         units_label,
@@ -177,7 +185,35 @@ pub fn cells(app: &App, inputs: &Inputs<'_>) -> StatusBar {
                 name.to_owned()
             }
         }),
-        message: inputs.message.map(str::to_owned),
+        message,
+        message_op,
+    }
+}
+
+/// The message cell: the last message, else the selected operation's
+/// carve summary (capability 76a) and that operation. The shell forgets
+/// its message when the selection changes, so a message is newer than
+/// the selection while it is held.
+fn message(app: &App, said: Option<&str>) -> (Option<String>, Option<OperationId>) {
+    if let Some(said) = said {
+        return (Some(said.to_owned()), None);
+    }
+    let Some(op) = selected_operation(app) else {
+        return (None, None);
+    };
+    match warnings::carve_message(app, op) {
+        Some(text) => (Some(text), Some(op.clone())),
+        None => (None, None),
+    }
+}
+
+/// The operation the status bar speaks for: the selection's, else the
+/// one the Operations list has open in the editor.
+#[must_use]
+pub fn selected_operation(app: &App) -> Option<&OperationId> {
+    match app.selection() {
+        Selection::Operation(op) => Some(op),
+        _ => app.editing(),
     }
 }
 

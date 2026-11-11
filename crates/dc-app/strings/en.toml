@@ -374,6 +374,54 @@ kind_engrave = "Engrave"
 kind_v_carve = "V-Carve"
 kind_inlay = "Inlay"
 
+# Carve notes (slice 28, #620; functional spec, capability 76a): the
+# summary `check` prints for an operation that carves, laid out in the
+# Warnings drawer as labelled facts under a heading per board, and its
+# first facts in the status bar's message cell. Lengths come in as the
+# summary states them (`4.000 mm`).
+[app.carve]
+deepest_cut = "Deepest cut"
+flat_depth = "Flat depth"
+flat_floor = "Flat floor"
+start_plane = "Start plane"
+surround_floor = "Surround floor"
+floor_ridges = "Floor ridges"
+band = "Band"
+band_edge = "Band edge"
+cut_out = "Cut-out"
+below_stock_top = "{depth} below the stock top"
+below_male_top = "{depth} below the male board's top"
+no_flat_depth = "none (the V-bit's point reaches the floor)"
+clamped = "clamped at {depth}"
+flat_floor_at = "at {depth} (depth_mm)"
+below_start_plane = "{depth} below the start plane (plug_depth_mm)"
+ridge_heights = "{straight} along the rings, up to {corner} at their corners"
+ridges_cleared = "{heights} where no clearing pass reaches"
+ridges_alone = "{heights}; a clearing pass or a smaller stepover flattens them"
+drawn_band = "drawn boundary {boundary}, narrowest {narrowest}, {edge}"
+v_wall = "V wall"
+open_edge = "open edge cut by {tool}"
+upright_edge = "cut upright by {tool}, inward curves rounded to {rounding}"
+frees_plug = "centre {inset} inside the band's edge, at least {outside} out from the design, {through} below the board"
+picture = "Picture"
+picture_named = "{name} ({id})"
+footprint = "Footprint"
+footprint_at = "{width} × {height} at ({x}, {y})"
+grooves = "Grooves"
+grooves_wide = "{count}, {width} wide at the full depth of {depth}"
+summary_grooves = "{count} grooves to {depth}"
+female_board = "Female board"
+male_board = "Male board"
+summary = "{name} · {facts}"
+summary_deepest = "deepest cut {depth}"
+summary_no_flat = "no flat depth"
+summary_flat_depth = "flat depth {depth}"
+summary_flat_floor = "flat floor at {depth}"
+summary_start_plane = "start plane {depth}"
+summary_separator = ", "
+list_separator = ", "
+open_note = "Show this note in the Warnings drawer"
+
 # The CAM panel's Tools tab (slice 8, #537; functional spec, capability
 # 63): the toolbar, the rows, the editor's labels and the messages the
 # status bar shows after Save to library. Slice 29 (#621): *New tool*, and

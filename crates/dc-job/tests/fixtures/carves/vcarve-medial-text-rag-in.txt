@@ -1,0 +1,1 @@
+V-Carve o1 `V-Carve`: deepest cut 0.1680 in below the stock top, clamped at a flat depth of 0.1969 in.

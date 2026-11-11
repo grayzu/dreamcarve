@@ -343,6 +343,9 @@ pub(crate) enum Action {
     ToggleWarnings,
     /// Put `check`'s text on the clipboard (the drawer's *Copy*).
     CopyWarnings,
+    /// Open the Warnings drawer at this operation's carve note (the
+    /// status bar's message cell, capability 76a).
+    ShowNote(dc_project::OperationId),
     /// Stop generation (the status bar's *Stop*).
     StopGeneration,
     /// Regenerate every operation (the status bar's *Regenerate all*,
@@ -531,6 +534,8 @@ pub struct Shell {
     worker: Worker,
     /// Whether the Warnings drawer is open.
     warnings_open: bool,
+    /// The carve note the drawer scrolls to in the next frame it draws.
+    note_target: Option<dc_project::OperationId>,
     /// Where the keyboard focus was after the last frame (#548).
     focus: focus::Shown,
 }
@@ -620,6 +625,7 @@ impl Shell {
             viewport: viewport::ViewportState::default(),
             worker,
             warnings_open: false,
+            note_target: None,
             focus: focus::Shown::default(),
         };
         shell.viewport.fit_on_next_frame();
@@ -1233,6 +1239,10 @@ impl Shell {
                 ctx.request_repaint();
             }
             Action::ToggleWarnings => self.warnings_open = !self.warnings_open,
+            Action::ShowNote(op) => {
+                self.warnings_open = true;
+                self.note_target = Some(op);
+            }
             // The OS clipboard needs eframe's `clipboard` feature, off
             // until `deny.toml` admits its BSL-1.0 Windows crates (#532);
             // egui keeps the text until then.
@@ -1617,6 +1627,8 @@ pub(crate) struct FrameState<'a> {
     pub pointer: viewport::Pointer,
     /// Whether the Warnings drawer is open, for View ▸ Warnings.
     pub warnings_open: bool,
+    /// The operation whose carve note the drawer scrolls to this frame.
+    pub note_target: Option<&'a dc_project::OperationId>,
     /// The estimates' settings, for the status bar's total and an
     /// operation row's hover (capability 78).
     pub estimate: &'a EstimateConfig,
@@ -1682,6 +1694,12 @@ impl eframe::App for Shell {
                 .map(|example| (example, example.thumbnail()))
                 .collect();
         }
+        // Asked for by the last frame's message cell: scrolled to once.
+        let note_target = if self.warnings_open {
+            self.note_target.take()
+        } else {
+            None
+        };
         let state = FrameState {
             app: &self.app,
             prefs: self.app.prefs(),
@@ -1691,6 +1709,7 @@ impl eframe::App for Shell {
             examples: &self.thumbnails,
             pointer,
             warnings_open: self.warnings_open,
+            note_target: note_target.as_ref(),
             estimate: &self.estimate,
             setup_sheet: self.setup_sheet.is_some(),
             settings_forced: self.settings_forced,
@@ -1781,6 +1800,8 @@ impl eframe::App for Shell {
             window: size,
         };
 
+        let selected = dc_app::status::selected_operation(&self.app).cloned();
+        let said = self.message.clone();
         // In target editing only the mode's own actions run, whatever a
         // panel or a key raised (capability 67).
         let editing_targets = self.app.target_editing().is_some();
@@ -1794,6 +1815,13 @@ impl eframe::App for Shell {
         if self.app.previewed() != hovered.as_ref() {
             self.app.preview_targets(hovered);
             ctx.request_repaint();
+        }
+        // Capability 50b: choosing an operation is newer than the last
+        // message, so the message cell shows its carve summary; a message
+        // said in the same frame stays.
+        let now = dc_app::status::selected_operation(&self.app);
+        if now.is_some() && now != selected.as_ref() && self.message == said {
+            self.message = None;
         }
         // Post the next work once the frame's edits have settled; look
         // again soon while any is out or waiting.

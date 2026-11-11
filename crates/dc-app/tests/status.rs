@@ -37,6 +37,66 @@ fn idle_inputs(estimate: &EstimateConfig) -> Inputs<'_> {
     }
 }
 
+/// Functional 50b and 76a (slice 28, #620): while an operation that
+/// carves is selected and nothing newer has been said, the message cell
+/// shows that operation's first facts, `Lettering · deepest cut 1.658 mm,
+/// no flat depth`, and names the operation, so a click opens the drawer at
+/// its note. A message said since wins; an operation that does not carve,
+/// or no selection, leaves the cell empty.
+#[test]
+fn selected_operation_summary_in_message_cell() {
+    let estimate = EstimateConfig::default();
+    let inputs = idle_inputs(&estimate);
+    let mut harness = Harness::open(&common::read(&common::fixture("sign.dcv"))).unwrap();
+    harness.generate();
+    let bar = status::cells(&harness.app, &inputs);
+    assert_eq!(bar.message, None, "nothing selected, nothing said");
+    assert_eq!(bar.message_op, None);
+
+    let lettering = dc_project::OperationId::new("op3");
+    harness
+        .app
+        .select(dc_app::Selection::Operation(lettering.clone()));
+    let bar = status::cells(&harness.app, &inputs);
+    assert_eq!(
+        bar.message.as_deref(),
+        Some("Lettering · deepest cut 1.658 mm, no flat depth")
+    );
+    assert_eq!(bar.message_op, Some(lettering));
+    assert!(
+        bar.texts()
+            .contains(&"Lettering · deepest cut 1.658 mm, no flat depth")
+    );
+
+    let said = Inputs {
+        message: Some("Saved sign"),
+        ..idle_inputs(&estimate)
+    };
+    let bar = status::cells(&harness.app, &said);
+    assert_eq!(bar.message.as_deref(), Some("Saved sign"));
+    assert_eq!(bar.message_op, None, "a message is not a note");
+
+    // The hanging holes' Drill carves nothing to summarise.
+    harness
+        .app
+        .select(dc_app::Selection::Operation(dc_project::OperationId::new(
+            "op1",
+        )));
+    let bar = status::cells(&harness.app, &inputs);
+    assert_eq!(bar.message, None);
+    assert_eq!(bar.message_op, None);
+
+    // The Operations list opens a row in the editor without selecting
+    // it: the open operation is the one spoken for.
+    harness.app.select(dc_app::Selection::Nothing);
+    harness.app.edit(Some(dc_project::OperationId::new("op3")));
+    let bar = status::cells(&harness.app, &inputs);
+    assert_eq!(
+        bar.message.as_deref(),
+        Some("Lettering · deepest cut 1.658 mm, no flat depth")
+    );
+}
+
 /// Capability 50b, table-driven over the states the generation cell has:
 /// a project with shapes and no operation has no Toolpaths cell and no
 /// generation text; the plaque mid-generation says `Generating 1 of 5…`

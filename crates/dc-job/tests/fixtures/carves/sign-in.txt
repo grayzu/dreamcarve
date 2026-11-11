@@ -1,0 +1,2 @@
+V-Carve op2 `Background`: deepest cut 0.0984 in below the stock top, clamped at a flat depth of 0.0984 in; V-bit floor ridges 0.0098 in along the rings and up to 0.0197 in at their corners where no clearing pass reaches.
+V-Carve op3 `Lettering`: deepest cut 0.0653 in below the stock top, no flat depth.
