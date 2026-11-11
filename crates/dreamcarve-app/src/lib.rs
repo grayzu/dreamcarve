@@ -20,4 +20,4 @@ mod widgets;
 pub use shell::files;
 pub use shell::focus::Region as FocusRegion;
 pub use shell::theme;
-pub use shell::window::{Dialogs, Layout, NativeDialogs, Options, PanelShown, Shell};
+pub use shell::window::{Dialogs, Example, Layout, NativeDialogs, Options, PanelShown, Shell};
