@@ -15,7 +15,7 @@ use eframe::egui::{self, Button, Key, Modifiers, Ui};
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::files;
 use crate::shell::theme::Palette;
-use crate::shell::window::{Action, Example, FrameState, shortcut_action, shortcut_text};
+use crate::shell::window::{Action, FrameState, shortcut_action, shortcut_text};
 
 /// The menu bar's height, px.
 const HEIGHT_PX: f32 = 28.0;
@@ -432,10 +432,3 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         }
     });
 }
-
-/// The examples, for the empty state.
-pub(crate) const EXAMPLES: [(Example, StrKey); 3] = [
-    (Example::Coaster, StrKey::AppEmptyCoaster),
-    (Example::Plaque, StrKey::AppEmptyPlaque),
-    (Example::Sign, StrKey::AppEmptySign),
-];
