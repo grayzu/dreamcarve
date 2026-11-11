@@ -1,81 +1,93 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="820" height="700" viewBox="0 0 820 700" font-family="Helvetica, Arial, sans-serif">
-<title>DreamCarve phase 4 wireframe: export dialog</title>
-<rect width="820" height="700" fill="#ffffff"/>
-<rect x="0" y="0" width="820" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
-<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">11 · Export dialog (capability 77). What export prints, before it writes; the override is not saved.</text>
-<rect x="20" y="40" width="780" height="640" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="20" y="40" width="780" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="28" y="56" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Export G-code · plaque.dcv</text>
-<text x="790" y="57" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">✕</text>
-<text x="36" y="90" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Destination</text>
-<rect x="36" y="98" width="560" height="22" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="42" y="113" font-family="Menlo, Consolas, monospace" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">/Users/sam/cnc/plaque</text>
-<text x="436" y="113" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">+ -1-T1.nc, -2-T2.nc …</text>
-<rect x="604" y="97" width="90" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="649.0" y="113.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Choose…</text>
-<text x="36" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Post-processor</text>
-<rect x="156" y="132" width="280" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="162" y="146" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">grblHAL  v3</text>
-<text x="428" y="146" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<text x="156" y="162" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Changing it here changes the project (undoable) and keeps your settings.</text>
-<text x="36" y="188" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Programs</text>
-<circle cx="162" cy="182" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<circle cx="162" cy="182" r="3" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<text x="174" y="187" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">As the project says: one program per tool</text>
-<circle cx="162" cy="202" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="174" y="207" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">One program per tool, this export only</text>
-<circle cx="162" cy="222" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="174" y="227" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">One program with M6 tool changes, this export only</text>
-<rect x="156" y="240" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M158 246 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="174" y="251" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Also write the toolpath preview (plaque-preview.svg)</text>
-<text x="36" y="282" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Programs to write</text>
-<rect x="36" y="290" width="748" height="20" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="42" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">#</text>
-<text x="66" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">File</text>
-<text x="236" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tool</text>
-<text x="396" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Operations</text>
-<text x="596" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Est.</text>
-<text x="656" y="304" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="bold" fill="#2b2b2b" text-anchor="start">Z range</text>
-<rect x="36" y="310" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="42" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1</text>
-<text x="66" y="324" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-1-T1.nc</text>
-<text x="236" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T1 6.35 mm end mill</text>
-<text x="396" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Panel pocket, Outside cut</text>
-<text x="596" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">9 min 40 s</text>
-<text x="656" y="324" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−12.2..5</text>
-<text x="66" y="339" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Zero the tool on the stock top, then run.</text>
-<rect x="36" y="346" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="42" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2</text>
-<text x="66" y="360" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-2-T2.nc</text>
-<text x="236" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T2 3.175 mm end mill</text>
-<text x="396" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Screw holes, Flourish</text>
-<text x="596" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">2 min 05 s</text>
-<text x="656" y="360" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−12.2..5</text>
-<text x="66" y="375" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Change to T2 3.175 mm end mill, re-zero Z, then run.</text>
-<rect x="36" y="382" width="748" height="36" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="42" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">3</text>
-<text x="66" y="396" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">plaque-3-T3.nc</text>
-<text x="236" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">T3 90° V-bit</text>
-<text x="396" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">Lettering</text>
-<text x="596" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">1 min 50 s</text>
-<text x="656" y="396" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2b2b2b" text-anchor="start">−2.5..5</text>
-<text x="66" y="411" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">▸ Change to T3 90° V-bit, re-zero Z, then run.</text>
-<text x="36" y="434" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Extents, tool centre: X 6.8..153.2  Y 6.8..93.2 · bit edge: X 3.7..156.3  Y 3.7..96.3 · total 13 min 35 s (rapids not included: set [estimate] rapid_mm_min)</text>
-<text x="36" y="462" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#c62828" text-anchor="start">Errors (export is disabled until fixed)</text>
-<circle cx="44" cy="477" r="4" fill="#c62828" stroke="none" stroke-width="1"/>
-<text x="56" y="481" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#c62828" text-anchor="start">tool_missing_plunge  90° V-bit 6.35 mm has no plunge rate.</text>
-<text x="688" y="481" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#2f6fdb" text-anchor="end">Fix →</text>
-<text x="36" y="512" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#b26a00" text-anchor="start">Warnings (listed, do not block)</text>
-<path d="M44 521 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="56" y="531" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">relief_corner_too_tight  2 of panel's corners skipped.</text>
-<path d="M44 539 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="56" y="549" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">tab_on_hole  A tab on hole-3 holds its slug.</text>
-<path d="M44 557 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="56" y="567" font-family="Menlo, Consolas, monospace" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">tool_change_avoidable  T2 in two non-adjacent operations.</text>
-<text x="36" y="596" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">Every file is written or none is. The project file is not changed by exporting.</text>
-<rect x="600" y="640" width="80" height="28" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="640.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Cancel</text>
-<rect x="690" y="640" width="94" height="28" rx="3" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="737.0" y="658.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="middle">Export</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="680" viewBox="0 0 1240 680" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 mock-up: export sheet</title>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.14"/></filter><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#8A929E" opacity="0.35"/><line x1="0" y1="0" x2="0" y2="4" stroke="#8A929E" stroke-width="1.2"/></pattern></defs>
+<rect width="1240" height="680" fill="#ECEEF1"/>
+<rect x="0.0" y="0.0" width="1240.0" height="24.0" rx="0" fill="#FFF8E1" stroke="none" stroke-width="1"/>
+<text x="10.0" y="16.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">11 · Export sheet (77): no preview tick, no warnings, no total, no footnote; Program Details closed by default. Right: details opened; below, blocked.</text>
+<rect x="40.0" y="50.0" width="560.0" height="390.0" rx="8" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="64.0" y="82.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#1C2128" text-anchor="start">Export G-code</text>
+<path d="M 568.0,72.0 L 576.0,80.0 M 576.0,72.0 L 568.0,80.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="64.0" y="119.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Destination</text>
+<rect x="176.0" y="102.0" width="304.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="184.0" y="119.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">~/cnc</text>
+<rect x="488.0" y="102.0" width="88.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="532.0" y="119.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Choose…</text>
+<text x="64.0" y="149.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">File name</text>
+<rect x="176.0" y="132.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="184.0" y="149.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">plaque</text>
+<text x="176.0" y="172.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Writes plaque-1-T1.nc, plaque-2-T2.nc, plaque-3-T3.nc</text>
+<text x="64.0" y="201.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Post-processor</text>
+<rect x="176.0" y="184.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="184.0" y="201.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">grblHAL v4 (latest)</text>
+<path d="M 558.0,195.0 L 562.0,199.0 L 566.0,195.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="176.0" y="224.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Changing it here changes the project (undoable).</text>
+<text x="64.0" y="253.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Programs</text>
+<rect x="176.0" y="236.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="184.0" y="253.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">As the project says: one per tool</text>
+<path d="M 558.0,247.0 L 562.0,251.0 L 566.0,247.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="40.0" y="274.0" width="560.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 54.0,284.0 L 58.0,288.0 L 54.0,292.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="68.0" y="292.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Program Details</text>
+<text x="187.2" y="292.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">3 programs, run in this order</text>
+<line x1="40.0" y1="384.0" x2="600.0" y2="384.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="466.0" y="398.0" width="110.0" height="28.0" rx="4" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 483.0,405.5 L 483.0,414.0 M 479.5,410.5 L 483.0,414.0 L 486.5,410.5 M 477.0,415.0 L 477.0,418.0 L 489.0,418.0 L 489.0,415.0" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="497.0" y="416.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#FFFFFF" text-anchor="start">Export</text>
+<rect x="640.0" y="50.0" width="560.0" height="600.0" rx="8" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="664.0" y="82.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#1C2128" text-anchor="start">Export G-code</text>
+<path d="M 1168.0,72.0 L 1176.0,80.0 M 1176.0,72.0 L 1168.0,80.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="664.0" y="119.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Destination</text>
+<rect x="776.0" y="102.0" width="304.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="784.0" y="119.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">~/cnc</text>
+<rect x="1088.0" y="102.0" width="88.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="1132.0" y="119.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Choose…</text>
+<text x="664.0" y="149.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">File name</text>
+<rect x="776.0" y="132.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="784.0" y="149.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">plaque</text>
+<text x="776.0" y="172.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Writes plaque-1-T1.nc, plaque-2-T2.nc, plaque-3-T3.nc</text>
+<text x="664.0" y="201.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Post-processor</text>
+<rect x="776.0" y="184.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="784.0" y="201.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">grblHAL v4 (latest)</text>
+<path d="M 1158.0,195.0 L 1162.0,199.0 L 1166.0,195.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="776.0" y="224.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Changing it here changes the project (undoable).</text>
+<text x="664.0" y="253.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Programs</text>
+<rect x="776.0" y="236.0" width="400.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="784.0" y="253.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">As the project says: one per tool</text>
+<path d="M 1158.0,247.0 L 1162.0,251.0 L 1166.0,247.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="640.0" y="274.0" width="560.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 652.0,286.0 L 656.0,290.0 L 660.0,286.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="668.0" y="292.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Program Details</text>
+<rect x="664.0" y="306.0" width="512.0" height="64.0" rx="4" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="674.0" y="324.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">1</text>
+<text x="692.0" y="324.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-1-T1.nc</text>
+<text x="1166.0" y="324.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">9 min 40 s</text>
+<text x="692.0" y="342.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">T1 6.35 mm end mill · Panel pocket, Outside cut</text>
+<text x="692.0" y="360.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Before: Fit T1 and set work zero X, Y and Z.</text>
+<rect x="664.0" y="374.0" width="512.0" height="64.0" rx="4" fill="#F2F3F6" stroke="none" stroke-width="1"/>
+<text x="674.0" y="392.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">2</text>
+<text x="692.0" y="392.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-2-T2.nc</text>
+<text x="1166.0" y="392.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">2 min 05 s</text>
+<text x="692.0" y="410.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">T2 3.175 mm end mill · Screw holes, Flourish</text>
+<text x="692.0" y="428.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Before: Change to T2, set Z zero. Keep X and Y.</text>
+<rect x="664.0" y="442.0" width="512.0" height="64.0" rx="4" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="674.0" y="460.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">3</text>
+<text x="692.0" y="460.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-3-T3.nc</text>
+<text x="1166.0" y="460.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">1 min 50 s</text>
+<text x="692.0" y="478.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">T3 90° V-bit · Lettering</text>
+<text x="692.0" y="496.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Before: Change to T3, set Z zero. Keep X and Y.</text>
+<line x1="640.0" y1="594.0" x2="1200.0" y2="594.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="1066.0" y="608.0" width="110.0" height="28.0" rx="4" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 1083.0,615.5 L 1083.0,624.0 M 1079.5,620.5 L 1083.0,624.0 L 1086.5,620.5 M 1077.0,625.0 L 1077.0,628.0 L 1089.0,628.0 L 1089.0,625.0" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1097.0" y="626.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#FFFFFF" text-anchor="start">Export</text>
+<text x="40.0" y="470.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">With an error: one line above the footer and a disabled Export (its tooltip gives the same reason).</text>
+<rect x="40.0" y="482.0" width="560.0" height="120.0" rx="8" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<circle cx="72.0" cy="514.0" r="6.5" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M69.5 511.5 L74.5 516.5 M74.5 511.5 L69.5 516.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="86.0" y="519.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#C62E27" text-anchor="start">1 error blocks export</text>
+<rect x="228.0" y="502.0" width="47.1" height="26.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<text x="251.6" y="519.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Show</text>
+<line x1="40.0" y1="546.0" x2="600.0" y2="546.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="466.0" y="560.0" width="110.0" height="28.0" rx="4" fill="#F7F8FA" stroke="#D7DBE2" stroke-width="1"/>
+<path d="M 483.0,567.5 L 483.0,576.0 M 479.5,572.5 L 483.0,576.0 L 486.5,572.5 M 477.0,577.0 L 477.0,580.0 L 489.0,580.0 L 489.0,577.0" fill="none" stroke="#9AA3AF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="497.0" y="578.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#9AA3AF" text-anchor="start">Export</text>
 </svg>

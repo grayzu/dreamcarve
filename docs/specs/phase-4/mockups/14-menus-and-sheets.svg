@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="760" viewBox="0 0 1280 760" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 mock-up: menus and the unsaved-changes sheet</title>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.14"/></filter><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#8A929E" opacity="0.35"/><line x1="0" y1="0" x2="0" y2="4" stroke="#8A929E" stroke-width="1.2"/></pattern></defs>
+<rect width="1280" height="760" fill="#ECEEF1"/>
+<rect x="0.0" y="0.0" width="1280.0" height="24.0" rx="0" fill="#FFF8E1" stroke="none" stroke-width="1"/>
+<text x="10.0" y="16.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">14 · Menus (79a) and the unsaved-changes sheet (51): new-project and add-to-project apart; Appearance a three-way choice; Save, Don't Save, Cancel.</text>
+<rect x="0.0" y="30.0" width="1280.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="6.0" y="33.0" width="41.1" height="22.0" rx="4" fill="#EAECEF" stroke="none" stroke-width="1"/>
+<text x="12.0" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">File</text>
+<text x="61.1" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Edit</text>
+<text x="110.2" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Arrange</text>
+<text x="181.2" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">View</text>
+<text x="230.3" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Project</text>
+<text x="301.3" y="49.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Help</text>
+<line x1="0.0" y1="58.0" x2="1280.0" y2="58.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="6.0" y="60.0" width="300.0" height="380.0" rx="6" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="38.0" y="82.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">New</text>
+<text x="294.0" y="82.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl N</text>
+<text x="38.0" y="110.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">New Project from Drawing…</text>
+<text x="38.0" y="138.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">New Project from Picture…</text>
+<text x="38.0" y="166.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Open…</text>
+<text x="294.0" y="166.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl O</text>
+<text x="38.0" y="194.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Open Recent</text>
+<path d="M 286.0,186.0 L 290.0,190.0 L 286.0,194.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="14.0" y1="208.0" x2="298.0" y2="208.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="38.0" y="231.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Save</text>
+<text x="294.0" y="231.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl S</text>
+<text x="38.0" y="259.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Save As…</text>
+<text x="294.0" y="259.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Shift Ctrl S</text>
+<line x1="14.0" y1="273.0" x2="298.0" y2="273.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="38.0" y="296.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Add Drawing to Project…</text>
+<text x="294.0" y="296.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl I</text>
+<text x="38.0" y="324.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Add Picture to Project…</text>
+<line x1="14.0" y1="338.0" x2="298.0" y2="338.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="38.0" y="361.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Export G-code…</text>
+<text x="294.0" y="361.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl E</text>
+<text x="38.0" y="389.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA3AF" text-anchor="start">Save Setup Sheet…</text>
+<line x1="14.0" y1="403.0" x2="298.0" y2="403.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="38.0" y="426.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Quit</text>
+<text x="294.0" y="426.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Ctrl Q</text>
+<text x="340.0" y="92.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Arrange</text>
+<rect x="340.0" y="100.0" width="290.0" height="194.0" rx="6" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="372.0" y="122.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Rotate 90° Clockwise</text>
+<text x="618.0" y="122.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">R</text>
+<text x="372.0" y="150.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Rotate 90° Anticlockwise</text>
+<text x="618.0" y="150.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Shift R</text>
+<text x="372.0" y="178.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Rotate…</text>
+<line x1="348.0" y1="192.0" x2="622.0" y2="192.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="372.0" y="215.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Flip Horizontal</text>
+<text x="618.0" y="215.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Shift Ctrl H</text>
+<text x="372.0" y="243.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Flip Vertical</text>
+<text x="618.0" y="243.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Shift Ctrl V</text>
+<line x1="348.0" y1="257.0" x2="622.0" y2="257.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="372.0" y="280.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Centre on Stock</text>
+<text x="660.0" y="92.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">View</text>
+<rect x="660.0" y="100.0" width="260.0" height="231.0" rx="6" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<path d="M 673.0,118.5 L 676.5,122.0 L 683.0,114.5" fill="none" stroke="#1C2128" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="692.0" y="122.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Design Tree and Settings</text>
+<path d="M 673.0,146.5 L 676.5,150.0 L 683.0,142.5" fill="none" stroke="#1C2128" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="692.0" y="150.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">CAM Panel</text>
+<line x1="668.0" y1="164.0" x2="912.0" y2="164.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="692.0" y="187.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Toolpaths…</text>
+<text x="692.0" y="215.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Warnings</text>
+<line x1="668.0" y1="229.0" x2="912.0" y2="229.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="692.0" y="252.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Fit View</text>
+<text x="908.0" y="252.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">F</text>
+<text x="692.0" y="280.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Zoom to Selection</text>
+<text x="908.0" y="280.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Shift F</text>
+<line x1="668.0" y1="294.0" x2="912.0" y2="294.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="664.0" y="299.0" width="252.0" height="28.0" rx="4" fill="#EAECEF" stroke="none" stroke-width="1"/>
+<text x="692.0" y="317.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Appearance</text>
+<path d="M 900.0,309.0 L 904.0,313.0 L 900.0,317.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="916.0" y="325.0" width="150.0" height="92.0" rx="6" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<path d="M 929.0,343.5 L 932.5,347.0 L 939.0,339.5" fill="none" stroke="#1C2128" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="948.0" y="347.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">System</text>
+<text x="948.0" y="375.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Light</text>
+<text x="948.0" y="403.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Dark</text>
+<rect x="760.0" y="520.0" width="420.0" height="150.0" rx="8" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="784.0" y="558.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#1C2128" text-anchor="start">Save changes to “plaque”?</text>
+<text x="784.0" y="584.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Your changes are lost if you don't save them.</text>
+<rect x="784.0" y="620.0" width="104.0" height="28.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="836.0" y="638.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#C62E27" text-anchor="middle">Don't Save</text>
+<rect x="988.0" y="620.0" width="84.0" height="28.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="1030.0" y="638.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Cancel</text>
+<rect x="1080.0" y="620.0" width="76.0" height="28.0" rx="4" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<text x="1118.0" y="638.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#FFFFFF" text-anchor="middle">Save</text>
+<rect x="40.0" y="560.0" width="660.0" height="78.0" rx="6" fill="#FFF8E1" stroke="#E9D9A6" stroke-width="1"/>
+<text x="50.0" y="578.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Shown on close, quit, Open and every New when there are unsaved changes.</text>
+<text x="50.0" y="594.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Enter is Save, Escape is Cancel. Save on an untitled project asks where first.</text>
+<text x="50.0" y="610.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">No autosave in phase 4 (maintainer, 2026-11-10).</text>
+<text x="50.0" y="626.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Save As… is the standard save-a-copy; Export G-code… writes programs.</text>
+</svg>

@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="780" viewBox="0 0 760 780" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 mock-up: tools tab</title>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.14"/></filter><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#8A929E" opacity="0.35"/><line x1="0" y1="0" x2="0" y2="4" stroke="#8A929E" stroke-width="1.2"/></pattern></defs>
+<rect width="760" height="780" fill="#ECEEF1"/>
+<rect x="0.0" y="0.0" width="760.0" height="24.0" rx="0" fill="#FFF8E1" stroke="none" stroke-width="1"/>
+<text x="10.0" y="16.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">16 · Tools tab (63): New tool makes tool4 with init's geometry and no rates; rates show Required, the message in the tooltip.</text>
+<rect x="20.0" y="40.0" width="340.0" height="720.0" rx="0" fill="#F7F8FA" stroke="#D7DBE2" stroke-width="1"/>
+<rect x="20.0" y="40.0" width="340.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="32.0" y="61.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">CAM</text>
+<line x1="20.0" y1="72.0" x2="360.0" y2="72.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="20.0" y="73.0" width="340.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="105.0" y="94.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="middle">Tools · 4</text>
+<rect x="32.0" y="103.0" width="146.0" height="2.0" rx="0" fill="#2563D0" stroke="none" stroke-width="1"/>
+<text x="275.0" y="94.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="middle">Operations · 5</text>
+<line x1="20.0" y1="105.0" x2="360.0" y2="105.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="20.0" y="106.0" width="340.0" height="40.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="32.0" y="113.0" width="104.2" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 49.0,121.0 L 49.0,131.0 M 44.0,126.0 L 54.0,126.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="63.0" y="130.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">New tool</text>
+<rect x="142.2" y="113.0" width="141.8" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="213.1" y="130.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Add from library…</text>
+<path d="M 35.5,161.5 L 35.5,170.5 Q 40.0,173.5 44.5,170.5 L 44.5,161.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 35.5,161.5 Q 40.0,158.5 44.5,161.5 Q 40.0,164.5 35.5,161.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="56.0" y="163.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">6.35 mm end mill</text>
+<text x="56.0" y="179.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">6.35 mm · T1</text>
+<path d="M 35.5,201.5 L 35.5,210.5 Q 40.0,213.5 44.5,210.5 L 44.5,201.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 35.5,201.5 Q 40.0,198.5 44.5,201.5 Q 40.0,204.5 35.5,201.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="56.0" y="203.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">3.175 mm end mill</text>
+<text x="56.0" y="219.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">3.175 mm · T2</text>
+<path d="M 34.5,241.0 L 45.5,241.0 L 40.0,252.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="56.0" y="243.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">90° V-bit</text>
+<text x="56.0" y="259.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">6.35 mm · 90° · T3</text>
+<rect x="20.0" y="266.0" width="340.0" height="40.0" rx="0" fill="#E3ECFA" stroke="none" stroke-width="1"/>
+<rect x="20.0" y="266.0" width="2.0" height="40.0" rx="0" fill="#2563D0" stroke="none" stroke-width="1"/>
+<path d="M 35.5,281.5 L 35.5,290.5 Q 40.0,293.5 44.5,290.5 L 44.5,281.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 35.5,281.5 Q 40.0,278.5 44.5,281.5 Q 40.0,284.5 35.5,281.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="56.0" y="283.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1C2128" text-anchor="start">tool4</text>
+<text x="56.0" y="299.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">6.35 mm · T4</text>
+<circle cx="340.0" cy="286.0" r="4.0" fill="#C62E27" stroke="none" stroke-width="1"/>
+<line x1="20.0" y1="306.0" x2="360.0" y2="306.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="32.0" y="313.0" width="111.5" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<rect x="46.0" y="323.0" width="9.0" height="9.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 44.0,329.0 L 43.0,329.0 L 43.0,320.0 L 52.0,320.0 L 52.0,321.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="63.0" y="330.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Duplicate</text>
+<rect x="149.5" y="313.0" width="89.7" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 161.0,322.0 L 172.0,322.0 M 164.5,322.0 L 164.5,320.5 L 168.5,320.5 L 168.5,322.0 M 162.5,322.0 L 163.3,332.0 L 169.7,332.0 L 170.5,322.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="180.5" y="330.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Delete</text>
+<rect x="144.0" y="348.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#2563D0" stroke-width="1"/>
+<rect x="150.0" y="353.0" width="40.0" height="16.0" rx="0" fill="#E3ECFA" stroke="none" stroke-width="1"/>
+<text x="32.0" y="365.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Name</text>
+<text x="152.0" y="365.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">tool4</text>
+<text x="32.0" y="395.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Type</text>
+<rect x="144.0" y="378.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="152.0" y="395.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">End mill</text>
+<path d="M 330.0,389.0 L 334.0,393.0 L 338.0,389.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="32.0" y="425.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Diameter</text>
+<rect x="144.0" y="408.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="340.0" y="425.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="152.0" y="425.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">6.35</text>
+<text x="32.0" y="455.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Flutes</text>
+<rect x="144.0" y="438.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="152.0" y="455.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">2</text>
+<text x="32.0" y="485.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Feed</text>
+<rect x="144.0" y="468.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#C62E27" stroke-width="1"/>
+<text x="340.0" y="485.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm/min</text>
+<circle cx="281.7" cy="481.0" r="6.5" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M279.2 478.5 L284.2 483.5 M284.2 478.5 L279.2 483.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="152.0" y="485.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA3AF" text-anchor="start">Required</text>
+<text x="32.0" y="515.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Plunge rate</text>
+<rect x="144.0" y="498.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#C62E27" stroke-width="1"/>
+<text x="340.0" y="515.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm/min</text>
+<circle cx="281.7" cy="511.0" r="6.5" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M279.2 508.5 L284.2 513.5 M284.2 508.5 L279.2 513.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="152.0" y="515.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA3AF" text-anchor="start">Required</text>
+<text x="32.0" y="545.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">RPM</text>
+<rect x="144.0" y="528.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#C62E27" stroke-width="1"/>
+<text x="340.0" y="545.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">rpm</text>
+<circle cx="301.8" cy="541.0" r="6.5" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M299.3 538.5 L304.3 543.5 M304.3 538.5 L299.3 543.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="152.0" y="545.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#9AA3AF" text-anchor="start">Required</text>
+<text x="32.0" y="575.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Step-down</text>
+<rect x="144.0" y="558.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="340.0" y="575.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="152.0" y="575.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<text x="32.0" y="605.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Stepover</text>
+<rect x="144.0" y="588.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="340.0" y="605.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">%</text>
+<text x="152.0" y="605.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<text x="32.0" y="635.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Tool number</text>
+<rect x="144.0" y="618.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="152.0" y="635.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<text x="32.0" y="665.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Vendor</text>
+<rect x="144.0" y="648.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="152.0" y="665.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<text x="32.0" y="695.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Product id</text>
+<rect x="144.0" y="678.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="152.0" y="695.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<rect x="32.0" y="712.0" width="127.2" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="95.6" y="729.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="middle">Save to library</text>
+<rect x="380.0" y="360.0" width="340.0" height="52.0" rx="6" fill="#262B33" stroke="none" stroke-width="1"/>
+<text x="392.0" y="382.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#E8EBF0" text-anchor="start">tools[t4].feed_mm_min is not set (mm/min)</text>
+<text x="392.0" y="400.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#A3ABB7" text-anchor="start">feed_mm_min</text>
+<rect x="380.0" y="430.0" width="340.0" height="112.0" rx="6" fill="#FFF8E1" stroke="#E9D9A6" stroke-width="1"/>
+<text x="390.0" y="448.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#1C2128" text-anchor="start">New tool</text>
+<text x="390.0" y="466.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Name focused and selected: type to rename.</text>
+<text x="390.0" y="482.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Diameter is init's placeholder (the file</text>
+<text x="390.0" y="498.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">needs one); feeds are never invented.</text>
+<text x="390.0" y="514.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Delete is refused while an operation uses</text>
+<text x="390.0" y="530.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">the tool; its tooltip names them.</text>
+<rect x="380.0" y="560.0" width="340.0" height="64.0" rx="6" fill="#FFF8E1" stroke="#E9D9A6" stroke-width="1"/>
+<text x="390.0" y="578.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#1C2128" text-anchor="start">Empty list</text>
+<text x="390.0" y="596.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Empty project: “No tools yet.” with</text>
+<text x="390.0" y="612.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">New tool and Add from library… under it.</text>
+</svg>

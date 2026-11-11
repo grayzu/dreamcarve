@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="900" viewBox="0 0 1240 900" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 mock-up: export result and setup sheet</title>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.14"/></filter><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#8A929E" opacity="0.35"/><line x1="0" y1="0" x2="0" y2="4" stroke="#8A929E" stroke-width="1.2"/></pattern></defs>
+<rect width="1240" height="900" fill="#ECEEF1"/>
+<rect x="0.0" y="0.0" width="1240.0" height="24.0" rx="0" fill="#FFF8E1" stroke="none" stroke-width="1"/>
+<text x="10.0" y="16.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">13 · Export result (77a): Status, Files, Run instructions (closed); Save setup sheet… Right: the setup sheet (77b), an HTML page printed from the browser.</text>
+<rect x="40.0" y="50.0" width="560.0" height="600.0" rx="8" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="64.0" y="82.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18" font-weight="600" fill="#1C2128" text-anchor="start">Export G-code</text>
+<path d="M 568.0,72.0 L 576.0,80.0 M 576.0,72.0 L 568.0,80.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="74.0" cy="110.0" r="8.1" fill="none" stroke="#1F7F43" stroke-width="1.5"/>
+<path d="M 70.2,110.2 L 73.0,113.0 L 77.8,107.5" fill="none" stroke="#1F7F43" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="92.0" y="116.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#1C2128" text-anchor="start">3 programs written</text>
+<text x="64.0" y="150.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Files</text>
+<rect x="64.0" y="160.0" width="512.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="72.0" y="178.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">#</text>
+<text x="96.0" y="178.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">File</text>
+<text x="284.0" y="178.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Tool</text>
+<text x="568.0" y="178.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">Time</text>
+<rect x="64.0" y="188.0" width="512.0" height="28.0" rx="0" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="72.0" y="206.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">1</text>
+<text x="96.0" y="206.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-1-T1.nc</text>
+<text x="284.0" y="206.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">T1 6.35 mm end mill</text>
+<text x="568.0" y="206.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">9 min 40 s</text>
+<rect x="64.0" y="216.0" width="512.0" height="28.0" rx="0" fill="#F2F3F6" stroke="none" stroke-width="1"/>
+<text x="72.0" y="234.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">2</text>
+<text x="96.0" y="234.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-2-T2.nc</text>
+<text x="284.0" y="234.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">T2 3.175 mm end mill</text>
+<text x="568.0" y="234.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">2 min 05 s</text>
+<rect x="64.0" y="244.0" width="512.0" height="28.0" rx="0" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<text x="72.0" y="262.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">3</text>
+<text x="96.0" y="262.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">plaque-3-T3.nc</text>
+<text x="284.0" y="262.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">T3 90° V-bit</text>
+<text x="568.0" y="262.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="end">1 min 50 s</text>
+<text x="64.0" y="296.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Folder</text>
+<text x="64.0" y="318.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">/Users/sam/cnc</text>
+<rect x="390.0" y="302.0" width="150.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 400.5,320.0 L 400.5,310.0 L 405.0,310.0 L 406.5,312.0 L 412.0,312.0 L 412.0,314.0 M 400.5,320.0 L 403.0,314.5 L 414.0,314.5 L 411.5,320.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="421.0" y="319.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Show in folder</text>
+<rect x="548.0" y="302.0" width="26.0" height="26.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<rect x="558.0" y="312.0" width="9.0" height="9.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 556.0,318.0 L 555.0,318.0 L 555.0,309.0 L 564.0,309.0 L 564.0,310.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="40.0" y="344.0" width="560.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 52.0,356.0 L 56.0,360.0 L 60.0,356.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="68.0" y="362.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Run instructions</text>
+<text x="64.0" y="392.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">1.</text>
+<text x="82.0" y="392.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">Before program 1: Fit T1 6.35 mm end mill; set work zero X, Y and Z.</text>
+<text x="64.0" y="412.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">2.</text>
+<text x="82.0" y="412.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">Before program 2: Change to T2 3.175 mm end mill; set Z zero, keep X and Y.</text>
+<text x="64.0" y="432.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">3.</text>
+<text x="82.0" y="432.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">Before program 3: Change to T3 90° V-bit; set Z zero, keep X and Y.</text>
+<rect x="64.0" y="442.0" width="512.0" height="28.0" rx="6" fill="#F2F3F6" stroke="none" stroke-width="1"/>
+<circle cx="79.0" cy="455.0" r="5.7" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 79.0,454.6 L 79.0,458.1" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="79.0" cy="452.4" r="0.7" fill="#5B6472" stroke="none" stroke-width="1"/>
+<text x="92.0" y="460.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">This program does not change the tool length offset (G43.1).</text>
+<rect x="64.0" y="476.0" width="512.0" height="28.0" rx="6" fill="#F2F3F6" stroke="none" stroke-width="1"/>
+<circle cx="79.0" cy="489.0" r="5.7" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 79.0,488.6 L 79.0,492.1" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="79.0" cy="486.4" r="0.7" fill="#5B6472" stroke="none" stroke-width="1"/>
+<text x="92.0" y="494.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">If you used G51 on this controller, soft-reset it first.</text>
+<text x="64.0" y="522.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Extents (tool centre) X 6.8…153.2  Y 6.8…93.2 · Z −12.2…+10</text>
+<line x1="40.0" y1="594.0" x2="600.0" y2="594.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="64.0" y="608.0" width="169.8" height="28.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 76.0,615.5 L 83.0,615.5 L 86.5,619.0 L 86.5,628.5 L 76.0,628.5 Z M 78.5,622.0 L 84.0,622.0 M 78.5,625.0 L 84.0,625.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="95.0" y="626.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Save setup sheet…</text>
+<rect x="486.0" y="608.0" width="90.0" height="28.0" rx="4" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<text x="531.0" y="626.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#FFFFFF" text-anchor="middle">Done</text>
+<text x="40.0" y="690.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">Run instructions shown open here; the sheet opens with them closed.</text>
+<rect x="660.0" y="50.0" width="540.0" height="820.0" rx="0" fill="#FFFFFF" stroke="#D7DBE2" stroke-width="1" filter="url(#shadow)"/>
+<text x="700.0" y="106.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="700" fill="#000" text-anchor="start">plaque — setup sheet</text>
+<text x="700.0" y="128.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Exported 2026-11-10 · grblHAL v4 · units mm</text>
+<text x="700.0" y="156.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Stock</text>
+<text x="810.0" y="156.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">160 × 100 × 12 mm</text>
+<text x="700.0" y="174.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">XY zero</text>
+<text x="810.0" y="174.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Bottom-left corner</text>
+<text x="700.0" y="192.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Z zero</text>
+<text x="810.0" y="192.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Stock top</text>
+<text x="700.0" y="210.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Clearance</text>
+<text x="810.0" y="210.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">10 mm</text>
+<line x1="700.0" y1="238.0" x2="1160.0" y2="238.0" stroke="#000" stroke-width="0.6" stroke-linecap="round"/>
+<text x="700.0" y="258.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#000" text-anchor="start">1.  plaque-1-T1.nc</text>
+<text x="1160.0" y="258.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="end">9 min 40 s</text>
+<text x="720.0" y="278.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Tool</text>
+<text x="810.0" y="278.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">T1 · 6.35 mm end mill · IDC Woodcraft DC-14 · 2 flutes</text>
+<text x="720.0" y="296.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Operations</text>
+<text x="810.0" y="296.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Panel pocket, Outside cut</text>
+<text x="720.0" y="314.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Before</text>
+<text x="810.0" y="314.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Fit T1 and set work zero X, Y and Z.</text>
+<text x="720.0" y="332.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Extents</text>
+<text x="810.0" y="332.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">X 6.8…153.2 · Y 6.8…93.2 · Z −12.2…+10</text>
+<line x1="700.0" y1="358.0" x2="1160.0" y2="358.0" stroke="#000" stroke-width="0.6" stroke-linecap="round"/>
+<text x="700.0" y="378.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#000" text-anchor="start">2.  plaque-2-T2.nc</text>
+<text x="1160.0" y="378.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="end">2 min 05 s</text>
+<text x="720.0" y="398.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Tool</text>
+<text x="810.0" y="398.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">T2 · 3.175 mm end mill · IDC Woodcraft UC-18 · 2 flutes</text>
+<text x="720.0" y="416.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Operations</text>
+<text x="810.0" y="416.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Screw holes, Flourish</text>
+<text x="720.0" y="434.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Before</text>
+<text x="810.0" y="434.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Change to T2, set Z zero. Keep X and Y.</text>
+<text x="720.0" y="452.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Extents</text>
+<text x="810.0" y="452.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">X 18.4…141.6 · Y 18.4…81.6 · Z −12.2…+10</text>
+<line x1="700.0" y1="478.0" x2="1160.0" y2="478.0" stroke="#000" stroke-width="0.6" stroke-linecap="round"/>
+<text x="700.0" y="498.0" font-family="'JetBrains Mono', Menlo, Consolas, monospace" font-size="13" font-weight="700" fill="#000" text-anchor="start">3.  plaque-3-T3.nc</text>
+<text x="1160.0" y="498.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="end">1 min 50 s</text>
+<text x="720.0" y="518.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Tool</text>
+<text x="810.0" y="518.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">T3 · 90° V-bit 6.35 mm · Amana 45702</text>
+<text x="720.0" y="536.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Operations</text>
+<text x="810.0" y="536.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Lettering</text>
+<text x="720.0" y="554.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Before</text>
+<text x="810.0" y="554.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">Change to T3, set Z zero. Keep X and Y.</text>
+<text x="720.0" y="572.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="600" fill="#000" text-anchor="start">Extents</text>
+<text x="810.0" y="572.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">X 40.1…120.0 · Y 40.0…60.2 · Z −2.5…+10</text>
+<line x1="700.0" y1="598.0" x2="1160.0" y2="598.0" stroke="#000" stroke-width="0.6" stroke-linecap="round"/>
+<text x="700.0" y="620.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="700" fill="#000" text-anchor="start">Notes</text>
+<text x="700.0" y="640.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">•  This program does not change the tool length offset (G43.1).</text>
+<text x="700.0" y="658.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#000" text-anchor="start">•  Warning tool_change_avoidable: T2 is used by two non-adjacent operations.</text>
+<text x="700.0" y="846.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10" font-weight="400" fill="#000" text-anchor="start">plaque · 2026-11-10 · DreamCarve 0.4.0</text>
+</svg>
