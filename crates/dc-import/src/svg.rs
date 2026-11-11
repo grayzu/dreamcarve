@@ -631,16 +631,16 @@ pub(crate) fn affine(t: usvg::Transform) -> Affine {
 /// circular arc.
 #[derive(Debug, Clone)]
 pub(crate) struct MmPath {
-    bez: BezPath,
+    pub(crate) bez: BezPath,
     /// One per element of `bez`: `Some` for the Bézier piece of a circular
     /// arc, which becomes a bulge instead of being flattened.
-    arcs: Vec<Option<ArcHint>>,
+    pub(crate) arcs: Vec<Option<ArcHint>>,
 }
 
 /// What [`build_profiles`] needs to turn a recognised Bézier piece back
 /// into its arc.
 #[derive(Debug, Clone, Copy)]
-struct ArcHint {
+pub(crate) struct ArcHint {
     /// Signed sweep in millimetre space (after the Y flip); positive is
     /// counter-clockwise.
     sweep_rad: f64,

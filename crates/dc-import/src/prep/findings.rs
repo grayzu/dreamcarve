@@ -8,14 +8,27 @@
 //! The import checks (functional 49a; design, "Import checks"): one
 //! measure over the walk's painted paths each, one warning per kind found
 //! with a count and the first example. Nothing is changed or refused.
+//!
+//! PureCutCNC's classifier assigns roles for its GUI; only its ambiguity
+//! detection is reused, as findings: outlines that cross are an overlap, a
+//! filled path inside a filled path is a separate-path hole. The nesting
+//! itself stays [`dc_geometry::nest`]'s.
 
-use crate::svg::SvgImportOptions;
+use super::DEFAULT_MIN_DETAIL_PCT;
+use super::walk::{HiddenReason, PaintedPath, StrokePaint, mean_axis_scale, walk};
+use crate::svg::{self, MM_PER_PX, SvgImportOptions};
 use crate::{ImportError, ImportWarning};
-use dc_geometry::Region;
+use dc_geometry::{
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, FillRule, Rect, Region, area_mm2, intersection,
+    merge_fills, resolve_fill, union,
+    width::{hole_is_narrower_than, is_narrower_than},
+};
+use std::collections::BTreeMap;
 
 /// The 49a checks on the SVG in `bytes`, in a fixed order: overlap, hole as
 /// a separate path, stroke only, hidden, not convertible (text, images,
-/// clip paths, masks), below size.
+/// clip paths, masks), below size. Flattens at the importer's tolerance;
+/// costs one more parse and flatten of the SVG `init` already read.
 ///
 /// # Errors
 ///
@@ -25,28 +38,401 @@ pub fn findings(
     bytes: &[u8],
     options: &SvgImportOptions,
 ) -> Result<Vec<ImportWarning>, ImportError> {
-    let _ = (bytes, options);
-    Ok(Vec::new())
+    let tolerance_mm = options.flatten_tolerance_mm;
+    if !(tolerance_mm.is_finite() && tolerance_mm >= svg::MIN_FLATTEN_TOLERANCE_MM) {
+        return Err(ImportError::InvalidTolerance { tolerance_mm });
+    }
+    let walked = walk(bytes)?;
+
+    let mut vertices = 0_usize;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for path in &walked.painted {
+        vertices =
+            vertices.saturating_add(svg::estimated_vertices(&path.geometry.bez, tolerance_mm));
+        if vertices > options.max_vertices {
+            return Err(ImportError::TooManyVertices {
+                limit: options.max_vertices,
+            });
+        }
+        let filled = path.fill.map_or_else(Vec::new, |fill| {
+            let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
+            resolve_fill(&profiles, fill.rule, tolerance_mm)
+        });
+        let stroked = path.stroke.as_ref().map_or_else(Vec::new, |stroke| {
+            stroke_regions(path, stroke, tolerance_mm)
+        });
+        shapes.push(Shape {
+            name: path.name.clone(),
+            filled,
+            stroked,
+        });
+    }
+
+    let mut out = Vec::new();
+    let named: Vec<(&str, Vec<&Region>)> = shapes
+        .iter()
+        .map(|s| (s.name.as_str(), s.filled.iter().chain(&s.stroked).collect()))
+        .collect();
+    out.extend(overlap(&named, tolerance_mm));
+    out.extend(separate_holes(&shapes, tolerance_mm));
+    out.extend(stroke_only(&walked.painted, &shapes));
+    out.extend(hidden(&walked.hidden));
+    out.extend(
+        walked
+            .not_convertible
+            .iter()
+            .map(|u| ImportWarning::SvgObjectNotConvertible {
+                kind: u.kind,
+                count: u.count,
+                group: u.group.clone(),
+            }),
+    );
+
+    // The ink: fills nested as `init` reads them, strokes united on top.
+    let height_mm = painted_height_mm(&walked.painted);
+    if height_mm.is_finite() && height_mm > 0.0 {
+        let fills: Vec<Vec<Region>> = shapes.iter().map(|s| s.filled.clone()).collect();
+        let strokes: Vec<Region> = shapes.iter().flat_map(|s| s.stroked.clone()).collect();
+        if let Ok(nested) = merge_fills(fills, tolerance_mm) {
+            let ink = union(&nested, &strokes, tolerance_mm);
+            out.extend(below_size(&ink, height_mm, tolerance_mm));
+        }
+    }
+    Ok(out)
 }
 
 /// The two checks that make sense on a project's shapes, for `check`:
 /// `shapes_overlap` and `feature_below_size`. Regions are named
-/// `region-N` (their position, from 1).
+/// `region-N` (their position, from 1); `height_mm` is the design's, from
+/// the regions' joint bounding box. See [`design_findings_named`].
 #[must_use]
 pub fn design_findings(regions: &[Region], height_mm: f64) -> Vec<ImportWarning> {
-    let _ = (regions, height_mm);
-    Vec::new()
+    let shapes: Vec<(String, Vec<Region>)> = regions
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (format!("region-{}", i + 1), vec![r.clone()]))
+        .collect();
+    design_findings_named(&shapes, height_mm)
 }
 
 /// [`design_findings`] with the shapes' own names: one `(name, regions)`
-/// per shape, in order.
+/// per shape, in order, so `shapes_overlap` can name the pair as the
+/// project does. Pieces and holes are measured as given (a project's
+/// nesting decides its holes); flattening is at the default tolerance.
 #[must_use]
 pub fn design_findings_named(
     shapes: &[(String, Vec<Region>)],
     height_mm: f64,
 ) -> Vec<ImportWarning> {
-    let _ = (shapes, height_mm);
-    Vec::new()
+    let tolerance_mm = FLATTEN_TOLERANCE_DEFAULT_MM;
+    let named: Vec<(&str, Vec<&Region>)> = shapes
+        .iter()
+        .map(|(name, regions)| (name.as_str(), regions.iter().collect()))
+        .collect();
+    let mut out: Vec<ImportWarning> = overlap(&named, tolerance_mm).into_iter().collect();
+    let all: Vec<Region> = shapes
+        .iter()
+        .flat_map(|(_, regions)| regions.clone())
+        .collect();
+    out.extend(below_size(&all, height_mm, tolerance_mm));
+    out
+}
+
+/// One painted path's areas.
+struct Shape {
+    name: String,
+    /// The fill, resolved under the path's rule; empty without a visible
+    /// fill (none, or on a path that encloses nothing).
+    filled: Vec<Region>,
+    /// The stroke's area, resolved nonzero.
+    stroked: Vec<Region>,
+}
+
+/// The area of `path`'s stroke, in millimetres, Y-up. Built in user space,
+/// before the transform, as SVG applies it, by tiny-skia's stroker, the one
+/// the renderers draw with.
+fn stroke_regions(path: &PaintedPath, stroke: &StrokePaint, tolerance_mm: f64) -> Vec<Region> {
+    let mut skia = stroke.stroke.to_tiny_skia();
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a resolution hint for the stroker"
+    )]
+    let res_scale = (mean_axis_scale(path.to_mm) / MM_PER_PX).clamp(1e-3, 1e6) as f32;
+    let dashed;
+    let source = match skia.dash.take() {
+        Some(dash) => {
+            let Some(path) = path.user_path.dash(&dash, res_scale) else {
+                return Vec::new();
+            };
+            dashed = path;
+            &dashed
+        }
+        None => &path.user_path,
+    };
+    let Some(outline) = source.stroke(&skia, res_scale) else {
+        return Vec::new();
+    };
+    let mm = svg::to_mm_path(&outline, path.to_mm);
+    let profiles = svg::build_profiles(&mm, tolerance_mm);
+    resolve_fill(&profiles, FillRule::NonZero, tolerance_mm)
+}
+
+/// Every pair `(i, j)`, `i < j`, of `boxes` that overlap or touch, by a
+/// sweep over their left edges.
+fn box_pairs(boxes: &[Option<Rect>]) -> Vec<(usize, usize)> {
+    let mut order: Vec<(usize, Rect)> = boxes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, b)| b.map(|b| (i, b)))
+        .collect();
+    order.sort_by(|(i, a), (j, b)| a.min.x.total_cmp(&b.min.x).then(i.cmp(j)));
+    let mut pairs = Vec::new();
+    for (k, &(i, a)) in order.iter().enumerate() {
+        for &(j, b) in order.iter().skip(k + 1) {
+            if b.min.x > a.max.x {
+                break;
+            }
+            if b.min.y <= a.max.y && a.min.y <= b.max.y {
+                pairs.push((i.min(j), i.max(j)));
+            }
+        }
+    }
+    pairs.sort_unstable();
+    pairs
+}
+
+fn bounds(region: &Region) -> Option<Rect> {
+    region.outer().polyline().bounds()
+}
+
+fn perimeter_mm(region: &Region) -> f64 {
+    std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum()
+}
+
+/// The area `a` and `b` share, mm², and a slack under which it is noise.
+fn shared(a: &Region, b: &Region, tolerance_mm: f64) -> (Vec<Region>, f64, f64) {
+    let both = intersection(
+        std::slice::from_ref(a),
+        std::slice::from_ref(b),
+        tolerance_mm,
+    );
+    let slack_mm2 = EPS_MM * (perimeter_mm(a) + perimeter_mm(b));
+    let mm2 = area_mm2(&both);
+    (both, mm2, slack_mm2)
+}
+
+/// `shapes_overlap`: pairs of shapes with a region of one crossing a
+/// region of the other: they share area and neither lies wholly in the
+/// other's material (`nest`'s test).
+fn overlap(shapes: &[(&str, Vec<&Region>)], tolerance_mm: f64) -> Option<ImportWarning> {
+    let items: Vec<(usize, &Region)> = shapes
+        .iter()
+        .enumerate()
+        .flat_map(|(s, (_, regions))| regions.iter().map(move |r| (s, *r)))
+        .collect();
+    let boxes: Vec<Option<Rect>> = items.iter().map(|(_, r)| bounds(r)).collect();
+    // Per pair of shapes, the box of everything where they cross.
+    let mut crossings: BTreeMap<(usize, usize), Rect> = BTreeMap::new();
+    for (i, j) in box_pairs(&boxes) {
+        let (Some(&(si, a)), Some(&(sj, b))) = (items.get(i), items.get(j)) else {
+            continue;
+        };
+        if si == sj {
+            continue;
+        }
+        let (both, shared_mm2, slack_mm2) = shared(a, b, tolerance_mm);
+        let crosses = shared_mm2 > slack_mm2
+            && (a.area_mm2() - shared_mm2).abs() > slack_mm2
+            && (b.area_mm2() - shared_mm2).abs() > slack_mm2;
+        if !crosses {
+            continue;
+        }
+        let Some(extent) = both
+            .iter()
+            .filter_map(bounds)
+            .reduce(|acc, b| acc.including(b.min).including(b.max))
+        else {
+            continue;
+        };
+        crossings
+            .entry((si.min(sj), si.max(sj)))
+            .and_modify(|acc| *acc = acc.including(extent.min).including(extent.max))
+            .or_insert(extent);
+    }
+    let (&(first, second), extent) = crossings.iter().next()?;
+    Some(ImportWarning::ShapesOverlap {
+        count: crossings.len(),
+        first: shapes.get(first)?.0.to_owned(),
+        second: shapes.get(second)?.0.to_owned(),
+        x_mm: f64::midpoint(extent.min.x, extent.max.x),
+        y_mm: f64::midpoint(extent.min.y, extent.max.y),
+    })
+}
+
+/// `svg_hole_as_separate_path`: a path with a visible fill all of whose
+/// regions lie wholly inside the material of one other path's fill.
+fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<ImportWarning> {
+    let items: Vec<(usize, &Region)> = shapes
+        .iter()
+        .enumerate()
+        .flat_map(|(s, shape)| shape.filled.iter().map(move |r| (s, r)))
+        .collect();
+    let boxes: Vec<Option<Rect>> = items.iter().map(|(_, r)| bounds(r)).collect();
+    // For each region, the shapes whose material holds it, with the
+    // container's area (the smallest names the outer).
+    let mut inside: BTreeMap<usize, Vec<Option<(usize, f64)>>> = BTreeMap::new();
+    for (s, shape) in shapes.iter().enumerate() {
+        if !shape.filled.is_empty() {
+            inside.insert(s, vec![None; shape.filled.len()]);
+        }
+    }
+    let mut local: Vec<usize> = Vec::with_capacity(items.len());
+    let mut seen: BTreeMap<usize, usize> = BTreeMap::new();
+    for &(s, _) in &items {
+        let n = seen.entry(s).or_insert(0);
+        local.push(*n);
+        *n += 1;
+    }
+    for (i, j) in box_pairs(&boxes) {
+        let (Some(&(si, a)), Some(&(sj, b))) = (items.get(i), items.get(j)) else {
+            continue;
+        };
+        if si == sj {
+            continue;
+        }
+        for (inner, outer, s_in, s_out, k) in
+            [(a, b, si, sj, local.get(i)), (b, a, sj, si, local.get(j))]
+        {
+            let (_, shared_mm2, slack_mm2) = shared(inner, outer, tolerance_mm);
+            let wholly = (inner.area_mm2() - shared_mm2).abs() <= slack_mm2
+                && outer.area_mm2() > inner.area_mm2() + slack_mm2;
+            if !wholly {
+                continue;
+            }
+            if let (Some(slots), Some(&k)) = (inside.get_mut(&s_in), k) {
+                let area = outer.area_mm2();
+                if let Some(slot) = slots.get_mut(k)
+                    && slot.is_none_or(|(_, best)| area < best)
+                {
+                    *slot = Some((s_out, area));
+                }
+            }
+        }
+    }
+    let mut count = 0;
+    let mut first = None;
+    for (s, slots) in &inside {
+        // Every region inside one and the same other path.
+        let owners: Vec<Option<usize>> = slots.iter().map(|o| o.map(|(owner, _)| owner)).collect();
+        let Some(Some(owner)) = owners.first().copied() else {
+            continue;
+        };
+        if owners.iter().all(|o| *o == Some(owner)) {
+            count += 1;
+            if first.is_none() {
+                first = Some((*s, owner));
+            }
+        }
+    }
+    let (inner, outer) = first?;
+    Some(ImportWarning::SvgHoleAsSeparatePath {
+        count,
+        inner: shapes.get(inner)?.name.clone(),
+        outer: shapes.get(outer)?.name.clone(),
+    })
+}
+
+/// `svg_stroke_only_path`: painted with a stroke and no visible fill.
+fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<ImportWarning> {
+    let mut found = painted
+        .iter()
+        .zip(shapes)
+        .filter(|(path, shape)| path.stroke.is_some() && shape.filled.is_empty());
+    let (first, _) = found.next()?;
+    Some(ImportWarning::SvgStrokeOnlyPath {
+        count: 1 + found.count(),
+        first: first.name.clone(),
+        width_mm: first.stroke.as_ref()?.width_mm,
+    })
+}
+
+/// `svg_hidden_object`: the walk's objects that are not drawn, the first
+/// named by the order `display_none`, `hidden`, `zero_opacity`,
+/// `unpainted`, then document order.
+fn hidden(objects: &[super::walk::HiddenObject]) -> Option<ImportWarning> {
+    let first = [
+        HiddenReason::DisplayNone,
+        HiddenReason::Hidden,
+        HiddenReason::ZeroOpacity,
+        HiddenReason::Unpainted,
+    ]
+    .into_iter()
+    .find_map(|reason| objects.iter().find(|o| o.reason == reason))?;
+    Some(ImportWarning::SvgHiddenObject {
+        count: objects.iter().map(|o| o.shapes).sum(),
+        first: first.name.clone(),
+        reason: first.reason,
+    })
+}
+
+/// The height of the painted paths' joint box, mm, strokes grown by half
+/// their width (a bound: a mitre can reach further).
+fn painted_height_mm(painted: &[PaintedPath]) -> f64 {
+    let mut low = f64::INFINITY;
+    let mut high = f64::NEG_INFINITY;
+    for path in painted {
+        let Some(b) = path.bounds_mm else { continue };
+        let grow = path.stroke.as_ref().map_or(0.0, |s| s.width_mm / 2.0);
+        low = low.min(b.min.y - grow);
+        high = high.max(b.max.y + grow);
+    }
+    high - low
+}
+
+/// `feature_below_size`: pieces and holes of `ink` whose widest point is
+/// under [`DEFAULT_MIN_DETAIL_PCT`] of `height_mm`.
+fn below_size(ink: &[Region], height_mm: f64, tolerance_mm: f64) -> Option<ImportWarning> {
+    if !(height_mm.is_finite() && height_mm > 0.0) {
+        return None;
+    }
+    let threshold_mm = DEFAULT_MIN_DETAIL_PCT / 100.0 * height_mm;
+    let mut count = 0;
+    let mut smallest_mm = threshold_mm;
+    let mut narrower = |is_narrower: &dyn Fn(f64) -> bool| {
+        if !is_narrower(threshold_mm) {
+            return;
+        }
+        count += 1;
+        // Only a feature narrower than the smallest so far can lower it:
+        // bisect the widest point below that.
+        if is_narrower(smallest_mm) {
+            let (mut low, mut high) = (0.0, smallest_mm);
+            for _ in 0..16 {
+                let mid = f64::midpoint(low, high);
+                if is_narrower(mid) {
+                    high = mid;
+                } else {
+                    low = mid;
+                }
+            }
+            smallest_mm = f64::midpoint(low, high);
+        }
+    };
+    for region in ink {
+        narrower(&|w| is_narrower_than(region, w, tolerance_mm));
+        for hole in region.holes() {
+            narrower(&|w| hole_is_narrower_than(hole, w, tolerance_mm));
+        }
+    }
+    (count > 0).then_some(ImportWarning::FeatureBelowSize {
+        count,
+        smallest_mm,
+        threshold_mm,
+        height_mm,
+    })
 }
 
 #[cfg(test)]

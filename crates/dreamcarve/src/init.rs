@@ -26,7 +26,7 @@ use std::process::ExitCode;
 
 use dc_import::{
     DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
-    import_dxf, import_svg,
+    import_dxf, import_svg, prep,
 };
 use dc_job::JobError;
 use dc_job::import::Drawing;
@@ -71,8 +71,14 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
     } else {
         import_svg_drawing(args, &bytes)?
     };
-    for warning in &warnings {
-        errln!("warning: {warning}");
+    if is_dxf {
+        // A DXF's warnings print as they always did; the checks need an
+        // SVG's paint and paths.
+        for warning in &warnings {
+            errln!("warning: {warning}");
+        }
+    } else {
+        print_svg_warnings(&warnings, &bytes)?;
     }
 
     let name = project_name(&args.drawing);
@@ -103,6 +109,33 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
 
     report(&project, &output, &text)?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// Prints an SVG import's `warnings` and the 49a import checks of `bytes`
+/// as `warning: <code>: <message>`. The checks count the text, images,
+/// clip paths and masks over the whole document, so they stand in for the
+/// importer's own per-group warnings about them; the rest of the
+/// importer's come first. Nothing here changes the project or the exit
+/// status.
+fn print_svg_warnings(warnings: &[ImportWarning], bytes: &[u8]) -> Result<(), Failure> {
+    let counted_by_the_checks = |w: &ImportWarning| {
+        matches!(
+            w,
+            ImportWarning::TextIgnored { .. }
+                | ImportWarning::ImagesIgnored { .. }
+                | ImportWarning::ClipPathIgnored { .. }
+                | ImportWarning::MaskIgnored { .. }
+        )
+    };
+    let checks = prep::findings(bytes, &SvgImportOptions::new())
+        .map_err(|e| Failure::error(format!("cannot check the drawing: {e}")))?;
+    for warning in warnings.iter().filter(|w| !counted_by_the_checks(w)) {
+        errln!("warning: {}: {warning}", warning.code());
+    }
+    for warning in &checks {
+        errln!("warning: {}: {warning}", warning.code());
+    }
+    Ok(())
 }
 
 /// Imports an SVG and prints what was read.
