@@ -997,10 +997,18 @@ be measured): `mode`, `read` (paths, hidden, unpainted, zero_opacity,
 display_none, text, images, clip_paths, masks), `strokes` (count, least and
 greatest width), `design_height_mm`, `pieces`, `holes`, `dropped_pieces`,
 `filled_holes`, `min_detail_mm`, `smoothed_vertices`, `smooth_mm`,
-`ink_median_width_mm`, `thinnest_piece_mm`, `narrowest_gap_mm`, and for
-each of those two widths `at_heights_mm: [f64; 3]` (`width ÷ design height × h`
-for each `h` of `REPORT_HEIGHTS_MM`) and `reaches_guide_at_mm`
-(`REPORT_MIN_FEATURE_MM ÷ (width ÷ design height)`). Rendering it as text is
+`ink_median_width_mm: Option<f64>`, and `thinnest_piece` and
+`narrowest_gap`, each an `Option<WidthFigure>` (`None` when it could not be
+measured) holding `width_mm`, `at_heights_mm: [f64; 3]` (`width ÷ design
+height × h` for each `h` of `REPORT_HEIGHTS_MM`) and `reaches_guide_at_mm`
+(`REPORT_MIN_FEATURE_MM ÷ (width ÷ design height)`). `read.paths` counts
+every path of the document, drawn or skipped; `strokes.count` the strokes
+that became an area. `PrepOptions` has a `Default` (shapes, the default
+thresholds, `MAX_IMPORT_VERTICES`), `prep::flatten_tolerance_mm(h)` is
+the tolerance of step 1, and `ImportError::code()` returns the code of the
+three image-prep errors (`None` for the importer's others). The
+`PrepThresholdRange` flag is spelled as the command line spells it
+(`--min-detail`, `--smooth`). Rendering it as text is
 `dc_job::prep_report::render(&PrepReport) -> String`, in `dc-job` as every
 summary is, so the GUI can show the same lines; the format is in "Report
 format and codes" below.
@@ -2408,7 +2416,14 @@ document order, with bounds, and the counts the report prints.
    The union is **the ink**: disjoint regions with their holes (`i_overlay`
    `Union`, as `dc_geometry::union`). `prep_background_shape` is raised
    here: a filled region whose box covers `BACKGROUND_COVER_FRACTION` of
-   the ink's box and has holes or sits behind the rest.
+   the ink's box and has holes (its own, or the nested region it joins) or
+   sits behind the rest, that is, another painted path comes after it in
+   the file (SVG paints later paths on top). A lone rectangle is the
+   design, not a background. One warning per such path. The outlines of
+   the strokes (step 2) are built before `H` is known, so the vertex cap
+   charges them at the tolerance of a bound of `H` (the painted box grown
+   by half each stroke's width); the tolerance of everything flattened
+   afterwards is the exact one.
 4. **The mode.** `Shapes`: the result is the ink. `Regions`:
    `spaces_between(ink)`, that is `difference(ink_outline(ink), ink)`; the
    ink's regions without a hole are counted (`ink_without_spaces`,
