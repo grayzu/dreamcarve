@@ -144,6 +144,10 @@ pub enum CommandError {
     /// The project could not be serialized.
     #[error(transparent)]
     Save(#[from] SaveError),
+    /// The tool library refused a change: an invalid value, a taken name
+    /// or an unknown tool (capability 64a).
+    #[error(transparent)]
+    Library(#[from] dc_library::LibraryError),
 }
 
 /// `shape “A” is locked` or `shapes “A” and “B” are locked`.

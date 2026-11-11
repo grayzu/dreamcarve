@@ -530,13 +530,18 @@ fn library_window_adds_ticked_rows() {
             .click();
         h.run();
     }
-    // A search hides a ticked row but keeps its tick.
+    // A search hides a ticked row but keeps its tick. The search is the
+    // sheet's first text field; the editing pane's follow it.
     h.get_by_role(Role::Dialog)
-        .get_by_role(Role::TextInput)
+        .query_all_by_role(Role::TextInput)
+        .next()
+        .unwrap()
         .focus();
     h.run();
     h.get_by_role(Role::Dialog)
-        .get_by_role(Role::TextInput)
+        .query_all_by_role(Role::TextInput)
+        .next()
+        .unwrap()
         .type_text("drill");
     h.run();
     let sheet = h.get_by_role(Role::Dialog);

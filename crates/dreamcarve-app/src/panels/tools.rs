@@ -109,11 +109,6 @@ fn set_pending_v_bit(ui: &Ui, tool: Option<&ToolId>) {
     });
 }
 
-/// The id of tool `tool`'s field `field`.
-fn field_id(tool: &ToolId, field: ToolField) -> Id {
-    Id::unique(("tool_field", tool.as_str(), field.file_name()))
-}
-
 /// Draws the tab under the CAM panel's tab strip.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let app = state.app;
@@ -416,22 +411,115 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
     }
 }
 
-/// The selected tool's fields (its footer is [`footer`]). While the tool's
-/// switch to V-bit is held, its *Angle* field shows empty, required and
-/// in the error state; a typed angle makes the switch, and leaving it
-/// empty discards it (#581).
+/// The selected project tool's fields (its footer is [`footer`]): the
+/// shared rows of [`tool_fields`], each change one command.
 fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut Vec<Action>) {
     let held = pending_v_bit(ui).as_ref() == Some(&tool.id)
         && !matches!(tool.cutter, ToolKind::VBit { .. });
+    let focus_name = ui.data(|d| d.get_temp::<ToolId>(focus_name_id())).as_ref() == Some(&tool.id);
+    let output = tool_fields(
+        ui,
+        &ToolFields {
+            salt: Id::unique(("tool_field", tool.id.as_str())),
+            strings,
+            units,
+            tool,
+            held,
+            focus_name,
+            marked: None,
+        },
+    );
+    if focus_name {
+        ui.data_mut(|d| d.remove::<ToolId>(focus_name_id()));
+    }
+    match output.hold {
+        Some(true) => set_pending_v_bit(ui, Some(&tool.id)),
+        Some(false) => set_pending_v_bit(ui, None),
+        None => {}
+    }
+    match output.edit {
+        Some(FieldEdit::Set(next, _)) if next != *tool => {
+            out.push(Action::Run(Box::new(Command::UpdateTool(next))));
+        }
+        Some(FieldEdit::Refused(_, reason)) => out.push(Action::Refused(reason)),
+        _ => {}
+    }
+}
+
+/// What the tool editor's rows show (capability 63; the library's
+/// editing pane, 64a, shows the same rows).
+pub(crate) struct ToolFields<'a> {
+    /// The fields' ids derive from it: one per tool, never a position.
+    pub salt: Id,
+    pub strings: &'a Strings,
+    /// The units lengths and rates show and are typed in.
+    pub units: Units,
+    pub tool: &'a Tool,
+    /// Whether the tool's switch to V-bit is held for its angle (#581).
+    pub held: bool,
+    /// Whether to focus the name with its text selected this frame (*New
+    /// tool*).
+    pub focus_name: bool,
+    /// A field marked with why its last change did not take, shown under
+    /// it in the error state (a library write that failed, 64a).
+    pub marked: Option<(ToolField, &'a str)>,
+}
+
+/// A change the rows made this frame.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum FieldEdit {
+    /// The tool with `ToolField` changed from what was typed.
+    Set(Tool, ToolField),
+    /// What was typed in the field is not a value of its kind: why.
+    Refused(ToolField, String),
+}
+
+/// What [`tool_fields`] did this frame.
+#[derive(Debug, Default)]
+pub(crate) struct FieldsOutput {
+    /// The change, when a field was left changed.
+    pub edit: Option<FieldEdit>,
+    /// `Some(true)` holds the switch to V-bit, `Some(false)` drops it.
+    pub hold: Option<bool>,
+}
+
+/// The id of field `field` among the rows of `salt`.
+fn field_id(salt: Id, field: ToolField) -> Id {
+    salt.with(field.file_name())
+}
+
+/// The tool editor's rows, in order: name, type (then a V-bit's angle),
+/// diameter, flutes, feed, plunge, RPM, step-down, stepover, number,
+/// vendor and product id, every field with its unit. Feed, plunge and RPM
+/// are empty while unset, never prefilled, with the required-field look
+/// (66b). While the tool's switch to V-bit is held, its *Angle* field
+/// shows empty, required and in the error state; a typed angle makes the
+/// switch, and leaving it empty discards it (#581).
+pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
+    let ToolFields {
+        salt,
+        strings,
+        units,
+        tool,
+        held,
+        focus_name,
+        marked,
+    } = *spec;
+    let mut result = FieldsOutput::default();
     let unset = tools::unset_rates(tool);
     let angle_required = strings.get(StrKey::AppToolsAngleRequired);
-    let error_for = |file_field: &str| {
-        if held && file_field == ToolField::Angle.file_name() {
+    let error_for = |field: ToolField| {
+        if let Some((marked_field, reason)) = marked
+            && marked_field == field
+        {
+            return Some(reason);
+        }
+        if held && field == ToolField::Angle {
             return Some(angle_required);
         }
         unset
             .iter()
-            .find(|(f, _)| *f == file_field)
+            .find(|(f, _)| *f == field.file_name())
             .map(|(_, m)| m.as_str())
     };
     let fields: Vec<(ToolField, StrKey)> = [
@@ -460,15 +548,16 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         } else {
             ""
         };
-        let id = field_id(&tool.id, field);
+        let id = field_id(salt, field);
         let name = strings.get(key);
-        let error = error_for(field.file_name());
+        let error = error_for(field);
+        let is_marked = marked.is_some_and(|(f, _)| f == field);
         // An unset rate is required (functional 66b; slice 26, #618):
         // *Required* in the field and the file's message its tooltip, not a
         // line under it. The held V-bit's angle keeps its line, which says
-        // what to type.
+        // what to type, and so does a marked field.
         let required = error
-            .filter(|_| value.is_empty() && field != ToolField::Angle)
+            .filter(|_| value.is_empty() && field != ToolField::Angle && !is_marked)
             .map(|message| Required {
                 placeholder: strings.get(StrKey::EditorRequired),
                 message,
@@ -490,8 +579,8 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         });
         let response = output.response.labelled_by(label.id);
         let left = response.lost_focus();
-        if field == ToolField::Name {
-            focus_new_name(ui, &tool.id, id, &value);
+        if field == ToolField::Name && focus_name {
+            focus_with_text_selected(ui, id, &value);
         }
         if required.is_none() {
             response.on_hover_text(field.file_name());
@@ -503,41 +592,34 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
                 .committed
                 .map(|typed| tools::finish_v_bit(tool, &typed))
             {
-                Some(Ok(Some(command))) => {
-                    set_pending_v_bit(ui, None);
-                    out.push(Action::Run(Box::new(command)));
+                Some(Ok(Some(Command::UpdateTool(next)))) => {
+                    result.hold = Some(false);
+                    result.edit = Some(FieldEdit::Set(next, field));
                 }
-                Some(Ok(None)) => set_pending_v_bit(ui, None),
-                Some(Err(e)) => out.push(Action::Refused(e.to_string())),
-                None if left => set_pending_v_bit(ui, None),
+                Some(Ok(_)) => result.hold = Some(false),
+                Some(Err(e)) => result.edit = Some(FieldEdit::Refused(field, e.to_string())),
+                None if left => result.hold = Some(false),
                 None => {}
             }
         } else if let Some(typed) = output.committed {
-            match tools::set_field(tool, field, &typed, units) {
-                Ok(next) if next != *tool => {
-                    out.push(Action::Run(Box::new(Command::UpdateTool(next))));
-                }
-                Ok(_) => {}
-                Err(e) => out.push(Action::Refused(e.to_string())),
-            }
+            result.edit = Some(match tools::set_field(tool, field, &typed, units) {
+                Ok(next) => FieldEdit::Set(next, field),
+                Err(e) => FieldEdit::Refused(field, e.to_string()),
+            });
         }
         ui.add_space(4.0);
         if field == ToolField::Name {
             // The type, then (for a V-bit) the angle it enables.
-            kind_row(ui, strings, tool, held, out);
+            kind_row(ui, salt, strings, tool, held, &mut result);
         }
     }
     ui.add_space(12.0);
+    result
 }
 
-/// Focuses the Name field `id` of tool `tool` with all of `text` selected
-/// when *New tool* asked for it, so typing renames the new tool.
-fn focus_new_name(ui: &Ui, tool: &ToolId, id: Id, text: &str) {
-    let asked = ui.data(|d| d.get_temp::<ToolId>(focus_name_id()));
-    if asked.as_ref() != Some(tool) {
-        return;
-    }
-    ui.data_mut(|d| d.remove::<ToolId>(focus_name_id()));
+/// Focuses field `id` with all of `text` selected, so typing replaces it
+/// (*New tool*: typing renames the new tool).
+fn focus_with_text_selected(ui: &Ui, id: Id, text: &str) {
     ui.memory_mut(|m| m.request_focus(id));
     if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), id) {
         state
@@ -550,7 +632,14 @@ fn focus_new_name(ui: &Ui, tool: &ToolId, id: Id, text: &str) {
 /// The type dropdown: the five cutters; a V-bit shows its angle field.
 /// Choosing *V-bit* for another type holds the switch (`held` from then
 /// on) and moves the focus to the empty *Angle* field.
-fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, held: bool, out: &mut Vec<Action>) {
+fn kind_row(
+    ui: &mut Ui,
+    salt: Id,
+    strings: &Strings,
+    tool: &Tool,
+    held: bool,
+    result: &mut FieldsOutput,
+) {
     let current = if held {
         KindChoice::VBit
     } else {
@@ -558,7 +647,7 @@ fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, held: bool, out: &mut V
     };
     let mut chosen = current;
     let (label, combo) = row(ui, strings.get(StrKey::AppToolsKind), |ui| {
-        egui::ComboBox::from_id_salt(("tool_kind", tool.id.as_str()))
+        egui::ComboBox::from_id_salt(salt.with("kind"))
             .icon(crate::widgets::icon::combo_chevron)
             .width(ui.available_width())
             .selected_text(kind_label(strings, current))
@@ -571,15 +660,15 @@ fn kind_row(ui: &mut Ui, strings: &Strings, tool: &Tool, held: bool, out: &mut V
     });
     combo.labelled_by(label.id);
     if chosen != current {
-        set_pending_v_bit(ui, None);
+        result.hold = Some(false);
         match tools::set_kind(tool, chosen) {
             KindSwitch::Unchanged => {}
             KindSwitch::Update(next) => {
-                out.push(Action::Run(Box::new(Command::UpdateTool(*next))));
+                result.edit = Some(FieldEdit::Set(*next, ToolField::Angle));
             }
             KindSwitch::HoldForAngle => {
-                set_pending_v_bit(ui, Some(&tool.id));
-                ui.memory_mut(|m| m.request_focus(field_id(&tool.id, ToolField::Angle)));
+                result.hold = Some(true);
+                ui.memory_mut(|m| m.request_focus(field_id(salt, ToolField::Angle)));
                 ui.ctx().request_repaint();
             }
         }

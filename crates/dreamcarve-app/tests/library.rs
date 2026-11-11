@@ -29,7 +29,7 @@ use dreamcarve_shell::{Paths, gui_prefs};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::{NodeT as _, Queryable as _};
+use egui_kittest::kittest::Queryable as _;
 
 /// The library `tools import fixtures/fusion/sample.tools` writes.
 fn sample_library() -> Library {
@@ -76,11 +76,15 @@ fn select_row(h: &mut Harness<'_, Shell>, name: &str) {
     h.run();
 }
 
-/// Types `text` into the sheet's field `label` and leaves it with Enter.
+/// Types `text` over the sheet's field `label` and leaves it with Enter.
 fn type_into(h: &mut Harness<'_, Shell>, label: &str, text: &str) {
     h.get_by_role(Role::Dialog)
         .get_by_role_and_label(Role::TextInput, label)
         .focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.key_press(egui::Key::Backspace);
     h.run();
     h.get_by_role(Role::Dialog)
         .get_by_role_and_label(Role::TextInput, label)
