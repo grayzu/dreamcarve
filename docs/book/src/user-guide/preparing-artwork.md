@@ -363,7 +363,11 @@ feature is narrower than you probably want. Use it like this:
 `image-prep` reads SVG only. A PNG or JPEG, known by its extension or by
 the first bytes of the file, is refused with the exit status 2 and the
 code `prep_not_svg`, and the message says to trace it first. Tracing is the
-conversion of a picture to outlines, and DreamCarve does not do it yet:
+conversion of a picture to outlines, and DreamCarve does not do it yet.
+(To carve the picture itself, its shades as V-bit grooves rather than its
+outlines as shapes, do not trace it: `dreamcarve init` takes a PNG or
+JPEG for a [Photo V-Carve](photo-v-carve.md); see [Images](images.md).)
+To trace it:
 
 1. Open the picture in Inkscape (File → Open), and select it.
 2. Path → Trace Bitmap. Try "Brightness cutoff" for a black and white

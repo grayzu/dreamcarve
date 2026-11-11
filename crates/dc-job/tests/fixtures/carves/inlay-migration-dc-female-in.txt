@@ -1,0 +1,1 @@
+Inlay op1 `DC` (female board): deepest cut 0.1575 in below the stock top, a flat floor at depth_mm 0.1575 in; V-bit floor ridges 0.0157 in along the rings and up to 0.0315 in at their corners where no clearing pass reaches.

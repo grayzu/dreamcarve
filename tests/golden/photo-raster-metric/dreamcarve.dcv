@@ -1,0 +1,94 @@
+{
+  "version": 27,
+  "name": "photo-raster-metric",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 120.0,
+    "height_mm": 120.0,
+    "thickness_mm": 6.0
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "30° V-bit",
+      "vendor": null,
+      "product_id": null,
+      "number": null,
+      "cutter": {
+        "v_bit": {
+          "included_angle_deg": 30.0
+        }
+      },
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": 1000.0,
+      "plunge_mm_min": 300.0,
+      "rpm": 18000,
+      "step_down_mm": null,
+      "step_over_fraction": null
+    }
+  ],
+  "operations": [
+    {
+      "kind": "photo_v_carve",
+      "id": "op1",
+      "name": "Photo V-Carve",
+      "enabled": true,
+      "image": "b1",
+      "tool": "t1",
+      "max_depth_mm": 2.0,
+      "start_depth_mm": 0.0,
+      "start_plane_cleared_externally": false,
+      "line_angle_deg": 22.5,
+      "line_spacing_fraction": 1.1,
+      "strategy": "raster",
+      "invert": false,
+      "sample_mm": 0.25,
+      "stepover_retract_mm": 1.0,
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 5.0
+    }
+  ],
+  "tabs": [],
+  "instances": [],
+  "bitmaps": [
+    {
+      "id": "b1",
+      "name": "radial",
+      "width_px": 64,
+      "height_px": 64,
+      "x_mm": 10.0,
+      "y_mm": 10.0,
+      "width_mm": 100.0,
+      "height_mm": 100.0,
+      "visible": true,
+      "locked": false,
+      "png_base64": "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAAAAACPAi4CAAADEklEQVR4nK2X65KqMBCEZxICcvH9H3S5CAnkVHeCuqtW7VbOoPzQ6i89PYhBpbD0d1/FvwIULxxJjeMDRN9+qKJ8n+tHiXz/CqAQq6ohJOmjHJH1akNfV1c1agzOqQcsfcR4HDi/uNA38lQA0AJURzxSvSD0h55aa2xinABq92PPjI8ANQqtZZEgig4oZ4ESj/gBoFjc2ooHCdlB0gceO2zEtwCjlKcCIvXADihPBUQ83gDUWFPZyuWDhBNAvc/HHo794UGf/GN1l6tytoIFtHAce9h98Lng4tGF/tDXrq5xcmjDqhGRI+6w7zccOH0j6H1+FsvXdV03ODkSkCI6gN5v27atOMHEfk5Tc4DG2irJm6YBA4QnAPTrtq5rQgQM4wmgp75pmktzAQI5MARG4L2H/LbeEoKEeAeomqqqkhzVXNCGQwhwsO8B/iFHERFCSE1oNpD0ULeX9gIPtXN3ABtYb7fltiQECMmCpgSQP/QtC5y6rqsqA0LYtg3KhUWCD4EpaDbgXNZ3bUdEQwAzIADrL8u8zJngfbKgaQTO1dR3qLaDB4aQAZ4GIEeRsHnPQSgi5AROfQ9E2zbNN8C6Yv15nk4CJxEjAaeBru27nq+2Qw/OZYD36GBe5mnia5lPCwlgbTYAMatrW4ZgrQqmiAgW6FnzlC3sOwGcYcMG+n7oBwCQQpojAN5vSACAcRqniU2snKTgHmxxDVyo74cBCAKaJwBmMM+QjyM8zABsCEE5RHaQ9QMtpBStMXIce8qQBsZMYA8YpAou47pGB1kPQscUq4ohhsAM56wHAT3gaiTAWucYQT/012G4PgD3Fh6Ar3H8mkYCVo8UNQ0BQ+xo4EoLCKFxLjtABoxgJGEcpzkN8hnQtojg+gxAC8iALTwAXwiBY/i/gEtRC64oRFM6RlN6IWnhpSylPyYp/jlr8Q1FC29pUnpTleLbupT+sUjxX5uW/rlK6d+7FG8wpHiLI6WbLCne5knxRlOKt7pSvNmW4u2+FD9wSPEjjxQ/dEn5Y58UP3ieH5c8+r5+9eeH79/XP/fBtIwrz21DAAAAAElFTkSuQmCC"
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 4,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {}
+}

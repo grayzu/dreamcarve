@@ -53,8 +53,9 @@ fn run(dir: &Path, args: &[&str]) -> (Option<i32>, String) {
 }
 
 /// The lines of `check`'s output for `file` that the panel lists: its
-/// notes, errors and warnings (located or not) and its count line, not
-/// its carve depths, extents and estimates.
+/// notes, errors and warnings (located or not), its carve notes (slice
+/// 28, #620: `V-Carve …` and `Inlay …`) and its count line, not its
+/// extents and estimates.
 fn panel_lines(stdout: &str, file: &str) -> Vec<String> {
     let located = |line: &str| {
         line.strip_prefix(&format!("{file}:")).is_some_and(|rest| {
@@ -74,6 +75,8 @@ fn panel_lines(stdout: &str, file: &str) -> Vec<String> {
                 || line.starts_with("error: ")
                 || line.starts_with("warning: ")
                 || located(line)
+                || line.starts_with("V-Carve ")
+                || line.starts_with("Inlay ")
                 || (line.starts_with(&format!("{file}: ")) && line.contains(" error(s), "))
         })
         .map(str::to_owned)
@@ -82,7 +85,8 @@ fn panel_lines(stdout: &str, file: &str) -> Vec<String> {
 
 /// Acceptance 82: for the coaster as `init` writes it (every unset value
 /// an error, located in the file), the phase 2 and 3 quick starts, a
-/// two-file Inlay's male that the format 25 migration notes, the Pocket
+/// two-file Inlay's male that the format 25 migration notes, with its
+/// carve note (slice 28), the one-file Inlay, the Pocket
 /// and Bore project with its hints, and two golden cases, the app's
 /// *Copy* is `check`'s text line for line, and the app counts as `check`
 /// exits: 1 with an error.
@@ -95,9 +99,10 @@ fn copy_equals_check_on_the_binary() {
     assert_eq!(code, Some(0), "init writes the coaster");
 
     let mut files = vec!["coaster.dcv".to_owned()];
-    let copies: [(PathBuf, &str); 6] = [
+    let copies: [(PathBuf, &str); 7] = [
         (root.join("tests/fixtures/plaque.dcv"), "plaque.dcv"),
         (root.join("tests/fixtures/sign.dcv"), "sign.dcv"),
+        (root.join("tests/fixtures/dc.dcv"), "dc.dcv"),
         (
             root.join("crates/dreamcarve/tests/fixtures/inlay-migration/star-male.dcv"),
             "star-male.dcv",
@@ -120,7 +125,7 @@ fn copy_equals_check_on_the_binary() {
         files.push((*name).to_owned());
     }
 
-    let (mut errors, mut notes) = (0, 0);
+    let (mut errors, mut notes, mut carves) = (0, 0, 0);
     for file in &files {
         let (code, stdout) = run(&dir, &["check", file]);
         let expected = panel_lines(&stdout, file);
@@ -142,10 +147,18 @@ fn copy_equals_check_on_the_binary() {
             Some(i32::from(counts.errors > 0)),
             "{file}: check's exit"
         );
+        carves += copied
+            .iter()
+            .filter(|l| l.starts_with("V-Carve ") || l.starts_with("Inlay "))
+            .count();
         errors += counts.errors;
         notes += counts.notes;
     }
     assert!(errors > 0, "the coaster's unset values are errors");
     assert!(notes > 0, "the male's migration is noted");
+    assert!(
+        carves >= 4,
+        "the sign's and the Inlays' carve notes are copied"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
