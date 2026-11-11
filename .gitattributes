@@ -15,3 +15,5 @@ crates/dc-project/src/definitions/**/*.json text eol=lf
 # test compares the two; the zip itself is binary.
 tests/fixtures/fusion/*.json text eol=lf
 *.tools binary
+# The setup sheet the renderer must write byte for byte (#625).
+crates/dc-job/tests/fixtures/** text eol=lf
