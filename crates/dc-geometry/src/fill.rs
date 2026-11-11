@@ -6,7 +6,7 @@
 //! areas of several paths joined as `init` reads them, and the art's
 //! outline and the spaces between its lines. Pure functions on
 //! [`Polyline`] and [`Region`]; results are canonical (see
-//! [`crate::boolean`]).
+//! [`mod@crate::boolean`]).
 
 use crate::GeometryError;
 use crate::boolean::{difference, from_shapes, intersection, to_shapes, union};
