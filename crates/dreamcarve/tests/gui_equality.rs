@@ -19,7 +19,8 @@
 //! byte, on every post-processor, with and without the program-split
 //! override; the Viewport's SVG dump is the file `--preview` writes
 //! (slice 32, #624: the sheet no longer writes the preview); and the
-//! result sheet's text is the CLI's report.
+//! result's text is the CLI's report, every line of it in exactly one of
+//! the result's three parts (slice 33, #625).
 
 #![allow(
     clippy::expect_used,
@@ -380,6 +381,19 @@ fn export_case(root: &Path, name: &str, bytes: &[u8], post: &str) -> usize {
                     stdout, report,
                     "{case}: the result sheet is the CLI's report"
                 );
+                // Capability 77a (#625): the result shows the report in
+                // three parts, every line the CLI printed in exactly one
+                // (the preview line aside: the sheet writes none).
+                let result = ready.result(&names, &dir, &dc_app::Strings::english());
+                let parts = result.parts();
+                for line in stdout.lines().filter(|l| !l.starts_with("Wrote preview ")) {
+                    let line = line.trim();
+                    let holding = parts
+                        .iter()
+                        .filter(|(_, texts)| texts.iter().any(|t| t == line))
+                        .count();
+                    assert_eq!(holding, 1, "{case}: `{line}` is in {holding} parts");
+                }
             }
             Some(reason) => {
                 assert_eq!(
