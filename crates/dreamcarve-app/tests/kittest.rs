@@ -5055,3 +5055,122 @@ fn shortcuts_reach_the_arrange_commands() {
     }
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// A window with no project open: the empty state.
+fn empty_window(
+    dir: &std::path::Path,
+    dialogs: &QueuedDialogs,
+) -> Harness<'static, dreamcarve_app::Shell> {
+    harness(options(&dir.join("config"), None, dialogs), 1280.0, 800.0)
+}
+
+/// The button named exactly `label`.
+fn button_named<'h>(
+    h: &'h Harness<'_, dreamcarve_app::Shell>,
+    label: &str,
+) -> egui_kittest::Node<'h> {
+    h.query_all_by_role(Role::Button)
+        .find(|n| n.accesskit_node().label().as_deref() == Some(label))
+        .unwrap_or_else(|| panic!("no button {label}"))
+}
+
+/// Slice 34 (#626), capability 79 and acceptance 103: the empty state
+/// offers two paths, each under its own heading, *Your drawing* with its
+/// three actions and *Examples* with three example buttons, each with a
+/// thumbnail of the example's own shapes; the copy is short and says
+/// nothing about phases or unsaved copies.
+#[test]
+fn empty_state_offers_two_paths() {
+    let dir = scratch("empty-two-paths");
+    let dialogs = QueuedDialogs::default();
+    let h = empty_window(&dir, &dialogs);
+
+    assert!(h.query_by_label("Start a project").is_some(), "the heading");
+    assert!(
+        h.query_by_label("Bring in a drawing to make toolpaths from, or explore an example.")
+            .is_some(),
+        "the one line under it"
+    );
+    let yours = h.get_by_label("Your drawing").rect();
+    let examples = h.get_by_label("Examples").rect();
+    assert_eq!(yours.top(), examples.top(), "the paths sit side by side");
+    assert!(yours.right() < examples.left());
+
+    // Your drawing's actions are in its column, the examples in theirs.
+    for label in ["Import a drawing…", "Import a picture…", "Open a project…"] {
+        let rect = button_named(&h, label).rect();
+        assert!(
+            rect.right() < examples.left(),
+            "{label}: under Your drawing"
+        );
+    }
+    let cards: Vec<egui::Rect> = ["Coaster", "Plaque", "Sign"]
+        .into_iter()
+        .map(|name| button_named(&h, name).rect())
+        .collect();
+    let lines = [
+        "Profile with tabs",
+        "Pockets and holes",
+        "V-carved lettering",
+    ];
+    for (card, teaches) in cards.iter().zip(lines) {
+        assert!(card.left() >= examples.left(), "{teaches}: under Examples");
+        assert_eq!(card.height(), 72.0, "an example card is 72 px tall");
+        let line = h.get_by_label(teaches).rect();
+        assert!(card.contains_rect(line), "{teaches} is on its card");
+    }
+    assert!(cards[0].bottom() <= cards[1].top() && cards[1].bottom() <= cards[2].top());
+
+    // Each card's thumbnail is the example's own shapes.
+    let thumbnails = h.state().example_thumbnails();
+    assert_eq!(thumbnails.len(), 3, "three thumbnails");
+    for (example, thumbnail) in thumbnails {
+        assert!(
+            !thumbnail.outlines.is_empty(),
+            "{example:?}: the thumbnail draws the example's shapes"
+        );
+    }
+
+    for word in ["phase", "Phase", "unsaved", "Unsaved"] {
+        let found: Vec<String> = h
+            .query_all_by_label_contains(word)
+            .map(|n| n.accesskit_node().label().unwrap_or_default())
+            .collect();
+        assert!(found.is_empty(), "no label says {word}: {found:?}");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Slice 34 (#626), capability 79: an example opens as an untitled copy,
+/// so the title is `Untitled — DreamCarve` and Save asks for a path.
+#[test]
+fn example_opens_untitled() {
+    let dir = scratch("empty-example-untitled");
+    for example in ["Coaster", "Plaque", "Sign"] {
+        let dialogs = QueuedDialogs::default();
+        let mut h = empty_window(&dir, &dialogs);
+        button_named(&h, example).click();
+        h.run();
+        assert!(
+            !h.state().app().project().instances.is_empty(),
+            "{example} opened"
+        );
+        assert!(h.state().app().source().is_none(), "{example} has no file");
+        assert_eq!(h.state().title(), "Untitled — DreamCarve", "{example}");
+        assert!(
+            h.query_by_label("Start a project").is_none(),
+            "{example}: the card goes when shapes arrive"
+        );
+
+        command_key(&h, egui::Key::S);
+        h.run();
+        let asked = dialogs.asked();
+        assert_eq!(asked.len(), 1, "{example}: Save asks once: {asked:?}");
+        assert!(
+            asked[0].starts_with("save_project "),
+            "{example}: Save asks where, got {asked:?}"
+        );
+        assert!(h.state().app().source().is_none(), "cancelled: no file");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use dc_app::import::{DrawingFormat, Purpose};
+use dc_app::onboarding::Thumbnail;
 use dc_app::{App, Command, Prefs, StrKey, Strings};
 use dc_job::EstimateConfig;
 use dreamcarve_shell::{GuiPrefs, Paths, StagedFile, commit_all, config, gui_prefs};
@@ -35,7 +36,7 @@ use crate::shell::{files, menu, status, theme, toolbar};
 use crate::{panels, viewport};
 
 /// The quick starts' example projects (functional spec, capability 79).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Example {
     /// The phase 1 coaster: `fixtures/coaster.svg` as `dreamcarve init`
     /// makes it, its feeds and depths unset as the quick start begins.
@@ -44,6 +45,52 @@ pub enum Example {
     Plaque,
     /// The phase 3 sign, `tests/fixtures/sign.dcv`.
     Sign,
+}
+
+impl Example {
+    /// Every example, in the empty state's order.
+    pub const ALL: [Self; 3] = [Self::Coaster, Self::Plaque, Self::Sign];
+
+    /// Its name on its card.
+    pub(crate) const fn name(self) -> StrKey {
+        match self {
+            Self::Coaster => StrKey::AppEmptyCoaster,
+            Self::Plaque => StrKey::AppEmptyPlaque,
+            Self::Sign => StrKey::AppEmptySign,
+        }
+    }
+
+    /// The one line saying what it teaches.
+    pub(crate) const fn teaches(self) -> StrKey {
+        match self {
+            Self::Coaster => StrKey::AppEmptyCoasterTeaches,
+            Self::Plaque => StrKey::AppEmptyPlaqueTeaches,
+            Self::Sign => StrKey::AppEmptySignTeaches,
+        }
+    }
+
+    /// The saved project behind it; `None` for the coaster, which is made
+    /// from its drawing ([`coaster`]).
+    const fn dcv(self) -> Option<&'static [u8]> {
+        match self {
+            Self::Coaster => None,
+            Self::Plaque => Some(PLAQUE_DCV),
+            Self::Sign => Some(SIGN_DCV),
+        }
+    }
+
+    /// Its thumbnail, drawn from the example's own shapes (capability
+    /// 79). An example that cannot be read has an empty one; opening it
+    /// says why.
+    fn thumbnail(self) -> Thumbnail {
+        let project = match self.dcv() {
+            Some(bytes) => dc_project::load(bytes).map(|loaded| loaded.project).ok(),
+            None => coaster().ok(),
+        };
+        project.map_or_else(Thumbnail::default, |project| {
+            dc_app::onboarding::thumbnail(&project)
+        })
+    }
 }
 
 /// The coaster's drawing.
@@ -451,6 +498,9 @@ pub struct Shell {
     /// reads them (capability 78).
     estimate: EstimateConfig,
     empty_dismissed: bool,
+    /// The empty state's example thumbnails, built when the card first
+    /// shows and kept: never per frame.
+    thumbnails: Vec<(Example, Thumbnail)>,
     /// The status bar's last message.
     message: Option<String>,
     layout: Layout,
@@ -546,6 +596,7 @@ impl Shell {
             setup_sheet: None,
             estimate,
             empty_dismissed: false,
+            thumbnails: Vec::new(),
             message,
             layout: Layout {
                 left: PanelShown::Strip,
@@ -585,6 +636,13 @@ impl Shell {
     #[must_use]
     pub fn drawn_toolpaths(&self) -> &[dc_project::OperationId] {
         self.viewport.drawn()
+    }
+
+    /// The empty state's example cards' thumbnails, in the cards' order:
+    /// empty until the card first shows.
+    #[must_use]
+    pub fn example_thumbnails(&self) -> &[(Example, Thumbnail)] {
+        &self.thumbnails
     }
 
     /// The application state, to change.
@@ -771,21 +829,16 @@ impl Shell {
         }
     }
 
-    /// Opens `example` as an unsaved copy: no file behind it, so Save asks
-    /// where.
+    /// Opens `example` as an untitled copy: no file behind it, so Save
+    /// asks where.
     fn open_example(&mut self, example: Example) {
-        let result = match example {
-            Example::Plaque => self
+        let result = match example.dcv() {
+            Some(bytes) => self
                 .app
-                .open(PLAQUE_DCV, None)
+                .open(bytes, None)
                 .map(drop)
                 .map_err(|e| e.to_string()),
-            Example::Sign => self
-                .app
-                .open(SIGN_DCV, None)
-                .map(drop)
-                .map_err(|e| e.to_string()),
-            Example::Coaster => coaster().map(|project| self.app.reset(project)),
+            None => coaster().map(|project| self.app.reset(project)),
         };
         self.empty_dismissed = false;
         self.viewport.fit_on_next_frame();
@@ -1550,6 +1603,8 @@ pub(crate) struct FrameState<'a> {
     pub display_name: String,
     pub message: Option<&'a str>,
     pub show_empty: bool,
+    /// The empty state's example cards, each with its thumbnail.
+    pub examples: &'a [(Example, Thumbnail)],
     /// The pointer over the Viewport, for the status bar.
     pub pointer: viewport::Pointer,
     /// Whether the Warnings drawer is open, for View ▸ Warnings.
@@ -1611,12 +1666,21 @@ impl eframe::App for Shell {
             regions.push((region, rect));
             before = after;
         };
+        let show_empty = self.app.project().instances.is_empty() && !self.empty_dismissed;
+        if show_empty && self.thumbnails.is_empty() {
+            // Once, when the card first shows: never per frame.
+            self.thumbnails = Example::ALL
+                .into_iter()
+                .map(|example| (example, example.thumbnail()))
+                .collect();
+        }
         let state = FrameState {
             app: &self.app,
             prefs: self.app.prefs(),
             display_name: self.display_name(),
             message: self.message.as_deref(),
-            show_empty: self.app.project().instances.is_empty() && !self.empty_dismissed,
+            show_empty,
+            examples: &self.thumbnails,
             pointer,
             warnings_open: self.warnings_open,
             estimate: &self.estimate,
