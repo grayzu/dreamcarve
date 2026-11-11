@@ -413,7 +413,6 @@ fn preview_draws_the_picture_of_image_add() {
 /// `init` on the gradient, set up, exported with `--preview`: the picture
 /// is drawn at its footprint before the Photo V-Carve's grooves.
 #[test]
-#[ignore = "needs #646"]
 fn preview_draws_the_bitmap_under_the_grooves() {
     let dir = work_dir("preview_draws_the_bitmap_under_the_grooves");
     copy_photo(&dir, "gradient.png", "gradient.png");
@@ -459,7 +458,6 @@ fn preview_draws_the_bitmap_under_the_grooves() {
 /// Acceptance 58 (capability 46, the project embeds its pictures):
 /// copying only the `.dcv` elsewhere exports the same program.
 #[test]
-#[ignore = "needs #646"]
 fn moved_dcv_exports_the_same_program() {
     let dir = work_dir("moved_dcv_exports_the_same_program");
     copy_photo(&dir, "gradient.png", "gradient.png");
