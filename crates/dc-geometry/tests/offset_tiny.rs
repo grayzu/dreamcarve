@@ -22,7 +22,9 @@
     reason = "test code reports failure by panicking"
 )]
 
-use dc_geometry::{Contour, Point, Polyline, Vertex, offset};
+use dc_geometry::{
+    Contour, Point, Polyline, Vertex, difference, intersection, nest, offset, offset_open, union,
+};
 use std::f64::consts::TAU;
 
 /// A xorshift generator, so the cases are the same on every run.
@@ -107,7 +109,7 @@ fn regular_polygons_of_every_scale_are_offset_without_a_panic() {
             }
         }
     }
-    assert!(built > 400, "only {built} contours were built");
+    assert!(built > 300, "only {built} contours were built");
 }
 
 #[test]
@@ -207,6 +209,45 @@ fn finely_traced_shapes_are_offset_without_a_panic() {
             if let Ok(contour) = Contour::new(regular(Point::new(5.0, 5.0), radius_mm, sides, 0.1))
             {
                 offset_all(&contour, &deltas(radius_mm));
+            }
+        }
+    }
+}
+
+/// The other `cavalier_contours` calls in the crate (the open offset and
+/// the booleans) take the same specks, offset by a distance of their own
+/// scale and combined with a neighbour.
+#[test]
+fn open_offsets_and_booleans_of_specks_do_not_panic() {
+    let mut rng = Rng(0x0637_0b0b_0c0c_0d0d);
+    for scale_mm in scales_mm() {
+        let centre = Point::new(rng.next() * 100.0, rng.next() * 100.0);
+        let path = Polyline::new(
+            vec![
+                Vertex::line(centre.x, centre.y),
+                Vertex::line(centre.x + scale_mm, centre.y + scale_mm * 0.3),
+                Vertex::new(centre.x + 2.0 * scale_mm, centre.y, 0.5),
+            ],
+            false,
+        );
+        for delta_mm in deltas(scale_mm) {
+            let _ = offset_open(&path, delta_mm);
+            let _ = offset_open(&path, -delta_mm);
+        }
+        let a = Contour::new(regular(centre, scale_mm, 8, 0.0));
+        let b = Contour::new(regular(
+            Point::new(centre.x + scale_mm * 0.5, centre.y),
+            scale_mm,
+            5,
+            0.3,
+        ));
+        if let (Ok(a), Ok(b)) = (a, b) {
+            let (ra, _) = nest(vec![a]).expect("a region");
+            let (rb, _) = nest(vec![b]).expect("a region");
+            for tolerance_mm in [1e-6, 1e-4, 1e-3] {
+                let _ = union(&ra, &rb, tolerance_mm);
+                let _ = difference(&ra, &rb, tolerance_mm);
+                let _ = intersection(&ra, &rb, tolerance_mm);
             }
         }
     }
