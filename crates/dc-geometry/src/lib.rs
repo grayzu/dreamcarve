@@ -20,7 +20,9 @@ mod point;
 mod polyline;
 mod region;
 mod self_band;
+pub mod simplify;
 mod transform;
+pub mod width;
 
 pub use boolean::{BooleanOp, boolean, difference, difference_within, intersection, union};
 pub use carve::{
