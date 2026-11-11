@@ -267,3 +267,18 @@ pub fn default_profile(targets: Vec<dc_project::InstanceId>, tool: ToolId) -> Pr
         start: StartAt::Auto,
     }
 }
+
+/// The project `dreamcarve init` writes for a picture.
+///
+/// # Errors
+///
+/// Not built yet.
+pub fn picture(
+    _name: &str,
+    _pixels: &dc_project::Grayscale,
+    _size: crate::picture::PictureSize,
+    _post_processor: PostProcessorRef,
+    _display_units: Units,
+) -> Result<Project, JobError> {
+    Err(JobError::NoShapes)
+}

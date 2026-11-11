@@ -4,16 +4,20 @@
 //! Importers for DreamCarve. Importers bring geometry into the internal
 //! Y-up frame (ADR-0001): SVG ([`import_svg`], phase 1) flips Y; DXF
 //! ([`import_dxf`], phase 2) is already Y-up and only scales to millimetres.
+//! Pictures ([`bitmap::import`], phase 3.5) are decoded to the 8-bit
+//! grayscale a project's bitmap stores; placing them is the caller's.
 //!
 //! Importers take bytes and return values: no file I/O, no printing.
 //! Problems that leave a usable result are [`ImportWarning`]s; anything that
 //! makes the result untrustworthy is an [`ImportError`].
 
+pub mod bitmap;
 pub mod dxf;
 pub mod prep;
 mod round;
 pub mod svg;
 
+pub use bitmap::{BITMAP_PNG_COMPRESSION, ImageFormat};
 pub use dxf::{
     DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
     MAX_INSERT_DEPTH, import_dxf,
@@ -127,6 +131,41 @@ pub enum ImportError {
     PrepOutputUnreadable {
         /// What did not hold.
         reason: String,
+    },
+    /// A picture (PNG or JPEG) could not be decoded: not the format its
+    /// signature claims, truncated, corrupt, empty, or past a decoder
+    /// limit ([`bitmap::import`]).
+    #[error("the picture could not be read: {reason}")]
+    ImageDecode {
+        /// What the decoder found.
+        reason: String,
+    },
+    /// A side of the picture is above [`dc_project::MAX_BITMAP_SIDE_PX`],
+    /// read from its header before any image data is decoded (security
+    /// review M4).
+    #[error(
+        "the picture is {width_px} × {height_px} px, and a side is at most {limit_px} px; scale it down first"
+    )]
+    ImageTooLarge {
+        /// The picture's width, pixels, as its header says.
+        width_px: u32,
+        /// The picture's height, pixels, as its header says.
+        height_px: u32,
+        /// [`dc_project::MAX_BITMAP_SIDE_PX`].
+        limit_px: u32,
+    },
+    /// The file's extension names one picture format and its first bytes
+    /// are the other's.
+    #[error(
+        "the file is named as a {} picture but holds a {}; rename it to match",
+        extension.name(),
+        found.name()
+    )]
+    ImageFormatMismatch {
+        /// The format the extension names.
+        extension: ImageFormat,
+        /// The format the signature shows.
+        found: ImageFormat,
     },
 }
 
@@ -355,6 +394,16 @@ pub enum ImportWarning {
         /// The design's height the threshold is relative to, mm.
         height_mm: f64,
     },
+    /// The picture has 16 bits per sample; each was taken by its high
+    /// byte (capability 48, `image_16_bit`).
+    Image16Bit,
+    /// Some of the picture's pixels are not opaque; they were composited
+    /// on white (capability 48, `image_alpha_flattened`).
+    ImageAlphaFlattened,
+    /// Some of the picture's pixels are in colour; the picture was
+    /// converted to grayscale by Rec. 601 luminance (capability 48,
+    /// `image_colour_converted`).
+    ImageColourConverted,
 }
 
 /// The kinds of SVG content that cannot become shapes
@@ -417,6 +466,9 @@ impl ImportWarning {
             Self::PrepSmoothSkipped { .. } => "prep_smooth_skipped",
             Self::PrepSmoothExceedsDetail { .. } => "prep_smooth_exceeds_detail",
             Self::FeatureBelowSize { .. } => "feature_below_size",
+            Self::Image16Bit => "image_16_bit",
+            Self::ImageAlphaFlattened => "image_alpha_flattened",
+            Self::ImageColourConverted => "image_colour_converted",
         }
     }
 }
@@ -612,6 +664,15 @@ impl std::fmt::Display for ImportWarning {
                 f,
                 "{count} piece(s) or hole(s) are narrower than {threshold_mm:.3} mm at their widest, 0.2% of the design's {height_mm:.1} mm height; the smallest is {smallest_mm:.3} mm. Specks that small are not worth carving{IMAGE_PREP_FIXES}"
             ),
+            Self::Image16Bit => f.write_str(
+                "the picture has 16 bits per sample; each was rounded down to 8 bits (its high byte)",
+            ),
+            Self::ImageAlphaFlattened => f.write_str(
+                "the picture has transparent pixels; they were laid on white, so they carve as white",
+            ),
+            Self::ImageColourConverted => f.write_str(
+                "the picture is in colour; it was converted to grayscale by luminance (0.299 R + 0.587 G + 0.114 B)",
+            ),
         }
     }
 }
@@ -730,6 +791,9 @@ mod warning {
                 },
                 "prep_smooth_exceeds_detail",
             ),
+            (ImportWarning::Image16Bit, "image_16_bit"),
+            (ImportWarning::ImageAlphaFlattened, "image_alpha_flattened"),
+            (ImportWarning::ImageColourConverted, "image_colour_converted"),
         ];
         for (warning, code) in cases {
             assert_eq!(warning.code(), code, "{warning}");

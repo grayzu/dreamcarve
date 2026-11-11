@@ -3,7 +3,7 @@
 
 [package]
 name = "dc-import"
-description = "DreamCarve importers: SVG, DXF"
+description = "DreamCarve importers: SVG, DXF, PNG and JPEG pictures"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,11 +12,17 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+# The stored PNG's text form (`bitmap::stored`).
+base64.workspace = true
 dc-geometry.workspace = true
 dc-project.workspace = true
 kurbo.workspace = true
+# Decodes a PNG picture and encodes the one a bitmap stores (`bitmap`).
+png.workspace = true
 thiserror.workspace = true
 usvg.workspace = true
+# Decodes a JPEG picture (`bitmap`).
+zune-jpeg.workspace = true
 
 [lints]
 workspace = true

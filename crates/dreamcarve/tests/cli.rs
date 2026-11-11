@@ -31,6 +31,10 @@ use dc_project::{
 };
 use dreamcarve_shell::clock;
 
+/// Pictures: `init` on a PNG or JPEG, `image add` and `image list` (#645).
+#[path = "cli/picture.rs"]
+mod picture;
+
 /// The date every compared program is exported with.
 const FIXED_DATE: &str = "2026-10-15";
 
