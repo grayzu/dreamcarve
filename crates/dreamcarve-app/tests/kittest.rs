@@ -3002,6 +3002,7 @@ fn keyboard_shortcuts_reach_their_commands() {
     for menu in [
         keyboard::Menu::File,
         keyboard::Menu::Edit,
+        keyboard::Menu::Arrange,
         keyboard::Menu::View,
     ] {
         let title = h.state().app().strings().get(menu.title()).to_owned();
@@ -3094,6 +3095,50 @@ fn keyboard_shortcuts_reach_their_commands() {
     h.run();
     assert!(!instance_of(&h, "i4").locked, "and L again unlocks it");
     reached.insert(Key::Lock);
+
+    // Arrange (slice 25, #617): each turn is one step, undone here.
+    for (modifiers, key, label, command) in [
+        (
+            egui::Modifiers::NONE,
+            egui::Key::R,
+            "Rotate “square” 90° clockwise",
+            Key::RotateClockwise,
+        ),
+        (
+            egui::Modifiers::SHIFT,
+            egui::Key::R,
+            "Rotate “square” 90° anticlockwise",
+            Key::RotateAnticlockwise,
+        ),
+        (
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::H,
+            "Flip “square” horizontally",
+            Key::FlipHorizontal,
+        ),
+        (
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::V,
+            "Flip “square” vertically",
+            Key::FlipVertical,
+        ),
+    ] {
+        h.key_press_modifiers(modifiers, key);
+        h.run();
+        assert_eq!(h.state().app().undo_label(), Some(label), "{command:?}");
+        h.state_mut().app_mut().undo();
+        h.run();
+        reached.insert(command);
+    }
+    h.key_press(egui::Key::F2);
+    h.run();
+    assert!(
+        h.get_by_label("Rename square").is_focused(),
+        "F2 renames the selected shape in place"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    reached.insert(Key::Rename);
 
     for (modifiers, step_mm, command) in [
         (egui::Modifiers::NONE, 1.0, Key::Nudge),
@@ -4157,5 +4202,183 @@ fn units_menu_switches_display_units() {
         h.query_by_role_and_label(Role::Button, "in").is_some(),
         "the button reads in"
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The names of the shell's project's instances, in file order.
+fn instance_names(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<String> {
+    h.state()
+        .app()
+        .project()
+        .instances
+        .iter()
+        .map(|i| i.name.clone())
+        .collect()
+}
+
+/// Slice 25 (#617; capability 57, acceptance 96): F2 on the selected
+/// square, and *Rename* in its row's context menu, each turn its name into
+/// a field in place, focused, with the whole name selected, so typing
+/// replaces it. Typing and Enter is one undo step `Rename "square"`;
+/// Escape leaves the file unchanged.
+#[test]
+fn f2_and_context_menu_rename_in_place() {
+    let dir = scratch("tree-rename");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let start = h.state().app().project().clone();
+
+    // F2: the field, focused, holding the name; typing replaces it.
+    select_only(&mut h, "i4");
+    h.key_press(egui::Key::F2);
+    h.run();
+    let field = h.get_by_label("Rename square");
+    assert!(field.is_focused(), "the field has the keyboard");
+    assert_eq!(field.value().as_deref(), Some("square"));
+    field.type_text("Recess");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(
+        instance_names(&h).contains(&"Recess".to_owned()),
+        "the typed name replaced the selected one: {:?}",
+        instance_names(&h)
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Rename “square”"));
+    assert_eq!(undo_steps(&h), 1, "the rename is one step");
+    assert!(
+        h.query_by_label("Rename square").is_none(),
+        "the field went"
+    );
+
+    // Escape after F2: the file unchanged, no step.
+    h.state_mut().app_mut().undo();
+    h.run();
+    assert_eq!(h.state().app().project(), &start);
+    h.key_press(egui::Key::F2);
+    h.run();
+    h.get_by_label("Rename square").type_text("zzz");
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().app().project(), &start, "Escape reverts");
+    assert_eq!(undo_steps(&h), 0, "and is no step");
+    assert!(h.query_by_label("Rename square").is_none());
+
+    // The context menu's Rename, on a row not selected.
+    h.get_by_label("border").click_secondary();
+    h.run();
+    h.get_by_label("Rename").click();
+    h.run();
+    let field = h.get_by_label("Rename border");
+    assert!(field.is_focused(), "the field has the keyboard");
+    field.type_text("Frame");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(
+        instance_names(&h).contains(&"Frame".to_owned()),
+        "{:?}",
+        instance_names(&h)
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Rename “border”"));
+    assert_eq!(undo_steps(&h), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 25 (#617; capabilities 54 and 58a): R, Shift R, Ctrl Shift H and
+/// Ctrl Shift V each do what the toolbar's Arrange group does: the same
+/// transform and the same undo label. R is the Rotate button, Shift R its
+/// popover's angle 90, the flips their buttons. With nothing selected the
+/// group is disabled.
+#[test]
+fn shortcuts_reach_the_arrange_commands() {
+    let dir = scratch("arrange-shortcuts");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    for name in ["Rotate 90° clockwise", "Flip horizontal", "Flip vertical"] {
+        assert!(
+            h.get_by_label(name).accesskit_node().is_disabled(),
+            "{name} is disabled with nothing selected"
+        );
+    }
+    select_only(&mut h, "i4");
+    let before = transform_of(&h, "i4");
+
+    type Toolbar = fn(&mut Harness<'_, dreamcarve_app::Shell>);
+    let rotate: Toolbar = |h| {
+        h.get_by_label("Rotate 90° clockwise").click();
+        h.run();
+    };
+    let popover_90: Toolbar = |h| {
+        h.get_by_label("Rotate by an angle").click();
+        h.run();
+        h.get_by_label("Angle").click();
+        h.run();
+        h.get_by_label("Angle").type_text("90");
+        h.run();
+        h.key_press(egui::Key::Enter);
+        h.run();
+    };
+    let flip_h: Toolbar = |h| {
+        h.get_by_label("Flip horizontal").click();
+        h.run();
+    };
+    let flip_v: Toolbar = |h| {
+        h.get_by_label("Flip vertical").click();
+        h.run();
+    };
+    for (modifiers, key, toolbar, what) in [
+        (egui::Modifiers::NONE, egui::Key::R, rotate, "R"),
+        (egui::Modifiers::SHIFT, egui::Key::R, popover_90, "Shift R"),
+        (
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::H,
+            flip_h,
+            "Ctrl Shift H",
+        ),
+        (
+            egui::Modifiers::COMMAND | egui::Modifiers::SHIFT,
+            egui::Key::V,
+            flip_v,
+            "Ctrl Shift V",
+        ),
+    ] {
+        let steps = undo_steps(&h);
+        toolbar(&mut h);
+        assert_eq!(undo_steps(&h), steps + 1, "{what}: the toolbar's one step");
+        let by_toolbar = transform_of(&h, "i4");
+        let label = h.state().app().undo_label().map(str::to_owned);
+        assert_ne!(by_toolbar, before, "{what}: the toolbar turned it");
+        h.state_mut().app_mut().undo();
+        h.run();
+        assert_eq!(transform_of(&h, "i4"), before);
+
+        h.key_press_modifiers(modifiers, key);
+        h.run();
+        assert_eq!(undo_steps(&h), steps + 1, "{what}: one step");
+        assert_same_transform(transform_of(&h, "i4"), by_toolbar, what);
+        assert_eq!(
+            h.state().app().undo_label().map(str::to_owned),
+            label,
+            "{what}: the toolbar's command"
+        );
+        assert!(
+            instance_of(&h, "i4").visible,
+            "{what}: H's own command (hide) did not run"
+        );
+        h.state_mut().app_mut().undo();
+        h.run();
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
