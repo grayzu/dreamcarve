@@ -5,18 +5,20 @@
 //! "The Design Tree and placement"; functional spec, capability 58;
 //! mock-up `01-workspace.svg`, Properties). With one or more instances
 //! selected the panel shows, in project units, the selection's joint
-//! bounding box (X and Y its bottom-left corner, W and H its size), the
-//! rotation in degrees, and two Mirror buttons. A typed value becomes one
-//! `TransformInstances` about the box's centre: a translation for X and Y,
-//! a scale for W and H (uniform unless the padlock between them is open),
-//! a rotation for the angle, a scale of −1 on one axis for a mirror. The
-//! definitions are never written, so a linked copy's sibling stays.
+//! bounding box: X and Y its bottom-left corner, W and H its size, and
+//! nothing else ([`fields`]; slice 25, #617). Rotation and mirroring are
+//! actions on the selection, not properties of a shape (capability 58a,
+//! [`crate::arrange`]). A typed value becomes one `TransformInstances`
+//! about the box's centre: a translation for X and Y, a scale for W and H
+//! (uniform unless the proportion link right of them is broken). The
+//! definitions are never written, so a linked copy's sibling stays. A
+//! locked selection's fields are read-only ([`read_only`]) under a note
+//! whose *Unlock* is [`unlock`].
 //!
 //! For several shapes the box is always one box, so X, Y, W and H are
-//! never mixed; the rotation, Visible and Locked are each instance's own
-//! and show *Mixed* when they differ ([`crate::mixed`], PureCutCNC's
-//! `mixedValue.ts`). A typed angle over a mixed rotation turns the
-//! selection by that angle.
+//! never mixed; the rotation (read for the Viewport's handles, not a
+//! field), Visible and Locked are each instance's own and are `None` when
+//! they differ ([`crate::mixed`], PureCutCNC's `mixedValue.ts`).
 //!
 //! An instance's rotation is read from its transform's linear part as the
 //! angle its X axis makes, counter-clockwise from +X in Y-up project
@@ -36,8 +38,6 @@ use crate::units;
 /// of an inch in mm, a tenth of a thou in inches (as the Tools tab's
 /// fields).
 const FIELD_DECIMALS: usize = 4;
-/// Decimals the rotation shows.
-const ANGLE_DECIMALS: usize = 2;
 /// Two rotations within this many degrees are the same rotation, for
 /// the mixed display.
 const ANGLE_TOLERANCE_DEG: f64 = 1e-6;
@@ -57,11 +57,13 @@ pub enum Field {
     W,
     /// The box's height.
     H,
-    /// The rotation, degrees counter-clockwise.
-    Rotation,
 }
 
-/// A change typed into the panel, in millimetres and degrees.
+/// The fields the panel shows, in order: X, Y, W and H, and nothing else
+/// (capability 58).
+pub const FIELDS: [Field; 4] = [Field::X, Field::Y, Field::W, Field::H];
+
+/// A change typed into the panel, in millimetres.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Edit {
     /// Move the box's left edge to `mm`.
@@ -79,7 +81,7 @@ pub enum Edit {
     W {
         /// The new width, mm.
         mm: f64,
-        /// Keep proportions (the padlock closed).
+        /// Keep proportions (the link closed).
         uniform: bool,
     },
     /// Scale to height `mm` about the centre; the width follows when
@@ -87,18 +89,9 @@ pub enum Edit {
     H {
         /// The new height, mm.
         mm: f64,
-        /// Keep proportions (the padlock closed).
+        /// Keep proportions (the link closed).
         uniform: bool,
     },
-    /// Rotate about the centre by `angle_deg`, counter-clockwise.
-    RotateBy {
-        /// The turn, degrees.
-        angle_deg: f64,
-    },
-    /// Mirror ↔: flip left to right about the centre.
-    MirrorHorizontal,
-    /// Mirror ↕: flip top to bottom about the centre.
-    MirrorVertical,
 }
 
 /// What the panel shows of a selection of instances.
@@ -164,8 +157,36 @@ pub fn placement(project: &Project, ids: &[InstanceId]) -> Option<Placement> {
     })
 }
 
-/// The text `field` shows, without its unit: lengths in `units`, the
-/// rotation in degrees, empty when the rotation is mixed.
+/// The field rows `placement` shows, in order: always [`FIELDS`].
+#[must_use]
+pub const fn fields(_placement: &Placement) -> &'static [Field] {
+    &FIELDS
+}
+
+/// Whether the fields are read-only: some selected shape is locked, so
+/// every transform is refused (capability 58).
+#[must_use]
+pub const fn read_only(placement: &Placement) -> bool {
+    placement.any_locked
+}
+
+/// The locked note's *Unlock*: one step unlocking the locked ones of
+/// `ids`; `None` when none is locked.
+#[must_use]
+pub fn unlock(project: &Project, ids: &[InstanceId]) -> Option<Command> {
+    let locked: Vec<InstanceId> = ids
+        .iter()
+        .filter(|id| find_instance(project, id).is_ok_and(|i| i.locked))
+        .cloned()
+        .collect();
+    (!locked.is_empty()).then_some(Command::SetInstanceFlags {
+        ids: locked,
+        visible: None,
+        locked: Some(false),
+    })
+}
+
+/// The text `field` shows, without its unit, in `units`.
 #[must_use]
 pub fn field_text(placement: &Placement, field: Field, units: Units) -> String {
     let length = |mm: f64| trimmed(units::to_display(mm, units), FIELD_DECIMALS);
@@ -175,19 +196,13 @@ pub fn field_text(placement: &Placement, field: Field, units: Units) -> String {
         Field::Y => length(b.min.y),
         Field::W => length(b.width_mm()),
         Field::H => length(b.height_mm()),
-        Field::Rotation => placement
-            .rotation_deg
-            .map_or_else(String::new, |deg| trimmed(deg, ANGLE_DECIMALS)),
     }
 }
 
 /// The unit `field` shows inside its outline.
 #[must_use]
-pub const fn field_unit(field: Field, units: Units) -> &'static str {
-    match field {
-        Field::Rotation => "°",
-        Field::X | Field::Y | Field::W | Field::H => units::suffix(units),
-    }
+pub const fn field_unit(_field: Field, units: Units) -> &'static str {
+    units::suffix(units)
 }
 
 /// A refusal of `text`.
@@ -221,20 +236,10 @@ fn decimal(text: &str) -> Result<f64, CommandError> {
     }
 }
 
-/// `deg` folded into (−180, 180].
-fn fold_deg(deg: f64) -> f64 {
-    let folded = (deg + 180.0).rem_euclid(360.0) - 180.0;
-    if approx_eq(folded, -180.0, ANGLE_TOLERANCE_DEG) {
-        180.0
-    } else {
-        folded
-    }
-}
-
 /// What typing `text` into `field` asks for: X and Y take a length in
 /// the file's unit strings (a bare number in `units`); W and H a length
-/// or a percentage of the current size (`50 %`); the rotation degrees,
-/// with or without `°`. `uniform` is the W/H padlock.
+/// or a percentage of the current size (`50 %`). `uniform` is the W/H
+/// proportion link.
 ///
 /// # Errors
 ///
@@ -269,17 +274,6 @@ pub fn parse(
             mm: size(b.height_mm())?,
             uniform,
         },
-        Field::Rotation => {
-            let bare = without(text, "°")
-                .or_else(|| without(text, "deg"))
-                .unwrap_or(text);
-            let typed = decimal(bare)?;
-            Edit::RotateBy {
-                angle_deg: placement
-                    .rotation_deg
-                    .map_or(typed, |current| fold_deg(typed - current)),
-            }
-        }
     })
 }
 
@@ -333,18 +327,6 @@ pub fn edit(project: &Project, ids: &[InstanceId], edit: Edit) -> Result<Command
             let s = scaled(factor("height", mm, b.height_mm())?)?;
             Transform::scale(if uniform { s } else { 1.0 }, s)
         }
-        Edit::RotateBy { angle_deg } => {
-            if !angle_deg.is_finite() {
-                return Err(CommandError::InvalidValue {
-                    field: "rotation",
-                    value: angle_deg,
-                });
-            }
-            moved(fold_deg(angle_deg))?;
-            Transform::rotate(angle_deg.to_radians())
-        }
-        Edit::MirrorHorizontal => Transform::scale(-1.0, 1.0),
-        Edit::MirrorVertical => Transform::scale(1.0, -1.0),
     };
     Ok(Command::TransformInstances {
         ids: ids.to_vec(),
@@ -364,7 +346,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rotations_read_counter_clockwise_and_fold() {
+    fn rotations_read_counter_clockwise() {
         let quarter = Transform::rotate(std::f64::consts::FRAC_PI_2);
         assert!(approx_eq(rotation_deg(quarter), 90.0, 1e-9));
         assert!(approx_eq(rotation_deg(Transform::IDENTITY), 0.0, 1e-12));
@@ -373,9 +355,6 @@ mod tests {
             180.0,
             1e-12
         ));
-        assert!(approx_eq(fold_deg(270.0), -90.0, 1e-12));
-        assert!(approx_eq(fold_deg(-180.0), 180.0, 1e-12));
-        assert!(approx_eq(fold_deg(360.0), 0.0, 1e-12));
     }
 
     #[test]

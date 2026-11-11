@@ -1066,10 +1066,10 @@ artwork of the maintainer's is committed):
  `init` on the output prints none of the 49a warnings and imports one
  shape per piece.
 61h. **The report.** On `ring-cross.svg` the report names a design height
- of 60.00 mm and, in `--regions` mode, a narrowest gap of 2.000 mm (3.33 %
+ of 60.00 mm and, in `--regions` mode, a narrowest gap of 2.00 mm (3.33 %
  of the height), 3.33 / 6.67 / 10.00 mm at 100 / 200 / 300 mm tall,
  reaching 1.5 mm at 45 mm tall; in default mode a thinnest piece of
- 2.000 mm. The same art with 1 mm strokes (about 1.7 % of the height),
+ 2.00 mm. The same art with 1 mm strokes (about 1.7 % of the height),
  prepared in default mode, warns `prep_regions_suggested`; the 2 mm
  version does not. A filled rectangle over 98 % of the drawing's box warns
  `prep_background_shape`. The report prints counts of what was dropped

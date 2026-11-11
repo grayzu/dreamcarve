@@ -1009,7 +1009,7 @@ the tolerance of step 1, and `ImportError::code()` returns the code of the
 three image-prep errors (`None` for the importer's others). The
 `PrepThresholdRange` flag is spelled as the command line spells it
 (`--min-detail`, `--smooth`). Rendering it as text is
-`dc_job::prep_report::render(&PrepReport) -> String`, in `dc-job` as every
+`dc_job::prep_report::render(&PrepReport, input, output) -> String`, in `dc-job` as every
 summary is, so the GUI can show the same lines; the format is in "Report
 format and codes" below.
 
@@ -2488,8 +2488,10 @@ document order, with bounds, and the counts the report prints.
    millimetres with a one-to-one `viewBox`, no `<metadata>`, no `<desc>`,
    no version string (the build's version carries a time and would break
    determinism), no stroke attribute anywhere. Then `prepare` reads its own
-   output back through `import_svg` (the importer, default options) and
-   `nest`, and requires the same number of pieces and holes and the
+   output back (the check is `prep::write::verify`, which `prepare` calls
+   before it returns, so no caller can skip it and `write_svg` stays a
+   plain `String`) through `import_svg` (the importer, default options but
+   the vertex cap) and `nest`, and requires the same number of pieces and holes and the
    area of each piece within `perimeter · tolerance`; a mismatch is
    `PrepOutputUnreadable` and nothing is returned, because a library crate
    never hands back what it has proven wrong.
@@ -2568,8 +2570,21 @@ one line per fact, in this order, a line omitted when it has nothing to say
 `Thinnest piece:`, `Narrowest gap` (with `, the board ridge between
 pockets` in regions mode), `At 100 / 200 / 300 mm tall:`, and `The
 thinnest piece` or `The narrowest gap reaches 1.5 mm at <h> mm tall.`
-Numbers: millimetres to two decimals (three below 1 mm), percentages to
-two, counts plain. The warnings:
+Numbers: millimetres to two decimals (three under 0.1 mm, so a thin width
+is not shown as 0.00, and for the thresholds of `Dropped:`), percentages to
+two, counts plain; the height at which a width reaches the guide is a whole
+number of millimetres. `Thinnest piece:` says "of the height" after its
+percentage and the lines after it do not, as the example does. The last
+line names whichever of the thinnest piece and the narrowest gap reaches
+the guide at the greater height. The header names the files as the shell
+shows them, so `render` takes `input` and `output` names beside the report
+(`render(&PrepReport, &str, &str)`, with `lines` for the same as a
+`Vec<String>`). `dc_job::prep_report::warning_line` prints a warning as
+`warning: <code>: <message>`; for an `image-prep` run it words the three
+checks that `init` words as advice to run `image-prep`
+(`svg_hole_as_separate_path`, `svg_stroke_only_path`,
+`svg_hidden_object`) as what the run did, and strips the advice suffix
+(`ImportWarning::message_without_advice`) from any other. The warnings:
 
 | Code | Severity | Params | When |
 | --- | --- | --- | --- |

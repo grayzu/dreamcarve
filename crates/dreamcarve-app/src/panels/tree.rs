@@ -4,25 +4,28 @@
 //! The Design Tree (functional spec, capability 57; `experience.md`,
 //! sections 6 to 8; mock-up `01-workspace.svg`, left): the Shapes
 //! section, one 26-px row per instance in file order with its eye, its
-//! padlock (shown on hover unless locked), its name, the `open` and
-//! `link-2` badges and the count of operations targeting it; then the
-//! Tabs section, a row per outline holding placed tabs with a row per tab
-//! under it (#546); then Pictures.
-//! Each header's eye and padlock act on every row in it.
+//! padlock (shown on hover unless locked; its tooltip says what a lock
+//! does), the shape glyph (`square`, `circle` or `spline`: never the word
+//! "open"), its name, the `component` badge of a linked copy and the count
+//! of operations targeting it; then the Tabs section, a row per outline
+//! holding placed tabs with a row per tab under it (#546); then Pictures.
+//! An empty section is its header alone (slice 25, #617). Each header's
+//! eye and padlock act on every row in it.
 //!
 //! The rows come from `dc_app::tree`; a click, the context menu, an eye,
 //! a padlock or a rename only push actions, so every change is a command
 //! and one undo step. The selection is `dc_app`'s, the one the Viewport
 //! and the Properties panel show: click selects, Shift-click selects the
-//! range from the last click, Ctrl/⌘-click toggles. A double-click turns
-//! the name into a field in place; Enter or leaving it commits, Escape
-//! reverts. What is being renamed and where the range starts live in
-//! egui's memory, not the project.
+//! range from the last click, Ctrl/⌘-click toggles. A double-click, F2 on
+//! the selected shape or *Rename* in the context menu turns the name into
+//! a field in place with the name selected ([`start_rename`]); Enter or
+//! leaving it commits, Escape reverts. What is being renamed and where
+//! the range starts live in egui's memory, not the project.
 
-use dc_app::tree::{MenuItem, ShapeRow, TabRow, Tree};
+use dc_app::tree::{Line, MenuItem, Section, ShapeGlyph, ShapeRow, TabRow, Tree};
 use dc_app::{ClickMode, Selection, StrKey, Strings};
 use dc_project::{InstanceId, Project};
-use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
+use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::panels;
 use crate::shell::theme::{self, Palette};
@@ -46,6 +49,16 @@ fn anchor_id() -> Id {
 /// The instance whose name is a field, and the text typed so far.
 fn renaming_id() -> Id {
     Id::unique("design_tree_renaming")
+}
+
+/// Turns instance `id`'s name into a field in place, the name selected,
+/// on the tree's next frame (F2, the context menu's *Rename*).
+pub(crate) fn start_rename(ctx: &egui::Context, project: &Project, id: &InstanceId) {
+    if let Some(instance) = project.instances.iter().find(|i| i.id == *id) {
+        ctx.data_mut(|d| {
+            d.insert_temp(renaming_id(), (id.clone(), instance.name.clone(), true));
+        });
+    }
 }
 
 /// The selection the tree last drew, to tell when it changed.
@@ -72,8 +85,8 @@ fn glyph(ui: &Ui, rect: Rect, icon: Icon, colour: egui::Color32) {
         .galley(rect.center() - galley.size() / 2.0, galley, colour);
 }
 
-/// A clickable glyph at `rect`, named `name` for assistive tools; whether
-/// it was clicked.
+/// A clickable glyph at `rect`, named `name` for assistive tools and
+/// showing `name` on hover; whether it was clicked.
 fn icon_button(
     ui: &mut Ui,
     rect: Rect,
@@ -81,6 +94,20 @@ fn icon_button(
     icon: Icon,
     colour: egui::Color32,
     name: &str,
+    enabled: bool,
+) -> egui::Response {
+    tipped_button(ui, rect, id, (icon, colour), name, name, enabled)
+}
+
+/// [`icon_button`] whose hover says `tip` rather than its name (the
+/// padlock's, which says what a lock does).
+fn tipped_button(
+    ui: &mut Ui,
+    rect: Rect,
+    id: Id,
+    (icon, colour): (Icon, egui::Color32),
+    name: &str,
+    tip: &str,
     enabled: bool,
 ) -> egui::Response {
     let sense = if enabled {
@@ -96,9 +123,9 @@ fn icon_button(
     }
     glyph(ui, rect, icon, colour);
     if enabled {
-        response.on_hover_text(name)
+        response.on_hover_text(tip)
     } else {
-        response.on_disabled_hover_text(name)
+        response.on_disabled_hover_text(tip)
     }
 }
 
@@ -204,20 +231,6 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         .auto_shrink(false)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            let (eye, lock) = section(
-                ui,
-                strings,
-                strings.get(StrKey::TreeShapes),
-                (!tree.shapes.is_empty()).then(|| tree.shapes_header()),
-                None,
-            );
-            let all = every_instance(project);
-            if eye && let Some(command) = dc_app::tree::toggle_visible(project, &all) {
-                out.push(Action::Run(Box::new(command)));
-            }
-            if lock && let Some(command) = dc_app::tree::toggle_locked(project, &all) {
-                out.push(Action::Run(Box::new(command)));
-            }
             // The tree scrolls to the first selected row when the
             // selection changes (`experience.md`, section 8).
             let current = app.selection().instances().to_vec();
@@ -226,51 +239,64 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .then(|| current.first().cloned())
                 .flatten();
             ui.data_mut(|d| d.insert_temp(seen_id(), current));
-            for row in &tree.shapes {
-                // A row out of view keeps its place and is not laid out,
-                // so 500 shapes cost a frame what a screenful does
-                // (acceptance 87); the row to reveal is always drawn.
-                let next =
-                    Rect::from_min_size(ui.cursor().min, egui::vec2(ui.available_width(), ROW_PX));
-                if !ui.is_rect_visible(next) && reveal.as_ref() != Some(&row.id) {
-                    ui.allocate_exact_size(next.size(), Sense::hover());
-                    continue;
+            // An empty section is its header alone (capability 57).
+            for line in tree.lines() {
+                match line {
+                    Line::Header(Section::Shapes) => {
+                        let (eye, lock) = section(
+                            ui,
+                            strings,
+                            strings.get(StrKey::TreeShapes),
+                            (!tree.shapes.is_empty()).then(|| tree.shapes_header()),
+                            None,
+                        );
+                        let all = every_instance(project);
+                        if eye && let Some(command) = dc_app::tree::toggle_visible(project, &all) {
+                            out.push(Action::Run(Box::new(command)));
+                        }
+                        if lock && let Some(command) = dc_app::tree::toggle_locked(project, &all) {
+                            out.push(Action::Run(Box::new(command)));
+                        }
+                    }
+                    Line::Shape(row) => {
+                        // A row out of view keeps its place and is not
+                        // laid out, so 500 shapes cost a frame what a
+                        // screenful does (acceptance 87); the row to
+                        // reveal is always drawn.
+                        let next = Rect::from_min_size(
+                            ui.cursor().min,
+                            egui::vec2(ui.available_width(), ROW_PX),
+                        );
+                        if !ui.is_rect_visible(next) && reveal.as_ref() != Some(&row.id) {
+                            ui.allocate_exact_size(next.size(), Sense::hover());
+                            continue;
+                        }
+                        let response = shape_row(ui, state, &tree, row, out);
+                        if reveal.as_ref() == Some(&row.id) {
+                            response.scroll_to_me(None);
+                        }
+                    }
+                    Line::Header(Section::Tabs) => {
+                        section(
+                            ui,
+                            strings,
+                            strings.get(StrKey::TreeTabs),
+                            None,
+                            Some(strings.get(StrKey::TreeTabsNoFlags)),
+                        );
+                    }
+                    Line::Tab(row) => tab_row(ui, state, row, out),
+                    Line::Header(Section::Pictures) => {
+                        section(
+                            ui,
+                            strings,
+                            strings.get(StrKey::TreePictures),
+                            None,
+                            Some(strings.get(StrKey::TreePicturesNoFlags)),
+                        );
+                    }
+                    Line::Picture(picture) => match *picture {},
                 }
-                let response = shape_row(ui, state, &tree, row, out);
-                if reveal.as_ref() == Some(&row.id) {
-                    response.scroll_to_me(None);
-                }
-            }
-
-            section(
-                ui,
-                strings,
-                strings.get(StrKey::TreeTabs),
-                None,
-                Some(strings.get(StrKey::TreeTabsNoFlags)),
-            );
-            for row in &tree.tabs {
-                tab_row(ui, state, row, out);
-            }
-
-            section(
-                ui,
-                strings,
-                strings.get(StrKey::TreePictures),
-                None,
-                Some(strings.get(StrKey::TreePicturesNoFlags)),
-            );
-            if tree.pictures.is_empty() {
-                let palette = Palette::current(ui);
-                let (rect, _) = ui
-                    .allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
-                ui.painter().text(
-                    egui::pos2(rect.left() + MARGIN_PX, rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    strings.get(StrKey::TreeNoPictures),
-                    TextStyle::Body.resolve(ui.style()),
-                    palette.text_secondary,
-                );
             }
         });
 }
@@ -372,13 +398,14 @@ fn shape_row(
     } else {
         (Icon::LockOpen, strings.get(StrKey::TreeLock), theme::NONE)
     };
-    if icon_button(
+    // The padlock's hover says what a lock does: it stops transforms only.
+    if tipped_button(
         ui,
         lock_rect,
         ui.make_persistent_id(("tree_lock", row.id.as_str())),
-        lock_icon,
-        lock_colour,
+        (lock_icon, lock_colour),
         lock_name,
+        strings.get(StrKey::TreeLockHelp),
         true,
     )
     .clicked()
@@ -386,6 +413,21 @@ fn shape_row(
     {
         out.push(Action::Run(Box::new(command)));
     }
+
+    // The shape glyph: what the shape is, never a word.
+    let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    let (shape_icon, shape_tip) = match row.glyph {
+        ShapeGlyph::Closed => (Icon::Square, StrKey::TreeGlyphClosed),
+        ShapeGlyph::Circle => (Icon::Circle, StrKey::TreeGlyphCircle),
+        ShapeGlyph::Open => (Icon::Spline, StrKey::TreeGlyphOpen),
+    };
+    glyph(ui, glyph_rect, shape_icon, palette.text_secondary);
+    ui.interact(
+        glyph_rect,
+        ui.make_persistent_id(("tree_glyph", row.id.as_str())),
+        Sense::hover(),
+    )
+    .on_hover_text(strings.get(shape_tip));
 
     // The count, right; the badges before it.
     let small = TextStyle::Small;
@@ -427,7 +469,7 @@ fn shape_row(
             egui::pos2(right - ICON_BOX_PX / 2.0, rect.center().y),
             egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
         );
-        glyph(ui, r, Icon::Link2, palette.text_secondary);
+        glyph(ui, r, Icon::Component, palette.text_secondary);
         ui.interact(
             r,
             ui.make_persistent_id(("tree_linked", row.id.as_str())),
@@ -436,41 +478,10 @@ fn shape_row(
         .on_hover_text(strings.get(StrKey::TreeLinked));
         right = r.left() - 4.0;
     }
-    if row.open {
-        let label = strings.get(StrKey::TreeOpen);
-        let galley = ui.painter().layout_no_wrap(
-            label.to_owned(),
-            small.resolve(ui.style()),
-            palette.text_secondary,
-        );
-        let pill = Rect::from_center_size(
-            egui::pos2(right - galley.size().x / 2.0 - 6.0, rect.center().y),
-            egui::vec2(galley.size().x + 12.0, 16.0),
-        );
-        painter.rect(
-            pill,
-            8.0,
-            palette.surface_stripe,
-            Stroke::new(1.0, palette.border_default),
-            egui::StrokeKind::Inside,
-        );
-        painter.galley(
-            pill.center() - galley.size() / 2.0,
-            galley,
-            palette.text_secondary,
-        );
-        ui.interact(
-            pill,
-            ui.make_persistent_id(("tree_open", row.id.as_str())),
-            Sense::hover(),
-        )
-        .on_hover_text(strings.get(StrKey::TreeOpenHelp));
-        right = pill.left() - 4.0;
-    }
 
     // The name, or the rename field.
     let name_rect = Rect::from_min_max(
-        egui::pos2(lock_rect.right() + 8.0, rect.top()),
+        egui::pos2(glyph_rect.right() + 8.0, rect.top()),
         egui::pos2(right, rect.bottom()),
     );
     let renaming: Option<(InstanceId, String, bool)> = ui.data(|d| d.get_temp(renaming_id()));
@@ -494,10 +505,16 @@ fn shape_row(
                     s.store(ui.ctx(), field_id);
                 }
             }
-            if edit.lost_focus() && !fresh {
+            // Escape reverts. egui drops the focus as the frame begins and
+            // the Viewport's keys take the press, so the focus router says
+            // whether this frame's Escape left a widget.
+            let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape))
+                || crate::shell::focus::escape_left_widget(ui.ctx());
+            if escaped && !fresh {
                 ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
-                let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                if !escaped && let Some(command) = dc_app::tree::rename(project, &row.id, &text) {
+            } else if edit.lost_focus() && !fresh {
+                ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
+                if let Some(command) = dc_app::tree::rename(project, &row.id, &text) {
                     out.push(Action::Run(Box::new(command)));
                 }
             } else {
@@ -535,21 +552,23 @@ fn shape_row(
         } else {
             vec![row.id.clone()]
         };
-        context_menu(ui, strings, project, &chosen, out);
+        context_menu(ui, strings, project, (&row.id, &chosen), out);
     });
     response
 }
 
-/// The context menu for `ids` (capability 57).
+/// The context menu of row `on` for `ids`, the selection it acts on
+/// (capability 57). *Rename* renames the row itself.
 fn context_menu(
     ui: &mut Ui,
     strings: &Strings,
     project: &Project,
-    ids: &[InstanceId],
+    (on, ids): (&InstanceId, &[InstanceId]),
     out: &mut Vec<Action>,
 ) {
     for item in dc_app::tree::menu(project, ids) {
         let key = match item {
+            MenuItem::Rename => StrKey::TreeRenameItem,
             MenuItem::Hide => StrKey::TreeHide,
             MenuItem::Show => StrKey::TreeShow,
             MenuItem::Lock => StrKey::TreeLock,
@@ -567,11 +586,12 @@ fn context_menu(
             });
             continue;
         }
-        if item == MenuItem::Delete {
+        if matches!(item, MenuItem::Delete | MenuItem::Hide | MenuItem::Show) {
             ui.separator();
         }
         if ui.button(strings.get(key)).clicked() {
             match item {
+                MenuItem::Rename => out.push(Action::Rename(on.clone())),
                 MenuItem::ZoomTo => out.push(Action::ZoomToSelection),
                 _ => {
                     if let Some(command) = dc_app::tree::menu_command(project, item, ids) {

@@ -424,6 +424,21 @@ impl ImportWarning {
 /// Appended to the messages that `image-prep` fixes.
 const IMAGE_PREP_FIXES: &str = "; `dreamcarve image-prep` would fix this";
 
+impl ImportWarning {
+    /// The message without the advice to run `dreamcarve image-prep`, for
+    /// the report of `image-prep` itself, where the user already has. A
+    /// warning that never gave the advice is its [`Display`](std::fmt::Display)
+    /// text.
+    #[must_use]
+    pub fn message_without_advice(&self) -> String {
+        let message = self.to_string();
+        match message.strip_suffix(IMAGE_PREP_FIXES) {
+            Some(rest) => rest.to_owned(),
+            None => message,
+        }
+    }
+}
+
 impl std::fmt::Display for ImportWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
