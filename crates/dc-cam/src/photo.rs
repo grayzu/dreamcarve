@@ -684,21 +684,23 @@ impl Family {
         let lines = self
             .lines()
             .map(|(k, t0, t1)| {
-                let steps = ((t1 - t0) / sample_mm).floor().max(0.0) as usize;
-                let mut ts: Vec<f64> = (0..=steps).map(|i| t0 + i as f64 * sample_mm).collect();
+                // Distances from the groove's start, the end it is cut
+                // from: `t0` for even `k` (along `+u`), `t1` for odd.
+                let length = t1 - t0;
+                let steps = (length / sample_mm).floor().max(0.0) as usize;
+                let mut ds: Vec<f64> = (0..=steps).map(|i| i as f64 * sample_mm).collect();
                 // The end, on its own or in place of a sample beside it.
-                match ts.last_mut() {
-                    Some(last) if t1 - *last <= MIN_SAMPLE_GAP_MM => *last = t1,
-                    _ => ts.push(t1),
+                match ds.last_mut() {
+                    Some(last) if length - *last <= MIN_SAMPLE_GAP_MM => *last = length,
+                    _ => ds.push(length),
                 }
-                if ts.len() == 2 && t1 - t0 <= MIN_SAMPLE_GAP_MM {
-                    ts.truncate(1);
+                if ds.len() == 2 && length <= MIN_SAMPLE_GAP_MM {
+                    ds.truncate(1);
                 }
-                let mut points: Vec<Point> = ts.into_iter().map(|t| self.at(k, t)).collect();
-                if k.rem_euclid(2) == 1 {
-                    points.reverse();
-                }
-                points
+                let backward = k.rem_euclid(2) == 1;
+                ds.into_iter()
+                    .map(|d| self.at(k, if backward { t1 - d } else { t0 + d }))
+                    .collect()
             })
             .collect();
         Grooves {

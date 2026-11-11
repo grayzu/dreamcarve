@@ -530,10 +530,11 @@ is no GUI in this phase.
  compared at the tolerance each fixture's README states, 0.02 mm unless
  the README says otherwise. The Photo V-Carve goldens are RasterCarve's
  own output, from its command line on DreamCarve's own fixture pictures,
- captured by the parity tool the same way. RasterCarve's X is
- DreamCarve's; its Y grows down the picture from the top edge, so the
- harness maps `y_dc = y_mm + height_mm − y_rc` before it compares, as
- the design spec's "Golden corpus" and each fixture's README state.
+ captured by the parity tool the same way. RasterCarve's origin is the
+ picture's top-left corner and its Y is negative down the picture, so
+ the harness maps `x_dc = x_mm + x_rc` and `y_dc = y_mm + height_mm +
+ y_rc` (in mm) before it compares, as the design spec's "Golden corpus"
+ and each fixture's README state (#647).
  Nothing from RasterCarve but those programs enters the repository.
 
 ### Image prep and the drawn boundary (sub-phase 3.4)
@@ -994,7 +995,10 @@ Numbering continues from phase 2's 47.
  grooves match RasterCarve's program groove for groove, each sample
  within 0.01 mm in XY and 0.05 mm in Z (2.5 % of the 2.03 mm maximum
  depth, the room sampling leaves), after mapping RasterCarve's picture
- origin to DreamCarve's as the fixture README states.
+ origin to DreamCarve's as the fixture README states. Where RasterCarve's
+ own behaviour departs from that, the case's README and its test say so
+ for that case alone (#647: its resampling on the inch case, the last
+ line it leaves uncut on the metric case).
 61. **Sign end to end.** The sign `.dcv` (see Test parts) exports its
  programs in tool-run order, `check --preview` draws the end mill's
  floor rings round the oval, the V-bit's lines into every serif of the
