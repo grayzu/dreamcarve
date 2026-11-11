@@ -100,3 +100,22 @@ the quick start test (`quick_start::inlay_pair_chapter_runs`) says how
 when it differs. The two-file pair of format 24 it replaced is a
 migration fixture in `crates/dreamcarve/tests/fixtures/inlay-migration/`
 and is not rebuilt.
+
+## The compass fixture
+
+`compass-fixture.ts` writes `tests/fixtures/prep/compass.svg` and
+`tests/fixtures/prep/compass-regions.svg`, the phase 3 line-art inlay test
+part (#605): a synthetic 70 mm compass in 2.5 mm line work (a ring and
+eight spokes) with a 96 × 84 mm oval round it, and the eight pockets
+between the strokes that `image-prep --regions` returns for it. It reads no
+font and no other code, so it needs nothing installed:
+
+```sh
+cd tools/parity
+node compass-fixture.ts
+```
+
+The output is byte-identical run to run (Node 23.6 or newer, or
+`npx tsx compass-fixture.ts`). It writes only the drawings; the project
+built from them is the test's (`cli::compass_inlay_exports_both_boards`).
+`tests/fixtures/README.md` lists the shapes.
