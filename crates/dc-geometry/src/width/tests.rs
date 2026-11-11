@@ -241,3 +241,56 @@ fn narrowest_gap_is_the_ridge_between_pockets() {
     let radius_mm = gap.x_mm.hypot(gap.y_mm);
     assert_approx_eq!(radius_mm, 11.0, 0.05);
 }
+
+/// A numerical sliver of a stroked outline union: about 6 µm by 4 nm, area
+/// near 3e-11 mm² (#611).
+fn sliver() -> Region {
+    region_of(vec![rect(10.0, 20.0, 0.006, 0.000_004)])
+}
+
+#[test]
+fn degenerate_sliver_is_narrower_than_any_width() {
+    let region = sliver();
+    for width_mm in [1e-6, 0.01, 0.1, 5.0] {
+        assert!(
+            is_narrower_than(&region, width_mm, TOL),
+            "a 4 nm sliver is under {width_mm} mm wide"
+        );
+    }
+    let hole = sliver().outer().reversed();
+    assert!(hole_is_narrower_than(&hole, 0.1, TOL));
+}
+
+#[test]
+fn functions_do_not_panic_on_slivers() {
+    for (w, h) in [(0.006, 4e-6), (4e-6, 0.006), (0.5, 1e-8)] {
+        let region = region_of(vec![rect(3.0, -7.0, w, h)]);
+        let _ = is_narrower_than(&region, 0.1, TOL);
+        let _ = hole_is_narrower_than(&region.outer().reversed(), 0.1, TOL);
+        assert!(local_widths(&region, TOL).is_none_or(|p| p.min_mm() >= 0.0));
+        let other = region_of(vec![rect(3.0, -6.9, 0.5, 0.5)]);
+        let _ = narrowest_gap(&[region.clone(), other], 1.0, TOL);
+        let _ = narrowest_gap(std::slice::from_ref(&region), 1.0, TOL);
+    }
+    // The sign fixture's sliver (#611): 6 µm long, a few nm wide, whose
+    // offset made cavalier_contours panic.
+    let triangle = Contour::oriented(Polyline::new(
+        vec![
+            Vertex::line(68.469_385_257_611_78, 33.602_204_291_770_875),
+            Vertex::line(68.469_446_292_768_03, 33.602_208_106_468_14),
+            Vertex::line(68.469_416_490_445_64, 33.602_207_152_793_824),
+        ],
+        true,
+    ))
+    .expect("a sliver triangle");
+    let region = region_of(vec![triangle.clone()]);
+    for width_mm in [1e-6, 0.01, 0.1] {
+        assert!(is_narrower_than(&region, width_mm, TOL));
+        assert!(hole_is_narrower_than(&triangle, width_mm, TOL));
+    }
+    assert!(local_widths(&region, TOL).is_none());
+    assert!(narrowest_gap(&[region], 1.0, TOL).is_none());
+    assert!(local_widths(&sliver(), TOL).is_none());
+    let big = region_of(vec![rect(0.0, 0.0, 10.0, 10.0)]);
+    assert!(narrowest_gap(&[big, sliver()], 1.0, TOL).is_none());
+}
