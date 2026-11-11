@@ -40,8 +40,12 @@ pub struct ButtonSpec<'a> {
     pub label: &'a str,
     /// A second line under the label, 12 px.
     pub hint: Option<&'a str>,
-    /// Shown on hover; for an icon-only button, also its accessible name.
+    /// Shown on hover; for an icon-only button, also its accessible name
+    /// unless `name` gives one.
     pub tooltip: Option<&'a str>,
+    /// The accessible name of an icon-only button whose tooltip says
+    /// something else (a disabled button's reason).
+    pub name: Option<&'a str>,
     /// Height, px: 26 for a control, 28 in the toolbar and sheet footers,
     /// 40 for the empty state's rows.
     pub height_px: f32,
@@ -65,6 +69,7 @@ impl<'a> ButtonSpec<'a> {
             label,
             hint: None,
             tooltip: None,
+            name: None,
             height_px: 26.0,
             width_px: None,
             enabled: true,
@@ -91,6 +96,13 @@ impl<'a> ButtonSpec<'a> {
     #[must_use]
     pub const fn tooltip(mut self, tooltip: &'a str) -> Self {
         self.tooltip = Some(tooltip);
+        self
+    }
+
+    /// Named `name` for assistive tools, whatever the tooltip says.
+    #[must_use]
+    pub const fn named(mut self, name: &'a str) -> Self {
+        self.name = Some(name);
         self
     }
 
@@ -218,10 +230,10 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
             Sense::hover()
         },
     );
-    let name = if spec.label.is_empty() {
-        spec.tooltip.unwrap_or_default()
-    } else {
-        spec.label
+    let name = match spec.name {
+        Some(name) => name,
+        None if spec.label.is_empty() => spec.tooltip.unwrap_or_default(),
+        None => spec.label,
     };
     let enabled = spec.enabled;
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));

@@ -447,6 +447,11 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             Shortcut::Hide,
             Shortcut::Lock,
             Shortcut::Delete,
+            Shortcut::Rename,
+            Shortcut::FlipHorizontal,
+            Shortcut::FlipVertical,
+            Shortcut::RotateAnticlockwise,
+            Shortcut::RotateClockwise,
         ] {
             if !popup_open && keyboard::consume(input, command) > 0 {
                 pressed.push(command);

@@ -21,15 +21,24 @@ pub(crate) use instances::{
     about, bounds as selection_bounds, centre, copy_name, find as find_instance, next_free_id,
 };
 
-use dc_geometry::Transform;
+use dc_geometry::{Transform, approx_eq};
 use dc_job::Drawing;
 use dc_project::{
     Heights, InstanceId, MachineOrigin, Operation, OperationId, PlacedTab, PostProcessorRef,
     Project, Stock, TabId, Tool, ToolId, Units, switch_post,
 };
 
+use crate::arrange::Flip;
 use crate::error::CommandError;
+use crate::library::trimmed;
 use crate::strings::{StrKey, Strings};
+
+/// One whole turn, degrees.
+const FULL_TURN_DEG: f64 = 360.0;
+/// A turn within this many degrees of a whole one turns nothing.
+const NO_TURN_DEG: f64 = 1e-9;
+/// Decimals an undo label gives a turn's angle.
+const ANGLE_DECIMALS: usize = 2;
 
 /// Every change to the project. `apply` is pure; `label` is the undo text.
 #[derive(Debug, Clone, PartialEq)]
@@ -80,6 +89,22 @@ pub enum Command {
         ids: Vec<InstanceId>,
         /// The change, about the selection's centre.
         delta: Transform,
+    },
+    /// Turn instances about their joint bounding-box centre (the Arrange
+    /// group's Rotate, capability 58a). Refused when any is locked.
+    RotateInstances {
+        /// The instances, in selection order.
+        ids: Vec<InstanceId>,
+        /// The turn, degrees, positive anticlockwise (Y-up).
+        angle_deg: f64,
+    },
+    /// Mirror instances about their joint bounding-box centre (the
+    /// Arrange group's flips, capability 58a). Refused when any is locked.
+    FlipInstances {
+        /// The instances, in selection order.
+        ids: Vec<InstanceId>,
+        /// Which way.
+        flip: Flip,
     },
     /// Set the `visible` and `locked` flags given.
     SetInstanceFlags {
@@ -247,6 +272,27 @@ impl Command {
             Self::TransformInstances { ids, delta } => {
                 next = instances::transform(project, ids, *delta)?;
             }
+            Self::RotateInstances { ids, angle_deg } => {
+                finite("rotation", *angle_deg)?;
+                if approx_eq(angle_deg.rem_euclid(FULL_TURN_DEG), 0.0, NO_TURN_DEG)
+                    || approx_eq(
+                        angle_deg.rem_euclid(FULL_TURN_DEG),
+                        FULL_TURN_DEG,
+                        NO_TURN_DEG,
+                    )
+                {
+                    return Err(CommandError::NothingToDo);
+                }
+                let delta = Transform::rotate(angle_deg.to_radians());
+                next = instances::transform(project, ids, delta)?;
+            }
+            Self::FlipInstances { ids, flip } => {
+                let delta = match flip {
+                    Flip::Horizontal => Transform::scale(-1.0, 1.0),
+                    Flip::Vertical => Transform::scale(1.0, -1.0),
+                };
+                next = instances::transform(project, ids, delta)?;
+            }
             Self::SetInstanceFlags {
                 ids,
                 visible,
@@ -399,6 +445,27 @@ impl Command {
                     instances::TransformKind::Scale => StrKey::CommandLabelScale,
                     instances::TransformKind::Mirror => StrKey::CommandLabelMirror,
                     instances::TransformKind::Other => StrKey::CommandLabelTransform,
+                };
+                with_subject(key, &subject_of(ids))
+            }
+            Self::RotateInstances { ids, angle_deg } => {
+                let key = if *angle_deg < 0.0 {
+                    StrKey::CommandLabelRotateClockwise
+                } else {
+                    StrKey::CommandLabelRotateAnticlockwise
+                };
+                strings.fmt(
+                    key,
+                    &[
+                        ("subject", &subject_of(ids)),
+                        ("angle", &trimmed(angle_deg.abs(), ANGLE_DECIMALS)),
+                    ],
+                )
+            }
+            Self::FlipInstances { ids, flip } => {
+                let key = match flip {
+                    Flip::Horizontal => StrKey::CommandLabelFlipHorizontal,
+                    Flip::Vertical => StrKey::CommandLabelFlipVertical,
                 };
                 with_subject(key, &subject_of(ids))
             }
