@@ -7,7 +7,7 @@
 //! read and written through `dreamcarve_shell::library` as the CLI's
 //! `tools` commands read and write it. A search field (name, vendor,
 //! diameter), a type filter and a table whose rows are ticked for *Add to
-//! project* or *Remove*; rows already in the project are marked. *Remove*
+//! project* or *Delete*; rows already in the project are marked. *Delete*
 //! asks first, naming the ticked tools, in place of the table (#581).
 //! *Import…* reads a Fusion `.tools` or `.json` or a DreamCarve library and
 //! shows the per-tool report `tools import` prints in place of the table,
@@ -62,7 +62,7 @@ pub(crate) struct Sheet {
     replace: bool,
     /// The last import's file name and report, shown in place of the table.
     report: Option<(String, ImportReport)>,
-    /// Whether *Remove* is asking first, in place of the table (#581).
+    /// Whether *Delete* is asking first, in place of the table (#581).
     confirm_remove: bool,
     /// The last action's message, and whether it is an error.
     message: Option<(String, bool)>,
@@ -101,7 +101,7 @@ impl Sheet {
         }
     }
 
-    /// The names of the ticked tools, in library order: what *Remove*'s
+    /// The names of the ticked tools, in library order: what *Delete*'s
     /// question names.
     fn ticked_names(&self) -> Vec<&str> {
         self.library.as_ref().map_or_else(
@@ -308,7 +308,7 @@ fn toolbar(
             .response
             .labelled_by(label.id);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let remove = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryRemove))
+            let remove = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryDelete))
                 .enabled(readable && !sheet.ticked.is_empty());
             if button(ui, remove).clicked() {
                 // The library is outside project history: ask first.
@@ -645,7 +645,7 @@ fn sentence(ui: &mut Ui, sentence: &str, colour: egui::Color32) {
     });
 }
 
-/// *Remove*'s question in place of the table (`experience.md`, section 8,
+/// *Delete*'s question in place of the table (`experience.md`, section 8,
 /// "Destructive actions"; #581), naming the ticked tools: the library is
 /// outside project history, so a removal cannot be undone. The footer
 /// holds the answers.
@@ -654,9 +654,9 @@ fn remove_question(ui: &mut Ui, strings: &Strings, names: &[&str]) {
     let names_text = names.join(", ");
     let count = names.len().to_string();
     let question = match names {
-        [_] => strings.fmt(StrKey::AppLibraryRemoveAskOne, &[("names", &names_text)]),
+        [_] => strings.fmt(StrKey::AppLibraryDeleteAskOne, &[("names", &names_text)]),
         _ => strings.fmt(
-            StrKey::AppLibraryRemoveAskMany,
+            StrKey::AppLibraryDeleteAskMany,
             &[("count", &count), ("names", &names_text)],
         ),
     };
@@ -724,11 +724,11 @@ fn footer(ui: &mut Ui, app: &App, project_name: &str, sheet: &mut Sheet, out: &m
                 return;
             }
             if sheet.confirm_remove {
-                // *Remove* (destructive) is the answer on the right, with
+                // *Delete* (destructive) is the answer on the right, with
                 // *Cancel* beside it.
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let remove =
-                        ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryRemove))
+                        ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppLibraryDelete))
                             .height(FOOTER_PX);
                     if button(ui, remove).clicked() {
                         sheet.confirm_remove = false;
@@ -875,7 +875,7 @@ fn export(sheet: &Sheet, strings: &Strings, dialogs: &mut dyn Dialogs) -> Option
     })
 }
 
-/// *Remove*, answered: the ticked tools out of the library, written at once.
+/// *Delete*, answered: the ticked tools out of the library, written at once.
 /// Projects keep their copies.
 fn remove(sheet: &mut Sheet, strings: &Strings, config: Option<&Paths>) -> Option<(String, bool)> {
     let paths = config?;
@@ -901,11 +901,11 @@ fn remove(sheet: &mut Sheet, strings: &Strings, config: Option<&Paths>) -> Optio
     sheet.set_library(next);
     let text = match removed.as_slice() {
         [one] => strings.fmt(
-            StrKey::AppLibraryRemovedOne,
+            StrKey::AppLibraryDeletedOne,
             &[("name", &one.tool.name), ("id", one.id.as_str())],
         ),
         many => strings.fmt(
-            StrKey::AppLibraryRemovedMany,
+            StrKey::AppLibraryDeletedMany,
             &[("count", &many.len().to_string())],
         ),
     };

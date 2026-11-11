@@ -217,3 +217,37 @@ fn placeholders_are_filled() {
         );
     }
 }
+
+/// Slice 29 (#621; functional 63, experience checklist 32): *Delete*,
+/// never *Remove*, names a deletion. The values that say `Remove` are the
+/// target actions (the target-editing bar, and the Design Tree's `Remove
+/// from “{name}”` and its hover text), which take a shape out of an
+/// operation's targets and delete nothing; the Tools tab's, the Tool
+/// Library's and the undo step's deletions read *Delete*.
+#[test]
+fn no_deletion_is_labelled_remove() {
+    let strings = Strings::english();
+    let removes: Vec<(&str, &str)> = StrKey::ALL
+        .iter()
+        .map(|&key| (key.key(), strings.get(key)))
+        .filter(|(_, text)| text.to_lowercase().contains("remov"))
+        .collect();
+    assert_eq!(
+        removes,
+        [
+            (
+                "editor.targets_editing",
+                "Editing targets of “{name}”: click shapes to add or remove them",
+            ),
+            ("tree.remove_from", "Remove from “{name}”"),
+            ("tree.target_on", "Remove {name} from the targets"),
+        ],
+        "only the target actions say Remove"
+    );
+    assert_eq!(strings.get(StrKey::AppToolsDelete), "Delete");
+    assert_eq!(strings.get(StrKey::AppLibraryDelete), "Delete");
+    assert_eq!(
+        strings.fmt(StrKey::CommandLabelDeleteTool, &[("subject", "“t”")]),
+        "Delete tool “t”"
+    );
+}

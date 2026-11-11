@@ -3125,6 +3125,67 @@ fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// Slice 29 (#621; functional 63, 79; acceptance 100): an empty
+/// project's Tools tab says *No tools yet* with *New tool* and *Add from
+/// library…*. *New tool* adds `tool1`, selected, with its Name field
+/// focused and the name selected, so typing replaces it; its rates show
+/// *Required*. *Delete* is in the list's actions and deletes it.
+#[test]
+fn new_tool_focuses_its_name() {
+    let dir = scratch("new-tool");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    h.get_by_label("Tools · 0").click();
+    h.run();
+    assert!(
+        h.query_by_label("No tools yet.").is_some(),
+        "the empty list"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Add from library…")
+            .is_some()
+    );
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Delete").is_none(),
+        "nothing to delete"
+    );
+    let steps = undo_steps(&h);
+
+    h.get_by_role_and_label(Role::Button, "New tool").click();
+    h.run();
+    let tools = &h.state().app().project().tools;
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0].name, "tool1");
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("New tool “tool1”"));
+    assert!(h.query_by_label("No tools yet.").is_none());
+    let name = h.get_by_role_and_label(Role::TextInput, "Name");
+    assert!(name.is_focused(), "the Name field has the focus");
+    assert_eq!(name.value().as_deref(), Some("tool1"));
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Feed")
+            .accesskit_node()
+            .placeholder(),
+        Some("Required"),
+        "the unset feed is required"
+    );
+
+    // The name is selected: typing replaces it.
+    h.get_by_role_and_label(Role::TextInput, "Name")
+        .type_text("Upcut");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(h.state().app().project().tools[0].name, "Upcut");
+    assert_eq!(undo_steps(&h), steps + 2);
+
+    h.get_by_role_and_label(Role::Button, "Delete").click();
+    h.run();
+    assert!(h.state().app().project().tools.is_empty(), "deleted");
+    assert_eq!(h.state().app().undo_label(), Some("Delete tool “Upcut”"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// Ticks library row `name` in the open Tool Library sheet.
 fn tick_library_row(h: &mut Harness<'_, dreamcarve_app::Shell>, name: &str) {
     h.get_by_role(Role::Dialog)
@@ -3137,13 +3198,13 @@ fn tick_library_row(h: &mut Harness<'_, dreamcarve_app::Shell>, name: &str) {
     h.run();
 }
 
-/// #581, decision 2 (#537 deviation 7): the Tool Library's *Remove* asks
+/// #581, decision 2 (#537 deviation 7): the Tool Library's *Delete* asks
 /// first, naming the ticked tools, in place of the table (never a sheet
 /// above a sheet). *Cancel* keeps them and leaves the file alone;
-/// *Remove* takes them out of the library file. The library is outside
+/// *Delete* takes them out of the library file. The library is outside
 /// project history, so the project does not change either way.
 #[test]
-fn library_remove_asks_and_names_the_tools() {
+fn library_delete_asks_and_names_the_tools() {
     let dir = scratch("library-remove");
     let config = dir.join("config");
     std::fs::create_dir_all(&config).unwrap();
@@ -3165,10 +3226,10 @@ fn library_remove_asks_and_names_the_tools() {
     tick_library_row(&mut h, "1/4 in Flat End Mill");
     tick_library_row(&mut h, "5 mm Drill");
 
-    // Remove asks, naming both in library order, and writes nothing yet.
-    let question = "Remove 2 tools from your library: 5 mm Drill, 1/4 in Flat End Mill? \
+    // Delete asks, naming both in library order, and writes nothing yet.
+    let question = "Delete 2 tools from your library: 5 mm Drill, 1/4 in Flat End Mill? \
                     Projects keep their copies.";
-    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
     h.run();
     assert!(
         h.get_by_role(Role::Dialog)
@@ -3204,15 +3265,15 @@ fn library_remove_asks_and_names_the_tools() {
         "Cancel leaves the library file alone"
     );
 
-    // Remove, then Remove: both go, from the file too.
-    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    // Delete, then Delete: both go, from the file too.
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
     h.run();
     assert!(
         h.get_by_role(Role::Dialog)
             .query_by_label(question)
             .is_some()
     );
-    h.get_by_role(Role::Dialog).get_by_label("Remove").click();
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
     h.run();
     let sheet = h.get_by_role(Role::Dialog);
     assert!(sheet.query_by_label(question).is_none());
