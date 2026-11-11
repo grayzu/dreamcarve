@@ -1148,7 +1148,8 @@ artwork of the maintainer's is committed):
  (`tests/fixtures/prep/compass.svg`, see Test parts), prepared with
  `--regions`, then an Inlay with a drawn oval boundary, exports both
  boards with every program passing S1–S19, seats within 0.05 mm, and
- every cut lies inside its 110 × 80 mm board with at least 3 mm to spare.
+ every cut lies inside its 130 × 100 mm board (the test part's stock and
+ male board; 110 × 80 mm is the lettered pair's) with at least 3 mm to spare.
 
 ## Safety requirements
 

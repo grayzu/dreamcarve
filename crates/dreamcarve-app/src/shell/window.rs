@@ -1076,6 +1076,19 @@ impl Shell {
                     panels::export::show_in_folder(sheet);
                 }
             }
+            // The drawer at the first error: open, and what that row
+            // names selected, as clicking the row would.
+            Request::ShowErrors => {
+                self.export = None;
+                self.warnings_open = true;
+                let first = dc_app::warnings::panel(&self.app)
+                    .into_iter()
+                    .flat_map(|g| g.rows)
+                    .find(|r| r.level == dc_app::warnings::Level::Error);
+                if let Some(selection) = first.and_then(|r| r.selection()) {
+                    self.app.select(selection);
+                }
+            }
         }
     }
 

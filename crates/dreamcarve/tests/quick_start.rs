@@ -1248,3 +1248,66 @@ fn inlay_pair_chapter_runs() {
         }
     }
 }
+
+/// The Inlay chapter of the user guide (sub-phase 3.4, #605).
+const INLAY_GUIDE: &str = "docs/book/src/user-guide/inlay.md";
+
+/// #605 (slice 21l): the Inlay chapter's boundary section, run as written
+/// like a quick start. It starts from the inlay pair's project, the
+/// committed `tests/fixtures/dc.dcv` the quick start builds, and
+/// follows the chapter's hand edit (the margin and rounding `null`, the
+/// frame `i3` as the `boundary`); `check` and `export` exit 0, and the
+/// project is the committed `tests/fixtures/dc-boundary.dcv`. `export`
+/// holds every program to S1 to S19. The chapter's other commands and
+/// the quick start (`inlay_pair_chapter_runs`) are untouched.
+#[test]
+fn inlay_boundary_chapter_runs() {
+    let run = Run {
+        chapter: INLAY_GUIDE,
+        drawing: ("tests/fixtures/dc.dcv", "dc.dcv"),
+        swap: None,
+    };
+    let text = std::fs::read_to_string(repo_root().join(INLAY_GUIDE)).expect("chapter readable");
+    let steps = steps(INLAY_GUIDE, &text);
+    for (what, has) in [
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+        ("run", steps.iter().any(|s| matches!(s, Step::Run { .. }))),
+    ] {
+        assert!(has, "{INLAY_GUIDE} has no `{what}` step");
+    }
+    for (needle, what) in [
+        ("\"boundary\": [ \"i3\" ],", "sets the boundary"),
+        ("replaces", "says the boundary replaces the margin"),
+        ("mirrored", "says the boundary is mirrored with the design"),
+        ("3.175 mm", "gives the cut-out's inset"),
+        ("narrowest band", "names the narrowest band"),
+        ("inlay_boundary_crosses_design", "names the crossing error"),
+        ("inlay_band_clipped", "says the boundary is clipped"),
+    ] {
+        assert!(text.contains(needle), "{INLAY_GUIDE} {what}");
+    }
+    let dir = run_chapter("inlay_boundary_chapter_runs", &run);
+
+    let fixture = "tests/fixtures/dc-boundary.dcv";
+    let built = std::fs::read_to_string(dir.join("dc.dcv")).expect("project written");
+    let committed = std::fs::read_to_string(repo_root().join(fixture)).expect("fixture readable");
+    assert_same_project(&built, &committed, fixture, &dir.join("dc.dcv"));
+
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(
+        programs,
+        [
+            "dc-female-1-T2.nc",
+            "dc-female-2-T1.nc",
+            "dc-male-1-T2.nc",
+            "dc-male-2-T1.nc",
+            "dc-male-3-T2.nc",
+        ]
+    );
+}

@@ -243,6 +243,60 @@ fn marks_of_one_case(name: &str, path: &std::path::Path) -> usize {
     checked
 }
 
+/// Acceptance 79 and 83 (capability 77): the export sheet no longer
+/// writes the toolpath preview; the Viewport is the preview. Its SVG dump
+/// for the coaster, the plaque, the sign and the inlay fixture, once every
+/// operation is generated, is the file `export --preview` writes for the
+/// project: `render_generated` of what `dc_job::build` generated. The
+/// byte comparison with the `dreamcarve` binary is
+/// `gui_equality::app_export_equals_cli_export_on_six_posts`.
+#[test]
+fn svg_dump_equals_preview() {
+    use dc_job::preview;
+
+    // The coaster as `init` writes it, then made ready to cut as
+    // `gui_equality`'s `ready_coaster` makes it.
+    let mut coaster = common::coaster();
+    for tool in &mut coaster.tools {
+        tool.feed_mm_min = Some(1500.0);
+        tool.plunge_mm_min = Some(500.0);
+        tool.rpm = Some(18000);
+        tool.step_down_mm = Some(2.0);
+    }
+    coaster.stock.thickness_mm = Some(11.8);
+    for op in &mut coaster.operations {
+        if let dc_project::Operation::Profile(p) = op {
+            p.depth_mm = Some(12.0);
+            p.through_cut_allowance_mm = 0.2;
+        }
+    }
+    let mut cases: Vec<(String, dc_project::Project)> = vec![("coaster".to_owned(), coaster)];
+    for name in ["plaque", "sign", "dc"] {
+        cases.push((
+            name.to_owned(),
+            common::load_dcv(&common::fixture(&format!("{name}.dcv"))),
+        ));
+    }
+    for (name, project) in cases {
+        let mut harness = Harness::from_project(project);
+        harness.generate();
+        let project = harness.app.project().clone();
+        let built = dc_job::build(
+            &project,
+            dc_job::ProgramSplit::ProjectDefault,
+            dc_app::test_support::DATE,
+        );
+        assert!(!built.programs.is_empty(), "{name}: the CLI exports");
+        let generated = built.generated.expect("every operation generates");
+        let dump = harness.app.scene().preview_svg(&project);
+        assert!(dump.contains("<svg"), "{name}: an SVG");
+        assert!(
+            dump == preview::render_generated(&project, &generated),
+            "{name}: the Viewport's SVG dump is --preview's"
+        );
+    }
+}
+
 /// Acceptance 87 (capability 71; design, "Digest and staleness"): an
 /// edit that changes an operation's digest leaves its last runs in the
 /// Scene, flagged stale for the Viewport to draw faded, while the other

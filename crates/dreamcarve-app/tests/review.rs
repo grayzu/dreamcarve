@@ -270,6 +270,12 @@ fn scenes(dir: &Path) -> bool {
     h.run();
     settle(&mut h);
     shoot(&mut h, "20-export-sheet");
+    // Program Details opened (#624): closed whenever the sheet opens.
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Program Details")
+        .click();
+    h.run();
+    shoot(&mut h, "20-export-sheet-details");
     h.get_by_role(Role::Dialog).get_by_label("Export").click();
     h.run();
     shoot(&mut h, "21-export-result-sheet");

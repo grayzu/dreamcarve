@@ -10,6 +10,7 @@
 //! makes the result untrustworthy is an [`ImportError`].
 
 pub mod dxf;
+pub mod prep;
 mod round;
 pub mod svg;
 
@@ -17,6 +18,7 @@ pub use dxf::{
     DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
     MAX_INSERT_DEPTH, import_dxf,
 };
+pub use prep::walk::HiddenReason;
 pub use svg::{
     MAX_IMPORT_VERTICES, MIN_FLATTEN_TOLERANCE_MM, RootUnits, SvgImport, SvgImportOptions,
     import_svg,
@@ -186,27 +188,157 @@ pub enum ImportWarning {
         /// The `$DWGCODEPAGE` value, as the file writes it.
         code_page: String,
     },
+    /// Outlines of different paths cross (3.4, `shapes_overlap`): `count`
+    /// pairs, the first named, and where its two shapes meet.
+    ShapesOverlap {
+        /// Number of overlapping pairs of paths.
+        count: usize,
+        /// Name of the earlier path of the first pair.
+        first: String,
+        /// Name of the later path of the first pair.
+        second: String,
+        /// X of the middle of the first pair's crossing, mm, Y-up frame.
+        x_mm: f64,
+        /// Y of the middle of the first pair's crossing, mm, Y-up frame.
+        y_mm: f64,
+    },
+    /// A filled path lies wholly inside another filled path (3.4,
+    /// `svg_hole_as_separate_path`): `count` such inner paths.
+    SvgHoleAsSeparatePath {
+        /// Number of inner paths.
+        count: usize,
+        /// Name of the first inner path.
+        inner: String,
+        /// Name of the path that contains it.
+        outer: String,
+    },
+    /// A path has a stroke and no fill (3.4, `svg_stroke_only_path`), so
+    /// the importer reads its centreline, an open path.
+    SvgStrokeOnlyPath {
+        /// Number of such paths.
+        count: usize,
+        /// Name of the first.
+        first: String,
+        /// The first one's stroke width, mm.
+        width_mm: f64,
+    },
+    /// An object that is not drawn (3.4, `svg_hidden_object`).
+    SvgHiddenObject {
+        /// Number of hidden shapes.
+        count: usize,
+        /// The first one's id, or its layer's.
+        first: String,
+        /// Why the first is not drawn.
+        reason: HiddenReason,
+    },
+    /// Text, images, clip paths or masks that cannot become shapes (3.4,
+    /// `svg_object_not_convertible`), counted over the whole document.
+    SvgObjectNotConvertible {
+        /// Which kind.
+        kind: NotConvertible,
+        /// How many there are.
+        count: usize,
+        /// For a clip path or mask, the id of the first group using it,
+        /// or empty; empty for text and images.
+        group: String,
+    },
+    /// Pieces or holes whose widest point is under the default minimum
+    /// detail (3.4, `feature_below_size`).
+    FeatureBelowSize {
+        /// Number of pieces and holes under the threshold.
+        count: usize,
+        /// The smallest one's widest point, mm.
+        smallest_mm: f64,
+        /// The threshold, mm.
+        threshold_mm: f64,
+        /// The design's height the threshold is relative to, mm.
+        height_mm: f64,
+    },
 }
+
+/// The kinds of SVG content that cannot become shapes
+/// ([`ImportWarning::SvgObjectNotConvertible`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotConvertible {
+    /// Live `<text>`.
+    Text,
+    /// A raster or nested-SVG `<image>`.
+    Image,
+    /// A clip path.
+    ClipPath,
+    /// A mask.
+    Mask,
+}
+
+impl NotConvertible {
+    /// The kind as the warning table writes it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Text => "text",
+            Self::Image => "image",
+            Self::ClipPath => "clip_path",
+            Self::Mask => "mask",
+        }
+    }
+}
+
+impl ImportWarning {
+    /// The stable `snake_case` code of the warning (functional 49g). The
+    /// four existing text, image, clip-path and mask warnings share
+    /// `svg_object_not_convertible` with the 3.4 variant that counts them.
+    #[must_use]
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::TextIgnored { .. }
+            | Self::ImagesIgnored { .. }
+            | Self::ClipPathIgnored { .. }
+            | Self::MaskIgnored { .. }
+            | Self::SvgObjectNotConvertible { .. } => "svg_object_not_convertible",
+            Self::PaintServerIgnored { .. } => "svg_paint_server_ignored",
+            Self::ZeroAreaDropped { .. } => "svg_zero_area_dropped",
+            Self::EmptyPath { .. } => "svg_empty_path",
+            Self::PhysicalSizeWithoutViewBox { .. } => "svg_physical_size_without_view_box",
+            Self::DxfEntitiesSkipped { .. } => "dxf_entities_skipped",
+            Self::DxfInsertTooDeep { .. } => "dxf_insert_too_deep",
+            Self::DxfBlockMissing { .. } => "dxf_block_missing",
+            Self::DxfCodePageUnsupported { .. } => "dxf_code_page_unsupported",
+            Self::ShapesOverlap { .. } => "shapes_overlap",
+            Self::SvgHoleAsSeparatePath { .. } => "svg_hole_as_separate_path",
+            Self::SvgStrokeOnlyPath { .. } => "svg_stroke_only_path",
+            Self::SvgHiddenObject { .. } => "svg_hidden_object",
+            Self::FeatureBelowSize { .. } => "feature_below_size",
+        }
+    }
+}
+
+/// Appended to the messages that `image-prep` fixes.
+const IMAGE_PREP_FIXES: &str = "; `dreamcarve image-prep` would fix this";
 
 impl std::fmt::Display for ImportWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::TextIgnored { count } => write!(
                 f,
-                "{count} text element(s) skipped; convert text to paths to import it"
+                "{count} text element(s) skipped; convert text to paths in your drawing program to import it"
             ),
-            Self::ImagesIgnored { count } => write!(f, "{count} image(s) skipped"),
+            Self::ImagesIgnored { count } => {
+                write!(
+                    f,
+                    "{count} image(s) skipped; trace images in Inkscape first"
+                )
+            }
             Self::PaintServerIgnored { path } => write!(
                 f,
                 "path `{path}` uses a gradient or pattern; its outline was imported"
             ),
             Self::ClipPathIgnored { group } => write!(
                 f,
-                "clip path on group `{group}` ignored; its shapes were imported unclipped"
+                "clip path on group `{group}` ignored; its shapes were imported unclipped; expand clips and masks in your drawing program"
             ),
             Self::MaskIgnored { group } => write!(
                 f,
-                "mask on group `{group}` ignored; its shapes were imported unmasked"
+                "mask on group `{group}` ignored; its shapes were imported unmasked; expand clips and masks in your drawing program"
             ),
             Self::ZeroAreaDropped { path, subpath } => write!(
                 f,
@@ -244,6 +376,161 @@ impl std::fmt::Display for ImportWarning {
                 f,
                 "the drawing's text is in code page `{code_page}`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters"
             ),
+            Self::ShapesOverlap {
+                count,
+                first,
+                second,
+                x_mm,
+                y_mm,
+            } => write!(
+                f,
+                "{count} pair(s) of shapes overlap; the first is `{first}` and `{second}`, meeting near ({x_mm:.2}, {y_mm:.2}) mm; unite them or move them apart{IMAGE_PREP_FIXES}"
+            ),
+            Self::SvgHoleAsSeparatePath {
+                count,
+                inner,
+                outer,
+            } => write!(
+                f,
+                "{count} filled path(s) lie wholly inside another filled path; the first is `{inner}` inside `{outer}`. They are separate shapes, a hole only where an operation targets both; make each one path with a hole{IMAGE_PREP_FIXES}"
+            ),
+            Self::SvgStrokeOnlyPath {
+                count,
+                first,
+                width_mm,
+            } => write!(
+                f,
+                "{count} path(s) have a stroke and no fill; the first is `{first}`, stroked {width_mm:.3} mm wide. Only its centreline is imported, an open path no Inlay or V-Carve can cut; turn strokes into shapes{IMAGE_PREP_FIXES}"
+            ),
+            Self::SvgHiddenObject {
+                count,
+                first,
+                reason,
+            } => write!(
+                f,
+                "{count} object(s) are not drawn ({}) but are imported and would be cut; the first is `{first}`; skip them{IMAGE_PREP_FIXES}",
+                reason.describe()
+            ),
+            Self::SvgObjectNotConvertible { kind, count, group } => {
+                let on = if group.is_empty() {
+                    String::new()
+                } else {
+                    format!(", the first on `{group}`")
+                };
+                match kind {
+                    NotConvertible::Text => write!(
+                        f,
+                        "{count} text element(s) skipped; convert text to paths in your drawing program"
+                    ),
+                    NotConvertible::Image => write!(
+                        f,
+                        "{count} image(s) skipped; trace images in Inkscape first"
+                    ),
+                    NotConvertible::ClipPath => write!(
+                        f,
+                        "{count} clip path(s) ignored{on}; their shapes are imported unclipped; expand clips and masks in your drawing program"
+                    ),
+                    NotConvertible::Mask => write!(
+                        f,
+                        "{count} mask(s) ignored{on}; their shapes are imported unmasked; expand clips and masks in your drawing program"
+                    ),
+                }
+            }
+            Self::FeatureBelowSize {
+                count,
+                smallest_mm,
+                threshold_mm,
+                height_mm,
+            } => write!(
+                f,
+                "{count} piece(s) or hole(s) are narrower than {threshold_mm:.3} mm at their widest, 0.2% of the design's {height_mm:.1} mm height; the smallest is {smallest_mm:.3} mm. Specks that small are not worth carving{IMAGE_PREP_FIXES}"
+            ),
         }
+    }
+}
+
+#[cfg(test)]
+mod warning {
+    use super::*;
+
+    /// Every variant, the existing ones included, has a stable code
+    /// (functional 49g).
+    #[test]
+    fn existing_import_warnings_have_codes() {
+        let cases = [
+            (
+                ImportWarning::TextIgnored { count: 1 },
+                "svg_object_not_convertible",
+            ),
+            (
+                ImportWarning::ImagesIgnored { count: 1 },
+                "svg_object_not_convertible",
+            ),
+            (
+                ImportWarning::ClipPathIgnored { group: "g".into() },
+                "svg_object_not_convertible",
+            ),
+            (
+                ImportWarning::MaskIgnored { group: "g".into() },
+                "svg_object_not_convertible",
+            ),
+            (
+                ImportWarning::PaintServerIgnored { path: "p".into() },
+                "svg_paint_server_ignored",
+            ),
+            (
+                ImportWarning::ZeroAreaDropped {
+                    path: "p".into(),
+                    subpath: 0,
+                },
+                "svg_zero_area_dropped",
+            ),
+            (
+                ImportWarning::EmptyPath { path: "p".into() },
+                "svg_empty_path",
+            ),
+            (
+                ImportWarning::PhysicalSizeWithoutViewBox {
+                    units: RootUnits::Millimetres,
+                },
+                "svg_physical_size_without_view_box",
+            ),
+            (
+                ImportWarning::DxfEntitiesSkipped {
+                    counts: std::collections::BTreeMap::new(),
+                },
+                "dxf_entities_skipped",
+            ),
+            (
+                ImportWarning::DxfInsertTooDeep { block: "b".into() },
+                "dxf_insert_too_deep",
+            ),
+            (
+                ImportWarning::DxfBlockMissing { block: "b".into() },
+                "dxf_block_missing",
+            ),
+            (
+                ImportWarning::DxfCodePageUnsupported {
+                    code_page: "ANSI_932".into(),
+                },
+                "dxf_code_page_unsupported",
+            ),
+        ];
+        for (warning, code) in cases {
+            assert_eq!(warning.code(), code, "{warning}");
+        }
+    }
+
+    /// The fixes the existing messages gained.
+    #[test]
+    fn existing_messages_name_their_fix() {
+        let text = ImportWarning::TextIgnored { count: 2 }.to_string();
+        assert!(text.contains("convert text to paths in your drawing program"));
+        let image = ImportWarning::ImagesIgnored { count: 1 }.to_string();
+        assert!(image.contains("trace images in Inkscape first"));
+        let clip = ImportWarning::ClipPathIgnored { group: "g".into() }.to_string();
+        assert!(clip.contains("expand clips and masks"));
+        let mask = ImportWarning::MaskIgnored { group: "g".into() }.to_string();
+        assert!(mask.contains("expand clips and masks"));
     }
 }

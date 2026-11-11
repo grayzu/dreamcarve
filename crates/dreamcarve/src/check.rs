@@ -17,11 +17,14 @@
 
 use std::process::ExitCode;
 
+use dc_geometry::{Contour, Region, nest};
+use dc_import::{ImportWarning, prep};
 use dc_job::summary::{
     board_heading, by_board, describe_carves, describe_extents, largest_tool_radius_mm,
     tool_radius_mm,
 };
 use dc_job::{Built, Estimates, ProgramSplit, preview};
+use dc_project::Project;
 use dreamcarve_shell::StagedFile;
 
 use crate::cli::{CheckArgs, Failure};
@@ -69,6 +72,11 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     }
     for warning in &findings.warnings {
         outln!("{}", file.describe("warning", warning))?;
+    }
+    // Sub-phase 3.4 (49a): the import checks that still apply to a project.
+    let design = design_findings(&project);
+    for warning in &design {
+        outln!("warning: {}: {warning}", warning.code())?;
     }
     // Phase 3: a carve's depth follows its shapes, so its deepest cut is
     // stated.
@@ -130,11 +138,48 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
         "{}: {} error(s), {} warning(s)",
         args.dcv.display(),
         findings.errors.len(),
-        findings.warnings.len()
+        findings.warnings.len() + design.len()
     )?;
     Ok(if findings.errors.is_empty() {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
     })
+}
+
+/// The two findings of the import checks that still apply to a project
+/// (`shapes_overlap`, `feature_below_size`), read from the regions of its
+/// visible shapes with the design's height from their joint bounding box
+/// (functional 49a). Shapes that do not resolve into regions are left out;
+/// validation reports them.
+fn design_findings(project: &Project) -> Vec<ImportWarning> {
+    let mut shapes: Vec<(String, Vec<Region>)> = Vec::new();
+    for instance in project.instances.iter().filter(|i| i.visible) {
+        let Some(definition) = project.definitions.get(&instance.definition) else {
+            continue;
+        };
+        let contours: Option<Vec<Contour>> = definition
+            .profiles
+            .iter()
+            .filter(|p| p.is_closed())
+            .map(|p| {
+                let placed = instance.transform.apply_polyline(p).ok()?;
+                Contour::new(placed).ok()
+            })
+            .collect();
+        if let Some(Ok((regions, _))) = contours.map(nest)
+            && !regions.is_empty()
+        {
+            shapes.push((instance.name.clone(), regions));
+        }
+    }
+    let bounds = shapes
+        .iter()
+        .flat_map(|(_, regions)| regions)
+        .filter_map(|r| r.outer().polyline().bounds())
+        .reduce(|a, b| a.including(b.min).including(b.max));
+    let Some(bounds) = bounds else {
+        return Vec::new();
+    };
+    prep::design_findings_named(&shapes, bounds.height_mm())
 }
