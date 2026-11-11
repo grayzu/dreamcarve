@@ -85,7 +85,7 @@ impl WidthProfile {
 /// holes. Exact by erosion, [`floor_regions`] by half the width, which is
 /// empty exactly when no circle of that radius fits; no medial axis, one
 /// offset. A region exactly `width_mm` wide is not narrower (the erosion is
-/// taken [`ERODE_SLACK_MM`] short of the radius, so rounding cannot empty
+/// taken 0.1 µm short of the radius, so rounding cannot empty
 /// it).
 /// False when `width_mm` is not a positive finite number.
 #[must_use]
@@ -180,7 +180,7 @@ pub fn local_widths(region: &Region, tolerance_mm: f64) -> Option<WidthProfile> 
 /// the reach raised from the merge distance to `reach_mm`: the same
 /// outline pairs and the same fold test, so a gap is what the merge would
 /// close. A gap lies outside the design: touching outlines (within
-/// [`EPS_MM`]) and a web of material between two holes are not gaps.
+/// [`crate::EPS_MM`]) and a web of material between two holes are not gaps.
 /// `None` when nothing lies within the reach, or the reach is not a
 /// positive finite number.
 #[must_use]
