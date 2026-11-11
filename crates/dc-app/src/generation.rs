@@ -209,7 +209,8 @@ fn reads_earlier(op: &Operation) -> bool {
     match op {
         Operation::Pocket(pocket) => pocket.rest_of.is_some(),
         Operation::Drill(drill) => drill.cycle.is_countersink(),
-        Operation::VCarve(_) | Operation::Inlay(_) => true,
+        // A Photo V-Carve reads the floors before it too (format 27).
+        Operation::VCarve(_) | Operation::Inlay(_) | Operation::PhotoVCarve(_) => true,
         Operation::Profile(_) | Operation::Engrave(_) | Operation::Bore(_) => false,
     }
 }

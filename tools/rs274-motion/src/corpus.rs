@@ -270,6 +270,11 @@ pub fn export(project: &Project) -> Result<Vec<String>, String> {
             Operation::Pocket(op) => (generate_pocket(project, op).map_err(err)?.0, None),
             Operation::Engrave(op) => (generate_engrave(project, op).map_err(err)?.0, None),
             Operation::Bore(op) => (generate_bore(project, op).map_err(err)?.0, None),
+            // Format 27 (#644): no corpus case holds one, and the
+            // generator refuses it until it is built (#646).
+            Operation::PhotoVCarve(op) => {
+                (dc_cam::generate_photo(project, op).map_err(err)?.0, None)
+            }
             // Format 20: each tool run is written with its own tool.
             Operation::VCarve(op) => {
                 for run in generate_vcarve(project, op).map_err(err)?.0 {

@@ -939,6 +939,12 @@ impl Material {
             // Format 22 (#436): S17 on the side's carve, the male's being
             // the surround of its mirrored targets.
             Operation::Inlay(inlay) => inlay_material(project, inlay, Board::Female),
+            // Format 27 (#644): the record is here before its rule. No
+            // generator makes a Photo V-Carve's toolpath yet, and a run
+            // handed to the pass as one is held to no material: every
+            // cut of it fails S9.
+            // TODO(#646): S19, the picture's footprint and depth range.
+            Operation::PhotoVCarve(_) => Self::Unresolved,
         }
     }
 }

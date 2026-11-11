@@ -606,7 +606,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 **Operations and editors (slices 10–15)**
 - `editor::fields_table_matches_the_records` (acc 73, table-driven over every kind), `editor::set_and_get_by_key_path_round_trip`, `editor::tool_derived_defaults_show_the_tools_value_and_write_null`, `editor::located_warning_matches_its_row`.
 - `operations::add_targets_the_selection_with_cli_defaults` (acc 72), `operations::add_menu_partitions_by_eligibility`, `operations::reorder_enable_duplicate` (acc 74), `operations::delete_keeps_placed_tabs`.
-- `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.4), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_and_place_tabs` (acc 78).
+- `editor::clearing_list_orders_and_warns` (acc 75), `editor::inlay_both_boards` (acc 76, after #498), `editor::photo_v_carve_fields` (acc 77, after 3.5), `editor::drill_cycle_fields_follow_the_cycle`, `editor::profile_tab_request_and_place_tabs` (acc 78).
 
 **Export (slice 18)**
 - `export::plan_waits_for_generation`, `export::plan_lists_programs_as_the_cli_prints_them`, `export::board_tick_filters_without_saving` (acc 76, 85), `export::errors_disable_warnings_do_not` (acc 84), `export::override_not_saved` (acc 85), `export::preview_svg_equals_the_cli` (acc 83).
@@ -636,7 +636,7 @@ slice 20 is the review against its checklist.
 12. **Drill and Bore editors.** Cycles including countersink, pecks, retract; pitch and stock to leave. [10]
 13. **V-Carve editor and clearing passes.** Strategy, flat depth, start plane; the clearing list with drag and `clearing_not_descending`. [10]
 14. **Inlay editor and the male board.** Values once, male board group, derived line, male board on the Viewport, per-board export rows. [10, 4, #498 merged]
-15. **Photo V-Carve editor and bitmaps.** Picture target, the fields, grooves on the Viewport. [10, phase 3.4 merged]
+15. **Photo V-Carve editor and bitmaps.** Picture target, the fields, grooves on the Viewport. [10, phase 3.5 merged]
 16. **Toolpath display.** Per-operation colours, marks, rapids, arrows, visibility panel, by-depth mode and legend, only-selected, extents box, stale fade, `lod`. [9, 4]
 17. **Tabs.** Place tabs, drag along the outline, Tab tool, per-tab properties, hollow marks, the Tabs section of the tree. [5, 11]
 18. **Export.** The sheet, program rows per board, override, preview tick, errors and warnings, staged write, result sheet, estimates in the status bar. [9, 7]
@@ -647,7 +647,7 @@ slice 20 is the review against its checklist.
 
 Slice 1 can start now, on `main`, while phase 3 finishes: it changes no
 output. Slices 2–3 can follow immediately. Slice 14 waits for #498 and
-slice 15 for 3.4; nothing else waits for phase 3.
+slice 15 for 3.5; nothing else waits for phase 3.
 
 Slice 20 (#549) took its first screenshots on 2026-11-10. The review
 turned into the redesign below; #549's exit, the maintainer's sign-off

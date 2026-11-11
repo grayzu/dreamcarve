@@ -7780,6 +7780,7 @@ mod tests {
     mod boards;
     mod boundary;
     mod inlay;
+    mod photo;
     mod s17;
     mod s18;
 }

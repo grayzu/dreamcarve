@@ -447,9 +447,10 @@ is no GUI in this phase.
  JPEG are read; a colour picture is converted to grayscale by luminance
  and `image add` says so; transparency counts as white. The picture
  appears on the stock as it appears on screen: its top row at the top,
- highest Y. A bitmap is an instance in the project like a shape, with a
- name, a position and a size, and it keeps `visible` and `locked` for
- the GUI; it cannot be rotated in this phase. The project **embeds**
+ highest Y. A bitmap is placed in the project as a shape is, with an id
+ of its own (`"b1"`; it is not an instance, and no operation but a
+ Photo V-Carve can name it), a name, a position and a size, and it keeps
+ `visible` and `locked` for the GUI; it cannot be rotated in this phase. The project **embeds**
  the picture's pixels, as it embeds its tools (ADR-0002), so a `.dcv`
  stays one file that exports anywhere; the chapter says the file grows
  by the picture's size and that 4 to 8 pixels per millimetre of
@@ -457,7 +458,7 @@ is no GUI in this phase.
 47. **Photo V-Carve** (`photo_v_carve`; VCarve "Photo V-Carve Toolpath",
  [https://docs.vectric.com/docs/V12.0/VCarvePro/ENU/Help/form/PhotoVCarveStrategy/index.html](https://docs.vectric.com/docs/V12.0/VCarvePro/ENU/Help/form/PhotoVCarveStrategy/index.html);
  RasterCarve's engraving parameters, `rastercarve --help`). An
- operation on one bitmap (`image: "<instance id>"`) with a V-bit that
+ operation on one bitmap (`image: "<bitmap id>"`, such as `"b1"`) with a V-bit that
  carves the picture as parallel grooves whose depth follows the
  pixels, as Vectric's PhotoVCarve does:
     - `max_depth_mm` (VCarve "Max Carving Depth", RasterCarve
@@ -526,9 +527,11 @@ is no GUI in this phase.
  compared at the tolerance each fixture's README states, 0.02 mm unless
  the README says otherwise. The Photo V-Carve goldens are RasterCarve's
  own output, from its command line on DreamCarve's own fixture pictures,
- captured by the parity tool the same way; its G-code is Y-up like
- PureCutCNC's exported programs, so it is compared directly. Nothing
- from RasterCarve but those programs enters the repository.
+ captured by the parity tool the same way. RasterCarve's X is
+ DreamCarve's; its Y grows down the picture from the top edge, so the
+ harness maps `y_dc = y_mm + height_mm − y_rc` before it compares, as
+ the design spec's "Golden corpus" and each fixture's README state.
+ Nothing from RasterCarve but those programs enters the repository.
 
 ### Image prep and the drawn boundary (sub-phase 3.4)
 
@@ -979,8 +982,11 @@ Numbering continues from phase 2's 47.
  +1 and crosses at the feed rate; `line_spacing_fraction: 0.9` warns
  `photo_lines_overlap`.
 60. **Photo parity.** For each photo golden case the design spec lists
- (RasterCarve's defaults on the gradient picture at 0.1 in wide, the
- same in millimetres at 100 mm wide, and a hatch case), DreamCarve's
+ (RasterCarve's defaults on `ramp.png`, 64 × 32 pixels, at 0.1 in wide,
+ and its metric settings on `radial.png`, 64 × 64 pixels, at 100 mm
+ wide; the hatch case of the draft is dropped, security review M5:
+ capturing it would drive RasterCarve's engine from a script, and hatch
+ is covered by the unit tests of 59), DreamCarve's
  grooves match RasterCarve's program groove for groove, each sample
  within 0.01 mm in XY and 0.05 mm in Z (2.5 % of the 2.03 mm maximum
  depth, the room sampling leaves), after mapping RasterCarve's picture
