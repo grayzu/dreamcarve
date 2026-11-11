@@ -7,12 +7,14 @@
 //! shapes it holds (closed and open, the layers, the units read from the
 //! file), and, for a DXF, the importer's options as `dreamcarve init`
 //! takes them: the units (required when the file declares none, with the
-//! importer's message under the dropdown and *Import* disabled), the join
+//! importer's message under the dropdown and *Add* disabled), the join
 //! tolerance and a layer list to tick, in which a layer of entities the
 //! importer does not read is listed greyed. An SVG has no options. A
-//! preview thumbnail draws the outlines where they will land, through the
-//! Viewport camera's one Y flip, and the importer's warnings are listed
-//! as the Warnings panel will list them.
+//! preview thumbnail draws the drawing alone, fitted to it through the
+//! Viewport camera's one Y flip, with no stock outline, origin or
+//! placement note (review 2026-11-10), and the importer's warnings are
+//! listed as the Warnings panel will list them. The footer's *Add 14
+//! shapes* (or *Create project*) counts what it adds.
 //!
 //! The model is `dc_app::import::DrawingImport`; the shell read the file.
 //! The sheet changes the model's options in place, so every change reads
@@ -23,9 +25,9 @@
 
 use std::path::{Path, PathBuf};
 
-use dc_app::import::{DrawingFormat, DrawingImport, Purpose};
+use dc_app::import::{DrawingFormat, DrawingImport, Preview, Purpose};
 use dc_app::{Camera, StrKey, Strings};
-use dc_geometry::{Point, Polyline, Rect as MmRect, Transform, Vec2 as MmVec2};
+use dc_geometry::{Point, Vec2 as MmVec2};
 use dc_job::Tier;
 use dc_project::{Project, Units};
 use eframe::egui::{self, Align, Layout, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui};
@@ -160,9 +162,7 @@ fn body(
                 ui.add_space(12.0);
             }
             heading(ui, strings.get(StrKey::AppImportPreview));
-            preview(ui, project, &sheet.model);
-            ui.add_space(8.0);
-            placement(ui, strings, &sheet.model);
+            preview(ui, &sheet.model);
             notes(ui, strings, &sheet.model);
         });
     ui.add_space(16.0);
@@ -459,9 +459,11 @@ fn layers(ui: &mut Ui, strings: &Strings, model: &mut DrawingImport) {
         });
 }
 
-/// The preview: the outlines where *Import* puts them, on the stock they
-/// land on, fitted to the thumbnail.
-fn preview(ui: &mut Ui, project: &Project, model: &DrawingImport) {
+/// The preview: the drawing alone, as drawn, fitted to the thumbnail
+/// (capability 55; mock-up 02): no stock outline, no origin and no
+/// placement note, since the selected shapes on the Viewport show where
+/// they landed.
+fn preview(ui: &mut Ui, model: &DrawingImport) {
     let palette = Palette::current(ui);
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), PREVIEW_PX), Sense::hover());
@@ -473,17 +475,13 @@ fn preview(ui: &mut Ui, project: &Project, model: &DrawingImport) {
         Stroke::new(1.0, palette.border_default),
         StrokeKind::Inside,
     );
-    let Some((stock, outlines)) = placed(project, model) else {
+    let Some(Preview { outlines, bounds }) = model.preview() else {
         return;
     };
-    let bounds = outlines
-        .iter()
-        .filter_map(Polyline::bounds)
-        .fold(stock, |acc, b| acc.including(b.min).including(b.max));
     let size_px = MmVec2::new(f64::from(rect.width()), f64::from(rect.height()));
     let room = |px: f64| (px - 2.0 * PREVIEW_MARGIN_PX).max(1.0);
-    let px_per_mm = (room(size_px.x) / bounds.width_mm().max(1.0))
-        .min(room(size_px.y) / bounds.height_mm().max(1.0));
+    let px_per_mm = (room(size_px.x) / bounds.width_mm().max(1e-6))
+        .min(room(size_px.y) / bounds.height_mm().max(1e-6));
     // The Viewport's camera, so the thumbnail flips Y where the Viewport
     // does, once, in `Camera::to_screen`.
     let camera = Camera {
@@ -502,25 +500,6 @@ fn preview(ui: &mut Ui, project: &Project, model: &DrawingImport) {
         let s = camera.to_screen(p);
         rect.min + egui::vec2(s.x_px as f32, s.y_px as f32)
     };
-    let corners = [
-        Point::new(stock.min.x, stock.min.y),
-        Point::new(stock.max.x, stock.min.y),
-        Point::new(stock.max.x, stock.max.y),
-        Point::new(stock.min.x, stock.max.y),
-        Point::new(stock.min.x, stock.min.y),
-    ];
-    let stock_px: Vec<egui::Pos2> = corners.into_iter().map(on_screen).collect();
-    painter.add(Shape::convex_polygon(
-        stock_px.get(..4).unwrap_or_default().to_vec(),
-        palette.viewport_stock_fill,
-        Stroke::NONE,
-    ));
-    painter.extend(Shape::dashed_line(
-        &stock_px,
-        Stroke::new(1.0, palette.viewport_stock),
-        4.0,
-        3.0,
-    ));
     let tolerance_mm = PREVIEW_FLATTEN_PX / px_per_mm;
     for outline in &outlines {
         let flat = outline.with_arcs_flattened(tolerance_mm);
@@ -536,51 +515,6 @@ fn preview(ui: &mut Ui, project: &Project, model: &DrawingImport) {
             painter.add(Shape::line(points, stroke));
         }
     }
-}
-
-/// The stock the shapes land on and their outlines there: the open
-/// project's stock with the shapes as drawn, or, for a new project, the
-/// stock `init` sizes round them with the shapes moved onto it.
-fn placed(project: &Project, model: &DrawingImport) -> Option<(MmRect, Vec<Polyline>)> {
-    let outlines = model.outlines();
-    let bounds = model.bounds()?;
-    let (width_mm, height_mm, shift) = match model.purpose() {
-        Purpose::Import => (
-            project.stock.width_mm,
-            project.stock.height_mm,
-            Transform::IDENTITY,
-        ),
-        Purpose::New => {
-            let fit =
-                dc_job::project_from::fit_stock(bounds, dc_job::project_from::STOCK_MARGIN_MM);
-            (fit.width_mm, fit.height_mm, fit.shift)
-        }
-    };
-    let stock = MmRect {
-        min: Point::new(0.0, 0.0),
-        max: Point::new(width_mm, height_mm),
-    };
-    let outlines = outlines
-        .iter()
-        .filter_map(|p| shift.apply_polyline(p).ok())
-        .collect();
-    Some((stock, outlines))
-}
-
-/// Where the shapes go: as drawn and selected, or on a new stock.
-fn placement(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
-    let palette = Palette::current(ui);
-    let line = match model.purpose() {
-        Purpose::Import => strings.get(StrKey::AppImportPlacedAsDrawn).to_owned(),
-        Purpose::New => strings.fmt(
-            StrKey::AppImportPlacedNew,
-            &[(
-                "margin",
-                &dc_app::units::field_text(dc_job::project_from::STOCK_MARGIN_MM, Units::Mm),
-            )],
-        ),
-    };
-    wrapped(ui, &line, TextStyle::Small, palette.text_secondary);
 }
 
 /// The importer's warnings, as the Warnings panel will list them.
@@ -618,16 +552,22 @@ fn notes(ui: &mut Ui, strings: &Strings, model: &DrawingImport) {
 /// The footer: the one primary action, disabled with the reason when the
 /// options leave nothing to import.
 fn footer(ui: &mut Ui, strings: &Strings, model: &DrawingImport, out: &mut Vec<Action>) {
-    let label = match model.purpose() {
-        Purpose::Import => StrKey::AppImportImport,
-        Purpose::New => StrKey::AppImportCreate,
+    // Mock-up 02: *Add 14 shapes*, the count the summary gives.
+    let shapes = model.summary().map(|s| s.closed + s.open);
+    let label = match (model.purpose(), shapes) {
+        (Purpose::Import, Some(1)) => strings.get(StrKey::AppImportAddOne).to_owned(),
+        (Purpose::Import, Some(count)) if count > 1 => {
+            strings.fmt(StrKey::AppImportAddMany, &[("count", &count.to_string())])
+        }
+        (Purpose::Import, _) => strings.get(StrKey::AppImportAdd).to_owned(),
+        (Purpose::New, _) => strings.get(StrKey::AppImportCreate).to_owned(),
     };
     let reason = model.blocked();
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), FOOTER_PX),
         Layout::right_to_left(Align::Center),
         |ui| {
-            let mut spec = ButtonSpec::new(Kind::Primary, strings.get(label))
+            let mut spec = ButtonSpec::new(Kind::Primary, &label)
                 .height(FOOTER_PX)
                 .enabled(reason.is_none());
             if let Some(reason) = reason.as_deref() {

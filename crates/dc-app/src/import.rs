@@ -307,7 +307,10 @@ impl DrawingImport {
     /// box. `None` when nothing would be imported.
     #[must_use]
     pub fn preview(&self) -> Option<Preview> {
-        None
+        Some(Preview {
+            bounds: self.bounds()?,
+            outlines: self.outlines(),
+        })
     }
 
     /// Reads the bytes with the current options and keeps the result.
