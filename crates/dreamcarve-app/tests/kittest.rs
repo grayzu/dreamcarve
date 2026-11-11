@@ -3377,6 +3377,112 @@ fn library_delete_asks_in_place_and_names_the_tools() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Slice 31 (#623, capability 64b; `experience.md`, "Sheets"): *Import…*
+/// replaces the Tool Library's panes with the import review in the same
+/// sheet (never a second sheet). *Back*, or Escape, returns to the table
+/// as it was: the ticks, the selection and the library file unchanged,
+/// and no banner. The table has no *Replace existing* switch; the review
+/// holds that choice.
+#[test]
+fn import_review_replaces_the_panes_in_place() {
+    let dir = scratch("library-review-in-place");
+    let config = dir.join("config");
+    std::fs::create_dir_all(&config).unwrap();
+    let bytes = std::fs::read(common::fixture("fusion/sample.tools")).unwrap();
+    let library = dc_app::library::import(&dc_library::Library::default(), &bytes, false)
+        .unwrap()
+        .library;
+    let written = dc_library::save(&library).unwrap();
+    std::fs::write(config.join("tools.json"), &written).unwrap();
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    tick_library_row(&mut h, "5 mm Drill");
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "3 mm Ball End Mill")
+        .click();
+    h.run();
+    let table_before = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let sheet = h.get_by_role(Role::Dialog);
+        assert!(
+            sheet.query_by_label("Replace existing").is_none(),
+            "no Replace existing on the table"
+        );
+        assert!(
+            sheet.query_by_label_contains("1 ticked").is_some(),
+            "the tick is kept"
+        );
+        assert_eq!(
+            sheet
+                .get_by_role_and_label(Role::CheckBox, "5 mm Drill")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True)
+        );
+        assert_eq!(
+            sheet
+                .get_by_role_and_label(Role::ListItem, "3 mm Ball End Mill")
+                .accesskit_node()
+                .toggled(),
+            Some(egui::accesskit::Toggled::True),
+            "the selection is kept"
+        );
+        assert!(
+            sheet.query_by_label_contains("Imported").is_none(),
+            "nothing imported, so no banner"
+        );
+    };
+    table_before(&h);
+
+    for leave in ["Back", "Escape"] {
+        let sample = common::fixture("fusion/sample.tools");
+        dialogs.answer(&sample);
+        h.get_by_role(Role::Dialog).get_by_label("Import…").click();
+        h.run();
+        assert_eq!(
+            h.query_all_by_role(Role::Dialog).count(),
+            1,
+            "no second sheet"
+        );
+        let sheet = h.get_by_role(Role::Dialog);
+        assert!(
+            sheet.query_by_label("Import sample.tools").is_some(),
+            "the review is in the sheet"
+        );
+        assert!(
+            sheet.query_by_role(Role::CheckBox).is_none()
+                && sheet.query_by_role(Role::ListItem).is_none()
+                && sheet.query_by_label("Revert changes").is_none(),
+            "the review replaces the panes"
+        );
+        assert!(sheet.query_by_label("Replace existing").is_none());
+        if leave == "Back" {
+            h.get_by_role(Role::Dialog).get_by_label("Back").click();
+        } else {
+            h.key_press(egui::Key::Escape);
+        }
+        h.run();
+        assert_eq!(
+            h.query_all_by_role(Role::Dialog).count(),
+            1,
+            "{leave} keeps the sheet"
+        );
+        table_before(&h);
+        assert_eq!(
+            std::fs::read_to_string(config.join("tools.json")).unwrap(),
+            written,
+            "{leave} writes nothing"
+        );
+    }
+    assert_eq!(dialogs.asked(), ["open_library", "open_library"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// #581, decision 3 (#538): the Warnings drawer's *Copy* reaches the OS
 /// clipboard. The shell hands egui `check`'s text; eframe's window loop
 /// gives it to egui-winit's clipboard, which is the OS clipboard (arboard)

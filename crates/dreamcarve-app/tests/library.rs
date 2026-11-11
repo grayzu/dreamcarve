@@ -5,7 +5,10 @@
 //! acceptance 101, first half), in the window: a library tool edited in
 //! the Tool Library sheet writes the library file at once and never the
 //! open project, and the library's own display units change only what the
-//! sheet shows. The model's tests (groups, *Revert changes*, *New tool*,
+//! sheet shows. Slice 31 (#623; capability 64b; acceptance 101, second
+//! half): *Import…* shows a review before anything is written, with *Keep
+//! mine* / *Replace with imported* only when a tool changed. The model's
+//! tests (groups, *Revert changes*, *New tool*,
 //! *Duplicate*) are `crates/dc-app/tests/library.rs`.
 
 #![allow(
@@ -29,7 +32,7 @@ use dreamcarve_shell::{Paths, gui_prefs};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 
 /// The library `tools import fixtures/fusion/sample.tools` writes.
 fn sample_library() -> Library {
@@ -240,5 +243,223 @@ fn units_are_display_only() {
         dreamcarve_app::files::prefs_from_file(&dreamcarve_app::files::prefs_to_file(&back)),
         back
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// Slice 31 (#623; functional 64b; acceptance 71 and 101, second half):
+// the import review, shown in place of the panes before anything is
+// written.
+
+/// The library `tools import fixtures/fusion/vendors.json` writes: the
+/// fixture library the sample is imported into.
+fn vendors_library() -> Library {
+    let bytes = std::fs::read(fixture("fusion/vendors.json")).unwrap();
+    dc_app::library::import(&Library::default(), &bytes, false)
+        .unwrap()
+        .library
+}
+
+/// What `tools import [--replace] fixtures/fusion/sample.tools` makes of
+/// `library`.
+fn merge_sample(library: &Library, replace: bool) -> dc_library::import::Merged {
+    let bytes = std::fs::read(fixture("fusion/sample.tools")).unwrap();
+    let incoming = dc_library::import::read(&bytes).unwrap();
+    dc_library::import::merge(library, incoming, replace).unwrap()
+}
+
+/// *Import…* in the open sheet, answered with `fixtures/fusion/sample.tools`.
+fn import_sample(h: &mut Harness<'_, Shell>, dialogs: &QueuedDialogs) {
+    dialogs.answer(&fixture("fusion/sample.tools"));
+    h.get_by_role(Role::Dialog)
+        .query_all_by_label("Import…")
+        .next()
+        .unwrap()
+        .click();
+    h.run();
+}
+
+/// The library file under `config`.
+fn library_text(config: &Path) -> String {
+    std::fs::read_to_string(config.join("tools.json")).unwrap()
+}
+
+/// Whether the open sheet has a node labelled `label`.
+fn shows(h: &Harness<'_, Shell>, label: &str) -> bool {
+    h.get_by_role(Role::Dialog).query_by_label(label).is_some()
+}
+
+/// Capability 64b: importing the sample into the fixture library shows
+/// the review in place, with the counts `tools import` prints (New is
+/// its imported, *Already in your library* its already present, Skipped
+/// its skipped), and writes nothing until *Import*. *Import* writes what
+/// `tools import` writes and returns to the table with the banner, whose
+/// *Details* reopens the review read-only.
+#[test]
+fn import_review_counts_equal_tools_import() {
+    let dir = scratch("library-import-review");
+    let library = vendors_library();
+    let (config, written) = config_with(&dir, &library);
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    let expected = merge_sample(&library, false);
+    let report = &expected.report;
+    assert!(report.imported > 0, "the sample adds tools");
+
+    import_sample(&mut h, &dialogs);
+    assert!(shows(&h, "Import sample.tools"), "the review's title");
+    for label in [
+        format!("{} New", report.imported),
+        format!("{} Already in your library", report.present),
+        "0 Changed".to_owned(),
+        format!("{} Skipped", report.skipped.unwrap()),
+    ] {
+        assert!(shows(&h, &label), "the review counts `{label}`");
+    }
+    // Every item of the file is a row, with its status.
+    assert!(shows(&h, "5 mm Drill · New"));
+    assert!(shows(
+        &h,
+        "Probe, 2 mm Stylus · Skipped: unsupported tool type `probe`"
+    ));
+    assert!(!shows(&h, "Keep mine"), "nothing changed, so no choice");
+    assert_eq!(library_text(&config), written, "nothing written yet");
+
+    let primary = format!("Import {} tools", report.imported);
+    h.get_by_role(Role::Dialog).get_by_label(&primary).click();
+    h.run();
+    assert_eq!(
+        library_text(&config),
+        dc_library::save(&expected.library).unwrap(),
+        "the library `tools import` writes"
+    );
+    let banner = format!(
+        "Imported {} tools from sample.tools. {} skipped.",
+        report.imported,
+        report.skipped.unwrap()
+    );
+    assert!(shows(&h, &banner), "the banner after the import");
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_role_and_label(Role::CheckBox, "5 mm Drill")
+            .is_some(),
+        "back on the table, with the new rows"
+    );
+
+    // *Details* reopens the review, read-only: the counts, no Import.
+    h.get_by_role(Role::Dialog).get_by_label("Details").click();
+    h.run();
+    assert!(shows(&h, &format!("{} New", report.imported)));
+    assert!(!shows(&h, &primary), "read-only");
+    h.get_by_role(Role::Dialog).get_by_label("Back").click();
+    h.run();
+    assert!(shows(&h, &banner), "Back from Details keeps the banner");
+    assert_eq!(
+        library_text(&config),
+        dc_library::save(&expected.library).unwrap()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 64b: after one imported tool is edited in the library, a
+/// second import of its file shows it as *Changed* and offers *Keep mine*
+/// (the default; `merge(replace: false)`, the file's version added beside
+/// yours) or *Replace with imported* (`merge(replace: true)`, yours
+/// overwritten in place).
+#[test]
+fn changed_tools_offer_keep_or_replace() {
+    let dir = scratch("library-import-changed");
+    let library = sample_library();
+    let drill = library
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "5 mm Drill")
+        .unwrap()
+        .id
+        .clone();
+    let edited =
+        dc_app::library::edit(&library, &drill, ToolField::Feed, "250", Units::Mm).unwrap();
+    let (config, written) = config_with(&dir, &edited);
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+
+    // Keep mine, the default.
+    import_sample(&mut h, &dialogs);
+    assert!(shows(&h, "1 Changed"), "the edited drill is changed");
+    assert!(shows(&h, "12 Already in your library"));
+    assert!(shows(&h, "0 New"));
+    assert!(shows(&h, "1 tool changed since you last imported it:"));
+    let keep = h
+        .get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "Keep mine");
+    assert_eq!(
+        keep.accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True),
+        "the default"
+    );
+    assert!(shows(&h, "5 mm Drill · Changed: added as 5 mm Drill (2)"));
+    assert_eq!(library_text(&config), written, "nothing written yet");
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Import 1 tool")
+        .click();
+    h.run();
+    assert_eq!(
+        library_text(&config),
+        dc_library::save(&merge_sample(&edited, false).library).unwrap(),
+        "Keep mine writes what merge(replace: false) writes"
+    );
+
+    // Again from the edited library: Replace with imported.
+    std::fs::write(config.join("tools.json"), &written).unwrap();
+    import_sample(&mut h, &dialogs);
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "Replace with imported")
+        .click();
+    h.run();
+    assert!(shows(&h, "5 mm Drill · Changed: replaces yours"));
+    assert_eq!(library_text(&config), written, "choosing writes nothing");
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Import 1 tool")
+        .click();
+    h.run();
+    let replaced = merge_sample(&edited, true).library;
+    assert_eq!(
+        library_text(&config),
+        dc_library::save(&replaced).unwrap(),
+        "Replace with imported writes what merge(replace: true) writes"
+    );
+    assert_eq!(
+        replaced, library,
+        "the drill as the file has it, its id kept"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 64b: when nothing is *Changed*, *Keep mine* and *Replace
+/// with imported* would write the same, so the choice is not shown; with
+/// every tool already in the library there is nothing to import.
+#[test]
+fn no_choice_when_nothing_changed() {
+    let dir = scratch("library-import-same");
+    let library = sample_library();
+    let (config, written) = config_with(&dir, &library);
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    import_sample(&mut h, &dialogs);
+    assert!(shows(&h, "Import sample.tools"), "the review shows");
+    assert!(shows(&h, "0 Changed"));
+    assert!(shows(&h, "13 Already in your library"));
+    assert!(shows(&h, "5 mm Drill · Same"));
+    assert!(
+        !shows(&h, "Keep mine") && !shows(&h, "Replace with imported"),
+        "no choice when nothing changed"
+    );
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .get_by_label("Nothing to import")
+            .accesskit_node()
+            .is_disabled(),
+        "nothing would change the library"
+    );
+    assert_eq!(library_text(&config), written);
     std::fs::remove_dir_all(&dir).unwrap();
 }
