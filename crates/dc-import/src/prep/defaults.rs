@@ -261,10 +261,12 @@ fn smooth_row(smooth_pct: f64) -> SmoothRow {
 
 #[test]
 fn fixtures_keep_their_intent_at_the_defaults() {
-    assert!(
-        DEFAULT_SMOOTH_PCT <= DEFAULT_MIN_DETAIL_PCT / 2.0,
-        "smoothing never fights the speck threshold"
-    );
+    const {
+        assert!(
+            DEFAULT_SMOOTH_PCT <= DEFAULT_MIN_DETAIL_PCT / 2.0,
+            "smoothing never fights the speck threshold"
+        );
+    }
 
     // speckled-dc.svg: every noise speck and pinhole gone, no intended
     // detail gone, and nothing else decided differently from the contract
@@ -307,7 +309,10 @@ fn defaults_are_the_smallest_grid_values_that_pass() {
         .into_iter()
         .find(|&t| detail_row(t).passes())
         .expect("some min_detail passes");
-    assert!((detail - DEFAULT_MIN_DETAIL_PCT).abs() < 1.0e-12, "{detail}");
+    assert!(
+        (detail - DEFAULT_MIN_DETAIL_PCT).abs() < 1.0e-12,
+        "{detail}"
+    );
     let smooth = SMOOTH_GRID_PCT
         .into_iter()
         .filter(|&s| s > 0.0)

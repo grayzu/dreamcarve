@@ -20,12 +20,14 @@ pub use report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
 pub use run::{PrepMode, PrepOptions, Prepared, flatten_tolerance_mm, prepare};
 
 /// The default minimum detail, percent of the design's height (functional
-/// 49d). A proposal: slice 21f calibrates it (open question 16). Pieces
+/// 49d). Calibrated by slice 21f (`tests/fixtures/prep/README.md`; open
+/// question 16); the maintainer confirms it on their own art. Pieces
 /// and holes whose widest point is under this share of the height are
 /// reported by `feature_below_size`.
 pub const DEFAULT_MIN_DETAIL_PCT: f64 = 0.2;
 /// The default `--smooth`, percent of the design's height (open question
-/// 17). A proposal: slice 21f calibrates it.
+/// 17). Calibrated by the same sweep; held at most half of
+/// [`DEFAULT_MIN_DETAIL_PCT`] by a test.
 pub const DEFAULT_SMOOTH_PCT: f64 = 0.05;
 /// The largest threshold either flag takes, percent.
 pub const MAX_THRESHOLD_PCT: f64 = 5.0;
@@ -91,7 +93,7 @@ mod tests {
                 r#"<circle cx="{:.3}" cy="{:.3}" r="{:.3}"/>"#,
                 50.0 + 1400.0 * next(),
                 50.0 + 800.0 * next(),
-                0.1 * next()
+                0.02 + 0.08 * next()
             );
         }
         format!(
@@ -102,7 +104,6 @@ mod tests {
     /// A traced picture's worth of vertices prepares in seconds (a loose
     /// bound, as `s17_check_is_fast_on_the_sign` is).
     #[test]
-    #[ignore = "timing: run in release, `cargo test --release -p dc-import -- --ignored`"]
     fn runs_in_seconds_on_traced_scale_art() {
         let art = traced_scale_art();
         let started = Instant::now();
