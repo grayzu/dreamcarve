@@ -6,7 +6,8 @@
 //! field edit is a whole tool through [`set_field`] and
 //! [`Command::UpdateTool`]; a tool from the library is the copy `tools
 //! add` writes ([`add_from_library`]); *Duplicate* is a copy under the
-//! next id; *Save to library* is [`dc_library::add`] on the library the
+//! next id; *New tool* is `init`'s placeholder named `tool<n>` ([`new_tool`]);
+//! *Save to library* is [`dc_library::add`] on the library the
 //! shell read. Feed, plunge rate and RPM are never filled in: an unset
 //! one shows empty, with the file's message ([`unset_rates`]), until the
 //! user types it (principle 5; S20).
@@ -376,7 +377,7 @@ pub fn lacks_rate(tool: &Tool) -> bool {
 }
 
 /// The names of the operations that cut with tool `id` (their own tool, a
-/// clearing pass's, a cut-out's), in project order: what *Remove*'s
+/// clearing pass's, a cut-out's), in project order: what *Delete*'s
 /// refusal names.
 #[must_use]
 pub fn users(project: &Project, id: &ToolId) -> Vec<String> {
@@ -409,6 +410,34 @@ pub fn add_from_library(
 ) -> Option<Command> {
     let tools = crate::library::build_add(lib, &project.tools, selected);
     (!tools.is_empty()).then_some(Command::AddTools(tools))
+}
+
+/// *New tool* (capability 63; slice 29, #621): a tool from scratch, for a
+/// bit that is in no library. It is `init`'s placeholder (an end mill,
+/// 6.35 mm, 2 flutes, no feed, plunge rate, RPM, step-down or stepover:
+/// the app invents no rate, S20) under the next free project id, named
+/// [`new_tool_name`]. One undo step, *New tool “tool4”*.
+#[must_use]
+pub fn new_tool(project: &Project) -> Command {
+    let id = dc_library::next_project_tool_id(&project.tools);
+    Command::NewTool(dc_job::project_from::placeholder_tool(
+        id,
+        new_tool_name(&project.tools),
+    ))
+}
+
+/// The name a new tool takes among `tools`: `tool<n>`, where `<n>` is its
+/// place in the list (one past the last) or, when that name is taken, the
+/// next number whose name is free.
+#[must_use]
+pub fn new_tool_name(tools: &[Tool]) -> String {
+    let taken = |name: &str| tools.iter().any(|t| t.name == name);
+    let place = tools.len().saturating_add(1);
+    // `tools.len()` names can take at most that many of these numbers.
+    (place..=place.saturating_add(tools.len()))
+        .map(|n| format!("tool{n}"))
+        .find(|name| !taken(name))
+        .unwrap_or_else(|| format!("tool{place}"))
 }
 
 /// *Duplicate*: a copy of tool `id` under the next free project id, named
