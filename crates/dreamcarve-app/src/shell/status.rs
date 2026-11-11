@@ -239,7 +239,6 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     // A drag's travel, scale or angle (#534).
                     (&cells.drag, palette.text_primary),
                     (&cells.hover, palette.text_primary),
-                    (&cells.message, secondary),
                 ] {
                     if let Some(label) = cell {
                         rule(ui, palette);
@@ -251,6 +250,38 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                         }
                     }
                 }
+                if let Some(label) = &cells.message {
+                    rule(ui, palette);
+                    message(ui, state, label, cells.message_op.as_ref(), out);
+                }
             });
         });
+}
+
+/// The message cell: the last message, or the selected operation's carve
+/// summary (capability 76a), which opens the Warnings drawer at its note.
+fn message(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    label: &str,
+    op: Option<&dc_project::OperationId>,
+    out: &mut Vec<Action>,
+) {
+    let palette = Palette::current(ui);
+    let response = text(ui, label, TextStyle::Small, palette.text_secondary);
+    let Some(op) = op else {
+        return;
+    };
+    let response = ui
+        .interact(
+            response.rect,
+            ui.make_persistent_id(("status_note", op.as_str())),
+            Sense::click(),
+        )
+        .on_hover_text(state.app.strings().get(StrKey::AppCarveOpenNote));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    if response.clicked() {
+        out.push(Action::ShowNote(op.clone()));
+    }
+    focus_ring(ui, &response);
 }

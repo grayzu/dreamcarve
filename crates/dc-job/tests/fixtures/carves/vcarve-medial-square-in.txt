@@ -1,0 +1,1 @@
+V-Carve o1 `V-Carve`: deepest cut 0.1181 in below the stock top, clamped at a flat depth of 0.1181 in; V-bit floor ridges 0.0472 in along the rings and up to 0.0668 in at their corners; a clearing pass or a smaller step_over_fraction flattens them.

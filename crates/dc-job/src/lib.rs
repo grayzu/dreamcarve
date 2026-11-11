@@ -37,8 +37,8 @@ pub use error::JobError;
 pub use import::{Drawing, drawing_into};
 pub use names::{program_names, program_suffixes};
 pub use summary::{
-    EstimateConfig, Estimates, ProjectExtents, describe_carves, describe_operations,
-    project_extents,
+    CarveFacts, EstimateConfig, Estimates, ProjectExtents, carve_facts, describe_carves,
+    describe_operations, project_extents,
 };
 
 // The `dc-cam` and `dc-gcode` types a shell needs, so the app's crates
