@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- DreamCarve phase 3 test part (docs/specs/phase-3/functional.md,
+     "Line-art inlay"): the line art alone, as strokes: a ring and eight spokes from its centre; no oval. Written by
+     tools/parity/compass-fixture.ts; do not edit by hand, re-run the tool.
+     Synthetic. The compass is 70 mm tall; every stroke is 2.5 mm wide;
+     the oval is 96 × 84 mm round the ring. SVG is Y-down. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="96mm" height="84mm" viewBox="0 0 96 84">
+  <g fill="none" stroke="#000000" stroke-width="2.5" stroke-linecap="butt">
+    <circle id="ring" cx="48" cy="42" r="33.75"/>
+    <path id="spokes" d="M 48,42 L 81.75,42 M 48,42 L 71.865,65.865 M 48,42 L 48,75.75 M 48,42 L 24.135,65.865 M 48,42 L 14.25,42 M 48,42 L 24.135,18.135 M 48,42 L 48,8.25 M 48,42 L 71.865,18.135"/>
+  </g>
+</svg>

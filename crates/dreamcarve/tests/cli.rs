@@ -7547,6 +7547,141 @@ fn compass_inlay_exports_both_boards() {
         stdout(&out)
     );
 
+    finish_compass_inlay(&dir);
+}
+
+/// The oval a reader draws into the prepared compass, as a drawing editor
+/// writes it: no fill, a thin stroke, an id to name in `boundary`. The same
+/// ellipse as the second path of `compass-regions.svg`.
+const COMPASS_OVAL: &str = r##"  <ellipse id="oval" cx="48" cy="42" rx="48" ry="42" fill="none" stroke="#000000" stroke-width="0.2"/>"##;
+
+/// #601, acceptance 61k and the "From line art" quick start: the line art
+/// alone (`tests/fixtures/prep/compass-art.svg`, the compass without its
+/// oval) prepared with `image-prep --regions`, the oval drawn into the
+/// prepared drawing (the test appends it, as a reader does in a drawing
+/// editor: the oval is a hairline stroke, which `--regions` would drop as a
+/// speck, so it is drawn afterwards), `init`, the compass Inlay with the
+/// oval as `boundary`, both boards exported (every program passing S1 to
+/// S19, the plug seating within 0.05 mm, as `compass_inlay_exports_both_boards`
+/// checks). The preparation is checked against the stand-in
+/// `compass-regions.svg` (#605): eight pockets, a 2.5 mm narrowest ridge,
+/// and the pockets reaching 32.5 mm from the centre. `init` on the prepared
+/// drawing prints no 49a warning; with the oval it prints one, the oval's
+/// bare stroke (`svg_stroke_only_path`), which is expected: the boundary
+/// needs only its outline.
+///
+/// The spec's 61k names `ring-cross.svg` and a circular boundary 8 mm
+/// beyond the pockets; the compass is the 61s test part and has the oval.
+#[test]
+fn line_art_to_inlay_end_to_end() {
+    let dir = work_dir("line_art_to_inlay_end_to_end");
+    copy_fixture(&dir, "prep/compass-art.svg", "compass-art.svg");
+    let out = run(&dir, &["image-prep", "compass-art.svg", "--regions"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(report.contains("Result: 8 pieces, 0 holes"), "{report}");
+    assert!(report.contains("Design height: 70.00 mm"), "{report}");
+    let ridge_mm: f64 = report
+        .lines()
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("Narrowest gap, the board ridge between pockets: ")
+        })
+        .and_then(|l| l.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the report names the ridge: {report}"));
+    assert!(
+        (ridge_mm - 2.5).abs() < 0.05,
+        "the ridge is the strokes' 2.5 mm: {report}"
+    );
+    let prepared = dir.join("compass-art-inlay.svg");
+    assert!(prepared.exists(), "image-prep wrote the default name");
+
+    // The prepared drawing agrees with the stand-in: the same eight pockets.
+    let got = pocket_extents(&dir, "compass-art-inlay.svg");
+    copy_fixture(&dir, "prep/compass-regions.svg", "compass-regions.svg");
+    let want = pocket_extents(&dir, "compass-regions.svg");
+    assert_eq!(got.len(), 8, "eight pockets");
+    assert_eq!(want.len(), 8, "the stand-in's eight pockets");
+    for (g, w) in got.iter().zip(&want) {
+        for (a, b) in g.iter().zip(w) {
+            assert!(
+                (a - b).abs() < 0.05,
+                "a pocket's extent: {g:?} against {w:?}"
+            );
+        }
+    }
+
+    // init on the prepared drawing prints no warning of 49a.
+    let out = run(&dir, &["init", "compass-art-inlay.svg", "-o", "plain.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "", "a prepared drawing has no import checks");
+    assert!(
+        stdout(&out).contains("Imported 8 shape(s)"),
+        "{}",
+        stdout(&out)
+    );
+
+    // Draw the oval into the prepared drawing, as a drawing editor does.
+    let text = std::fs::read_to_string(&prepared).expect("prepared drawing readable");
+    let (head, tail) = text.rsplit_once("</svg>").expect("an SVG");
+    std::fs::write(
+        dir.join("compass.svg"),
+        format!("{head}{COMPASS_OVAL}\n</svg>{tail}"),
+    )
+    .expect("drawing written");
+    let out = run(&dir, &["init", "compass.svg", "-o", "compass.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Imported 9 shape(s)"),
+        "eight pockets and the oval: {}",
+        stdout(&out)
+    );
+    let codes = warning_codes(&stderr(&out));
+    assert_eq!(
+        codes,
+        ["svg_stroke_only_path"],
+        "only the oval's bare stroke: {}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("`oval`"), "{}", stderr(&out));
+
+    finish_compass_inlay(&dir);
+}
+
+/// The bounding box `[min_x, min_y, max_x, max_y]` of each shape `init`
+/// makes of `svg` in `dir`, except the oval, sorted.
+fn pocket_extents(dir: &Path, svg: &str) -> Vec<[f64; 4]> {
+    let out = run(dir, &["init", svg, "-o", "extents.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let path = dir.join("extents.dcv");
+    let value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("dcv readable"))
+            .expect("dcv is JSON");
+    std::fs::remove_file(&path).expect("project removed");
+    let mut boxes: Vec<[f64; 4]> = value["definitions"]
+        .as_object()
+        .expect("definitions")
+        .values()
+        .filter(|d| d["name"] != "oval")
+        .map(|d| {
+            let mut b = [f64::MAX, f64::MAX, f64::MIN, f64::MIN];
+            for v in d["profiles"][0]["vertices"].as_array().expect("vertices") {
+                let (x, y) = (v["x"].as_f64().expect("x"), v["y"].as_f64().expect("y"));
+                b = [b[0].min(x), b[1].min(y), b[2].max(x), b[3].max(y)];
+            }
+            b
+        })
+        .collect();
+    boxes.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+    boxes
+}
+
+/// The rest of the compass test part, from a `compass.dcv` that `init` made
+/// in `dir` from the compass (the eight pockets and the oval, the ninth
+/// shape): the test part's boards, the lettered pair's tools and Inlay with
+/// the oval as `boundary`, both boards exported and checked (#605, #601).
+fn finish_compass_inlay(dir: &Path) {
     // The test part's boards and the lettered pair's tools and Inlay.
     let path = dir.join("compass.dcv");
     let mut value: serde_json::Value =

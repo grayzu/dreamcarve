@@ -27,6 +27,9 @@
 //!   chapter's block over it. The pasted lines take the indentation of the
 //!   line they replace. Several files may be named; the block is pasted
 //!   into each.
+//! - `<!-- doc-test: insert FILE -->` before a block: the reader adds the
+//!   block's lines to the drawing `FILE` just before its closing `</svg>`,
+//!   as drawing a shape in a drawing program does.
 //! - `<!-- doc-test: excerpt FILE -->` before a block: the first lines of
 //!   `FILE` as the chapter shows them. The header line carrying the date is
 //!   compared up to the date.
@@ -63,6 +66,9 @@ const SIGN: &str = "docs/book/src/quick-start/sign.md";
 /// The inlay quick start (sub-phase 3.3), relative to the repository root.
 const INLAY: &str = "docs/book/src/quick-start/inlay.md";
 
+/// The line-art quick start (sub-phase 3.4), relative to the repository root.
+const LINE_ART: &str = "docs/book/src/quick-start/line-art.md";
+
 /// The marker that opens every step comment.
 const MARKER: &str = "<!-- doc-test:";
 
@@ -95,6 +101,12 @@ enum Step {
     Paste {
         file: String,
         key: String,
+        lines: Vec<String>,
+        line: usize,
+    },
+    /// Add `lines` to the drawing `file` before its closing `</svg>`.
+    Insert {
+        file: String,
         lines: Vec<String>,
         line: usize,
     },
@@ -280,6 +292,11 @@ fn step(chapter: &str, directive: &str, at: usize, first: usize, body: &[&str]) 
                 })
                 .collect()
         }
+        "insert" => vec![Step::Insert {
+            file: file(),
+            lines: owned(),
+            line: at,
+        }],
         "excerpt" => vec![Step::Excerpt {
             file: file(),
             lines: owned(),
@@ -482,6 +499,16 @@ fn run_chapter(name: &str, run: &Run<'_>) -> PathBuf {
                 lines,
                 line,
             } => paste(chapter, &dir.join(file), key, lines, *line),
+            Step::Insert { file, lines, line } => {
+                let target = dir.join(file);
+                let text = std::fs::read_to_string(&target)
+                    .unwrap_or_else(|e| panic!("{chapter}:{line}: cannot read {file}: {e}"));
+                let (head, tail) = text.rsplit_once("</svg>").unwrap_or_else(|| {
+                    panic!("{chapter}:{line}: {file} has no closing </svg> to draw before")
+                });
+                std::fs::write(&target, format!("{head}{}\n</svg>{tail}", lines.join("\n")))
+                    .expect("drawing written");
+            }
             Step::Excerpt { file, lines, line } if run.swap.is_none() => {
                 let actual = std::fs::read_to_string(dir.join(file))
                     .unwrap_or_else(|e| panic!("{chapter}:{line}: cannot read {file}: {e}"));
@@ -1309,5 +1336,91 @@ fn inlay_boundary_chapter_runs() {
             "dc-male-2-T1.nc",
             "dc-male-3-T2.nc",
         ]
+    );
+}
+
+/// #601 (slice 21h): "From line art", run as written. It starts from
+/// `tests/fixtures/prep/compass-art.svg`, the compass without its oval,
+/// prepares it with `image-prep --regions` (the chapter shows the report),
+/// draws the oval into the prepared drawing (`insert`: the chapter gives the
+/// ellipse a drawing program would write), makes the project, adds the tools
+/// and the Inlay with the oval as `boundary`, and exports both boards. The
+/// report's numbers are read, not compared: the default thresholds are the
+/// calibration's (#599). `export` holds every program to S1 to S19.
+#[test]
+fn line_art_chapter_runs() {
+    let run = Run {
+        chapter: LINE_ART,
+        drawing: ("tests/fixtures/prep/compass-art.svg", "compass-art.svg"),
+        swap: None,
+    };
+    let text = std::fs::read_to_string(repo_root().join(LINE_ART)).expect("chapter readable");
+    let steps = steps(LINE_ART, &text);
+    for (what, has) in [
+        (
+            "write",
+            steps.iter().any(|s| matches!(s, Step::Write { .. })),
+        ),
+        (
+            "paste",
+            steps.iter().any(|s| matches!(s, Step::Paste { .. })),
+        ),
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+        (
+            "insert",
+            steps.iter().any(|s| matches!(s, Step::Insert { .. })),
+        ),
+    ] {
+        assert!(has, "{LINE_ART} has no `{what}` step");
+    }
+    for (needle, what) in [
+        (
+            "image-prep compass-art.svg --regions",
+            "prepares with --regions",
+        ),
+        ("\"boundary\": [ \"i9\" ],", "sets the boundary"),
+        ("hairline", "says why the oval is drawn afterwards"),
+        ("svg_stroke_only_path", "explains the oval's one warning"),
+        ("Trace Bitmap", "says how to trace a picture"),
+        (
+            "preparing-artwork.md",
+            "points to the Preparing artwork chapter",
+        ),
+    ] {
+        assert!(text.contains(needle), "{LINE_ART} {what}");
+    }
+    let dir = run_chapter("line_art_chapter_runs", &run);
+
+    assert!(
+        dir.join("compass-art-inlay.svg").exists(),
+        "the prepared drawing"
+    );
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(
+        programs,
+        [
+            "compass-female-1-T2.nc",
+            "compass-female-2-T1.nc",
+            "compass-male-1-T2.nc",
+            "compass-male-2-T1.nc",
+            "compass-male-3-T2.nc",
+        ]
+    );
+
+    // The inlay quick start points here, and the guide chapter exists.
+    let inlay = std::fs::read_to_string(repo_root().join(INLAY)).expect("inlay chapter readable");
+    assert!(
+        inlay.contains("line-art.md"),
+        "the inlay quick start points to From line art"
+    );
+    assert!(
+        inlay.contains("preparing-artwork.md"),
+        "and to Preparing artwork"
     );
 }
