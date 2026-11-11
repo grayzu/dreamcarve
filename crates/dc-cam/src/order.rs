@@ -24,7 +24,9 @@ use crate::profile::{Hold, cut_outlines, same_contour};
 use crate::toolpath::Toolpath;
 use crate::warning::{FloorKind, Warning};
 use dc_geometry::{Contour, EPS_MM, GeometryWarning, Polyline, nest};
-use dc_project::{Board, ClearedPlane, DrillCycle, Operation, OperationId, Project, ToolId};
+use dc_project::{
+    Board, ClearedPlane, DrillCycle, Operation, OperationId, Project, StartFootprint, ToolId,
+};
 
 /// Checks the order of the operations of `project`. `generated` holds, in
 /// project order, every enabled operation whose toolpath was generated,
@@ -184,6 +186,8 @@ struct StartSetting {
     /// `start_plane_cleared_externally`: the user's word that another
     /// program cleared the plane.
     cleared_externally: bool,
+    /// What a floor must hold to clear the plane, as messages name it.
+    footprint: StartFootprint,
 }
 
 /// The start-plane setting of `op`, for the operations cut from a start
@@ -198,6 +202,7 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
         Operation::VCarve(carve) => Some(StartSetting {
             start_depth_mm: carve.start_depth_mm,
             cleared_externally: carve.start_plane_cleared_externally,
+            footprint: StartFootprint::Targets,
         }),
         Operation::Drill(drill) => match drill.cycle {
             DrillCycle::Countersink {
@@ -207,6 +212,7 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
             } => Some(StartSetting {
                 start_depth_mm,
                 cleared_externally: start_plane_cleared_externally,
+                footprint: StartFootprint::BitAtEachHole,
             }),
             DrillCycle::Simple | DrillCycle::Peck { .. } => None,
         },
@@ -220,6 +226,7 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
         Operation::PhotoVCarve(photo) => Some(StartSetting {
             start_depth_mm: photo.start_depth_mm,
             cleared_externally: photo.start_plane_cleared_externally,
+            footprint: StartFootprint::Picture,
         }),
     }
 }
@@ -242,6 +249,7 @@ fn start_depth_warnings(project: &Project) -> Vec<Warning> {
                     Operation::VCarve(_) => FloorKind::VCarve,
                     _ => FloorKind::Pocket,
                 },
+                footprint: start_setting(op)?.footprint,
                 start_depth_mm: start_setting(op)?.start_depth_mm,
                 floor_depth_mm: plane.depth_mm(),
             }),
@@ -1642,9 +1650,16 @@ mod tests {
                 op: OperationId::new("o8"),
                 cleared_by: OperationId::new("o2"),
                 floor: FloorKind::Pocket,
+                footprint: StartFootprint::Picture,
                 start_depth_mm: 2.0,
                 floor_depth_mm: Some(1.0),
             }]
+        );
+        // #648: the message says what the Pocket holds: the picture.
+        let message = mismatches(&project)[0].to_string();
+        assert!(
+            message.contains("whose area contains its picture's footprint,"),
+            "{message}"
         );
 
         let mut project = photo_in_pocket(None, 2.0);
@@ -1779,6 +1794,7 @@ mod tests {
                 op: OperationId::new("o6"),
                 cleared_by: OperationId::new("o2"),
                 floor: FloorKind::Pocket,
+                footprint: StartFootprint::Targets,
                 start_depth_mm: 2.0,
                 floor_depth_mm: Some(1.0),
             }]
@@ -1791,6 +1807,7 @@ mod tests {
                 op: OperationId::new("o6"),
                 cleared_by: OperationId::new("o2"),
                 floor: FloorKind::Pocket,
+                footprint: StartFootprint::Targets,
                 start_depth_mm: 0.0,
                 floor_depth_mm: Some(1.0),
             }]
@@ -2013,6 +2030,7 @@ mod tests {
                     op: o3(),
                     cleared_by: OperationId::new("o2"),
                     floor: FloorKind::Pocket,
+                    footprint: StartFootprint::BitAtEachHole,
                     start_depth_mm: start_mm,
                     floor_depth_mm: Some(pocket_mm),
                 }]
@@ -2112,13 +2130,14 @@ mod tests {
                 op: OperationId::new("o3"),
                 cleared_by: OperationId::new("o6"),
                 floor: FloorKind::VCarve,
+                footprint: StartFootprint::BitAtEachHole,
                 start_depth_mm: 2.0,
                 floor_depth_mm: Some(2.5),
             }]
         );
         let message = warnings[0].to_string();
         assert!(
-            message.contains("`o6`, the V-Carve before it whose flat floor contains"),
+            message.contains("`o6`, the V-Carve before it whose flat floor contains the whole of its V-bit at each hole,"),
             "{message}"
         );
     }

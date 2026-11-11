@@ -8,7 +8,7 @@
 use std::fmt;
 
 use dc_geometry::EPS_MM;
-use dc_project::{CornerRelief, InstanceId, OperationId, TabId, ToolId};
+use dc_project::{CornerRelief, InstanceId, OperationId, StartFootprint, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -899,6 +899,10 @@ pub enum Warning {
         cleared_by: OperationId,
         /// Which of the two it is.
         floor: FloorKind,
+        /// What of the operation the floor holds, as the message names it
+        /// (#648): a V-Carve's targets, a countersink's bit at each hole,
+        /// a Photo V-Carve's picture's footprint.
+        footprint: StartFootprint,
         /// The operation's start depth below the stock top.
         start_depth_mm: f64,
         /// The floor's depth below the stock top: the Pocket's depth
@@ -1900,6 +1904,7 @@ impl fmt::Display for Warning {
             Self::StartDepthMismatch {
                 cleared_by,
                 floor,
+                footprint,
                 start_depth_mm,
                 floor_depth_mm,
                 ..
@@ -1910,9 +1915,14 @@ impl fmt::Display for Warning {
                     FloorKind::Pocket => ("Pocket", "area", "that Pocket's floor", "the Pocket's depth"),
                     FloorKind::VCarve => ("V-Carve", "flat floor", "that floor", "the floor's depth"),
                 };
+                let held = match footprint {
+                    StartFootprint::Targets => "its targets",
+                    StartFootprint::BitAtEachHole => "the whole of its V-bit at each hole",
+                    StartFootprint::Picture => "its picture's footprint",
+                };
                 write!(
                     f,
-                    "it starts {} mm below the stock top, but operation `{cleared_by}`, the {what} before it whose {holding} contains its targets, {depth}, so the start plane is not {floor}; set start_depth_mm to {its_depth}",
+                    "it starts {} mm below the stock top, but operation `{cleared_by}`, the {what} before it whose {holding} contains {held}, {depth}, so the start plane is not {floor}; set start_depth_mm to {its_depth}",
                     mm(*start_depth_mm)
                 )
             }
@@ -2727,6 +2737,7 @@ mod tests {
                     op: op(),
                     cleared_by: "o2".into(),
                     floor: FloorKind::Pocket,
+                    footprint: StartFootprint::Targets,
                     start_depth_mm: 4.000_000_1,
                     floor_depth_mm: Some(3.0),
                 },
@@ -2737,16 +2748,29 @@ mod tests {
                     op: op(),
                     cleared_by: "o2".into(),
                     floor: FloorKind::Pocket,
+                    footprint: StartFootprint::BitAtEachHole,
                     start_depth_mm: 0.0,
                     floor_depth_mm: None,
                 },
-                "it starts 0 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its targets, has no depth set, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+                "it starts 0 mm below the stock top, but operation `o2`, the Pocket before it whose area contains the whole of its V-bit at each hole, has no depth set, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
+            ),
+            (
+                Warning::StartDepthMismatch {
+                    op: op(),
+                    cleared_by: "o2".into(),
+                    floor: FloorKind::Pocket,
+                    footprint: StartFootprint::Picture,
+                    start_depth_mm: 2.0,
+                    floor_depth_mm: Some(1.5),
+                },
+                "it starts 2 mm below the stock top, but operation `o2`, the Pocket before it whose area contains its picture's footprint, is 1.5 mm deep, so the start plane is not that Pocket's floor; set start_depth_mm to the Pocket's depth",
             ),
             (
                 Warning::StartDepthMismatch {
                     op: op(),
                     cleared_by: "o6".into(),
                     floor: FloorKind::VCarve,
+                    footprint: StartFootprint::Targets,
                     start_depth_mm: 2.0,
                     floor_depth_mm: Some(2.5),
                 },

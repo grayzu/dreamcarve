@@ -935,6 +935,7 @@ mod tests {
             op: OperationId::new(op),
             cleared_by: OperationId::new("o2"),
             floor: dc_cam::FloorKind::Pocket,
+            footprint: dc_project::StartFootprint::Targets,
             start_depth_mm: 2.0,
             floor_depth_mm: Some(1.0),
         };
