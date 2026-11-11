@@ -7584,7 +7584,7 @@ fn compass_inlay_exports_both_boards() {
         .iter()
         .find(|i| i.name == "oval")
         .expect("the oval is an instance");
-    assert_eq!(inlay.boundary, [oval.id.clone()]);
+    assert_eq!(inlay.boundary, std::slice::from_ref(&oval.id));
     assert!(!inlay.targets.contains(&oval.id));
     assert_eq!(inlay.targets.len(), 8, "the eight pockets");
     assert_eq!(

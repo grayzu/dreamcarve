@@ -21,6 +21,15 @@ phases bump the patch number.
   board. Older files upgrade with
   `"boundary": []` and export the same programs. Photo V-Carve moves to
   format 27.
+- **Inlay chapter: the boundary (#449, #605).** The Inlay chapter of the
+  user guide draws, names and explains the boundary: what it replaces,
+  the narrowest band and why it decides the edge, mirrored with the
+  design, the cut-out's inset (the finished plug is the boundary less the
+  tool's diameter), several boundaries and clipping to the board; a
+  doc-tested example builds the new fixture `tests/fixtures/dc-boundary.dcv`
+  (the quick start's frame as the boundary). The line-art test part's
+  synthetic compass and its oval are `tests/fixtures/prep/compass.svg` and
+  `compass-regions.svg`, drawn by `tools/parity/compass-fixture.ts`.
 - **V-Carve in the project file; format version 20.** A project can hold a
   `"v_carve"` operation, with its strategy, clearing passes, flat depth and
   start depth, and `check` validates it: the tool must be a V-bit, the flat

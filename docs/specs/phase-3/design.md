@@ -3065,7 +3065,7 @@ crates/dc-job/src/prep_report.rs (render the report; 3.4)
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), preview.rs (+ <image>, the male board, the boundary), prep.rs (image-prep; 3.4)}
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}, prep-fixture.ts (the 3.4 drawings)}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, speckled-dc.svg, jagged-dc.svg}}
+tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, compass-regions.svg, speckled-dc.svg, jagged-dc.svg}}
 crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv
 crates/dreamcarve/tests/{fixtures,expected}/inlay-migration/ (the two-file pairs of formats 23 and 24 and their programs, #498)
 ```
@@ -3225,7 +3225,7 @@ and committed as SVG; the numbers in the assertions are acceptance 61a to
 *dreamcarve (integration)*
 - `cli::init_prints_the_import_checks` (61a), `cli::init_project_is_unchanged_by_the_checks` (byte for byte against the project the previous build wrote), `cli::check_repeats_overlap_and_size_findings`, `cli::a_clean_drawing_prints_no_checks`, `cli::dxf_init_is_unchanged`.
 - `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`.
-- `cli::line_art_to_inlay_end_to_end` (61k: `ring-cross.svg` → `--regions` → `init` → Inlay with a circular boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `quick_start::line_art_chapter_runs` (the chapter's commands).
+- `cli::line_art_to_inlay_end_to_end` (61k: `ring-cross.svg` → `--regions` → `init` → Inlay with a circular boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `cli::dc_boundary_fixture_is_the_frame_as_boundary`, `quick_start::inlay_boundary_chapter_runs`, `quick_start::line_art_chapter_runs` (the chapter's commands).
 
 
 ## Sub-phases
@@ -3452,7 +3452,14 @@ and 21i start at once.
 21l. **Boundary docs and fixtures.** The Inlay chapter's boundary
     section, the project file (v26), the dc fixtures' boundary variant
     (`tests/fixtures/dc-boundary.dcv`: the frame as boundary), the
-    compass's oval. Tests: `cli::compass_inlay_exports_both_boards`,
+    compass's oval (`compass.svg` and `compass-regions.svg`, drawn by
+    `tools/parity/compass-fixture.ts`: this slice made them, as the first
+    to need them; the preparation's own slice adopts them, and `compass-regions.svg` is the stand-in for `image-prep
+    compass.svg --regions` until that command exists). Tests:
+    `cli::compass_inlay_exports_both_boards`,
+    `cli::dc_boundary_fixture_is_the_frame_as_boundary`,
+    `quick_start::inlay_boundary_chapter_runs` (the Inlay chapter's
+    boundary section, run as written),
     `quick_start::inlay_pair_chapter_runs` unchanged. [21j, 21k]
 21m. **3.4 bench check.** Test part 3, the line-art inlay, cut, fitted and
     recorded; the maintainer's own line art prepared and cut beside it if
