@@ -170,7 +170,7 @@ fn card(
                 let refused_id = control_id(cx.op, slot.key()).with("refused");
                 let refused: Option<String> = ui.data(|d| d.get_temp(refused_id));
                 let tier = refused.as_ref().map(|_| Tier::Error);
-                ui.horizontal(|ui| control(ui, cx, &slot, &tools, tier, false, out));
+                ui.horizontal(|ui| control(ui, cx, &slot, &tools, tier, None, false, out));
                 if matches!(slot.row.kind, dc_app::editor::FieldKind::ToolPicker) {
                     tool_note(ui, cx, &slot);
                 }

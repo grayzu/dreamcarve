@@ -27,6 +27,7 @@
 pub mod clearing;
 pub mod fields;
 mod set;
+pub mod summary;
 pub mod targets;
 
 use std::borrow::Cow;
@@ -121,7 +122,6 @@ fn parse(project: &Project, row: &Row, key: &str, text: &str) -> Result<Value, C
         return Ok(Value::Null);
     }
     Ok(match row.kind {
-        FieldKind::Text => Value::from(trimmed),
         FieldKind::Length | FieldKind::SwitchedLength => {
             Value::from(units::parse_length_mm(text, units)?)
         }
@@ -268,9 +268,6 @@ impl<'r> Slot<'r> {
         op: &Operation,
         text: &str,
     ) -> Result<Option<Command>, CommandError> {
-        if matches!(self.row.kind, FieldKind::Text) && text.trim().is_empty() {
-            return Ok(None);
-        }
         let value = parse(project, self.row, &self.key, text)?;
         let empty = value.is_null();
         self.update(op, value).map_err(|e| {
@@ -797,6 +794,24 @@ pub fn carve_summary(app: &App, op: &OperationId) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The editor header's inline rename committed (functional spec,
+/// capability 66; `experience.md`, section 8, "Inline rename"): `op` with
+/// the typed name, trimmed, as one `UpdateOperation` labelled *Rename*;
+/// `None` when the name is empty or unchanged, so Enter on an untouched
+/// name is no undo step.
+///
+/// # Errors
+///
+/// [`CommandError`] when the record refuses the name, which it never
+/// does for a string.
+pub fn rename(op: &Operation, typed: &str) -> Result<Option<Command>, CommandError> {
+    let name = typed.trim();
+    if name.is_empty() || name == op.name() {
+        return Ok(None);
+    }
+    fields::set(op, "name", Value::from(name)).map(|next| Some(Command::UpdateOperation(next)))
+}
+
 /// The Pockets `op` can rest on (functional spec, capability 13): the
 /// enabled Pockets before it in the list, in list order, by id and name.
 /// Never `op` itself or a Pocket after it, which validation refuses
@@ -942,15 +957,19 @@ pub fn derived(
     Some(Err(message))
 }
 
-/// The generator's warnings about a target the kind cannot cut
-/// (capability 67; slice 12, #541): they name the operation and the shape
-/// but no field, so they are drawn under the Targets group.
-const TARGET_CODES: &[&str] = &[
-    "drill_target_not_circle",
-    "drill_hole_too_small",
-    "bore_target_not_circle",
-    "bore_no_room",
-    "bore_leaves_core",
+/// The generator's warnings that name an operation but no field, by code,
+/// with the row of the operation each is about: a target the kind cannot
+/// cut (capability 67; slice 12, #541) is the Targets row's, a corner its
+/// relief does not fit (slice 26, #618; mock-up 05's Corners badge) the
+/// corner relief's.
+const CODE_ROWS: &[(&str, &str)] = &[
+    ("drill_target_not_circle", "targets"),
+    ("drill_hole_too_small", "targets"),
+    ("bore_target_not_circle", "targets"),
+    ("bore_no_room", "targets"),
+    ("bore_leaves_core", "targets"),
+    ("relief_corner_too_tight", "corner_relief"),
+    ("relief_corner_not_cut", "corner_relief"),
 ];
 
 /// The findings located on an operation's rows, matched once
@@ -964,26 +983,23 @@ pub struct Located<'a> {
 impl<'a> Located<'a> {
     /// The findings of `findings` located on `op`'s rows: each at a field
     /// under the row that holds it, and each of the generator's warnings
-    /// about a target of `op` it cannot cut (`drill_target_not_circle`,
-    /// `bore_no_room`, …) under its Targets row.
+    /// about `op` that name no field under the row its code is about
+    /// (by code: `bore_no_room` under Targets,
+    /// `relief_corner_too_tight` under the corner relief).
     #[must_use]
     pub fn of(findings: &'a [Finding], op: &Operation) -> Self {
         let rows = fields::rows(op);
         let record = fields::record(op).ok();
-        let targets = rows
-            .iter()
-            .copied()
-            .find(|r| matches!(r.kind, FieldKind::InstanceList));
+        let by_code = |code: &str| {
+            let (_, key) = CODE_ROWS.iter().find(|(c, _)| *c == code)?;
+            rows.iter().copied().find(|r| r.key == *key)
+        };
         let found = findings
             .iter()
             .filter_map(|f| {
                 let row = match f.field.as_deref() {
                     Some(field) => fields::row_among(&rows, record.as_ref()?, op, field),
-                    None if f.op.as_ref() == Some(op.id())
-                        && f.code.as_deref().is_some_and(|c| TARGET_CODES.contains(&c)) =>
-                    {
-                        targets
-                    }
+                    None if f.op.as_ref() == Some(op.id()) => f.code.as_deref().and_then(by_code),
                     None => None,
                 };
                 row.map(|row| (row, f))

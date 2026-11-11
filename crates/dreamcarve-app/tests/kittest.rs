@@ -2155,6 +2155,22 @@ fn field_commits_on_blur_not_per_keystroke() {
     assert_eq!(after.depth_mm, Some(9.5), "leaving the field writes it");
     assert_eq!(undo_steps(&h), steps + 1, "as one step");
     assert_eq!(h.state().app().undo_label(), Some("Set depth of “Cut out”"));
+
+    // Escape restores the field and writes nothing (section 7), though the
+    // Viewport takes the key before the editor draws (#618).
+    h.get_by_role_and_label(Role::TextInput, "Depth").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("7".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let dc_project::Operation::Profile(after) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    assert_eq!(after.depth_mm, Some(9.5), "Escape writes nothing");
+    assert_eq!(undo_steps(&h), steps + 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2281,6 +2297,23 @@ fn warnings_row_focuses_its_field() {
     };
     assert_eq!(after.depth_mm, Some(7.0), "the depth field had the focus");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Opens the operation editor's group `title` (slice 26, #618: every group
+/// but Setup starts closed): its header, the rightmost button of that
+/// name, since the editor is the right-hand panel.
+fn open_group(h: &mut Harness<'_, dreamcarve_app::Shell>, title: &str) {
+    let header = h
+        .query_all_by_role_and_label(Role::Button, title)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {title} group"));
+    header.scroll_to_me();
+    h.run();
+    h.query_all_by_role_and_label(Role::Button, title)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {title} group"))
+        .click();
+    h.run();
 }
 
 /// Clicks the toolpath view's button `label`, opening the view from the
@@ -2410,8 +2443,9 @@ fn clearing_tools(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> Vec<Strin
 /// Capability 70 and acceptance 75 in the window (slice 13, #542): on the
 /// sign's Background, *Add pass* appends the 3.175 mm end mill's pass;
 /// dragging its grip above the first pass is one step and shows
-/// `clearing_not_descending`'s message under the list; the editor's foot
-/// shows `check`'s carve summary once the carve has generated.
+/// `clearing_not_descending`'s message under the list. The carve summary
+/// is no longer the editor's foot (slice 26, #618):
+/// `editor_has_no_check_says_box`.
 #[test]
 fn clearing_list_adds_and_drags() {
     let dir = scratch("clearing-list");
@@ -2456,24 +2490,6 @@ fn clearing_list_adds_and_drags() {
         h.query_by_label(&warning).is_some(),
         "the warning shows under the list"
     );
-
-    // Generated, the foot shows check's line for the carve.
-    let op2 = dc_project::OperationId::new("op2");
-    for _ in 0..400 {
-        if !dc_app::editor::carve_summary(h.state().app(), &op2).is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        h.run();
-    }
-    let summary = dc_app::editor::carve_summary(h.state().app(), &op2);
-    assert_eq!(summary.len(), 1, "the carve generated");
-    h.run();
-    assert!(
-        h.query_by_label(&summary[0]).is_some(),
-        "the editor's foot shows {}",
-        summary[0]
-    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2514,6 +2530,8 @@ fn start_point_click_on_the_viewport() {
         !h.get_by_label("Place tabs").accesskit_node().is_disabled(),
         "the Profile's tab request can be placed (#546)"
     );
+    // The start point is Strategy's, closed until opened (#618).
+    open_group(&mut h, "Strategy");
 
     h.get_by_label("Pick on the view").scroll_to_me();
     h.run();
@@ -2608,6 +2626,13 @@ fn inlay_editor_shows_the_male_board() {
     );
     h.get_by_role_and_label(Role::ListItem, "DC").click();
     h.run();
+    // The derived line and the margin are Depth's, closed until opened;
+    // the values and the board thickness are Setup's (#618).
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Band margin")
+            .is_none()
+    );
+    open_group(&mut h, "Depth");
     for label in [
         "Inlay depth",
         "Glue gap",
@@ -3657,6 +3682,216 @@ fn depth_legend_leaves_the_extents_caption_readable() {
         "the caption {:?} is clear of the legend {legend:?}",
         caption[0]
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Functional 66 and acceptance 97 (slice 26, #618): the editor's header
+/// holds the name, editable in place. Clicking it, typing and Enter is one
+/// undo step; Escape reverts. There is no *Enabled* checkbox and no
+/// *Name* field in the editor: enabled is the list's.
+#[test]
+fn editor_header_renames_in_place() {
+    let dir = scratch("header-rename");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::CheckBox, "Enabled")
+            .is_none(),
+        "no enabled checkbox in the editor"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Name").is_none(),
+        "no name field in the editor"
+    );
+    assert!(h.query_by_label("Identity").is_none(), "no Identity group");
+    let steps = undo_steps(&h);
+
+    h.get_by_role_and_label(Role::Button, "Cut out").click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Rename Cut out")
+        .type_text("Outline");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(operation_of(&h, "op4").name(), "Outline", "renamed");
+    assert_eq!(undo_steps(&h), steps + 1, "as one step");
+    assert_eq!(h.state().app().undo_label(), Some("Rename “Cut out”"));
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Rename Cut out")
+            .is_none(),
+        "Enter leaves the field"
+    );
+
+    h.get_by_role_and_label(Role::Button, "Outline").click();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, "Rename Outline")
+        .type_text("Other");
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(operation_of(&h, "op4").name(), "Outline", "Escape reverts");
+    assert_eq!(undo_steps(&h), steps + 1, "and adds no step");
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op4"),
+        "the editor stays open"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Steps the window until a tooltip has had time to show (egui's
+/// `tooltip_delay`, 0.5 s), at 0.1 s a frame.
+fn wait_for_tooltip(h: &mut Harness<'_, dreamcarve_app::Shell>) {
+    for _ in 0..10 {
+        h.step();
+    }
+    h.run();
+}
+
+/// Asserts the text field `label` shows the required-field look
+/// (functional 66b; `experience.md`, section 7, "required (unset)"):
+/// *Required* as its placeholder, no line under it carrying `message`, and
+/// `message` as its tooltip.
+fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, message: &str) {
+    use egui_kittest::kittest::NodeT as _;
+    let field = h.get_by_role_and_label(Role::TextInput, label);
+    assert_eq!(
+        field.accesskit_node().placeholder(),
+        Some("Required"),
+        "{label}'s placeholder"
+    );
+    assert_eq!(field.accesskit_node().value().as_deref(), Some(""));
+    assert!(
+        h.query_by_label(message).is_none(),
+        "no line under {label} carries the message"
+    );
+    h.get_by_role_and_label(Role::TextInput, label).hover();
+    wait_for_tooltip(h);
+    assert!(
+        h.query_by_label(message).is_some(),
+        "{label}'s tooltip is the file's message: {message}"
+    );
+}
+
+/// Functional 66b and acceptance 97 (slice 26, #618): a tool with no feed
+/// shows *Required* in its Feed field, not a paragraph under it, and the
+/// file's message as the field's tooltip; Project Settings' thickness on a
+/// new project the same.
+#[test]
+fn required_field_shows_required_not_a_message() {
+    let dir = scratch("required-field");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let options_for = |project| options(&dir.join("config"), project, &dialogs);
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options_for(Some(plaque))).expect("the shell starts")
+        });
+    h.run();
+    h.get_by_label("Tools · 3").click();
+    h.run();
+    h.get_by_label("Set me").click();
+    h.run();
+    let tool = h.state().app().project().tools[0].clone();
+    assert_eq!(
+        tool.feed_mm_min, None,
+        "the plaque's first tool has no feed"
+    );
+    let message = dc_app::tools::unset_rates(&tool)
+        .into_iter()
+        .find(|(field, _)| *field == "feed_mm_min")
+        .map(|(_, message)| message)
+        .expect("the unset feed's message");
+    assert_required(&mut h, "Feed", &message);
+    drop(h);
+
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options_for(None)).expect("the shell starts")
+        });
+    h.run();
+    assert_eq!(h.state().app().project().stock.thickness_mm, None);
+    let message = h
+        .state()
+        .app()
+        .warnings()
+        .iter()
+        .find(|f| f.field.as_deref() == Some("stock.thickness_mm"))
+        .map(|f| f.message.clone())
+        .expect("validation locates the unset thickness");
+    assert_required(&mut h, "Thickness", &message);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Functional 66 and experience checklist 31 (slice 26, #618): the carve
+/// summary `check` prints is not in the editor (slice 28 makes it a note
+/// in the Warnings drawer). For every kind with a record, in the
+/// committed fixtures, once generation has settled, no node is labelled
+/// `check says`; the V-Carves have a summary that would have shown.
+#[test]
+fn editor_has_no_check_says_box() {
+    let dir = scratch("no-check-says");
+    for (fixture, names) in [
+        (
+            "plaque.dcv",
+            &["Panel", "Cut out", "Screw holes", "Border and squiggle"][..],
+        ),
+        (
+            "sign.dcv",
+            &["Hanging holes", "Lettering", "Countersinks"][..],
+        ),
+        ("dc.dcv", &["DC"][..]),
+    ] {
+        let path = copy_fixture(fixture, &dir);
+        let dialogs = QueuedDialogs::default();
+        let mut h = harness(
+            options(&dir.join("config"), Some(path), &dialogs),
+            1280.0,
+            800.0,
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+        while h.state().app().generation().busy() || h.state().worker_busy() {
+            assert!(std::time::Instant::now() < deadline, "generation settles");
+            h.step();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        h.run();
+        for name in names {
+            h.get_by_role_and_label(Role::ListItem, name).click();
+            h.run();
+            let id = h
+                .state()
+                .app()
+                .editing()
+                .cloned()
+                .expect("an operation is open");
+            let op = operation_of(&h, id.as_str());
+            if matches!(op, dc_project::Operation::VCarve(_)) {
+                assert!(
+                    !dc_app::editor::carve_summary(h.state().app(), &id).is_empty(),
+                    "{name} has a carve summary"
+                );
+            }
+            assert!(
+                h.query_by_label("check says").is_none(),
+                "{fixture}, {name}: no check says box"
+            );
+        }
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

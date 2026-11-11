@@ -433,6 +433,11 @@ impl Command {
             Self::UpdateOperation(operation) => {
                 let subject = op_subject(operation.id());
                 match operations::changed_field(before, operation) {
+                    // The editor header's inline rename (#618), worded as
+                    // the Design Tree's is.
+                    Some(field) if field == "name" => {
+                        with_subject(StrKey::CommandLabelRename, &subject)
+                    }
                     Some(field) => strings.fmt(
                         StrKey::CommandLabelSetField,
                         &[("field", &field), ("subject", &subject)],
