@@ -25,6 +25,43 @@ changes the library (`tools import`) creates the file, and the config
 directory if it is missing. Set `DREAMCARVE_CONFIG_DIR` to keep the library
 somewhere else.
 
+## In the app
+
+**Project ▸ Tool Library…** opens the library in a sheet with two panes.
+The app and the `dreamcarve tools` commands read and write the same file.
+
+- **The list.** The tools are grouped by vendor, with *No vendor* last.
+  Click a group's header to close or open it. The search field matches
+  name, vendor, product id and diameter, and the type filter narrows the
+  list to one kind of cutter. A red dash marks a feed, plunge rate or RPM
+  that is not set, and a ✓ marks a tool already in the open project.
+- **Editing.** Select a row to edit that tool in the right pane. There is
+  no Edit button. The fields are the ones the Tools tab shows for a
+  project tool. A field is saved to the library when you leave it. There
+  is no undo for library edits, but *Revert changes* puts the selected
+  tool back the way it was when you opened the sheet. A value the library
+  cannot take, such as a diameter of 0 or a name another tool already
+  has, leaves the field marked with the reason, and the file is not
+  changed. Editing a library tool never changes a project's copy of it.
+- **Units.** The `mm` / `in` switch in the header picks the units the
+  sheet shows and the units you type in. The app remembers it. It does
+  not change the project's units, and the file always stores
+  millimetres.
+- **New tool, Duplicate, Delete.** *New tool* adds an end mill named
+  `tool<n>` with a 6.35 mm diameter, 2 flutes and no feed, plunge rate or
+  RPM. Type those in yourself, because the app never invents them.
+  *Duplicate* adds a copy of the selected tool below it, named
+  `<name> (2)`. *Delete* removes the ticked tools, or the selected tool
+  when none is ticked. It names them and asks first, because a deletion
+  cannot be undone. Projects keep their copies.
+- **Add to project.** Tick rows and press *Add N tools to project*. The
+  project gets copies under new ids, as `tools add` makes them, and you
+  can undo that in one step.
+- **Import… and Export library….** *Import…* works like `tools import`
+  and shows its report. *Export library…* writes the whole library to one
+  file. Use it to keep a backup or to take your tools to another
+  computer.
+
 ## Commands
 
 | Command | What it does |

@@ -37,6 +37,16 @@ fn gradient() -> Grayscale {
     pixels
 }
 
+/// The generator's tests build the gradient in code
+/// (`dc_project::test_support::gradient_bytes`); it must stay the
+/// committed fixture's picture.
+#[test]
+fn gradient_fixture_matches_the_test_support_picture() {
+    let pixels = gradient();
+    assert_eq!((pixels.width_px, pixels.height_px), (64, 32));
+    assert_eq!(pixels.bytes, dc_project::test_support::gradient_bytes());
+}
+
 fn post() -> PostProcessorRef {
     PostProcessorRef::latest("grblhal").unwrap()
 }

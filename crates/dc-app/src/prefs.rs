@@ -10,7 +10,7 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-use dc_project::TabShape;
+use dc_project::{TabShape, Units};
 
 use crate::view::{ColourMode, Visibility};
 
@@ -38,6 +38,10 @@ pub struct Prefs {
     /// The last-used tab size, which the Tab tool adds tabs with
     /// (functional spec, capability 69).
     pub tab: TabSize,
+    /// The Tool Library's display units (capability 64): what the sheet
+    /// shows, never what the library file stores (millimetres). `None`
+    /// until chosen, and then the open project's units.
+    pub library_units: Option<Units>,
 }
 
 /// A placed tab's width, height and shape, as the Tab tool adds it.
