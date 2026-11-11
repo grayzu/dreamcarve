@@ -4,7 +4,7 @@
 //! Image prep, the part of it that reads an SVG without changing it
 //! (sub-phase 3.4, `docs/specs/phase-3/design.md`, "Image prep"): the
 //! [`walk`] of an SVG's visible geometry and the import checks built on it,
-//! [`findings`] for `init` and [`design_findings`] for `check`.
+//! [`findings()`] for `init` and [`design_findings`] for `check`.
 
 mod findings;
 pub(crate) mod stroke;
