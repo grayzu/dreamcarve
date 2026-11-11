@@ -141,7 +141,7 @@ The fields, in the order DreamCarve writes them:
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
 | `instances` | Placed copies of the shapes. |
-| `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. |
+| `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. See [`bitmaps`](#bitmaps). |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
 
@@ -334,7 +334,7 @@ To move a shape on the stock, change `e` and `f`.
 | `vendor` | Who makes the tool, such as `"IDC Woodcraft"`, or `null`. [Fusion import](tool-library.md#fusion-360-tool-libraries) fills it in; `init` writes `null`. No program uses it. |
 | `product_id` | The vendor's part number for it, such as `"DC-14"`, or `null`. Fusion import fills it in; `init` writes `null`. No program uses it. |
 | `number` | The tool's number, for `T<n>` in programs and `-T<n>` in file names: a whole number of 1 or more, or `null` for the tool's position in this list (the first tool is 1). `init` writes `null`. Two tools used by enabled operations that end up with the same number are an error; so is 0. Set it to match your machine's tool table: with `5`, programs write `T5` (`M61 Q5`, `T5 M6`, the `( Tool 5: … )` comment, `Fit T5`) and, with one program per tool run, name its programs `<stem>-<k>-T5.nc`. |
-| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, a Pocket, and a V-Carve's clearing pass, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. A V-Carve cuts only with a `v_bit`, whose `included_angle_deg` (above 0, below 180) sets its depth and its cone height, `diameter_mm / (2 × tan(angle / 2))`. On line, Drill and Engrave allow any cutter. |
+| `cutter` | `"end_mill"`. Also accepted: `"ball_nose"`, `"engraver"`, `"drill"`, and `{ "v_bit": { "included_angle_deg": 60.0 } }`, but an Outside, Inside, Left or Right Profile, a Pocket, and a V-Carve's clearing pass, cut only with `"end_mill"`: they offset by half the diameter, which is wrong for any other bit. A V-Carve, an Inlay and a Photo V-Carve cut only with a `v_bit`, whose `included_angle_deg` (above 0, below 180) sets its depth and its cone height, `diameter_mm / (2 × tan(angle / 2))`. On line, Drill and Engrave allow any cutter. |
 | `diameter_mm` | Cutting diameter. Profile and Pocket offset the path by half of it. Above 50 mm is a warning. |
 | `flutes` | Number of flutes. Not used yet. |
 | `feed_mm_min` | Feed rate while cutting. **Required.** At most 20 000. |
@@ -357,8 +357,9 @@ uses; see [Values that look wrong](profile.md#values-that-look-wrong).
 
 A list of operations, cut in order. `kind` says which: `"profile"`,
 `"pocket"`, `"drill"`, `"bore"` (from format version 18), `"engrave"`,
-`"v_carve"` (from format version 20) or `"inlay"` (from format version
-22). `init` writes one Profile:
+`"v_carve"` (from format version 20), `"inlay"` (from format version
+22) or `"photo_v_carve"` (from format version 27). `init` on a drawing
+writes one Profile, and `init` on a picture one Photo V-Carve:
 
 ```json
 {
@@ -437,9 +438,18 @@ same meaning, plus its own fields:
 | `"v_carve"` | No `depth_mm`: the depth follows the shape and the bit's angle. `strategy`: `"medial"` or `{ "offset": { "step_over_mm": 0.5, "direction": "climb" } }` (step-over greater than 0); `clearing`: a list of clearing passes, each `{ "tool": "t2", "strategy": "offset", "direction": "climb", "entry": "plunge" }` with a Pocket's `strategy`, `direction` and `entry`, `[]` for none; `flat_depth_mm` (`null`, or greater than 0, within the bit's cone height); `start_depth_mm` (0 or more); `start_plane_cleared_externally` (`true` or `false`); `step_over_fraction` (`null` for the tool's; greater than 0 and at most 1); `machining_order`. The tool must be a V-bit; each clearing pass's tool an `"end_mill"`. From format version 20. See [V-Carve](v-carve.md). |
 | `"inlay"` | A V-bit inlay, both its boards: the female (the pocket) on the stock and the male (the plug) on its male board. `male_board` (from format version 25, after `tool`): `{ "width_mm": null, "height_mm": null, "thickness_mm": null }`, the board the male is cut from; width and height `null` for the stock's, or greater than 0; `thickness_mm` the male board's own, greater than 0, and until it is set only the female is cut (warning `inlay_male_board_unset`); every Inlay that cuts its male names the same male board. `depth_mm`, the female pocket's depth (greater than 0); `glue_gap_mm`, the gap left under the seated plug (0 or more, below `depth_mm`; the male starts `depth_mm − glue_gap_mm` below the male board's top); `plug_depth_mm`, how far below that the male's surround is cut flat (greater than 0); `margin_mm`, how far beyond the design the male's surround reaches (greater than 0, needed once the male is cut; the female ignores it); `outline_rounding_mm` (from format version 24), `null` or the radius, greater than 0, the male's band is rounded by: its inward curves no tighter, gaps between shapes narrower than about twice it filled (the female ignores it); `boundary` (from format version 26), `[]` or a list of instance ids such as `["i3"]` (after `outline_rounding_mm`): shapes whose closed outlines, united, are the male band's outer edge in place of `margin_mm` and `outline_rounding_mm` (which are then ignored, with a warning, and `margin_mm` is not needed); the design must lie strictly inside them, and they are not targets; empty keeps the margin's band (the female ignores it); `clearing`, as a V-Carve's (on a male, the first pass whose end mill fits the band's flat floor also cuts the band's outer edge upright); `step_over_fraction`; `machining_order`. The first three are always needed; `null` until set. The tool must be a V-bit, and the flank's depth from each board's top, `depth_mm` for the female and `depth_mm − glue_gap_mm + plug_depth_mm` for the male, must fit its cone. A male leaving less than 6 mm of the male board under its surround warns. No start depth. `cut_out` (from format version 23), the male's (the female ignores it): `null`, or `{ "tool", "tabs", "through_cut_allowance_mm" }`, a flat end mill that frees the plug, run last, along the outer edge of the band's flat floor, rounded as the band is, from the floor down through the male board, with tabs as a Profile's tab request (or `null`); the floor must be at least the end mill wide. From format version 22. See [Inlay](inlay.md). |
 
+A Photo V-Carve carves a picture, not shapes, and its depth is its own,
+so it has `kind`, `id`, `name`, `enabled`, `tool`,
+`through_cut_allowance_mm` and `safe_z_mm` with the same meaning, but no
+`targets` and no `depth_mm`:
+
+| Kind | Own fields |
+| --- | --- |
+| `"photo_v_carve"` | `image`, the id of the bitmap it carves (after `enabled`); `max_depth_mm`, how deep black is carved below the start plane (greater than 0, within the bit's cone height; `null` until set, and never defaulted); `start_depth_mm` (0 or more) and `start_plane_cleared_externally` (`true` or `false`), as a V-Carve's; `line_angle_deg`, the grooves' direction (0 or more, less than 180); `line_spacing_fraction`, their spacing as a fraction of a groove's width at `max_depth_mm` (greater than 0; below 1 warns `photo_lines_overlap`); `strategy`: `"raster"` or `"hatch"`; `invert` (`true` carves white deepest); `sample_mm`, the step along a groove at which the picture is read (greater than 0); `stepover_retract_mm`, the lift above the start plane between grooves (greater than 0). The tool must be a V-bit. From format version 27. See [Photo V-Carve](photo-v-carve.md). |
+
 Each kind has a chapter of its own: [Pocket](pocket.md), [Drill](drill.md),
-[Bore](bore.md), [Engrave](engrave.md), [V-Carve](v-carve.md) and
-[Inlay](inlay.md).
+[Bore](bore.md), [Engrave](engrave.md), [V-Carve](v-carve.md),
+[Inlay](inlay.md) and [Photo V-Carve](photo-v-carve.md).
 
 ## `tabs`
 
@@ -476,6 +486,47 @@ point, and every enabled Profile that cuts that outline rises over it:
 | `holds_slug` | Whether the tab is meant to hold the slug of the hole it is on: `true`, `false` or `null`. It changes no cut, only the `tab_on_hole` warning. `tabs place --on-holes`, and a tab request with `on_holes`, write `true` for each tab they put on a hole, and `check` and `export` then do not warn for it; every other tab they place gets `false`, and a `false` tab on a hole warns on every `check` and `export`. `null` is what a project upgraded from version 14 gets: such a tab warns as it did before, unless it lies on the bit's path round the hole of the Profile that cuts it, where only placing with `on_holes` put one. Set it to `true` by hand to keep a hole's slug without the warning. See [Tabs: parts with holes](tabs.md#parts-with-holes). |
 
 [Tabs](tabs.md) explains placing, listing and removing them.
+
+## `bitmaps`
+
+The pictures a project holds (from format version 27), each placed on
+the stock, for a [Photo V-Carve](photo-v-carve.md) to carve. `init` on a
+picture writes one, and `dreamcarve image add` adds one
+([Images](images.md)); a project made from a drawing has `[]`. The
+picture's pixels are in the file, so the project stays one file:
+
+```json
+"bitmaps": [
+  {
+    "id": "b1",
+    "name": "gradient",
+    "width_px": 64,
+    "height_px": 32,
+    "x_mm": 10.0,
+    "y_mm": 10.0,
+    "width_mm": 100.0,
+    "height_mm": 50.0,
+    "visible": true,
+    "locked": false,
+    "png_base64": "iVBORw0KGgo…"
+  }
+]
+```
+
+| Field | Meaning |
+| --- | --- |
+| `id` | `"b1"`, `"b2"`, …, unique among the bitmaps (`duplicate_bitmap_id`). A Photo V-Carve's `image` names it (`photo_unknown_bitmap` when none has it). |
+| `name` | Your name for it. `init` and `image add` use the file's name. |
+| `width_px`, `height_px` | Its size in pixels: at least 1 (`bitmap_empty`) and at most 8192 (`bitmap_too_large`), and the PNG's own size (`bitmap_pixels_mismatch`). |
+| `x_mm`, `y_mm` | Its bottom-left corner on the stock, in project millimetres. Its top row of pixels is at `y_mm + height_mm`, the highest Y. |
+| `width_mm`, `height_mm` | Its size on the stock: greater than 0 (`bitmap_footprint_positive`), and in the picture's proportions, `width_mm / height_mm` equal to `width_px / height_px` (`bitmap_footprint_aspect`, which gives the size that fits). Like every coordinate, within 6000 mm. |
+| `visible`, `locked` | For the GUI: whether it is drawn, and whether it can be moved. Neither changes a cut. |
+| `png_base64` | The picture: an 8-bit grayscale PNG (`bitmap_not_grayscale_8` otherwise), base64-encoded with padding, written on one line however long. Only its header is read when the project is opened; its pixels when a Photo V-Carve needs them. Text that is not base64, or not a PNG, is `bitmap_unreadable`. Do not edit it: add the picture again with `image add`. |
+
+`init` and `image add` store any picture as 8-bit grayscale ([Images: how
+a picture is read](images.md#how-a-picture-is-read)), so a bitmap they
+wrote passes every check; the codes above come from a hand edit, or a
+file damaged in transit.
 
 ## `post_processor`
 
@@ -539,7 +590,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 24 | Adds each Inlay's `outline_rounding_mm`, after its `margin_mm`, `null` on upgrade: the radius the male's band is rounded by. In the same release the male's band changed: when a clearing pass fits the band's flat floor, its end mill cuts the band's outer edge upright and the cut-out runs along the wider floor's outer edge, where an older build cut a V wall there. An upgraded male with such a pass gives a different program, the same as the project written at version 24 ([Inlay: the band's outer edge](inlay.md#the-bands-outer-edge)). |
 | 25 | One Inlay cuts both boards (#498): each Inlay's `side` is replaced, in its place, by `male_board`. A `"female"` Inlay gets `{ "width_mm": null, "height_mm": null, "thickness_mm": null }`, so it exports the female programs it did, warning `inlay_male_board_unset`. A `"male"` Inlay gets its stock's width, height and thickness, so it exports the male programs it did, byte for byte; and it now also cuts the female on the stock, which `check` and `export` print as a `note:`. In a project with an Inlay every program is now named after its board, `<stem>-female-<k>-T<n>` and `<stem>-male-<k>-T<n>` ([Inlay: projects from before format 25](inlay.md#projects-from-before-format-25)). |
 | 26 | Adds each Inlay's `boundary`, after its `outline_rounding_mm`, `[]` on upgrade (#449): the shapes that draw the male band's outer edge. Empty, the band is `margin_mm` and `outline_rounding_mm` as before, so a version 25 file exports the same programs, byte for byte. A male that lists one is cut inside it, mirrored with the design ([Inlay: the boundary](inlay.md#the-boundary)). |
-| 27 | Adds `bitmaps`, after `instances`, `[]` on upgrade (#644): the pictures a project holds, and with them the `"photo_v_carve"` operation kind that carves one. A version 26 file holds neither, so it exports the same programs, byte for byte. This build reads and checks a Photo V-Carve but does not cut one yet: `check` and `export` stop at it until it is disabled. |
+| 27 | Adds `bitmaps`, after `instances`, `[]` on upgrade (#644): the pictures a project holds, and with them the `"photo_v_carve"` operation kind that carves one ([Images](images.md), [Photo V-Carve](photo-v-carve.md)). A version 26 file holds neither, so it exports the same programs, byte for byte; an older DreamCarve refuses a version 27 file rather than misread a kind it does not know. A version 26 file that already holds `bitmaps` or a `"photo_v_carve"` is refused. |
 
 ## What `check` reports
 
@@ -570,11 +621,13 @@ Errors stop export. Warnings do not.
 | A Profile with a `last_pass` whose earlier passes cannot follow the drawing: a band, neck, slot, notch or hole that fits the bit but not the bit plus the stock to leave on both sides, a tip so narrow that the last pass would take off more than a third of the bit, or a stock pass that would come within the bit's radius of another part or run inside it; on a Left or Right Profile, a stock pass that would come within the bit's radius plus the stock to leave of another line or the strip it keeps ([Last pass](profile.md#last-pass)) | |
 | `post_processor.use_canned_cycles` is `true` but the post-processor has no drilling cycles (grblHAL, GRBL, UCCNC and generic) | |
 | A `flatten_tolerance_mm` above 0.1 | A V-Carve's clearing pass with an end mill wider than the pass before it (`clearing_not_descending`) |
-| A V-Carve whose tool is not a V-bit, or a V-bit angle not above 0 and below 180 | An earlier Pocket, or an earlier V-Carve's flat floor, containing a V-Carve's targets, or a countersink's whole bit at each hole, at a depth other than its start depth (`start_depth_mismatch`) |
+| A V-Carve whose tool is not a V-bit, or a V-bit angle not above 0 and below 180 | An earlier Pocket, or an earlier V-Carve's flat floor, containing a V-Carve's targets, a countersink's whole bit at each hole, or a Photo V-Carve's picture, at a depth other than its start depth (`start_depth_mismatch`) |
 | A V-Carve whose flat depth, or a countersink whose derived depth, plus a start depth no earlier Pocket or V-Carve floor clears, is deeper than the bit's cone height (`v_bit_cone_exceeded`) | A countersink with `allow_tool_wider_than_hole` `true`, which has no effect (`countersink_ignores_tool_width`) |
 | A countersink whose tool is not a V-bit (`countersink_needs_v_bit`), whose `diameter_mm` is not above 0 (`countersink_diameter_positive`), or whose `diameter_mm` is wider than its V-bit (`countersink_mouth_exceeds_tool`) | |
 | A V-Carve with clearing passes and no flat depth, or a pass whose tool is not an `"end_mill"` or does not exist | |
-| A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket or V-Carve flat floor containing the targets (for a countersink, its whole bit at each hole) and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
+| A `start_depth_mm` below 0, or above 0 with no enabled earlier Pocket or V-Carve flat floor containing the targets (for a countersink, its whole bit at each hole; for a Photo V-Carve, its picture's footprint) and `start_plane_cleared_externally` `false` (`start_depth_uncleared`) | |
+| A Photo V-Carve whose tool is not a V-bit, whose `max_depth_mm` is unset or, plus a start depth no floor clears, deeper than the bit's cone height, whose `image` names no bitmap (`photo_unknown_bitmap`), or whose `line_angle_deg`, `line_spacing_fraction`, `sample_mm` or `stepover_retract_mm` is out of its range (`photo_line_angle_range`, `photo_line_spacing_positive`, `photo_sample_positive`, `photo_retract_positive`) | A Photo V-Carve whose `line_spacing_fraction` is below 1 (`photo_lines_overlap`) |
+| A bitmap with an id used twice, a size in pixels of 0 or above 8192, a footprint not above 0 or not in the picture's proportions, or a `png_base64` that is not an 8-bit grayscale PNG of its `width_px` by `height_px` (see [`bitmaps`](#bitmaps)) | |
 
 The checks in the rows from "A feed or plunge rate" down look only at
 enabled operations and the tools they use. See [Values that look

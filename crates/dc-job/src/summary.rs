@@ -493,7 +493,8 @@ fn describe_photo(
 }
 
 /// One line per exported tool run, in cut order: each enabled operation's
-/// id, name, tool, target count and depth, a carve's clearing runs before
+/// id, name, tool, target count (a Photo V-Carve's picture, #648) and
+/// depth, a carve's clearing runs before
 /// it named `o6 (clearing t1)` with their own tools and depths (#406), and
 /// a male Inlay's cut-out after it, `op1 (cut-out t2)` (#443).
 #[must_use]
@@ -564,6 +565,11 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
                 || "? mm deep".to_owned(),
                 |d| format!("cut {} deep at most", describe_length(project, d)),
             ),
+            // #648: black is carved `max_depth_mm` deep, lighter less.
+            Operation::PhotoVCarve(photo) => photo.max_depth_mm.map_or_else(
+                || "? mm deep".to_owned(),
+                |d| format!("{} deep at most", describe_length(project, d)),
+            ),
             Operation::Drill(DrillOp {
                 cycle: DrillCycle::Countersink { diameter_mm, .. },
                 ..
@@ -580,13 +586,25 @@ pub fn describe_operations(project: &Project, generated: &[EmitOp]) -> Vec<Strin
                 |d| format!("{} deep", describe_length(project, d)),
             ),
         };
+        // #648: a Photo V-Carve carves a picture, not targets, as deep as
+        // its `max_depth_mm` where the picture is black.
+        let carves = match op {
+            Operation::PhotoVCarve(photo) => {
+                let name = project
+                    .bitmaps
+                    .iter()
+                    .find(|b| b.id == photo.image)
+                    .map_or("?", |b| b.name.as_str());
+                format!("picture `{name}` ({})", photo.image)
+            }
+            _ => format!("{} target(s)", op.targets().len()),
+        };
         lines.push(format!(
-            "{} `{}`: tool `{}` ({}), {} target(s), {depth}",
+            "{} `{}`: tool `{}` ({}), {carves}, {depth}",
             op.id(),
             op.name(),
             op.tool(),
             tool_name(op.tool()),
-            op.targets().len(),
         ));
         // #443: a male Inlay's cut-out is cut after it, through the board.
         for run in generated

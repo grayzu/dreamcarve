@@ -12,6 +12,7 @@
 - [A V-carved sign from SVG outlines](quick-start/sign.md)
 - [An inlay pair](quick-start/inlay.md)
 - [From line art](quick-start/line-art.md)
+- [Carving a photo](quick-start/photo.md)
 
 # User guide
 
@@ -28,6 +29,8 @@
 - [Bore operation](user-guide/bore.md)
 - [V-Carve operation](user-guide/v-carve.md)
 - [Inlay operation](user-guide/inlay.md)
+- [Images](user-guide/images.md)
+- [Photo V-Carve operation](user-guide/photo-v-carve.md)
 - [Machining order and cut order](user-guide/machining-order.md)
 - [Post-processors](user-guide/post-processors.md)
 - [Configuration](user-guide/configuration.md)

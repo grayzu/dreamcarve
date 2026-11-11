@@ -3393,7 +3393,7 @@ for V operations.
 **dreamcarve (integration, `tests/`)**
 - `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`; `cli::preview_draws_the_picture_of_image_add` (#645: the `<image>` half of the preview test, which needs no generator).
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
-- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v26_project_exports_the_same_programs`, `cli::photo_quick_start_runs` (the chapter's commands).
+- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v26_project_exports_the_same_programs`, `cli::photo_quick_start_runs` (the chapter's commands; filed beside the chapter runner as `quick_start::photo_quick_start_runs`, #648, with `quick_start::photo_v_carve_chapter_runs` and `quick_start::images_chapter_runs` for the guide chapters, whose commands run too).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).
 
 **dc-gcode (integration, `tests/golden.rs`)**
@@ -3706,7 +3706,13 @@ Goal: a photograph carved.
     RasterCarve cases. Tests: `golden::photo_*`. [24]
 26. **Photo docs.** Photo V-Carve chapter, Images chapter (`image`,
     pictures in the file), The project file (v27),
-    `cli::photo_quick_start_runs`. [23, 24]
+    `cli::photo_quick_start_runs` (as built, #648:
+    `quick_start::photo_quick_start_runs`, where the chapter runner is).
+    The slice's wording pass gave `start_depth_mismatch` the operation's
+    footprint (`Warning::StartDepthMismatch::footprint`, a
+    `dc_project::StartFootprint`), a Photo's `v_bit_cone_exceeded` its
+    `max_depth_mm`, and export's operation line a Photo's picture.
+    [23, 24]
 27. **3.5 bench check.** Test part 4 cut and recorded. Exit: acceptance
     58 to 60 green.
 

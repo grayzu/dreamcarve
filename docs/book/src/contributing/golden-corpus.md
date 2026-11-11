@@ -128,6 +128,44 @@ through its corners.
 On failure, the message names the check and prints a unified diff of the
 two programs, with the dated header line normalised.
 
+## Photo V-Carve cases
+
+PureCutCNC has no Photo V-Carve, so the Photo V-Carve goldens are
+RasterCarve's output instead (`tools/parity/photo/`, sub-phase 3.5;
+design spec, "Golden corpus"). RasterCarve is GPLv2+, and DreamCarve is
+Apache-2.0, so the boundary is strict:
+
+- **What is captured.** `program.nc`, the G-code RasterCarve writes from
+  its own command line for one of DreamCarve's own synthetic fixture
+  pictures, exactly as written, and a `README.md` with the command line,
+  RasterCarve's commit, its statistics and the frame mapping. A GPL
+  program's output on our own input is not covered by the GPL, and it
+  holds no RasterCarve source text.
+- **What is not.** Nothing else of RasterCarve's: no source, no test, no
+  picture, no part of its engine. `tools/parity/photo/capture.py` runs
+  RasterCarve's command line from its own environment in a fresh folder,
+  without importing it or adding it to its path. A hatch case is not
+  captured, because the only way would be to drive RasterCarve's engine
+  from a script, which would make a combined work; hatch is covered by
+  DreamCarve's unit tests alone.
+- **No code is ported.** RasterCarve is a behaviour reference: the
+  generator was written from its documented behaviour and VCarve's, and
+  never from its source. Never read its code to fix a difference; read
+  its documentation and the golden's numbers.
+
+| Case | Picture | What it covers |
+| --- | --- | --- |
+| `photo-raster-inch` | `ramp.png`, 64 × 32, black left to white right | RasterCarve's defaults, 0.1 in wide, in inches; the harness scales the golden by 25.4. |
+| `photo-raster-metric` | `radial.png`, 64 × 64, white centre to black edge | Metric settings: 100 mm wide, 30°, 2 mm deep, 22.5°, 110 %, 0.25 mm samples. |
+
+RasterCarve's X is DreamCarve's; its Y grows down the picture from the
+top-left corner, so the harness maps `y = y_mm + height_mm − y_rc` before
+it compares. The grooves are compared groove for groove, in order, each
+sample within 0.01 mm in XY and 0.05 mm in Z (acceptance 60). Rapids,
+the lifts between grooves, and RasterCarve's final move are not compared:
+its lift is a different setting. `tools/parity/photo/README.md` is the
+record of how to capture a case and what each one's differences are.
+
 ## Comparing order
 
 Sets do not see the order of the cuts. A case built with `Order::InOrder`
