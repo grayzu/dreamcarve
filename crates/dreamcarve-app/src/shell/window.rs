@@ -263,6 +263,16 @@ pub(crate) enum Action {
     },
     /// Run a command on the project; a refusal goes to the status bar.
     Run(Box<Command>),
+    /// An Arrange action on the selection (the toolbar's group, the
+    /// Arrange menu, R, Shift R, Ctrl Shift H, Ctrl Shift V; #617): its
+    /// command runs on the unlocked shapes, and the status bar names the
+    /// locked ones, or says why nothing could turn.
+    Arrange(dc_app::arrange::Action),
+    /// Rename a shape in its Design Tree row (F2, the context menu's
+    /// *Rename*; #617).
+    Rename(dc_project::InstanceId),
+    /// Arrange ▸ Rotate…: the toolbar's Rotate popover opened (#617).
+    OpenRotate,
     /// Show a refusal in the status bar.
     Refused(String),
     /// Open the Tool Library sheet.
@@ -749,6 +759,29 @@ impl Shell {
         }
     }
 
+    /// Runs Arrange `action` on the selection (capability 58a): one step
+    /// over the unlocked shapes, the status bar naming the locked ones; a
+    /// disabled group's reason, or a refusal, in the status bar instead. A
+    /// turn that changes nothing (a typed 0° or 360°) is no step and says
+    /// nothing.
+    fn arrange(&mut self, action: dc_app::arrange::Action) {
+        let selected = self.app.selection().instances().to_vec();
+        match dc_app::arrange::arrange(self.app.project(), &selected, 0, action) {
+            Ok(arranged) => match self.app.run(arranged.command) {
+                Ok(_) => {
+                    if let Some(line) =
+                        dc_app::arrange::locked_message(self.app.strings(), &arranged.locked)
+                    {
+                        self.message = Some(line);
+                    }
+                }
+                Err(dc_app::CommandError::NothingToDo) => {}
+                Err(e) => self.message = Some(e.to_string()),
+            },
+            Err(why) => self.message = Some(self.strings().get(why.reason()).to_owned()),
+        }
+    }
+
     /// Saves to the project's file, or asks where when `as_new` or when
     /// it has none. Whether it was written.
     fn save(&mut self, as_new: bool) -> bool {
@@ -996,6 +1029,15 @@ impl Shell {
                 if let Err(e) = self.app.run(*command) {
                     self.message = Some(e.to_string());
                 }
+            }
+            Action::Arrange(action) => self.arrange(action),
+            Action::OpenRotate => toolbar::open_rotate(ctx),
+            Action::Rename(id) => {
+                // The name is edited in its Design Tree row, so the tree
+                // shows.
+                self.app.prefs_mut().panels.left_open = true;
+                self.forced_open.0 = true;
+                panels::tree::start_rename(ctx, self.app.project(), &id);
             }
             Action::ShowProject => {
                 self.app
@@ -1368,6 +1410,9 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
     let on_selection = |item: dc_app::tree::MenuItem| {
         dc_app::tree::menu_command(project, item, selected).map(Action::run)
     };
+    // The Arrange group's own action on a selection; with every shape
+    // locked it runs to say so in the status bar (acceptance 66).
+    let arrange = |action| (!selected.is_empty()).then_some(Action::Arrange(action));
     match command {
         Shortcut::New => Some(Action::New),
         Shortcut::Open => Some(Action::Open),
@@ -1400,6 +1445,11 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::Hide => on_selection(dc_app::tree::MenuItem::Hide),
         Shortcut::Show => on_selection(dc_app::tree::MenuItem::Show),
         Shortcut::Lock => dc_app::tree::toggle_locked(project, selected).map(Action::run),
+        Shortcut::Rename => selected.first().cloned().map(Action::Rename),
+        Shortcut::RotateClockwise => arrange(dc_app::arrange::Action::RotateClockwise),
+        Shortcut::RotateAnticlockwise => arrange(dc_app::arrange::Action::RotateAnticlockwise),
+        Shortcut::FlipHorizontal => arrange(dc_app::arrange::Action::FlipHorizontal),
+        Shortcut::FlipVertical => arrange(dc_app::arrange::Action::FlipVertical),
         Shortcut::FitView => Some(Action::FitView),
         Shortcut::ZoomToSelection => (!selected.is_empty()).then_some(Action::ZoomToSelection),
         Shortcut::TabTool

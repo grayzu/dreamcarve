@@ -1,10 +1,13 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The menu bar (functional spec, capability 50: File, Edit, View,
-//! Project, Help; `experience.md`, section 2, "Menu bar and toolbar"):
-//! egui's own on every platform (design open question 6), 28 px, every
-//! shortcut shown in its row (capability 54).
+//! The menu bar (functional spec, capability 50: File, Edit, Arrange,
+//! View, Project, Help; `experience.md`, section 2, "Menu bar and
+//! toolbar"): egui's own on every platform (design open question 6),
+//! 28 px, every shortcut shown in its row (capability 54). The Arrange
+//! menu (capability 58a, mock-up 14) holds the toolbar's Arrange commands
+//! with their shortcuts, *Rotate…* (the toolbar's angle popover) and
+//! *Centre on Stock* (61).
 
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Button, Key, Modifiers, Ui};
@@ -65,6 +68,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 let strings = state.app.strings();
                 ui.menu_button(strings.get(StrKey::AppMenuFile), |ui| file(ui, state, out));
                 ui.menu_button(strings.get(StrKey::AppMenuEdit), |ui| edit(ui, state, out));
+                ui.menu_button(strings.get(StrKey::AppMenuArrange), |ui| {
+                    arrange(ui, state, out);
+                });
                 ui.menu_button(strings.get(StrKey::AppMenuView), |ui| view(ui, state, out));
                 ui.menu_button(strings.get(StrKey::AppMenuProject), |ui| {
                     item(
@@ -100,24 +106,70 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         });
 }
 
-/// The Project menu's *Centre on Stock* and *Fit Stock to Shapes…*
-/// (functional spec, capabilities 58 and 61): the fit's submenu takes the
-/// margin in place (capability 50a: no dialog), starting at `init`'s; the
-/// margin is not a project field, so it is kept in egui's memory.
+/// The Arrange menu (capability 58a; mock-up 14): Rotate 90° either way,
+/// *Rotate…*, the two flips, and *Centre on Stock*, each disabled with
+/// the toolbar group's reason when nothing can turn.
+fn arrange(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    use dc_app::arrange::Action as Arrange;
+    let strings = state.app.strings();
+    let disabled =
+        dc_app::arrange::disabled(state.app.project(), state.app.selection().instances(), 0);
+    let mut row = |ui: &mut Ui, key: StrKey, shortcut: Option<Shortcut>, action: Action| {
+        let mut button = Button::new(strings.get(key));
+        if let Some((modifiers, key)) = shortcut.and_then(keyboard::binding) {
+            button = button.shortcut_text(shortcut_text(ui.ctx(), modifiers, key));
+        }
+        let response = ui.add_enabled(disabled.is_none(), button);
+        let response = match disabled {
+            Some(why) => response.on_disabled_hover_text(strings.get(why.reason())),
+            None => response,
+        };
+        if response.clicked() {
+            out.push(action);
+            ui.close();
+        }
+    };
+    row(
+        ui,
+        StrKey::ArrangeMenuRotateClockwise,
+        Some(Shortcut::RotateClockwise),
+        Action::Arrange(Arrange::RotateClockwise),
+    );
+    row(
+        ui,
+        StrKey::ArrangeMenuRotateAnticlockwise,
+        Some(Shortcut::RotateAnticlockwise),
+        Action::Arrange(Arrange::RotateAnticlockwise),
+    );
+    row(ui, StrKey::ArrangeMenuRotate, None, Action::OpenRotate);
+    ui.separator();
+    row(
+        ui,
+        StrKey::ArrangeMenuFlipHorizontal,
+        Some(Shortcut::FlipHorizontal),
+        Action::Arrange(Arrange::FlipHorizontal),
+    );
+    row(
+        ui,
+        StrKey::ArrangeMenuFlipVertical,
+        Some(Shortcut::FlipVertical),
+        Action::Arrange(Arrange::FlipVertical),
+    );
+    ui.separator();
+    row(
+        ui,
+        StrKey::ArrangeMenuCentreOnStock,
+        None,
+        Action::Arrange(Arrange::CentreOnStock),
+    );
+}
+
+/// The Project menu's *Fit Stock to Shapes…* (functional spec, capability
+/// 61): the submenu takes the margin in place (capability 50a: no
+/// dialog), starting at `init`'s; the margin is not a project field, so it
+/// is kept in egui's memory.
 fn placement_items(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    let selected = state.app.selection().instances();
-    let centre = ui.add_enabled(
-        !selected.is_empty(),
-        Button::new(strings.get(StrKey::PlacementCentreOnStock)),
-    );
-    let centre = centre.on_disabled_hover_text(strings.get(StrKey::PlacementCentreOnStockNone));
-    if centre.clicked() {
-        out.push(Action::Run(Box::new(dc_app::Command::CentreOnStock(
-            selected.to_vec(),
-        ))));
-        ui.close();
-    }
     ui.menu_button(strings.get(StrKey::AppMenuFitStock), |ui| {
         let units = state.app.project().display_units;
         let memory = egui::Id::unique("fit_stock_margin");
@@ -296,6 +348,7 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             .all(|i| i.locked);
     for (command, key) in [
         (Shortcut::SelectAll, StrKey::AppMenuSelectAll),
+        (Shortcut::Rename, StrKey::AppMenuRename),
         (Shortcut::Duplicate, StrKey::AppMenuDuplicate),
         (Shortcut::Delete, StrKey::AppMenuDelete),
         (Shortcut::Hide, StrKey::AppMenuHide),

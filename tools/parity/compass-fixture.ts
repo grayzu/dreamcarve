@@ -14,7 +14,7 @@
  * ring as a separate shape, which `init` imports as the instance the
  * Inlay names as its `boundary`.
  *
- * Two files, both from the same numbers:
+ * Three files, all from the same numbers:
  *
  * - `compass.svg` is the line art: the ring, the eight spokes and the
  *   oval, as strokes. It is what `image-prep --regions` takes.
@@ -24,6 +24,11 @@
  *   as 40 chords per pocket, 0.01 mm off the circle at most), and the oval
  *   unchanged. It stands in for the preparation until `image-prep` is
  *   built, and the `cli::compass_inlay_exports_both_boards` test imports it.
+ *
+ * - `compass-art.svg` is the line art alone, the ring and the spokes with no
+ *   oval. `image-prep --regions` is run on it, and the oval is drawn into
+ *   the prepared drawing afterwards (the quick start "From line art",
+ *   `cli::line_art_to_inlay_end_to_end`).
  *
  * Synthetic: nothing here is anyone's art. Dev-only tool, not part of the
  * Cargo workspace; it reads no other code and no font. Run it twice: the
@@ -107,6 +112,17 @@ const lineArt = `${header('the line art, as strokes: a ring, eight spokes from i
 </svg>
 `
 
+// The line art alone, with no oval: what `image-prep --regions` is run on.
+// The oval is a hairline-width stroke, which the preparation would drop as a
+// speck; the user draws it into the prepared drawing afterwards (#601).
+const art = `${header('the line art alone, as strokes: a ring and eight spokes from its centre; no oval.')}
+  <g fill="none" stroke="#000000" stroke-width="${f(STROKE_MM)}" stroke-linecap="butt">
+    <circle id="ring" cx="${f(CENTRE.x)}" cy="${f(CENTRE.y)}" r="${f(RING_RADIUS_MM)}"/>
+    <path id="spokes" d="${spokes}"/>
+  </g>
+</svg>
+`
+
 const pockets = Array.from({ length: SPOKES }, (_, k) => `    <path id="pocket-${k + 1}" d="${pocket(k)}"/>`)
 const regions = `${header('what image-prep returns in regions mode for compass.svg: the eight pockets between the strokes, as filled polygons, and the oval.')}
   <g fill="#000000" stroke="none">
@@ -118,4 +134,5 @@ ${pockets.join('\n')}
 
 writeFileSync(join(dir, 'compass.svg'), lineArt)
 writeFileSync(join(dir, 'compass-regions.svg'), regions)
-console.log(`wrote ${dir}/compass.svg and compass-regions.svg: ${SPOKES} pockets, ${STROKE_MM} mm strokes, ${2 * OUTER_RADIUS_MM} mm tall, oval ${PAGE.width} × ${PAGE.height} mm`)
+writeFileSync(join(dir, 'compass-art.svg'), art)
+console.log(`wrote ${dir}/compass.svg, compass-regions.svg and compass-art.svg: ${SPOKES} pockets, ${STROKE_MM} mm strokes, ${2 * OUTER_RADIUS_MM} mm tall, oval ${PAGE.width} × ${PAGE.height} mm`)

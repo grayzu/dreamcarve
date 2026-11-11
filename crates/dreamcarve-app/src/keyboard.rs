@@ -44,6 +44,16 @@ pub enum Command {
     Show,
     /// Edit ▸ Lock, or Unlock when every selected shape is locked.
     Lock,
+    /// Edit ▸ Rename: the selected shape's name in place (#617).
+    Rename,
+    /// Arrange ▸ Rotate 90° Clockwise (#617).
+    RotateClockwise,
+    /// Arrange ▸ Rotate 90° Anticlockwise.
+    RotateAnticlockwise,
+    /// Arrange ▸ Flip Horizontal.
+    FlipHorizontal,
+    /// Arrange ▸ Flip Vertical.
+    FlipVertical,
     /// View ▸ Fit View.
     FitView,
     /// View ▸ Zoom to Selection.
@@ -67,6 +77,8 @@ pub enum Menu {
     File,
     /// Edit.
     Edit,
+    /// Arrange (#617).
+    Arrange,
     /// View.
     View,
 }
@@ -78,6 +90,7 @@ impl Menu {
         match self {
             Self::File => StrKey::AppMenuFile,
             Self::Edit => StrKey::AppMenuEdit,
+            Self::Arrange => StrKey::AppMenuArrange,
             Self::View => StrKey::AppMenuView,
         }
     }
@@ -316,6 +329,51 @@ pub const SHORTCUTS: &[Shortcut] = &[
         Menu::Edit,
         StrKey::AppMenuLock,
         "Lock the selection, or unlock it when every shape in it is locked",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::Rename,
+        NONE,
+        &[Key::F2],
+        Menu::Edit,
+        StrKey::AppMenuRename,
+        "Rename the selected shape in place",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::RotateClockwise,
+        NONE,
+        &[Key::R],
+        Menu::Arrange,
+        StrKey::ArrangeMenuRotateClockwise,
+        "Rotate the selection 90° clockwise",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::RotateAnticlockwise,
+        SHIFT,
+        &[Key::R],
+        Menu::Arrange,
+        StrKey::ArrangeMenuRotateAnticlockwise,
+        "Rotate the selection 90° anticlockwise",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::FlipHorizontal,
+        COMMAND_SHIFT,
+        &[Key::H],
+        Menu::Arrange,
+        StrKey::ArrangeMenuFlipHorizontal,
+        "Flip the selection left to right",
+        Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::FlipVertical,
+        COMMAND_SHIFT,
+        &[Key::V],
+        Menu::Arrange,
+        StrKey::ArrangeMenuFlipVertical,
+        "Flip the selection top to bottom",
         Scope::OutsideFields,
     ),
     menu_row(

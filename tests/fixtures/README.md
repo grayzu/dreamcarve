@@ -152,3 +152,11 @@ end-user licence text (Ascender Corporation); the Android Open Source
 Project released the Droid fonts under Apache-2.0, which is the licence
 three.js distributes them under and the one used here. The fixtures are
 test data and not part of any DreamCarve binary.
+
+## `prep/speckled-dc.svg` and `prep/jagged-dc.svg`
+
+The calibration drawings for the image-prep defaults (#599), drawn by
+`tools/parity/prep-fixture.ts`: the "DC" monogram with seeded specks and
+pinholes, and the same letters with a trace's jittered edges. The sweep
+that fixes `--min-detail` and `--smooth` from them, and how to rerun it,
+are in `prep/README.md`.

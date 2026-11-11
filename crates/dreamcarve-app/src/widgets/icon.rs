@@ -64,17 +64,32 @@ pub enum Icon {
     Eye,
     /// `eye-off`: a hidden row.
     EyeOff,
-    /// `lock-open`: an unlocked row on hover; the W/H padlock open.
+    /// `lock-open`: an unlocked row on hover.
     LockOpen,
-    /// `link-2`: a linked copy.
-    Link2,
+    /// `component`: a linked copy (not a chain: the chain is the
+    /// proportion link).
+    Component,
+    /// `link`: W and H keep their proportions.
+    Link,
+    /// `unlink`: W and H scale on their own.
+    Unlink,
+    /// `square`: a closed outline's row.
+    Square,
+    /// `circle`: a circle's row.
+    Circle,
+    /// `spline`: an open path's row.
+    Spline,
+    /// `rotate-cw-square`: the toolbar's Rotate.
+    RotateCwSquare,
     /// `bookmark`: a tab row.
     Bookmark,
-    /// `flip-vertical-2`, mirrored about a vertical line: Mirror ↔ (Lucide
-    /// names a flip by its axis).
-    MirrorLeftRight,
-    /// `flip-horizontal-2`, mirrored about a horizontal line: Mirror ↕.
-    MirrorTopBottom,
+    /// Flip horizontal (left to right). Lucide's `flip-vertical-2`: Lucide
+    /// names a flip by its dashed axis, which here is vertical, so the
+    /// glyph pictures a left-to-right mirror as the mock-up draws it.
+    FlipHorizontal,
+    /// Flip vertical (top to bottom): Lucide's `flip-horizontal-2`, the
+    /// mirror about a horizontal dashed line.
+    FlipVertical,
     /// `grip-vertical`: a list row's drag handle.
     GripVertical,
     /// `rotate-ccw`: reset a field to the tool's value.
@@ -132,10 +147,16 @@ impl Icon {
             Self::Eye => "eye",
             Self::EyeOff => "eye-off",
             Self::LockOpen => "lock-open",
-            Self::Link2 => "link-2",
+            Self::Component => "component",
+            Self::Link => "link",
+            Self::Unlink => "unlink",
+            Self::Square => "square",
+            Self::Circle => "circle",
+            Self::Spline => "spline",
+            Self::RotateCwSquare => "rotate-cw-square",
             Self::Bookmark => "bookmark",
-            Self::MirrorLeftRight => "flip-vertical-2",
-            Self::MirrorTopBottom => "flip-horizontal-2",
+            Self::FlipHorizontal => "flip-vertical-2",
+            Self::FlipVertical => "flip-horizontal-2",
             Self::GripVertical => "grip-vertical",
             Self::RotateCcw => "rotate-ccw",
             Self::Copy => "copy",
@@ -181,10 +202,16 @@ impl Icon {
             Self::Eye => '\u{e0ba}',
             Self::EyeOff => '\u{e0bb}',
             Self::LockOpen => '\u{e10c}',
-            Self::Link2 => '\u{e103}',
+            Self::Component => '\u{e2ad}',
+            Self::Link => '\u{e102}',
+            Self::Unlink => '\u{e19c}',
+            Self::Square => '\u{e167}',
+            Self::Circle => '\u{e076}',
+            Self::Spline => '\u{e38b}',
+            Self::RotateCwSquare => '\u{e5d1}',
             Self::Bookmark => '\u{e060}',
-            Self::MirrorLeftRight => '\u{e360}',
-            Self::MirrorTopBottom => '\u{e35e}',
+            Self::FlipHorizontal => '\u{e360}',
+            Self::FlipVertical => '\u{e35e}',
             Self::GripVertical => '\u{e0eb}',
             Self::RotateCcw => '\u{e148}',
             Self::Copy => '\u{e09e}',
@@ -201,7 +228,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 48] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -229,10 +256,16 @@ impl Icon {
         Self::Eye,
         Self::EyeOff,
         Self::LockOpen,
-        Self::Link2,
+        Self::Component,
+        Self::Link,
+        Self::Unlink,
+        Self::Square,
+        Self::Circle,
+        Self::Spline,
+        Self::RotateCwSquare,
         Self::Bookmark,
-        Self::MirrorLeftRight,
-        Self::MirrorTopBottom,
+        Self::FlipHorizontal,
+        Self::FlipVertical,
         Self::GripVertical,
         Self::RotateCcw,
         Self::Copy,
