@@ -121,7 +121,10 @@ fn hole_test_reads_the_hole_not_the_piece() {
     assert!(!hole_is_narrower_than(hole, 9.9, TOL));
     assert!(hole_is_narrower_than(hole, 10.1, TOL));
     assert!(hole_is_narrower_than(hole, 11.0, TOL));
-    assert!(is_narrower_than(&region, 6.0, TOL), "the ring is under 6 mm");
+    assert!(
+        is_narrower_than(&region, 6.0, TOL),
+        "the ring is under 6 mm"
+    );
     assert!(!hole_is_narrower_than(hole, 6.0, TOL), "the hole is not");
 }
 
@@ -211,7 +214,7 @@ fn narrowest_gap_across_a_notch_of_one_piece() {
     let gap = narrowest_gap(&[region], 3.0, TOL).expect("a gap");
     assert_approx_eq!(gap.width_mm, 0.6, 0.01);
     assert_approx_eq!(gap.x_mm, 10.0, 0.31);
-    assert!(gap.y_mm > 2.0 && gap.y_mm < 12.0, "inside the slot");
+    assert!((2.0..=12.0).contains(&gap.y_mm), "along the slot");
 }
 
 #[test]

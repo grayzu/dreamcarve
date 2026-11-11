@@ -801,7 +801,9 @@ pub fn ink_without_spaces(ink: &[Region]) -> usize;
 /// of the largest circle that fits in it (inside its outer, outside its
 /// holes). Exact by erosion: `floor_regions(&[region], width_mm / 2, tol)`
 /// is empty exactly when no circle of that radius fits, so it needs no
-/// medial axis and costs one offset.
+/// medial axis and costs one offset. The erosion stops 0.1 µm short of half the width, so
+/// a region exactly `width_mm` wide is not narrower (offsets round away a
+/// sliver of zero width).
 pub fn is_narrower_than(region: &Region, width_mm: f64, tolerance_mm: f64) -> bool;
 /// A hole's widest point is under `width_mm`: the same test on the hole
 /// as a region of its own (the largest circle that fits in the hole).
@@ -817,8 +819,12 @@ pub struct WidthProfile { /* (width_mm, length_mm) samples, sorted */ }
 impl WidthProfile {
     /// The length-weighted median width, mm.
     pub fn median_mm(&self) -> f64;
-    /// The narrowest width, mm.
+    /// The narrowest width, mm. Along a corner's branch the clearance
+    /// falls towards the tip, so this is small for any shape with a
+    /// sharp corner; the report reads the median.
     pub fn min_mm(&self) -> f64;
+    /// The `(width_mm, length_mm)` samples, narrowest first.
+    pub fn samples(&self) -> &[(f64, f64)];
 }
 /// The narrowest gap between `regions`, searching no farther than
 /// `reach_mm`: the least distance between two outlines of different
@@ -842,7 +848,9 @@ pub fn simplify(contour: &Contour, tolerance_mm: f64) -> Contour;
 /// `simplify` on every contour of every region; the regions whose
 /// simplified contours cross a contour of another region, or themselves,
 /// are returned unsimplified, with their indices in the second element
-/// (`prep_smooth_skipped`).
+/// (`prep_smooth_skipped`). A region is put back when its simplified form
+/// crosses the other's original; when only the two simplified forms
+/// cross, both are. Regions keep their order and input positions.
 pub fn simplify_regions(regions: &[Region], tolerance_mm: f64) -> (Vec<Region>, Vec<usize>);
 
 // dc-geometry::carve (the drawn band, 3.4; "Drawn boundary")

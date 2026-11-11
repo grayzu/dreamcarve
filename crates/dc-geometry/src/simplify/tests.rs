@@ -180,7 +180,7 @@ fn anchors_are_deterministic() {
     let lowest = points_of(&first)
         .into_iter()
         .fold((f64::INFINITY, f64::INFINITY), |best, p| {
-            if p.1 < best.1 || (p.1 == best.1 && p.0 < best.0) {
+            if p.1.total_cmp(&best.1).then(p.0.total_cmp(&best.0)).is_lt() {
                 p
             } else {
                 best
