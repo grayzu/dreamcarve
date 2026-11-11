@@ -12,8 +12,9 @@
  * six things the import checks find (and the three they count), each once.
  * `clean.svg` is the "DC" monogram of `tests/fixtures/dc-inlay.svg` (Droid
  * Serif Bold, `inlay-fixture.ts`) as two filled compound paths, one per
- * letter, which the checks leave alone. Later slices add their drawings
- * (`ring-cross.svg`, `speckled-dc.svg`, `jagged-dc.svg`) to this script.
+ * letter, which the checks leave alone. `ring-cross.svg` is acceptance
+ * 61e's line art (#598). Later slices add their drawings (`speckled-dc.svg`,
+ * `jagged-dc.svg`) to this script.
  *
  * Dev-only tool, not part of the Cargo workspace. Run it twice: the output
  * must be byte-identical.
@@ -85,3 +86,27 @@ const clean = `<?xml version="1.0" encoding="UTF-8"?>
 </svg>
 `
 writeFileSync(join(outDir, 'clean.svg'), clean)
+
+// ring-cross.svg: acceptance 61e. A circle of radius 29 mm stroked 2 mm (ink
+// from radius 28 to 30) and two straight lines 58 mm long, 2 mm wide,
+// crossing at its centre, on a 60 mm square page. No fill anywhere, so the
+// drawing is all stroke: default mode prepares one piece with four holes,
+// `--regions` the four spaces between the lines.
+const ringCross = `<?xml version="1.0" encoding="UTF-8"?>
+<!-- DreamCarve phase 3.4 test drawing (acceptance 61e, 61h): line art in a
+     ring. Written by tools/parity/prep-fixture.ts; do not edit by hand,
+     re-run the tool. One user unit is one mm on a 60 x 60 mm page (SVG is
+     Y-down).
+       ring     a circle of radius 29 mm stroked 2 mm: ink from radius 28
+                to 30, so the drawing is 60 mm tall
+       cross    two straight lines 58 mm long, 2 mm wide, through the
+                centre, one across and one up and down (butt caps) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="60mm" viewBox="0 0 60 60">
+  <g fill="none" stroke="#000000" stroke-width="2">
+    <circle id="ring" cx="30" cy="30" r="29"/>
+    <line id="cross-across" x1="1" y1="30" x2="59" y2="30"/>
+    <line id="cross-up" x1="30" y1="1" x2="30" y2="59"/>
+  </g>
+</svg>
+`
+writeFileSync(join(outDir, 'ring-cross.svg'), ringCross)
