@@ -327,7 +327,7 @@ pub fn male_shapes(project: &Project) -> Vec<MaleShapes> {
 pub struct MaleBoundary {
     /// The Inlay.
     pub op: OperationId,
-    /// The outlines of its boundary instances ([`Inlay::boundary`]),
+    /// The outlines of its boundary instances (`boundary`),
     /// placed and mirrored with the design about the targets' centre line
     /// ([`dc_cam::inlay::male_mirror`]), in the male board's project
     /// space, mm, Y-up; every outline, a hole's included, since the
