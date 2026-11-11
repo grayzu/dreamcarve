@@ -424,3 +424,139 @@ fn single_group_has_no_heading() {
     );
     assert!(groups.iter().all(|g| g.heading), "two groups, two headings");
 }
+
+/// `tests/fixtures/<name>.dcv` opened as `<name>.dcv` and generated.
+fn quick_start(name: &str) -> Harness {
+    let file = format!("{name}.dcv");
+    generated(
+        &file,
+        &read(&repo_root().join("tests/fixtures").join(&file)),
+    )
+}
+
+/// What `check` prints as its carve lines for the project `harness`
+/// holds: `describe_carves` over a full build's runs.
+fn check_carves(harness: &Harness) -> Vec<String> {
+    let project = harness.app.project();
+    let built = dc_job::build(project, dc_job::ProgramSplit::ProjectDefault, "check");
+    dc_job::describe_carves(project, built.generated.as_deref().unwrap_or_default())
+}
+
+/// Functional 76a, acceptance 99 (slice 28, #620): on the sign, the
+/// Lettering V-Carve's carve summary is a note, the last row of its
+/// operation's group, laid out as labelled facts with *Deepest cut*
+/// first; the notes are information, so the counts are what they are
+/// without them: `check`'s count line's.
+#[test]
+fn notes_follow_their_operation_and_are_not_counted() {
+    let sign = quick_start("sign");
+    let groups = warnings::panel(&sign.app);
+    let lettering = OperationId::new("op3");
+    let group = groups
+        .iter()
+        .find(|g| g.op.as_ref() == Some(&lettering))
+        .expect("Lettering has a group");
+    let last = group.rows.last().expect("rows");
+    let note = last.note.as_ref().expect("its last row is the carve note");
+    assert_eq!(last.level, Level::Note);
+    assert_eq!(last.op.as_ref(), Some(&lettering));
+    assert_eq!(note.sections.len(), 1, "a V-Carve cuts one board");
+    let section = &note.sections[0];
+    assert_eq!(section.heading, None, "one board, no sub-heading");
+    let first = section.facts.first().expect("facts");
+    assert_eq!(first.label, "Deepest cut");
+    assert_eq!(first.value, "1.658 mm below the stock top");
+    for group in &groups {
+        let notes: Vec<usize> = group
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.note.is_some())
+            .map(|(k, _)| k)
+            .collect();
+        assert!(
+            notes.iter().all(|k| *k + 1 == group.rows.len()),
+            "a note is last in its group"
+        );
+    }
+
+    let counts = warnings::counts(&sign.app);
+    let mut without = warnings::Counts::default();
+    for row in groups.iter().flat_map(|g| &g.rows) {
+        match (row.level, &row.note) {
+            (_, Some(_)) => {}
+            (Level::Error, None) => without.errors += 1,
+            (Level::Warning, None) => without.warnings += 1,
+            (Level::Hint, None) => without.hints += 1,
+            (Level::Note, None) => without.notes += 1,
+        }
+    }
+    assert_eq!(counts, without, "the notes are not counted");
+    let text = warnings::copy_text(&sign.app);
+    assert!(
+        text.ends_with(&format!(
+            "sign.dcv: 0 error(s), {} warning(s)\n",
+            counts.warnings + counts.hints
+        )),
+        "{text}"
+    );
+}
+
+/// Functional 76a (slice 28, #620): an Inlay that cuts both boards has a
+/// sub-heading per board, *Female board* then *Male board*, each with
+/// its deepest cut first and the male's start plane among its facts.
+#[test]
+fn inlay_notes_have_board_subheadings() {
+    let dc = quick_start("dc");
+    let note = warnings::panel(&dc.app)
+        .into_iter()
+        .flat_map(|g| g.rows)
+        .find_map(|r| r.note)
+        .expect("the Inlay's note");
+    let headings: Vec<Option<&str>> = note.sections.iter().map(|s| s.heading.as_deref()).collect();
+    assert_eq!(headings, [Some("Female board"), Some("Male board")]);
+    for section in &note.sections {
+        assert_eq!(
+            section.facts.first().map(|f| f.label.as_str()),
+            Some("Deepest cut")
+        );
+    }
+    let male: Vec<&str> = note.sections[1]
+        .facts
+        .iter()
+        .map(|f| f.label.as_str())
+        .collect();
+    assert!(male.contains(&"Start plane"), "{male:?}");
+    assert!(male.contains(&"Cut-out"), "{male:?}");
+}
+
+/// Acceptance 82 and 99 (slice 28, #620): *Copy* writes the carve notes
+/// as `check` prints them, after the warnings and before the count line,
+/// so the drawer's text stays `check`'s line for line: on the sign (two
+/// V-Carves) and the one-file Inlay (a line per board).
+#[test]
+fn copy_includes_notes_as_check_prints_them() {
+    for name in ["sign", "dc"] {
+        let harness = quick_start(name);
+        let carves = check_carves(&harness);
+        assert!(!carves.is_empty(), "{name} carves");
+        let text = warnings::copy_text(&harness.app);
+        let lines: Vec<&str> = text.lines().collect();
+        let count = lines.len() - 1;
+        assert_eq!(
+            lines[count - carves.len()..count].to_vec(),
+            carves.iter().map(String::as_str).collect::<Vec<_>>(),
+            "{name}: {text}"
+        );
+        assert!(
+            lines[count].starts_with(&format!("{name}.dcv: ")),
+            "{name}: the count line last"
+        );
+        let panel: Vec<String> = warnings::lines(&harness.app);
+        assert_eq!(
+            panel.iter().map(String::as_str).collect::<Vec<_>>(),
+            lines[..count].to_vec(),
+            "{name}: the panel's lines are Copy's"
+        );
+    }
+}
