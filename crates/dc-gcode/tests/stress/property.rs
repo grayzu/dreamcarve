@@ -49,6 +49,14 @@ pub enum Kind {
     MaleRounded,
     /// Inlay male with a cut-out.
     MaleCutOut,
+    /// Inlay male whose band is a drawn boundary (#604), no clearing: a V
+    /// wall at the drawn edge.
+    BoundaryVWall,
+    /// Inlay male with a drawn boundary and the end mill's pass: an open
+    /// edge.
+    BoundaryOpenEdge,
+    /// Inlay male with a drawn boundary and a cut-out.
+    BoundaryCutOut,
     /// V-Carve from the stock top.
     VCarveTop,
     /// V-Carve from a start depth on a floor cleared beforehand.
@@ -477,7 +485,12 @@ const KNOWN_CASES: [(&str, u64, Kind, u32); 0] = [];
 /// settings drawn: as [`explains`], each names a setting that does not
 /// fit and how to change it. `inlay_cut_out_no_room` is
 /// [`CamError::InlayCutOutNoRoom`], which validation reports first.
-const EXPLAINED_PROBLEMS: [&str; 1] = ["inlay_cut_out_no_room"];
+const EXPLAINED_PROBLEMS: [&str; 2] = [
+    "inlay_cut_out_no_room",
+    // #604: a drawn boundary too tight round the design (a contour a few
+    // millimetres out of a design with near parts is drawn at random).
+    "inlay_boundary_crosses_design",
+];
 
 /// The seat check's grid step, mm, as [`carve`] reads every pair.
 const SEAT_GRID_MM: f64 = 0.1;

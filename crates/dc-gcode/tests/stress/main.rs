@@ -55,11 +55,13 @@
     reason = "test code reports failure by panicking"
 )]
 
+mod boundary;
 mod designs;
 mod lettering;
 mod property;
 mod rng;
 
+use dc_project::{ToolKind, Units};
 use designs::Design;
 use property::{Kind, Outcome, Seats, carve, case};
 
@@ -200,6 +202,136 @@ fn generator_never_refuses_its_own_move() {
         Seats::None,
         false,
     ));
+}
+
+/// Seeds of the small line-art and lettering designs the drawn boundary is
+/// carved on in CI (#604). Together they cover all four bench bits, each in
+/// mm and in inch (`boundary_seeds_cover_every_bit_and_unit`).
+const BOUNDARY_LINE_ART_SEEDS: [u64; 4] = [0, 1, 3, 7];
+const BOUNDARY_LETTERING_SEEDS: [u64; 4] = [2, 4, 5, 10];
+
+/// The bench V-bits' included angles, degrees.
+const BENCH_BITS_DEG: [f64; 4] = [15.0, 30.0, 60.0, 90.0];
+
+/// The (index of the bit in [`BENCH_BITS_DEG`], units) of the case of
+/// `family` and `seed`.
+fn bit_and_units(family: Family, seed: u64) -> (usize, Units) {
+    let c = case(family.0, seed, (family.1)(seed));
+    let ToolKind::VBit { included_angle_deg } = c.project.tools[0].cutter else {
+        panic!("the first tool is the V-bit");
+    };
+    let bit = BENCH_BITS_DEG
+        .iter()
+        .position(|a| (a - included_angle_deg).abs() < 0.5)
+        .expect("a bench bit");
+    (bit, c.project.display_units)
+}
+
+/// Carves the drawn-boundary cases ([`boundary::boundary_case`]) of the
+/// small designs of `family` at `seeds`: the male with a V wall, with the
+/// end mill's pass and with a cut-out at a drawn edge, each through
+/// S1–S19 with the pair seated, or refused with an explained problem.
+fn run_boundary(family: Family, seeds: &[u64], seats: Seats) -> Outcome {
+    let mut all = Outcome::default();
+    for &seed in seeds {
+        let mut c = case(family.0, seed, (family.1)(seed));
+        c.project.arc_fit_tolerance_mm = None;
+        all.absorb(carve(&boundary::boundary_case(&c), seats, true));
+    }
+    all
+}
+
+/// The drawn boundary's CI seeds ([`BOUNDARY_LINE_ART_SEEDS`] and
+/// [`BOUNDARY_LETTERING_SEEDS`]) draw every bench bit with both millimetre
+/// and inch programs between them (#604: "every bit, mm and inch").
+#[test]
+fn boundary_seeds_cover_every_bit_and_unit() {
+    let mut seen = std::collections::BTreeSet::new();
+    for (family, seeds) in [
+        (LINE_ART_SMALL, BOUNDARY_LINE_ART_SEEDS),
+        (LETTERING_SMALL, BOUNDARY_LETTERING_SEEDS),
+    ] {
+        for seed in seeds {
+            let (angle, units) = bit_and_units(family, seed);
+            seen.insert((angle, units == Units::Inch));
+        }
+    }
+    let all: std::collections::BTreeSet<(usize, bool)> = (0..BENCH_BITS_DEG.len())
+        .flat_map(|bit| [(bit, false), (bit, true)])
+        .collect();
+    assert_eq!(seen, all);
+}
+
+/// The drawn boundary on small line-art designs: the male with a V wall,
+/// with the end mill's pass and with a cut-out at a drawn edge (an oval, a
+/// rounded rectangle or a contour, one or two shapes), every bench bit,
+/// mm and inch, each through S1–S19 with one pair per design seated within
+/// 0.05 mm, or refused by an explained problem (#604; "Drawn boundary",
+/// "Stress").
+#[test]
+fn line_art_with_a_drawn_boundary_carves_or_explains() {
+    let outcome = run_boundary(LINE_ART_SMALL, &BOUNDARY_LINE_ART_SEEDS, Seats::One);
+    assert!(outcome.carved > 0, "{outcome:?}");
+    assert_none_failed(&outcome);
+}
+
+/// The drawn boundary on small lettering designs, as for line art.
+#[test]
+fn lettering_with_a_drawn_boundary_carves_or_explains() {
+    let outcome = run_boundary(LETTERING_SMALL, &BOUNDARY_LETTERING_SEEDS, Seats::One);
+    assert!(outcome.carved > 0, "{outcome:?}");
+    assert_none_failed(&outcome);
+}
+
+/// The boundary sweep (#604): `STRESS_CASES` full-size designs of each
+/// family from `STRESS_SEED` with a drawn boundary, every male's two
+/// boards seated, on every core. Run like the large sweep.
+#[test]
+#[ignore = "the boundary sweep (#604): run with --release -- --ignored"]
+fn boundary_sweep() {
+    let number = |name: &str, default: u64| {
+        std::env::var(name)
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    };
+    let count = number("STRESS_CASES", SWEEP_CASES);
+    let first = number("STRESS_SEED", 0);
+    let jobs: Vec<(Family, u64)> = [LINE_ART, LETTERING]
+        .into_iter()
+        .flat_map(|family| (first..first + count).map(move |seed| (family, seed)))
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let all = std::sync::Mutex::new(Outcome::default());
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    std::thread::scope(|scope| {
+        for _ in 0..threads {
+            scope.spawn(|| {
+                loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(&((family, draw), seed)) = jobs.get(k) else {
+                        break;
+                    };
+                    let c = case(family, seed, draw(seed));
+                    let outcome = carve(&boundary::boundary_case(&c), Seats::All, true);
+                    println!(
+                        "{family} seed {seed}: {} carved, {} failures, {} known",
+                        outcome.carved,
+                        outcome.failures.len(),
+                        outcome.known.len()
+                    );
+                    for f in &outcome.failures {
+                        println!("FAIL {f}");
+                    }
+                    all.lock()
+                        .expect("no thread panics holding it")
+                        .absorb(outcome);
+                }
+            });
+        }
+    });
+    println!("boundary sweep: {count} designs of each family from seed {first}");
+    assert_none_failed(&all.into_inner().expect("the threads are done"));
 }
 
 /// The large sweep: `STRESS_CASES` full-size designs of each family from
