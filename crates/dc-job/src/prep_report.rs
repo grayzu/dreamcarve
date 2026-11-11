@@ -7,12 +7,96 @@
 //! shell prints them; nothing here does I/O.
 
 use dc_import::ImportWarning;
-use dc_import::prep::PrepReport;
+use dc_import::prep::{PrepMode, PrepReport, REPORT_MIN_FEATURE_MM, WidthFigure};
 
-/// The report's lines.
+/// The report's lines for a run that read `input` and wrote `output` (the
+/// names as the shell shows them), in order: the header, then, indented, a
+/// line each for what was read, the strokes made into areas, the design's
+/// height, the result, what was dropped, the thinnest piece, the narrowest
+/// gap, those widths at 100, 200 and 300 mm tall, and the height at which
+/// the narrower one reaches the guide width. A line with nothing to say is
+/// left out.
 #[must_use]
-pub fn lines(_report: &PrepReport, _input: &str, _output: &str) -> Vec<String> {
-    Vec::new()
+pub fn lines(report: &PrepReport, input: &str, output: &str) -> Vec<String> {
+    let height = report.design_height_mm;
+    let mode = match report.mode {
+        PrepMode::Shapes => "shapes",
+        PrepMode::Regions => "regions",
+    };
+    let mut lines = vec![format!("Prepared {input} \u{2192} {output} ({mode})")];
+    lines.push(format!("  {}", read_line(report)));
+    let strokes = &report.strokes;
+    if strokes.count > 0 {
+        let widths = match (strokes.least_width_mm, strokes.greatest_width_mm) {
+            (Some(least), Some(greatest)) if mm(least) != mm(greatest) => {
+                format!(", {} to {} mm wide", mm(least), mm(greatest))
+            }
+            (Some(width), _) | (None, Some(width)) => format!(", {} mm wide", mm(width)),
+            (None, None) => String::new(),
+        };
+        lines.push(format!(
+            "  Strokes made into areas: {}{widths}",
+            strokes.count
+        ));
+    }
+    lines.push(format!("  Design height: {} mm", mm(height)));
+    lines.push(format!(
+        "  Result: {}, {}",
+        count(report.pieces, "piece", "pieces"),
+        count(report.holes, "hole", "holes")
+    ));
+    if let Some(dropped) = dropped_line(report) {
+        lines.push(format!("  {dropped}"));
+    }
+    let gap_label = match report.mode {
+        PrepMode::Shapes => "Narrowest gap",
+        PrepMode::Regions => "Narrowest gap, the board ridge between pockets",
+    };
+    if let Some(figure) = &report.thinnest_piece {
+        lines.push(format!(
+            "  Thinnest piece: {}",
+            width(figure, height, " of the height")
+        ));
+    }
+    if let Some(figure) = &report.narrowest_gap {
+        lines.push(format!("  {gap_label}: {}", width(figure, height, "")));
+    }
+    let scaled = |label: &str, figure: &WidthFigure| {
+        let widths: Vec<String> = figure.at_heights_mm.iter().map(|w| mm(*w)).collect();
+        format!("{label} {} mm", widths.join(" / "))
+    };
+    let at: Vec<String> = [
+        report
+            .thinnest_piece
+            .as_ref()
+            .map(|f| scaled("thinnest piece", f)),
+        report
+            .narrowest_gap
+            .as_ref()
+            .map(|f| scaled("narrowest gap", f)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if !at.is_empty() {
+        lines.push(format!("  At 100 / 200 / 300 mm tall: {}", at.join("; ")));
+    }
+    // The narrower of the two is the one that limits the size.
+    let limiting = match (&report.thinnest_piece, &report.narrowest_gap) {
+        (Some(piece), Some(gap)) if gap.reaches_guide_at_mm > piece.reaches_guide_at_mm => {
+            Some(("narrowest gap", gap))
+        }
+        (Some(piece), _) => Some(("thinnest piece", piece)),
+        (None, Some(gap)) => Some(("narrowest gap", gap)),
+        (None, None) => None,
+    };
+    if let Some((name, figure)) = limiting {
+        lines.push(format!(
+            "  The {name} reaches {REPORT_MIN_FEATURE_MM} mm at {:.0} mm tall.",
+            figure.reaches_guide_at_mm
+        ));
+    }
+    lines
 }
 
 /// The report as text, `\n` between lines and none after the last.
@@ -21,10 +105,159 @@ pub fn render(report: &PrepReport, input: &str, output: &str) -> String {
     lines(report, input, output).join("\n")
 }
 
-/// `warning: <code>: <message>` for a warning of an `image-prep` run.
+/// `warning: <code>: <message>` for a warning of an `image-prep` run. The
+/// import checks that `init` words as advice to run `image-prep` are
+/// worded here as what the run did, since the user has run it.
 #[must_use]
-pub fn warning_line(_warning: &ImportWarning) -> String {
-    String::new()
+pub fn warning_line(warning: &ImportWarning) -> String {
+    let message = match warning {
+        ImportWarning::SvgHoleAsSeparatePath {
+            count,
+            inner,
+            outer,
+        } => format!(
+            "{count} filled path(s) lie wholly inside another filled path; the first is `{inner}` inside `{outer}`. Each is a hole of the path that contains it, as `init` reads nested paths"
+        ),
+        ImportWarning::SvgStrokeOnlyPath {
+            count,
+            first,
+            width_mm,
+        } => format!(
+            "{count} path(s) have a stroke and no fill; the first is `{first}`, stroked {width_mm:.3} mm wide. Their strokes were made into areas"
+        ),
+        ImportWarning::SvgHiddenObject {
+            count,
+            first,
+            reason,
+        } => format!(
+            "{count} object(s) are not drawn ({}) and were skipped; the first is `{first}`",
+            reason.describe()
+        ),
+        other => other.message_without_advice(),
+    };
+    format!("warning: {}: {message}", warning.code())
+}
+
+/// `Read:`, always: the paths, what was skipped, what cannot be converted.
+fn read_line(report: &PrepReport) -> String {
+    let read = &report.read;
+    let skipped: Vec<String> = [
+        (read.hidden, "hidden"),
+        (read.unpainted, "unpainted"),
+        (read.zero_opacity, "zero-opacity"),
+        (read.display_none, "in hidden layers"),
+    ]
+    .into_iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, what)| format!("{n} {what}"))
+    .collect();
+    let of_them = if skipped.is_empty() {
+        String::new()
+    } else {
+        format!(", of them {} skipped", join_and(&skipped))
+    };
+    format!(
+        "Read: {}{of_them}; {} text, {} images, {} clip paths, {} masks",
+        count(read.paths, "path", "paths"),
+        read.text,
+        read.images,
+        read.clip_paths,
+        read.masks
+    )
+}
+
+/// `Dropped:`, when anything was dropped, filled or smoothed.
+fn dropped_line(report: &PrepReport) -> Option<String> {
+    let height = report.design_height_mm;
+    let threshold = |threshold_mm: f64, of: &str| {
+        format!(
+            "{} %{of} ({} mm)",
+            percent(threshold_mm, height),
+            mm_fine(threshold_mm)
+        )
+    };
+    let mut removed = Vec::new();
+    if report.dropped_pieces > 0 {
+        removed.push(format!(
+            "{} below {}",
+            count(report.dropped_pieces, "piece", "pieces"),
+            threshold(report.min_detail_mm, " of the height")
+        ));
+    }
+    if report.filled_holes > 0 {
+        let below = if report.dropped_pieces == 0 {
+            format!(
+                " below {}",
+                threshold(report.min_detail_mm, " of the height")
+            )
+        } else {
+            String::new()
+        };
+        removed.push(format!(
+            "{} filled{below}",
+            count(report.filled_holes, "hole", "holes")
+        ));
+    }
+    let mut parts = Vec::new();
+    if !removed.is_empty() {
+        parts.push(removed.join(", "));
+    }
+    if report.smoothed_vertices > 0 {
+        parts.push(format!(
+            "smoothed within {}",
+            threshold(report.smooth_mm, "")
+        ));
+    }
+    (!parts.is_empty()).then(|| format!("Dropped: {}", parts.join("; ")))
+}
+
+/// `3.10 mm (3.15 % of the height)`: the share of the height is named
+/// once, on the first width, and the next says `0.56 %`.
+fn width(figure: &WidthFigure, height_mm: f64, of: &str) -> String {
+    format!(
+        "{} mm ({} %{of})",
+        mm(figure.width_mm),
+        percent(figure.width_mm, height_mm)
+    )
+}
+
+/// Millimetres to two decimals, three when under 0.1 so a thin width is
+/// not shown as 0.00.
+fn mm(value: f64) -> String {
+    if value != 0.0 && value.abs() < 0.1 {
+        format!("{value:.3}")
+    } else {
+        format!("{value:.2}")
+    }
+}
+
+/// Millimetres to three decimals: the thresholds, which are sub-millimetre.
+fn mm_fine(value: f64) -> String {
+    format!("{value:.3}")
+}
+
+/// `part` as a percentage of `whole`, two decimals.
+fn percent(part: f64, whole: f64) -> String {
+    let share = if whole > 0.0 {
+        part / whole * 100.0
+    } else {
+        0.0
+    };
+    format!("{share:.2}")
+}
+
+/// `1 piece`, `2 pieces`.
+fn count(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+/// `a`, `a and b`, `a, b and c`.
+fn join_and(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
 }
 
 #[cfg(test)]

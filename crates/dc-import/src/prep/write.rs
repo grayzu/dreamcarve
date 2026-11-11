@@ -7,18 +7,166 @@
 //! so [`prepare`](super::prepare) never returns pieces it cannot prove the
 //! importer reads as they are.
 
-use super::Prepared;
-use crate::ImportError;
+use std::fmt::Write as _;
 
-/// The SVG text of `prepared`.
+use super::{MIN_FLATTEN_TOLERANCE_MM, Prepared};
+use crate::{ImportError, SvgImportOptions, import_svg};
+use dc_geometry::{Contour, Polyline, Region, nest};
+
+/// The SVG text of `prepared`: the page at the input's physical size in
+/// millimetres with a one-to-one `viewBox`, and one filled `<path>` per
+/// piece (`piece-1`, `piece-2`, … in the pieces' canonical order), its
+/// outline first and its holes after as further subpaths, `evenodd` so a
+/// hole is a hole whatever its winding. `M`, `L` and `Z` only; numbers to
+/// four decimals (0.1 µm) without trailing zeros, negative zero written
+/// `0`; `\n` line ends; Y flipped back to the SVG's Y-down
+/// (`y_svg = page_height_mm − y`). No metadata, description, version
+/// string, time or stroke attribute, so the same pieces always give the
+/// same text.
+///
+/// [`prepare`](super::prepare) has proven this text reads back as the
+/// pieces it was written from.
 #[must_use]
-pub fn write_svg(_prepared: &Prepared) -> String {
-    String::new()
+pub fn write_svg(prepared: &Prepared) -> String {
+    let mut out = String::new();
+    let (width, height) = (prepared.page_width_mm, prepared.page_height_mm);
+    out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let _ = writeln!(
+        out,
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{w}mm\" height=\"{h}mm\" viewBox=\"0 0 {w} {h}\">",
+        w = number(width),
+        h = number(height),
+    );
+    for (index, piece) in prepared.pieces.iter().enumerate() {
+        let _ = write!(out, "  <path id=\"piece-{}\" d=\"", index + 1);
+        let contours = std::iter::once(piece.outer()).chain(piece.holes());
+        for (n, contour) in contours.enumerate() {
+            if n > 0 {
+                out.push(' ');
+            }
+            subpath(&mut out, contour, height);
+        }
+        out.push_str("\" fill=\"#000000\" fill-rule=\"evenodd\"/>\n");
+    }
+    out.push_str("</svg>\n");
+    out
 }
 
-/// Reads the written form of `prepared` back.
-pub(crate) fn verify(_prepared: &Prepared, _max_vertices: usize) -> Result<(), ImportError> {
+/// Appends `M x y L x y … Z` for `contour`, Y flipped about the page.
+fn subpath(out: &mut String, contour: &Contour, page_height_mm: f64) {
+    let polyline = contour.polyline();
+    // Prepared pieces are polygons; an arc, were one ever to appear, is
+    // written as the line segments the importer would flatten it to.
+    let flattened;
+    let polyline = if polyline.vertices().iter().any(|v| v.bulge != 0.0) {
+        flattened = polyline.with_arcs_flattened(MIN_FLATTEN_TOLERANCE_MM);
+        &flattened
+    } else {
+        polyline
+    };
+    for (n, vertex) in polyline.vertices().iter().enumerate() {
+        let _ = write!(
+            out,
+            "{} {} {}",
+            if n == 0 { "M" } else { " L" },
+            number(vertex.x),
+            number(page_height_mm - vertex.y),
+        );
+    }
+    out.push_str(" Z");
+}
+
+/// `value` to four decimals, trailing zeros and a bare point dropped, and
+/// negative zero (and anything that rounds to it) written `0`.
+fn number(value: f64) -> String {
+    let text = format!("{value:.4}");
+    let text = if text.contains('.') {
+        text.trim_end_matches('0').trim_end_matches('.')
+    } else {
+        text.as_str()
+    };
+    if text == "-0" || text.is_empty() {
+        "0".to_owned()
+    } else {
+        text.to_owned()
+    }
+}
+
+/// Reads the text [`write_svg`] writes for `prepared` back through the
+/// importer (default options, but for the vertex cap) and `nest`, and
+/// requires what it must be: one definition per piece, each reading as one
+/// piece with the same number of holes and an area within the piece's
+/// perimeter times the importer's flattening tolerance of the piece's.
+///
+/// # Errors
+///
+/// [`ImportError::PrepOutputUnreadable`], naming what differed.
+pub(crate) fn verify(prepared: &Prepared, max_vertices: usize) -> Result<(), ImportError> {
+    if prepared.pieces.is_empty() {
+        return Err(unreadable("there are no pieces to write"));
+    }
+    let text = write_svg(prepared);
+    let options = SvgImportOptions {
+        max_vertices,
+        ..SvgImportOptions::new()
+    };
+    let (import, _) = import_svg(text.as_bytes(), &options).map_err(unreadable)?;
+    if import.definitions.len() != prepared.pieces.len() {
+        return Err(unreadable(format!(
+            "{} pieces were written and the importer reads {} shapes",
+            prepared.pieces.len(),
+            import.definitions.len()
+        )));
+    }
+    for (index, (piece, definition)) in prepared.pieces.iter().zip(&import.definitions).enumerate()
+    {
+        let which = index + 1;
+        let contours = definition
+            .profiles
+            .iter()
+            .map(|profile| Contour::new(profile.clone()))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| unreadable(format!("piece-{which}: {e}")))?;
+        let (read, _) = nest(contours).map_err(|e| unreadable(format!("piece-{which}: {e}")))?;
+        let [read] = read.as_slice() else {
+            return Err(unreadable(format!(
+                "piece-{which} reads as {} pieces, not one",
+                read.len()
+            )));
+        };
+        if read.holes().len() != piece.holes().len() {
+            return Err(unreadable(format!(
+                "piece-{which} has {} holes and reads back with {}",
+                piece.holes().len(),
+                read.holes().len()
+            )));
+        }
+        let allowed = perimeter_mm(piece) * options.flatten_tolerance_mm;
+        let differs = (read.area_mm2() - piece.area_mm2()).abs();
+        // A NaN area is a mismatch, not a pass.
+        let within = differs.is_finite() && differs <= allowed;
+        if !within {
+            return Err(unreadable(format!(
+                "piece-{which} has an area of {:.4} mm² and reads back as {:.4} mm²",
+                piece.area_mm2(),
+                read.area_mm2()
+            )));
+        }
+    }
     Ok(())
+}
+
+fn perimeter_mm(piece: &Region) -> f64 {
+    std::iter::once(piece.outer())
+        .chain(piece.holes())
+        .map(|c| Polyline::length_mm(c.polyline()))
+        .sum()
+}
+
+fn unreadable(reason: impl std::fmt::Display) -> ImportError {
+    ImportError::PrepOutputUnreadable {
+        reason: reason.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -152,7 +300,8 @@ mod tests {
         // The area is the F's: 30 x 8 bar, 50 x 8 stem less overlap, and
         // a 16 x 8 middle arm.
         let expected = 30.0 * 8.0 + 8.0 * 42.0 + 16.0 * 8.0;
-        assert!((area_mm2(&read_back(&out)) - expected).abs() < 1e-6);
+        // (usvg keeps coordinates as f32, so the importer reads to ~1e-6.)
+        assert!((area_mm2(&read_back(&out)) - expected).abs() < 0.01);
     }
 
     #[test]
@@ -171,7 +320,7 @@ mod tests {
         let contour_box = regions[0].outer().polyline().bounds().expect("box");
         same_box(input.bounds.expect("box"), contour_box);
         assert!(
-            (area_mm2(&regions) - 50.0 * 25.0).abs() < 1e-6,
+            (area_mm2(&regions) - 50.0 * 25.0).abs() < 0.01,
             "{}",
             area_mm2(&regions)
         );
@@ -190,7 +339,8 @@ mod tests {
             PrepMode::Shapes,
         );
         assert!(out.contains("M 0 ") || out.contains(" 0 "), "{out}");
-        for token in out.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')) {
+        let body = out.split_once('\n').expect("a declaration line").1;
+        for token in body.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-')) {
             assert_ne!(token, "-0", "{out}");
             assert!(
                 !token.contains('.') || !token.ends_with('0'),
