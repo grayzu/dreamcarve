@@ -49,7 +49,7 @@ use dc_project::{Board, ClearedPlane, DrillCycle, Operation, OperationId, Projec
 ///   own end mills before its V-bit's (#406), whether or not a pass
 ///   reaches anything;
 /// - [`Warning::StartDepthMismatch`] for every enabled operation cut from
-///   a start plane (a V-Carve, a countersink Drill) whose footprint an
+///   a start plane (a V-Carve, a countersink Drill, a Photo V-Carve) whose footprint an
 ///   earlier floor at another depth holds, a Pocket's or a V-Carve's flat
 ///   floor ([`start_plane`]), in project order. These read the project
 ///   only, not `generated`.
@@ -188,10 +188,10 @@ struct StartSetting {
 
 /// The start-plane setting of `op`, for the operations cut from a start
 /// plane; `None` for the others. This is the list of start-plane
-/// operations: a V-Carve and a countersink Drill (format 21); a Photo
-/// V-Carve (sub-phase 3.5, format 27) joins it here with its generator
-/// (#646), and [`start_plane`] and [`check`] then cover it. An Inlay is
-/// exempt (its start plane is the stock top or the plug's own design).
+/// operations: a V-Carve, a countersink Drill (format 21) and a Photo
+/// V-Carve (sub-phase 3.5, format 27, #646), whose footprint is its
+/// picture's rectangle. An Inlay is exempt (its start plane is the stock
+/// top or the plug's own design).
 /// The matches are exhaustive so a new operation or Drill cycle must say.
 fn start_setting(op: &Operation) -> Option<StartSetting> {
     match op {
@@ -216,13 +216,11 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
         | Operation::Bore(_)
         | Operation::Engrave(_)
         | Operation::Inlay(_) => None,
-        // Format 27 (#644): the record is here before the generator.
-        // Nothing is cut for a Photo V-Carve yet (`generate_photo`
-        // refuses it), so there is no start plane to check; validation
-        // already reports `start_depth_uncleared` for it.
-        // TODO(#646): its `start_depth_mm` and
-        // `start_plane_cleared_externally`, as a V-Carve's.
-        Operation::PhotoVCarve(_) => None,
+        // Format 27 (#646): as a V-Carve's.
+        Operation::PhotoVCarve(photo) => Some(StartSetting {
+            start_depth_mm: photo.start_depth_mm,
+            cleared_externally: photo.start_plane_cleared_externally,
+        }),
     }
 }
 

@@ -844,8 +844,9 @@ pub enum CamError {
         /// The start depth given, mm.
         start_depth_mm: f64,
     },
-    /// A V-Carve starts below the stock top, no enabled earlier Pocket
-    /// contains its targets, and the operation does not say another
+    /// A V-Carve, a countersink or a Photo V-Carve starts below the stock
+    /// top, no enabled earlier Pocket holds its footprint, and the
+    /// operation does not say another
     /// program cleared it (`start_depth_uncleared`; security review M2).
     /// Validation reports this first.
     #[error(
@@ -1047,16 +1048,6 @@ pub enum CamError {
         bitmap: BitmapId,
         /// Why.
         reason: BitmapError,
-    },
-    /// The operation is a Photo V-Carve, whose record a project can hold
-    /// (format 27, #644) before its generator is built.
-    // TODO(#646): remove with the generator.
-    #[error(
-        "operation `{op}` is a Photo V-Carve, which this version of DreamCarve cannot cut yet; disable it to export the project's other operations"
-    )]
-    PhotoNotBuilt {
-        /// The operation.
-        op: OperationId,
     },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.

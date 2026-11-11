@@ -359,8 +359,7 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
                 .collect::<Result<Vec<_>, _>>()
                 .map(|runs| (runs, w))
         }),
-        // Format 27 (#644): refused with `CamError::PhotoNotBuilt` until
-        // the generator lands (#646), so the error below names it.
+        // Format 27 (#646): one run, its own, on the stock.
         Operation::PhotoVCarve(op) => generate_photo(project, op).map(|(t, w)| (plain(t), w)),
         // Generated above, board by board.
         Operation::Inlay(_) => return out,
@@ -389,8 +388,9 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
 
 /// Whether validation already reports `warning`, so generation does not
 /// repeat it: `clearing_not_descending` (#406), `inlay_plug_base_thin`
-/// (#434) and the drawn boundary's `inlay_margin_ignored`,
-/// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603).
+/// (#434), the drawn boundary's `inlay_margin_ignored`,
+/// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603), and
+/// `photo_lines_overlap` (#646).
 fn reported_by_validation(warning: &Warning) -> bool {
     matches!(
         warning,
@@ -399,6 +399,7 @@ fn reported_by_validation(warning: &Warning) -> bool {
             | Warning::InlayMarginIgnored { .. }
             | Warning::InlayBoundaryEmpty { .. }
             | Warning::InlayBoundaryHoleIgnored { .. }
+            | Warning::PhotoLinesOverlap { .. }
     )
 }
 
