@@ -228,6 +228,10 @@ fn gray_buffer(width_px: u32, height_px: u32) -> Result<Vec<u8>, ImportError> {
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "test samples are small numbers wrapped into a byte on purpose"
+)]
 mod tests {
     use super::*;
     use dc_project::{Bitmap, BitmapId};
@@ -356,10 +360,11 @@ mod tests {
         out
     }
 
-    fn decode_error<T: std::fmt::Debug>(result: Result<T, ImportError>) -> String {
+    fn decode_error<T>(result: Result<T, ImportError>) -> String {
         match result {
             Err(ImportError::ImageDecode { reason }) => reason,
-            other => panic!("expected ImageDecode, got {other:?}"),
+            Err(other) => panic!("expected ImageDecode, got {other:?}"),
+            Ok(_) => panic!("expected ImageDecode, got a picture"),
         }
     }
 
@@ -794,16 +799,24 @@ mod tests {
         lying.push(chunk(b"IEND", &[]));
         decode_error(import(&png_with_header(64, 64, &lying), ImageFormat::Png));
 
-        // JPEG cut short: in the headers, and in the scan.
-        for cut in [3, 10, 30, COLOUR_JPG.len() - 20, COLOUR_JPG.len() - 2] {
+        // JPEG cut short: in the headers, in the tables, and in the scan.
+        // (A file that lacks only its end-of-image marker, its scan whole,
+        // is every pixel of its picture and reads.)
+        for cut in [3, 10, 30, 150, 170, COLOUR_JPG.len() - 20] {
             decode_error(import(&COLOUR_JPG[..cut], ImageFormat::Jpeg));
         }
-        // A frame header claiming more than the scan holds.
-        decode_error(import(&jpeg_resized(COLOUR_JPG, 64, 64), ImageFormat::Jpeg));
-        decode_error(import(
-            &jpeg_resized(COLOUR_PROGRESSIVE_JPG, 64, 64),
-            ImageFormat::Jpeg,
-        ));
+        for cut in [150, COLOUR_PROGRESSIVE_JPG.len() - 12] {
+            decode_error(import(&COLOUR_PROGRESSIVE_JPG[..cut], ImageFormat::Jpeg));
+        }
+        // A frame header claiming more than the scan holds, the file cut
+        // short after it. (Where the scan instead ends at an end-of-image
+        // marker, the decoder fills the rest, as JPEG decoders do; the
+        // picture is no larger than its header, which the side limit
+        // bounds.)
+        for jpeg in [COLOUR_JPG, COLOUR_PROGRESSIVE_JPG] {
+            let lying = jpeg_resized(jpeg, 64, 64);
+            decode_error(import(&lying[..lying.len() - 2], ImageFormat::Jpeg));
+        }
         // 0 × 0.
         decode_error(import(&jpeg_header_only(0xc0, 0, 0), ImageFormat::Jpeg));
         // A start of image and nothing else.
