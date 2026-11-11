@@ -1,6 +1,8 @@
 # Phase 4: GUI, CAM only — Design Spec
 
-**Status:** accepted (merged in #460, 2026-11-03)
+**Status:** accepted (merged in #460, 2026-11-03); amended by the
+screenshot review of #549 (2026-11-10): "Review redesign" below and the
+review slices 23–36
 **Functional spec:** `functional.md`
 **Visual design:** `experience.md` (the design language: principles, type,
 colour, controls, interaction, egui realisation, review checklist)
@@ -344,6 +346,16 @@ built by `fields::set(record, key, value)`; the label is "Set <field> of
 <name>". Located warnings (`Finding::field` naming `operations[op].<path>`)
 are matched to rows by key path and drawn under them by the shell.
 
+Since the review (functional 66, 66a): `Group::Identity` is gone (the
+name is the header's, `enabled` the list's) and `Group::Setup` is first;
+a row's group is still decided only in the table, so moving a field to
+Setup is a table edit and acceptance 73's walk is unchanged.
+`editor::summary::group(kind, group, record, project, units) -> String`
+builds a closed group's one-line summary from the same rows, through
+`units::format`, so it can never show a value the fields do not. The
+editor's open state per `(kind, group)` lives in `Prefs::sections`; a
+group holding a located finding opens on selection.
+
 ### The Design Tree and placement
 
 `dc-app::tree` produces rows from the snapshot (instances in file order,
@@ -357,6 +369,29 @@ for the angle, mirror as a scale of −1 on one axis. `dc_geometry::Transform`
 composes; definitions are never written. Locked instances are filtered out
 of `TransformInstances` by `apply`, which returns `CommandError::Locked`
 naming them, and the shell shows that in the status bar.
+
+### Targets on the drawing
+
+`dc-app::editor::targets` (review, functional 67) holds the
+target-editing state: `TargetEdit { op, pending: BTreeSet<InstanceId> }`
+in `App`, entered and left by the shell, never a `Command`; `Done` emits
+one `UpdateOperation` with the new targets and the label *Set targets of
+"<name>"*. While it is `Some`, `pick` results toggle membership instead
+of selecting, and `TransformInstances` is not emitted. The `Scene` gains
+a per-shape style (`Normal`, `Target(OpColour)`, `Faded`) derived from
+the operation selection, so the highlight costs no extra pass, and
+`tree::rows` gains `target_of: Option<OpColour>`.
+
+### Arrange
+
+`dc-app::arrange` turns the toolbar's actions into
+`TransformInstances` about the selection's bounding-box centre:
+`rotate(deg)` (positive anticlockwise, Y-up; the toolbar's 90° clockwise
+is `rotate(-90)`) and `flip(Axis)` (scale −1 on one axis), filtering
+locked instances and returning the names it left out for the status
+bar, and `enabled(selection) -> Result<(), Reason>` for the disabled
+state. Properties loses rotation and mirror; `properties::placement`
+keeps X, Y, W, H and the proportion link (`Prefs`, not project data).
 
 ### Tabs
 
@@ -379,6 +414,15 @@ generator). Rows are grouped by operation, project-level first, in the
 order `check` prints them, so acceptance 82's comparison is a line-by-line
 one against the CLI's text. *Copy* is the same text.
 
+Carve notes (review, functional 76a): `dc_job::summary::carve_facts(
+project, generated) -> Vec<CarveFacts>`, one per carving operation, each
+a list of boards, each a list of `(FactKey, FactValue)`; the existing
+`describe_carves` becomes a formatter over it, so `check`'s text is
+byte-identical and the CLI's tests are the guard. `App::warnings()` puts
+each operation's facts last in its group as `Row::Note`, which the
+counts skip. `warnings::groups(rows)` returns a heading per group only
+when there are two or more.
+
 ### Export
 
 The dialog is `dc-app::export::plan(project, split, board_filter)`: it
@@ -388,7 +432,32 @@ refuses while any operation is pending or stale, then calls `dc_job::build`
 stem, and lists `ProgramSummary` rows. *Export* writes every program, the
 preview SVG when ticked, through `dreamcarve-shell::commit_all`, with the
 same marker check on an existing preview the CLI makes. The project file is
-not written. The result sheet is the CLI's report text.
+not written. The result (functional 77a) is built from `dc_job::report`'s
+parts, not its text: `export::result(&Built, names, dir) -> ExportResult
+{ status, files: Vec<FileRow>, folder, instructions: Vec<Step>, notes:
+Vec<String> }`, with a test that every line of the CLI's report text
+appears in exactly one part.
+
+The setup sheet (functional 77b) is `dc_job::setup_sheet::render(
+project, built, names, date, strings) -> String`: pure, deterministic
+with the date pinned, HTML with inline CSS only, escaped through one
+function. It lives in `dc-job` beside the report so a later CLI flag
+would print the same bytes (open question 7); phase 4 adds no CLI
+flag. The shell writes it through `dreamcarve-shell`'s staged write.
+
+### The Tool Library
+
+`dc-app::library` (review, functional 64, 64a, 64b) gains: `groups(lib,
+filter) -> Vec<VendorGroup>` (by `vendor`, sorted, `None` last); an
+`LibraryEdit` session holding the library as opened, so *Revert* is a
+copy back; `edit(lib, id, key, value) -> Library`, validated with
+`dc_library::validate_tool` and written at once by the shell; and
+`review(lib, incoming) -> ImportReview`, which runs
+`dc_library::import::merge` twice in memory (`replace` false and true)
+and reports the counts and per-tool outcome of each, so the review shows
+what either choice writes and *Import* writes the chosen one. The
+library's display units are `Prefs::library_units`; the editing pane
+reuses the project tool editor's rows with those units.
 
 ### Test harness
 
@@ -428,7 +497,7 @@ before merge.
 ## Module layout
 
 ```
-crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, describe_carves), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
+crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
 crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, warnings.rs (merge, tiers, grouping), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
 crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, menu.rs, toolbar.rs, status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{tree.rs, properties.rs, project.rs, operations.rs, editor.rs (renderers per field kind), tools.rs, library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
@@ -438,6 +507,18 @@ crates/dreamcarve/tests/gui_equality.rs
 docs/specs/phase-4/{functional.md, design.md, experience.md, mockups/}
 docs/book/src/{quick-start/app.md, user-guide/{app.md, importing.md, placing.md, stock-origin.md, preview.md, export.md, keyboard.md}}
 ```
+
+The review slices (23–36) add, with no new crate: `dc-app/src/{arrange.rs
+(rotate, flip, enabled), status.rs (the status bar's cells as data),
+editor/summary.rs (closed-group summaries), onboarding.rs (example
+thumbnails as outlines)}`, `TargetEdit` in `editor/targets.rs`, `groups`,
+`LibraryEdit` and `review` in `library.rs`, notes in `warnings.rs`, the
+depth legend's ticks in `view.rs`, `result` in `export.rs`;
+`dc-job/src/setup_sheet.rs` and `carve_facts` in `summary.rs`;
+`dreamcarve-app/src/{viewport/popover.rs (the toolpath view, replacing
+card.rs), viewport/legend.rs, viewport/target_bar.rs, panels/result.rs,
+widgets/split_button.rs, widgets/link.rs}`. `Prefs` gains
+`library_units` and the left column's panel open states.
 
 Dependencies, all `[workspace.dependencies]`, versions re-checked at slice
 time: `eframe`/`egui`/`egui_wgpu`/`egui_extras` (MIT/Apache-2.0; `wgpu`
@@ -568,6 +649,394 @@ Slice 1 can start now, on `main`, while phase 3 finishes: it changes no
 output. Slices 2–3 can follow immediately. Slice 14 waits for #498 and
 slice 15 for 3.4; nothing else waits for phase 3.
 
+Slice 20 (#549) took its first screenshots on 2026-11-10. The review
+turned into the redesign below; #549's exit, the maintainer's sign-off
+on a second set, is now slice 36, and slices 21 and 22 wait for it.
+
+## Review redesign slices
+
+The screenshot review of slice 20 (#549, 2026-11-10) changed the
+functional spec in place ("Review redesign" there) and `experience.md`
+(its section 15 and the amended sections). These slices carry it. Each
+is one GitHub issue, opened after this spec merges, with the tests
+below as its Tests section and #549 as its parent; the process is the
+phase's (test first, the full gate, PR into `main`). Every slice's
+screenshots are checked against `experience.md`'s checklist, items
+1–34. Dependencies in brackets; "main" means it can start on `main` as
+it stands. Slices with no dependency between them touch some of the same
+files (`shell/status.rs`, `panels/editor.rs`); the second to merge
+rebases, and none waits for another to start.
+
+### Shell, layout and status bar
+
+23. **Window title, panels and the CAM panel** (functional 50, 50a, 53,
+    60; acceptance 93). The project's name without extension in the OS
+    window title with `*` when unsaved, and no file name in the toolbar;
+    toolbar labels *Add drawing* and *Add picture*; the left column's
+    lower half as two collapsible panels, Project Settings on top and
+    Properties on selection, scrolled into view; Project Settings' open
+    rule (open on a new project and on a project-level error); Units as
+    Project Settings' first row; the CAM panel's title band and the Tools,
+    Operations tab order with the opening rule. [main]
+
+    Tests:
+    - `kittest::window_title_is_the_project_name_without_extension`: the
+      plaque gives the title `plaque — DreamCarve`; after one edit,
+      `plaque* — DreamCarve`; after Save, `plaque — DreamCarve` again;
+      *New* gives `Untitled — DreamCarve`; no node in the accessibility
+      tree has a label containing `plaque.dcv`.
+    - `kittest::cam_panel_has_a_title_and_tools_first`: a node labelled
+      `CAM` exists above the tab strip; the tabs' labels in order are
+      `Tools · 3`, `Operations · 5`; a new project opens on Tools, the
+      plaque on Operations.
+    - `kittest::left_column_is_project_settings_then_properties`: with
+      nothing selected there is a `Project Settings` panel and no
+      `Properties`; with the square selected both exist, Project
+      Settings' rect above Properties'; clicking each title collapses it
+      to its 32-px band; the open state is in `Prefs` after a restart.
+    - `kittest::project_settings_opens_on_a_project_error`: on a new
+      project (thickness unset) it is open whatever `Prefs` says; on the
+      plaque it follows `Prefs`.
+    - `kittest::units_is_the_first_row_of_project_settings`: the first
+      field under the title is the `mm` / `in` segmented control, and
+      choosing `in` is one undo step that leaves the file's lengths
+      unchanged.
+
+24. **Status bar, toolpath view and the Warnings drawer** (functional
+    50b, 71, 73, 73a, 76; acceptance 80, 94). The status bar's cells as
+    data (`dc_app::status`), drawn by the shell: units menu, cursor,
+    Toolpaths button, generation (blank, generating with Stop, stopped
+    with *Regenerate all*), counts, estimate, Z range, message; no stock
+    size. The toolpath view as a popover from the status bar with the
+    by-operation key, replacing the Viewport card. The depth legend at the
+    Viewport's bottom-left with the positive band and work-coordinate
+    labels; Fit leaving room for it. *Regenerate all* removed from View
+    and from the drawer; the drawer's group heading only with two or
+    more groups. [main]
+
+    Tests:
+    - `status::cells_follow_the_state`: table-driven; a project with
+      shapes and no operation has no Toolpaths cell and no generation
+      text; the plaque mid-generation has `Generating 1 of 5…` and a
+      Stop action; after Stop, `Stopped` and a Regenerate-all action;
+      idle, the generation cell is `None`; with no cursor position the
+      cursor cell is empty, never `X — Y —`.
+    - `status::stock_size_is_never_a_cell`: for every fixture, no cell's
+      text contains the stock's dimensions.
+    - `view::depth_legend_ticks_include_clearance_and_safe_z`: on the
+      plaque the ticks in order are `+10 clearance`, `+5 safe Z`,
+      `0 stock top`, `−1 Border and squiggle`, `−4 Panel`, `−6 Square
+      recess`, `−12 Screw holes, Cut out`; with Z zero at the stock
+      bottom the stock top's tick is `+11.8` and the cuts' are positive
+      or zero.
+    - `view::by_operation_key_lists_each_operation_colour`: one entry
+      per enabled operation in list order, colour from the palette by
+      index, names from the file.
+    - `kittest::toolpaths_button_opens_the_popover_and_escape_closes_it`:
+      absent on a project with no toolpath; present on the plaque; a
+      click shows a node `Toolpaths` with the eight toggles; Escape
+      removes it; no Viewport card exists in either state.
+    - `kittest::regenerate_all_only_after_stop`: no menu item and no
+      drawer button is labelled `Regenerate all`; after Stop the status
+      bar has one, and clicking it makes `pending()` hold every enabled
+      operation.
+    - `warnings::single_group_has_no_heading`: rows of a project whose
+      findings all belong to one group yield no heading; with a project
+      row and an operation row, two headings.
+    - `kittest::units_menu_switches_display_units`: the status bar's
+      units menu sets inches as one undo step labelled as the Project
+      Settings switch is.
+
+25. **Design Tree and Arrange** (functional 54, 57, 58, 58a; acceptance
+    66, 95, 96). Shape glyphs (`square`, `circle`, `spline`) and no
+    `open` badge; the `component` linked-copy badge; Rename on F2 and in
+    the context menu; empty sections without a *None* row; the lock's
+    tooltip and the locked Properties note with *Unlock*; Properties as
+    X, Y, W, H with the proportion link to their right; the toolbar's
+    Arrange group with the Rotate split button and its popover; the
+    Arrange menu with *Centre on stock*; the shortcuts R, Shift R, Ctrl
+    Shift H, Ctrl Shift V. [main]
+
+    Tests:
+    - `tree::rows_carry_a_shape_glyph`: on the plaque, `holes-1` is
+      `Circle`, `outline` is `Closed`, `squiggle` is `Open`; no row
+      model has a text badge.
+    - `tree::empty_sections_have_no_placeholder_row`: the plaque's
+      Pictures section yields its header and no row.
+    - `kittest::f2_and_context_menu_rename_in_place`: F2 on the selected
+      square and *Rename* in its context menu each turn the name into a
+      field with the text selected; typing and Enter is one undo step
+      `Rename "square"`; Escape leaves the file unchanged.
+    - `arrange::rotate_90_and_flip_equal_the_typed_transforms`: the
+      square's transform after Rotate (90° clockwise), after
+      `rotate(30)` and after each flip equals the transform acceptance
+      66 expects for the same rotation or mirror about the bounding-box
+      centre, each one undo step with its label.
+    - `arrange::disabled_with_a_reason`: nothing selected, all locked,
+      only pictures: each gives its reason string key.
+    - `arrange::partly_locked_turns_the_unlocked_and_names_the_rest`.
+    - `properties::placement_is_x_y_w_h_only`: the field rows for a
+      selection are exactly X, Y, W, H; `properties::broken_link_scales_one_axis`:
+      with the link broken, typing W changes only the X scale.
+    - `kittest::shortcuts_reach_the_arrange_commands`: R, Shift R, Ctrl
+      Shift H and Ctrl Shift V each emit the command the toolbar emits.
+
+### Operation editors
+
+26. **Editor framework: header, Setup and summaries** (functional 66,
+    66a, 66b; acceptance 73, 97). The editor header with the inline
+    name; `Group::Identity` removed and `Group::Setup` first, with each
+    kind's Setup rows moved in the table; other groups closed by default
+    with their one-line summaries; a group with a located finding opens;
+    the required-field state in `unit_field` (outline, glyph, *Required*,
+    message as tooltip), used by the editors, Project Settings'
+    thickness and, from slice 29, the tools. The *check says* box leaves
+    the editor (its content arrives in slice 28). [main]
+
+    Tests:
+    - `editor::fields::setup_rows_lead_each_kind`: for each of the eight
+      kinds the first rows are Targets (Picture for Photo V-Carve), Tool,
+      then 66a's rows in 66a's order.
+    - `editor::fields::every_field_appears_once`: no key path is in two
+      groups; acceptance 73's table-driven test passes unchanged.
+    - `editor::fields::no_identity_group`: no row has key `name` or
+      `enabled`.
+    - `editor::summary::closed_groups_summarise_their_values`: the
+      plaque's Panel Pocket gives `Raster 0°, climb, wall last` for
+      Strategy and `Safe Z 5 mm` for Heights; in an inch project
+      `Safe Z 0.197 in`; a tool-derived `null` reads `tool's 3 mm`.
+    - `editor::summary::located_finding_opens_its_group`: a
+      `relief_corner_too_tight` on the Pocket opens Corners and leaves
+      the others closed.
+    - `kittest::editor_header_renames_in_place`: clicking the header
+      name, typing and Enter is one undo step; Escape reverts; there is
+      no `Enabled` checkbox and no `Name` field in the editor.
+    - `kittest::required_field_shows_required_not_a_message`: a tool
+      with no feed shows a Feed field whose placeholder is `Required`,
+      with no label node under it carrying the message, and a tooltip
+      equal to the file's message; Project Settings' thickness on a new
+      project the same.
+    - `kittest::editor_has_no_check_says_box`: no node labelled
+      `check says` on any kind.
+
+27. **Targets on the drawing** (functional 57, 67; acceptance 98). The
+    target highlight on the Viewport and in the tree for the selected
+    operation, with the hover preview from the list; the Setup Targets
+    row (count, names, warning, Edit, `⋯`); target editing with its bar,
+    click and marquee toggling, Done and Cancel; *Add to* and *Remove
+    from* in the tree's context menu; *Use selection* and *Add
+    selection*; Photo V-Carve's Picture dropdown. [26]
+
+    Tests:
+    - `scene::selected_operation_targets_are_marked`: selecting the
+      plaque's Panel gives `pocket` and `island` the style
+      `Target(colour 3)` and every other shape `Faded`; clearing the
+      operation selection returns all to `Normal`.
+    - `tree::target_rows_marked_for_selected_operation`.
+    - `targets::editing_toggles_and_commits_one_step`: entering on
+      Panel, clicking the square then the island, and Done emits one
+      `UpdateOperation` whose targets are `pocket, square`, labelled
+      `Set targets of "Panel"`; Cancel emits nothing and the saved file
+      is byte-identical.
+    - `targets::editing_blocks_selection_and_transforms`: while editing,
+      a click never changes the instance selection and a drag emits no
+      `TransformInstances`.
+    - `targets::marquee_adds_alt_marquee_removes`.
+    - `targets::row_summary`: `2 shapes · pocket, island`; a Pocket
+      targeting the squiggle carries the warning flag.
+    - `kittest::target_editing_bar_enter_is_done_escape_is_cancel`.
+    - `kittest::tree_context_menu_adds_and_removes_targets`.
+
+28. **Carve notes** (functional 50b, 76a; acceptance 82, 99).
+    `dc_job::summary::carve_facts` and `describe_carves` as its
+    formatter; notes in the drawer, last in their group, as labelled
+    facts with board sub-headings; not counted; the selected
+    operation's first fact in the status bar's message cell, opening
+    the drawer at it. [main]
+
+    Tests:
+    - `summary::describe_carves_is_unchanged`: for every fixture with
+      expected `check` output, the CLI's text is byte-identical (the
+      CLI's own tests are the second guard).
+    - `summary::carve_facts_format_to_describe_carves`: formatting each
+      fixture's facts gives `describe_carves`' strings.
+    - `warnings::notes_follow_their_operation_and_are_not_counted`: on
+      the sign, Lettering's note is the last row of its group with a
+      `Deepest cut` fact; the counts equal those without notes.
+    - `warnings::inlay_notes_have_board_subheadings`: the inlay fixture's
+      note has `Female board` and `Male board` sections.
+    - `warnings::copy_includes_notes_as_check_prints_them` (acceptance
+      82 stays line-for-line).
+    - `status::selected_operation_summary_in_message_cell`.
+
+### Tools and library
+
+29. **Tools tab: New tool and Delete** (functional 63, 79; acceptance 71,
+    100). *New tool* (`tool<n>`, `init`'s placeholder geometry, no rates,
+    name focused); *Remove* renamed *Delete* everywhere it deletes; the
+    rates' required-field look; *Save to library* in the editor's
+    footer; the empty Tools list with *New tool* and *Add from
+    library…*. [26]
+
+    Tests:
+    - `tools::new_tool_is_a_placeholder_named_by_number`: on an empty
+      project the first is `tool1` (end mill, 6.35 mm, 2 flutes), the
+      second `tool2`; on a project whose third tool is already named
+      `tool4`, a new fourth tool is `tool5`.
+    - `tools::new_tool_never_fills_a_rate`: feed, plunge rate, RPM,
+      step-down and stepover are `None` (principle 5, S20).
+    - `tools::export_refuses_a_new_tool_until_its_rates_are_set`: the
+      findings equal the CLI's refusal for the saved file.
+    - `kittest::new_tool_focuses_its_name`: after *New tool* the focused
+      node is the Name field with its text selected.
+    - `strings::no_deletion_is_labelled_remove`: no value in `en.toml`
+      for a delete action reads `Remove`; `Remove from "{name}"` is the
+      only `Remove` and is a target action.
+
+30. **Tool Library: vendor groups, editing and units** (functional 64,
+    64a; acceptance 101, first half). The two-pane sheet; groups by
+    vendor; the editing pane writing the library on leave; *Revert
+    changes*; *New tool*, *Duplicate*, *Delete* (asked in place);
+    *Export library…* with its tooltip; the library's display units in
+    `gui.toml`; the empty library's two buttons. [29]
+
+    Tests:
+    - `library::groups_by_vendor_with_no_vendor_last`: the fixture
+      library's groups are sorted by vendor with `None` last; a search
+      for `amana` leaves one group.
+    - `library::edit_writes_the_library_and_not_the_project`: setting a
+      library tool's feed yields library bytes equal to
+      `dc_library::save` of the edited library; the open project and
+      the undo history are unchanged.
+    - `library::revert_restores_the_tool_as_opened`.
+    - `library::units_are_display_only`: with inches the 6.35 mm end
+      mill reads `0.25 in`; the library file and the project's units are
+      unchanged; `Prefs::library_units` round-trips through `gui.toml`.
+    - `library::new_and_duplicate`: *New tool* gives `tool<n>` numbered
+      within the library; a duplicate has a new id, `source: None` and
+      ` (2)` on its name.
+    - `kittest::library_delete_asks_in_place_and_names_the_tools`.
+
+31. **Library import review** (functional 64b; acceptance 71, 101,
+    second half). The review replacing the panes in place; the counts;
+    the Keep mine / Replace with imported choice shown only when a tool
+    is *Changed*; the banner and its *Details*; no *Replace existing*
+    checkbox on the table. [30]
+
+    Tests:
+    - `library::import_review_counts_equal_tools_import`: importing
+      `fixtures/fusion/sample.tools` into the fixture library reports
+      the counts `tools import` prints, and the library file is untouched
+      until *Import*.
+    - `library::changed_tools_offer_keep_or_replace`: after editing one
+      imported tool, a second import shows one *Changed*; *Keep mine*
+      writes what `merge(replace: false)` writes and *Replace with
+      imported* what `merge(replace: true)` writes.
+    - `library::no_choice_when_nothing_changed`.
+    - `kittest::import_review_replaces_the_panes_in_place`: no second
+      sheet opens; *Back* returns to the table unchanged.
+
+### Export, its result and the setup sheet
+
+32. **Export sheet trimmed** (functional 77; acceptance 83, 84, 102,
+    first half). No preview tick, warnings list, total or footnote;
+    *Program Details* closed by default; the one blocking line with
+    *Show*; Export's disabled tooltip. The Viewport's SVG dump carries
+    acceptance 83's preview check. [main]
+
+    Tests:
+    - `kittest::export_sheet_has_no_preview_warnings_total_or_note`: no
+      node labelled with the preview tick, `Warnings`, `Estimated total`
+      or `Every file is written`.
+    - `kittest::program_details_start_closed`: the disclosure is closed
+      on open and its rows equal `export::plan`'s when opened.
+    - `export::blocking_line_names_the_error_count`: one error gives `1
+      error blocks export`; none gives no line.
+    - `export::preview_svg_equals_the_cli` is replaced by
+      `scene::svg_dump_equals_preview` (acceptance 79, 83).
+
+33. **Export result and setup sheet** (functional 77a, 77b; acceptance
+    102, second half). The result in Status, Files and Run instructions;
+    *Show in folder* and *Copy path*; *Save setup sheet…* in the footer
+    and in the File menu after an export; `dc_job::setup_sheet::render`.
+    [32]
+
+    Tests:
+    - `export::result_parts_are_status_files_and_instructions`: the
+      plaque's export gives `2 programs written`, the files
+      `plaque-1-T2.nc`, `plaque-2-T1.nc` in run order, the folder, and
+      instructions equal to the CLI's step-before lines and notes.
+    - `export::result_holds_every_fact_of_the_cli_report`: each line of
+      the CLI's report text is in exactly one part.
+    - `setup_sheet::render_is_self_contained`: the output has no
+      `<script`, no `http`, no `<img` and no `url(`.
+    - `setup_sheet::matches_the_export`: its programs, tools,
+      step-before lines, extents and estimates equal `Built` and the
+      `ProgramSummary` rows.
+    - `setup_sheet::deterministic_with_the_date_pinned`: two renders are
+      byte-identical and equal the committed
+      `crates/dc-job/tests/fixtures/setup_sheet/plaque.html`.
+    - `setup_sheet::uses_display_units`: an inch project's sheet shows
+      inches.
+    - `strings::setup_sheet_strings_are_keyed` (acceptance 91).
+
+### Empty state, import and the File menu
+
+34. **Empty state** (functional 79; acceptance 103, first half). The
+    640-px card with the two wells, *Your drawing* and *Examples*; the
+    example cards with thumbnails drawn from each example's shapes; the
+    shorter copy; examples opening untitled; the empty Tools list's
+    buttons are slice 29's. [main]
+
+    Tests:
+    - `kittest::empty_state_offers_two_paths`: nodes `Your drawing` and
+      `Examples`; three example buttons; no label containing `phase` or
+      `unsaved`.
+    - `onboarding::example_thumbnails_draw_the_examples_shapes`: each
+      thumbnail's outlines are the example's visible instances' outlines
+      fitted to 96 × 56 with a 4-px inset (same count, same bounds
+      ratio).
+    - `kittest::example_opens_untitled`: the title is `Untitled —
+      DreamCarve` and Save asks for a path.
+
+35. **Import sheet, menus and the unsaved-changes sheet** (functional 51,
+    55, 56, 79a; acceptance 63, 88, 103, second half). The import
+    preview without the stock box or placement note; the File, Edit,
+    Arrange, View and Project menus as 79a lists them, the labels *New
+    Project from Drawing…*, *Add Drawing to Project…*, *Export G-code…*;
+    View ▸ Appearance with System, Light and Dark; the unsaved sheet's
+    *Save*, *Don't Save*, *Cancel* on close, quit, open and every *New*.
+    [main]
+
+    Tests:
+    - `import::preview_is_the_drawing_alone`: the preview geometry's
+      bounds equal the drawing's bounds and it holds no stock outline.
+    - `kittest::file_menu_labels_in_order`: the File menu's items equal
+      79a's list.
+    - `kittest::appearance_has_three_checked_choices`: System is checked
+      by default; choosing Dark checks it, sets `Prefs::theme` and
+      applies the dark visuals.
+    - `kittest::unsaved_sheet_is_save_dont_save_cancel`: on close, quit,
+      open and each *New*, the sheet's buttons are exactly those three;
+      *Don't Save* proceeds without writing (acceptance 88).
+    - `kittest::save_on_untitled_asks_where_and_cancel_cancels_all`.
+
+### Second visual review
+
+36. **Second visual review** (functional 50a; acceptance 104; #549's
+    exit). A new screenshot set of every panel, sheet, menu and popover
+    in both appearances at 1× and 2×, each captioned with what it shows
+    and the state it was taken in; `experience.md`'s checklist, items
+    1–34, ticked; the snapshot pair regenerated; fixes. Maintainer
+    sign-off closes #549; #550 (docs) and #551 (release) follow. [23–35]
+
+    Tests:
+    - `kittest::snapshot_workspace_light_and_dark` (Linux only),
+      regenerated.
+    - `theme::no_colour_literal_outside_theme` still green.
+    - A checklist comment on #549 with every item ticked and every
+      screenshot captioned.
+
 ## Open questions
 
 Answered by the maintainer on 2026-11-03: every recommendation accepted.
@@ -581,3 +1050,10 @@ The decisions stand as the slices assume them; the record stays here.
 | 4 | Stop cannot interrupt a running generator. Add a cancellation token to the long generators (V-Carve medial, pocket raster) in a later phase, or accept that Stop drops the result and lets the thread finish? | Accept for phase 4; note it in the chapter. A cancellation point in `dc-cam` is a phase 6 concern when simulation adds longer jobs. |
 | 5 | Operation palette (`experience.md`, "Operation colours"): four of the CLI's eight `--preview` colours sit at 2.2–2.6:1 on white, and the designer proposes darkened light-mode hexes for green, purple, orange, cyan and pink, plus a dark-mode set. Functional 73 says the app uses the same palette as `--preview`. Change `preview.rs`'s `PALETTE` to the proposed light set, so the CLI's SVG and the app agree, or keep the CLI's hexes in light mode? | Change `preview.rs` to the proposed light set in slice 16, same order, so there is one light table and acceptance 79 holds; the dark set is the app's alone, since the SVG is on white. The goldens do not contain the preview, so no bytes under test change; the quick-start pictures are regenerated once. |
 | 6 | macOS menu bar: egui's in-window menu bar on every platform, or a native `NSMenu` on macOS? | egui's on all three for phase 4: one implementation, one test path, every shortcut in one place. A native bar is phase 9 polish, where signing and bundle work already touch the macOS shell. |
+
+Raised by the review redesign (2026-11-10), open until the maintainer
+answers on the spec PR:
+
+| # | Question | Recommendation |
+| --- | --- | --- |
+| 7 | The setup sheet (functional 77b) is rendered in `dc-job`. Should the CLI get `export --setup-sheet` in phase 4, so the app's HTML is also the CLI's, as S20's spirit suggests? | Not in phase 4. The renderer lives in `dc-job` so the flag is a small later change; adding CLI surface now widens the release for a feature nobody has asked for from the command line. |
