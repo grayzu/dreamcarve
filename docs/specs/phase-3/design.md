@@ -775,10 +775,9 @@ pub enum FillRule { NonZero, EvenOdd }
 /// The area a set of subpaths fills under `rule`: open subpaths are
 /// closed (an SVG fill closes them), arcs flattened within `tolerance_mm`,
 /// self-overlap and winding resolved in one i_overlay pass with the
-/// subject only (`FloatOverlay`, `OverlayRule::Subject`, the rule's
-/// `FillRule`; or the `SimplifyShape` helper, whichever i_overlay 9.x
-/// exposes, decided in the slice), so the result is disjoint regions
-/// with their holes.
+/// subject only (i_overlay 9.1's `SimplifyShape::simplify_shape`, which is
+/// `FloatOverlay` with `OverlayRule::Subject` and the rule's `FillRule`),
+/// so the result is disjoint regions with their holes.
 pub fn resolve_fill(subpaths: &[Polyline], rule: FillRule, tolerance_mm: f64) -> Vec<Region>;
 /// Paths' areas, each from `resolve_fill`, joined as `init` would read
 /// them: areas that cross (share area, neither inside the other's area)

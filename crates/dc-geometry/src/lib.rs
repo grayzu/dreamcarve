@@ -12,6 +12,7 @@ mod carve;
 mod circle;
 mod contour;
 mod distance;
+mod fill;
 mod flatten;
 pub mod medial;
 mod merge;
@@ -32,6 +33,9 @@ pub use contour::Contour;
 pub use distance::{
     Nearest, closest_points, distance_away_from_mm, distance_mm, meeting_points, nearest_point,
     point_segment_distance_mm, segment_distance_mm,
+};
+pub use fill::{
+    FillRule, ink_outline, ink_without_spaces, merge_fills, resolve_fill, spaces_between,
 };
 pub use flatten::{FLATTEN_TOLERANCE_DEFAULT_MM, KURBO_FLATTEN_SAFETY, flatten};
 pub use merge::{FilledHole, MergedParts, NearParts, merge_near_parts};
@@ -124,6 +128,10 @@ pub enum GeometryError {
         /// Input position of the later contour.
         second: usize,
     },
+    /// Contours still cross after the unions that should have joined them:
+    /// a defect in the fill resolution, not a problem with the input.
+    #[error("the merged shapes still cross each other; this is a defect in the fill resolution")]
+    Unresolved,
     /// A non-uniform transform would turn a circular arc into an ellipse,
     /// which a bulge cannot represent.
     #[error("transform does not preserve circular arcs (non-uniform scale or shear)")]
