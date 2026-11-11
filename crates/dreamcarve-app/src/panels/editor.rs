@@ -1176,7 +1176,7 @@ fn target_list(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let remove =
-                            strings.fmt(StrKey::EditorTargetsRemove, &[("name", &target.name)]);
+                            strings.fmt(StrKey::EditorTargetsRemove, &[("name", op.name())]);
                         let spec = ButtonSpec::new(ButtonKind::Quiet, "")
                             .icon(Icon::X, theme::ICON_SMALL_PX)
                             .tooltip(&remove)

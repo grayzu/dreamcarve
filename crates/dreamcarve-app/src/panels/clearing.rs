@@ -151,7 +151,7 @@ fn card(
                     .selectable(false),
                 );
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let remove = cx.strings.fmt(StrKey::EditorClearingRemove, &[("n", &n)]);
+                    let remove = cx.strings.fmt(StrKey::EditorClearingDelete, &[("n", &n)]);
                     let spec = ButtonSpec::new(ButtonKind::Quiet, "")
                         .icon(Icon::X, theme::ICON_SMALL_PX)
                         .tooltip(&remove)
