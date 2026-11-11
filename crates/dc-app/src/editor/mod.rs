@@ -779,18 +779,13 @@ fn length_text(value_mm: f64, units: Units) -> String {
 /// `check`'s carve summary for operation `op` (slice 13, #542): the lines
 /// `check` prints for it ([`dc_job::describe_carves`]: its deepest cut,
 /// its flat floor, and the ridges where no clearing pass reaches; a line
-/// per board for an Inlay), from the generation result the app holds,
-/// which the worker described when it generated it. Empty for a kind
-/// `check` prints no such line for, and while the operation has no
-/// current result (before it generates, while it regenerates, or when
-/// validation stops generation, as `check` then prints none).
+/// per board for an Inlay), worded from [`crate::warnings::carve_facts`].
+/// The editor does not show it (slice 28, #620): the Warnings drawer's
+/// note and the status bar do. Empty when `carve_facts` is `None`.
 #[must_use]
 pub fn carve_summary(app: &App, op: &OperationId) -> Vec<String> {
-    let generation = app.generation();
-    generation
-        .result(op)
-        .filter(|_| generation.is_current(op))
-        .map(|result| result.carves.clone())
+    crate::warnings::carve_facts(app, op)
+        .map(|facts| facts.lines())
         .unwrap_or_default()
 }
 

@@ -4116,6 +4116,47 @@ fn editor_has_no_check_says_box() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Functional 50b and 76a (slice 28, #620): selecting the sign's
+/// Lettering shows its first facts in the status bar's message cell;
+/// clicking the cell opens the Warnings drawer, where the note is a row
+/// labelled with `check`'s line for it.
+#[test]
+fn message_cell_opens_the_drawer_at_the_note() {
+    let dir = scratch("message-cell-note");
+    let path = copy_fixture("sign.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(path), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "generation settles");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    h.get_by_role_and_label(Role::ListItem, "Lettering").click();
+    h.run();
+    assert!(!h.state().warnings_open());
+    h.get_by_role_and_label(
+        Role::Button,
+        "Lettering · deepest cut 1.658 mm, no flat depth",
+    )
+    .click();
+    h.run();
+    assert!(h.state().warnings_open(), "the cell opens the drawer");
+    assert!(
+        h.query_by_label(
+            "V-Carve op3 `Lettering`: deepest cut 1.658 mm below the stock top, no flat depth."
+        )
+        .is_some(),
+        "the drawer shows the Lettering's note"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// No node of the accessibility tree names the file with its extension:
 /// the project's name is the OS window title only (capability 50).
 fn assert_no_file_name(h: &Harness<'_, dreamcarve_app::Shell>, what: &str) {

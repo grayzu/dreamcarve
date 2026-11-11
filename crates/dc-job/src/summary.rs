@@ -5,7 +5,9 @@
 //! (`docs/specs/phase-4/design.md`, "Data model → dc-job"), moved from
 //! `crates/dreamcarve/src/export.rs` with their text unchanged: each
 //! exported operation and its depth, a carve's deepest cut and floor
-//! ridges, a program's extents (#62) and cycle-time estimate (functional
+//! ridges (as [`CarveFacts`], which the app lays out as labelled facts and
+//! [`describe_carves`] words as `check` prints them; capability 76a), a
+//! program's extents (#62) and cycle-time estimate (functional
 //! spec, capability 30), the board headings (#498), and what to do before
 //! a program starts (#57). Lengths are stated in the project's display
 //! units with the post-processor's decimals (addendum A6).
@@ -307,57 +309,323 @@ fn on_board<'p>(project: &'p Project, entry: &EmitOp) -> std::borrow::Cow<'p, Pr
     }
 }
 
-/// The V-bit floor's ridges for [`describe_carves`] (design step 6): their
-/// height between rings and, where it is higher, at the rings' corners
-/// (#522); then, with no clearing pass, what flattens them, or with one,
-/// that they stand only where no pass reaches.
-fn describe_ridges(project: &Project, ridges: dc_cam::vcarve::FloorRidges, alone: bool) -> String {
-    let straight = describe_length(project, ridges.straight_mm);
-    let corner = describe_length(project, ridges.corner_mm);
-    let heights = if corner == straight {
-        straight
-    } else {
-        format!("{straight} along the rings and up to {corner} at their corners")
-    };
-    if alone {
-        format!(
-            "; V-bit floor ridges {heights}; a clearing pass or a smaller step_over_fraction flattens them"
-        )
-    } else {
-        format!("; V-bit floor ridges {heights} where no clearing pass reaches")
+/// The kind of a carving operation, as its summary names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarveKind {
+    /// A V-Carve: one board, the stock.
+    VCarve,
+    /// An Inlay: a female board, a male board, or both (#498).
+    Inlay,
+}
+
+/// Whose top a deepest cut is measured from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Top {
+    /// The stock's: a V-Carve's, an Inlay's female.
+    Stock,
+    /// The male board's (#498).
+    MaleBoard,
+}
+
+/// What a [`Fact`] states, the label a shell puts beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactKey {
+    /// [`Fact::DeepestCut`].
+    DeepestCut,
+    /// [`Fact::FlatDepth`].
+    FlatDepth,
+    /// [`Fact::FlatFloor`].
+    FlatFloor,
+    /// [`Fact::StartPlane`].
+    StartPlane,
+    /// [`Fact::SurroundFloor`].
+    SurroundFloor,
+    /// [`Fact::FloorRidges`].
+    FloorRidges,
+    /// [`Fact::Band`].
+    Band,
+    /// [`Fact::BandEdge`].
+    BandEdge,
+    /// [`Fact::CutOut`].
+    CutOut,
+}
+
+/// One fact of a carve's summary. Every length is already stated as the
+/// summary states lengths ([`describe_length`]: `4.000 mm`, `0.1575 in`),
+/// or `?` for a value validation would have refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Fact {
+    /// The deepest cut below `below`'s top; a male's is the carve's, not
+    /// its cut-out's.
+    DeepestCut {
+        /// How deep.
+        depth: String,
+        /// Below whose top.
+        below: Top,
+    },
+    /// A V-Carve's flat depth (capability 39), `None` when it has none.
+    FlatDepth(Option<String>),
+    /// An Inlay female's flat floor, at its `depth_mm`.
+    FlatFloor {
+        /// Its depth.
+        depth: String,
+    },
+    /// An Inlay male's start plane, `depth_mm − glue_gap_mm` below the male
+    /// board's top (#436).
+    StartPlane {
+        /// Its depth below the male board's top.
+        depth: String,
+    },
+    /// An Inlay male surround's flat floor, `plug_depth_mm` below the
+    /// start plane.
+    SurroundFloor {
+        /// Its depth below the start plane.
+        depth: String,
+    },
+    /// The V-bit floor's ridges (design step 6, #522).
+    FloorRidges {
+        /// Their height between the rings.
+        straight: String,
+        /// Their height at the rings' corners, when it is higher.
+        corner: Option<String>,
+        /// Whether clearing passes cut the rest of the floor, so the
+        /// ridges stand only where none reaches; without them, a clearing
+        /// pass or a smaller `step_over_fraction` flattens them.
+        cleared: bool,
+    },
+    /// Where a male's band edge comes from, when it is drawn (#603).
+    Band {
+        /// The drawn boundary's shape ids.
+        boundary: Vec<String>,
+        /// The narrowest band.
+        narrowest: String,
+        /// The edge pass's tool, for an open edge; `None` for a V wall.
+        edge_pass: Option<String>,
+    },
+    /// The end mill's upright band edge and its rounding (#448).
+    BandEdge {
+        /// The clearing pass's tool.
+        tool: String,
+        /// The radius its inward curves are rounded to.
+        rounding: String,
+    },
+    /// Where a male's cut-out frees the plug, and how deep (#443, #461).
+    CutOut {
+        /// Its centre's distance inside the band's edge.
+        inset: String,
+        /// The least distance out from the design.
+        outside: String,
+        /// How far it cuts below the board.
+        through: String,
+    },
+}
+
+impl Fact {
+    /// What it states.
+    #[must_use]
+    pub fn key(&self) -> FactKey {
+        match self {
+            Self::DeepestCut { .. } => FactKey::DeepestCut,
+            Self::FlatDepth(_) => FactKey::FlatDepth,
+            Self::FlatFloor { .. } => FactKey::FlatFloor,
+            Self::StartPlane { .. } => FactKey::StartPlane,
+            Self::SurroundFloor { .. } => FactKey::SurroundFloor,
+            Self::FloorRidges { .. } => FactKey::FloorRidges,
+            Self::Band { .. } => FactKey::Band,
+            Self::BandEdge { .. } => FactKey::BandEdge,
+            Self::CutOut { .. } => FactKey::CutOut,
+        }
+    }
+
+    /// The fact as `check`'s line words it, with what joins it to the
+    /// fact before: nothing for the first, `, ` for the floor, ` and `
+    /// between a male's two floors, `; ` for the rest.
+    fn clause(&self) -> (&'static str, String) {
+        match self {
+            Self::DeepestCut { depth, below } => (
+                "",
+                format!(
+                    "deepest cut {depth} below {}",
+                    match below {
+                        Top::Stock => "the stock top",
+                        Top::MaleBoard => "the male board's top",
+                    }
+                ),
+            ),
+            Self::FlatDepth(None) => (", ", "no flat depth".to_owned()),
+            Self::FlatDepth(Some(depth)) => (", ", format!("clamped at a flat depth of {depth}")),
+            Self::FlatFloor { depth } => (", ", format!("a flat floor at depth_mm {depth}")),
+            Self::StartPlane { depth } => (
+                ", ",
+                format!("the plug's start plane {depth} below the male board's top"),
+            ),
+            Self::SurroundFloor { depth } => (
+                " and ",
+                format!("the surround's flat floor plug_depth_mm {depth} below that"),
+            ),
+            Self::FloorRidges {
+                straight,
+                corner,
+                cleared,
+            } => {
+                let heights = match corner {
+                    Some(corner) => {
+                        format!("{straight} along the rings and up to {corner} at their corners")
+                    }
+                    None => straight.clone(),
+                };
+                let text = if *cleared {
+                    format!("V-bit floor ridges {heights} where no clearing pass reaches")
+                } else {
+                    format!(
+                        "V-bit floor ridges {heights}; a clearing pass or a smaller step_over_fraction flattens them"
+                    )
+                };
+                ("; ", text)
+            }
+            Self::Band {
+                boundary,
+                narrowest,
+                edge_pass,
+            } => {
+                let edge = match edge_pass {
+                    Some(tool) => format!("open edge, edge pass {tool}"),
+                    None => "V wall".to_owned(),
+                };
+                (
+                    "; ",
+                    format!(
+                        "band: drawn boundary {}, narrowest band {narrowest} ({edge})",
+                        boundary.join(", ")
+                    ),
+                )
+            }
+            Self::BandEdge { tool, rounding } => (
+                "; ",
+                format!(
+                    "clearing pass `{tool}` cuts the band's outer edge upright, its inward curves rounded to {rounding}"
+                ),
+            ),
+            Self::CutOut {
+                inset,
+                outside,
+                through,
+            } => (
+                "; ",
+                format!(
+                    "the cut-out frees the plug along the floor's outer edge, its centre {inset} inside the band's edge and at least {outside} out from the design, through the board to {through} below it"
+                ),
+            ),
+        }
     }
 }
 
-/// The line of Inlay `inlay`'s `board` for [`describe_carves`] (#498),
-/// when `generated` cuts it: its deepest cut below the board's top, the
-/// female's flat floor or the male's start plane and floor, its floor
-/// ridges, and on the male its band's upright edge and its cut-out.
-fn describe_inlay(
+/// The facts of one board an operation carves.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BoardFacts {
+    /// The board: `None` for a V-Carve, which cuts the stock alone.
+    pub board: Option<Board>,
+    /// Its facts in `check`'s order, the deepest cut first.
+    pub facts: Vec<Fact>,
+}
+
+/// The summary of one carving operation (functional spec, capability
+/// 76a): what `check` prints for it, as facts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarveFacts {
+    /// The operation.
+    pub op: OperationId,
+    /// Its kind.
+    pub kind: CarveKind,
+    /// Its name.
+    pub name: String,
+    /// A board per line `check` prints for it: one for a V-Carve, one per
+    /// board it cuts for an Inlay, the female first.
+    pub boards: Vec<BoardFacts>,
+}
+
+impl CarveFacts {
+    /// The lines `check` prints for it, one per board.
+    #[must_use]
+    pub fn lines(&self) -> Vec<String> {
+        self.boards
+            .iter()
+            .map(|board| {
+                let head = match (self.kind, board.board) {
+                    (CarveKind::Inlay, Some(b)) => {
+                        format!("Inlay {} `{}` ({} board)", self.op, self.name, b.as_str())
+                    }
+                    (CarveKind::Inlay, None) => format!("Inlay {} `{}`", self.op, self.name),
+                    (CarveKind::VCarve, _) => format!("V-Carve {} `{}`", self.op, self.name),
+                };
+                let mut line = format!("{head}: ");
+                for (k, fact) in board.facts.iter().enumerate() {
+                    let (join, clause) = fact.clause();
+                    if k > 0 {
+                        line.push_str(join);
+                    }
+                    line.push_str(&clause);
+                }
+                line.push('.');
+                line
+            })
+            .collect()
+    }
+}
+
+/// The V-bit floor's ridges (design step 6): their height between rings
+/// and, where it is higher, at the rings' corners (#522); and whether
+/// clearing passes cut the rest.
+fn ridges_fact(project: &Project, ridges: dc_cam::vcarve::FloorRidges, cleared: bool) -> Fact {
+    let straight = describe_length(project, ridges.straight_mm);
+    let corner = describe_length(project, ridges.corner_mm);
+    Fact::FloorRidges {
+        corner: (corner != straight).then_some(corner),
+        straight,
+        cleared,
+    }
+}
+
+/// The facts of Inlay `inlay`'s `board` (#498), when `generated` cuts
+/// it: its deepest cut below the board's top, the female's flat floor or
+/// the male's start plane and floor, its floor ridges, and on the male
+/// its band's drawn edge, its upright edge and its cut-out.
+fn inlay_facts(
     project: &Project,
     generated: &[EmitOp],
     inlay: &dc_project::InlayOp,
     board: Board,
-) -> Option<String> {
+) -> Option<BoardFacts> {
     let deepest = deepest_cut_on_mm(project, generated, &inlay.id, board)?;
     // Validation refuses an unset value, so an exported one is set.
     let length =
         |mm: Option<f64>| mm.map_or_else(|| "?".to_owned(), |mm| describe_length(project, mm));
-    let (top, mut floor) = match board {
-        Board::Female => (
-            "the stock top",
-            format!("a flat floor at depth_mm {}", length(inlay.depth_mm)),
-        ),
-        Board::Male => (
-            "the male board's top",
-            format!(
-                "the plug's start plane {} below the male board's top and the surround's flat floor plug_depth_mm {} below that",
-                length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
-                length(inlay.plug_depth_mm)
-            ),
-        ),
-    };
+    let mut facts = Vec::new();
+    match board {
+        Board::Female => {
+            facts.push(Fact::DeepestCut {
+                depth: describe_length(project, deepest),
+                below: Top::Stock,
+            });
+            facts.push(Fact::FlatFloor {
+                depth: length(inlay.depth_mm),
+            });
+        }
+        Board::Male => {
+            facts.push(Fact::DeepestCut {
+                depth: describe_length(project, deepest),
+                below: Top::MaleBoard,
+            });
+            facts.push(Fact::StartPlane {
+                depth: length(inlay.depth_mm.zip(inlay.glue_gap_mm).map(|(d, g)| d - g)),
+            });
+            facts.push(Fact::SurroundFloor {
+                depth: length(inlay.plug_depth_mm),
+            });
+        }
+    }
     if let Some(ridges) = dc_cam::inlay::floor_ridges(project, inlay, board) {
-        floor.push_str(&describe_ridges(project, ridges, inlay.clearing.is_empty()));
+        facts.push(ridges_fact(project, ridges, !inlay.clearing.is_empty()));
     }
     let band = (board == Board::Male)
         .then(|| dc_project::male_band(project, inlay))
@@ -366,25 +634,19 @@ fn describe_inlay(
     if let Some(band) = band.as_ref()
         && matches!(band.source, dc_project::BandSource::Drawn { .. })
     {
-        let ids: Vec<&str> = inlay.boundary.iter().map(|id| id.as_str()).collect();
-        let edge = match band.edge_pass() {
-            Some(pass) => format!("open edge, edge pass {}", pass.tool),
-            None => "V wall".to_owned(),
-        };
-        floor.push_str(&format!(
-            "; band: drawn boundary {}, narrowest band {} ({edge})",
-            ids.join(", "),
-            describe_length(project, band.margin_mm)
-        ));
+        facts.push(Fact::Band {
+            boundary: inlay.boundary.iter().map(ToString::to_string).collect(),
+            narrowest: describe_length(project, band.margin_mm),
+            edge_pass: band.edge_pass().map(|pass| pass.tool.to_string()),
+        });
     }
     // #448: the end mill's upright edge, and its rounding.
     if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
         let rounding = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
-        floor.push_str(&format!(
-            "; clearing pass `{}` cuts the band's outer edge upright, its inward curves rounded to {}",
-            pass.tool,
-            describe_length(project, rounding)
-        ));
+        facts.push(Fact::BandEdge {
+            tool: pass.tool.to_string(),
+            rounding: describe_length(project, rounding),
+        });
     }
     // #443, #461: where the cut-out frees the plug, and how deep.
     if let (Some(cut_out), Some(band)) = (&inlay.cut_out, band.as_ref())
@@ -394,66 +656,84 @@ fn describe_inlay(
             .any(|e| e.op.id() == &inlay.id && matches!(e.label, RunLabel::CutOut(_)))
     {
         let inset_mm = band.cut_out_inset_mm(tool.diameter_mm);
-        floor.push_str(&format!(
-            "; the cut-out frees the plug along the floor's outer edge, its centre {} inside the band's edge and at least {} out from the design, through the board to {} below it",
-            describe_length(project, inset_mm),
-            describe_length(project, band.margin_mm - inset_mm),
-            describe_length(project, cut_out.through_cut_allowance_mm)
-        ));
+        facts.push(Fact::CutOut {
+            inset: describe_length(project, inset_mm),
+            outside: describe_length(project, band.margin_mm - inset_mm),
+            through: describe_length(project, cut_out.through_cut_allowance_mm),
+        });
     }
-    Some(format!(
-        "Inlay {} `{}` ({} board): deepest cut {} below {top}, {floor}.",
-        inlay.id,
-        inlay.name,
-        board.as_str(),
-        describe_length(project, deepest)
-    ))
+    Some(BoardFacts {
+        board: Some(board),
+        facts,
+    })
 }
 
-/// One line per enabled V-Carve or Inlay of `generated`, for `check` and
-/// `export`: its deepest cut, whether it has a flat depth (capability 39)
-/// and, when the V-bit cuts a floor, the height of the ridges it leaves
-/// (design step 6) and whether clearing passes cut the rest. An Inlay has
-/// a line per board it cuts (#498): the female's, and the male's with its
-/// start plane, `depth_mm − glue_gap_mm` below the male board's top
-/// (#436); its mirror line is the `inlay_male_mirrored` warning's. A male
-/// with a cut-out says where it runs and how far through the board
-/// (#443); its deepest cut is the carve's, not the cut-out's.
+/// The facts of each enabled V-Carve or Inlay that `generated` cuts, in
+/// the project's order (functional spec, capability 76a; design spec,
+/// "Warnings"): its deepest cut, whether it has a flat depth (capability
+/// 39) and, when the V-bit cuts a floor, the height of the ridges it
+/// leaves (design step 6) and whether clearing passes cut the rest. An
+/// Inlay has a board per board it cuts (#498): the female's, and the
+/// male's with its start plane, `depth_mm − glue_gap_mm` below the male
+/// board's top (#436); a male with a cut-out says where it runs and how
+/// far through the board (#443); its deepest cut is the carve's, not the
+/// cut-out's. [`describe_carves`] words them as `check` prints them.
 #[must_use]
-pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
+pub fn carve_facts(project: &Project, generated: &[EmitOp]) -> Vec<CarveFacts> {
     project
         .operations
         .iter()
         .filter(|op| op.enabled())
-        .flat_map(|op| match op {
-            Operation::VCarve(carve) => {
-                let Some(deepest) = deepest_cut_mm(project, generated, &carve.id) else {
-                    return Vec::new();
-                };
-                let mut floor = carve.flat_depth_mm.map_or_else(
-                    || "no flat depth".to_owned(),
-                    |f| format!("clamped at a flat depth of {}", describe_length(project, f)),
-                );
-                // Design step 6: the V-bit's floor is scalloped; with
-                // clearing passes, only where none of them reaches (#406).
-                if let Some(ridges) = dc_cam::vcarve::floor_ridges(project, carve) {
-                    floor.push_str(&describe_ridges(project, ridges, carve.clearing.is_empty()));
+        .filter_map(|op| {
+            let (kind, boards) = match op {
+                Operation::VCarve(carve) => {
+                    let deepest = deepest_cut_mm(project, generated, &carve.id)?;
+                    let mut facts = vec![
+                        Fact::DeepestCut {
+                            depth: describe_length(project, deepest),
+                            below: Top::Stock,
+                        },
+                        Fact::FlatDepth(carve.flat_depth_mm.map(|f| describe_length(project, f))),
+                    ];
+                    // Design step 6: the V-bit's floor is scalloped; with
+                    // clearing passes, only where none of them reaches (#406).
+                    if let Some(ridges) = dc_cam::vcarve::floor_ridges(project, carve) {
+                        facts.push(ridges_fact(project, ridges, !carve.clearing.is_empty()));
+                    }
+                    (CarveKind::VCarve, vec![BoardFacts { board: None, facts }])
                 }
-                vec![format!(
-                    "V-Carve {} `{}`: deepest cut {} below the stock top, {floor}.",
-                    carve.id,
-                    carve.name,
-                    describe_length(project, deepest)
-                )]
-            }
-            // #498: one line per board it cuts.
-            Operation::Inlay(inlay) => [Board::Female, Board::Male]
-                .into_iter()
-                .filter_map(|board| describe_inlay(project, generated, inlay, board))
-                .collect(),
-            _ => Vec::new(),
+                // #498: one board per board it cuts.
+                Operation::Inlay(inlay) => (
+                    CarveKind::Inlay,
+                    [Board::Female, Board::Male]
+                        .into_iter()
+                        .filter_map(|board| inlay_facts(project, generated, inlay, board))
+                        .collect(),
+                ),
+                _ => return None,
+            };
+            (!boards.is_empty()).then(|| CarveFacts {
+                op: op.id().clone(),
+                kind,
+                name: op.name().to_owned(),
+                boards,
+            })
         })
         .collect()
+}
+
+/// `facts` as `check` prints them: a line per board of each.
+#[must_use]
+pub fn format_carves(facts: &[CarveFacts]) -> Vec<String> {
+    facts.iter().flat_map(CarveFacts::lines).collect()
+}
+
+/// One line per enabled V-Carve or Inlay of `generated`, for `check` and
+/// `export`, and one per board an Inlay cuts: [`carve_facts`] as
+/// [`format_carves`] words them.
+#[must_use]
+pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
+    format_carves(&carve_facts(project, generated))
 }
 
 /// One line per exported tool run, in cut order: each enabled operation's

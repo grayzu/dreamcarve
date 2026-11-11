@@ -96,10 +96,10 @@ pub enum JobResult {
         /// Each run's marks (`dc_job::preview::marks`), found on the
         /// worker so the window does not walk the toolpaths again.
         marks: Vec<Marks>,
-        /// `check`'s carve summary of its runs
-        /// ([`dc_job::describe_carves`]), described on the worker: empty
-        /// but for a V-Carve or an Inlay (slice 13, #542).
-        carves: Vec<String>,
+        /// `check`'s carve summary of its runs as facts
+        /// ([`dc_job::carve_facts`]), found on the worker: empty but for
+        /// a V-Carve or an Inlay (slice 13, #542; slice 28, #620).
+        carves: Vec<dc_job::CarveFacts>,
     },
     /// The project-level pass ([`dc_job::finish`]) over every operation's
     /// runs.
@@ -127,7 +127,7 @@ pub fn execute(project: &Project, work: Work, date: &str, estimate: &EstimateCon
                 .collect();
             // Only this operation has runs here, so only its lines are
             // described: `check`'s, from the same runs.
-            let carves = dc_job::describe_carves(project, &generated.runs);
+            let carves = dc_job::carve_facts(project, &generated.runs);
             JobResult::Operation {
                 job,
                 generated,
@@ -307,9 +307,10 @@ pub struct OperationResult {
     /// Each run's marks, in `runs`' order (the worker's; empty when the
     /// result was made without them, and the Scene finds them then).
     pub marks: Vec<Marks>,
-    /// `check`'s carve summary of its runs, the editor's status line
-    /// ([`crate::editor::carve_summary`]).
-    pub carves: Vec<String>,
+    /// `check`'s carve summary of its runs, as facts: the Warnings
+    /// drawer's carve note and the status bar's message
+    /// ([`crate::warnings::carve_note`]).
+    pub carves: Vec<dc_job::CarveFacts>,
 }
 
 /// How far the current round of generation has got, for the status bar's

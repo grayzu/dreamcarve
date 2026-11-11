@@ -13,13 +13,15 @@
 //! names; a row on an operation's field opens the operation in the editor
 //! with that field focused (#539). *Copy* puts
 //! `check`'s text on the clipboard. Each group is named above its rows
-//! only when there are two or more (#616); the drawer has no Regenerate
+//! only when there are two or more (#616). An operation's carve note is
+//! the last row of its group, its facts laid out as labelled lines under
+//! a board's sub-heading (#620). The drawer has no Regenerate
 //! button, since *Regenerate all* lives in the status bar after Stop
 //! (capability 71).
 
 use dc_app::StrKey;
 use dc_app::status::counted;
-use dc_app::warnings::{self, Counts, Group, Level, Row};
+use dc_app::warnings::{self, CarveNote, Counts, Group, Level, Row};
 use eframe::egui::{self, Rangef, Sense, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
@@ -33,6 +35,13 @@ const HEADER_PX: f32 = 32.0;
 const GROUP_PX: f32 = 28.0;
 /// A row, px (`experience.md`, section 7, "Table rows").
 const ROW_PX: f32 = 28.0;
+/// A line of a carve note, px (the mock-up's 22-px fact lines).
+const NOTE_LINE_PX: f32 = 22.0;
+/// Where a carve note's facts start, from the row's left edge, px: past
+/// the glyph and the word, where other rows' messages run.
+const NOTE_FACTS_PX: f32 = 96.0;
+/// A carve note's label column, px.
+const NOTE_LABEL_PX: f32 = 140.0;
 /// The drawer's height when first opened, px.
 const DEFAULT_PX: f32 = 240.0;
 /// Its least height, px.
@@ -167,7 +176,10 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
                             group_header(ui, &group_title(state, group));
                         }
                         for row in &group.rows {
-                            draw_row(ui, state, row, stripe, out);
+                            match &row.note {
+                                Some(note) => draw_note(ui, state, row, note, stripe, out),
+                                None => draw_row(ui, state, row, stripe, out),
+                            }
                             stripe = !stripe;
                         }
                     }
@@ -232,6 +244,99 @@ fn group_header(ui: &mut Ui, title: &str) {
         TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
         palette.text_primary,
     );
+}
+
+/// A carve note (capability 76a; mock-up `10-warnings-panel.svg`): the
+/// quiet `info` glyph and *note* in secondary text, then its facts one per
+/// line, each label in secondary text before its value, under a board's
+/// sub-heading when there are two. Clicking it selects its operation; the
+/// status bar's message cell opens the drawer scrolled to it.
+fn draw_note(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    row: &Row,
+    note: &CarveNote,
+    stripe: bool,
+    out: &mut Vec<Action>,
+) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let lines: usize = note
+        .sections
+        .iter()
+        .map(|s| s.facts.len() + usize::from(s.heading.is_some()))
+        .sum();
+    #[allow(clippy::cast_precision_loss, reason = "a note has a handful of lines")]
+    let height = (NOTE_LINE_PX * lines as f32 + 12.0).max(ROW_PX);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
+    if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+    } else if stripe {
+        ui.painter().rect_filled(rect, 0.0, palette.surface_stripe);
+    }
+    if state.note_target.is_some() && state.note_target == row.op.as_ref() {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
+    if response.clicked()
+        && let Some(selection) = row.selection()
+    {
+        out.push(Action::Select(selection));
+    }
+
+    let (icon, colour, word) = tier(row.level, palette);
+    let painter = ui.painter_at(rect);
+    let left = rect.left() + 12.0;
+    let first_y = rect.top() + 6.0 + NOTE_LINE_PX / 2.0;
+    let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
+    painter.galley(
+        egui::pos2(left, first_y - glyph.size().y / 2.0),
+        glyph,
+        colour,
+    );
+    let small = TextStyle::Small.resolve(ui.style());
+    let body = TextStyle::Body.resolve(ui.style());
+    let title = TextStyle::Name(theme::TITLE.into()).resolve(ui.style());
+    painter.text(
+        egui::pos2(left + theme::ICON_SMALL_PX + 8.0, first_y),
+        egui::Align2::LEFT_CENTER,
+        strings.get(word),
+        small,
+        colour,
+    );
+    let label_x = left + NOTE_FACTS_PX;
+    let value_x = label_x + NOTE_LABEL_PX;
+    let mut y = first_y;
+    for section in &note.sections {
+        if let Some(heading) = &section.heading {
+            painter.text(
+                egui::pos2(label_x, y),
+                egui::Align2::LEFT_CENTER,
+                heading,
+                title.clone(),
+                palette.text_primary,
+            );
+            y += NOTE_LINE_PX;
+        }
+        for fact in &section.facts {
+            painter.text(
+                egui::pos2(label_x, y),
+                egui::Align2::LEFT_CENTER,
+                &fact.label,
+                body.clone(),
+                palette.text_secondary,
+            );
+            painter.text(
+                egui::pos2(value_x, y),
+                egui::Align2::LEFT_CENTER,
+                &fact.value,
+                body.clone(),
+                palette.text_primary,
+            );
+            y += NOTE_LINE_PX;
+        }
+    }
 }
 
 /// One row: tier glyph and word, the code as a link, the message, the

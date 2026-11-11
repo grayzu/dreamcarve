@@ -85,6 +85,16 @@ fn selected_operation_summary_in_message_cell() {
     let bar = status::cells(&harness.app, &inputs);
     assert_eq!(bar.message, None);
     assert_eq!(bar.message_op, None);
+
+    // The Operations list opens a row in the editor without selecting
+    // it: the open operation is the one spoken for.
+    harness.app.select(dc_app::Selection::Nothing);
+    harness.app.edit(Some(dc_project::OperationId::new("op3")));
+    let bar = status::cells(&harness.app, &inputs);
+    assert_eq!(
+        bar.message.as_deref(),
+        Some("Lettering · deepest cut 1.658 mm, no flat depth")
+    );
 }
 
 /// Capability 50b, table-driven over the states the generation cell has:

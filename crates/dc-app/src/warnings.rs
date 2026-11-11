@@ -13,8 +13,8 @@
 //! file, `warning: …` when not, `plaque.dcv: note: …` for a note. A
 //! position is the file's only while the project is what the file holds:
 //! once it is edited, the lines carry none. [`copy_text`] is `check`'s
-//! text: its notes, errors and warnings in the order it prints them, then
-//! its count line.
+//! text: its notes, errors, warnings and carve lines in the order it
+//! prints them, then its count line.
 //!
 //! Tiers follow PureCutCNC's `src/engine/toolpaths/warningCodes.ts`
 //! (`warningSeverity`): tiers at presentation, codes in the engine. The
@@ -26,12 +26,24 @@
 //! `inlay_plug_base_thin`), so validation's findings followed by each
 //! operation's and then `finish`'s are `build`'s list, and nothing here
 //! drops or reorders a finding but the grouping.
+//!
+//! Carve notes (slice 28, #620; capability 76a): the summary `check`
+//! prints for each operation that carves ([`dc_job::carve_facts`]) is a
+//! [`Level::Note`] row last in its operation's group, laid out as
+//! labelled facts with a heading per board when there are two
+//! ([`CarveNote`]). It is information, so [`counts`] skips it; its
+//! [`Row::line`] is `check`'s lines for it, which [`copy_text`] writes
+//! after the warnings as `check` prints them. As `check` prints them only
+//! when nothing stopped the build, the notes show only while there is no
+//! error.
 
+use dc_job::summary::{CarveFacts, Fact, Top};
 use dc_job::{Finding, Findings, ShapeRef, Tier};
 use dc_project::{OperationId, Project, SourceMap};
 
 use crate::app::App;
 use crate::selection::Selection;
+use crate::strings::{StrKey, Strings};
 
 /// The Warnings chapter of the book, whose entries the rows' codes link
 /// to.
@@ -47,7 +59,8 @@ pub enum Level {
     /// Advice about the job's setup (`tool_change_avoidable`,
     /// `unused_tool`).
     Hint,
-    /// What opening or importing a file changed or left out.
+    /// What opening or importing a file changed or left out, or a carve
+    /// note: information, not a problem.
     Note,
 }
 
@@ -77,8 +90,37 @@ pub struct Row {
     pub op: Option<OperationId>,
     /// The shape it is about.
     pub shape: Option<ShapeRef>,
-    /// The whole line as `check` prints it.
+    /// The whole line as `check` prints it; a carve note's lines, one
+    /// per board, joined by newlines.
     pub line: String,
+    /// The carve note's facts, for a carve note; `None` for every other
+    /// row.
+    pub note: Option<CarveNote>,
+}
+
+/// A carve note laid out (capability 76a): a section per board.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CarveNote {
+    /// Its sections, the female board's first.
+    pub sections: Vec<NoteSection>,
+}
+
+/// The facts of one board of a carve note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteSection {
+    /// *Female board* or *Male board*, when the note has two boards.
+    pub heading: Option<String>,
+    /// Its facts, one per line, the deepest cut first.
+    pub facts: Vec<NoteFact>,
+}
+
+/// One labelled fact: *Deepest cut* · *1.658 mm below the stock top*.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoteFact {
+    /// The label.
+    pub label: String,
+    /// What it says.
+    pub value: String,
 }
 
 impl Row {
@@ -172,8 +214,8 @@ impl Location<'_> {
     }
 }
 
-/// Every row in `check`'s order: the notes, the errors, then the
-/// warnings (hints among them).
+/// Every row in `check`'s order: the notes, the errors, the warnings
+/// (hints among them), then the carve notes.
 fn rows(app: &App) -> Vec<Row> {
     let location = Location::of(app);
     let notes = app.notes().iter().map(|note| Row {
@@ -184,6 +226,7 @@ fn rows(app: &App) -> Vec<Row> {
         op: None,
         shape: None,
         line: format!("{}: note: {note}", location.name),
+        note: None,
     });
     let findings = app.findings();
     let labelled = findings
@@ -199,8 +242,217 @@ fn rows(app: &App) -> Vec<Row> {
         op: finding.op.clone(),
         shape: finding.shape.clone(),
         line: location.describe(label, finding),
+        note: None,
     });
-    notes.chain(found).collect()
+    // `check` prints the carves only when the build was not stopped.
+    let carves = if findings.has_errors() {
+        Vec::new()
+    } else {
+        app.project()
+            .operations
+            .iter()
+            .filter_map(|op| carve_facts(app, op.id()))
+            .map(|facts| carve_row(app.strings(), facts))
+            .collect()
+    };
+    notes.chain(found).chain(carves).collect()
+}
+
+/// The carve summary of operation `op` (capability 76a), from the
+/// generation result the app holds, which the worker found when it
+/// generated it; `None` for a kind `check` prints no such line for, and
+/// while the operation has no current result (before it generates, while
+/// it regenerates, or when validation stops generation, as `check` then
+/// prints none).
+#[must_use]
+pub fn carve_facts<'a>(app: &'a App, op: &OperationId) -> Option<&'a CarveFacts> {
+    let generation = app.generation();
+    generation
+        .result(op)
+        .filter(|_| generation.is_current(op))
+        .and_then(|result| result.carves.iter().find(|c| &c.op == op))
+}
+
+/// The note row of `facts`.
+fn carve_row(strings: &Strings, facts: &CarveFacts) -> Row {
+    let text = facts.lines().join("\n");
+    Row {
+        level: Level::Note,
+        code: None,
+        message: text.clone(),
+        field: None,
+        op: Some(facts.op.clone()),
+        shape: None,
+        line: text,
+        note: Some(carve_note(strings, facts)),
+    }
+}
+
+/// `facts` laid out as labelled facts, under a heading per board when
+/// there are two.
+#[must_use]
+pub fn carve_note(strings: &Strings, facts: &CarveFacts) -> CarveNote {
+    let headed = facts.boards.len() >= 2;
+    CarveNote {
+        sections: facts
+            .boards
+            .iter()
+            .map(|board| NoteSection {
+                heading: board.board.filter(|_| headed).map(|b| {
+                    strings
+                        .get(match b {
+                            dc_project::Board::Female => StrKey::AppCarveFemaleBoard,
+                            dc_project::Board::Male => StrKey::AppCarveMaleBoard,
+                        })
+                        .to_owned()
+                }),
+                facts: board
+                    .facts
+                    .iter()
+                    .map(|fact| labelled(strings, fact))
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+/// `fact` with its label, as the drawer lays it out.
+fn labelled(strings: &Strings, fact: &Fact) -> NoteFact {
+    let (label, value) = match fact {
+        Fact::DeepestCut { depth, below } => (
+            StrKey::AppCarveDeepestCut,
+            strings.fmt(
+                match below {
+                    Top::Stock => StrKey::AppCarveBelowStockTop,
+                    Top::MaleBoard => StrKey::AppCarveBelowMaleTop,
+                },
+                &[("depth", depth)],
+            ),
+        ),
+        Fact::FlatDepth(None) => (
+            StrKey::AppCarveFlatDepth,
+            strings.get(StrKey::AppCarveNoFlatDepth).to_owned(),
+        ),
+        Fact::FlatDepth(Some(depth)) => (
+            StrKey::AppCarveFlatDepth,
+            strings.fmt(StrKey::AppCarveClamped, &[("depth", depth)]),
+        ),
+        Fact::FlatFloor { depth } => (
+            StrKey::AppCarveFlatFloor,
+            strings.fmt(StrKey::AppCarveFlatFloorAt, &[("depth", depth)]),
+        ),
+        Fact::StartPlane { depth } => (
+            StrKey::AppCarveStartPlane,
+            strings.fmt(StrKey::AppCarveBelowMaleTop, &[("depth", depth)]),
+        ),
+        Fact::SurroundFloor { depth } => (
+            StrKey::AppCarveSurroundFloor,
+            strings.fmt(StrKey::AppCarveBelowStartPlane, &[("depth", depth)]),
+        ),
+        Fact::FloorRidges {
+            straight,
+            corner,
+            cleared,
+        } => {
+            let heights = match corner {
+                Some(corner) => strings.fmt(
+                    StrKey::AppCarveRidgeHeights,
+                    &[("straight", straight), ("corner", corner)],
+                ),
+                None => straight.clone(),
+            };
+            let key = if *cleared {
+                StrKey::AppCarveRidgesCleared
+            } else {
+                StrKey::AppCarveRidgesAlone
+            };
+            (
+                StrKey::AppCarveFloorRidges,
+                strings.fmt(key, &[("heights", &heights)]),
+            )
+        }
+        Fact::Band {
+            boundary,
+            narrowest,
+            edge_pass,
+        } => {
+            let edge = match edge_pass {
+                Some(tool) => strings.fmt(StrKey::AppCarveOpenEdge, &[("tool", tool)]),
+                None => strings.get(StrKey::AppCarveVWall).to_owned(),
+            };
+            let boundary = boundary.join(strings.get(StrKey::AppCarveListSeparator));
+            (
+                StrKey::AppCarveBand,
+                strings.fmt(
+                    StrKey::AppCarveDrawnBand,
+                    &[
+                        ("boundary", &boundary),
+                        ("narrowest", narrowest),
+                        ("edge", &edge),
+                    ],
+                ),
+            )
+        }
+        Fact::BandEdge { tool, rounding } => (
+            StrKey::AppCarveBandEdge,
+            strings.fmt(
+                StrKey::AppCarveUprightEdge,
+                &[("tool", tool), ("rounding", rounding)],
+            ),
+        ),
+        Fact::CutOut {
+            inset,
+            outside,
+            through,
+        } => (
+            StrKey::AppCarveCutOut,
+            strings.fmt(
+                StrKey::AppCarveFreesPlug,
+                &[("inset", inset), ("outside", outside), ("through", through)],
+            ),
+        ),
+    };
+    NoteFact {
+        label: strings.get(label).to_owned(),
+        value,
+    }
+}
+
+/// The status bar's message for operation `op` while it is selected
+/// (capabilities 50b and 76a): its name and the first facts of its first
+/// board, `Lettering · deepest cut 1.658 mm, no flat depth`; `None` when
+/// it has no carve summary.
+#[must_use]
+pub fn carve_message(app: &App, op: &OperationId) -> Option<String> {
+    let strings = app.strings();
+    let facts = carve_facts(app, op)?;
+    let board = facts.boards.first()?;
+    let parts: Vec<String> = board
+        .facts
+        .iter()
+        .take(2)
+        .filter_map(|fact| match fact {
+            Fact::DeepestCut { depth, .. } => {
+                Some(strings.fmt(StrKey::AppCarveSummaryDeepest, &[("depth", depth)]))
+            }
+            Fact::FlatDepth(None) => Some(strings.get(StrKey::AppCarveSummaryNoFlat).to_owned()),
+            Fact::FlatDepth(Some(depth)) => {
+                Some(strings.fmt(StrKey::AppCarveSummaryFlatDepth, &[("depth", depth)]))
+            }
+            Fact::FlatFloor { depth } => {
+                Some(strings.fmt(StrKey::AppCarveSummaryFlatFloor, &[("depth", depth)]))
+            }
+            Fact::StartPlane { depth } => {
+                Some(strings.fmt(StrKey::AppCarveSummaryStartPlane, &[("depth", depth)]))
+            }
+            _ => None,
+        })
+        .collect();
+    let facts_text = parts.join(strings.get(StrKey::AppCarveSummarySeparator));
+    Some(strings.fmt(
+        StrKey::AppCarveSummary,
+        &[("name", &facts.name), ("facts", &facts_text)],
+    ))
 }
 
 /// Where `op`'s group goes: the project-level group first, then the
@@ -247,14 +499,18 @@ pub fn panel(app: &App) -> Vec<Group> {
 /// without its count line.
 #[must_use]
 pub fn lines(app: &App) -> Vec<String> {
-    rows(app).into_iter().map(|r| r.line).collect()
+    rows(app)
+        .iter()
+        .flat_map(|r| r.line.lines().map(str::to_owned).collect::<Vec<_>>())
+        .collect()
 }
 
 /// How many rows of each tier.
 #[must_use]
 pub fn counts(app: &App) -> Counts {
     let mut counts = Counts::default();
-    for row in rows(app) {
+    // A carve note is information, not counted (capability 76a).
+    for row in rows(app).into_iter().filter(|r| r.note.is_none()) {
         match row.level {
             Level::Error => counts.errors += 1,
             Level::Warning => counts.warnings += 1,
