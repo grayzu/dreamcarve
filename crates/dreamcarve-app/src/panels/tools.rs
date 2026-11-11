@@ -1,21 +1,27 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The CAM panel's Tools tab (functional spec, capability 63; mock-up
-//! `01-workspace.svg`; `experience.md`, section 7): the project's tools,
-//! one 40-px row each with its type glyph, name, diameter (and angle for
-//! a V-bit) and number, a red dot when it lacks a feed, plunge rate or
-//! RPM and the `unused_tool` hint when no operation uses it; under the
-//! list, the selected tool's editor, every field with its unit. Feed,
-//! plunge and RPM are empty while the file holds `null`, never prefilled,
-//! and show the error state with the file's message (S20). Switching a
-//! tool to V-bit writes no default angle: the switch is held, with an
-//! empty, required *Angle* field, until an angle is typed (#581). *Remove*
-//! is disabled while an operation uses the tool, its tooltip naming them.
+//! The CAM panel's Tools tab (functional spec, capability 63; mock-ups
+//! `01-workspace.svg` and `16-tools-tab.svg`; `experience.md`, section 7):
+//! *New tool* and *Add from library…* over the project's tools, one 40-px
+//! row each with its type glyph, name, diameter (and angle for a V-bit)
+//! and number, a red dot when it lacks a feed, plunge rate or RPM and the
+//! `unused_tool` hint when no operation uses it; *Duplicate* and *Delete*
+//! under the list; then the selected tool's editor, every field with its
+//! unit, and *Save to library* in its footer. Feed, plunge and RPM are
+//! empty while the file holds `null`, never prefilled, and show the
+//! required-field look with the file's message as the tooltip (S20; 66b).
+//! Switching a tool to V-bit writes no default angle: the switch is held,
+//! with an empty, required *Angle* field, until an angle is typed (#581).
+//! *Delete* is disabled while an operation uses the tool, its tooltip
+//! naming them. *New tool* (slice 29, #621) selects the tool it makes and
+//! focuses its name with the text selected, so typing renames it. An
+//! empty list says *No tools yet* with *New tool* and *Add from library…*
+//! under it (capability 79).
 //!
 //! The tab holds no project data: it reads the snapshot and emits
-//! commands. Which row is selected, and a held switch, are view state,
-//! kept in egui's memory.
+//! commands. Which row is selected, a held switch and a name to focus are
+//! view state, kept in egui's memory.
 
 use dc_app::tools::{self, KindChoice, KindSwitch, ToolField};
 use dc_app::{Command, CommandError, StrKey, Strings};
@@ -33,6 +39,8 @@ use crate::widgets::unit_field::{Required, UnitField, field as unit_field, row, 
 const ROW_PX: f32 = 40.0;
 /// The status cell's width, px.
 const STATUS_PX: f32 = 24.0;
+/// The editor footer's height, px: a 26-px button between 8-px gaps.
+const FOOTER_PX: f32 = 42.0;
 /// The panel's content margin, px.
 const MARGIN_PX: f32 = 12.0;
 
@@ -116,13 +124,16 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     if pending_v_bit(ui).is_some_and(|held| current.as_ref() != Some(&held)) {
         set_pending_v_bit(ui, None);
     }
-    ui.add_space(8.0);
-    toolbar(ui, strings, project, current.as_ref(), out);
-    ui.add_space(8.0);
     if project.tools.is_empty() {
-        empty(ui, strings.get(StrKey::AppPanelNoTools));
+        empty(ui, strings, project, out);
         return;
     }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.add_space(MARGIN_PX - 8.0);
+        add_buttons(ui, strings, project, out);
+    });
+    ui.add_space(8.0);
     // Six rows show before the list scrolls.
     let rows = u8::try_from(project.tools.len().min(6)).unwrap_or(6);
     let list_h = ROW_PX * f32::from(rows);
@@ -136,6 +147,8 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 list_row(ui, state, tool, current.as_ref() == Some(&tool.id));
             }
         });
+    ui.add_space(8.0);
+    list_actions(ui, strings, project, current.as_ref(), out);
     let palette = Palette::current(ui);
     let (line, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 9.0), Sense::hover());
     ui.painter().hline(
@@ -147,9 +160,12 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         .as_ref()
         .and_then(|id| project.tools.iter().find(|t| t.id == *id))
     {
+        // The editor scrolls above its footer, which stays in view.
+
         egui::ScrollArea::vertical()
             .id_salt("tool_editor")
             .auto_shrink(false)
+            .max_height((ui.available_height() - FOOTER_PX).max(0.0))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.add_space(MARGIN_PX);
@@ -159,12 +175,60 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     });
                 });
             });
+        footer(ui, strings, tool, out);
     }
 }
 
-/// *Add from library…*, *Duplicate* and *Remove*, acting on the selected
-/// tool. *Remove* is disabled while an operation uses it, and says which.
-fn toolbar(
+/// The name field to focus, with its text selected, when the editor next
+/// draws that tool: set by *New tool*, view state in egui's memory.
+fn focus_name_id() -> Id {
+    Id::unique("tools_tab_focus_name")
+}
+
+/// *New tool* and *Add from library…*, the ways to add a tool, in that
+/// order (capability 63). *New tool* selects the tool it makes and has
+/// its name focused when the editor draws it.
+fn add_buttons(ui: &mut Ui, strings: &Strings, project: &Project, out: &mut Vec<Action>) {
+    let new = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsNewTool))
+        .icon(Icon::Plus, theme::ICON_SMALL_PX);
+    if button(ui, new).clicked() {
+        let command = tools::new_tool(project);
+        if let Command::NewTool(tool) = &command {
+            select(ui, &tool.id, project.tools.len().saturating_add(1));
+            ui.data_mut(|d| d.insert_temp(focus_name_id(), tool.id.clone()));
+        }
+        out.push(Action::Run(Box::new(command)));
+    }
+    let add = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsAddFromLibrary));
+    if button(ui, add).clicked() {
+        out.push(Action::OpenLibrary);
+    }
+}
+
+/// The editor's footer: *Save to library*, which copies the project tool
+/// into the library (capability 63).
+fn footer(ui: &mut Ui, strings: &Strings, tool: &Tool, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let (line, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), Sense::hover());
+    ui.painter().hline(
+        line.x_range(),
+        line.center().y,
+        Stroke::new(1.0, palette.border_default),
+    );
+    ui.add_space(7.0);
+    ui.horizontal(|ui| {
+        ui.add_space(MARGIN_PX);
+        let save = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsSaveToLibrary))
+            .icon(Icon::BookPlus, theme::ICON_SMALL_PX);
+        if button(ui, save).clicked() {
+            out.push(Action::SaveToLibrary(tool.id.clone()));
+        }
+    });
+}
+
+/// *Duplicate* and *Delete* under the list, acting on the selected tool.
+/// *Delete* is disabled while an operation uses it, and says which.
+fn list_actions(
     ui: &mut Ui,
     strings: &Strings,
     project: &Project,
@@ -173,11 +237,6 @@ fn toolbar(
 ) {
     ui.horizontal(|ui| {
         ui.add_space(MARGIN_PX - 8.0);
-        let add = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsAddFromLibrary))
-            .icon(Icon::Plus, theme::ICON_SMALL_PX);
-        if button(ui, add).clicked() {
-            out.push(Action::OpenLibrary);
-        }
         let duplicate = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsDuplicate))
             .enabled(current.is_some());
         if button(ui, duplicate).clicked()
@@ -203,33 +262,45 @@ fn toolbar(
             }
             .to_string()
         });
-        let mut remove = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppToolsRemove))
+        let mut delete = ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppToolsDelete))
             .enabled(current.is_some() && refusal.is_none());
         if let Some(reason) = &refusal {
-            remove = remove.tooltip(reason);
+            delete = delete.tooltip(reason);
         }
-        if button(ui, remove).clicked()
+        if button(ui, delete).clicked()
             && let Some(id) = current
         {
-            out.push(Action::Run(Box::new(Command::RemoveTool(id.clone()))));
+            out.push(Action::Run(Box::new(Command::DeleteTool(id.clone()))));
         }
     });
 }
 
-/// One sentence where the list would be (section 8, "Empty states").
-fn empty(ui: &mut Ui, sentence: &str) {
+/// The empty list (capability 79; section 8, "Empty states"): *No tools
+/// yet*, with *New tool* and *Add from library…* under it.
+fn empty(ui: &mut Ui, strings: &Strings, project: &Project, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
-    ui.add_space(16.0);
+    ui.add_space(24.0);
     ui.vertical_centered(|ui| {
         ui.add(
             egui::Label::new(
-                egui::RichText::new(sentence)
+                egui::RichText::new(strings.get(StrKey::AppPanelNoTools))
                     .text_style(TextStyle::Body)
                     .color(palette.text_secondary),
             )
             .wrap()
             .selectable(false),
         );
+    });
+    ui.add_space(8.0);
+    // The two buttons, centred as a pair.
+    let width = ui.available_width();
+    ui.horizontal(|ui| {
+        let pair = ui.data(|d| d.get_temp::<f32>(Id::unique("tools_tab_empty_pair")));
+        ui.add_space(pair.map_or(MARGIN_PX, |w| ((width - w) / 2.0).max(0.0)));
+        let start = ui.cursor().left();
+        add_buttons(ui, strings, project, out);
+        let used = ui.min_rect().right() - start;
+        ui.data_mut(|d| d.insert_temp(Id::unique("tools_tab_empty_pair"), used));
     });
 }
 
@@ -345,7 +416,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, tool: &Tool, chosen: bool) {
     }
 }
 
-/// The selected tool's fields, then *Save to library*. While the tool's
+/// The selected tool's fields (its footer is [`footer`]). While the tool's
 /// switch to V-bit is held, its *Angle* field shows empty, required and
 /// in the error state; a typed angle makes the switch, and leaving it
 /// empty discards it (#581).
@@ -419,6 +490,9 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         });
         let response = output.response.labelled_by(label.id);
         let left = response.lost_focus();
+        if field == ToolField::Name {
+            focus_new_name(ui, &tool.id, id, &value);
+        }
         if required.is_none() {
             response.on_hover_text(field.file_name());
         }
@@ -453,13 +527,24 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
             kind_row(ui, strings, tool, held, out);
         }
     }
-    ui.add_space(8.0);
-    let save = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppToolsSaveToLibrary))
-        .icon(Icon::BookPlus, theme::ICON_SMALL_PX);
-    if button(ui, save).clicked() {
-        out.push(Action::SaveToLibrary(tool.id.clone()));
-    }
     ui.add_space(12.0);
+}
+
+/// Focuses the Name field `id` of tool `tool` with all of `text` selected
+/// when *New tool* asked for it, so typing renames the new tool.
+fn focus_new_name(ui: &Ui, tool: &ToolId, id: Id, text: &str) {
+    let asked = ui.data(|d| d.get_temp::<ToolId>(focus_name_id()));
+    if asked.as_ref() != Some(tool) {
+        return;
+    }
+    ui.data_mut(|d| d.remove::<ToolId>(focus_name_id()));
+    ui.memory_mut(|m| m.request_focus(id));
+    if let Some(mut state) = egui::text_edit::TextEditState::load(ui.ctx(), id) {
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::select_all_str(text)));
+        state.store(ui.ctx(), id);
+    }
 }
 
 /// The type dropdown: the five cutters; a V-bit shows its angle field.
