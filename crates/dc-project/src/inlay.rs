@@ -475,6 +475,172 @@ mod tests {
         assert_eq!(male_band(&p, &unmeasured), male_band(&p, &op));
     }
 
+    /// The sample project with the V-bit `t2`, an Inlay `o7` of the
+    /// sample rectangle `i1` (10 to 60 by 10 to 40 mm) listing `boundary`
+    /// (male board 6 mm, no margin), and the shapes `shapes` as instances
+    /// `i2`, `i3`, … each a closed rectangle (corner x, y, width, height)
+    /// from the origin.
+    fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
+        use crate::ids::{DefinitionId, InstanceId};
+        use crate::model::{FeatureDefinition, FeatureInstance};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        for (k, [x, y, w, h]) in shapes.iter().enumerate() {
+            let id = format!("i{}", k + 2);
+            let definition = DefinitionId::new(format!("d_{id}"));
+            p.definitions.insert(
+                definition.clone(),
+                FeatureDefinition {
+                    id: definition.clone(),
+                    name: id.clone(),
+                    profiles: vec![dc_geometry::Polyline::rect(Point::new(0.0, 0.0), *w, *h)],
+                },
+            );
+            p.instances.push(FeatureInstance {
+                id: InstanceId::new(&id),
+                definition,
+                transform: dc_geometry::Transform::translate(*x, *y),
+                name: format!("Shape {id}"),
+                visible: true,
+                locked: false,
+                z_top_mm: None,
+                z_bottom_mm: None,
+            });
+        }
+        let op = InlayOp {
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
+            margin_mm: None,
+            targets: vec![InstanceId::new("i1")],
+            boundary: boundary.iter().map(|b| InstanceId::new(*b)).collect(),
+            ..sample_inlay()
+        };
+        (p, op)
+    }
+
+    /// `boundary_regions` collects each listed instance's regions in
+    /// project space, in list order: the rectangle placed at (0, 0), 80
+    /// by 50 mm, and the one at (5, 5), 30 by 30 mm.
+    #[test]
+    fn boundary_regions_collects_each_instance_in_project_space() {
+        let (p, op) = bounded(&["i3", "i2"], &[[0.0, 0.0, 80.0, 50.0], [5.0, 5.0, 30.0, 30.0]]);
+        let found = boundary_regions(&p, &op).expect("resolves");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].instance, crate::ids::InstanceId::new("i3"));
+        assert_eq!(found[1].instance, crate::ids::InstanceId::new("i2"));
+        let bounds = found[0].regions[0].outer().polyline().bounds().unwrap();
+        assert_eq!((bounds.min.x, bounds.max.x), (5.0, 35.0));
+        assert_eq!((bounds.min.y, bounds.max.y), (5.0, 35.0));
+        assert_eq!(found[1].regions.len(), 1);
+    }
+
+    /// The problems of an entry: an id that is no instance, a target, a
+    /// definition with an open profile (the profile's index).
+    #[test]
+    fn boundary_regions_names_what_is_wrong() {
+        use crate::ids::InstanceId;
+        let (p, op) = bounded(&["nope"], &[]);
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::Unknown {
+                instance: InstanceId::new("nope")
+            })
+        );
+        let (p, op) = bounded(&["i1"], &[]);
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::IsTarget {
+                instance: InstanceId::new("i1")
+            })
+        );
+        let (mut p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        p.definitions
+            .get_mut(&crate::ids::DefinitionId::new("d_i2"))
+            .unwrap()
+            .profiles
+            .insert(
+                0,
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 0.0),
+                        dc_geometry::Vertex::line(5.0, 0.0),
+                    ],
+                    false,
+                ),
+            );
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::Open {
+                instance: InstanceId::new("i2"),
+                profile: 0
+            })
+        );
+    }
+
+    /// The drawn boundary of an 80 × 50 rectangle round the design (10 to
+    /// 60 by 10 to 40): 10 mm at the narrowest. A rectangle that cuts the
+    /// design is `CrossesDesign` at its farthest point; no boundary is no
+    /// drawn band.
+    #[test]
+    fn drawn_boundary_reads_the_narrowest_band() {
+        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        let drawn = drawn_boundary(&p, &op)
+            .expect("resolves")
+            .expect("a drawn boundary");
+        dc_geometry::assert_approx_eq!(drawn.narrowest_mm, 10.0, 1e-9);
+        assert_eq!(drawn.band.len(), 1);
+        assert!(drawn.empty.is_empty());
+
+        let (p, op) = bounded(&["i2"], &[[30.0, 0.0, 80.0, 50.0]]);
+        let Err(BoundaryProblem::CrossesDesign {
+            x_mm, distance_mm, ..
+        }) = drawn_boundary(&p, &op)
+        else {
+            panic!("the design is cut");
+        };
+        dc_geometry::assert_approx_eq!(x_mm, 10.0, 1e-9);
+        dc_geometry::assert_approx_eq!(distance_mm, 20.0, 1e-9);
+
+        let (p, op) = bounded(&[], &[]);
+        assert!(!op.has_boundary());
+        assert!(drawn_boundary(&p, &op).is_ok_and(|d| d.is_none()));
+    }
+
+    /// With a boundary the male band reads the narrowest band as its
+    /// margin, with no rounding of its own (`BandSource::Drawn`); the
+    /// same Inlay with a margin and no boundary reads the margin.
+    #[test]
+    fn male_band_reads_the_drawn_band_for_its_margin() {
+        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        let band = male_band(&p, &op).expect("a male band");
+        dc_geometry::assert_approx_eq!(band.margin_mm, 10.0, 1e-9);
+        dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 0.0, 1e-12);
+        assert!(matches!(band.source, BandSource::Drawn { narrowest_mm } if (narrowest_mm - 10.0).abs() < 1e-9));
+
+        let ignored = InlayOp {
+            margin_mm: Some(6.0),
+            outline_rounding_mm: Some(4.0),
+            ..op.clone()
+        };
+        assert_eq!(male_band(&p, &ignored), Some(band));
+        let computed = InlayOp {
+            boundary: Vec::new(),
+            ..ignored
+        };
+        let band = male_band(&p, &computed).expect("a male band");
+        dc_geometry::assert_approx_eq!(band.margin_mm, 6.0, 1e-12);
+        assert_eq!(
+            band.source,
+            BandSource::Computed {
+                margin_mm: 6.0,
+                outline_rounding_mm: 4.0
+            }
+        );
+    }
+
     /// #495: an open band is clipped to the stock itself, a V wall the
     /// V-bit's radius inside it (the 90° bit `t2`, 6.35 mm across). The
     /// room a clipping edge needs: the V-bit along the plug's foot with

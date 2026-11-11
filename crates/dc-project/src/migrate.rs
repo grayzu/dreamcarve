@@ -3424,7 +3424,182 @@ mod tests {
     /// A version 24 reader refuses a version 25 file as newer (ADR-0002).
     #[test]
     fn version_25_is_newer_than_24() {
-        assert_eq!(CURRENT_VERSION, 25);
+        const { assert!(CURRENT_VERSION >= 25) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 25 → 26 (#449, #602): the Inlay's drawn boundary.
+
+    const V25_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v25/sample.dcv");
+    const V26_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v26/sample.dcv");
+    const V26_BOUNDARY_FIXTURE: &[u8] =
+        include_bytes!("../tests/fixtures/dcv/v26/inlay-boundary.dcv");
+
+    /// An Inlay `inlay` as a version 25 file wrote it: no `boundary`.
+    fn v25_inlay(inlay: &crate::model::InlayOp) -> Value {
+        let mut op = serde_json::to_value(Operation::Inlay(inlay.clone())).unwrap();
+        op.as_object_mut().unwrap().shift_remove("boundary");
+        op
+    }
+
+    /// Format 26 (#449): every Inlay gains `"boundary": []` right after
+    /// `outline_rounding_mm`, and nothing else changes, keys in order.
+    /// Other operations are untouched. An Inlay that already has a
+    /// `boundary` is not a version 25 one.
+    #[test]
+    fn v25_to_v26_adds_an_empty_boundary() {
+        use crate::model::{InlayOp, MaleBoard};
+        use crate::test_support::sample_inlay;
+        let female = sample_inlay();
+        let male = InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(8.0),
+            },
+            outline_rounding_mm: Some(4.0),
+            ..sample_inlay()
+        };
+        let mut root = sample_root_at(25);
+        let mut expected = sample_root_at(CURRENT_VERSION);
+        for inlay in [&female, &male] {
+            root["operations"]
+                .as_array_mut()
+                .unwrap()
+                .push(v25_inlay(inlay));
+            expected["operations"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::to_value(Operation::Inlay(inlay.clone())).unwrap());
+        }
+        for i in [1, 2] {
+            let inlay = expected["operations"][i].as_object().unwrap();
+            assert_eq!(inlay["boundary"], json!([]));
+            let keys: Vec<&str> = inlay.keys().map(String::as_str).collect();
+            let at = keys
+                .iter()
+                .position(|k| *k == "outline_rounding_mm")
+                .unwrap();
+            assert_eq!(keys.get(at + 1), Some(&"boundary"));
+        }
+
+        let (migrated, notes) = migrate_with_notes(root, 25).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+        assert_eq!(notes, vec![]);
+
+        let mut bad = sample_root_at(25);
+        bad["operations"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::to_value(Operation::Inlay(female)).unwrap());
+        let err = migrate(bad, 25).unwrap_err();
+        assert!(
+            matches!(err, LoadError::Migration { from: 25, .. }),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn version_25_fixture_loads() {
+        let text = std::str::from_utf8(V25_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 25,"), "a version 25 file");
+        let loaded = load(V25_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![], "no Inlay, nothing to note");
+    }
+
+    /// The version 26 fixtures load as they are: the plain sample, and
+    /// one whose Inlay lists a boundary instance, `i2`, that is not a
+    /// target.
+    #[test]
+    fn version_26_fixtures_load() {
+        let text = std::str::from_utf8(V26_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 26,"), "a version 26 file");
+        assert_eq!(load(V26_FIXTURE).unwrap().project, sample_project());
+
+        let loaded = load(V26_BOUNDARY_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        let inlay = loaded
+            .project
+            .operations
+            .iter()
+            .find_map(|o| match o {
+                Operation::Inlay(i) => Some(i),
+                _ => None,
+            })
+            .expect("an Inlay");
+        assert_eq!(inlay.boundary, vec![crate::ids::InstanceId::new("i2")]);
+        assert!(inlay.has_boundary());
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// A version 25 project, whatever it holds, exports the programs it
+    /// did: the migration changes nothing a program is made of. Its Inlay
+    /// loads as the project written at version 26 with an empty boundary,
+    /// so `has_boundary` is false and `margin_mm` and
+    /// `outline_rounding_mm` still make the band, and saving it adds
+    /// exactly one line per Inlay, `"boundary": []`, to the file. (The CLI
+    /// test `v25_project_exports_the_same_programs` compares the
+    /// programs themselves.)
+    #[test]
+    fn a_v25_project_exports_the_same_programs() {
+        use crate::model::{InlayOp, MaleBoard};
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let male = InlayOp {
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(8.0),
+            },
+            outline_rounding_mm: Some(4.0),
+            ..sample_inlay()
+        };
+        let mut project = sample_project();
+        project.tools.push(tool_v_bit_90());
+        project.operations.push(Operation::Inlay(male));
+        project.version = CURRENT_VERSION;
+        let mut v25 = serde_json::to_value(&project).unwrap();
+        v25["operations"][1]
+            .as_object_mut()
+            .unwrap()
+            .shift_remove("boundary");
+        v25["version"] = json!(25);
+        let text25 = serde_json::to_string_pretty(&v25).unwrap();
+
+        let loaded = load(text25.as_bytes()).unwrap();
+        assert_eq!(loaded.project, project, "the same project");
+        let Operation::Inlay(inlay) = &loaded.project.operations[1] else {
+            panic!("an Inlay");
+        };
+        assert!(!inlay.has_boundary());
+        assert_eq!(inlay.margin_mm, Some(6.0));
+        assert_eq!(inlay.outline_rounding_mm, Some(4.0));
+
+        let saved = crate::save(&loaded.project).unwrap();
+        let without: Vec<&str> = saved
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("\"boundary\":"))
+            .collect();
+        assert_eq!(
+            saved.lines().count() - without.len(),
+            1,
+            "one added line per Inlay"
+        );
+    }
+
+    /// A version 25 reader refuses a version 26 file as newer (ADR-0002).
+    #[test]
+    fn version_26_is_newer_than_25() {
+        assert_eq!(CURRENT_VERSION, 26);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

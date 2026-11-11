@@ -1297,4 +1297,306 @@ mod tests {
         );
         assert_eq!(band(&fine), band(&coarse), "the band's edge as before");
     }
+
+    // The drawn band (3.4, #449; `docs/specs/phase-3/design.md`, "Drawn
+    // boundary").
+
+    /// The regions of `contours` nested.
+    fn regions(contours: Vec<Contour>) -> Vec<Region> {
+        nest(contours).expect("nests").0
+    }
+
+    /// A closed polygon through `points`.
+    fn polygon(points: &[(f64, f64)]) -> Contour {
+        let vertices = points.iter().map(|&(x, y)| Vertex::line(x, y)).collect();
+        Contour::new(Polyline::new(vertices, true)).expect("a polygon")
+    }
+
+    /// Two overlapping 20 × 20 squares are one band of 20 × 30 mm; two
+    /// apart stay two.
+    #[test]
+    fn drawn_band_is_the_union_of_the_outers() {
+        let overlapping = [
+            regions(vec![rect(0.0, 0.0, 20.0, 20.0)]),
+            regions(vec![rect(10.0, 0.0, 20.0, 20.0)]),
+        ]
+        .concat();
+        let band = drawn_band(&overlapping, TOL);
+        assert_eq!(band.len(), 1, "{band:?}");
+        assert!(
+            (area_mm2(&band) - 600.0).abs() < 1e-9,
+            "{}",
+            area_mm2(&band)
+        );
+        assert!(band.iter().all(|r| r.holes().is_empty()));
+
+        let apart = [
+            regions(vec![rect(0.0, 0.0, 20.0, 20.0)]),
+            regions(vec![rect(40.0, 0.0, 20.0, 20.0)]),
+        ]
+        .concat();
+        let band = drawn_band(&apart, TOL);
+        assert_eq!(band.len(), 2, "{band:?}");
+        assert!((area_mm2(&band) - 800.0).abs() < 1e-9);
+        assert!(drawn_band(&[], TOL).is_empty());
+    }
+
+    /// A ring-shaped boundary: its hole is band too, since board standing
+    /// in the band would hold the plug off the female (#484). Four bars
+    /// that ring a gap between them leave no hole either.
+    #[test]
+    fn drawn_band_drops_holes() {
+        let ring = regions(vec![
+            rect(0.0, 0.0, 40.0, 40.0),
+            rect(10.0, 10.0, 20.0, 20.0),
+        ]);
+        assert_eq!(ring.len(), 1);
+        assert_eq!(ring[0].holes().len(), 1);
+        let band = drawn_band(&ring, TOL);
+        assert_eq!(band.len(), 1, "{band:?}");
+        assert!(band[0].holes().is_empty(), "the hole is band");
+        assert!((area_mm2(&band) - 1600.0).abs() < 1e-9);
+
+        let bars = [
+            regions(vec![rect(0.0, 0.0, 30.0, 10.0)]),
+            regions(vec![rect(0.0, 20.0, 30.0, 10.0)]),
+            regions(vec![rect(0.0, 0.0, 10.0, 30.0)]),
+            regions(vec![rect(20.0, 0.0, 10.0, 30.0)]),
+        ]
+        .concat();
+        let band = drawn_band(&bars, TOL);
+        assert_eq!(band.len(), 1, "{band:?}");
+        assert!(band[0].holes().is_empty(), "the ringed gap is band");
+        assert!((area_mm2(&band) - 900.0).abs() < 1e-9);
+    }
+
+    /// The four-point star (tips 30 mm out) in an 80 mm square: the tips
+    /// are 10 mm from the edge, the least room anywhere, nearest at a tip.
+    #[test]
+    fn band_clearance_of_a_star_in_a_square() {
+        let design = regions(vec![star()]);
+        let band = regions(vec![rect(-40.0, -40.0, 80.0, 80.0)]);
+        let BandClearance::Inside {
+            narrowest_mm,
+            x_mm,
+            y_mm,
+        } = band_clearance(&design, &band, TOL)
+        else {
+            panic!("the star is inside");
+        };
+        assert!((narrowest_mm - 10.0).abs() < 1e-9, "{narrowest_mm}");
+        let at_tip = (x_mm.abs() - 30.0).abs() < 1e-9 && y_mm.abs() < 1e-9
+            || (y_mm.abs() - 30.0).abs() < 1e-9 && x_mm.abs() < 1e-9;
+        assert!(at_tip, "at a tip: ({x_mm}, {y_mm})");
+    }
+
+    /// A triangle whose left corner, (-8, 0), runs 8 mm past a band's edge
+    /// at x = 0: the crossing is reported at that corner, 8 mm out.
+    #[test]
+    fn band_clearance_reports_a_crossing_with_its_point_and_depth() {
+        let design = regions(vec![polygon(&[(-8.0, 0.0), (20.0, -5.0), (20.0, 5.0)])]);
+        let band = regions(vec![rect(0.0, -50.0, 100.0, 100.0)]);
+        let BandClearance::Crosses {
+            x_mm,
+            y_mm,
+            depth_mm,
+        } = band_clearance(&design, &band, TOL)
+        else {
+            panic!("the corner is past the edge");
+        };
+        assert!(
+            (x_mm + 8.0).abs() < 1e-9 && y_mm.abs() < 1e-9,
+            "({x_mm}, {y_mm})"
+        );
+        assert!((depth_mm - 8.0).abs() < 1e-9, "{depth_mm}");
+    }
+
+    /// A design whose outline runs along the band's edge, or touches it at
+    /// a corner, is a crossing with depth 0: the plug's wall would have
+    /// no band beyond it.
+    #[test]
+    fn a_boundary_touching_the_design_is_a_crossing() {
+        let design = regions(vec![rect(0.0, 0.0, 10.0, 10.0)]);
+        for band in [
+            regions(vec![rect(0.0, -10.0, 50.0, 30.0)]),
+            regions(vec![rect(-10.0, -10.0, 20.0, 20.0)]),
+            regions(vec![polygon(&[
+                (-5.0, -5.0),
+                (10.0, 0.0),
+                (10.0, 10.0),
+                (-5.0, 15.0),
+            ])]),
+        ] {
+            let result = band_clearance(&design, &band, TOL);
+            assert!(
+                matches!(result, BandClearance::Crosses { depth_mm, .. } if depth_mm.abs() < 1e-6),
+                "{result:?}"
+            );
+        }
+        let apart = regions(vec![rect(-0.1, -0.1, 10.2, 10.2)]);
+        let BandClearance::Inside { narrowest_mm, .. } = band_clearance(&design, &apart, TOL)
+        else {
+            panic!("0.1 mm of room is inside");
+        };
+        assert!((narrowest_mm - 0.1).abs() < 1e-9, "{narrowest_mm}");
+    }
+
+    /// A part wholly outside the band is a crossing, as far out as its
+    /// farthest point; one part outside among several is too.
+    #[test]
+    fn a_design_part_outside_is_a_crossing() {
+        let band = regions(vec![rect(0.0, 0.0, 50.0, 50.0)]);
+        let outside = regions(vec![rect(60.0, 0.0, 10.0, 5.0)]);
+        let BandClearance::Crosses { x_mm, depth_mm, .. } = band_clearance(&outside, &band, TOL)
+        else {
+            panic!("outside");
+        };
+        assert!((x_mm - 70.0).abs() < 1e-9, "{x_mm}");
+        assert!((depth_mm - 20.0).abs() < 1e-9, "{depth_mm}");
+
+        let two = [
+            regions(vec![rect(10.0, 10.0, 5.0, 5.0)]),
+            regions(vec![rect(80.0, 10.0, 5.0, 5.0)]),
+        ]
+        .concat();
+        assert!(matches!(
+            band_clearance(&two, &band, TOL),
+            BandClearance::Crosses { .. }
+        ));
+        assert!(matches!(
+            band_clearance(&two, &[], TOL),
+            BandClearance::Crosses { .. }
+        ));
+    }
+
+    /// Closing an L-shaped band by 3 mm rounds only its inward corner: the
+    /// outline keeps its sharp outward corners (the bounding box and each
+    /// outward vertex stay, and the area grows by the fillet at (20, 20),
+    /// `r² (1 − π/4)`), and a slot narrower than twice the radius fills.
+    #[test]
+    fn closed_band_rounds_inward_corners_only() {
+        let corners = [
+            (0.0, 0.0),
+            (40.0, 0.0),
+            (40.0, 20.0),
+            (20.0, 40.0),
+            (0.0, 40.0),
+        ];
+        let l = regions(vec![polygon(&[
+            (0.0, 0.0),
+            (40.0, 0.0),
+            (40.0, 20.0),
+            (20.0, 20.0),
+            (20.0, 40.0),
+            (0.0, 40.0),
+        ])]);
+        let closed = closed_band(&l, 3.0, TOL);
+        assert_eq!(closed.len(), 1, "{closed:?}");
+        let bounds = closed[0].outer().polyline().bounds().expect("bounds");
+        assert!(bounds.min.x.abs() < 1e-9 && bounds.min.y.abs() < 1e-9);
+        assert!((bounds.max.x - 40.0).abs() < 1e-9 && (bounds.max.y - 40.0).abs() < 1e-9);
+        let fillet = 9.0 * (1.0 - PI / 4.0);
+        let added = area_mm2(&closed) - area_mm2(&l);
+        assert!(
+            (added - fillet).abs() < 0.05,
+            "added {added}, fillet {fillet}"
+        );
+        for (x, y) in corners {
+            assert!(
+                closed[0]
+                    .outer()
+                    .polyline()
+                    .vertices()
+                    .iter()
+                    .any(|v| (v.point().x - x).abs() < 1e-6 && (v.point().y - y).abs() < 1e-6),
+                "outward corner ({x}, {y}) stays sharp"
+            );
+        }
+
+        // A 2 mm slot cut into a block closes at r = 3 and stays at r = 0.5.
+        let slotted = regions(vec![polygon(&[
+            (0.0, 0.0),
+            (30.0, 0.0),
+            (30.0, 20.0),
+            (16.0, 20.0),
+            (16.0, 10.0),
+            (14.0, 10.0),
+            (14.0, 20.0),
+            (0.0, 20.0),
+        ])]);
+        let filled = closed_band(&slotted, 3.0, TOL);
+        assert!(
+            area_mm2(&filled) > area_mm2(&slotted) + 19.0,
+            "the slot fills: {} vs {}",
+            area_mm2(&filled),
+            area_mm2(&slotted)
+        );
+        let open = closed_band(&slotted, 0.5, TOL);
+        assert!(
+            area_mm2(&open) < area_mm2(&slotted) + 1.0,
+            "{}",
+            area_mm2(&open)
+        );
+    }
+
+    /// With no rounding the closed band is the band united; a negative or
+    /// non-finite rounding gives nothing, as `rounded_band`'s does.
+    #[test]
+    fn closed_band_without_rounding_is_the_band() {
+        let band = regions(vec![rect(0.0, 0.0, 20.0, 20.0)]);
+        let same = closed_band(&band, 0.0, TOL);
+        assert_eq!(same.len(), 1);
+        assert!((area_mm2(&same) - 400.0).abs() < 1e-9);
+        for bad in [-1.0, f64::NAN, f64::INFINITY] {
+            assert!(closed_band(&band, bad, TOL).is_empty(), "{bad}");
+        }
+    }
+
+    /// `rounded_band` is the design's outers grown by `M + R`, united and
+    /// closed by `R`: the same regions, to the last place, as the
+    /// construction written out before `closed_band` shared its tail.
+    #[test]
+    fn rounded_band_is_unchanged_by_the_refactor() {
+        let (design, _) = nest(vec![star(), circle(Point::new(0.0, 0.0), 6.0)]).expect("nests");
+        let pair = [
+            regions(vec![rect(0.0, 0.0, 10.0, 10.0)]),
+            regions(vec![rect(14.0, 3.0, 8.0, 6.0)]),
+        ]
+        .concat();
+        for design in [design, pair] {
+            for (margin_mm, rounding_mm) in [(8.0, 0.0), (8.0, 5.0), (2.0, 5.0), (9.0, 12.0)] {
+                let grown = grown_outers(&design, margin_mm + rounding_mm, Bays::Island);
+                let united = filled(union(&grown, &[], TOL));
+                let before = if rounding_mm == 0.0 {
+                    united
+                } else {
+                    floor_regions(&united, rounding_mm, TOL)
+                };
+                assert_eq!(
+                    rounded_band(&design, margin_mm, rounding_mm, TOL),
+                    before,
+                    "M {margin_mm} R {rounding_mm}"
+                );
+            }
+        }
+    }
+
+    /// A drawn band runs past the board like a computed one: clipped to
+    /// the rectangle by `band_on_board`, and unchanged (`None`) when it
+    /// stays on the board.
+    #[test]
+    fn drawn_band_clips_to_the_board_like_a_computed_one() {
+        let drawn = drawn_band(&regions(vec![rect(-10.0, -10.0, 60.0, 60.0)]), TOL);
+        let board = Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(40.0, 40.0),
+        };
+        let clipped = band_on_board(&drawn, board, TOL).expect("it runs past the board");
+        assert!((area_mm2(&clipped) - 1600.0).abs() < 1e-9);
+        let bounds = clipped[0].outer().polyline().bounds().expect("bounds");
+        assert!(bounds.min.x.abs() < 1e-9 && (bounds.max.y - 40.0).abs() < 1e-9);
+
+        let inside = drawn_band(&regions(vec![rect(5.0, 5.0, 20.0, 20.0)]), TOL);
+        assert_eq!(band_on_board(&inside, board, TOL), None);
+    }
 }
