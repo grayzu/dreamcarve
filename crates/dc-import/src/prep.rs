@@ -6,6 +6,8 @@
 //! built on it ([`findings()`] for `init`, [`design_findings`] for `check`)
 //! and [`prepare()`], which turns an SVG into pieces and a [`PrepReport`].
 
+#[cfg(test)]
+mod defaults;
 mod findings;
 mod report;
 mod run;
@@ -43,3 +45,73 @@ pub const REPORT_MIN_FEATURE_MM: f64 = 1.5;
 pub const REPORT_HEIGHTS_MM: [f64; 3] = [100.0, 200.0, 300.0];
 /// `narrowest_gap` searches this fraction of the height.
 pub const GAP_REACH_FRACTION: f64 = 0.25;
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, reason = "tests")]
+
+    use super::{PrepOptions, prepare};
+    use std::fmt::Write as _;
+    use std::time::{Duration, Instant};
+
+    /// Art as a trace leaves it: 100 000 vertices in fifty jittered
+    /// outlines, and a fringe of specks.
+    fn traced_scale_art() -> String {
+        let mut state = 0x2545_f491_u32;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            f64::from(state) / f64::from(u32::MAX)
+        };
+        let mut body = String::new();
+        let per_ring = 2_000;
+        for ring in 0..50 {
+            let (cx, cy) = (
+                100.0 + 150.0 * f64::from(ring % 10),
+                100.0 + 150.0 * f64::from(ring / 10),
+            );
+            let mut d = String::new();
+            for i in 0..per_ring {
+                let a = std::f64::consts::TAU * f64::from(i) / f64::from(per_ring);
+                let r = 60.0 + 0.1 * (next() - 0.5);
+                let _ = write!(
+                    d,
+                    "{}{:.3},{:.3} ",
+                    if i == 0 { "M " } else { "L " },
+                    cx + r * a.cos(),
+                    cy + r * a.sin()
+                );
+            }
+            let _ = write!(body, r#"<path d="{d}Z"/>"#);
+        }
+        for _ in 0..200 {
+            let _ = write!(
+                body,
+                r#"<circle cx="{:.3}" cy="{:.3}" r="{:.3}"/>"#,
+                50.0 + 1400.0 * next(),
+                50.0 + 800.0 * next(),
+                0.1 * next()
+            );
+        }
+        format!(
+            r#"<svg xmlns="http://www.w3.org/2000/svg" width="1500mm" height="900mm" viewBox="0 0 1500 900">{body}</svg>"#
+        )
+    }
+
+    /// A traced picture's worth of vertices prepares in seconds (a loose
+    /// bound, as `s17_check_is_fast_on_the_sign` is).
+    #[test]
+    #[ignore = "timing: run in release, `cargo test --release -p dc-import -- --ignored`"]
+    fn runs_in_seconds_on_traced_scale_art() {
+        let art = traced_scale_art();
+        let started = Instant::now();
+        let (prepared, _) = prepare(art.as_bytes(), &PrepOptions::default()).unwrap();
+        let elapsed = started.elapsed();
+        assert!(!prepared.pieces.is_empty());
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "100 000 vertices took {elapsed:?}"
+        );
+    }
+}
