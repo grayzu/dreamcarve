@@ -31,6 +31,7 @@ mod lead;
 pub mod order;
 mod overlap;
 pub mod passes;
+mod photo;
 pub mod placed_tabs;
 pub mod pocket;
 mod profile;

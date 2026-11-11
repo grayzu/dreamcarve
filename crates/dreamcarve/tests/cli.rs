@@ -7315,6 +7315,111 @@ fn v25_project_exports_the_same_programs() {
     }
 }
 
+/// Format 27 (sub-phase 3.5, #644): bitmaps and the Photo V-Carve add
+/// `"bitmaps": []` to a project and change nothing it cuts. The inlay
+/// pair's projects, the sign (a Pocket, a V-Carve with clearing, two
+/// countersinks and a Profile) and the plaque, each written as a version
+/// 26 file (the version 27 text less its `bitmaps` line), export the same
+/// programs, byte for byte, as the file written at version 27.
+#[test]
+fn v26_project_exports_the_same_programs() {
+    let sources = [
+        inlay_migration_fixture("dc-male.dcv"),
+        inlay_migration_fixture("star-male.dcv"),
+        inlay_migration_fixture("dc-female.dcv"),
+        inlay_migration_fixture("star-female.dcv"),
+        tests_fixture("sign.dcv"),
+        tests_fixture("plaque.dcv"),
+    ];
+    for path in sources {
+        let stem = path
+            .file_stem()
+            .expect("a file name")
+            .to_string_lossy()
+            .into_owned();
+        let dir = work_dir(&format!("v26_project_exports_the_same_programs_{stem}"));
+        let source = dir.join("source.dcv");
+        std::fs::copy(&path, &source).expect("fixture copied");
+        let project = load_file(&source).project;
+        assert_eq!(project.version, 27);
+        assert_eq!(project.bitmaps, vec![]);
+        let current = save(&project).expect("project saves");
+        assert!(
+            current.contains("\n  \"bitmaps\": [],\n"),
+            "{stem}: {current}"
+        );
+        let v26 = current
+            .replacen("\n  \"bitmaps\": [],\n", "\n", 1)
+            .replacen("\"version\": 27,", "\"version\": 26,", 1);
+        assert!(v26.contains("\"version\": 26,"), "{stem}: {v26}");
+        assert!(!v26.contains("bitmaps"), "{stem}: {v26}");
+        std::fs::write(dir.join("old.dcv"), &v26).expect("dcv written");
+        std::fs::write(dir.join("new.dcv"), &current).expect("dcv written");
+        for file in ["old.dcv", "new.dcv"] {
+            let out = run(&dir, &["export", file, "--date", FIXED_DATE]);
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{stem} {file}: {}",
+                stderr(&out)
+            );
+        }
+        let programs = programs_in(&dir);
+        let old: Vec<&String> = programs.iter().filter(|n| n.starts_with("old-")).collect();
+        assert!(!old.is_empty(), "{stem}: {programs:?}");
+        assert_eq!(
+            old.len(),
+            programs.iter().filter(|n| n.starts_with("new-")).count(),
+            "{stem}: {programs:?}"
+        );
+        for name in old {
+            let a = std::fs::read_to_string(dir.join(name)).expect("old written");
+            let b = std::fs::read_to_string(dir.join(name.replacen("old-", "new-", 1)))
+                .expect("new written");
+            assert!(a == b, "{stem} {name}:\n{a}\n{b}");
+        }
+        // `check` reads the version 26 file with nothing to say about it.
+        let out = run(&dir, &["check", "old.dcv"]);
+        assert_eq!(out.status.code(), Some(0), "{stem}: {}", stderr(&out));
+    }
+}
+
+/// Format 27 (#644): a project with a bitmap and a Photo V-Carve loads
+/// and `check` reads it, but the generator is not built yet (#646), so
+/// `check` and `export` exit 1 with one line that names the operation and
+/// write no program. A bitmap whose picture cannot be read stops the
+/// load, with the bitmap's id.
+#[test]
+fn photo_v_carve_loads_and_is_not_cut_yet() {
+    let dir = work_dir("photo_v_carve_loads_and_is_not_cut_yet");
+    let project = dc_project::test_support::photo_project();
+    let text = save(&project).expect("project saves");
+    std::fs::write(dir.join("photo.dcv"), &text).expect("dcv written");
+    for command in ["check", "export"] {
+        let out = run(&dir, &[command, "photo.dcv"]);
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(1), "{command}: {report}");
+        assert!(
+            report.contains(
+                "operation `o8` is a Photo V-Carve, which this version of DreamCarve cannot cut yet"
+            ),
+            "{command}: {report}"
+        );
+        assert!(!report.contains("panicked"), "{command}: {report}");
+        assert_eq!(programs_in(&dir), Vec::<String>::new(), "{command}");
+    }
+
+    let png = &project.bitmaps[0].png_base64;
+    let bad = text.replacen(png.as_str(), "bm90IGEgcGljdHVyZQ==", 1);
+    assert_ne!(bad, text, "fixture layout changed:\n{text}");
+    std::fs::write(dir.join("bad.dcv"), bad).expect("dcv written");
+    let out = run(&dir, &["check", "bad.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_ne!(out.status.code(), Some(0), "{report}");
+    assert!(report.contains("bitmap `b1` cannot be read"), "{report}");
+    assert!(!report.contains("panicked"), "{report}");
+}
+
 /// The tutorial project `dc.dcv` with its 90 x 60 mm frame (`i3`) as the
 /// drawn boundary of its Inlay, moved `shift_mm` right (acceptance 61m),
 /// written to `dir/dc.dcv`; `margin_mm` and `outline_rounding_mm` are

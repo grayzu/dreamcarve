@@ -1350,6 +1350,9 @@ mod tests {
 
     fn sample_root_at(version: u32) -> Value {
         let mut root = serde_json::to_value(sample_project()).unwrap();
+        if version < 27 {
+            root.as_object_mut().unwrap().shift_remove("bitmaps");
+        }
         if version < 17 {
             for op in root["operations"].as_array_mut().unwrap() {
                 op.as_object_mut()
@@ -3644,7 +3647,180 @@ mod tests {
     /// A version 25 reader refuses a version 26 file as newer (ADR-0002).
     #[test]
     fn version_26_is_newer_than_25() {
-        assert_eq!(CURRENT_VERSION, 26);
+        const { assert!(CURRENT_VERSION >= 26) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 26 → 27 (sub-phase 3.5, #644): bitmaps and the Photo V-Carve.
+
+    const V27_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v27/sample.dcv");
+    const V27_PHOTO_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v27/photo.dcv");
+
+    /// `root`, a project as the current version writes it, as version 26
+    /// wrote it: no `bitmaps`.
+    fn as_v26(mut root: Value) -> Value {
+        root.as_object_mut().unwrap().shift_remove("bitmaps");
+        root["version"] = json!(26);
+        root
+    }
+
+    /// Format 27: the root gains `"bitmaps": []` right after `instances`,
+    /// and nothing else changes, keys in order. The project here holds
+    /// every kind a version 26 file can, so none of them is touched.
+    #[test]
+    fn v26_to_v27_adds_an_empty_bitmap_list() {
+        use crate::test_support::{sample_inlay, sample_v_carve, tool_v_bit_90};
+        let mut project = sample_project();
+        project.tools.push(tool_v_bit_90());
+        project.operations.push(Operation::VCarve(sample_v_carve()));
+        project.operations.push(Operation::Inlay(sample_inlay()));
+        let expected = serde_json::to_value(&project).unwrap();
+        assert_eq!(expected["bitmaps"], json!([]));
+        let keys: Vec<&str> = expected
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let at = keys.iter().position(|k| *k == "instances").unwrap();
+        assert_eq!(keys.get(at + 1), Some(&"bitmaps"));
+
+        let root = as_v26(expected.clone());
+        assert!(root.get("bitmaps").is_none());
+        let (migrated, notes) = migrate_with_notes(root, 26).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+        assert_eq!(notes, vec![]);
+
+        // A root with no `instances` (not a file this build wrote) still
+        // gains the list, at the end.
+        let mut bare = as_v26(expected);
+        bare.as_object_mut().unwrap().shift_remove("instances");
+        let migrated = migrate(bare, 26).unwrap();
+        assert_eq!(migrated["bitmaps"], json!([]));
+    }
+
+    /// A file that says 26 and holds `bitmaps`, or a `photo_v_carve`
+    /// operation, is not a version 26 file: the kind and the list arrive
+    /// together in 27, and the migration refuses it, naming what it found.
+    #[test]
+    fn v26_with_bitmaps_already_present_fails() {
+        for bitmaps in [json!([]), json!([{ "id": "b1" }]), json!(null)] {
+            let mut root = sample_root_at(26);
+            root["bitmaps"] = bitmaps.clone();
+            let err = migrate(root, 26).unwrap_err();
+            match &err {
+                LoadError::Migration {
+                    from: 26,
+                    to: 27,
+                    message,
+                    ..
+                } => assert!(message.contains("`bitmaps`"), "{message}"),
+                _ => panic!("{bitmaps}: {err:?}"),
+            }
+        }
+
+        let mut root = sample_root_at(26);
+        root["operations"][0]["kind"] = json!("photo_v_carve");
+        let err = migrate(root, 26).unwrap_err();
+        match &err {
+            LoadError::Migration {
+                from: 26,
+                to: 27,
+                message,
+                ..
+            } => {
+                assert!(message.contains("`operations[0]`"), "{message}");
+                assert!(message.contains("photo_v_carve"), "{message}");
+            }
+            _ => panic!("{err:?}"),
+        }
+        // An older file is refused by the same step, at the end of its chain.
+        let mut root = sample_root_at(20);
+        root["bitmaps"] = json!([]);
+        let err = migrate(root, 20).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LoadError::Migration {
+                    from: 26,
+                    to: 27,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// The version 27 fixtures load as they are: the plain sample, whose
+    /// bitmap list is empty, and one with a bitmap `b1` and a Photo
+    /// V-Carve of it.
+    #[test]
+    fn version_27_fixtures_load() {
+        use crate::test_support::{SAMPLE_BITMAP_BYTES, photo_project};
+        let text = std::str::from_utf8(V27_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 27,"), "a version 27 file");
+        assert!(text.contains("\n  \"bitmaps\": [],\n"), "{text}");
+        let loaded = load(V27_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![]);
+
+        let text = std::str::from_utf8(V27_PHOTO_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 27,"), "a version 27 file");
+        let loaded = load(V27_PHOTO_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.project, photo_project());
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
+        let Some(Operation::PhotoVCarve(photo)) = loaded.project.operations.last() else {
+            panic!("a Photo V-Carve");
+        };
+        let bitmap = loaded
+            .project
+            .bitmaps
+            .iter()
+            .find(|b| b.id == photo.image)
+            .expect("the bitmap the Photo V-Carve names");
+        assert_eq!(bitmap.pixels().unwrap().bytes, SAMPLE_BITMAP_BYTES);
+    }
+
+    /// A version 26 project, whatever it holds, exports the programs it
+    /// did: it loads as the same project written at version 27 with an
+    /// empty bitmap list, and saving it adds exactly one line to the
+    /// file, `"bitmaps": []`. (The CLI test
+    /// `v26_project_exports_the_same_programs` compares the programs.)
+    #[test]
+    fn a_v26_project_loads_as_the_same_project() {
+        for fixture in [V26_FIXTURE, V26_BOUNDARY_FIXTURE] {
+            let old = std::str::from_utf8(fixture).unwrap();
+            assert!(old.contains("\"version\": 26,"), "a version 26 file");
+            assert!(!old.contains("bitmaps"), "a version 26 file");
+            let loaded = load(fixture).unwrap();
+            assert_eq!(loaded.project.version, CURRENT_VERSION);
+            assert_eq!(loaded.project.bitmaps, vec![]);
+            assert_eq!(loaded.notes, vec![]);
+            let saved = crate::save(&loaded.project).unwrap();
+            let expected = old
+                .replacen("\"version\": 26,", "\"version\": 27,", 1)
+                .replacen(
+                    "\n  \"post_processor\": {",
+                    "\n  \"bitmaps\": [],\n  \"post_processor\": {",
+                    1,
+                );
+            assert_eq!(saved, expected, "one line added, after the instances");
+        }
+    }
+
+    /// A version 26 reader refuses a version 27 file as newer (ADR-0002).
+    #[test]
+    fn version_27_is_newer_than_26() {
+        assert_eq!(CURRENT_VERSION, 27);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }

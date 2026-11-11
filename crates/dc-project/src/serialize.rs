@@ -399,7 +399,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v26/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v27/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1632,23 +1632,281 @@ mod tests {
         assert_eq!(keys.get(at + 2), Some(&"clearing"));
     }
 
-    /// The format chain after the boundary (#602): format 25 is the
-    /// one-file Inlay (#498), 26 the drawn boundary, so the Photo
-    /// V-Carve of sub-phase 3.5 is format 27. A version 26 file cannot
-    /// hold a `photo_v_carve` operation (this build has no such kind)
-    /// nor `bitmaps`; the 3.5 slice adds both behind a bump to 27.
+    /// Format 27 (sub-phase 3.5): `bitmaps` and the Photo V-Carve kind. A
+    /// project with a Photo V-Carve and a bitmap saves as version 27, and
+    /// reads back. The chain is one version per step, so a file that says
+    /// 26 cannot hold either: its `photo_v_carve` operation and its
+    /// `bitmaps` are each refused, by the migration, which names them.
     #[test]
     fn photo_v_carve_is_format_27() {
-        assert_eq!(crate::CURRENT_VERSION, 26);
-        let text = save(&sample_project()).unwrap();
-        let photo = text.replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
-        assert_ne!(photo, text, "fixture layout changed:\n{text}");
-        let err = load(photo.as_bytes()).unwrap_err().to_string();
-        assert!(err.contains("photo_v_carve"), "{err}");
-        let bitmaps = text.replacen("\"tabs\": [", "\"bitmaps\": [],\n  \"tabs\": [", 1);
-        assert_ne!(bitmaps, text, "fixture layout changed:\n{text}");
-        let err = load(bitmaps.as_bytes()).unwrap_err().to_string();
-        assert!(err.contains("bitmaps"), "{err}");
+        use crate::test_support::photo_project;
+        assert_eq!(crate::CURRENT_VERSION, 27);
+        let p = photo_project();
+        let text = save(&p).unwrap();
+        assert!(text.starts_with("{\n  \"version\": 27,\n"), "{text}");
+        assert!(text.contains("\"kind\": \"photo_v_carve\""), "{text}");
+        assert!(text.contains("\n  \"bitmaps\": [\n"), "{text}");
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(loaded.project.version, 27);
+        assert_eq!(loaded.problems, vec![]);
+
+        // The same text under version 26: `bitmaps` is not a 26 field.
+        let v26 = text.replacen("\"version\": 27,", "\"version\": 26,", 1);
+        let err = load(v26.as_bytes()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LoadError::Migration {
+                    from: 26,
+                    to: 27,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("bitmaps"), "{err}");
+
+        // A version 26 file with no `bitmaps` but a Photo V-Carve.
+        let sample = save(&sample_project()).unwrap();
+        let v26 = sample
+            .replacen("\"version\": 27,", "\"version\": 26,", 1)
+            .replacen("  \"bitmaps\": [],\n", "", 1)
+            .replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
+        assert!(!v26.contains("bitmaps"), "fixture layout changed:\n{v26}");
+        assert!(
+            v26.contains("photo_v_carve"),
+            "fixture layout changed:\n{v26}"
+        );
+        let err = load(v26.as_bytes()).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LoadError::Migration {
+                    from: 26,
+                    to: 27,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+        assert!(err.to_string().contains("photo_v_carve"), "{err}");
+        assert!(err.to_string().contains("operations[0]"), "{err}");
+    }
+
+    /// Format 27: a project with a V-Carve, an Inlay and a Photo V-Carve,
+    /// and the bitmap the last carves, saves and loads unchanged, and the
+    /// saved text is stable. `PhotoStrategy` is a plain string.
+    #[test]
+    fn v_carve_inlay_photo_round_trip() {
+        use crate::model::{PhotoStrategy, PhotoVCarveOp};
+        use crate::test_support::{
+            photo_project, sample_inlay, sample_photo_v_carve, sample_v_carve,
+        };
+        let mut p = photo_project();
+        p.operations.insert(1, Operation::VCarve(sample_v_carve()));
+        p.operations.insert(2, Operation::Inlay(sample_inlay()));
+        p.operations.push(Operation::PhotoVCarve(PhotoVCarveOp {
+            id: crate::ids::OperationId::new("o9"),
+            name: "Hatched".into(),
+            enabled: false,
+            max_depth_mm: None,
+            start_depth_mm: 1.0,
+            start_plane_cleared_externally: true,
+            line_angle_deg: 0.0,
+            strategy: PhotoStrategy::Hatch,
+            invert: true,
+            ..sample_photo_v_carve()
+        }));
+        let text = save(&p).unwrap();
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+        assert_eq!(save(&loaded.project).unwrap(), text, "stable text");
+
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let kinds: Vec<&str> = value["operations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|op| op["kind"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                "profile",
+                "v_carve",
+                "inlay",
+                "photo_v_carve",
+                "photo_v_carve"
+            ]
+        );
+        assert_eq!(value["operations"][3]["strategy"], json!("raster"));
+        assert_eq!(value["operations"][4]["strategy"], json!("hatch"));
+        assert_eq!(value["operations"][3]["image"], json!("b1"));
+        assert_eq!(value["operations"][3]["max_depth_mm"], json!(1.5));
+        assert_eq!(value["operations"][4]["max_depth_mm"], json!(null));
+        assert_eq!(value["bitmaps"][0]["id"], json!("b1"));
+        assert_eq!(
+            serde_json::from_value::<PhotoStrategy>(json!("hatch")).unwrap(),
+            PhotoStrategy::Hatch
+        );
+        assert!(serde_json::from_value::<PhotoStrategy>(json!({ "hatch": {} })).is_err());
+    }
+
+    /// Format 27: the fields of a bitmap and of a Photo V-Carve are
+    /// written in the order the model declares them, every one present,
+    /// and `bitmaps` comes right after `instances`.
+    #[test]
+    fn bitmap_and_photo_fields_are_saved_in_order() {
+        use crate::test_support::photo_project;
+        let text = save(&photo_project()).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let keys = |v: &serde_json::Value| -> Vec<String> {
+            v.as_object().unwrap().keys().cloned().collect()
+        };
+        assert_eq!(
+            keys(&value["bitmaps"][0]),
+            [
+                "id",
+                "name",
+                "width_px",
+                "height_px",
+                "x_mm",
+                "y_mm",
+                "width_mm",
+                "height_mm",
+                "visible",
+                "locked",
+                "png_base64",
+            ]
+        );
+        assert_eq!(
+            keys(&value["operations"][1]),
+            [
+                "kind",
+                "id",
+                "name",
+                "enabled",
+                "image",
+                "tool",
+                "max_depth_mm",
+                "start_depth_mm",
+                "start_plane_cleared_externally",
+                "line_angle_deg",
+                "line_spacing_fraction",
+                "strategy",
+                "invert",
+                "sample_mm",
+                "stepover_retract_mm",
+                "through_cut_allowance_mm",
+                "safe_z_mm",
+            ]
+        );
+        let root = keys(&value);
+        let at = root.iter().position(|k| k == "instances").unwrap();
+        assert_eq!(root.get(at + 1).map(String::as_str), Some("bitmaps"));
+
+        // Every field is required: a file without one is not format 27.
+        for line in [
+            "      \"locked\": false,\n",
+            "      \"invert\": false,\n",
+            "      \"max_depth_mm\": 1.5,\n",
+        ] {
+            let without = text.replacen(line, "", 1);
+            assert_ne!(without, text, "fixture layout changed: {line:?}\n{text}");
+            let err = load(without.as_bytes()).unwrap_err();
+            assert!(matches!(err, LoadError::Schema { .. }), "{line:?}: {err:?}");
+        }
+        // A length may be written with its unit, as any other (A6).
+        let inches = text.replacen("\"width_mm\": 40.0,", "\"width_mm\": \"40 mm\",", 1);
+        assert_ne!(inches, text, "fixture layout changed:\n{text}");
+        assert_eq!(load(inches.as_bytes()).unwrap().project, photo_project());
+        // A typo in a Photo V-Carve's field is named with its path.
+        let typo = text.replacen("\"invert\": false", "\"inverted\": false", 1);
+        let err = load(typo.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("operations[1]"), "{err}");
+        assert!(err.contains("inverted"), "{err}");
+    }
+
+    /// Format 27: `png_base64`, the one long string of a `.dcv`, is one
+    /// line of the file, as a vertex is; no line of it is wrapped.
+    #[test]
+    fn bitmap_png_is_one_line() {
+        use crate::test_support::{gray_png_base64, photo_project};
+        let mut p = photo_project();
+        // 64 × 32 pixels of noise: a few kilobytes of base64.
+        let bytes: Vec<u8> = (0..64 * 32_u32)
+            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+            .collect();
+        p.bitmaps[0].width_px = 64;
+        p.bitmaps[0].height_px = 32;
+        p.bitmaps[0].png_base64 = gray_png_base64(64, 32, &bytes);
+        let png = p.bitmaps[0].png_base64.clone();
+        assert!(png.len() > 2000, "{} characters", png.len());
+        let text = save(&p).unwrap();
+        let lines: Vec<&str> = text.lines().filter(|l| l.contains("png_base64")).collect();
+        assert_eq!(lines, [format!("      \"png_base64\": \"{png}\"")]);
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+    }
+
+    /// The load decision of #644: `load` checks that each bitmap's
+    /// `png_base64` is base64 and reads its PNG header, and nothing more
+    /// of the picture. Text that is not base64, or bytes that are no PNG,
+    /// fail to load with the bitmap's id; image data is not decoded, so a
+    /// picture whose data is corrupt loads and fails later, in `pixels`.
+    #[test]
+    fn load_checks_a_bitmap_from_its_header_alone() {
+        use crate::bitmap::BitmapError;
+        use crate::ids::BitmapId;
+        use crate::test_support::photo_project;
+        use base64::Engine as _;
+        let engine = base64::engine::general_purpose::STANDARD;
+        let p = photo_project();
+        let text = save(&p).unwrap();
+        let png = p.bitmaps[0].png_base64.clone();
+        let with = |replacement: &str| {
+            let edited = text.replacen(&png, replacement, 1);
+            assert_ne!(edited, text, "fixture layout changed:\n{text}");
+            load(edited.as_bytes())
+        };
+
+        for bad in [&png[..png.len() - 1], "not base64!", "QUJD\\nQUJD"] {
+            match with(bad) {
+                Err(LoadError::Bitmap { id, reason }) => {
+                    assert_eq!(id, BitmapId::new("b1"));
+                    assert!(matches!(reason, BitmapError::Base64 { .. }), "{reason:?}");
+                }
+                other => panic!("{bad:?}: {other:?}"),
+            }
+        }
+        for bad in ["", "QUJD", &engine.encode("a text file, not a picture")] {
+            match with(bad) {
+                Err(LoadError::Bitmap { id, reason }) => {
+                    assert_eq!(id, BitmapId::new("b1"));
+                    assert!(matches!(reason, BitmapError::Png { .. }), "{reason:?}");
+                }
+                other => panic!("{bad:?}: {other:?}"),
+            }
+        }
+        let err = with("QUJD").unwrap_err().to_string();
+        assert!(
+            err.starts_with("bitmap `b1` cannot be read: its PNG cannot be decoded"),
+            "{err}"
+        );
+
+        // The header, then bytes that are no image data.
+        let mut corrupt = engine.decode(&png).unwrap();
+        for byte in corrupt.iter_mut().skip(33) {
+            *byte = 0x55;
+        }
+        let loaded = with(&engine.encode(&corrupt)).unwrap();
+        assert_eq!(loaded.problems, vec![]);
+        match loaded.project.bitmaps[0].pixels() {
+            Err(LoadError::Bitmap { reason, .. }) => {
+                assert!(matches!(reason, BitmapError::Png { .. }), "{reason:?}");
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     /// Format 20: the V-Carve strategy is externally tagged, like a drill

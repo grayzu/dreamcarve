@@ -7,6 +7,7 @@
 //! A [`Project`] is saved with [`save`] and read back with [`load`], which
 //! migrates older files to [`CURRENT_VERSION`] and runs [`validate`](fn@validate).
 
+mod bitmap;
 mod countersink;
 mod history;
 mod ids;
