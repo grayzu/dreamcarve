@@ -358,3 +358,112 @@ fn blocking_line_names_the_error_count() {
         ]
     );
 }
+
+/// The folder the result tests name: never written, only shown.
+fn folder() -> std::path::PathBuf {
+    std::path::PathBuf::from("/Users/sam/cnc")
+}
+
+/// Capability 77a and acceptance 102 (#625): the plaque's export result
+/// reads, in three parts, `2 programs written`; the files
+/// `plaque-1-T2.nc`, `plaque-2-T1.nc` in run order and the folder they
+/// went to; and run instructions whose steps are the CLI's step-before
+/// lines and whose notes are the controller notes `export` prints (the
+/// `G43.1` and `G51` lines), in the CLI's order.
+#[test]
+fn result_parts_are_status_files_and_instructions() {
+    let strings = Strings::english();
+    let harness = generated(&plaque_bytes());
+    let ready = ready(&harness, &options());
+    let names = ready.names("plaque");
+    let result = ready.result(&names, &folder(), &strings);
+
+    assert_eq!(result.status.headline, "2 programs written");
+    let files: Vec<&str> = result.files.rows.iter().map(|r| r.name.as_str()).collect();
+    assert_eq!(files, ["plaque-1-T2.nc", "plaque-2-T1.nc"]);
+    let numbers: Vec<usize> = result.files.rows.iter().map(|r| r.number).collect();
+    assert_eq!(numbers, [1, 2], "run order");
+    assert_eq!(result.files.rows[0].tool, "T2 1/8 end mill");
+    assert_eq!(
+        Some(result.files.rows[0].time.clone()),
+        ready.estimate(0),
+        "the CLI's estimate"
+    );
+    assert_eq!(result.files.folder, folder().display().to_string());
+
+    let report = ready.report(&names, None);
+    let steps: Vec<&str> = report
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| l.contains("Before you start:"))
+        .collect();
+    assert_eq!(steps.len(), 2, "{report:#?}");
+    let before: Vec<&str> = result
+        .instructions
+        .steps
+        .iter()
+        .map(|s| s.before.as_str())
+        .collect();
+    assert_eq!(before, steps, "the CLI's step-before lines");
+    let notes: Vec<&str> = report
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| l.contains("G43.1") || l.contains("G51"))
+        .collect();
+    assert_eq!(notes.len(), 2, "grblHAL's two notes: {report:#?}");
+    assert_eq!(result.instructions.notes, notes, "the CLI's notes");
+    // Each step carries its program's extents, as the CLI prints them.
+    for (k, step) in result.instructions.steps.iter().enumerate() {
+        let summary = &ready.programs[k];
+        let radius_mm = dc_job::summary::tool_radius_mm(ready.project(), &summary.program);
+        let extents: Vec<String> =
+            dc_job::summary::describe_extents(ready.project(), &summary.program, radius_mm)
+                .iter()
+                .map(|l| l.trim().to_owned())
+                .collect();
+        assert_eq!(step.extents, extents, "program {k}'s extents");
+    }
+}
+
+/// Capability 77a (#625): the CLI's report text is no longer shown as one
+/// block; every line of it is in exactly one of the result's three parts,
+/// Status, Files and Run instructions, on the plaque, the sign, the inlay
+/// fixture (by board) and the plaque as one program with `M6` (the
+/// one-program report).
+#[test]
+fn result_holds_every_fact_of_the_cli_report() {
+    let strings = Strings::english();
+    for (name, split) in [
+        ("plaque", ProgramSplit::ProjectDefault),
+        ("plaque-svg", ProgramSplit::ProjectDefault),
+        ("sign", ProgramSplit::ProjectDefault),
+        ("dc", ProgramSplit::ProjectDefault),
+        ("plaque", ProgramSplit::OneProgram),
+    ] {
+        let harness = generated(&read(&fixture(&format!("{name}.dcv"))));
+        let options = Options { split, ..options() };
+        let ready = ready(&harness, &options);
+        assert!(ready.blocked().is_none(), "{name}: nothing blocks");
+        let names = ready.names(name);
+        let report = ready.report(&names, None);
+        let result = ready.result(&names, &folder(), &strings);
+        let parts = result.parts();
+        assert_eq!(
+            parts.iter().map(|(part, _)| *part).collect::<Vec<_>>(),
+            ["Status", "Files", "Run instructions"]
+        );
+        for line in &report {
+            let line = line.trim();
+            let holding: Vec<&str> = parts
+                .iter()
+                .filter(|(_, texts)| texts.iter().any(|t| t == line))
+                .map(|(part, _)| *part)
+                .collect();
+            assert_eq!(
+                holding.len(),
+                1,
+                "{name} ({split:?}): `{line}` is in {holding:?}"
+            );
+        }
+    }
+}

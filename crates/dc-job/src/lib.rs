@@ -24,6 +24,7 @@ pub mod prep_report;
 pub mod preview;
 pub mod project_from;
 pub mod report;
+pub mod setup_sheet;
 pub mod summary;
 pub mod tabs;
 

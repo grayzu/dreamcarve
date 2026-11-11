@@ -119,6 +119,49 @@ fn every_key_is_used() {
     assert!(unused.is_empty(), "keys nothing uses: {unused:?}");
 }
 
+/// Acceptance 91 for the setup sheet (#625; capability 77b): its labels
+/// are the string table's `[setup_sheet]` entries, one per
+/// `dc_job::setup_sheet::Label` and no other, and the app hands the
+/// renderer the table's text, a translation's included.
+#[test]
+fn setup_sheet_strings_are_keyed() {
+    use dc_job::setup_sheet::Label;
+
+    let table: BTreeSet<String> = table_keys()
+        .into_iter()
+        .filter(|k| k.starts_with("setup_sheet."))
+        .collect();
+    let labels: BTreeSet<String> = Label::ALL.iter().map(|l| l.key().to_owned()).collect();
+    assert!(!labels.is_empty());
+    assert_eq!(labels, table, "the labels are the [setup_sheet] keys");
+
+    let keys: Vec<StrKey> = StrKey::ALL
+        .iter()
+        .copied()
+        .filter(|k| k.key().starts_with("setup_sheet."))
+        .collect();
+    let english = Strings::english();
+    let marked = Strings::with(keys.iter().map(|&k| (k, format!("<<{}>>", k.key()))));
+    for &label in Label::ALL {
+        let key = keys
+            .iter()
+            .copied()
+            .find(|k| k.key() == label.key())
+            .unwrap_or_else(|| panic!("no StrKey for {}", label.key()));
+        assert_eq!(
+            dc_app::export::setup_sheet_text(&english, label),
+            english.get(key),
+            "{}",
+            label.key()
+        );
+        assert_eq!(
+            dc_app::export::setup_sheet_text(&marked, label),
+            format!("<<{}>>", label.key()),
+            "a translation reaches the sheet"
+        );
+    }
+}
+
 /// `Strings::fmt` fills every `{name}` placeholder, leaves text without
 /// one alone, and every value in the table has only placeholders that can
 /// be named.

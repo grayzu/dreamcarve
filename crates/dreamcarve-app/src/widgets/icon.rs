@@ -110,7 +110,7 @@ pub enum Icon {
     MoveDown,
     /// `layers`: the status bar's Toolpaths button.
     Layers,
-    /// `circle-check`: the status bar's *No problems*.
+    /// `circle-check`: the status bar's *No problems*; the export result's status.
     CircleCheck,
     /// `target`: an operation's targets (the Setup row, the tree's mark,
     /// the target-editing bar).

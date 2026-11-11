@@ -289,6 +289,17 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Action::OpenExport,
         out,
     );
+    // Capability 77b: once this project has been exported.
+    if state.setup_sheet {
+        item(
+            ui,
+            strings,
+            StrKey::AppMenuSaveSetupSheet,
+            None,
+            Action::SaveSetupSheet,
+            out,
+        );
+    }
     ui.separator();
     item(
         ui,

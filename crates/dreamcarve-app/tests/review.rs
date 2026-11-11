@@ -305,6 +305,12 @@ fn scenes(dir: &Path) -> bool {
     h.get_by_role(Role::Dialog).get_by_label("Export").click();
     h.run();
     shoot(&mut h, "21-export-result-sheet");
+    // Run instructions opened (#625): closed whenever the result shows.
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Run instructions")
+        .click();
+    h.run();
+    shoot(&mut h, "21-export-result-instructions");
     h.get_by_role(Role::Dialog).get_by_label("Close").click();
     h.run();
     // The unsaved-changes sheet.
