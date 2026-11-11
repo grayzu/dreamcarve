@@ -17,8 +17,9 @@
 //! Slice 18 (#547, acceptance 83; S20): what the export sheet writes is
 //! what `dreamcarve export` writes for the file the app saves, byte for
 //! byte, on every post-processor, with and without the program-split
-//! override, the preview included; and the result sheet's text is the
-//! CLI's report.
+//! override; the Viewport's SVG dump is the file `--preview` writes
+//! (slice 32, #624: the sheet no longer writes the preview); and the
+//! result sheet's text is the CLI's report.
 
 #![allow(
     clippy::expect_used,
@@ -312,8 +313,9 @@ fn written(dir: &Path, project: &str) -> Vec<String> {
 /// `post` with the Project panel's command (an undoable project change)
 /// and saves; for each split the CLI exports that saved file with the
 /// date pinned and the preview asked for, and the app's plan for the same
-/// snapshot must give the same files, byte for byte, the same report, or
-/// the same refusal with nothing written.
+/// snapshot must give the same programs, byte for byte, the Viewport's
+/// SVG dump the same preview, the same report, or the same refusal with
+/// nothing written.
 fn export_case(root: &Path, name: &str, bytes: &[u8], post: &str) -> usize {
     let mut harness = Harness::open(bytes).expect("the project opens");
     if harness.app.project().post_processor.id != post {
@@ -358,7 +360,11 @@ fn export_case(root: &Path, name: &str, bytes: &[u8], post: &str) -> usize {
         match ready.blocked() {
             None => {
                 assert_eq!(code, Some(0), "{case}: the CLI failed: {stderr}");
-                let files = ready.files(name, true);
+                // The sheet writes the programs; the preview is the
+                // Viewport's SVG dump (capability 77, acceptance 83).
+                let dump = harness.app.scene().preview_svg(harness.app.project());
+                let mut files = ready.files(name);
+                files.push((preview.clone(), dump.as_str()));
                 let mut expected: Vec<String> = files.iter().map(|(n, _)| n.clone()).collect();
                 expected.sort();
                 assert_eq!(written(&dir, &project_file), expected, "{case}: the files");
@@ -401,7 +407,8 @@ fn export_case(root: &Path, name: &str, bytes: &[u8], post: &str) -> usize {
 /// on all six post-processors, as the project says and with each
 /// program-split override, exported from the app equal what
 /// `dreamcarve export --date` writes for the saved file, byte for byte,
-/// preview included. The fixtures are read where they live.
+/// and the Viewport's SVG dump equals its `--preview` file. The fixtures
+/// are read where they live.
 #[test]
 fn app_export_equals_cli_export_on_six_posts() {
     let root = work_dir("app_export_equals_cli_export_on_six_posts");

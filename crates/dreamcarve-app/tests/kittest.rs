@@ -125,7 +125,7 @@ fn opens_plaque_renders_and_exports() {
     else {
         panic!("the plaque has generated");
     };
-    for (name, text) in ready.files("plaque-copy", false) {
+    for (name, text) in ready.files("plaque-copy") {
         let written = std::fs::read_to_string(dir.join(&name)).expect("program written");
         assert!(written == text, "{name} is the plan's program");
     }
@@ -1509,6 +1509,7 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     };
     let names = ready.names("plaque");
     assert!(names.len() > 1, "the plaque writes a program per tool");
+    open_program_details(&mut h);
     for name in &names {
         assert!(
             h.get_by_role(Role::Dialog).query_by_label(name).is_some(),
@@ -1542,7 +1543,7 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     std::fs::remove_dir_all(&blocker).unwrap();
     h.get_by_role(Role::Dialog).get_by_label("Export").click();
     h.run();
-    for ((name, text), program) in ready.files("plaque", false).iter().zip(&names) {
+    for ((name, text), program) in ready.files("plaque").iter().zip(&names) {
         assert_eq!(name, program);
         let written = std::fs::read_to_string(dir.join(name)).expect("program written");
         assert!(written == *text, "{name} is the plan's program");
@@ -1590,16 +1591,200 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         dc_job::ProgramSplit::ProjectDefault,
         &date,
     );
-    let error = &built.findings.errors[0].message;
+    assert_eq!(built.findings.errors.len(), 1, "one tool lacks a feed");
+    let error = built.findings.errors[0].message.clone();
+    // One line above the footer says so, and Export is disabled; the
+    // error itself is the drawer's (capability 77).
     let sheet = h.get_by_role(Role::Dialog);
     assert!(
-        sheet.query_by_label_contains(error).is_some(),
-        "the error is listed: {error}"
+        sheet.query_by_label("1 error blocks export").is_some(),
+        "the blocking line"
+    );
+    assert!(
+        sheet.query_by_label_contains(&error).is_none(),
+        "the sheet lists no finding: {error}"
     );
     assert!(
         sheet.get_by_label("Export").accesskit_node().is_disabled(),
         "Export is disabled"
     );
+    // Show closes the sheet and opens the drawer at the error.
+    assert!(!h.state().warnings_open());
+    h.get_by_role(Role::Dialog).get_by_label("Show").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
+    assert!(h.state().warnings_open(), "the drawer is open");
+    assert!(
+        h.query_all_by_label_contains(&error).next().is_some(),
+        "the drawer lists the error: {error}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Clicks the export sheet's *Program Details* disclosure.
+fn open_program_details(h: &mut Harness<'_, dreamcarve_app::Shell>) {
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Program Details")
+        .click();
+    h.run();
+}
+
+/// Opens the export sheet on the plaque, generated and planned.
+fn plaque_export_sheet(
+    name: &str,
+) -> (std::path::PathBuf, Harness<'static, dreamcarve_app::Shell>) {
+    let dir = scratch(name);
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        900.0,
+    );
+    settle_export(&mut h);
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label_contains("Export G-code")
+            .is_some(),
+        "the sheet is open"
+    );
+    (dir, h)
+}
+
+/// Capability 77 and acceptance 102 (#624): the trimmed export sheet has
+/// no toolpath preview tick, no warnings list, no estimated total and no
+/// note about how files are written; whatever warnings the plan found
+/// are the status bar's and the drawer's, not listed here.
+#[test]
+fn export_sheet_has_no_preview_warnings_total_or_note() {
+    use egui_kittest::kittest::NodeT as _;
+
+    let (dir, mut h) = plaque_export_sheet("export-trimmed");
+    open_program_details(&mut h);
+    let sheet = h.get_by_role(Role::Dialog);
+    for gone in [
+        "toolpath preview",
+        "preview.svg",
+        "Warnings",
+        "Estimated total",
+        "Every file is written",
+    ] {
+        assert!(
+            sheet.query_all_by_label_contains(gone).next().is_none(),
+            "no node labelled with `{gone}`"
+        );
+    }
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    for finding in &ready.findings.warnings {
+        assert!(
+            sheet
+                .query_all_by_label_contains(&finding.message)
+                .next()
+                .is_none(),
+            "the warning is not listed: {}",
+            finding.message
+        );
+    }
+    assert!(
+        sheet
+            .query_all_by_label_contains("blocks export")
+            .next()
+            .is_none()
+            && sheet
+                .query_all_by_label_contains("block export")
+                .next()
+                .is_none(),
+        "no error, no blocking line"
+    );
+    assert!(
+        !sheet.get_by_label("Export").accesskit_node().is_disabled(),
+        "warnings do not block"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 77 and acceptance 102 (#624): *Program Details* is closed
+/// when the sheet opens, its rows hidden; opened, its rows are the
+/// plan's, in run order: file name, estimate and the step before each.
+#[test]
+fn program_details_start_closed() {
+    use eframe::egui::accesskit::Toggled;
+    use egui_kittest::kittest::NodeT as _;
+
+    let (dir, mut h) = plaque_export_sheet("export-details");
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    let names = ready.names("plaque");
+    assert!(names.len() > 1);
+
+    let header = h.get_by_role(Role::Dialog).get_by_label("Program Details");
+    assert_eq!(
+        header.accesskit_node().toggled(),
+        Some(Toggled::False),
+        "closed"
+    );
+    for name in &names {
+        assert!(
+            h.get_by_role(Role::Dialog).query_by_label(name).is_none(),
+            "{name} is hidden while the disclosure is closed"
+        );
+    }
+    let summary = format!("{} programs, run in this order", names.len());
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label(&summary)
+            .is_some(),
+        "the closed disclosure says how many: {summary}"
+    );
+
+    open_program_details(&mut h);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert_eq!(
+        sheet
+            .get_by_label("Program Details")
+            .accesskit_node()
+            .toggled(),
+        Some(Toggled::True),
+        "open"
+    );
+    // The rows, top to bottom, are the plan's programs in run order.
+    let mut tops: Vec<(f64, &String)> = names
+        .iter()
+        .map(|name| {
+            let node = sheet.get_by_label(name);
+            let top = node.accesskit_node().bounding_box().expect("laid out").y0;
+            (top, name)
+        })
+        .collect();
+    tops.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let order: Vec<&String> = tops.into_iter().map(|(_, n)| n).collect();
+    assert_eq!(order, names.iter().collect::<Vec<_>>(), "in run order");
+    for (k, summary) in ready.programs.iter().enumerate() {
+        let estimate = ready.estimate(k).expect("the plaque's programs estimate");
+        assert!(
+            sheet.query_all_by_label(&estimate).next().is_some(),
+            "{}: its estimate {estimate}",
+            names[k]
+        );
+        assert!(
+            sheet
+                .query_all_by_label_contains(&summary.before)
+                .next()
+                .is_some(),
+            "{}: the step before it",
+            names[k]
+        );
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

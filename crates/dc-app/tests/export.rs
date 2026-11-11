@@ -18,9 +18,9 @@
 
 mod common;
 
-use dc_app::Command;
 use dc_app::export::{self, Boards, Options, Plan, Ready};
 use dc_app::test_support::{DATE, Harness};
+use dc_app::{Command, Strings};
 use dc_job::summary::before_you_start;
 use dc_job::{Built, EstimateConfig, ProgramSplit, Tier};
 use dc_project::{Board, Project, ToolChangeMode};
@@ -305,25 +305,56 @@ fn override_not_saved() {
     );
 }
 
-/// Acceptance 83: the preview the plan writes is `--preview`'s picture of
-/// the same build, and `<stem>-preview.svg` is its name.
+/// Capability 77 and acceptance 102: when errors block export, the sheet
+/// says so in one line above its footer, counting the errors the CLI
+/// found: one gives `1 error blocks export`, two `2 errors block export`;
+/// a project with none has no line. The sheet writes the programs and
+/// nothing else: the toolpath preview is the Viewport's SVG dump
+/// (`scene::svg_dump_equals_preview`), and `export --preview` writes it
+/// from the CLI.
 #[test]
-fn preview_svg_equals_the_cli() {
-    for name in ["plaque", "sign", "dc"] {
-        let harness = generated(&read(&fixture(&format!("{name}.dcv"))));
-        let ready = ready(&harness, &options());
-        let built = cli_build(harness.app.project(), ProgramSplit::ProjectDefault, None);
-        let generated = built.generated.expect("every operation generated");
-        let svg = dc_job::preview::render_generated(harness.app.project(), &generated);
-        assert!(ready.preview.as_deref() == Some(svg.as_str()), "{name}");
-        let files = ready.files(name, true);
-        let (last_name, last_text) = files.last().unwrap();
-        assert_eq!(last_name, &format!("{name}-preview.svg"));
-        assert!(
-            *last_text == svg.as_str(),
-            "{name}: the preview is written last"
-        );
-        assert_eq!(files.len(), ready.programs.len() + 1);
-        assert_eq!(ready.files(name, false).len(), ready.programs.len());
+fn blocking_line_names_the_error_count() {
+    let strings = Strings::english();
+    let plaque = generated(&plaque_bytes());
+    let clear = ready(&plaque, &options());
+    assert!(clear.findings.errors.is_empty());
+    assert_eq!(clear.blocking_line(&strings), None, "no error, no line");
+    let files = clear.files("plaque");
+    assert_eq!(files.len(), clear.programs.len(), "the programs only");
+    assert!(files.iter().all(|(name, _)| !name.ends_with(".svg")));
+
+    // Tools without a feed: the CLI's errors.
+    let mut harness = Harness::open(&plaque_bytes()).unwrap();
+    let mut used: Vec<_> = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .flat_map(dc_project::Operation::run_tools)
+        .cloned()
+        .collect();
+    used.sort();
+    used.dedup();
+    let mut lines = Vec::new();
+    for id in used.iter().take(2) {
+        let project = harness.app.project();
+        let mut tool = project.tools.iter().find(|t| &t.id == id).unwrap().clone();
+        tool.feed_mm_min = None;
+        harness.run(Command::UpdateTool(tool)).unwrap();
+        harness.generate();
+        let blocked = ready(&harness, &options());
+        let cli = cli_build(harness.app.project(), ProgramSplit::ProjectDefault, None);
+        assert_eq!(blocked.findings, cli.findings, "the CLI's findings");
+        lines.push((
+            blocked.findings.errors.len(),
+            blocked.blocking_line(&strings),
+        ));
     }
+    assert_eq!(
+        lines,
+        [
+            (1, Some("1 error blocks export".to_owned())),
+            (2, Some("2 errors block export".to_owned())),
+        ]
+    );
 }

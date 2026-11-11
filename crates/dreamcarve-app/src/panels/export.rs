@@ -9,18 +9,23 @@
 //! (the folder remembered per project in `gui.toml`, beside the project
 //! by default), the post-processor (changing it is the Project panel's
 //! undoable switch), the program split as the project says or overridden
-//! for this export, a tick per board with an Inlay, *Also write the
-//! toolpath preview*, then the programs `dc_app::export::plan` built,
-//! one row each with the step before it, and the errors (which disable
-//! *Export*) and warnings (which do not). The plan is built on a thread
-//! of its own once generation has finished, so the window keeps
+//! for this export, a tick per board with an Inlay, then *Program
+//! Details*, a disclosure closed whenever the sheet opens, holding the
+//! programs `dc_app::export::plan` built, one row each with the step
+//! before it. Trimmed by the review (#624): no toolpath preview tick (the
+//! Viewport is the preview), no warnings list (the status bar counts
+//! them), no estimated total (the status bar shows it) and no note on how
+//! files are written. Errors block *Export*: one line above the footer
+//! counts them, with *Show* opening the Warnings drawer at them, and
+//! *Export*'s tooltip gives the same reason. The plan is built on a
+//! thread of its own once generation has finished, so the window keeps
 //! answering; until then the sheet says what it waits for under a
 //! progress bar.
 //!
-//! *Export* stages every file and moves them into place with
+//! *Export* stages every program and moves them into place with
 //! `dreamcarve_shell::commit_all`, every one or none, after the CLI's
-//! checks: never over the project file, and a preview only over an
-//! earlier preview. The project file is never written. The result
+//! check: never over the project file. The project file is never
+//! written. The result
 //! replaces the sheet's content in place: the CLI's report text and
 //! *Show in folder*. The header's `x`, Escape and the scrim close it; no
 //! Cancel (`experience.md`, section 13, item 9).
@@ -37,12 +42,14 @@ use dc_project::ToolChangeMode;
 use dreamcarve_shell::{StagedFile, commit_all};
 use eframe::egui::{self, Align, Layout, Stroke, TextStyle, Ui};
 
+use crate::panels::warnings::counted;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row;
+use crate::widgets::section::section;
 
 /// The sheet's width, px.
 const WIDTH_PX: f32 = 560.0;
@@ -66,6 +73,9 @@ pub(crate) enum Request {
     Export,
     /// Open the folder the files went to.
     ShowInFolder,
+    /// Close the sheet and open the Warnings drawer at the errors that
+    /// block export.
+    ShowErrors,
 }
 
 /// The plan being built off the UI thread, and what it was asked for.
@@ -90,7 +100,9 @@ pub(crate) struct Sheet {
     stem: String,
     split: ProgramSplit,
     boards: Boards,
-    preview: bool,
+    /// Whether *Program Details* is open: closed whenever the sheet
+    /// opens.
+    details: bool,
     /// The date the programs are headed with: today's, when the sheet
     /// opened.
     date: String,
@@ -133,7 +145,7 @@ impl Sheet {
             stem,
             split: ProgramSplit::ProjectDefault,
             boards: Boards::default(),
-            preview: false,
+            details: false,
             date,
             estimate,
             ready: None,
@@ -280,15 +292,9 @@ fn write(
     if !valid_stem(stem) {
         return Err(strings.get(StrKey::ExportStemEmpty).to_owned());
     }
-    let files = ready.files(stem, sheet.preview);
-    let preview_name = sheet
-        .preview
-        .then(|| dc_app::export::preview_name(stem))
-        .filter(|_| ready.preview.is_some());
+    let files = ready.files(stem);
     let paths: Vec<PathBuf> = files.iter().map(|(name, _)| dir.join(name)).collect();
-    // The CLI's checks (`export`): never over the project file; a preview
-    // over an existing file only when that is an earlier preview, never
-    // the drawing (addendum A5), nor where a program goes.
+    // The CLI's check (`export`): never over the project file.
     if let Some(source) = source
         && let Some(path) = paths.iter().find(|p| same_file(p, source))
     {
@@ -297,17 +303,6 @@ fn write(
             &[("name", &path.display().to_string())],
         ));
     }
-    if let Some(name) = &preview_name {
-        let path = dir.join(name);
-        let names_a_program = files.iter().filter(|(n, _)| n == name).count() > 1;
-        let exists = std::fs::symlink_metadata(&path).is_ok();
-        if names_a_program || (exists && !dreamcarve_shell::is_preview(&path)) {
-            return Err(strings.fmt(
-                StrKey::ExportNotAPreview,
-                &[("name", &path.display().to_string())],
-            ));
-        }
-    }
     let staged = paths
         .iter()
         .zip(&files)
@@ -315,14 +310,8 @@ fn write(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     commit_all(staged).map_err(|e| e.to_string())?;
-    let program_count = ready.programs.len();
-    let outputs: Vec<String> = paths
-        .iter()
-        .take(program_count)
-        .map(|p| p.display().to_string())
-        .collect();
-    let preview_path = preview_name.map(|name| dir.join(name).display().to_string());
-    let report = ready.report(&outputs, preview_path.as_deref());
+    let outputs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    let report = ready.report(&outputs, None);
     Ok((dir, report, files.len()))
 }
 
@@ -415,6 +404,7 @@ fn body(ui: &mut Ui, app: &App, display_name: &str, sheet: &mut Sheet, out: &mut
     ui.add_space(8.0);
     let footer_h = FOOTER_PX + 48.0;
     let room = (ui.available_height() - footer_h).max(160.0);
+    let mut toggled = false;
     egui::ScrollArea::vertical()
         .max_height(room)
         .auto_shrink([false, true])
@@ -433,19 +423,34 @@ fn body(ui: &mut Ui, app: &App, display_name: &str, sheet: &mut Sheet, out: &mut
                 ui.add_space(4.0);
                 boards(ui, strings, sheet);
             }
-            ui.add_space(4.0);
-            let preview_label = strings.fmt(
-                StrKey::ExportPreview,
-                &[("name", &dc_app::export::preview_name(sheet.stem.trim()))],
-            );
-            checkbox(ui, "export.preview", &mut sheet.preview, &preview_label);
             ui.add_space(12.0);
-            match sheet.current(app) {
-                Some(ready) if !busy => {
-                    programs(ui, app, ready, sheet.stem.trim());
-                    findings(ui, strings, ready);
+            match sheet.current(app).filter(|_| !busy) {
+                Some(ready) => {
+                    let stem = sheet.stem.trim();
+                    toggled = section(
+                        ui,
+                        egui::Id::unique("export.details"),
+                        strings.get(StrKey::ExportDetails),
+                        sheet.details,
+                        None,
+                        |ui| programs(ui, app, ready, stem),
+                    );
+                    if !sheet.details && !ready.programs.is_empty() {
+                        let summary = counted(
+                            strings,
+                            ready.programs.len(),
+                            StrKey::ExportDetailsOne,
+                            StrKey::ExportDetailsMany,
+                        );
+                        wrapped(
+                            ui,
+                            &summary,
+                            TextStyle::Small,
+                            Palette::current(ui).text_secondary,
+                        );
+                    }
                 }
-                _ => {
+                None => {
                     let key = if dc_app::export::waits(app) {
                         StrKey::ExportWaiting
                     } else {
@@ -460,6 +465,9 @@ fn body(ui: &mut Ui, app: &App, display_name: &str, sheet: &mut Sheet, out: &mut
                 }
             }
         });
+    if toggled {
+        sheet.details = !sheet.details;
+    }
     ui.add_space(12.0);
     footer(ui, app, sheet, busy, out);
 }
@@ -673,14 +681,10 @@ fn boards(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet) {
 /// The programs: one striped row per program, grouped by board with an
 /// Inlay: its number and file, its estimate and Z range on the right;
 /// its tool and operations under them; then the step before it as
-/// `export` prints it. Then the total.
+/// `export` prints it: *Program Details*' body.
 fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
     let strings = app.strings();
     let palette = Palette::current(ui);
-    heading(ui, strings.get(StrKey::ExportPrograms));
-    if ready.programs.is_empty() {
-        return;
-    }
     let project = ready.project();
     let names = ready.names(stem);
     let not_available = strings.get(StrKey::ExportNotAvailable);
@@ -756,66 +760,28 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
                 wrapped(ui, &before, TextStyle::Small, palette.text_secondary);
             });
     }
-    let total = ready
-        .programs
-        .iter()
-        .try_fold(dc_job::Estimate::default(), |sum, p| {
-            Some(sum + p.estimate?)
-        });
-    if ready.programs.len() > 1
-        && let Some(total) = total
-    {
-        ui.add_space(4.0);
-        let time = dc_job::summary::describe_estimated_time(&total, &ready.options.estimate);
-        let line = strings.fmt(StrKey::ExportTotal, &[("time", &time)]);
-        text(ui, &line, TextStyle::Small, palette.text_secondary)
-            .on_hover_text(ready.total_line.as_deref().unwrap_or_default());
-    }
 }
 
-/// The errors, which disable *Export*, then the warnings, which do not,
-/// as the CLI prints them.
-fn findings(ui: &mut Ui, strings: &Strings, ready: &Ready) {
-    let line = |f: &dc_job::Finding| match &f.code {
-        Some(code) => format!("{code}: {}", f.message),
-        None => f.message.clone(),
-    };
-    if !ready.findings.errors.is_empty() {
-        ui.add_space(12.0);
-        heading(ui, strings.get(StrKey::ExportErrors));
-        for finding in &ready.findings.errors {
-            row::message(ui, Tier::Error, &line(finding));
-        }
-    }
-    if !ready.findings.warnings.is_empty() {
-        ui.add_space(12.0);
-        heading(ui, strings.get(StrKey::ExportWarnings));
-        for finding in &ready.findings.warnings {
-            row::message(ui, finding.tier, &line(finding));
-        }
-    }
-}
-
-/// The footer: the promise, the last failure, and *Export*, disabled
-/// with the reason while it waits, or while anything blocks it.
+/// The footer: the last failure, the one line saying errors block
+/// export with *Show*, and *Export*, disabled with the reason in its
+/// tooltip while it waits, or while anything blocks it.
 fn footer(ui: &mut Ui, app: &App, sheet: &Sheet, busy: bool, out: &mut Vec<Action>) {
     let strings = app.strings();
-    let palette = Palette::current(ui);
     if let Some(failure) = &sheet.failure {
         row::message(ui, Tier::Error, failure);
     }
-    wrapped(
-        ui,
-        strings.get(StrKey::ExportFooter),
-        TextStyle::Small,
-        palette.text_secondary,
-    );
+    let ready = sheet.current(app).filter(|_| !busy);
+    let blocking = ready.and_then(|r| r.blocking_line(strings));
+    if let Some(line) = &blocking {
+        blocking_line(ui, strings, line, out);
+    }
     ui.add_space(8.0);
     let reason = if busy {
         Some(strings.get(StrKey::ExportWaiting).to_owned())
     } else {
-        match sheet.current(app) {
-            Some(ready) => ready.blocked(),
+        match ready {
+            // The blocking line's reason, as the line says it.
+            Some(ready) => blocking.clone().or_else(|| ready.blocked()),
             None => Some(strings.get(StrKey::ExportBuilding).to_owned()),
         }
     }
@@ -846,6 +812,28 @@ fn footer(ui: &mut Ui, app: &App, sheet: &Sheet, busy: bool, out: &mut Vec<Actio
     );
 }
 
+/// The one line above the footer when errors block export: the error
+/// glyph, `1 error blocks export`, and *Show*, which opens the Warnings
+/// drawer at them.
+fn blocking_line(ui: &mut Ui, strings: &Strings, line: &str, out: &mut Vec<Action>) {
+    let colours = Palette::current(ui).status_error;
+    ui.horizontal(|ui| {
+        let glyph = Icon::CircleX.galley(ui, theme::ICON_SMALL_PX, colours.stroke);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
+            egui::Sense::hover(),
+        );
+        ui.painter()
+            .galley(rect.center() - glyph.size() / 2.0, glyph, colours.stroke);
+        text(ui, line, TextStyle::Body, colours.text);
+        let show = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::ExportShow))
+            .tooltip(strings.get(StrKey::ExportShowHelp));
+        if button(ui, show).clicked() {
+            out.push(Action::Export(Request::ShowErrors));
+        }
+    });
+}
+
 /// The result, in place of the sheet's content: the CLI's report and
 /// *Show in folder*.
 fn result(ui: &mut Ui, strings: &Strings, done: &Done, out: &mut Vec<Action>) {
@@ -873,18 +861,6 @@ fn result(ui: &mut Ui, strings: &Strings, done: &Done, out: &mut Vec<Action>) {
             }
         },
     );
-}
-
-/// A 13-px SemiBold group heading.
-fn heading(ui: &mut Ui, title: &str) {
-    let palette = Palette::current(ui);
-    text(
-        ui,
-        title,
-        TextStyle::Name(theme::TITLE.into()),
-        palette.text_primary,
-    );
-    ui.add_space(4.0);
 }
 
 /// `text` wrapped to the width.

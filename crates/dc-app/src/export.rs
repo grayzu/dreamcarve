@@ -12,8 +12,9 @@
 //! so the bytes the sheet writes are `build`'s. The program split
 //! override and the board ticks are this export's only (`--one-program`,
 //! `--programs-per-tool`, `--board`): they are arguments of the build and
-//! never touch the project. Errors are the CLI's and block the export;
-//! warnings are listed and do not. A project validation rejects is built
+//! never touch the project. Errors are the CLI's and block the export,
+//! counted in one line ([`Ready::blocking_line`]); warnings do not, and
+//! the sheet leaves them to the status bar and the drawer. A project validation rejects is built
 //! at once, since nothing generates for it, so its errors show without
 //! waiting.
 //!
@@ -23,9 +24,7 @@
 
 use dc_job::report::{Written, export_report};
 use dc_job::summary::{by_board, describe_estimated_time};
-use dc_job::{
-    Built, EmitOp, EstimateConfig, Estimates, Findings, ProgramSplit, ProgramSummary, Tier,
-};
+use dc_job::{Built, EmitOp, EstimateConfig, Estimates, Findings, ProgramSplit, ProgramSummary};
 use dc_project::{Board, Project};
 
 use crate::app::App;
@@ -146,7 +145,6 @@ impl Request {
                 options,
                 programs: Vec::new(),
                 findings: Findings::default(),
-                preview: None,
                 by_board: grouped,
                 total_line: None,
                 generated: Vec::new(),
@@ -158,11 +156,6 @@ impl Request {
             findings,
             generated,
         } = dc_job::build_board(&project, options.split, &options.date, board);
-        // `build` generated every operation when it emitted programs.
-        let preview = generated
-            .as_deref()
-            .filter(|_| !programs.is_empty())
-            .map(|g| dc_job::preview::render_generated(&project, g));
         let generated = generated.unwrap_or_default();
         let (programs, total_line) = dc_job::summarize(
             &project,
@@ -177,7 +170,6 @@ impl Request {
             options,
             programs,
             findings,
-            preview,
             by_board: grouped,
             total_line,
             generated,
@@ -199,9 +191,6 @@ pub struct Ready {
     pub programs: Vec<ProgramSummary>,
     /// The build's errors and warnings, as `export` prints them.
     pub findings: Findings,
-    /// The toolpath preview, `--preview`'s picture of this build, when
-    /// programs were emitted.
-    pub preview: Option<String>,
     /// Whether the programs are listed and named by board (an enabled
     /// Inlay, #498).
     pub by_board: bool,
@@ -246,25 +235,33 @@ impl Ready {
     }
 
     /// The files to write under `stem`, each name with its text, in the
-    /// order they are committed: the programs, then the preview when
-    /// `preview` is asked for and there is one.
+    /// order they are committed: the programs. The sheet writes no
+    /// toolpath preview (capability 77): the Viewport is the preview, its
+    /// SVG dump `--preview`'s file ([`crate::scene::Scene::preview_svg`]).
     #[must_use]
-    pub fn files(&self, stem: &str, preview: bool) -> Vec<(String, &str)> {
-        let mut files: Vec<(String, &str)> = self
-            .names(stem)
+    pub fn files(&self, stem: &str) -> Vec<(String, &str)> {
+        self.names(stem)
             .into_iter()
             .zip(&self.programs)
             .map(|(name, p)| (name, p.program.text.as_str()))
-            .collect();
-        if preview && let Some(svg) = &self.preview {
-            files.push((preview_name(stem), svg.as_str()));
+            .collect()
+    }
+
+    /// The one line above the sheet's footer when errors block export
+    /// (capability 77): `1 error blocks export`, `3 errors block export`;
+    /// `None` when the build found no error.
+    #[must_use]
+    pub fn blocking_line(&self, strings: &Strings) -> Option<String> {
+        match self.findings.errors.len() {
+            0 => None,
+            1 => Some(strings.get(StrKey::ExportBlockedOne).to_owned()),
+            n => Some(strings.fmt(StrKey::ExportBlockedMany, &[("count", &n.to_string())])),
         }
-        files
     }
 
     /// The report `export` prints once these programs are written to
-    /// `outputs` (and the preview to `preview`), line for line: the
-    /// result sheet's text.
+    /// `outputs` (and, from the CLI, the preview to `preview`), line for
+    /// line: the result sheet's text.
     #[must_use]
     pub fn report(&self, outputs: &[String], preview: Option<&str>) -> Vec<String> {
         let programs: Vec<dc_job::Program> =
@@ -288,25 +285,10 @@ impl Ready {
         let estimate = self.programs.get(k)?.estimate?;
         Some(describe_estimated_time(&estimate, &self.options.estimate))
     }
-
-    /// The findings to list, errors first, each with its tier.
-    #[must_use]
-    pub fn listed(&self) -> Vec<&dc_job::Finding> {
-        self.findings
-            .errors
-            .iter()
-            .chain(&self.findings.warnings)
-            .collect()
-    }
-
-    /// Whether any listed finding is an error.
-    #[must_use]
-    pub fn has_errors(&self) -> bool {
-        self.listed().iter().any(|f| f.tier == Tier::Error)
-    }
 }
 
-/// The preview's file name under `stem`: `<stem>-preview.svg`.
+/// The file name `export --preview` gives the preview under `stem`:
+/// `<stem>-preview.svg`.
 #[must_use]
 pub fn preview_name(stem: &str) -> String {
     format!("{stem}-preview.svg")
