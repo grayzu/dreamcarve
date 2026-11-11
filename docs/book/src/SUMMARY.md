@@ -11,12 +11,14 @@
 - [A pocketed plaque from DXF](quick-start/plaque.md)
 - [A V-carved sign from SVG outlines](quick-start/sign.md)
 - [An inlay pair](quick-start/inlay.md)
+- [From line art](quick-start/line-art.md)
 
 # User guide
 
 - [Overview](user-guide/overview.md)
 - [The project file](user-guide/project-file.md)
 - [Importing DXF](user-guide/importing-dxf.md)
+- [Preparing artwork](user-guide/preparing-artwork.md)
 - [Shapes, holes, and islands](user-guide/shapes-and-holes.md)
 - [Profile operation](user-guide/profile.md)
 - [Tabs](user-guide/tabs.md)

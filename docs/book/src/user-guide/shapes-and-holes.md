@@ -13,6 +13,22 @@ an operation of its own has nothing around it there, so it is a part.
 Holes get no tabs by default, so a part and its holes are best cut in
 one operation; see [Parts with holes](tabs.md#parts-with-holes).
 
+## Checks when `init` reads an SVG
+
+Two of the problems this page describes are drawing mistakes that `init`
+notices when it reads an SVG, before any operation exists, and warns about:
+
+- Two shapes that cross (rule 10) are `shapes_overlap`: the message names
+  the first pair and where they meet.
+- A hole drawn as a filled shape inside another filled shape (rule 1 and 2:
+  the inner one is a hole only where an operation targets both) is
+  `svg_hole_as_separate_path`. A Pocket of the outer path alone would cut
+  across it. An unfilled frame drawn round a design is not reported.
+
+`dreamcarve image-prep` fixes both: it merges paths that cross, and makes a
+path wholly inside another a hole of it, the rule this page states. See
+[Preparing artwork](preparing-artwork.md#the-checks-init-prints).
+
 ## Reading the figures
 
 Every figure on this page is generated from the real code: `nest` runs on
