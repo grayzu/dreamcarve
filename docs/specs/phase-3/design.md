@@ -561,6 +561,10 @@ pub fn generate_inlay(project: &Project, op: &InlayOp) -> Result<(Vec<ToolRun>, 
 /// (clearing passes, the V-bit, the cut-out). The male with its board's
 /// thickness unset has no runs and warns `inlay_male_board_unset`.
 pub fn generate_inlay_board(project: &Project, op: &InlayOp, board: Board) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError>;
+/// One run, its own, on the stock (#646): a Photo V-Carve has no clearing
+/// passes and no male board, so it keeps the phase 2 generators' shape and
+/// `dc-job` tags its toolpath `RunLabel::Main` on `Board::Female`, as it
+/// does a Pocket's.
 pub fn generate_photo(project: &Project, op: &PhotoVCarveOp) -> Result<(Toolpath, Vec<Warning>), CamError>;
 // generate_drill gains the countersink path; the phase 2 generators are unchanged.
 
@@ -581,11 +585,14 @@ pub struct CutBlock {
 
 pub struct SequenceInput<'a> {
     // phase 2 fields unchanged, plus:
-    /// Photo V-Carve only: consecutive blocks of one group are joined at
-    /// this Z by feed moves (a rise, a move, a plunge) instead of a
-    /// retract to safe Z. `None` for every other generator, which is
-    /// unchanged.
-    pub stay_down_links: Option<f64>,
+    /// Photo V-Carve only: consecutive blocks of one shape and group are
+    /// joined at this Z by feed moves (a rise, a move, a plunge) instead
+    /// of a retract to safe Z. `None` for every other generator, which is
+    /// unchanged. Named `groove_link_z_mm` in #646, not `stay_down_links`
+    /// as drafted: that is the name of `pocket::raster`'s own links, and
+    /// both those and `sequence`'s cleared-area stay-down link run at the
+    /// cut's depth, where this one runs above the start plane.
+    pub groove_link_z_mm: Option<f64>,
 }
 
 pub mod vcarve {
@@ -662,8 +669,16 @@ pub mod photo {
     /// `MAX_PHOTO_MOVES` (2 000 000 samples; security review L3), as
     /// `MAX_RINGS` bounds a Pocket.
     pub struct Grooves { pub direction: Vec2, pub spacing_mm: f64, pub lines: Vec<Vec<Point>> }
-    pub fn grooves(footprint: Rect, angle_deg: f64, spacing_mm: f64, sample_mm: f64) -> Result<Grooves, CamError>;
+    /// `op` names the operation in `CamError::PhotoSetting` (#646); the
+    /// error's field is `spacing_mm` or `sample_mm`, this function's own.
+    pub fn grooves(op: &OperationId, footprint: Rect, angle_deg: f64, spacing_mm: f64, sample_mm: f64) -> Result<Grooves, CamError>;
     pub const MAX_PHOTO_MOVES: usize = 2_000_000;
+    /// The footprint, the groove count (both families of a hatch) and the
+    /// full-depth width, from the project without sampling the picture:
+    /// what `check`, `export` and the editor's status line print (#646).
+    pub struct Layout { pub footprint: Rect, pub grooves: usize, pub width_mm: f64 }
+    pub fn layout(project: &Project, op: &PhotoVCarveOp) -> Option<Layout>;
+    pub fn footprint(bitmap: &Bitmap) -> Rect;
     /// Brightness 0..=255 at a project point, bilinear between pixel
     /// centres, clamped at the edges. Indices come from `f64::floor`
     /// clamped into `0..width_px` and are read with `get`, never from
@@ -715,7 +730,10 @@ instance, profile, depth_mm, cone_mm }`, `ClearingInvalid { op, tool, reason: Cl
 `InlayMargin { op, margin_mm }`, `InlayTooNearEdge { op, edge, distance_mm,
 needed_mm, stock_mm }` (#495: a male's design too near an edge of the
 male board that clips its band; "Algorithms → Inlay", step 4), `PhotoBitmapUnknown { op, bitmap }`,
-`PhotoSetting { op, field, value }`, `BitmapDecode { bitmap, reason }`,
+`PhotoSetting { op, field, value: Option<f64>, problem: PhotoProblem }`
+(`PhotoProblem` is `Unset`, `OutOfRange { range }` or `TooManyMoves {
+moves, limit }`, so the message says what to change, #646),
+`BitmapDecode { bitmap, reason: BitmapError }`,
 `StartDepthUncleared { op, start_depth_mm }` (the generator's form of the
 validation error, re-checked as every generator re-checks validation),
 `ConeOffMaterial { op, shape, x_mm, y_mm, z_mm, overlap_mm }` (the
@@ -2895,7 +2913,16 @@ port.
    (a segment, or nothing); lines are ordered by `k` from the one through
    `c` outward across the picture, and alternate direction: even `k` runs
    along `+u`, odd along `−u`. With `hatch`, a second family at `θ + 90°`
-   follows the first, ordered and alternated the same way.
+   follows the first, ordered and alternated the same way. As built
+   (#646): the lines run from the largest `k` that meets the footprint
+   to the smallest. For `θ` in [0°, 90°] that is `k = 0`, through `c`,
+   across the picture; for `θ` in (90°, 180°) (and a hatch's second
+   family at `θ + 90°` past 90°) `c` is not an extreme of `n · p`, so the
+   sweep starts at the far side and passes through `c` on its way. A line
+   that only touches the footprint (within `EPS_MM`), the line through
+   `c` itself for `θ` in (0°, 90°), is a groove of one point: a plunge at
+   the corner to its depth and the lift, as RasterCarve cuts its first
+   line, so the family keeps one groove through `c` and its parity.
 3. **Samples.** Along a clipped groove from its start, points every
    `sample_mm`, plus the end point; at each the depth `d = (1 − g/255) ·
    max_depth` where `g = photo::sample` (bilinear between the four
@@ -2914,8 +2941,12 @@ port.
    thickness + ENTRY_CLEARANCE_MM)` when the user vouched for it
    (`start_plane_cleared_externally`), so the link never runs through
    material the project has not seen (security review L1; RasterCarve's
-   lifts are not compared, so parity holds). `sequence` is told
-   (`SequenceInput::stay_down_links: Some(height)`) to link consecutive
+   lifts are not compared, so parity holds). As built (#646), a start
+   plane that an earlier floor holds at another depth
+   (`start_depth_mismatch`) takes the second form too: a shallower floor
+   leaves material above the start plane, and the flanks already count
+   from the stock top there (H4). `sequence` is told
+   (`SequenceInput::groove_link_z_mm: Some(height)`) to link consecutive
    blocks of one group at that height with feed moves rather than retract
    to safe Z (a new field, read only by Photo; every other generator
    leaves it `None` and is unchanged). The first groove and the last
@@ -2929,7 +2960,14 @@ port.
    between-groove move a feed move. S7 widens grooves by `d · slope` at
    their depth; at the picture's edge a full-depth groove reaches `W/2`
    past the footprint, which is why `init` sizes the stock with the
-   margin and S7 stays the rule that matters.
+   margin and S7 stays the rule that matters. As built (#646), `d` for
+   S7 is measured from the stock top, `(thickness − z) · slope` capped at
+   the tool's radius and 0 above the stock: the bit's width where it
+   meets the board, never less than the groove's width at the start
+   plane. The generator checks it too, before it returns, and refuses
+   with `CamError::OffStock` (operation and overhang), the error `check`
+   and `export` print (acceptance 58, `cli::picture_past_the_stock_edge_fails_s7`);
+   the safety pass's S7 is the same rule on the program.
 6. **Cost.** A 100 × 50 mm picture at 30°, 2 mm, `f` 1.1: `s` 1.18 mm,
    about 110 grooves of up to 115 mm, 460 samples each: 50 000 moves
    before merging. Fine.
@@ -3094,7 +3132,21 @@ against the male board.
   below safe Z that is not inside a groove (i.e. between a groove's last
   sample and the next groove's first) is a feed move at `start_plane +
   stepover_retract_mm` (within rounding), else `GrooveLinkRapid` /
-  `GrooveOffPicture`. S2 already refuses a rapid there.
+  `GrooveOffPicture`. S2 already refuses a rapid there. As built (#646,
+  `material/photo.rs`, every line of the span, as S18): the link height
+  is derived as the generator's (the second form when the plane is only
+  vouched for or a floor holds it at another depth); a `G1` that ends at
+  or below the start plane is a groove cut (or the plunge into one) and
+  its ends at or below the plane are held to the footprint and the depth
+  range (`GrooveOffPicture`) and its lower end to the shank
+  (`ConeHeightExceeded`); a `G1` that moves across above the start plane
+  is a link, both ends at the link height and over the footprint (else
+  `GrooveLinkRapid`, also for a move that dives across from above the
+  plane into a groove); a straight rise or descent above the plane is in
+  the air; an arc is `GrooveOffPicture` (grooves are never fitted, and
+  the emitter fits no arc to a Photo's run); a rapid across below safe Z
+  is `GrooveLinkRapid`. A start plane below the top that nothing clears
+  and nobody vouches for is unresolved, so every cut fails.
 
 S6 reads a groove's merged samples as the straight cuts they are: the
 toolpath holds the merged moves, so reproduction is move for move.
@@ -3189,8 +3241,8 @@ the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
 ```
 crates/dc-geometry/src/{medial.rs (medial axis, resolution, convex corners, point_in_loops), medial/{grid.rs (SegmentDistanceGrid), tests.rs}, carve.rs (floor_regions, surround, rounded_band, surround_floor_regions, inset_outers, is_design_hole; 3.4: drawn_band, closed_band, band_clearance, BandClearance), fill.rs (FillRule, resolve_fill, merge_fills, ink_outline, spaces_between, ink_without_spaces; 3.4), width.rs (is_narrower_than, hole_is_narrower_than, local_widths, WidthProfile, narrowest_gap, Gap; 3.4), simplify.rs (simplify, simplify_regions; 3.4), merge.rs (merge_near_parts, MergedParts, NearParts; #479), transform.rs (+ mirror_x_about)}
 crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, MaleBoard, Board, PhotoVCarveOp, PhotoStrategy, Bitmap, DrillCycle::Countersink, ClearingPass, Project::bitmaps), bitmap.rs (Bitmap::pixels, Grayscale), ids.rs (+ BitmapId), migrate.rs (v19_to_v20 … v26_to_v27, MigrationNote, migrate_with_notes), project.rs (cleared_start_plane, ClearedPlane), inlay.rs (3.4: band_edge, drawn_band, boundary_regions, BoundaryProblem, BandSource; male_band, edge_pass, MaleBand, BandEdge; #448; INLAY_MERGE_MM; #479; Project::on_male_board, Project::male_board; #498), validate.rs (+ rules above), serialize.rs (png_base64 on one line)}
-crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
-crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
+crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs (+ photo/tests.rs), drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ groove_link_z_mm, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
+crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), material/photo.rs (S19, #646), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}, prep.rs (3.4: PrepOptions, Prepared, findings, design_findings, prepare, write_svg), prep/{walk.rs (visible geometry, paint intent), findings.rs, stroke.rs (tiny-skia stroker wrapper), run.rs (the pipeline), report.rs (PrepReport), write.rs}}
 crates/dc-job/src/{prep_report.rs (render the report; 3.4), picture.rs (PictureSize, bitmap, picture_into, picture_rows; #645), project_from.rs (+ picture, photo_v_bit, default_photo_v_carve; #645), preview.rs (+ <image>, the male board, the boundary)}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), prep.rs (image-prep; 3.4)}
@@ -3302,6 +3354,7 @@ for V operations.
 
 **dc-cam — photo**
 - `photo::move_budget_refuses_a_microscopic_sample_step` (L3), `photo::link_height_clears_the_stock_top_when_the_start_plane_is_only_vouched_for` (L1), `photo::uncleared_start_depth_is_refused` (M2).
+- Added in #646: `photo::settings_are_checked_again`, `photo::undecodable_picture_is_a_typed_error`, `photo::layout_counts_the_grooves`; `safety::hand_written_grooves_pass_s19`, `safety::photo_shank_is_held_to_the_cone`; `build::tests::photo_v_carve_generates_one_run` (dc-job); `cli::photo_v_carve_loads_and_exports` (was `…_is_not_cut_yet`), `cli::check_prints_the_photo_summary` (the Photo's `check`/`export` line). The photo tests build acceptance 59's picture in code (`dc_project::test_support::gradient_bytes`), the same pixels as #645's `gradient.png`.
 - `photo::grooves_are_spaced_by_the_fraction_of_the_full_depth_width` (acceptance 59: 1.179 ± 0.001 at 30°, 2 mm, 1.1), `photo::grooves_run_at_the_line_angle_and_alternate`, `photo::one_groove_passes_through_the_top_left_corner`, `photo::zero_angle_grooves_are_parallel_to_x`, `photo::every_cut_is_inside_the_footprint`, `photo::black_is_max_depth_white_is_the_surface_and_grey_is_between` (`gradient.png` with its blocks: −2.000, 0.000 ± 0.01; 50 % ± 0.02), `photo::invert_swaps_black_and_white`, `photo::hatch_adds_a_second_family_at_ninety_degrees`, `photo::between_grooves_the_bit_rises_to_the_retract_and_feeds_across`, `photo::spacing_below_one_warns`, `photo::collinear_samples_merge_into_one_move`, `photo::sample_is_bilinear_and_clamped_at_the_edges`, `photo::top_row_is_at_the_highest_y`, `photo::max_depth_beyond_the_cone_is_an_error`, `photo::start_depth_lowers_the_grooves`, `photo::unknown_bitmap_is_an_error`, `photo::same_input_twice_is_identical`.
 
 **dc-gcode — safety**
@@ -3618,7 +3671,8 @@ Goal: a photograph carved.
     image. Tests: the dc-import bitmap group, `cli::init_on_a_picture_*`,
     `cli::image_*`, `cli::moved_dcv_*`, `cli::preview_draws_*`. [22]
 24. **Photo generator and S19.** `dc-cam::photo`,
-    `SequenceInput::stay_down_links`, `MAX_PHOTO_MOVES`, S19 in
+    `SequenceInput::groove_link_z_mm` (#646; `stay_down_links` in the
+    draft), `MAX_PHOTO_MOVES`, S19 in
     `assert_safe` and `material.rs`, `start_depth_uncleared` for a Photo.
     Tests: the photo group, the safety S19 tests,
     `golden::phase_1_and_2_cases_are_unchanged`. [22]

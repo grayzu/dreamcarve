@@ -118,6 +118,19 @@ pub struct SequenceInput<'a> {
     /// rapid straight down may stop [`ENTRY_CLEARANCE_MM`] above the
     /// floors they cut, as above the toolpath's own (S2, #227).
     pub cut_before: &'a [Move],
+    /// Photo V-Carve only (format 27, `docs/specs/phase-3/design.md`,
+    /// "Photo V-Carve", step 4): `Some(z_mm)` joins each block to the
+    /// next block of the same shape and group by a groove link at that
+    /// absolute Z: a `Linear` rise at the feed rate to it, a `Linear`
+    /// move across at it at the feed rate, and the next block's descent
+    /// (its straight plunge at the plunge rate) from there, never a
+    /// retract to safe Z. The caller vouches that the Z is in the air
+    /// over every block (security review L1). `None` for every other
+    /// generator, whose output it leaves as it was. It is not the
+    /// stay-down link through cleared area that [`sequence`](fn@sequence)
+    /// writes between two Pocket blocks, nor a raster Pocket's stay-down
+    /// links (`pocket::raster`): both run at the cut's own depth.
+    pub groove_link_z_mm: Option<f64>,
 }
 
 /// The clearance Z, mm, absolute, for [`SequenceInput::clearance_z_mm`]
@@ -176,6 +189,10 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// changed in #214) and a plunge for the rest. Zero-length moves are never
 /// written. The first block is reached by a rapid at safe Z; the last is
 /// followed by a rapid up to safe Z.
+/// With [`SequenceInput::groove_link_z_mm`] set (a Photo V-Carve, #646),
+/// consecutive blocks of one shape and group are joined instead by a
+/// groove link: a rise at feed to that Z, a move across there at feed,
+/// and the next block's plunge.
 ///
 /// Fails as [`plan`] does.
 #[must_use = "the toolpath is the whole point"]
@@ -500,6 +517,26 @@ struct Emitter<'a, 'b> {
 impl<'a> Emitter<'a, '_> {
     fn emit(&mut self, block: &'a CutBlock) {
         let safe_z = self.input.safe_z_mm;
+        // A Photo V-Carve's grooves of one family: up to the link height,
+        // across and down, all fed (S19).
+        if let (Some(link_z), Some(previous), Some(current)) =
+            (self.input.groove_link_z_mm, self.previous, self.current)
+            && previous.shape == block.shape
+            && previous.group == block.group
+        {
+            let feed = self.input.feed_mm_min;
+            self.push(Move::linear(
+                Point3::new(current.x, current.y, link_z),
+                feed,
+            ));
+            self.push(Move::linear(
+                Point3::new(block.descent_from.x, block.descent_from.y, link_z),
+                feed,
+            ));
+            self.descend(block);
+            self.cut(block);
+            return;
+        }
         match (self.previous, self.current) {
             (Some(previous), Some(current)) => match self.link(previous, block, current) {
                 Link::None => {}
@@ -990,6 +1027,7 @@ mod tests {
             feed_mm_min: FEED_MM_MIN,
             plunge_mm_min: PLUNGE_MM_MIN,
             cut_before: &[],
+            groove_link_z_mm: None,
         }
     }
 

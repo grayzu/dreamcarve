@@ -346,6 +346,7 @@ fn emit(graph: &MedialGraph, region: &Region, slope: f64, flat_depth_mm: Option<
         feed_mm_min: FEED_MM_MIN,
         plunge_mm_min: PLUNGE_MM_MIN,
         cut_before: &[],
+        groove_link_z_mm: None,
     })
     .expect("the blocks sequence")
 }

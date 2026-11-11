@@ -359,8 +359,7 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
                 .collect::<Result<Vec<_>, _>>()
                 .map(|runs| (runs, w))
         }),
-        // Format 27 (#644): refused with `CamError::PhotoNotBuilt` until
-        // the generator lands (#646), so the error below names it.
+        // Format 27 (#646): one run, its own, on the stock.
         Operation::PhotoVCarve(op) => generate_photo(project, op).map(|(t, w)| (plain(t), w)),
         // Generated above, board by board.
         Operation::Inlay(_) => return out,
@@ -389,8 +388,9 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
 
 /// Whether validation already reports `warning`, so generation does not
 /// repeat it: `clearing_not_descending` (#406), `inlay_plug_base_thin`
-/// (#434) and the drawn boundary's `inlay_margin_ignored`,
-/// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603).
+/// (#434), the drawn boundary's `inlay_margin_ignored`,
+/// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603), and
+/// `photo_lines_overlap` (#646).
 fn reported_by_validation(warning: &Warning) -> bool {
     matches!(
         warning,
@@ -399,6 +399,7 @@ fn reported_by_validation(warning: &Warning) -> bool {
             | Warning::InlayMarginIgnored { .. }
             | Warning::InlayBoundaryEmpty { .. }
             | Warning::InlayBoundaryHoleIgnored { .. }
+            | Warning::PhotoLinesOverlap { .. }
     )
 }
 
@@ -816,42 +817,53 @@ mod tests {
         project
     }
 
-    /// #644: a Photo V-Carve is in the project file (format 27) before
-    /// its generator is built (#646). Until then a project with an
-    /// enabled one validates, and building it is one error that names the
-    /// operation: no program, and no toolpath for a preview, so nothing
-    /// that cuts nothing is ever written. The project's other operations
-    /// export once it is disabled.
+    /// #646: a Photo V-Carve generates one run, its own, on the stock
+    /// with its V-bit, and exports a program of its own; its summary line
+    /// gives the picture's footprint, the groove count and the full-depth
+    /// width. A spacing below 1 is reported once, by validation.
     #[test]
-    fn photo_v_carve_is_not_generated_yet() {
+    fn photo_v_carve_generates_one_run() {
         let project = dc_project::test_support::photo_project();
         assert!(!validation(&project).has_errors());
         let built = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
-        assert!(built.programs.is_empty(), "{:?}", built.programs.len());
-        assert_eq!(built.generated, None);
-        let expected = dc_cam::CamError::PhotoNotBuilt {
-            op: OperationId::new("o8"),
-        }
-        .to_string();
-        let errors: Vec<(&str, Option<&str>)> = built
-            .findings
-            .errors
-            .iter()
-            .map(|f| (f.message.as_str(), f.op.as_ref().map(OperationId::as_str)))
-            .collect();
-        assert_eq!(errors, [(expected.as_str(), Some("o8"))]);
-
-        let generated = generate_operation(&project, &OperationId::new("o8"));
-        assert!(generated.runs.is_empty());
-        assert_eq!(generated.findings.errors.len(), 1);
-
-        let mut disabled = project;
-        if let Some(Operation::PhotoVCarve(photo)) = disabled.operations.last_mut() {
-            photo.enabled = false;
-        }
-        let built = build(&disabled, ProgramSplit::ProjectDefault, "2026-01-01");
         assert!(!built.findings.has_errors(), "{:?}", built.findings);
-        assert_eq!(built.programs.len(), 1, "the Profile's program");
+        assert_eq!(built.programs.len(), 2, "the Profile's and the Photo's");
+        let generated = generate_operation(&project, &OperationId::new("o8"));
+        assert!(!generated.findings.has_errors(), "{:?}", generated.findings);
+        let [run] = generated.runs.as_slice() else {
+            panic!("one run: {:?}", generated.runs.len());
+        };
+        assert_eq!(run.label, RunLabel::Main);
+        assert_eq!(run.board, Board::Female);
+        assert_eq!(run.tool.id.as_str(), "t2");
+
+        let lines = crate::summary::describe_carves(
+            &project,
+            built
+                .generated
+                .as_deref()
+                .expect("every operation generated"),
+        );
+        assert_eq!(
+            lines,
+            [
+                "Photo V-Carve o8 `Photo V-Carve`: picture `ramp` (b1), 40.000 mm by 20.000 mm at (15.000 mm, 15.000 mm), 11 grooves 3.000 mm wide at the full depth of 1.500 mm."
+            ]
+        );
+
+        let mut overlapping = project;
+        if let Some(Operation::PhotoVCarve(photo)) = overlapping.operations.last_mut() {
+            photo.line_spacing_fraction = 0.9;
+        }
+        let built = build(&overlapping, ProgramSplit::ProjectDefault, "2026-01-01");
+        assert!(!built.findings.has_errors(), "{:?}", built.findings);
+        let overlaps = built
+            .findings
+            .warnings
+            .iter()
+            .filter(|f| f.code.as_deref() == Some("photo_lines_overlap"))
+            .count();
+        assert_eq!(overlaps, 1, "{:?}", built.findings.warnings);
     }
 
     /// #406: the summary names a carve's clearing run `o6 (clearing t1)`

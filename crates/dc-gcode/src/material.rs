@@ -153,6 +153,15 @@
 //!   `dc_cam::generate_drill` finds them): its ends and middle lie within
 //!   the hole's radius of its centre. A Drill only plunges, so that is the
 //!   hole it drills.
+//! - **Photo V-Carve, S19** (format 27, #646; [`photo`] has the rule):
+//!   every line of its span. Every cut a `G1`; one that ends at or below
+//!   the start plane inside the picture's footprint, no deeper than its
+//!   maximum depth, its flanks engaged no deeper than the cone (S17's tip,
+//!   depth and shank rules with the footprint as the region; the picture's
+//!   edge is no wall, so no disc test); one that moves across above the
+//!   start plane at the link height, fed; no rapid across below safe Z.
+//!   The groove's width is S7's, which widens each cut by its width at
+//!   the stock top.
 //! - **Countersink Drill, S18** (format 21, #427; [`countersink`] has the
 //!   rule): every line of its span, not only its cuts. No canned cycle;
 //!   every cut a `G1` straight down at the centre of one of its holes
@@ -293,6 +302,7 @@ use std::ops::Range;
 
 mod cone;
 mod countersink;
+mod photo;
 
 use cone::{Cone, Fault};
 use countersink::Sink;
@@ -310,6 +320,7 @@ use dc_project::{
     ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
     band_edge_of, cleared_start_plane, male_band,
 };
+use photo::Picture;
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
@@ -395,6 +406,8 @@ pub(crate) enum Material {
     /// A countersink Drill (format 21): S18 (module docs,
     /// [`countersink`]).
     Countersink(Sink),
+    /// A Photo V-Carve (format 27, #646): S19 (module docs, [`photo`]).
+    Photo(Picture),
     /// A clearing run of a V-Carve or an Inlay side (#406, #436; security
     /// review M3): the end
     /// mill's centre stays inside the carve's floor regions, at least its
@@ -811,6 +824,10 @@ impl Material {
             {
                 Self::Unresolved
             }
+            // S19 holds a Photo V-Carve to its own V-bit's cone.
+            (Operation::PhotoVCarve(photo), RunLabel::Main) if tool.id != photo.tool => {
+                Self::Unresolved
+            }
             (_, RunLabel::Main) => Self::of(project, op),
         }
     }
@@ -939,12 +956,11 @@ impl Material {
             // Format 22 (#436): S17 on the side's carve, the male's being
             // the surround of its mirrored targets.
             Operation::Inlay(inlay) => inlay_material(project, inlay, Board::Female),
-            // Format 27 (#644): the record is here before its rule. No
-            // generator makes a Photo V-Carve's toolpath yet, and a run
-            // handed to the pass as one is held to no material: every
-            // cut of it fails S9.
-            // TODO(#646): S19, the picture's footprint and depth range.
-            Operation::PhotoVCarve(_) => Self::Unresolved,
+            // Format 27 (#646): S19, the picture's footprint, depth range
+            // and link height.
+            Operation::PhotoVCarve(photo) => {
+                Picture::of(project, photo).map_or(Self::Unresolved, Self::Photo)
+            }
         }
     }
 }
@@ -964,7 +980,7 @@ fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
 /// The V-bit `id` of `project` as S17 needs it: its slope `tan(α/2)` and
 /// its cone height, mm; `None` when it is missing or not a V-bit with an
 /// angle in (0°, 180°) and a positive diameter.
-fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
+pub(crate) fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
     let tool = project.tools.iter().find(|t| &t.id == id)?;
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return None;
@@ -2413,7 +2429,7 @@ fn departure_mm(tolerances: Tolerances) -> f64 {
 /// How far a move written in `units` may depart from where the toolpath
 /// put it (module docs): one unit in the last written place and
 /// [`departure_mm`], mm.
-fn slack_mm(post: &PostProcessor, units: Units, tolerances: Tolerances) -> f64 {
+pub(crate) fn slack_mm(post: &PostProcessor, units: Units, tolerances: Tolerances) -> f64 {
     quantum_mm(post, units) + departure_mm(tolerances)
 }
 
@@ -2442,6 +2458,10 @@ pub(crate) fn check(
     // S18 holds every line of a countersink's span, not only its cuts.
     if let Material::Countersink(sink) = span.material {
         return sink.check(blocks, post, transform, span);
+    }
+    // S19 likewise: a Photo V-Carve's links and rapids are its business.
+    if let Material::Photo(picture) = span.material {
+        return picture.check(blocks, post, transform, tolerances, span);
     }
     let radius_mm = span.tool.diameter_mm / 2.0;
     // #221: each On line loop and held open path, measured against itself.
@@ -2606,7 +2626,7 @@ pub(crate) fn check(
             // Its Z or XY is not known: S17 cannot hold it.
             Material::VBit(_) => false,
             // Checked above, line by line.
-            Material::Countersink(_) => false,
+            Material::Countersink(_) | Material::Photo(_) => false,
             Material::Floor {
                 areas,
                 floor_z_mm,

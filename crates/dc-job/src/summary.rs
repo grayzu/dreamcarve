@@ -418,7 +418,10 @@ fn describe_inlay(
 /// start plane, `depth_mm − glue_gap_mm` below the male board's top
 /// (#436); its mirror line is the `inlay_male_mirrored` warning's. A male
 /// with a cut-out says where it runs and how far through the board
-/// (#443); its deepest cut is the carve's, not the cut-out's.
+/// (#443); its deepest cut is the carve's, not the cut-out's. A Photo
+/// V-Carve (#646) gives its picture's footprint, its groove count and a
+/// groove's width at its full depth ([`dc_cam::photo::layout`], the
+/// figures the editor's status line reads, #544).
 #[must_use]
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     project
@@ -451,9 +454,42 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
                 .into_iter()
                 .filter_map(|board| describe_inlay(project, generated, inlay, board))
                 .collect(),
+            Operation::PhotoVCarve(photo) => describe_photo(project, generated, photo)
+                .into_iter()
+                .collect(),
             _ => Vec::new(),
         })
         .collect()
+}
+
+/// [`describe_carves`]' line for Photo V-Carve `photo`, when it generated
+/// and its layout resolves.
+fn describe_photo(
+    project: &Project,
+    generated: &[EmitOp],
+    photo: &dc_project::PhotoVCarveOp,
+) -> Option<String> {
+    if !generated.iter().any(|e| e.op.id() == &photo.id) {
+        return None;
+    }
+    let layout = dc_cam::photo::layout(project, photo)?;
+    let bitmap = project.bitmaps.iter().find(|b| b.id == photo.image)?;
+    let length = |mm: f64| describe_length(project, mm);
+    let footprint = layout.footprint;
+    Some(format!(
+        "Photo V-Carve {} `{}`: picture `{}` ({}), {} by {} at ({}, {}), {} grooves {} wide at the full depth of {}.",
+        photo.id,
+        photo.name,
+        bitmap.name,
+        bitmap.id,
+        length(footprint.width_mm()),
+        length(footprint.height_mm()),
+        length(footprint.min.x),
+        length(footprint.min.y),
+        layout.grooves,
+        length(layout.width_mm),
+        length(photo.max_depth_mm?),
+    ))
 }
 
 /// One line per exported tool run, in cut order: each enabled operation's
