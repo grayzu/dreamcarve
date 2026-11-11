@@ -7,15 +7,19 @@
 //! 28 px, every shortcut shown in its row (capability 54). The Arrange
 //! menu (capability 58a, mock-up 14) holds the toolbar's Arrange commands
 //! with their shortcuts, *Rotate…* (the toolbar's angle popover) and
-//! *Centre on Stock* (61).
+//! *Centre on Stock* (61). The File, Edit, View and Project menus are
+//! capability 79a's (mock-up 14): new-project and add-to-project apart,
+//! *Export G-code…* in its own group, and View ▸ Appearance a choice of
+//! three with a check.
 
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Button, Key, Modifiers, Ui};
 
 use crate::keyboard::{self, Command as Shortcut};
 use crate::shell::files;
-use crate::shell::theme::Palette;
+use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState, shortcut_action, shortcut_text};
+use crate::widgets::icon::Icon;
 
 /// The menu bar's height, px.
 const HEIGHT_PX: f32 = 28.0;
@@ -281,6 +285,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Button::new(strings.get(StrKey::AppMenuImportPicture)),
     )
     .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
+    ui.separator();
     item(
         ui,
         strings,
@@ -349,11 +354,13 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             .iter()
             .filter(|i| selected.contains(&i.id))
             .all(|i| i.locked);
+    // Capability 79a: Duplicate, Delete, Rename | Select All; then the
+    // visibility and lock rows, which carry shortcuts (54).
     for (command, key) in [
-        (Shortcut::SelectAll, StrKey::AppMenuSelectAll),
-        (Shortcut::Rename, StrKey::AppMenuRename),
         (Shortcut::Duplicate, StrKey::AppMenuDuplicate),
         (Shortcut::Delete, StrKey::AppMenuDelete),
+        (Shortcut::Rename, StrKey::AppMenuRename),
+        (Shortcut::SelectAll, StrKey::AppMenuSelectAll),
         (Shortcut::Hide, StrKey::AppMenuHide),
         (Shortcut::Show, StrKey::AppMenuShow),
         (
@@ -365,7 +372,7 @@ fn edit(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             },
         ),
     ] {
-        if command == Shortcut::Hide {
+        if matches!(command, Shortcut::SelectAll | Shortcut::Hide) {
             ui.separator();
         }
         let mut button = Button::new(strings.get(key));
@@ -401,6 +408,33 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui.close();
     }
     ui.separator();
+    // Capability 73: the toolpath view, as the status bar's button opens
+    // it; there is nothing to show until a toolpath exists.
+    let toolpaths = state
+        .app
+        .scene()
+        .operations()
+        .iter()
+        .any(|op| !op.runs.is_empty());
+    item_text(
+        ui,
+        strings.get(StrKey::AppMenuToolpaths),
+        None,
+        toolpaths,
+        Action::OpenToolpaths,
+        out,
+    );
+    // Capability 76: the drawer. Regenerate all is the status bar's alone
+    // (capability 71).
+    let mut drawer = state.warnings_open;
+    if ui
+        .checkbox(&mut drawer, strings.get(StrKey::AppWarningsTitle))
+        .clicked()
+    {
+        out.push(Action::ToggleWarnings);
+        ui.close();
+    }
+    ui.separator();
     item(
         ui,
         strings,
@@ -418,31 +452,40 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         out,
     );
     ui.separator();
-    // Capability 76: the drawer. Regenerate all is the status bar's alone
-    // (capability 71).
-    let mut drawer = state.warnings_open;
-    if ui
-        .checkbox(&mut drawer, strings.get(StrKey::AppWarningsTitle))
-        .clicked()
-    {
-        out.push(Action::ToggleWarnings);
-        ui.close();
-    }
-    ui.separator();
+    // Capability 79a: a choice of three is a submenu with a check, not a
+    // checkbox, since a checkbox cannot say "follow the system".
     ui.menu_button(strings.get(StrKey::AppMenuAppearance), |ui| {
         for (theme, key) in [
             (dc_app::Theme::System, StrKey::AppMenuThemeSystem),
             (dc_app::Theme::Light, StrKey::AppMenuThemeLight),
             (dc_app::Theme::Dark, StrKey::AppMenuThemeDark),
         ] {
-            let chosen = state.prefs.theme == theme;
-            if ui
-                .add(Button::new(strings.get(key)).selected(chosen))
-                .clicked()
-            {
+            if checked_item(ui, strings.get(key), state.prefs.theme == theme).clicked() {
                 out.push(Action::SetTheme(theme));
                 ui.close();
             }
         }
     });
+}
+
+/// A menu row with a check in front when `checked`: one of a choice
+/// (mock-up 14). Screen readers hear it as a toggled button.
+fn checked_item(ui: &mut Ui, text: &str, checked: bool) -> egui::Response {
+    let palette = Palette::current(ui);
+    let colour = if checked {
+        palette.text_primary
+    } else {
+        theme::NONE
+    };
+    let check = egui::RichText::new(Icon::Check.codepoint().to_string())
+        .font(egui::FontId::new(
+            theme::ICON_SMALL_PX,
+            egui::FontFamily::Name(theme::ICONS.into()),
+        ))
+        .color(colour);
+    let response = ui.add(Button::new((check, text)));
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), checked, text)
+    });
+    response
 }
