@@ -6,7 +6,7 @@
 //! "Sheets"): 420 px on `surface.raised` over a scrim, the file's name,
 //! *Discard* on the left and *Cancel* and *Save* on the right. Enter is
 //! Save; Escape, or a click on the scrim, is Cancel. One of the app's two
-//! confirmations; the other is the Tool Library's *Remove*, asked in place
+//! confirmations; the other is the Tool Library's *Delete*, asked in place
 //! of the library's table (`panels::library`).
 
 use dc_app::{StrKey, Strings};
