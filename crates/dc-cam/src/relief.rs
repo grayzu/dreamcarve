@@ -804,6 +804,7 @@ impl Relief {
                 // #227: the notch's rapid down stops just above the floor
                 // the main path cut at its descend point.
                 cut_before: &toolpath.moves,
+                groove_link_z_mm: None,
             };
             let notch = sequence(&input)?;
             toolpath.moves.extend(notch.moves);

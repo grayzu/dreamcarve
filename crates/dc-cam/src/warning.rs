@@ -238,6 +238,10 @@ pub enum WarningCode {
     /// An Inlay's boundary shape has a hole (format 26, #449), which the
     /// band ignores. Validation reports it too.
     InlayBoundaryHoleIgnored,
+    /// A Photo V-Carve's `line_spacing_fraction` is below 1 (format 27),
+    /// so its full-depth grooves overlap and leave no ridge between them.
+    /// Validation reports it too.
+    PhotoLinesOverlap,
 }
 
 impl WarningCode {
@@ -301,6 +305,7 @@ impl WarningCode {
             Self::InlayMarginIgnored => "inlay_margin_ignored",
             Self::InlayBoundaryEmpty => "inlay_boundary_empty",
             Self::InlayBoundaryHoleIgnored => "inlay_boundary_hole_ignored",
+            Self::PhotoLinesOverlap => "photo_lines_overlap",
         }
     }
 }
@@ -1033,6 +1038,13 @@ pub enum Warning {
         /// The hole's profile, its place in the instance's definition.
         profile: usize,
     },
+    /// [`WarningCode::PhotoLinesOverlap`].
+    PhotoLinesOverlap {
+        /// The Photo V-Carve.
+        op: OperationId,
+        /// Its `line_spacing_fraction`, below 1.
+        fraction: f64,
+    },
 }
 
 impl Warning {
@@ -1049,6 +1061,9 @@ impl Warning {
             Self::InlayBoundaryEmpty { op, index, .. }
             | Self::InlayBoundaryHoleIgnored { op, index, .. } => {
                 Some(format!("operations[{op}].boundary[{index}]"))
+            }
+            Self::PhotoLinesOverlap { op, .. } => {
+                Some(format!("operations[{op}].line_spacing_fraction"))
             }
             _ => None,
         }
@@ -1115,6 +1130,7 @@ impl Warning {
             Self::InlayMarginIgnored { .. } => WarningCode::InlayMarginIgnored,
             Self::InlayBoundaryEmpty { .. } => WarningCode::InlayBoundaryEmpty,
             Self::InlayBoundaryHoleIgnored { .. } => WarningCode::InlayBoundaryHoleIgnored,
+            Self::PhotoLinesOverlap { .. } => WarningCode::PhotoLinesOverlap,
         }
     }
 
@@ -1169,6 +1185,7 @@ impl Warning {
             | Self::InlayMarginIgnored { op, .. }
             | Self::InlayBoundaryEmpty { op, .. }
             | Self::InlayBoundaryHoleIgnored { op, .. }
+            | Self::PhotoLinesOverlap { op, .. }
             | Self::InlayMaleBoardUnset { op } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1241,6 +1258,7 @@ impl Warning {
             | Self::InlayMarginIgnored { .. }
             | Self::InlayBoundaryEmpty { .. }
             | Self::InlayBoundaryHoleIgnored { .. }
+            | Self::PhotoLinesOverlap { .. }
             | Self::InlayMaleBoardUnset { .. } => None,
         }
     }
@@ -2014,6 +2032,11 @@ impl fmt::Display for Warning {
             ),
             Self::InlayMaleBoardUnset { .. } => f.write_str(
                 "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
+            ),
+            Self::PhotoLinesOverlap { fraction, .. } => write!(
+                f,
+                "its line_spacing_fraction {} is less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges",
+                rounded(*fraction, 4)
             ),
             Self::InlayMarginIgnored { field, .. } => write!(
                 f,
@@ -2855,6 +2878,13 @@ mod tests {
                 Warning::InlayMaleBoardUnset { op: op() },
                 "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
             ),
+            (
+                Warning::PhotoLinesOverlap {
+                    op: op(),
+                    fraction: 0.9,
+                },
+                "its line_spacing_fraction 0.9 is less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges",
+            ),
         ]
     }
 
@@ -2925,7 +2955,8 @@ mod tests {
             C::InlayMaleBoardUnset => C::InlayMarginIgnored,
             C::InlayMarginIgnored => C::InlayBoundaryEmpty,
             C::InlayBoundaryEmpty => C::InlayBoundaryHoleIgnored,
-            C::InlayBoundaryHoleIgnored => return None,
+            C::InlayBoundaryHoleIgnored => C::PhotoLinesOverlap,
+            C::PhotoLinesOverlap => return None,
         })
     }
 
@@ -2962,7 +2993,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 56);
+        assert_eq!(count, 57);
     }
 
     #[test]

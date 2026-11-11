@@ -341,6 +341,7 @@ pub fn generate_drill(
         feed_mm_min: plunge_mm_min,
         plunge_mm_min,
         cut_before: &[],
+        groove_link_z_mm: None,
     };
     let records = plan(&input)?
         .into_iter()

@@ -886,6 +886,7 @@ pub(crate) fn generate_profile_below(
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
         cut_before: &[],
+        groove_link_z_mm: None,
     };
 
     // Warnings name contours by their position in the cut order, which

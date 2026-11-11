@@ -6,7 +6,7 @@
 //! trusted, so none is produced.
 
 use dc_geometry::{GeometryError, Point3};
-use dc_project::{DefinitionId, InstanceId, OperationId, ToolId};
+use dc_project::{BitmapError, BitmapId, DefinitionId, InstanceId, OperationId, ToolId};
 use std::fmt;
 
 use crate::{Overhang, StockEdge};
@@ -112,6 +112,49 @@ impl fmt::Display for ClearingProblem {
             ),
             Self::UnknownTool => f.write_str("the project has no tool with that id"),
         }
+    }
+}
+
+/// Why a Photo V-Carve's setting cannot be cut
+/// ([`CamError::PhotoSetting`], format 27).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PhotoProblem {
+    /// The value is unset. It is never defaulted.
+    Unset,
+    /// The value is outside its range, given in words (`above 0`).
+    OutOfRange {
+        /// The range, in words.
+        range: &'static str,
+    },
+    /// The grooves would take more than
+    /// [`crate::photo::MAX_PHOTO_MOVES`] moves (security review L3),
+    /// counted before anything is allocated.
+    TooManyMoves {
+        /// How many moves the grooves would take, at least.
+        moves: f64,
+        /// [`crate::photo::MAX_PHOTO_MOVES`].
+        limit: usize,
+    },
+}
+
+/// The message of [`CamError::PhotoSetting`].
+fn photo_setting(
+    op: &OperationId,
+    field: &str,
+    value: Option<f64>,
+    problem: &PhotoProblem,
+) -> String {
+    let value = value.map_or_else(|| "unset".to_owned(), |v| v.to_string());
+    match problem {
+        PhotoProblem::Unset => {
+            format!("operation `{op}` has no {field}; export fails until it is set")
+        }
+        PhotoProblem::OutOfRange { range } => {
+            format!("operation `{op}` has {field} {value}; it must be {range}")
+        }
+        PhotoProblem::TooManyMoves { moves, limit } => format!(
+            "operation `{op}` would carve its picture in about {moves:.0} moves with {field} {value}, more than the {limit} a Photo V-Carve may make; raise sample_mm or line_spacing_fraction, or make the picture smaller"
+        ),
     }
 }
 
@@ -969,6 +1012,41 @@ pub enum CamError {
         /// The stock's least width (an X edge) or length (a Y edge) that
         /// fits the design centred, mm.
         stock_mm: f64,
+    },
+    /// A Photo V-Carve names a bitmap the project does not hold
+    /// (format 27, `photo_unknown_bitmap`). Validation reports this first.
+    #[error("operation `{op}` carves bitmap `{bitmap}`, which is not in the project")]
+    PhotoBitmapUnknown {
+        /// The Photo V-Carve.
+        op: OperationId,
+        /// The missing bitmap's id.
+        bitmap: BitmapId,
+    },
+    /// A Photo V-Carve's setting cannot be cut (format 27): unset, out of
+    /// its range (validation's `photo_*` rules, re-checked), or so fine
+    /// that its grooves would pass [`crate::photo::MAX_PHOTO_MOVES`]
+    /// (security review L3).
+    #[error("{}", photo_setting(op, field, *value, problem))]
+    PhotoSetting {
+        /// The Photo V-Carve.
+        op: OperationId,
+        /// The field at fault: `max_depth_mm`, `line_angle_deg`,
+        /// `line_spacing_fraction`, `sample_mm` or `stepover_retract_mm`.
+        field: &'static str,
+        /// Its value; `None` when it is unset.
+        value: Option<f64>,
+        /// What is wrong with it.
+        problem: PhotoProblem,
+    },
+    /// A bitmap's stored picture cannot be decoded (format 27): its data
+    /// is corrupt or cut short behind a good header, which only decoding
+    /// finds (`dc_project::Bitmap::pixels`).
+    #[error("bitmap `{bitmap}` cannot be read: {reason}")]
+    BitmapDecode {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Why.
+        reason: BitmapError,
     },
     /// The operation is a Photo V-Carve, whose record a project can hold
     /// (format 27, #644) before its generator is built.

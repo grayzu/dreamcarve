@@ -220,6 +220,17 @@ retract plane; this line ends at Z … (project space)", and holds its bit's
 shank with the V-Carve shank error above. See [Safety](safety.md), rule
 15.
 
+## Photo V-Carve
+
+| Code | Message says | What to do |
+| --- | --- | --- |
+| `photo_lines_overlap` | "… has line_spacing_fraction …, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them" | A Photo V-Carve's grooves are spaced `line_spacing_fraction` times their full-depth width apart. Below 1 the darkest grooves run into each other and the picture loses contrast there. Use 1 or more (1.1 is the default) unless you want that. Validation reports it once; export does not repeat it. |
+
+Export stops when a Photo V-Carve's grooves would need more than
+2 000 000 moves: "operation … would carve its picture in about … moves
+with sample_mm …, more than the 2000000 a Photo V-Carve may make". Raise
+`sample_mm` or `line_spacing_fraction`, or make the picture smaller.
+
 ## Import
 
 `init` prints what it found in the drawing before it writes the project, as

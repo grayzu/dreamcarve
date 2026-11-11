@@ -7388,30 +7388,26 @@ fn v26_project_exports_the_same_programs() {
     }
 }
 
-/// Format 27 (#644): a project with a bitmap and a Photo V-Carve loads
-/// and `check` reads it, but the generator is not built yet (#646), so
-/// `check` and `export` exit 1 with one line that names the operation and
-/// write no program. A bitmap whose picture cannot be read stops the
+/// Format 27 (#644, #646): a project with a bitmap and a Photo V-Carve
+/// loads, `check` reads it, and `export` writes its programs, the
+/// Photo's among them. A bitmap whose picture cannot be read stops the
 /// load, with the bitmap's id.
 #[test]
-fn photo_v_carve_loads_and_is_not_cut_yet() {
-    let dir = work_dir("photo_v_carve_loads_and_is_not_cut_yet");
+fn photo_v_carve_loads_and_exports() {
+    let dir = work_dir("photo_v_carve_loads_and_exports");
     let project = dc_project::test_support::photo_project();
     let text = save(&project).expect("project saves");
     std::fs::write(dir.join("photo.dcv"), &text).expect("dcv written");
-    for command in ["check", "export"] {
-        let out = run(&dir, &[command, "photo.dcv"]);
-        let report = format!("{}{}", stdout(&out), stderr(&out));
-        assert_eq!(out.status.code(), Some(1), "{command}: {report}");
-        assert!(
-            report.contains(
-                "operation `o8` is a Photo V-Carve, which this version of DreamCarve cannot cut yet"
-            ),
-            "{command}: {report}"
-        );
-        assert!(!report.contains("panicked"), "{command}: {report}");
-        assert_eq!(programs_in(&dir), Vec::<String>::new(), "{command}");
-    }
+    let out = run(&dir, &["check", "photo.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stderr(&out));
+    let out = run(&dir, &["export", "photo.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "export: {report}");
+    assert!(!report.contains("panicked"), "{report}");
+    assert_eq!(
+        programs_in(&dir),
+        vec!["photo-1-T1.nc".to_owned(), "photo-2-T2.nc".to_owned()]
+    );
 
     let png = &project.bitmaps[0].png_base64;
     let bad = text.replacen(png.as_str(), "bm90IGEgcGljdHVyZQ==", 1);
@@ -7422,6 +7418,62 @@ fn photo_v_carve_loads_and_is_not_cut_yet() {
     assert_ne!(out.status.code(), Some(0), "{report}");
     assert!(report.contains("bitmap `b1` cannot be read"), "{report}");
     assert!(!report.contains("panicked"), "{report}");
+}
+
+/// #646: `check` and `export` print a line for a Photo V-Carve with the
+/// picture's footprint, its groove count and the full-depth groove width,
+/// the figures the editor's status line reads (#544).
+#[test]
+fn check_prints_the_photo_summary() {
+    let dir = work_dir("check_prints_the_photo_summary");
+    let project = dc_project::test_support::photo_project();
+    std::fs::write(
+        dir.join("photo.dcv"),
+        save(&project).expect("project saves"),
+    )
+    .expect("dcv written");
+    let line = "Photo V-Carve o8 `Photo V-Carve`: picture `ramp` (b1), 40.000 mm by 20.000 mm at (15.000 mm, 15.000 mm), 11 grooves 3.000 mm wide at the full depth of 1.500 mm.";
+    for command in ["check", "export"] {
+        let out = if command == "export" {
+            run(&dir, &[command, "photo.dcv", "--date", FIXED_DATE])
+        } else {
+            run(&dir, &[command, "photo.dcv"])
+        };
+        let report = stdout(&out);
+        assert_eq!(out.status.code(), Some(0), "{command}: {}", stderr(&out));
+        assert!(report.contains(line), "{command}: {report}");
+    }
+}
+
+/// Acceptance 58, its last sentence: a picture whose footprint runs past
+/// the stock's edge fails S7, naming the operation and the overhang. The
+/// sample picture moved to X 70 to 110 on the 100 mm stock: the grooves
+/// reach 10 mm past the right edge, and half a groove more at depth.
+#[test]
+fn picture_past_the_stock_edge_fails_s7() {
+    let dir = work_dir("picture_past_the_stock_edge_fails_s7");
+    let mut project = dc_project::test_support::photo_project();
+    project.bitmaps[0].x_mm = 70.0;
+    std::fs::write(
+        dir.join("photo.dcv"),
+        save(&project).expect("project saves"),
+    )
+    .expect("dcv written");
+    for command in ["check", "export"] {
+        let out = if command == "export" {
+            run(&dir, &[command, "photo.dcv", "--date", FIXED_DATE])
+        } else {
+            run(&dir, &[command, "photo.dcv"])
+        };
+        let report = format!("{}{}", stdout(&out), stderr(&out));
+        assert_eq!(out.status.code(), Some(1), "{command}: {report}");
+        assert!(
+            report.contains("operation `o8` cuts off the stock: 10.")
+                && report.contains("mm past the +X (right) edge"),
+            "{command}: {report}"
+        );
+        assert_eq!(programs_in(&dir), Vec::<String>::new(), "{command}");
+    }
 }
 
 /// The tutorial project `dc.dcv` with its 90 x 60 mm frame (`i3`) as the

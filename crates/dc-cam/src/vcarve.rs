@@ -843,6 +843,7 @@ pub(crate) fn finish(
         feed_mm_min: rates.feed_mm_min,
         plunge_mm_min: rates.plunge_mm_min,
         cut_before: &[],
+        groove_link_z_mm: None,
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
