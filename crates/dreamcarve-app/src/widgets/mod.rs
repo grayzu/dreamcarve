@@ -7,6 +7,7 @@
 //! the switch and the disclosure section.
 
 pub(crate) mod button;
+pub(crate) mod checkbox;
 pub(crate) mod icon;
 pub(crate) mod op_glyph;
 pub(crate) mod row;

@@ -3290,3 +3290,155 @@ fn clicking_a_cut_opens_its_operation() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `experience.md` section 13 and design question 2 (#549): the plaque's
+/// workspace, generated, with its Panel pocket open in the editor, in a
+/// 1280 × 800 window, compared with the committed pair
+/// `tests/snapshots/workspace_light.png` and `workspace_dark.png` under
+/// `kittest.toml`'s thresholds. Linux only: font rasterisation differs per
+/// OS, so the other two run the behaviour tests without image comparison.
+/// Like every rendering test it says so and renders nothing where the
+/// machine has no wgpu adapter (CI's Linux job needs Mesa's lavapipe).
+/// `UPDATE_SNAPSHOTS=1` rewrites the pair; a mismatch leaves
+/// `<name>.new.png` and `<name>.diff.png` beside it.
+#[test]
+fn snapshot_workspace_light_and_dark() {
+    if !cfg!(target_os = "linux") {
+        println!(
+            "snapshot_workspace_light_and_dark: image snapshots are compared on Linux only \
+             (design question 2)"
+        );
+        return;
+    }
+    let dir = scratch("snapshot-workspace");
+    // Opened in place and never saved: the fixture is only read.
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = common::wgpu_harness(
+        "snapshot_workspace_light_and_dark",
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    ) else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    while h.state().app().generation().busy() || h.state().worker_busy() {
+        assert!(std::time::Instant::now() < deadline, "the plaque generates");
+        h.step();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    h.run();
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    assert!(h.query_by_label("Panel · Pocket").is_some(), "the editor");
+
+    let mut failures = Vec::new();
+    for (theme, name) in [
+        (egui::Theme::Light, "workspace_light"),
+        (egui::Theme::Dark, "workspace_dark"),
+    ] {
+        h.input_mut().system_theme = Some(theme);
+        h.run();
+        assert_eq!(h.ctx.theme(), theme);
+        if let Err(err) = h.try_snapshot(name) {
+            failures.push(format!("{name}: {err}"));
+        }
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Where in the last frame's paint order the first text shape containing
+/// `needle` is.
+fn painted_at(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Option<usize> {
+    h.output().shapes.iter().position(|clipped| {
+        matches!(&clipped.shape, egui::Shape::Text(text) if text.galley.text().contains(needle))
+    })
+}
+
+/// `experience.md` section 8, "Sheets" (#549 review): a sheet sits above
+/// everything on the Viewport, the depth legend included. In *By depth*,
+/// with the export sheet open, the legend's labels paint before (under)
+/// the sheet's title and its scrim.
+#[test]
+fn depth_legend_paints_under_a_sheet() {
+    let dir = scratch("legend-under-sheet");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    h.query_all_by_label("By depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the card's By depth segment")
+        .click();
+    h.run();
+    assert!(painted_at(&h, "stock top").is_some(), "the legend is drawn");
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    let legend = painted_at(&h, "stock top").expect("the legend is still drawn");
+    let sheet = painted_at(&h, "Export G-code").expect("the sheet's title");
+    assert!(
+        legend < sheet,
+        "the legend ({legend}) paints under the sheet ({sheet})"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The window rectangles of the last frame's text shapes whose text
+/// contains `needle`.
+fn text_rects(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Vec<egui::Rect> {
+    h.output()
+        .shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::Shape::Text(text) if text.galley.text().contains(needle) => {
+                Some(egui::Rect::from_min_size(text.pos, text.galley.size()))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// #549, first comment (seen by slice 16): at the minimum window, 1280 ×
+/// 768, in *By depth* with *Program extents* on, the depth legend must
+/// not cover the extents caption. The caption moves under the bit-edge
+/// box when its place at the box's top-left is under the legend or the
+/// card.
+#[test]
+fn depth_legend_leaves_the_extents_caption_readable() {
+    let dir = scratch("legend-caption");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        768.0,
+    );
+    settle_export(&mut h);
+    h.query_all_by_label("By depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the card's By depth segment")
+        .click();
+    h.run();
+    h.get_by_label("Program extents").click();
+    h.run();
+    let caption = text_rects(&h, "Program extents (bit edge");
+    assert_eq!(caption.len(), 1, "the caption is drawn once: {caption:?}");
+    let legend = ["stock top", "Screw holes, Cut out"]
+        .iter()
+        .flat_map(|label| text_rects(&h, label))
+        .reduce(|a, b| a.union(b))
+        .expect("the legend's labels");
+    assert!(
+        !caption[0].intersects(legend),
+        "the caption {:?} is clear of the legend {legend:?}",
+        caption[0]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

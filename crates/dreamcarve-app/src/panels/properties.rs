@@ -30,6 +30,7 @@ use eframe::egui::{self, Id, Sense, TextStyle, Ui};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented;
 use crate::widgets::unit_field::{LABEL_PX, UnitField, field as unit_field, row};
@@ -153,7 +154,7 @@ fn flag_row(ui: &mut Ui, label: &str, value: Option<bool>, mixed: &str) -> Optio
     let changed = ui
         .horizontal(|ui| {
             ui.add_space(LABEL_PX + 8.0);
-            let response = ui.checkbox(&mut checked, label);
+            let response = checkbox(ui, label, &mut checked, label);
             if value.is_none() {
                 text(ui, mixed, TextStyle::Small, palette.text_secondary);
             }

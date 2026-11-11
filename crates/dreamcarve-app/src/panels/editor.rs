@@ -52,6 +52,7 @@ use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
+use crate::widgets::checkbox::checkbox as check_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
 use crate::widgets::row::{self, GAP_PX};
@@ -643,6 +644,7 @@ fn choice(
             .unwrap_or_default();
         let width = ui.available_width();
         let response = egui::ComboBox::from_id_salt(id)
+            .icon(crate::widgets::icon::combo_chevron)
             .truncate()
             .selected_text(selected)
             .width(width)
@@ -673,7 +675,7 @@ fn checkbox(
     let palette = Palette::current(ui);
     let row = slot.row;
     let mut on = slot.checked(cx.op);
-    let response = ui.checkbox(&mut on, cx.strings.get(row.label));
+    let response = check_box(ui, slot.key(), &mut on, cx.strings.get(row.label));
     let help = cx.strings.get(row.help);
     let response = response.on_hover_ui(|ui| {
         ui.label(egui::RichText::new(help).text_style(TextStyle::Body));
@@ -781,6 +783,7 @@ fn earlier_pocket(
     let mut picked: Option<Option<OperationId>> = None;
     let width = ui.available_width();
     let response = egui::ComboBox::from_id_salt(id)
+        .icon(crate::widgets::icon::combo_chevron)
         .truncate()
         .selected_text(selected)
         .width(width)
@@ -842,6 +845,22 @@ pub(super) const fn tool_icon(kind: &ToolKind) -> Icon {
     }
 }
 
+/// Paints `kind`'s glyph (section 6) at 16 px centred on `centre` in
+/// `colour`. Lucide's `triangle` points up, so the V-bit's is turned to
+/// point down, as the spec draws it.
+pub(super) fn paint_tool_icon(ui: &Ui, centre: egui::Pos2, kind: &ToolKind, colour: egui::Color32) {
+    let galley = tool_icon(kind).galley(ui, theme::ICON_SMALL_PX, colour);
+    let half = galley.size() / 2.0;
+    if matches!(kind, ToolKind::VBit { .. }) {
+        // A text shape turns about its top-left corner.
+        let shape = egui::epaint::TextShape::new(centre + half, galley, colour)
+            .with_angle(std::f32::consts::PI);
+        ui.painter().add(shape);
+    } else {
+        ui.painter().galley(centre - half, galley, colour);
+    }
+}
+
 /// `tool`'s name as the picker lists it: `name (T2)`.
 fn tool_text(strings: &Strings, project: &Project, tool: &dc_project::Tool) -> String {
     let number = tool.number.map_or_else(
@@ -900,11 +919,10 @@ fn tool_picker(
     );
     let mut x = rect.left() + 8.0;
     if let Some(tool) = current {
-        let glyph =
-            tool_icon(&tool.cutter).galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
-        ui.painter().galley(
-            egui::pos2(x, rect.center().y - glyph.size().y / 2.0),
-            glyph,
+        paint_tool_icon(
+            ui,
+            egui::pos2(x + theme::ICON_SMALL_PX / 2.0, rect.center().y),
+            &tool.cutter,
             palette.text_secondary,
         );
         x += theme::ICON_SMALL_PX + 6.0;

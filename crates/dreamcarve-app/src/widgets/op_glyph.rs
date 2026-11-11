@@ -72,11 +72,15 @@ pub(crate) fn op_glyph(painter: &Painter, rect: Rect, kind: Kind, colour: Color3
             line(&[(4.0, 4.0), (12.0, 16.0), (20.0, 4.0)]);
             line(&[(6.0, 20.0), (18.0, 20.0)]);
         }
-        // Two mirrored Vs nested, the lower inverted: the plug in its
-        // pocket.
+        // The plug in its pocket: the pocket an open V, the plug a closed
+        // V (its back the flat top) nested inside it with a glue gap. The
+        // first drawing, a V over an inverted V, read as an X at 16 px
+        // (#549).
         Kind::Inlay => {
-            line(&[(3.0, 3.0), (12.0, 10.5), (21.0, 3.0)]);
-            line(&[(5.0, 21.0), (12.0, 13.5), (19.0, 21.0)]);
+            line(&[(3.0, 9.0), (12.0, 21.0), (21.0, 9.0)]);
+            let plug = [(6.0, 4.0), (12.0, 13.0), (18.0, 4.0)];
+            let plug: Vec<Pos2> = plug.iter().map(|(x, y)| at(*x, *y)).collect();
+            painter.add(egui::Shape::closed_line(plug, stroke));
         }
         // A rounded rectangle with four short diagonal hatch strokes.
         Kind::PhotoVCarve => {

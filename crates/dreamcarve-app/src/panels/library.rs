@@ -35,6 +35,7 @@ use crate::shell::files;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Dialogs};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::checkbox::{checkbox, paint_box};
 use crate::widgets::icon::Icon;
 
 /// The sheet's default size, px (`experience.md`, section 3).
@@ -292,6 +293,7 @@ fn toolbar(
             palette.text_secondary,
         );
         egui::ComboBox::from_id_salt("library_kind")
+            .icon(crate::widgets::icon::combo_chevron)
             .width(150.0)
             .selected_text(kind_filter_label(strings, sheet.filter.kind))
             .show_ui(ui, |ui| {
@@ -329,7 +331,12 @@ fn toolbar(
         egui::vec2(ui.available_width(), 26.0),
         Layout::right_to_left(Align::Center),
         |ui| {
-            ui.checkbox(&mut sheet.replace, strings.get(StrKey::AppLibraryReplace));
+            checkbox(
+                ui,
+                "library.replace",
+                &mut sheet.replace,
+                strings.get(StrKey::AppLibraryReplace),
+            );
         },
     );
 }
@@ -550,22 +557,7 @@ fn table_row(
         egui::pos2(rect.left() + TICK_PX / 2.0, rect.center().y),
         egui::vec2(16.0, 16.0),
     );
-    if on {
-        ui.painter().rect_filled(tick, 3.0, palette.accent_fill);
-        let glyph = Icon::Check.galley(ui, 12.0, palette.text_on_accent);
-        ui.painter().galley(
-            tick.center() - glyph.size() / 2.0,
-            glyph,
-            palette.text_on_accent,
-        );
-    } else {
-        ui.painter().rect_stroke(
-            tick,
-            3.0,
-            Stroke::new(1.0, palette.border_strong),
-            StrokeKind::Inside,
-        );
-    }
+    paint_box(ui, tick, on, response.hovered(), true);
 
     let colour = if state.in_project {
         palette.text_secondary

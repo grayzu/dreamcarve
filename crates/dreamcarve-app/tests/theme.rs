@@ -265,3 +265,29 @@ fn operation_colours_and_depth_ramp_match_experience_md() {
         assert_eq!(theme::DARK.depth_ramp[k], hex_in(&row[3]), "dark stop {k}");
     }
 }
+
+/// Section 4 (#549): the bundled Inter has tabular figures frozen in, so
+/// every digit and the true minus share one advance, but words keep their
+/// own spacing: a hyphen (`holes-1`, `Bottom-left`, `Step-down`) is its
+/// proportional width, narrower than a figure, not the tabular one the
+/// `tnum` freeze also gave it.
+#[test]
+fn figures_are_tabular_and_hyphens_are_not() {
+    use eframe::egui;
+
+    let ctx = egui::Context::default();
+    ctx.set_fonts(theme::fonts());
+    let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+    output.textures_delta.clear();
+    let body = egui::FontId::proportional(13.0);
+    let width = |c: char| ctx.fonts_mut(|f| f.glyph_width(&body, c));
+    let zero = width('0');
+    for digit in "123456789\u{2212}".chars() {
+        assert_eq!(width(digit), zero, "{digit:?} is tabular");
+    }
+    assert!(
+        width('-') < 0.8 * zero,
+        "the hyphen is proportional: {} against a figure's {zero}",
+        width('-')
+    );
+}

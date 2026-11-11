@@ -26,6 +26,7 @@ use eframe::egui::{self, Id, Ui};
 use crate::shell::theme;
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
+use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{self, GAP_PX, LABEL_PX};
 use crate::widgets::section::section;
@@ -227,6 +228,7 @@ fn dropdown<T: Copy + PartialEq>(
     let mut picked = None;
     let width = ui.available_width();
     let response = egui::ComboBox::from_id_salt(id)
+        .icon(crate::widgets::icon::combo_chevron)
         .truncate()
         .selected_text(selected)
         .width(width)
@@ -530,6 +532,7 @@ fn controller(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Ac
         let width = ui.available_width();
         let mut picked = None;
         egui::ComboBox::from_id_salt("project.post.id")
+            .icon(crate::widgets::icon::combo_chevron)
             .truncate()
             .selected_text(project::post_label(cx.strings, cx.project))
             .width(width)
@@ -625,7 +628,8 @@ fn canned_cycles(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
         let mut checked = on;
         let name = cx.strings.get(Choice::CannedCycles.label());
         if ui
-            .checkbox(&mut checked, "")
+            .scope(|ui| checkbox(ui, "project.canned_cycles", &mut checked, ""))
+            .inner
             .accessible_name(name)
             .changed()
         {

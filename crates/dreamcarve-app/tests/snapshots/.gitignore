@@ -1,0 +1,4 @@
+# What a snapshot run leaves beside the committed pair (egui_kittest).
+*.new.png
+*.diff.png
+*.old.png

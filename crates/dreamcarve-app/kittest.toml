@@ -1,0 +1,16 @@
+# Copyright 2026 The DreamCarve Contributors
+# SPDX-License-Identifier: Apache-2.0
+#
+# Image snapshot thresholds for egui_kittest (design question 2, #549).
+# Snapshots are compared on Linux only (`kittest::snapshot_workspace_light_and_dark`),
+# rendered by Mesa's lavapipe; a small per-pixel threshold absorbs the
+# anti-aliasing differences between Mesa releases, and a few hundred pixels
+# may fail it (text edges) before a snapshot counts as changed.
+
+output_path = "tests/snapshots"
+threshold = 0.6
+max_failed_pixels = 0
+
+[linux]
+threshold = 1.0
+max_failed_pixels = 400

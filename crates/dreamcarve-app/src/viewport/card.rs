@@ -19,6 +19,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::viewport::renderer::gpu_f32;
 use crate::widgets::button::{ButtonSpec, Kind, button};
+use crate::widgets::checkbox::checkbox;
 use crate::widgets::section::section;
 use crate::widgets::segmented::segmented;
 
@@ -36,14 +37,15 @@ const LEGEND_BAR: egui::Vec2 = egui::vec2(12.0, 160.0);
 const LABEL_GAP_PX: f32 = 14.0;
 
 /// Draws the card over `pane` and, in *By depth*, the legend left of it;
-/// pushes what the user changed to `out`. Returns the card's rectangle.
+/// pushes what the user changed to `out`. Returns the card's rectangle and
+/// the legend's, when drawn.
 pub(crate) fn show(
     ui: &Ui,
     pane: Rect,
     app: &App,
     legend: Option<&DepthLegend>,
     out: &mut Vec<Action>,
-) -> Rect {
+) -> (Rect, Option<Rect>) {
     let strings = app.strings();
     let view = app.view();
     let open = app.prefs().sections.get(SECTION).copied().unwrap_or(true);
@@ -78,10 +80,10 @@ pub(crate) fn show(
                 });
         });
     let card = area.response.rect;
-    if let Some(legend) = legend.filter(|_| view.colour == ColourMode::ByDepth) {
-        draw_legend(ui, pane, card, app, legend);
-    }
-    card
+    let legend = legend
+        .filter(|_| view.colour == ColourMode::ByDepth)
+        .map(|legend| draw_legend(ui, pane, card, app, legend));
+    (card, legend)
 }
 
 /// One of the card's toggles: the flag of [`Visibility`] it flips.
@@ -123,7 +125,7 @@ fn body(ui: &mut Ui, app: &App, visibility: Visibility, colour: ColourMode, out:
     for (key, flag) in toggles {
         let mut next = visibility;
         let value = flag(&mut next);
-        if ui.checkbox(value, strings.get(key)).changed() {
+        if checkbox(ui, key, value, strings.get(key)).changed() {
             out.push(Action::SetVisibility(next));
         }
     }
@@ -143,14 +145,34 @@ fn body(ui: &mut Ui, app: &App, visibility: Visibility, colour: ColourMode, out:
 /// The depth legend left of `card`: the ramp as a 12 × 160 px bar, a tick
 /// and a label at the stock top, each operation's depth and the deepest
 /// cut, labels that would overlap stacked to the right; on a
-/// `viewport.label.bg` pill so it reads over the toolpaths.
-fn draw_legend(ui: &Ui, pane: Rect, card: Rect, app: &App, legend: &DepthLegend) {
+/// `viewport.label.bg` pill so it reads over the toolpaths. Drawn in its
+/// own non-interactive area rather than a bare layer: egui orders areas, so
+/// a sheet opened later stacks above it (#549), where a bare layer would
+/// paint over the sheet.
+/// Returns the legend's rectangle.
+fn draw_legend(ui: &Ui, pane: Rect, card: Rect, app: &App, legend: &DepthLegend) -> Rect {
+    egui::Area::new(egui::Id::unique("toolpaths_legend"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(pane.min)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            let painter = ui.painter().clone();
+            paint_legend(ui, &painter, pane, card, app, legend)
+        })
+        .inner
+}
+
+/// [`draw_legend`]'s painting, on `painter`; returns the legend's frame.
+fn paint_legend(
+    ui: &Ui,
+    painter: &egui::Painter,
+    pane: Rect,
+    card: Rect,
+    app: &App,
+    legend: &DepthLegend,
+) -> Rect {
     let palette = Palette::current(ui);
     let strings = app.strings();
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(
-        egui::Order::Foreground,
-        egui::Id::unique("toolpaths_legend"),
-    ));
     let small = TextStyle::Small.resolve(ui.style());
     let title = painter.layout_no_wrap(
         strings.get(StrKey::AppToolpathsLegend).to_owned(),
@@ -220,17 +242,22 @@ fn draw_legend(ui: &Ui, pane: Rect, card: Rect, app: &App, legend: &DepthLegend)
         let rect = Align2::LEFT_CENTER.anchor_size(egui::pos2(origin.x + x, y), galley.size());
         painter.galley(rect.min, galley, palette.text_secondary);
     }
+    frame
 }
 
 /// The extents' caption (`experience.md`, section 9: *Program extents
 /// (bit edge, dashed)* and its ranges) in a `viewport.label.bg` pill at
-/// the bit-edge box's top-left, `top_left` on the window.
+/// the bit-edge box's top-left, `edge` on the window. Where that place is
+/// under the card or the depth legend (`covers`), it sits under the box's
+/// bottom-left instead, so the caption stays readable at the minimum
+/// window (#549).
 pub(crate) fn extents_caption(
     ui: &Ui,
     painter: &egui::Painter,
     app: &App,
     extents: &ProgramExtents,
-    top_left: egui::Pos2,
+    edge: Rect,
+    covers: &[Rect],
 ) {
     let palette = Palette::current(ui);
     let text = app.strings().fmt(
@@ -245,10 +272,13 @@ pub(crate) fn extents_caption(
         TextStyle::Small.resolve(ui.style()),
         palette.text_secondary,
     );
-    let rect = Rect::from_min_size(
-        top_left + egui::vec2(0.0, -galley.size().y - 8.0),
-        galley.size() + egui::vec2(12.0, 4.0),
-    );
+    let size = galley.size() + egui::vec2(12.0, 4.0);
+    let above = Rect::from_min_size(edge.left_top() + egui::vec2(0.0, -size.y - 4.0), size);
+    let rect = if covers.iter().any(|c| c.intersects(above)) {
+        Rect::from_min_size(edge.left_bottom() + egui::vec2(0.0, 4.0), size)
+    } else {
+        above
+    };
     painter.rect_filled(rect, 6.0, palette.viewport_label_bg);
     painter.galley(
         rect.min + egui::vec2(6.0, 2.0),
