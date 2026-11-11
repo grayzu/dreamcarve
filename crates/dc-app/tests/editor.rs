@@ -41,6 +41,13 @@
 //! and Cut-out groups (capability 68a, which add two groups to capability
 //! 66's nine for the Inlay alone), the derived line under Depth and the
 //! base under the band, both computed from `dc-project`'s own rules.
+//!
+//! Slice 26 (#618, the review redesign): the name is the editor's header
+//! and *enabled* the list's, so no row edits either; each kind's Setup
+//! rows lead its table; every other group is closed by default with a
+//! one-line summary of its values, and a group holding a located error or
+//! warning opens. The tests named `fields::…` and `summary::…` are the
+//! issue's.
 
 #![allow(
     clippy::panic,
@@ -55,7 +62,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use dc_app::editor::{self, FieldKind, Group, clearing, fields};
+use dc_app::editor::{self, FieldKind, Group, clearing};
 use dc_app::operations::{self, Kind};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::Tier;
@@ -223,7 +230,8 @@ fn covers(row: &fields::Row, path: &str) -> bool {
 /// value other than the record's through the editor's own path, is that
 /// value after `dc_project::save` and `dc_project::load` (the CLI's reader),
 /// and set back is the record again. `kind` and `id` are the record's
-/// identity, not settings.
+/// identity, not settings; `name` is edited in the editor's header and
+/// `enabled` by the list's checkbox (slice 26, #618), not by a row.
 #[test]
 fn fields_table_matches_the_records() {
     let project = project();
@@ -266,7 +274,7 @@ fn fields_table_matches_the_records() {
             let mut found = BTreeSet::new();
             leaves(&record, "", &mut found);
             for leaf in found {
-                if leaf == "kind" || leaf == "id" {
+                if matches!(leaf.as_str(), "kind" | "id" | "name" | "enabled") {
                     continue;
                 }
                 // A row whose rule hides it here still covers the leaf: the
@@ -2553,4 +2561,223 @@ fn inlay_both_boards() {
         ["set the inlay depth, glue gap and plug depth to see the male's planes"]
     );
     assert!(!alert);
+}
+
+/// The editor's table (`dc_app::editor::fields`), re-exported here so the
+/// tests above name it as before, with slice 26's tests (#618; functional
+/// spec 66, 66a; acceptance 73, 97).
+mod fields {
+    pub use dc_app::editor::fields::*;
+
+    use dc_app::editor::Group;
+    use dc_app::operations::Kind;
+
+    /// Functional 66a: the key paths each kind's Setup holds, in order:
+    /// Targets and Tool, then the kind's rows, a choice's or a switch's own
+    /// rows after it (a Profile's tab count, a countersink's mouth and its
+    /// derived depth in the depth's place).
+    fn setup_keys(kind: Kind) -> &'static [&'static str] {
+        match kind {
+            Kind::Profile => &[
+                "targets",
+                "tool",
+                "side",
+                "depth_mm",
+                "tabs",
+                "tabs.placement",
+                "tabs.placement.count",
+                "tabs.placement.distances_mm",
+            ],
+            Kind::Pocket => &["targets", "tool", "depth_mm", "strategy"],
+            Kind::Drill => &[
+                "targets",
+                "tool",
+                "cycle",
+                "depth_mm",
+                "cycle.countersink.diameter_mm",
+                "cycle.countersink",
+            ],
+            Kind::Bore | Kind::Engrave => &["targets", "tool", "depth_mm"],
+            Kind::VCarve => &["targets", "tool", "flat_depth_mm", "clearing"],
+            Kind::Inlay => &[
+                "targets",
+                "tool",
+                "depth_mm",
+                "glue_gap_mm",
+                "plug_depth_mm",
+                "male_board.thickness_mm",
+            ],
+            // The Picture, the V-bit, the maximum depth: slice 15 (#544)
+            // gives the Photo V-Carve its record, and its table these.
+            Kind::PhotoVCarve => &["picture", "tool", "max_depth_mm"],
+        }
+    }
+
+    /// Functional 66a and acceptance 97: for each kind the table's first
+    /// rows are its Setup rows, Targets and Tool first and then 66a's rows
+    /// in 66a's order, and no Setup row comes after another group's.
+    #[test]
+    fn setup_rows_lead_each_kind() {
+        for kind in Kind::ALL {
+            let rows = table(kind);
+            if kind == Kind::PhotoVCarve && rows.is_empty() {
+                // No record before phase 3.4 (`still_to_come`), so no rows
+                // yet; slice 15 (#544) makes this check its Setup too.
+                continue;
+            }
+            let setup: Vec<&str> = rows
+                .iter()
+                .take_while(|r| r.group == Group::Setup)
+                .map(|r| r.key)
+                .collect();
+            assert_eq!(setup, setup_keys(kind), "{kind:?}: the Setup rows lead");
+            assert!(
+                rows.iter()
+                    .skip(setup.len())
+                    .all(|r| r.group != Group::Setup),
+                "{kind:?}: every Setup row is in the lead"
+            );
+        }
+        assert_eq!(Group::ALL.first(), Some(&Group::Setup), "Setup is first");
+    }
+
+    /// Functional 66 and acceptance 73, 97: no key path is in two groups
+    /// (nor twice in one), so every field of 68 is shown exactly once;
+    /// `fields_table_matches_the_records` is the table-driven half.
+    #[test]
+    fn every_field_appears_once() {
+        for kind in Kind::ALL {
+            let mut seen: Vec<&str> = Vec::new();
+            for row in table(kind) {
+                assert!(
+                    !seen.contains(&row.key),
+                    "{kind:?}: `{}` has two rows",
+                    row.key
+                );
+                seen.push(row.key);
+            }
+        }
+    }
+
+    /// Functional 66: the name is the header's and *enabled* the list's;
+    /// there is no Identity group.
+    #[test]
+    fn no_identity_group() {
+        for kind in Kind::ALL {
+            for row in table(kind) {
+                assert!(
+                    row.key != "name" && row.key != "enabled",
+                    "{kind:?} has a `{}` row",
+                    row.key
+                );
+            }
+        }
+        for row in CLEARING_PASS {
+            assert_ne!(row.key, "name");
+        }
+    }
+}
+
+/// Slice 26's closed-group summaries and open state (#618; functional 66;
+/// design, "The editors": `editor::summary`).
+mod summary {
+    use std::collections::BTreeMap;
+
+    use dc_app::Strings;
+    use dc_app::editor::{self, Group, fields, summary};
+    use dc_app::operations::Kind;
+    use dc_job::{Finding, Tier};
+    use dc_project::{Operation, OperationId, Project, Units};
+
+    use super::common;
+
+    /// The plaque in `units` with its Panel pocket at the spec's numbers:
+    /// a 5 mm safe Z (the plaque's is 15) and its tool's step-down 3 mm
+    /// (the plaque's is 4), the Panel's own step-down `null`.
+    fn panel(units: Units) -> (Project, Operation) {
+        let mut project = common::plaque();
+        project.display_units = units;
+        let at = project
+            .operations
+            .iter()
+            .position(|o| o.id().as_str() == "op1")
+            .expect("the plaque's Panel");
+        let panel = fields::set(&project.operations[at], "safe_z_mm", serde_json::json!(5.0))
+            .expect("a safe Z");
+        project.operations[at] = panel.clone();
+        let tool = project
+            .tools
+            .iter_mut()
+            .find(|t| t.id == *panel.tool())
+            .expect("the Panel's tool");
+        tool.step_down_mm = Some(3.0);
+        (project, panel)
+    }
+
+    /// Functional 66: a closed group's header summarises its values in the
+    /// project's units, through the same rows the fields draw, and a
+    /// tool-derived `null` reads as the tool's value.
+    #[test]
+    fn closed_groups_summarise_their_values() {
+        let strings = Strings::english();
+        let (project, panel) = panel(Units::Mm);
+        assert!(matches!(panel, Operation::Pocket(_)));
+        assert_eq!(
+            summary::group(&project, &strings, &panel, Group::Strategy),
+            "Raster 0°, climb, wall last"
+        );
+        assert_eq!(
+            summary::group(&project, &strings, &panel, Group::Heights),
+            "Safe Z 5 mm"
+        );
+        let depth = summary::group(&project, &strings, &panel, Group::Depth);
+        assert!(
+            depth.starts_with("Step-down tool's 3 mm"),
+            "the step-down is the tool's: {depth}"
+        );
+        let (inch, panel) = self::panel(Units::Inch);
+        assert_eq!(
+            summary::group(&inch, &strings, &panel, Group::Heights),
+            "Safe Z 0.197 in"
+        );
+        // Setup is never closed, so it has no summary.
+        assert_eq!(summary::group(&project, &strings, &panel, Group::Setup), "");
+    }
+
+    /// Functional 66: every group but Setup starts closed; a group holding
+    /// a located warning opens by itself, and only it: the Pocket's
+    /// `relief_corner_too_tight` is Corners and tabs'.
+    #[test]
+    fn located_finding_opens_its_group() {
+        let (_, panel) = panel(Units::Mm);
+        let none = BTreeMap::new();
+        for (group, _) in fields::groups(&panel) {
+            assert_eq!(
+                summary::open(&none, Kind::Pocket, group),
+                group == Group::Setup,
+                "{group:?} on first show"
+            );
+        }
+        let findings = [Finding::warning(
+            "relief_corner_too_tight",
+            "a corner of `pocket` is too tight for its dogbone",
+        )
+        .for_op(Some(OperationId::new("op1")))];
+        assert_eq!(findings[0].tier, Tier::Warning);
+        let located = editor::Located::of(&findings, &panel);
+        assert_eq!(
+            summary::opened(&panel, &located),
+            [Group::CornersAndTabs],
+            "the warning opens Corners and tabs, and nothing else"
+        );
+        assert_eq!(
+            located.group(Group::CornersAndTabs),
+            Some((Tier::Warning, 1)),
+            "and its closed header counts it"
+        );
+        // Another operation's finding opens nothing here.
+        let elsewhere = [findings[0].clone().for_op(Some(OperationId::new("op2")))];
+        let located = editor::Located::of(&elsewhere, &panel);
+        assert!(summary::opened(&panel, &located).is_empty());
+    }
 }
