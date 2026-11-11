@@ -949,6 +949,7 @@ dependencies = [
  "dc-project",
  "serde",
  "thiserror 2.0.21",
+ "toml",
 ]
 
 [[package]]

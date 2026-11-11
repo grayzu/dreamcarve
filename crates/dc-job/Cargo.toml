@@ -25,6 +25,8 @@ thiserror.workspace = true
 [dev-dependencies]
 dc-cam = { workspace = true, features = ["test-support"] }
 dc-project = { workspace = true, features = ["test-support"] }
+# The setup sheet's tests read its labels from the app's string table.
+toml.workspace = true
 
 [lints]
 workspace = true

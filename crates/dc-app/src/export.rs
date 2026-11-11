@@ -20,9 +20,14 @@
 //!
 //! The plan is pure. The shell runs [`Request::run`] off the UI thread,
 //! names the files under the stem the user chose ([`Ready::files`]), and
-//! writes them every one or none.
+//! writes them every one or none. The result ([`Ready::result`],
+//! capability 77a) shows the CLI's report in three parts, and
+//! [`Ready::setup_sheet`] renders the setup sheet (capability 77b).
 
-use dc_job::report::{Written, export_report};
+use std::path::Path;
+
+use dc_job::report::{Line, Part, Written, export_report, export_report_lines};
+use dc_job::setup_sheet::{self, Label};
 use dc_job::summary::{by_board, describe_estimated_time};
 use dc_job::{Built, EmitOp, EstimateConfig, Estimates, Findings, ProgramSplit, ProgramSummary};
 use dc_project::{Board, Project};
@@ -285,6 +290,315 @@ impl Ready {
         let estimate = self.programs.get(k)?.estimate?;
         Some(describe_estimated_time(&estimate, &self.options.estimate))
     }
+
+    /// The result of writing these programs as `names` into `folder`
+    /// (capability 77a): the CLI's report, every line of it in one of
+    /// three parts. Built from the report's tagged lines
+    /// ([`dc_job::report::export_report_lines`]), the same lines
+    /// [`Ready::report`] gives the CLI's text, so the parts hold the
+    /// CLI's words.
+    #[must_use]
+    pub fn result(&self, names: &[String], folder: &Path, strings: &Strings) -> ExportResult {
+        let programs: Vec<dc_job::Program> =
+            self.programs.iter().map(|p| p.program.clone()).collect();
+        let estimates = Estimates::new(&self.project, &programs, self.options.estimate);
+        let written = Written {
+            programs: &programs,
+            outputs: names,
+            split: self.options.split,
+            generated: &self.generated,
+            preview: None,
+            switched: &[],
+        };
+        let lines = export_report_lines(&self.project, &written, &estimates);
+        let count = self.programs.len();
+        let headline = if count == 1 {
+            strings.get(StrKey::ExportResultWrittenOne).to_owned()
+        } else {
+            strings.fmt(
+                StrKey::ExportResultWrittenMany,
+                &[("count", &count.to_string())],
+            )
+        };
+        let mut status = Status {
+            headline,
+            lines: Vec::new(),
+        };
+        let mut steps: Vec<Step> = (0..count).map(|_| Step::default()).collect();
+        let mut instructions = Instructions::default();
+        let mut boards = Vec::new();
+        let mut totals = Vec::new();
+        for Line { part, text } in lines {
+            let text = text.trim().to_owned();
+            let program = match part {
+                Part::Step(k)
+                | Part::Program(k)
+                | Part::Extents(k)
+                | Part::Estimate(k)
+                | Part::Pause(k) => steps.get_mut(k),
+                _ => None,
+            };
+            match (part, program) {
+                (Part::Status, _) => status.lines.push(text),
+                (Part::Board, _) => boards.push(text),
+                (Part::Total, _) => totals.push(text),
+                (Part::Note, _) => instructions.notes.push(text),
+                (Part::Step(_), Some(step)) => step.before = text,
+                (Part::Program(_), Some(step)) => step.heading = Some(text),
+                (Part::Extents(_), Some(step)) => step.extents.push(text),
+                (Part::Estimate(_), Some(step)) => step.estimate = Some(text),
+                (Part::Pause(_), Some(step)) => step.pauses.push(text),
+                // Each operation and carve, and nothing else: every
+                // program's lines have its step.
+                _ => instructions.facts.push(text),
+            }
+        }
+        instructions.steps = steps;
+        let not_available = strings.get(StrKey::ExportNotAvailable);
+        let mut board = None;
+        let mut k_in_board = 0;
+        let mut headings = boards.into_iter();
+        let rows = self
+            .programs
+            .iter()
+            .zip(names)
+            .enumerate()
+            .map(|(k, (summary, name))| {
+                let program = &summary.program;
+                let mut heading = None;
+                if self.by_board && board != Some(program.board) {
+                    board = Some(program.board);
+                    k_in_board = 0;
+                    heading = headings.next();
+                }
+                k_in_board += 1;
+                FileRow {
+                    number: if self.by_board { k_in_board } else { k + 1 },
+                    board: heading,
+                    name: name.clone(),
+                    tool: strings.fmt(
+                        StrKey::ExportTool,
+                        &[
+                            ("number", &program.first_tool.number.to_string()),
+                            ("name", &program.first_tool.name),
+                        ],
+                    ),
+                    time: self.estimate(k).unwrap_or_else(|| not_available.to_owned()),
+                }
+            })
+            .collect();
+        // The report heads each board twice, over its steps and over its
+        // details; the Files part shows each heading once, over its rows,
+        // so the rest are the same text.
+        let repeated: Vec<String> = headings.collect();
+        ExportResult {
+            status,
+            files: Files {
+                rows,
+                repeated_boards: repeated,
+                totals,
+                folder: folder.display().to_string(),
+            },
+            instructions,
+        }
+    }
+
+    /// The setup sheet of these programs written as `names` (capability
+    /// 77b): `dc_job::setup_sheet::render` with the export's date, rows,
+    /// warnings and split, its labels from `strings`, its footer naming
+    /// DreamCarve `version`.
+    #[must_use]
+    pub fn setup_sheet(&self, names: &[String], version: &str, strings: &Strings) -> String {
+        dc_job::setup_sheet::render(
+            &setup_sheet::Sheet {
+                project: &self.project,
+                programs: &self.programs,
+                names,
+                warnings: &self.findings.warnings,
+                split: self.options.split,
+                estimate: self.options.estimate,
+                date: &self.options.date,
+                version,
+            },
+            &|label| setup_sheet_text(strings, label),
+        )
+    }
+}
+
+/// The export result (functional spec, capability 77a): the sheet's
+/// content once the programs are written, in three parts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportResult {
+    /// What was written.
+    pub status: Status,
+    /// The files in run order and their folder.
+    pub files: Files,
+    /// What to do before each program, the controller notes, and the
+    /// rest of the CLI's facts, behind a disclosure.
+    pub instructions: Instructions,
+}
+
+impl ExportResult {
+    /// Every text each part shows, by part: `Status`, `Files`, `Run
+    /// instructions`. Each line of the CLI's report is one of them, in
+    /// one part only.
+    #[must_use]
+    pub fn parts(&self) -> [(&'static str, Vec<String>); 3] {
+        let status = std::iter::once(self.status.headline.clone())
+            .chain(self.status.lines.iter().cloned())
+            .collect();
+        let mut files = Vec::new();
+        for row in &self.files.rows {
+            files.extend(row.board.iter().cloned());
+            files.extend([
+                row.number.to_string(),
+                row.name.clone(),
+                row.tool.clone(),
+                row.time.clone(),
+            ]);
+        }
+        files.extend(self.files.repeated_boards.iter().cloned());
+        files.extend(self.files.totals.iter().cloned());
+        files.push(self.files.folder.clone());
+        let mut instructions = Vec::new();
+        for step in &self.instructions.steps {
+            instructions.extend(step.heading.iter().cloned());
+            instructions.push(step.before.clone());
+            instructions.extend(step.extents.iter().cloned());
+            instructions.extend(step.estimate.iter().cloned());
+            instructions.extend(step.pauses.iter().cloned());
+        }
+        instructions.extend(self.instructions.notes.iter().cloned());
+        instructions.extend(self.instructions.facts.iter().cloned());
+        [
+            ("Status", status),
+            ("Files", files),
+            ("Run instructions", instructions),
+        ]
+    }
+}
+
+/// The result's Status part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Status {
+    /// `2 programs written`.
+    pub headline: String,
+    /// The CLI's own lines about what was written: `Wrote …` and
+    /// `Post-processor …`.
+    pub lines: Vec<String>,
+}
+
+/// One program's row in the Files part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRow {
+    /// Its place in the run order, counted within its board with an
+    /// Inlay.
+    pub number: usize,
+    /// The board heading over it, when it is its board's first (#498).
+    pub board: Option<String>,
+    /// Its file name.
+    pub name: String,
+    /// Its tool: `T2 1/8 end mill`.
+    pub tool: String,
+    /// Its estimated time as the CLI writes it, or a dash.
+    pub time: String,
+}
+
+/// The result's Files part.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Files {
+    /// One row per program, in run order.
+    pub rows: Vec<FileRow>,
+    /// The board headings the report repeats over each board's details.
+    pub repeated_boards: Vec<String>,
+    /// The boards' and the export's estimated totals, as the CLI prints
+    /// them.
+    pub totals: Vec<String>,
+    /// The folder the files went to.
+    pub folder: String,
+}
+
+/// What to do before one program, as the CLI prints it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Step {
+    /// `plaque-1-T2.nc (1334 lines):`, with several programs.
+    pub heading: Option<String>,
+    /// The step-before line: the tool to fit and the zero to set.
+    pub before: String,
+    /// Its extents, tool centre then the cutter's edge.
+    pub extents: Vec<String>,
+    /// Its `Estimated time: …` line.
+    pub estimate: Option<String>,
+    /// Its pauses and tool changes.
+    pub pauses: Vec<String>,
+}
+
+/// The result's Run instructions part.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Instructions {
+    /// One step per program, in run order.
+    pub steps: Vec<Step>,
+    /// The controller notes, each a callout.
+    pub notes: Vec<String>,
+    /// The CLI's other facts: each exported operation, each carve.
+    pub facts: Vec<String>,
+}
+
+/// `label`'s text in `strings`: the setup sheet's labels are the string
+/// table's `[setup_sheet]` entries (acceptance 91).
+#[must_use]
+pub fn setup_sheet_text(strings: &Strings, label: Label) -> String {
+    let key = match label {
+        Label::Title => StrKey::SetupSheetTitle,
+        Label::Exported => StrKey::SetupSheetExported,
+        Label::Post => StrKey::SetupSheetPost,
+        Label::PostValue => StrKey::SetupSheetPostValue,
+        Label::Units => StrKey::SetupSheetUnits,
+        Label::UnitsMm => StrKey::SetupSheetUnitsMm,
+        Label::UnitsIn => StrKey::SetupSheetUnitsIn,
+        Label::RangeMm => StrKey::SetupSheetRangeMm,
+        Label::RangeIn => StrKey::SetupSheetRangeIn,
+        Label::Stock => StrKey::SetupSheetStock,
+        Label::StockValue => StrKey::SetupSheetStockValue,
+        Label::NotSet => StrKey::SetupSheetNotSet,
+        Label::XyZero => StrKey::SetupSheetXyZero,
+        Label::ZZero => StrKey::SetupSheetZZero,
+        Label::XyBottomLeft => StrKey::SetupSheetXyBottomLeft,
+        Label::XyBottomRight => StrKey::SetupSheetXyBottomRight,
+        Label::XyTopLeft => StrKey::SetupSheetXyTopLeft,
+        Label::XyTopRight => StrKey::SetupSheetXyTopRight,
+        Label::XyCentre => StrKey::SetupSheetXyCentre,
+        Label::XyCustom => StrKey::SetupSheetXyCustom,
+        Label::ZStockTop => StrKey::SetupSheetZStockTop,
+        Label::ZStockBottom => StrKey::SetupSheetZStockBottom,
+        Label::Programs => StrKey::SetupSheetPrograms,
+        Label::Program => StrKey::SetupSheetProgram,
+        Label::Tool => StrKey::SetupSheetTool,
+        Label::ToolValue => StrKey::SetupSheetToolValue,
+        Label::ToolType => StrKey::SetupSheetToolType,
+        Label::TypeEndMill => StrKey::SetupSheetTypeEndMill,
+        Label::TypeBallNose => StrKey::SetupSheetTypeBallNose,
+        Label::TypeVBit => StrKey::SetupSheetTypeVBit,
+        Label::TypeEngraver => StrKey::SetupSheetTypeEngraver,
+        Label::TypeDrill => StrKey::SetupSheetTypeDrill,
+        Label::Diameter => StrKey::SetupSheetDiameter,
+        Label::Angle => StrKey::SetupSheetAngle,
+        Label::AngleValue => StrKey::SetupSheetAngleValue,
+        Label::Vendor => StrKey::SetupSheetVendor,
+        Label::Product => StrKey::SetupSheetProduct,
+        Label::Operations => StrKey::SetupSheetOperations,
+        Label::Before => StrKey::SetupSheetBefore,
+        Label::Time => StrKey::SetupSheetTime,
+        Label::ExtentsCentre => StrKey::SetupSheetExtentsCentre,
+        Label::ExtentsEdge => StrKey::SetupSheetExtentsEdge,
+        Label::ZRange => StrKey::SetupSheetZRange,
+        Label::Pauses => StrKey::SetupSheetPauses,
+        Label::Warnings => StrKey::SetupSheetWarnings,
+        Label::Warning => StrKey::SetupSheetWarning,
+        Label::Notes => StrKey::SetupSheetNotes,
+        Label::Footer => StrKey::SetupSheetFooter,
+    };
+    strings.get(key).to_owned()
 }
 
 /// The file name `export --preview` gives the preview under `stem`:
