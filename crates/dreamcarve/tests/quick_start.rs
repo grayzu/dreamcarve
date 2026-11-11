@@ -1775,7 +1775,7 @@ fn photo_v_carve_chapter_runs() {
 
 /// #648: the Images chapter, run as written: `init` on the gradient
 /// picture and its usage error, `image list`, and `image add` on a project
-/// made from a drawing (`tests/fixtures/plaque.dxf`), with the colour
+/// made from a drawing (the coaster, `fixtures/coaster.svg`), with the colour
 /// picture `tests/fixtures/photo/colour.jpg` and its warning. The chapter
 /// shows the `bitmaps` entry `init` writes as it writes it, names every
 /// field of it, and gives the limits a picture is held to.
@@ -1823,10 +1823,10 @@ fn images_chapter_runs() {
         },
         &[
             ("tests/fixtures/photo/colour.jpg", "colour.jpg"),
-            ("tests/fixtures/plaque.dxf", "plaque.dxf"),
+            ("fixtures/coaster.svg", "coaster.svg"),
         ],
     );
-    let (code, list) = dreamcarve(&dir, &["image", "list", "plaque.dcv"]);
+    let (code, list) = dreamcarve(&dir, &["image", "list", "coaster.dcv"]);
     assert_eq!(code, Some(0), "{list}");
     assert_eq!(list.lines().count(), 3, "two pictures added: {list}");
 }
