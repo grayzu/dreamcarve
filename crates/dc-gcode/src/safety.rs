@@ -7778,6 +7778,7 @@ mod tests {
 
     mod arc_fit;
     mod boards;
+    mod boundary;
     mod inlay;
     mod s17;
     mod s18;
