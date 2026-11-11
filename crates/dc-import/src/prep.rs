@@ -7,6 +7,7 @@
 //! [`findings`] for `init` and [`design_findings`] for `check`.
 
 mod findings;
+pub(crate) mod stroke;
 pub mod walk;
 
 pub use findings::{design_findings, design_findings_named, findings};

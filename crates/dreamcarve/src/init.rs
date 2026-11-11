@@ -127,8 +127,13 @@ fn print_svg_warnings(warnings: &[ImportWarning], bytes: &[u8]) -> Result<(), Fa
                 | ImportWarning::MaskIgnored { .. }
         )
     };
-    let checks = prep::findings(bytes, &SvgImportOptions::new())
-        .map_err(|e| Failure::error(format!("cannot check the drawing: {e}")))?;
+    // The checks never change the outcome: a drawing they cannot measure
+    // (they budget the strokes' outlines, which the import does not build)
+    // is imported all the same, with a note.
+    let checks = prep::findings(bytes, &SvgImportOptions::new()).unwrap_or_else(|e| {
+        errln!("warning: import_checks_skipped: the drawing could not be checked: {e}");
+        Vec::new()
+    });
     for warning in warnings.iter().filter(|w| !counted_by_the_checks(w)) {
         errln!("warning: {}: {warning}", warning.code());
     }

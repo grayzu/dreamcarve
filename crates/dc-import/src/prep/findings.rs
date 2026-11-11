@@ -15,8 +15,9 @@
 //! itself stays [`dc_geometry::nest`]'s.
 
 use super::DEFAULT_MIN_DETAIL_PCT;
-use super::walk::{HiddenReason, PaintedPath, StrokePaint, mean_axis_scale, walk};
-use crate::svg::{self, MM_PER_PX, SvgImportOptions};
+use super::stroke::{self, Budget};
+use super::walk::{HiddenReason, PaintedPath, StrokePaint, walk};
+use crate::svg::{self, SvgImportOptions};
 use crate::{ImportError, ImportWarning};
 use dc_geometry::{
     EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, FillRule, Rect, Region, area_mm2, intersection,
@@ -44,23 +45,18 @@ pub fn findings(
     }
     let walked = walk(bytes)?;
 
-    let mut vertices = 0_usize;
+    let mut budget = Budget::new(0, options.max_vertices);
     let mut shapes: Vec<Shape> = Vec::new();
     for path in &walked.painted {
-        vertices =
-            vertices.saturating_add(svg::estimated_vertices(&path.geometry.bez, tolerance_mm));
-        if vertices > options.max_vertices {
-            return Err(ImportError::TooManyVertices {
-                limit: options.max_vertices,
-            });
-        }
+        budget.spend(svg::estimated_vertices(&path.geometry.bez, tolerance_mm))?;
         let filled = path.fill.map_or_else(Vec::new, |fill| {
             let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
             resolve_fill(&profiles, fill.rule, tolerance_mm)
         });
-        let stroked = path.stroke.as_ref().map_or_else(Vec::new, |stroke| {
-            stroke_regions(path, stroke, tolerance_mm)
-        });
+        let stroked = match &path.stroke {
+            Some(stroke) => stroke_regions(path, stroke, tolerance_mm, &mut budget)?,
+            None => Vec::new(),
+        };
         shapes.push(Shape {
             name: path.name.clone(),
             filled,
@@ -148,33 +144,21 @@ struct Shape {
     stroked: Vec<Region>,
 }
 
-/// The area of `path`'s stroke, in millimetres, Y-up. Built in user space,
-/// before the transform, as SVG applies it, by tiny-skia's stroker, the one
-/// the renderers draw with.
-fn stroke_regions(path: &PaintedPath, stroke: &StrokePaint, tolerance_mm: f64) -> Vec<Region> {
-    let mut skia = stroke.stroke.to_tiny_skia();
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a resolution hint for the stroker"
-    )]
-    let res_scale = (mean_axis_scale(path.to_mm) / MM_PER_PX).clamp(1e-3, 1e6) as f32;
-    let dashed;
-    let source = match skia.dash.take() {
-        Some(dash) => {
-            let Some(path) = path.user_path.dash(&dash, res_scale) else {
-                return Vec::new();
-            };
-            dashed = path;
-            &dashed
-        }
-        None => &path.user_path,
-    };
-    let Some(outline) = source.stroke(&skia, res_scale) else {
-        return Vec::new();
+/// The area of `path`'s stroke, in millimetres, Y-up, from the guarded
+/// stroker ([`stroke::outline`]), which charges `budget` before it builds.
+fn stroke_regions(
+    path: &PaintedPath,
+    stroke: &StrokePaint,
+    tolerance_mm: f64,
+    budget: &mut Budget,
+) -> Result<Vec<Region>, ImportError> {
+    let Some(outline) = stroke::outline(path, stroke, tolerance_mm, budget)? else {
+        return Ok(Vec::new());
     };
     let mm = svg::to_mm_path(&outline, path.to_mm);
     let profiles = svg::build_profiles(&mm, tolerance_mm);
-    resolve_fill(&profiles, FillRule::NonZero, tolerance_mm)
+    budget.spend(profiles.iter().map(|p| p.vertices().len()).sum())?;
+    Ok(resolve_fill(&profiles, FillRule::NonZero, tolerance_mm))
 }
 
 /// Every pair `(i, j)`, `i < j`, of `boxes` that overlap or touch, by a
@@ -212,16 +196,23 @@ fn perimeter_mm(region: &Region) -> f64 {
         .sum()
 }
 
+/// How far a region's exact area (its arcs kept) may differ from the area of
+/// its flattening, mm²: the chord error times the perimeter. Areas the
+/// boolean returns are of flattened shapes, so they are compared with this
+/// much room.
+fn slack_mm2(region: &Region, tolerance_mm: f64) -> f64 {
+    tolerance_mm.max(EPS_MM) * perimeter_mm(region)
+}
+
 /// The area `a` and `b` share, mm², and a slack under which it is noise.
-fn shared(a: &Region, b: &Region, tolerance_mm: f64) -> (Vec<Region>, f64, f64) {
+fn shared(a: &Region, b: &Region, tolerance_mm: f64) -> (Vec<Region>, f64) {
     let both = intersection(
         std::slice::from_ref(a),
         std::slice::from_ref(b),
         tolerance_mm,
     );
-    let slack_mm2 = EPS_MM * (perimeter_mm(a) + perimeter_mm(b));
     let mm2 = area_mm2(&both);
-    (both, mm2, slack_mm2)
+    (both, mm2)
 }
 
 /// `shapes_overlap`: pairs of shapes with a region of one crossing a
@@ -243,10 +234,11 @@ fn overlap(shapes: &[(&str, Vec<&Region>)], tolerance_mm: f64) -> Option<ImportW
         if si == sj {
             continue;
         }
-        let (both, shared_mm2, slack_mm2) = shared(a, b, tolerance_mm);
-        let crosses = shared_mm2 > slack_mm2
-            && (a.area_mm2() - shared_mm2).abs() > slack_mm2
-            && (b.area_mm2() - shared_mm2).abs() > slack_mm2;
+        let (both, shared_mm2) = shared(a, b, tolerance_mm);
+        let (slack_a, slack_b) = (slack_mm2(a, tolerance_mm), slack_mm2(b, tolerance_mm));
+        let crosses = shared_mm2 > slack_a.min(slack_b)
+            && (a.area_mm2() - shared_mm2).abs() > slack_a
+            && (b.area_mm2() - shared_mm2).abs() > slack_b;
         if !crosses {
             continue;
         }
@@ -306,9 +298,10 @@ fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<ImportWarning> 
         for (inner, outer, s_in, s_out, k) in
             [(a, b, si, sj, local.get(i)), (b, a, sj, si, local.get(j))]
         {
-            let (_, shared_mm2, slack_mm2) = shared(inner, outer, tolerance_mm);
-            let wholly = (inner.area_mm2() - shared_mm2).abs() <= slack_mm2
-                && outer.area_mm2() > inner.area_mm2() + slack_mm2;
+            let (_, shared_mm2) = shared(inner, outer, tolerance_mm);
+            let slack = slack_mm2(inner, tolerance_mm);
+            let wholly = (inner.area_mm2() - shared_mm2).abs() <= slack
+                && outer.area_mm2() > inner.area_mm2() + slack;
             if !wholly {
                 continue;
             }
@@ -615,6 +608,20 @@ mod tests {
         assert!((0.07..=0.101).contains(&smallest), "smallest {smallest}");
         assert!((threshold - 0.2).abs() < 1e-3, "threshold {threshold}");
         assert!((height - 100.0).abs() < 1e-3, "height {height}");
+    }
+
+    /// A stroke whose outline would pass the vertex cap is refused before
+    /// the outline is built.
+    #[test]
+    fn a_huge_dashed_stroke_is_refused_not_built() {
+        let bytes = drawing(
+            r#"<path d="M0,0 L50000,0" fill="none" stroke="black" stroke-width="50" stroke-dasharray="0.001"/>"#,
+        );
+        let result = findings(&bytes, &SvgImportOptions::new());
+        assert!(
+            matches!(result, Err(ImportError::TooManyVertices { .. })),
+            "{result:?}"
+        );
     }
 
     #[test]
