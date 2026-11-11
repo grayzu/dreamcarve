@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- DreamCarve phase 3.4 test drawing (acceptance 61e, 61h): line art in a
+     ring. Written by tools/parity/prep-fixture.ts; do not edit by hand,
+     re-run the tool. One user unit is one mm on a 60 x 60 mm page (SVG is
+     Y-down).
+       ring     a circle of radius 29 mm stroked 2 mm: ink from radius 28
+                to 30, so the drawing is 60 mm tall
+       cross    two straight lines 58 mm long, 2 mm wide, through the
+                centre, one across and one up and down (butt caps) -->
+<svg xmlns="http://www.w3.org/2000/svg" width="60mm" height="60mm" viewBox="0 0 60 60">
+  <g fill="none" stroke="#000000" stroke-width="2">
+    <circle id="ring" cx="30" cy="30" r="29"/>
+    <line id="cross-across" x1="1" y1="30" x2="59" y2="30"/>
+    <line id="cross-up" x1="30" y1="1" x2="30" y2="59"/>
+  </g>
+</svg>

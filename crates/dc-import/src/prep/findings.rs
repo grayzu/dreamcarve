@@ -16,12 +16,12 @@
 
 use super::DEFAULT_MIN_DETAIL_PCT;
 use super::stroke::{self, Budget};
-use super::walk::{HiddenReason, PaintedPath, StrokePaint, walk};
+use super::walk::{HiddenReason, PaintedPath, walk};
 use crate::svg::{self, SvgImportOptions};
 use crate::{ImportError, ImportWarning};
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, FillRule, Rect, Region, area_mm2, intersection,
-    merge_fills, resolve_fill, union,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Region, area_mm2, intersection, merge_fills,
+    resolve_fill, union,
     width::{hole_is_narrower_than, is_narrower_than},
 };
 use std::collections::BTreeMap;
@@ -53,10 +53,8 @@ pub fn findings(
             let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
             resolve_fill(&profiles, fill.rule, tolerance_mm)
         });
-        let stroked = match &path.stroke {
-            Some(stroke) => stroke_regions(path, stroke, tolerance_mm, &mut budget)?,
-            None => Vec::new(),
-        };
+        // The checks only report; a failed stroke is `image-prep`'s warning.
+        let (stroked, _) = stroke::regions(path, tolerance_mm, &mut budget)?;
         shapes.push(Shape {
             name: path.name.clone(),
             filled,
@@ -135,30 +133,13 @@ pub fn design_findings_named(
 }
 
 /// One painted path's areas.
-struct Shape {
-    name: String,
+pub(super) struct Shape {
+    pub(super) name: String,
     /// The fill, resolved under the path's rule; empty without a visible
     /// fill (none, or on a path that encloses nothing).
-    filled: Vec<Region>,
+    pub(super) filled: Vec<Region>,
     /// The stroke's area, resolved nonzero.
-    stroked: Vec<Region>,
-}
-
-/// The area of `path`'s stroke, in millimetres, Y-up, from the guarded
-/// stroker ([`stroke::outline`]), which charges `budget` before it builds.
-fn stroke_regions(
-    path: &PaintedPath,
-    stroke: &StrokePaint,
-    tolerance_mm: f64,
-    budget: &mut Budget,
-) -> Result<Vec<Region>, ImportError> {
-    let Some(outline) = stroke::outline(path, stroke, tolerance_mm, budget)? else {
-        return Ok(Vec::new());
-    };
-    let mm = svg::to_mm_path(&outline, path.to_mm);
-    let profiles = svg::build_profiles(&mm, tolerance_mm);
-    budget.spend(profiles.iter().map(|p| p.vertices().len()).sum())?;
-    Ok(resolve_fill(&profiles, FillRule::NonZero, tolerance_mm))
+    pub(super) stroked: Vec<Region>,
 }
 
 /// Every pair `(i, j)`, `i < j`, of `boxes` that overlap or touch, by a
@@ -185,7 +166,7 @@ fn box_pairs(boxes: &[Option<Rect>]) -> Vec<(usize, usize)> {
     pairs
 }
 
-fn bounds(region: &Region) -> Option<Rect> {
+pub(super) fn bounds(region: &Region) -> Option<Rect> {
     region.outer().polyline().bounds()
 }
 
@@ -266,7 +247,7 @@ fn overlap(shapes: &[(&str, Vec<&Region>)], tolerance_mm: f64) -> Option<ImportW
 
 /// `svg_hole_as_separate_path`: a path with a visible fill all of whose
 /// regions lie wholly inside the material of one other path's fill.
-fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<ImportWarning> {
+pub(super) fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<ImportWarning> {
     let items: Vec<(usize, &Region)> = shapes
         .iter()
         .enumerate()
@@ -339,7 +320,7 @@ fn separate_holes(shapes: &[Shape], tolerance_mm: f64) -> Option<ImportWarning> 
 }
 
 /// `svg_stroke_only_path`: painted with a stroke and no visible fill.
-fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<ImportWarning> {
+pub(super) fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<ImportWarning> {
     let mut found = painted
         .iter()
         .zip(shapes)
@@ -355,7 +336,7 @@ fn stroke_only(painted: &[PaintedPath], shapes: &[Shape]) -> Option<ImportWarnin
 /// `svg_hidden_object`: the walk's objects that are not drawn, the first
 /// named by the order `display_none`, `hidden`, `zero_opacity`,
 /// `unpainted`, then document order.
-fn hidden(objects: &[super::walk::HiddenObject]) -> Option<ImportWarning> {
+pub(super) fn hidden(objects: &[super::walk::HiddenObject]) -> Option<ImportWarning> {
     let first = [
         HiddenReason::DisplayNone,
         HiddenReason::Hidden,
@@ -373,7 +354,7 @@ fn hidden(objects: &[super::walk::HiddenObject]) -> Option<ImportWarning> {
 
 /// The height of the painted paths' joint box, mm, strokes grown by half
 /// their width (a bound: a mitre can reach further).
-fn painted_height_mm(painted: &[PaintedPath]) -> f64 {
+pub(super) fn painted_height_mm(painted: &[PaintedPath]) -> f64 {
     let mut low = f64::INFINITY;
     let mut high = f64::NEG_INFINITY;
     for path in painted {

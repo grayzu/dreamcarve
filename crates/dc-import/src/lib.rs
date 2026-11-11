@@ -103,6 +103,45 @@ pub enum ImportError {
         /// The rejected tolerance, millimetres.
         tolerance_mm: f64,
     },
+    /// An image-prep threshold is outside `0` to
+    /// [`prep::MAX_THRESHOLD_PCT`] percent (3.4, `prep_threshold_range`).
+    #[error(
+        "{flag} {value_pct} is not between 0 and {} percent of the design's height",
+        prep::MAX_THRESHOLD_PCT
+    )]
+    PrepThresholdRange {
+        /// The option, as the command line spells it (`--min-detail`,
+        /// `--smooth`).
+        flag: &'static str,
+        /// The rejected value, percent.
+        value_pct: f64,
+    },
+    /// Nothing is left to prepare: nothing is drawn, the design has no
+    /// height, or clean-up dropped everything (3.4, `prep_nothing_left`).
+    #[error("nothing is left to prepare: no visible shape of any size remains")]
+    PrepNothingLeft,
+    /// The prepared pieces cannot be read back as the shapes they were
+    /// made as, a defect and not a property of the input (3.4,
+    /// `prep_output_unreadable`).
+    #[error("the prepared shapes could not be read back: {reason}")]
+    PrepOutputUnreadable {
+        /// What did not hold.
+        reason: String,
+    },
+}
+
+impl ImportError {
+    /// The stable `snake_case` code of an image-prep error (functional
+    /// 49g); `None` for the importer's other errors.
+    #[must_use]
+    pub const fn code(&self) -> Option<&'static str> {
+        match self {
+            Self::PrepThresholdRange { .. } => Some("prep_threshold_range"),
+            Self::PrepNothingLeft => Some("prep_nothing_left"),
+            Self::PrepOutputUnreadable { .. } => Some("prep_output_unreadable"),
+            _ => None,
+        }
+    }
 }
 
 /// Something in the input that was skipped or reinterpreted. The import
@@ -242,6 +281,68 @@ pub enum ImportWarning {
         /// or empty; empty for text and images.
         group: String,
     },
+    /// The stroker could not build the outline of a path's stroke (3.4,
+    /// `prep_stroke_failed`), so the path's stroke was left out of the
+    /// prepared drawing.
+    PrepStrokeFailed {
+        /// Name of the path.
+        path: String,
+    },
+    /// The ink is mostly thin line work, which `--regions` prepares
+    /// better (3.4, `prep_regions_suggested`).
+    PrepRegionsSuggested {
+        /// The ink's median width, mm.
+        median_width_mm: f64,
+        /// The design's height, mm.
+        height_mm: f64,
+    },
+    /// Ink components that enclose no space leave nothing to cut in
+    /// regions mode (3.4, `prep_regions_open_ink`).
+    PrepRegionsOpenInk {
+        /// How many components have no hole.
+        count: usize,
+    },
+    /// A filled shape covers nearly the whole drawing and has the art
+    /// inside it or in front of it: a page background (3.4,
+    /// `prep_background_shape`).
+    PrepBackgroundShape {
+        /// Name of the path.
+        path: String,
+        /// The share of the drawing's box it covers, 0 to 1.
+        covers: f64,
+    },
+    /// Pieces under the minimum detail were dropped (3.4,
+    /// `prep_speck_dropped`).
+    PrepSpeckDropped {
+        /// How many.
+        count: usize,
+        /// The widest point of the widest one dropped, mm.
+        largest_mm: f64,
+        /// The threshold, mm.
+        threshold_mm: f64,
+    },
+    /// Holes under the minimum detail were filled (3.4,
+    /// `prep_hole_filled`).
+    PrepHoleFilled {
+        /// How many.
+        count: usize,
+        /// The widest point of the widest one filled, mm.
+        largest_mm: f64,
+    },
+    /// Smoothing was left out of pieces where it would have made outlines
+    /// cross (3.4, `prep_smooth_skipped`).
+    PrepSmoothSkipped {
+        /// How many pieces were left as they were.
+        count: usize,
+    },
+    /// The smoothing threshold is above half the minimum detail (3.4,
+    /// `prep_smooth_exceeds_detail`).
+    PrepSmoothExceedsDetail {
+        /// `--smooth`, percent.
+        smooth_pct: f64,
+        /// `--min-detail`, percent.
+        min_detail_pct: f64,
+    },
     /// Pieces or holes whose widest point is under the default minimum
     /// detail (3.4, `feature_below_size`).
     FeatureBelowSize {
@@ -307,6 +408,14 @@ impl ImportWarning {
             Self::SvgHoleAsSeparatePath { .. } => "svg_hole_as_separate_path",
             Self::SvgStrokeOnlyPath { .. } => "svg_stroke_only_path",
             Self::SvgHiddenObject { .. } => "svg_hidden_object",
+            Self::PrepStrokeFailed { .. } => "prep_stroke_failed",
+            Self::PrepRegionsSuggested { .. } => "prep_regions_suggested",
+            Self::PrepRegionsOpenInk { .. } => "prep_regions_open_ink",
+            Self::PrepBackgroundShape { .. } => "prep_background_shape",
+            Self::PrepSpeckDropped { .. } => "prep_speck_dropped",
+            Self::PrepHoleFilled { .. } => "prep_hole_filled",
+            Self::PrepSmoothSkipped { .. } => "prep_smooth_skipped",
+            Self::PrepSmoothExceedsDetail { .. } => "prep_smooth_exceeds_detail",
             Self::FeatureBelowSize { .. } => "feature_below_size",
         }
     }
@@ -436,6 +545,49 @@ impl std::fmt::Display for ImportWarning {
                     ),
                 }
             }
+            Self::PrepStrokeFailed { path } => write!(
+                f,
+                "the stroke of {path} could not be turned into an area and was left out"
+            ),
+            Self::PrepRegionsSuggested {
+                median_width_mm,
+                height_mm,
+            } => write!(
+                f,
+                "the ink is thin line work, {median_width_mm:.2} mm wide in the middle of a {height_mm:.1} mm design; `--regions` prepares the spaces between the lines, which is what an inlay of line art cuts"
+            ),
+            Self::PrepRegionsOpenInk { count } => write!(
+                f,
+                "{count} piece(s) of ink enclose no space, so regions mode leaves nothing to cut there; close the lines in your drawing program if a space was meant"
+            ),
+            Self::PrepBackgroundShape { path, covers } => write!(
+                f,
+                "`{path}` is a filled shape over {:.0}% of the drawing's box with the art inside or in front of it, probably a page background; delete it in your drawing program or the art becomes holes",
+                covers * 100.0
+            ),
+            Self::PrepSpeckDropped {
+                count,
+                largest_mm,
+                threshold_mm,
+            } => write!(
+                f,
+                "{count} piece(s) narrower than {threshold_mm:.3} mm were dropped, the widest {largest_mm:.3} mm; lower `--min-detail` to keep them"
+            ),
+            Self::PrepHoleFilled { count, largest_mm } => write!(
+                f,
+                "{count} hole(s) narrower than the minimum detail were filled, the widest {largest_mm:.3} mm; lower `--min-detail` to keep them"
+            ),
+            Self::PrepSmoothSkipped { count } => write!(
+                f,
+                "{count} piece(s) were left unsmoothed because smoothing would have made outlines cross"
+            ),
+            Self::PrepSmoothExceedsDetail {
+                smooth_pct,
+                min_detail_pct,
+            } => write!(
+                f,
+                "`--smooth` {smooth_pct} is above half of `--min-detail` {min_detail_pct}; smoothing that large could remove what the minimum detail keeps"
+            ),
             Self::FeatureBelowSize {
                 count,
                 smallest_mm,
@@ -514,6 +666,54 @@ mod warning {
                     code_page: "ANSI_932".into(),
                 },
                 "dxf_code_page_unsupported",
+            ),
+            (
+                ImportWarning::PrepStrokeFailed { path: "p".into() },
+                "prep_stroke_failed",
+            ),
+            (
+                ImportWarning::PrepRegionsSuggested {
+                    median_width_mm: 1.0,
+                    height_mm: 60.0,
+                },
+                "prep_regions_suggested",
+            ),
+            (
+                ImportWarning::PrepRegionsOpenInk { count: 1 },
+                "prep_regions_open_ink",
+            ),
+            (
+                ImportWarning::PrepBackgroundShape {
+                    path: "p".into(),
+                    covers: 1.0,
+                },
+                "prep_background_shape",
+            ),
+            (
+                ImportWarning::PrepSpeckDropped {
+                    count: 1,
+                    largest_mm: 0.1,
+                    threshold_mm: 0.2,
+                },
+                "prep_speck_dropped",
+            ),
+            (
+                ImportWarning::PrepHoleFilled {
+                    count: 1,
+                    largest_mm: 0.1,
+                },
+                "prep_hole_filled",
+            ),
+            (
+                ImportWarning::PrepSmoothSkipped { count: 1 },
+                "prep_smooth_skipped",
+            ),
+            (
+                ImportWarning::PrepSmoothExceedsDetail {
+                    smooth_pct: 0.2,
+                    min_detail_pct: 0.2,
+                },
+                "prep_smooth_exceeds_detail",
             ),
         ];
         for (warning, code) in cases {

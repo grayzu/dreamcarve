@@ -794,6 +794,31 @@ pub fn set_park(project: &Project, at_mm: Point) -> Option<Command> {
     changes(project, Command::SetHeights(heights))
 }
 
+/// Whether a Project Settings field has an error (the thickness unset is
+/// one), so the panel opens (functional spec, capability 60). Errors
+/// about an operation, a tool or a shape are not the panel's.
+#[must_use]
+pub fn settings_error(findings: &[Finding]) -> bool {
+    findings
+        .iter()
+        .any(|f| f.tier == Tier::Error && f.field.as_deref().is_some_and(is_settings_path))
+}
+
+/// Whether `path`, as validation names a field, is one Project Settings
+/// edits.
+fn is_settings_path(path: &str) -> bool {
+    ["stock", "origin", "heights", "post_processor"]
+        .iter()
+        .any(|root| {
+            path.strip_prefix(root)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        })
+        || matches!(
+            path,
+            "flatten_tolerance_mm" | "arc_fit_tolerance_mm" | "display_units"
+        )
+}
+
 /// Why export is refused, when it is (S20: on the CLI's conditions): the
 /// first error among the current snapshot's findings. The thickness
 /// unset is one (`stock_thickness_unset`).

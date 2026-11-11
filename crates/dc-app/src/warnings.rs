@@ -111,6 +111,11 @@ pub struct Group {
     pub op: Option<OperationId>,
     /// Its rows, in `check`'s order.
     pub rows: Vec<Row>,
+    /// Whether the drawer names the group above its rows: only when there
+    /// are two or more groups, since a lone heading would label the only
+    /// thing there (capability 76). A row still names its operation in
+    /// its message.
+    pub heading: bool,
 }
 
 /// How many rows of each tier: the status bar's counts and the drawer's
@@ -213,7 +218,8 @@ fn group_rank(project: &Project, op: Option<&OperationId>) -> usize {
 /// The panel's rows, grouped by operation (capability 76): project-level
 /// rows first (thickness unset, a tool-change height on a post without
 /// `G53`, `tool_change_avoidable`, the notes), then each operation's in
-/// the project's order, each group in `check`'s order.
+/// the project's order, each group in `check`'s order, headed only when
+/// there are two or more.
 #[must_use]
 pub fn panel(app: &App) -> Vec<Group> {
     let project = app.project();
@@ -224,11 +230,16 @@ pub fn panel(app: &App) -> Vec<Group> {
             None => groups.push(Group {
                 op: row.op.clone(),
                 rows: vec![row],
+                heading: false,
             }),
         }
     }
     // Stable: operations the project lacks keep their first appearance.
     groups.sort_by_key(|g| group_rank(project, g.op.as_ref()));
+    let headed = groups.len() >= 2;
+    for group in &mut groups {
+        group.heading = headed;
+    }
     groups
 }
 

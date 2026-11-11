@@ -42,7 +42,6 @@ use dc_project::ToolChangeMode;
 use dreamcarve_shell::{StagedFile, commit_all};
 use eframe::egui::{self, Align, Layout, Stroke, TextStyle, Ui};
 
-use crate::panels::warnings::counted;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
@@ -50,6 +49,7 @@ use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row;
 use crate::widgets::section::section;
+use dc_app::status::counted;
 
 /// The sheet's width, px.
 const WIDTH_PX: f32 = 560.0;

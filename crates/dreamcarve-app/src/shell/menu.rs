@@ -70,7 +70,7 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     item(
                         ui,
                         strings,
-                        StrKey::AppMenuStockOrigin,
+                        StrKey::AppMenuProjectSettings,
                         None,
                         Action::ShowProject,
                         out,
@@ -351,7 +351,8 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         out,
     );
     ui.separator();
-    // Capabilities 71 and 76: the drawer, and forcing generation.
+    // Capability 76: the drawer. Regenerate all is the status bar's alone
+    // (capability 71).
     let mut drawer = state.warnings_open;
     if ui
         .checkbox(&mut drawer, strings.get(StrKey::AppWarningsTitle))
@@ -360,14 +361,6 @@ fn view(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         out.push(Action::ToggleWarnings);
         ui.close();
     }
-    item(
-        ui,
-        strings,
-        StrKey::AppGenerationRegenerateAll,
-        None,
-        Action::RegenerateAll,
-        out,
-    );
     ui.separator();
     ui.menu_button(strings.get(StrKey::AppMenuAppearance), |ui| {
         for (theme, key) in [

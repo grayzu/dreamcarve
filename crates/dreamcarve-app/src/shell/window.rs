@@ -237,8 +237,8 @@ pub(crate) enum Action {
     UserGuide,
     About,
     Answer(Answer),
-    /// Project ▸ Stock and Origin…: the Project panel, shown with nothing
-    /// selected.
+    /// Project ▸ Project Settings…: the panel opened and scrolled into
+    /// view (capability 60).
     ShowProject,
     /// A panel section opened or closed, kept in `gui.toml`.
     SetSection {
@@ -272,18 +272,20 @@ pub(crate) enum Action {
     CopyWarnings,
     /// Stop generation (the status bar's *Stop*).
     StopGeneration,
-    /// Regenerate every operation (View ▸ Regenerate All, the drawer).
+    /// Regenerate every operation (the status bar's *Regenerate all*,
+    /// offered after Stop).
     RegenerateAll,
     /// Open a page of the book (a warning code's chapter entry).
     OpenUrl(String),
-    /// What the Viewport draws of a toolpath (the Toolpaths card's
+    /// What the Viewport draws of a toolpath (the toolpath view's
     /// toggles): view state, kept in `gui.toml`.
     SetVisibility(dc_app::Visibility),
-    /// How the Viewport colours toolpaths (the card's colour mode).
+    /// How the Viewport colours toolpaths (the toolpath view's colour
+    /// mode).
     SetColour(dc_app::ColourMode),
-    /// Open every operation's eye (the card's *Show all*).
+    /// Open every operation's eye (the toolpath view's *Show all*).
     ShowAllToolpaths,
-    /// Close every operation's eye (the card's *Hide all*).
+    /// Close every operation's eye (the toolpath view's *Hide all*).
     HideAllToolpaths,
     /// Show an operation in the editor (its row clicked).
     EditOperation(dc_project::OperationId),
@@ -342,12 +344,25 @@ enum Pending {
     NewFromDrawing,
 }
 
-/// Which tab of the CAM panel is showing.
+/// Which tab of the CAM panel is showing, in the strip's order
+/// (functional spec, capability 50: Tools, then Operations).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum CamTab {
     #[default]
-    Operations,
     Tools,
+    Operations,
+}
+
+impl CamTab {
+    /// The tab a project opens on (capability 50a): Tools while it has
+    /// no tools, Operations otherwise.
+    pub(crate) fn opening(project: &dc_project::Project) -> Self {
+        if project.tools.is_empty() {
+            Self::Tools
+        } else {
+            Self::Operations
+        }
+    }
 }
 
 /// The app's window.
@@ -373,6 +388,14 @@ pub struct Shell {
     message: Option<String>,
     layout: Layout,
     pub(crate) cam_tab: CamTab,
+    /// [`App::replaced`] as last seen, to tell a newly opened project.
+    seen_project: Option<u64>,
+    /// Whether a Project Settings field had an error last frame.
+    settings_error: bool,
+    /// Project Settings held open over the preference: set when a new
+    /// project, or a new error in one of its fields, appears; cleared by
+    /// a click on its title (capability 60).
+    settings_forced: bool,
     /// The title last sent to the window.
     title: String,
     close_allowed: bool,
@@ -463,6 +486,9 @@ impl Shell {
                 window: Vec2::ZERO,
             },
             cam_tab: CamTab::default(),
+            seen_project: None,
+            settings_error: false,
+            settings_forced: false,
             title: String::new(),
             close_allowed: false,
             last_window: None,
@@ -564,12 +590,33 @@ impl Shell {
         self.app.strings()
     }
 
-    /// The name the title, the toolbar and the sheet use: the file's name,
-    /// or the project's before it has one.
+    /// The name the window title and the sheets use (capability 50): the
+    /// file's name without its extension, or *Untitled* before the
+    /// project has a file.
     pub(crate) fn display_name(&self) -> String {
-        self.app
-            .source()
-            .map_or_else(|| self.app.project().name.clone(), files::file_name)
+        self.app.source().map_or_else(
+            || self.strings().get(StrKey::AppUntitled).to_owned(),
+            files::stem,
+        )
+    }
+
+    /// What a newly opened project starts with, once per project: the CAM
+    /// panel's tab (capability 50a); and Project Settings held open while
+    /// one of its fields has an error that was not there before
+    /// (capability 60), a new project's unset thickness included.
+    fn follow_project(&mut self) {
+        let replaced = self.app.replaced();
+        if self.seen_project != Some(replaced) {
+            self.seen_project = Some(replaced);
+            self.cam_tab = CamTab::opening(self.app.project());
+            self.settings_error = false;
+            self.settings_forced = false;
+        }
+        let error = dc_app::project::settings_error(self.app.warnings());
+        if error && !self.settings_error {
+            self.settings_forced = true;
+        }
+        self.settings_error = error;
     }
 
     /// Asks for `pending`, through the unsaved-changes sheet when the
@@ -632,6 +679,9 @@ impl Shell {
                 self.empty_dismissed = false;
                 self.viewport.fit_on_next_frame();
                 let count = opened.notes.len().to_string();
+                // The project's name, as the title has it (capability
+                // 50b: *Saved plaque*).
+                let name = files::stem(path);
                 self.message = Some(if opened.notes.is_empty() {
                     self.strings()
                         .fmt(StrKey::AppMessageOpened, &[("name", &name)])
@@ -704,6 +754,7 @@ impl Shell {
         match written {
             Ok(text) => {
                 self.app.mark_saved(text.as_bytes(), Some(path.clone()));
+                let name = files::stem(&path);
                 self.app.prefs_mut().push_recent(path);
                 self.message = Some(
                     self.strings()
@@ -922,11 +973,18 @@ impl Shell {
                 }
             }
             Action::ShowProject => {
-                self.app.select(dc_app::Selection::Nothing);
+                self.app
+                    .prefs_mut()
+                    .sections
+                    .insert(panels::side::SETTINGS_SECTION.to_owned(), true);
                 self.app.prefs_mut().panels.left_open = true;
                 self.forced_open.0 = true;
+                panels::side::reveal_settings(ctx);
             }
             Action::SetSection { name, open } => {
+                if name == panels::side::SETTINGS_SECTION {
+                    self.settings_forced = false;
+                }
                 self.app.prefs_mut().sections.insert(name, open);
             }
             Action::Refused(reason) => self.message = Some(reason),
@@ -971,7 +1029,8 @@ impl Shell {
             Action::FitView => {
                 let app = &self.app;
                 let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
-                self.app.view_mut().camera.fit(bounds);
+                let reserve = self.viewport.fit_reserve_px();
+                self.app.view_mut().camera.fit_beside(bounds, reserve);
                 self.viewport.mark_fitted(true);
                 ctx.request_repaint();
             }
@@ -1114,8 +1173,8 @@ impl Shell {
         }
     }
 
-    /// Sends the title when it changed: the file's name and a marker when
-    /// unsaved (capability 51).
+    /// Sends the title when it changed: the project's name and `*` when
+    /// unsaved (capabilities 50 and 51), the one place the name shows.
     fn update_title(&mut self, ctx: &egui::Context) {
         let key = if self.app.is_dirty() {
             StrKey::AppTitleUnsaved
@@ -1302,6 +1361,9 @@ pub(crate) struct FrameState<'a> {
     /// The estimates' settings, for the status bar's total and an
     /// operation row's hover (capability 78).
     pub estimate: &'a EstimateConfig,
+    /// Project Settings is held open over its preference (capability
+    /// 60).
+    pub settings_forced: bool,
 }
 
 impl eframe::App for Shell {
@@ -1311,6 +1373,7 @@ impl eframe::App for Shell {
         // What the worker finished since the last frame, before anything
         // reads the results.
         self.worker.tick(&mut self.app, Instant::now());
+        self.follow_project();
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
 
@@ -1349,6 +1412,7 @@ impl eframe::App for Shell {
             pointer,
             warnings_open: self.warnings_open,
             estimate: &self.estimate,
+            settings_forced: self.settings_forced,
         };
         focus::mark(ui, Region::Menu);
         menu::bar(ui, &state, &mut actions);
