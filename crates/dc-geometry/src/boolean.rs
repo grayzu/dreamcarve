@@ -69,7 +69,7 @@ pub(crate) fn boolean_within(
 
 /// Flattens `regions` to i_overlay's shape list: per region, the outer
 /// then its holes, each a closed ring of points with its winding kept.
-fn to_shapes(regions: &[Region], tolerance_mm: f64) -> Shapes<[f64; 2]> {
+pub(crate) fn to_shapes(regions: &[Region], tolerance_mm: f64) -> Shapes<[f64; 2]> {
     let ring = |c: &Contour| -> Vec<[f64; 2]> {
         c.polyline()
             .with_arcs_flattened(tolerance_mm)
@@ -94,7 +94,7 @@ fn to_shapes(regions: &[Region], tolerance_mm: f64) -> Shapes<[f64; 2]> {
 /// are dropped. Rings are made canonical and sorted before nesting, so the
 /// regions, and the holes within each, come out in an order that depends
 /// only on the shapes.
-fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
+pub(crate) fn from_shapes(shapes: Shapes<[f64; 2]>) -> Vec<Region> {
     let mut contours: Vec<Contour> = shapes
         .into_iter()
         .flatten()

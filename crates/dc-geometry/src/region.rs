@@ -179,7 +179,7 @@ pub fn nest(contours: Vec<Contour>) -> Result<(Vec<Region>, Vec<GeometryWarning>
 /// rather than a comparison per pair (#71). Boxes with a coordinate that is
 /// not finite cannot be sorted, so then every pair of `Some` boxes is
 /// returned.
-fn touching_pairs(boxes: &[Option<Rect>], margin_mm: f64) -> Vec<(usize, usize)> {
+pub(crate) fn touching_pairs(boxes: &[Option<Rect>], margin_mm: f64) -> Vec<(usize, usize)> {
     let mut sorted: Vec<(usize, Rect)> = boxes
         .iter()
         .enumerate()

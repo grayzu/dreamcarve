@@ -9,8 +9,13 @@
 //! [`crate::boolean`]).
 
 use crate::GeometryError;
+use crate::boolean::{difference, from_shapes, intersection, to_shapes, union};
+use crate::contour::Contour;
+use crate::point::{EPS_MM, Rect};
 use crate::polyline::Polyline;
-use crate::region::Region;
+use crate::region::{Region, area_mm2, nest, touching_pairs};
+use i_overlay::core::fill_rule::FillRule as OverlayFillRule;
+use i_overlay::float::simplify::SimplifyShape;
 
 /// An SVG fill rule. Own type; `i_overlay`'s `FillRule` stays private.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21,41 +26,145 @@ pub enum FillRule {
     EvenOdd,
 }
 
-/// The area `subpaths` fill under `rule`.
+/// The area `subpaths` fill under `rule` (mm, Y-up): open subpaths are
+/// closed, as an SVG fill closes them, arcs are flattened within
+/// `tolerance_mm`, and self-overlap and winding are resolved in one
+/// `i_overlay` pass over the subject alone (`SimplifyShape`, which is
+/// `FloatOverlay` with `OverlayRule::Subject`). The result is disjoint
+/// regions with their holes, canonical (outers CCW, holes CW, each
+/// contour from its lowest-then-leftmost vertex, ordered by it), so the
+/// same subpaths in any order and winding give the same `Vec`. A subpath
+/// with fewer than three vertices or a coordinate that is not finite
+/// fills nothing and is skipped.
 #[must_use]
-pub fn resolve_fill(_subpaths: &[Polyline], _rule: FillRule, _tolerance_mm: f64) -> Vec<Region> {
-    Vec::new()
+pub fn resolve_fill(subpaths: &[Polyline], rule: FillRule, tolerance_mm: f64) -> Vec<Region> {
+    let rings: Vec<Vec<[f64; 2]>> = subpaths
+        .iter()
+        .filter_map(|subpath| {
+            let ring: Vec<[f64; 2]> = subpath
+                .with_arcs_flattened(tolerance_mm)
+                .vertices()
+                .iter()
+                .map(|v| [v.x, v.y])
+                .collect();
+            let finite = ring.iter().all(|p| p.iter().all(|c| c.is_finite()));
+            (ring.len() >= 3 && finite).then_some(ring)
+        })
+        .collect();
+    if rings.is_empty() {
+        return Vec::new();
+    }
+    let rule = match rule {
+        FillRule::NonZero => OverlayFillRule::NonZero,
+        FillRule::EvenOdd => OverlayFillRule::EvenOdd,
+    };
+    from_shapes(rings.simplify_shape(rule))
 }
 
-/// The areas of several paths joined as `init` would read them.
+/// Paths' areas, each from [`resolve_fill`], joined as `init` would read
+/// them. Areas that cross (share area, neither inside the other's
+/// material) are united, in groups by transitive crossing, one union per
+/// group; then every contour goes through [`nest`], so an area wholly
+/// inside another's material is a hole of it (an island path) and one
+/// inside a hole is a piece of its own. Nesting decides holes, not paint
+/// order or colour. The result is canonical.
 ///
 /// # Errors
-/// [`GeometryError::Unresolved`] when contours still cross after the unions.
+/// [`GeometryError::Unresolved`] if contours still cross after the
+/// unions, which is a defect in this function and not a property of the
+/// input.
 pub fn merge_fills(
-    _paths: Vec<Vec<Region>>,
-    _tolerance_mm: f64,
+    paths: Vec<Vec<Region>>,
+    tolerance_mm: f64,
 ) -> Result<Vec<Region>, GeometryError> {
-    Ok(Vec::new())
+    let regions: Vec<Region> = paths.into_iter().flatten().collect();
+    let boxes: Vec<Option<Rect>> = regions
+        .iter()
+        .map(|r| r.outer().polyline().bounds())
+        .collect();
+    // `label[i]` names the group region `i` is in; pairs come in a fixed
+    // order, so the groups depend on nothing but the input.
+    let mut label: Vec<usize> = (0..regions.len()).collect();
+    for (i, j) in touching_pairs(&boxes, 0.0) {
+        let (Some(a), Some(b)) = (regions.get(i), regions.get(j)) else {
+            continue;
+        };
+        let (Some(&to), Some(&from)) = (label.get(i), label.get(j)) else {
+            continue;
+        };
+        if from != to && crosses(a, b, tolerance_mm) {
+            for l in &mut label {
+                if *l == from {
+                    *l = to;
+                }
+            }
+        }
+    }
+    let mut merged: Vec<Region> = Vec::new();
+    for group in 0..regions.len() {
+        let members: Vec<Region> = regions
+            .iter()
+            .zip(&label)
+            .filter(|&(_, &l)| l == group)
+            .map(|(r, _)| r.clone())
+            .collect();
+        match members.len() {
+            0 => {}
+            1 => merged.extend(members),
+            _ => merged.extend(union(&members, &[], tolerance_mm)),
+        }
+    }
+    let contours: Vec<Contour> = merged
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()).cloned())
+        .collect();
+    let (nested, _) = nest(contours).map_err(|_| GeometryError::Unresolved)?;
+    Ok(from_shapes(to_shapes(&nested, tolerance_mm)))
 }
 
-/// Every region's outer contour, holes dropped, united.
-#[must_use]
-pub fn ink_outline(_ink: &[Region], _tolerance_mm: f64) -> Vec<Region> {
-    Vec::new()
+/// True when `a` and `b` share area and neither lies wholly in the
+/// other's material: the shared area is neither nothing nor all of one.
+fn crosses(a: &Region, b: &Region, tolerance_mm: f64) -> bool {
+    let shared_mm2 = area_mm2(&intersection(
+        std::slice::from_ref(a),
+        std::slice::from_ref(b),
+        tolerance_mm,
+    ));
+    let perimeter_mm = |r: &Region| {
+        std::iter::once(r.outer())
+            .chain(r.holes())
+            .map(|c| c.polyline().length_mm())
+            .sum::<f64>()
+    };
+    let slack_mm2 = EPS_MM * (perimeter_mm(a) + perimeter_mm(b));
+    shared_mm2 > slack_mm2
+        && (a.area_mm2() - shared_mm2).abs() > slack_mm2
+        && (b.area_mm2() - shared_mm2).abs() > slack_mm2
 }
 
-/// The enclosed spaces between the lines: `difference(ink_outline(ink), ink)`.
+/// The art's outline (49c, step 4): every region's outer contour, holes
+/// dropped, united.
 #[must_use]
-pub fn spaces_between(_ink: &[Region], _tolerance_mm: f64) -> Vec<Region> {
-    Vec::new()
+pub fn ink_outline(ink: &[Region], tolerance_mm: f64) -> Vec<Region> {
+    let outers: Vec<Region> = ink
+        .iter()
+        .map(|r| r.without_holes(&(0..r.holes().len()).collect::<Vec<_>>()))
+        .collect();
+    union(&outers, &[], tolerance_mm)
+}
+
+/// The enclosed spaces between the lines: `difference(ink_outline(ink),
+/// ink)`, the `--regions` mode of image prep.
+#[must_use]
+pub fn spaces_between(ink: &[Region], tolerance_mm: f64) -> Vec<Region> {
+    difference(&ink_outline(ink, tolerance_mm), ink, tolerance_mm)
 }
 
 /// How many regions of `ink` enclose no space (have no hole).
 #[must_use]
-pub fn ink_without_spaces(_ink: &[Region]) -> usize {
-    usize::MAX
+pub fn ink_without_spaces(ink: &[Region]) -> usize {
+    ink.iter().filter(|r| r.holes().is_empty()).count()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -165,8 +274,8 @@ mod tests {
         assert_eq!(nonzero.len(), 1);
         assert!(nonzero[0].holes().is_empty());
         let even_odd = resolve_fill(std::slice::from_ref(&star), FillRule::EvenOdd, TOL_MM);
-        assert_eq!(even_odd.len(), 1);
-        assert_eq!(even_odd[0].holes().len(), 1);
+        // Even-odd drops the doubly wound middle, leaving the five points.
+        assert_eq!(even_odd.len(), 5);
         assert!(area_mm2(&nonzero) > area_mm2(&even_odd));
         assert_canonical(&nonzero);
     }
@@ -184,7 +293,9 @@ mod tests {
         b.reverse();
         let one = resolve_fill(&a, FillRule::NonZero, TOL_MM);
         let two = resolve_fill(&b, FillRule::NonZero, TOL_MM);
-        assert_eq!(one.len(), 3);
+        // The ring, the small square, the circle and the clockwise square
+        // (a lone clockwise subpath still fills under NonZero).
+        assert_eq!(one.len(), 4);
         assert_eq!(one, two);
         assert_canonical(&one);
     }
