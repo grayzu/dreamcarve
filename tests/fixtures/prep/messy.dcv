@@ -1,0 +1,320 @@
+{
+  "version": 26,
+  "name": "messy",
+  "display_units": "mm",
+  "flatten_tolerance_mm": 0.01,
+  "arc_fit_tolerance_mm": 0.01,
+  "stock": {
+    "width_mm": 100.0,
+    "height_mm": 120.0,
+    "thickness_mm": null
+  },
+  "origin": {
+    "xy": "bottom_left",
+    "z": "stock_top"
+  },
+  "heights": {
+    "clearance_mm": null,
+    "tool_change_machine_z_mm": null,
+    "park": null
+  },
+  "tools": [
+    {
+      "id": "t1",
+      "name": "Set me",
+      "vendor": null,
+      "product_id": null,
+      "number": null,
+      "cutter": "end_mill",
+      "diameter_mm": 6.35,
+      "flutes": 2,
+      "feed_mm_min": null,
+      "plunge_mm_min": null,
+      "rpm": null,
+      "step_down_mm": null,
+      "step_over_fraction": null
+    }
+  ],
+  "operations": [
+    {
+      "kind": "profile",
+      "id": "op1",
+      "name": "Profile",
+      "enabled": true,
+      "targets": [
+        "i1",
+        "i2",
+        "i3",
+        "i4",
+        "i6",
+        "i7"
+      ],
+      "tool": "t1",
+      "side": "outside",
+      "depth_mm": null,
+      "step_down_mm": null,
+      "direction": "climb",
+      "through_cut_allowance_mm": 0.0,
+      "safe_z_mm": 5.0,
+      "tabs": {
+        "placement": {
+          "kind": "count",
+          "count": 4
+        },
+        "width_mm": 8.0,
+        "height_mm": 3.0,
+        "shape": "rect",
+        "on_holes": false,
+        "avoid_corners": true
+      },
+      "machining_order": "full_depth_first",
+      "entry": {
+        "ramp": {
+          "angle_deg": 15.0
+        }
+      },
+      "lead": null,
+      "corner_relief": "none",
+      "last_pass": null,
+      "start": "auto"
+    }
+  ],
+  "tabs": [],
+  "instances": [
+    {
+      "id": "i1",
+      "definition": "d1",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "sq-a",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i2",
+      "definition": "d2",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "sq-b",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i3",
+      "definition": "d3",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "outer",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i4",
+      "definition": "d4",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "inner",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i5",
+      "definition": "d5",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "centreline",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i6",
+      "definition": "d6",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "clipped-rect",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    },
+    {
+      "id": "i7",
+      "definition": "d7",
+      "transform": [
+        1.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        10.0
+      ],
+      "name": "dot",
+      "visible": true,
+      "locked": false,
+      "z_top_mm": null,
+      "z_bottom_mm": null
+    }
+  ],
+  "post_processor": {
+    "id": "grblhal",
+    "definition_version": 4,
+    "file_extension": "nc",
+    "spindle_control": "automatic",
+    "spindle_on_dwell_s": 3.0,
+    "tool_change_mode": "separate_programs",
+    "decimal_places": {
+      "mm": 3,
+      "inch": 4
+    },
+    "use_canned_cycles": false
+  },
+  "definitions": {
+    "d1": {
+      "id": "d1",
+      "name": "sq-a",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 10.0, "y": 100.000001, "bulge": 0.0 },
+            { "x": 20.000001, "y": 100.000001, "bulge": 0.0 },
+            { "x": 20.000001, "y": 90.0, "bulge": 0.0 },
+            { "x": 10.0, "y": 90.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d2": {
+      "id": "d2",
+      "name": "sq-b",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 16.0, "y": 100.000001, "bulge": 0.0 },
+            { "x": 26.000001, "y": 100.000001, "bulge": 0.0 },
+            { "x": 26.000001, "y": 90.0, "bulge": 0.0 },
+            { "x": 16.0, "y": 90.0, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d3": {
+      "id": "d3",
+      "name": "outer",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 40.000001, "y": 19.999999, "bulge": 0.0 },
+            { "x": 60.000002, "y": 19.999999, "bulge": 0.0 },
+            { "x": 60.000002, "y": -2e-6, "bulge": 0.0 },
+            { "x": 40.000001, "y": -2e-6, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d4": {
+      "id": "d4",
+      "name": "inner",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 45.000001, "y": 14.999998, "bulge": 0.0 },
+            { "x": 55.000002, "y": 14.999998, "bulge": 0.0 },
+            { "x": 55.000002, "y": 4.999998, "bulge": 0.0 },
+            { "x": 45.000001, "y": 4.999998, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d5": {
+      "id": "d5",
+      "name": "centreline",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 10.0, "y": 70.0, "bulge": 0.0 },
+            { "x": 50.000001, "y": 39.999999, "bulge": 0.0 }
+          ],
+          "closed": false
+        }
+      ]
+    },
+    "d6": {
+      "id": "d6",
+      "name": "clipped-rect",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 70.000002, "y": 60.0, "bulge": 0.0 },
+            { "x": 90.000003, "y": 60.0, "bulge": 0.0 },
+            { "x": 90.000003, "y": 39.999999, "bulge": 0.0 },
+            { "x": 70.000002, "y": 39.999999, "bulge": 0.0 }
+          ],
+          "closed": true
+        }
+      ]
+    },
+    "d7": {
+      "id": "d7",
+      "name": "dot",
+      "profiles": [
+        {
+          "vertices": [
+            { "x": 85.050005, "y": 88.0, "bulge": -1.0 },
+            { "x": 84.950006, "y": 87.999993, "bulge": -1.0 }
+          ],
+          "closed": true
+        }
+      ]
+    }
+  }
+}

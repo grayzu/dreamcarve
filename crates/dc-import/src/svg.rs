@@ -39,7 +39,7 @@ use usvg::tiny_skia_path::PathSegment;
 
 /// Millimetres per CSS pixel. usvg resolves every length to pixels at 96
 /// per inch, so this one factor converts any SVG to millimetres.
-const MM_PER_PX: f64 = 25.4 / 96.0;
+pub(crate) const MM_PER_PX: f64 = 25.4 / 96.0;
 
 /// How close a subpath's last point must be to its start for the subpath
 /// to count as closed without a `Z`, mm. usvg stores coordinates as f32,
@@ -47,7 +47,7 @@ const MM_PER_PX: f64 = 25.4 / 96.0;
 /// that and far below anything a cutter can resolve.
 const SUBPATH_CLOSE_TOLERANCE_MM: f64 = 1e-4;
 
-const SVG_NS: &str = "http://www.w3.org/2000/svg";
+pub(crate) const SVG_NS: &str = "http://www.w3.org/2000/svg";
 
 /// Finest flattening tolerance an import accepts, mm (1 µm). Below any
 /// machine's resolution; finer would only multiply vertices.
@@ -177,21 +177,7 @@ pub fn import_svg(
     let tree = usvg::Tree::from_data(bytes, &usvg_options())?;
     let root = inspect_root(bytes)?;
 
-    let size = tree.size();
-    let page_width_mm = f64::from(size.width()) * MM_PER_PX;
-    let page_height_mm = f64::from(size.height()) * MM_PER_PX;
-    if !(page_width_mm.is_finite()
-        && page_height_mm.is_finite()
-        && page_width_mm > 0.0
-        && page_height_mm > 0.0
-        && page_width_mm <= MAX_COORDINATE_MM
-        && page_height_mm <= MAX_COORDINATE_MM)
-    {
-        return Err(ImportError::InvalidPageSize {
-            width_mm: page_width_mm,
-            height_mm: page_height_mm,
-        });
-    }
+    let (page_width_mm, page_height_mm) = page_size_mm(&tree)?;
     let mm_per_user_unit = root
         .view_box_width
         .map_or(MM_PER_PX, |width| page_width_mm / width);
@@ -237,11 +223,32 @@ pub fn import_svg(
     Ok((import, walker.warnings))
 }
 
+/// The page size of `tree` in millimetres, refused unless it is a positive
+/// finite size within [`MAX_COORDINATE_MM`].
+pub(crate) fn page_size_mm(tree: &usvg::Tree) -> Result<(f64, f64), ImportError> {
+    let size = tree.size();
+    let page_width_mm = f64::from(size.width()) * MM_PER_PX;
+    let page_height_mm = f64::from(size.height()) * MM_PER_PX;
+    if !(page_width_mm.is_finite()
+        && page_height_mm.is_finite()
+        && page_width_mm > 0.0
+        && page_height_mm > 0.0
+        && page_width_mm <= MAX_COORDINATE_MM
+        && page_height_mm <= MAX_COORDINATE_MM)
+    {
+        return Err(ImportError::InvalidPageSize {
+            width_mm: page_width_mm,
+            height_mm: page_height_mm,
+        });
+    }
+    Ok((page_width_mm, page_height_mm))
+}
+
 /// usvg options that keep the importer free of I/O: image references
 /// resolve to nothing instead of being read from disk. Text needs usvg's
 /// `text` feature, which is off, so usvg drops it; [`inspect_root`] counts
 /// it for the warning.
-fn usvg_options() -> usvg::Options<'static> {
+pub(crate) fn usvg_options() -> usvg::Options<'static> {
     usvg::Options {
         image_href_resolver: usvg::ImageHrefResolver {
             resolve_data: Box::new(|_, _, _| None),
@@ -252,18 +259,148 @@ fn usvg_options() -> usvg::Options<'static> {
 }
 
 /// What the raw document says that usvg's tree no longer records.
-struct RootInfo {
-    units: RootUnits,
+pub(crate) struct RootInfo {
+    pub(crate) units: RootUnits,
     /// The `viewBox` width in user units, when there is a usable one.
-    view_box_width: Option<f64>,
-    text_count: usize,
-    image_count: usize,
+    pub(crate) view_box_width: Option<f64>,
+    pub(crate) text_count: usize,
+    pub(crate) image_count: usize,
+    /// Elements that use a clip path or a mask, which usvg's tree keeps
+    /// only as group properties (3.4, the walk).
+    pub(crate) clip_paths: ObjectUse,
+    pub(crate) masks: ObjectUse,
+    /// The outermost `display:none` elements that hold shapes, in
+    /// document order. usvg drops these subtrees (3.4, the walk).
+    pub(crate) display_none: Vec<DisplayNone>,
+}
+
+/// Uses of one kind of object the importer cannot convert.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ObjectUse {
+    /// How many elements use it.
+    pub(crate) count: usize,
+    /// The id of the first user, or of its nearest ancestor with one;
+    /// empty when none has an id.
+    pub(crate) first_group: String,
+}
+
+/// A `display:none` element that holds drawn shapes.
+#[derive(Debug, Clone)]
+pub(crate) struct DisplayNone {
+    /// The element's id, else its first shape's, else its tag name.
+    pub(crate) name: String,
+    /// How many shape elements it holds.
+    pub(crate) shapes: usize,
+}
+
+const SHAPE_TAGS: [&str; 7] = [
+    "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+];
+
+/// Containers whose content is not drawn where it is written.
+const DEFINITION_TAGS: [&str; 10] = [
+    "defs",
+    "clipPath",
+    "mask",
+    "symbol",
+    "pattern",
+    "marker",
+    "filter",
+    "linearGradient",
+    "radialGradient",
+    "style",
+];
+
+type XmlNode<'a, 'i> = usvg::roxmltree::Node<'a, 'i>;
+
+/// The value of presentation property `name` on `node`, from its inline
+/// `style` (which wins) or its attribute.
+fn property<'a>(node: XmlNode<'a, '_>, name: &str) -> Option<&'a str> {
+    let from_style = node.attribute("style").and_then(|style| {
+        style
+            .split(';')
+            .filter_map(|decl| decl.split_once(':'))
+            .filter(|(k, _)| k.trim().eq_ignore_ascii_case(name))
+            .map(|(_, v)| v.trim())
+            .next_back()
+    });
+    from_style.or_else(|| node.attribute(name))
+}
+
+fn element_id<'a>(n: XmlNode<'a, '_>) -> Option<&'a str> {
+    n.attribute("id").filter(|i| !i.is_empty())
+}
+
+fn is_svg_element(node: &XmlNode<'_, '_>) -> bool {
+    node.is_element() && matches!(node.tag_name().namespace(), None | Some(SVG_NS))
+}
+
+/// The id of `node`, or of its nearest ancestor with one.
+fn nearest_id(node: XmlNode<'_, '_>) -> String {
+    node.ancestors()
+        .filter(XmlNode::is_element)
+        .find_map(|n| n.attribute("id").filter(|id| !id.is_empty()))
+        .unwrap_or_default()
+        .to_owned()
+}
+
+/// True when `node` sits inside a definition container.
+fn in_definitions(node: XmlNode<'_, '_>) -> bool {
+    node.ancestors()
+        .skip(1)
+        .any(|a| is_svg_element(&a) && DEFINITION_TAGS.contains(&a.tag_name().name()))
+}
+
+fn uses(doc: &usvg::roxmltree::Document<'_>, property_name: &str) -> ObjectUse {
+    let mut out = ObjectUse::default();
+    for node in doc.descendants().filter(is_svg_element) {
+        let value = property(node, property_name).map(str::trim);
+        if value.is_some_and(|v| !v.is_empty() && v != "none") && !in_definitions(node) {
+            if out.count == 0 {
+                out.first_group = nearest_id(node);
+            }
+            out.count += 1;
+        }
+    }
+    out
+}
+
+fn display_none(doc: &usvg::roxmltree::Document<'_>) -> Vec<DisplayNone> {
+    let hidden = |n: &XmlNode<'_, '_>| property(*n, "display") == Some("none");
+    let mut out = Vec::new();
+    for node in doc.descendants().filter(is_svg_element) {
+        if !hidden(&node)
+            || in_definitions(node)
+            || node
+                .ancestors()
+                .skip(1)
+                .filter(is_svg_element)
+                .any(|a| hidden(&a))
+        {
+            continue;
+        }
+        let shapes: Vec<_> = node
+            .descendants()
+            .filter(|n| is_svg_element(n) && SHAPE_TAGS.contains(&n.tag_name().name()))
+            .collect();
+        let Some(first) = shapes.first() else {
+            continue;
+        };
+        let name = element_id(node)
+            .or_else(|| element_id(*first))
+            .map_or_else(|| node.tag_name().name().to_owned(), str::to_owned);
+        out.push(DisplayNone {
+            name,
+            shapes: shapes.len(),
+        });
+    }
+    out
 }
 
 /// Reads the root's declared units and `viewBox`, and counts the text and
 /// image elements usvg drops. Uses the same XML parser and options as usvg,
 /// so it accepts exactly what usvg accepted.
-fn inspect_root(bytes: &[u8]) -> Result<RootInfo, ImportError> {
+pub(crate) fn inspect_root(bytes: &[u8]) -> Result<RootInfo, ImportError> {
     let text = std::str::from_utf8(bytes).map_err(|_| usvg::Error::NotAnUtf8Str)?;
     let xml_options = usvg::roxmltree::ParsingOptions {
         allow_dtd: true,
@@ -312,6 +449,9 @@ fn inspect_root(bytes: &[u8]) -> Result<RootInfo, ImportError> {
         view_box_width,
         text_count: count("text"),
         image_count: count("image"),
+        clip_paths: uses(&doc, "clip-path"),
+        masks: uses(&doc, "mask"),
+        display_none: display_none(&doc),
     })
 }
 
@@ -483,23 +623,24 @@ impl Walker {
 
 /// usvg's (tiny-skia's) transform as a kurbo affine. Both use the SVG
 /// `matrix(a b c d e f)` layout.
-fn affine(t: usvg::Transform) -> Affine {
+pub(crate) fn affine(t: usvg::Transform) -> Affine {
     Affine::new([t.sx, t.ky, t.kx, t.sy, t.tx, t.ty].map(f64::from))
 }
 
 /// A path in millimetres, Y-up, and which of its elements are pieces of a
 /// circular arc.
-struct MmPath {
-    bez: BezPath,
+#[derive(Debug, Clone)]
+pub(crate) struct MmPath {
+    pub(crate) bez: BezPath,
     /// One per element of `bez`: `Some` for the Bézier piece of a circular
     /// arc, which becomes a bulge instead of being flattened.
-    arcs: Vec<Option<ArcHint>>,
+    pub(crate) arcs: Vec<Option<ArcHint>>,
 }
 
 /// What [`build_profiles`] needs to turn a recognised Bézier piece back
 /// into its arc.
 #[derive(Debug, Clone, Copy)]
-struct ArcHint {
+pub(crate) struct ArcHint {
     /// Signed sweep in millimetre space (after the Y flip); positive is
     /// counter-clockwise.
     sweep_rad: f64,
@@ -512,7 +653,7 @@ struct ArcHint {
 /// within [`SUBPATH_CLOSE_TOLERANCE_MM`] of its start without `Z` is
 /// closed, its last point snapped onto the start, as PureCutCNC's
 /// `parsePathProfiles` does.
-fn to_mm_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> MmPath {
+pub(crate) fn to_mm_path(data: &usvg::tiny_skia_path::Path, to_mm: Affine) -> MmPath {
     let pt =
         |p: usvg::tiny_skia_path::Point| to_mm * kurbo::Point::new(f64::from(p.x), f64::from(p.y));
     // Only a similarity keeps a circle a circle; under anything else every
@@ -608,7 +749,7 @@ fn close_if_returned(out: &mut MmPath, start: kurbo::Point, open: bool) {
 /// [`dc_geometry::flatten`]'s, which a path with no arcs gives exactly: a
 /// subpath ending in `ClosePath` is closed, a point within [`EPS_MM`] of
 /// the one before is dropped, and so is a subpath of fewer than two points.
-fn build_profiles(path: &MmPath, tolerance_mm: f64) -> Vec<Polyline> {
+pub(crate) fn build_profiles(path: &MmPath, tolerance_mm: f64) -> Vec<Polyline> {
     let mut out = Vec::new();
     let mut profile = ProfileBuilder::default();
     let mut current = kurbo::Point::ZERO;

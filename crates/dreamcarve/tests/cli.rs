@@ -11874,3 +11874,147 @@ fn countersink_exports_as_plain_moves_with_canned_cycles() {
         .count();
     assert_eq!(plunges, 4, "{text}");
 }
+
+// ── Image prep, slice 3.4-3: the import checks (49a, acceptance 61a) ─────
+
+/// The import checks of `init`: one warning for each of the six kinds on
+/// `messy.svg`, the text, image and clip-path ones with their fix, and
+/// `shapes_overlap` naming the two squares by id (61a).
+#[test]
+fn init_prints_the_import_checks() {
+    let dir = work_dir("init_prints_the_import_checks");
+    copy_fixture(&dir, "prep/messy.svg", "messy.svg");
+    let out = run(&dir, &["init", "messy.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let err = stderr(&out);
+    let lines = warning_lines(&err);
+    let codes: Vec<&str> = lines
+        .iter()
+        .map(|l| l["warning: ".len()..].split(':').next().expect("code"))
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "shapes_overlap",
+            "svg_hole_as_separate_path",
+            "svg_stroke_only_path",
+            "svg_hidden_object",
+            "svg_object_not_convertible",
+            "svg_object_not_convertible",
+            "svg_object_not_convertible",
+            "feature_below_size",
+        ],
+        "{err}"
+    );
+    let line = |code: &str, needle: &str| {
+        lines
+            .iter()
+            .find(|l| l.starts_with(&format!("warning: {code}:")) && l.contains(needle))
+            .copied()
+            .unwrap_or_else(|| panic!("no {code} line with `{needle}`: {err}"))
+    };
+    line("shapes_overlap", "`sq-a` and `sq-b`");
+    line("svg_hole_as_separate_path", "`inner` inside `outer`");
+    line("svg_stroke_only_path", "1.200 mm");
+    line("svg_hidden_object", "`old-layer`");
+    line(
+        "svg_object_not_convertible",
+        "convert text to paths in your drawing program",
+    );
+    line(
+        "svg_object_not_convertible",
+        "trace images in Inkscape first",
+    );
+    line("svg_object_not_convertible", "expand clips and masks");
+    line("feature_below_size", "0.200 mm");
+    // The ones `image-prep` fixes say so; the three it cannot, do not.
+    let fix = "; `dreamcarve image-prep` would fix this";
+    for code in [
+        "shapes_overlap",
+        "svg_hole_as_separate_path",
+        "svg_stroke_only_path",
+        "svg_hidden_object",
+        "feature_below_size",
+    ] {
+        assert!(line(code, "").ends_with(fix), "{code}");
+    }
+    assert!(
+        lines
+            .iter()
+            .filter(|l| l.contains("svg_object_not_convertible"))
+            .all(|l| !l.ends_with(fix)),
+        "{err}"
+    );
+}
+
+/// The checks change nothing: the project `init` writes for `messy.svg`
+/// is byte for byte the one the build before the checks wrote
+/// (`tests/fixtures/prep/messy.dcv`), and the exit status is 0.
+#[test]
+fn init_project_is_unchanged_by_the_checks() {
+    let dir = work_dir("init_project_is_unchanged_by_the_checks");
+    copy_fixture(&dir, "prep/messy.svg", "messy.svg");
+    let out = run(&dir, &["init", "messy.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let written = std::fs::read_to_string(dir.join("messy.dcv")).expect("project written");
+    let before = std::fs::read_to_string(tests_fixture("prep/messy.dcv")).expect("golden");
+    assert_eq!(written, before);
+}
+
+/// `check` repeats the two findings a project can still make, from its
+/// shapes, and none of the SVG-only ones.
+#[test]
+fn check_repeats_overlap_and_size_findings() {
+    let dir = work_dir("check_repeats_overlap_and_size_findings");
+    copy_fixture(&dir, "prep/messy.dcv", "messy.dcv");
+    let out = run(&dir, &["check", "messy.dcv"]);
+    let report = stdout(&out);
+    let codes = warning_codes(&report);
+    assert!(codes.contains(&"shapes_overlap".to_owned()), "{report}");
+    assert!(codes.contains(&"feature_below_size".to_owned()), "{report}");
+    for svg_only in [
+        "svg_hole_as_separate_path",
+        "svg_stroke_only_path",
+        "svg_hidden_object",
+        "svg_object_not_convertible",
+    ] {
+        assert!(!report.contains(svg_only), "{svg_only}: {report}");
+    }
+    let overlap = report
+        .lines()
+        .find(|l| l.contains("shapes_overlap"))
+        .expect("overlap line");
+    assert!(overlap.contains("`sq-a` and `sq-b`"), "{overlap}");
+}
+
+/// A clean drawing prints none of the checks.
+#[test]
+fn a_clean_drawing_prints_no_checks() {
+    let dir = work_dir("a_clean_drawing_prints_no_checks");
+    copy_fixture(&dir, "prep/clean.svg", "clean.svg");
+    let out = run(&dir, &["init", "clean.svg"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    assert_eq!(warning_lines(&stderr(&out)), Vec::<&str>::new());
+    let out = run(&dir, &["check", "clean.dcv"]);
+    let report = stdout(&out);
+    for code in ["shapes_overlap", "feature_below_size"] {
+        assert!(!report.contains(code), "{code}: {report}");
+    }
+}
+
+/// `init` on a DXF does not run the checks (they need an SVG's paint and
+/// paths); its warnings print exactly as they always did.
+#[test]
+fn dxf_init_is_unchanged() {
+    let dir = work_dir("dxf_init_is_unchanged");
+    copy_fixture(&dir, "dxf/unsupported.dxf", "part.dxf");
+    let out = run(&dir, &["init", "part.dxf"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    assert_eq!(
+        warning_lines(&stderr(&out)),
+        [
+            "warning: dxf_entities_skipped: 3 entity(ies) DreamCarve does not read were skipped: DIMENSION: 1, MTEXT: 1, TEXT: 1",
+            "warning: INSERT of undefined block `MISSING` was skipped",
+        ]
+    );
+}
