@@ -195,14 +195,14 @@ Every setting trades detail against time. For the 100 × 50 mm gradient,
 | `"hatch"` | 104 | 6 min 24 s |
 
 The time grows with the area of the picture and falls with the spacing:
-twice the width and height is four times the time, and half the spacing
-is twice it. `check` and `export` print the estimate.
+twice the width and height is about four times the time, and half the
+spacing about twice it. `check` and `export` print the estimate.
 
 `sample_mm` sets how finely the picture is read along each groove, not
 how many grooves there are: a smaller step follows the picture more
 closely and makes a longer program, but hardly changes the cutting time.
-The default, 0.25 mm, is finer than any groove; below about a quarter of
-the groove spacing there is nothing more to see. A step too small for
+The default, 0.25 mm, is finer than a common bit's groove is wide at
+1 mm deep or more. A step too small for
 the picture is refused, so that a program cannot grow without bound: no
 Photo V-Carve may take more than 2 000 000 moves (see [When a Photo
 V-Carve is refused](#when-a-photo-v-carve-is-refused)).
@@ -503,9 +503,14 @@ picture itself (its size, its PNG) are the bitmap's, listed in
 ## Limits
 
 - One picture per operation, carved whole: no part of a picture, and no
-  vector boundary to carve it inside (VCarve's "Selected Vectors").
+  vector boundary to carve it inside (PhotoVCarve's "Selected Vectors"
+  strategy).
+- No picture editing: contrast, cropping and rotation are done in an
+  image editor first ([Images](images.md#choosing-a-picture)).
 - The picture cannot be rotated: turn it before you add it. The grooves
   can run at any angle.
+- Brightness is a groove's depth, never a surface: carving a picture as
+  a relief is a later phase's.
 - No ball-nose or engraving bit; a V-bit only.
 - One pass: there is no step-down, so a deep picture in a hard wood is
   cut in one pass at its full depth. Keep `max_depth_mm` modest in hard

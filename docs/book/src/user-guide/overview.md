@@ -78,6 +78,7 @@ side follows its proportions. See [Images](images.md).
 | `--units <mm\|inch>` | Units the G-code is written in. Default `mm`. For a DXF, also the units the drawing is in: required when the file does not say, and overriding it when it does. |
 | `--join-tolerance <MM>` | DXF only. Join open segments whose ends are within this distance, and close a chain whose ends meet. Default `0.01`. |
 | `--layer <NAME>` | DXF only. Import only this layer; repeat the option for several. |
+| `--width <MM>`, `--height <MM>` | Picture only, and exactly one is required: the picture's width, or height, on the stock; the other side follows its proportions ([Images](images.md)). |
 
 `init` leaves the values only you can know unset (`null`): the stock
 thickness, the cut depth, and the tool's feed rate, plunge rate and spindle
