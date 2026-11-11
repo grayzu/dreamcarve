@@ -970,6 +970,16 @@ pub enum CamError {
         /// fits the design centred, mm.
         stock_mm: f64,
     },
+    /// The operation is a Photo V-Carve, whose record a project can hold
+    /// (format 27, #644) before its generator is built.
+    // TODO(#646): remove with the generator.
+    #[error(
+        "operation `{op}` is a Photo V-Carve, which this version of DreamCarve cannot cut yet; disable it to export the project's other operations"
+    )]
+    PhotoNotBuilt {
+        /// The operation.
+        op: OperationId,
+    },
     /// The containment pairs given to the sequencer form a cycle, so no
     /// shape can be cut first. `nest` never produces one.
     #[error("shape {shape} encloses itself through other shapes; no cut order exists")]

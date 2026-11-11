@@ -118,6 +118,8 @@ fn group_title(state: &FrameState<'_>, group: &Group) -> String {
         dc_project::Operation::Engrave(_) => StrKey::AppWarningsKindEngrave,
         dc_project::Operation::VCarve(_) => StrKey::AppWarningsKindVCarve,
         dc_project::Operation::Inlay(_) => StrKey::AppWarningsKindInlay,
+        // Format 27 (#644): the kind's own name; its rows are #544's.
+        dc_project::Operation::PhotoVCarve(_) => StrKey::OperationsKindPhotoVCarve,
     };
     strings.fmt(
         StrKey::AppWarningsGroup,

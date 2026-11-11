@@ -5,7 +5,8 @@
 //! dc-project"; `docs/specs/phase-2/design.md`, "Data model → dc-project"
 //! for the Pocket, Drill and Engrave operations, entries, leads, corner
 //! relief and tool numbers; `docs/specs/phase-3/design.md`, "Data model →
-//! dc-project" for the V-Carve and the Inlay). Every type here is persisted in a `.dcv` file, so each one
+//! dc-project" for the V-Carve, the Inlay, the bitmap and the Photo
+//! V-Carve). Every type here is persisted in a `.dcv` file, so each one
 //! denies unknown fields and serializes `Option` as `null`
 //! (`docs/rust-guidelines.md`, "Serialization"). `Option` fields are also
 //! required on load (`deserialize_with = "Option::deserialize"` turns off
@@ -20,7 +21,7 @@
 //! Geometry is Y-up, Z-up, millimetres (ADR-0001). Stock occupies
 //! `[0, width] × [0, height] × [0, thickness]` in project space.
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::post_processor::PostProcessorRef;
 use crate::units_input;
 use dc_geometry::{Point, Polyline, Transform};
@@ -70,6 +71,10 @@ pub struct Project {
     pub tabs: Vec<PlacedTab>,
     /// Placed copies of definitions.
     pub instances: Vec<FeatureInstance>,
+    /// Pictures placed on the stock (format 27; functional spec,
+    /// capability 46), each carved by the Photo V-Carves that name it.
+    /// Empty for a project made from a drawing and for a migrated one.
+    pub bitmaps: Vec<Bitmap>,
     /// The bundled post-processor definition version and the user's
     /// settings for it (ADR-0004).
     pub post_processor: PostProcessorRef,
@@ -266,6 +271,61 @@ pub struct FeatureInstance {
     pub z_bottom_mm: Option<f64>,
 }
 
+/// A grayscale picture placed on the stock (format 27; functional spec,
+/// capability 46). The pixels travel with the project (ADR-0002), as an
+/// 8-bit grayscale PNG in base64.
+///
+/// The footprint is the rectangle from (`x_mm`, `y_mm`), its bottom-left
+/// corner in project space (Y-up, ADR-0001), `width_mm` wide and
+/// `height_mm` tall. The picture's **top** row lies along the footprint's
+/// top edge, `y = y_mm + height_mm`: with `w = width_mm / width_px` and
+/// `h = height_mm / height_px`, the pixel of column `i`, row `j` covers
+/// `x` from `x_mm + i·w` to `x_mm + (i + 1)·w` and `y` from `y_mm +
+/// height_mm − (j + 1)·h` to `y_mm + height_mm − j·h`. Every reader of
+/// the pixels places them so; [`Bitmap::pixels`] returns them top row
+/// first and nothing flips them.
+///
+/// A `.dcv` file is untrusted input: [`Bitmap::header`] and
+/// [`Bitmap::pixels`] (in `bitmap.rs`) hold the picture to
+/// [`crate::MAX_BITMAP_SIDE_PX`] and to 8-bit grayscale before anything is
+/// allocated for it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bitmap {
+    /// This bitmap's id, `b<n>`; unique in the project.
+    pub id: BitmapId,
+    /// Display name; the picture file's stem by default.
+    pub name: String,
+    /// The picture's width, pixels: the stored PNG's, which validation
+    /// checks. At least 1 and at most [`crate::MAX_BITMAP_SIDE_PX`].
+    pub width_px: u32,
+    /// The picture's height, pixels, as `width_px`.
+    pub height_px: u32,
+    /// X of the footprint's bottom-left corner, millimetres, project
+    /// space.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub x_mm: f64,
+    /// Y of the footprint's bottom-left corner, millimetres (Y-up).
+    #[serde(deserialize_with = "units_input::mm")]
+    pub y_mm: f64,
+    /// The footprint's width, millimetres, above 0.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub width_mm: f64,
+    /// The footprint's height, millimetres, above 0. `height_mm /
+    /// width_mm` is `height_px / width_px` within 1e-6 (validation), so
+    /// the picture is never stretched.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub height_mm: f64,
+    /// Shown in previews. Reserved for the GUI, as an instance's.
+    pub visible: bool,
+    /// Protected from edits. Reserved for the GUI, as an instance's.
+    pub locked: bool,
+    /// The picture: an 8-bit grayscale PNG in base64, standard alphabet,
+    /// padded, on one line of the file. Written by DreamCarve's own
+    /// encoder, so the same pixels give the same text within one build.
+    pub png_base64: String,
+}
+
 /// A cutting tool embedded in the project. Feeds, plunge and RPM stay `None`
 /// until the user supplies them; export fails without them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -361,9 +421,9 @@ impl ToolKind {
     }
 }
 
-/// A machining operation: Profile, Pocket, Drill, Bore, Engrave, V-Carve
-/// or Inlay. Tagged by `kind` in the file, so each one reads as a flat
-/// object.
+/// A machining operation: Profile, Pocket, Drill, Bore, Engrave, V-Carve,
+/// Inlay or Photo V-Carve. Tagged by `kind` in the file, so each one reads
+/// as a flat object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Operation {
@@ -385,6 +445,9 @@ pub enum Operation {
     /// stock and the male plug on its own board (format 22; both boards
     /// since format 25, #498).
     Inlay(InlayOp),
+    /// Carve a picture as parallel V-bit grooves whose depth follows its
+    /// darkness (format 27).
+    PhotoVCarve(PhotoVCarveOp),
 }
 
 impl Operation {
@@ -398,6 +461,7 @@ impl Operation {
             Self::Engrave(op) => &op.id,
             Self::VCarve(op) => &op.id,
             Self::Inlay(op) => &op.id,
+            Self::PhotoVCarve(op) => &op.id,
         }
     }
 
@@ -411,6 +475,7 @@ impl Operation {
             Self::Engrave(op) => &op.name,
             Self::VCarve(op) => &op.name,
             Self::Inlay(op) => &op.name,
+            Self::PhotoVCarve(op) => &op.name,
         }
     }
 
@@ -424,6 +489,7 @@ impl Operation {
             Self::Engrave(op) => op.enabled,
             Self::VCarve(op) => op.enabled,
             Self::Inlay(op) => op.enabled,
+            Self::PhotoVCarve(op) => op.enabled,
         }
     }
 
@@ -437,6 +503,7 @@ impl Operation {
             Self::Engrave(op) => &op.tool,
             Self::VCarve(op) => &op.tool,
             Self::Inlay(op) => &op.tool,
+            Self::PhotoVCarve(op) => &op.tool,
         }
     }
 
@@ -453,7 +520,8 @@ impl Operation {
             | Self::Pocket(_)
             | Self::Drill(_)
             | Self::Bore(_)
-            | Self::Engrave(_) => &[],
+            | Self::Engrave(_)
+            | Self::PhotoVCarve(_) => &[],
         };
         let cut_out = match self {
             Self::Inlay(op) => op.cut_out.as_ref().map(|c| &c.tool),
@@ -486,7 +554,9 @@ impl Operation {
         }
     }
 
-    /// The instances the operation machines.
+    /// The instances the operation machines. None for a Photo V-Carve
+    /// (format 27): it carves a bitmap, [`PhotoVCarveOp::image`], which is
+    /// not an instance.
     pub fn targets(&self) -> &[InstanceId] {
         match self {
             Self::Profile(op) => &op.targets,
@@ -496,6 +566,7 @@ impl Operation {
             Self::Engrave(op) => &op.targets,
             Self::VCarve(op) => &op.targets,
             Self::Inlay(op) => &op.targets,
+            Self::PhotoVCarve(_) => &[],
         }
     }
 
@@ -509,6 +580,7 @@ impl Operation {
             Self::Engrave(op) => op.safe_z_mm,
             Self::VCarve(op) => op.safe_z_mm,
             Self::Inlay(op) => op.safe_z_mm,
+            Self::PhotoVCarve(op) => op.safe_z_mm,
         }
     }
 
@@ -521,7 +593,9 @@ impl Operation {
     /// [`crate::countersink_depth_mm`]). An Inlay's is the deepest it cuts
     /// below the stock top, its female's `depth_mm` (format 22; the male
     /// is cut on its own board, #498, [`InlayOp::engagement_mm`]), `None`
-    /// until set.
+    /// until set. A Photo V-Carve's is its start depth plus its
+    /// `max_depth_mm`, where its darkest pixels are carved (format 27),
+    /// `None` until that is set.
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
             Self::Profile(op) => op.depth_mm,
@@ -532,6 +606,7 @@ impl Operation {
             Self::Engrave(op) => op.depth_mm,
             Self::VCarve(op) => op.flat_depth_mm.map(|f| op.start_depth_mm + f),
             Self::Inlay(op) => op.engagement_mm(Board::Female),
+            Self::PhotoVCarve(op) => op.max_depth_mm.map(|d| op.start_depth_mm + d),
         }
     }
 
@@ -545,11 +620,12 @@ impl Operation {
             Self::Engrave(op) => op.through_cut_allowance_mm,
             Self::VCarve(op) => op.through_cut_allowance_mm,
             Self::Inlay(op) => op.through_cut_allowance_mm,
+            Self::PhotoVCarve(op) => op.through_cut_allowance_mm,
         }
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,
-    /// `drill`, `bore`, `engrave`, `v_carve` or `inlay`.
+    /// `drill`, `bore`, `engrave`, `v_carve`, `inlay` or `photo_v_carve`.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
@@ -560,8 +636,78 @@ impl Operation {
             Self::Engrave(_) => "engrave",
             Self::VCarve(_) => "v_carve",
             Self::Inlay(_) => "inlay",
+            Self::PhotoVCarve(_) => "photo_v_carve",
         }
     }
+}
+
+/// A Photo V-Carve operation (format 27; `docs/specs/phase-3/
+/// functional.md`, capability 47, after VCarve's Photo V-Carve toolpath
+/// and RasterCarve's documented behaviour): carves one bitmap as parallel
+/// V-bit grooves, each as deep as the picture is dark under it, up to
+/// `max_depth_mm`. It has no targets: `image` names the bitmap, whose
+/// footprint is where it cuts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PhotoVCarveOp {
+    /// This operation's id.
+    pub id: OperationId,
+    /// Display name.
+    pub name: String,
+    /// Whether the operation is included in export.
+    pub enabled: bool,
+    /// The bitmap to carve, by its id (`"b1"`).
+    pub image: BitmapId,
+    /// The tool to carve with: a V-bit.
+    pub tool: ToolId,
+    /// How deep the darkest pixels are carved, millimetres below the
+    /// start plane (VCarve "Max Carving Depth"). `None` until set; never
+    /// defaulted.
+    #[serde(deserialize_with = "units_input::opt_mm")]
+    pub max_depth_mm: Option<f64>,
+    /// The start plane, millimetres below the stock top, 0 or more, as a
+    /// V-Carve's (capability 41).
+    #[serde(deserialize_with = "units_input::mm")]
+    pub start_depth_mm: f64,
+    /// The user's statement that another program has cleared the start
+    /// plane over the picture's footprint, as a V-Carve's.
+    pub start_plane_cleared_externally: bool,
+    /// The grooves' direction, degrees from the X axis, in [0, 180).
+    pub line_angle_deg: f64,
+    /// The distance between grooves as a fraction of a groove's width at
+    /// `max_depth_mm`, above 0. Below 1 the grooves overlap, a warning.
+    pub line_spacing_fraction: f64,
+    /// One set of grooves, or a second across the first.
+    pub strategy: PhotoStrategy,
+    /// Carve the light pixels deep instead of the dark ones, for a dark
+    /// wood.
+    pub invert: bool,
+    /// How far apart along a groove the picture is sampled, millimetres,
+    /// above 0. `init` writes 0.25.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub sample_mm: f64,
+    /// How high above the start plane the bit lifts to step over to the
+    /// next groove, millimetres, above 0. `init` writes 1.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub stepover_retract_mm: f64,
+    /// How far below the stock bottom the cut may go, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub through_cut_allowance_mm: f64,
+    /// Retract height above the stock top, millimetres.
+    #[serde(deserialize_with = "units_input::mm")]
+    pub safe_z_mm: f64,
+}
+
+/// How a Photo V-Carve lays its grooves (capability 47; VCarve "Raster"
+/// and "Hatch"). Saved as the plain string `"raster"` or `"hatch"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhotoStrategy {
+    /// One set of parallel grooves at `line_angle_deg`. `init` writes
+    /// this.
+    Raster,
+    /// A second set across the first.
+    Hatch,
 }
 
 /// The order an operation visits its shapes and passes (functional spec,

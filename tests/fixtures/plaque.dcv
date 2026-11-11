@@ -1,5 +1,5 @@
 {
-  "version": 26,
+  "version": 27,
   "name": "plaque",
   "display_units": "mm",
   "flatten_tolerance_mm": 0.01,
@@ -338,6 +338,7 @@
       "z_bottom_mm": null
     }
   ],
+  "bitmaps": [],
   "post_processor": {
     "id": "grblhal",
     "definition_version": 4,

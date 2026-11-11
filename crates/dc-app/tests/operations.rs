@@ -192,7 +192,7 @@ fn add_targets_the_selection_with_cli_defaults() {
     assert_eq!(
         tool_of(Kind::PhotoVCarve),
         None,
-        "no Photo V-Carve before 3.4"
+        "no Photo V-Carve before 3.5"
     );
     // The plaque has no V-bit: a V-Carve takes none, and validation says so.
     let carve = operations::new_operation(&plaque, &strings, Kind::VCarve, &ids(&["i4"])).unwrap();

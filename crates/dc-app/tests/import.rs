@@ -326,10 +326,10 @@ fn one_import_is_one_undo_step() {
 /// adds the bitmap `image add --width 100` adds, at the origin, with the
 /// grayscale note for a colour file.
 #[test]
-#[ignore = "needs phase 3.4's Bitmap (format 26); see #544"]
+#[ignore = "needs phase 3.5's Bitmap (format 27); see #544"]
 fn picture_at_width_equals_image_add() {
     // The picture half of slice 6 waits for `dc_project::Bitmap`, which
-    // phase 3.4 adds with format 26 (main is at format 25), and for
+    // phase 3.5 added with format 27 (#644), and for
     // `dc_job::project_from::picture` and `Command::ImportPicture` (#544).
-    panic!("Import picture is not built: there is no Bitmap type yet");
+    panic!("Import picture is not built: the picture importer is not built yet");
 }

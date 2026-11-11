@@ -1547,7 +1547,7 @@ const INLAY: &[Row] = &[
 ];
 
 /// Every row of `kind`, in render order (capability 68). Empty for a
-/// Photo V-Carve, which has no record before phase 3.4 (slice 15, #544).
+/// Photo V-Carve, which has no record before phase 3.5 (slice 15, #544).
 #[must_use]
 pub const fn table(kind: Kind) -> &'static [Row] {
     match kind {

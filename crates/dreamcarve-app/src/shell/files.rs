@@ -78,7 +78,7 @@ pub enum FileKind {
     Svg,
     /// A DXF drawing.
     Dxf,
-    /// A PNG or JPEG picture (capability 56), which waits for phase 3.4.
+    /// A PNG or JPEG picture (capability 56), which waits for phase 3.5.
     Picture,
 }
 

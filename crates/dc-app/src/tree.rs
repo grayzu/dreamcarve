@@ -8,7 +8,7 @@
 //! glyph (a closed outline, a circle or an open path: never a word, slice
 //! 25, #617), *linked* badge and the operations targeting it; then the
 //! placed tabs grouped by the outline they sit on; then the pictures, none
-//! until phase 3.4. An empty section is its header alone ([`Tree::lines`]).
+//! until phase 3.5. An empty section is its header alone ([`Tree::lines`]).
 //! The shell draws the rows and turns a click, a menu item or a rename
 //! into the [`Command`] these functions return; the selection is the
 //! app's one [`Selection`](crate::Selection), shared with the Viewport.
@@ -108,7 +108,7 @@ pub struct TabRow {
     pub tabs: Vec<TabId>,
 }
 
-/// A bitmap's row. Phase 3.4 brings the bitmap type; until then the
+/// A bitmap's row. Phase 3.5 brings the bitmap type; until then the
 /// Pictures section has no rows, and this type has no values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PictureRow {}

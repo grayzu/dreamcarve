@@ -199,6 +199,8 @@ fn default_project(
         heights: Heights::unset(),
         definitions,
         instances,
+        // A drawing brings no picture (format 27).
+        bitmaps: Vec::new(),
         tools,
         operations,
         tabs: Vec::new(),

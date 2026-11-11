@@ -88,7 +88,7 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
         // 26, #449, #602): the data model lands first; picking its
         // instances is a row of a later slice.
         Kind::Inlay => &["boundary"],
-        // Slice 15 (#544): no record before phase 3.4.
+        // Slice 15 (#544): no record before phase 3.5.
         Kind::PhotoVCarve => &[],
     }
 }
@@ -262,7 +262,7 @@ fn fields_table_matches_the_records() {
             }
         }
         if kind == Kind::PhotoVCarve {
-            assert!(table.is_empty(), "no Photo V-Carve record before 3.4");
+            assert!(table.is_empty(), "no Photo V-Carve record before 3.5");
             assert!(records.is_empty());
             continue;
         }
@@ -2630,7 +2630,7 @@ mod fields {
         for kind in Kind::ALL {
             let rows = table(kind);
             if kind == Kind::PhotoVCarve && rows.is_empty() {
-                // No record before phase 3.4 (`still_to_come`), so no rows
+                // No record before phase 3.5 (`still_to_come`), so no rows
                 // yet; slice 15 (#544) makes this check its Setup too.
                 continue;
             }

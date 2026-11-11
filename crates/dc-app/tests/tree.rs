@@ -33,7 +33,7 @@ fn id(s: &str) -> InstanceId {
 /// padlock, shape glyph (the plaque's squiggle is its one open path) and
 /// *linked* badge (only rows whose definition another row shares); below,
 /// the Tabs section groups placed tabs by the outline they sit on, and the
-/// Pictures section is empty until phase 3.4. The section header's eye and
+/// Pictures section is empty until phase 3.5. The section header's eye and
 /// padlock read the rows' common state, mixed when they differ.
 #[test]
 fn rows_follow_file_order_with_badges() {
@@ -97,7 +97,7 @@ fn rows_follow_file_order_with_badges() {
     assert_eq!(tabs.name, "outline");
     assert_eq!(tabs.tabs.len(), project.tabs.len());
     assert!(!tabs.tabs.is_empty());
-    assert!(tree.pictures.is_empty(), "no pictures before phase 3.4");
+    assert!(tree.pictures.is_empty(), "no pictures before phase 3.5");
 
     // Every row shown and unlocked: the header reads so, not mixed.
     harness

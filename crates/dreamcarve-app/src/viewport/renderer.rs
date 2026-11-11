@@ -51,7 +51,7 @@ pub enum Layer {
     Stock,
     // TODO(#544): `Bitmaps`, a textured quad per picture at its footprint,
     // under the shapes (functional spec, capability 56). It waits for
-    // phase 3.4's `dc_project::Bitmap` (format 26); main is at format 25,
+    // phase 3.5: `dc_project::Bitmap` is here (format 27, #644), its importer not,
     // so slice 6 (#535) builds the drawing half only.
     /// Every visible shape.
     Shapes,

@@ -61,6 +61,9 @@ generated from Cargo.lock at release time.
   Copyright (c) 2015 Carl Lerche + nix-rust Authors
 - delaunator 1.1 (ISC), https://github.com/mourner/delaunator-rs
   Copyright (c) 2018, Mapbox
+- simd-adler32 0.3 (MIT), https://github.com/mcountryman/simd-adler32 (a
+  dependency of png's inflater, fdeflate)
+  Copyright (c) [2021] [Marvin Countryman]
 
 The dreamcarve-app binary bundles three typefaces and an icon set, under
 crates/dreamcarve-app/assets/ with their license texts and a README each
