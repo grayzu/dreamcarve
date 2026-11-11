@@ -28,7 +28,7 @@ use dreamcarve_app::{PanelShown, theme};
 use dreamcarve_shell::{GuiPrefs, Paths, gui_prefs};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
-use egui_kittest::kittest::Queryable as _;
+use egui_kittest::kittest::{NodeT as _, Queryable as _};
 use egui_kittest::{Harness, wgpu::WgpuTestRenderer};
 
 /// Acceptance 92 (three platforms): the app launches with `--open
@@ -3440,5 +3440,297 @@ fn depth_legend_leaves_the_extents_caption_readable() {
         "the caption {:?} is clear of the legend {legend:?}",
         caption[0]
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// No node of the accessibility tree names the file with its extension:
+/// the project's name is the OS window title only (capability 50).
+fn assert_no_file_name(h: &Harness<'_, dreamcarve_app::Shell>, what: &str) {
+    let found: Vec<String> = h
+        .query_all_by_label_contains("plaque.dcv")
+        .map(|n| format!("{:?}", n.accesskit_node().label()))
+        .collect();
+    assert!(found.is_empty(), "{what}: {found:?}");
+}
+
+/// Slice 23 (#615), acceptance 93: the window title is the project's
+/// name without its extension, `*` while unsaved, `Untitled` before the
+/// first save; no widget shows `plaque.dcv`.
+#[test]
+fn window_title_is_the_project_name_without_extension() {
+    let dir = scratch("title-name");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert_eq!(h.state().title(), "plaque — DreamCarve");
+    assert_no_file_name(&h, "the plaque, clean");
+
+    widen_stock(&mut h);
+    assert_eq!(h.state().title(), "plaque* — DreamCarve");
+    assert_no_file_name(&h, "the plaque, edited");
+
+    command_key(&h, egui::Key::S);
+    h.run();
+    assert!(!h.state().app().is_dirty(), "Save wrote the file");
+    assert_eq!(h.state().title(), "plaque — DreamCarve");
+
+    command_key(&h, egui::Key::N);
+    h.run();
+    assert!(h.state().app().source().is_none(), "New has no file");
+    assert_eq!(h.state().title(), "Untitled — DreamCarve");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The CAM panel's tabs, left to right: label, whether active, rect.
+fn cam_tabs(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<(String, bool, egui::Rect)> {
+    let mut tabs: Vec<(String, bool, egui::Rect)> = h
+        .query_all_by_role(Role::Tab)
+        .map(|n| {
+            (
+                n.accesskit_node().label().unwrap_or_default(),
+                n.accesskit_node().is_selected() == Some(true),
+                n.rect(),
+            )
+        })
+        .collect();
+    tabs.sort_by(|a, b| a.2.min.x.total_cmp(&b.2.min.x));
+    tabs
+}
+
+/// Slice 23 (#615), capabilities 50 and 50a: the CAM panel has the title
+/// *CAM* above its tab strip, the tabs read Tools then Operations, and it
+/// opens on Tools for a project with no tools and on Operations
+/// otherwise; the tab picked stays until the next project.
+#[test]
+fn cam_panel_has_a_title_and_tools_first() {
+    let dir = scratch("cam-title");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+
+    // A new project: no tools, so Tools.
+    let h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let tabs = cam_tabs(&h);
+    let labels: Vec<&str> = tabs.iter().map(|t| t.0.as_str()).collect();
+    assert_eq!(labels, ["Tools · 0", "Operations · 0"]);
+    assert!(tabs[0].1 && !tabs[1].1, "a new project opens on Tools");
+    drop(h);
+
+    // The plaque: three tools and five operations, on Operations.
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let tabs = cam_tabs(&h);
+    let labels: Vec<&str> = tabs.iter().map(|t| t.0.as_str()).collect();
+    assert_eq!(labels, ["Tools · 3", "Operations · 5"]);
+    assert!(!tabs[0].1 && tabs[1].1, "the plaque opens on Operations");
+    let title = h.get_by_label("CAM").rect();
+    assert!(
+        title.max.y <= tabs[0].2.min.y + 0.5,
+        "the title band {title:?} is above the tab strip {:?}",
+        tabs[0].2
+    );
+    assert!(
+        title.min.x >= tabs[0].2.min.x - 0.5 && title.max.x <= tabs[1].2.max.x + 0.5,
+        "over the CAM panel"
+    );
+
+    // The tab picked stays until the next project: New opens on Tools.
+    h.get_by_label("Tools · 3").click();
+    h.run();
+    assert!(cam_tabs(&h)[0].1);
+    h.get_by_label("Operations · 5").click();
+    h.run();
+    assert!(cam_tabs(&h)[1].1, "the user's pick stays");
+    command_key(&h, egui::Key::N);
+    h.run();
+    assert!(cam_tabs(&h)[0].1, "New opens on Tools");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The Project Settings band.
+fn settings_band(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {
+    h.get_by_label("Project Settings").rect()
+}
+
+/// The Properties band, when there is one.
+fn properties_band(h: &Harness<'_, dreamcarve_app::Shell>) -> Option<egui::Rect> {
+    h.query_by_label_contains("Properties ·").map(|n| n.rect())
+}
+
+/// Whether Project Settings' body is drawn: its stock width field.
+fn settings_body_shown(h: &Harness<'_, dreamcarve_app::Shell>) -> bool {
+    h.query_by_role_and_label(Role::TextInput, "Width")
+        .is_some()
+}
+
+/// Slice 23 (#615), capability 50 and `experience.md` section 2: the
+/// left column's lower half is Project Settings, always there, over
+/// Properties, there only with a selection and scrolled into view; each
+/// title collapses its panel to its 32-px band, and the open state
+/// outlives a restart.
+#[test]
+fn left_column_is_project_settings_then_properties() {
+    let dir = scratch("left-column");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let config = dir.join("config");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&config, Some(plaque.clone()), &dialogs),
+        1280.0,
+        800.0,
+    );
+    assert!(h.query_by_label("Project Settings").is_some());
+    assert!(
+        h.query_all_by_label_contains("Properties").next().is_none(),
+        "no Properties with nothing selected"
+    );
+    assert!(settings_body_shown(&h), "Project Settings starts open");
+
+    select_only(&mut h, "i4");
+    let properties = properties_band(&h).expect("Properties with the square selected");
+    assert!(
+        h.query_by_label("Project Settings").is_some(),
+        "still there"
+    );
+    let settings = settings_band(&h);
+    assert!(
+        settings.max.y <= properties.min.y,
+        "Project Settings {settings:?} above Properties {properties:?}"
+    );
+    let x = h.get_by_role_and_label(Role::TextInput, "X").rect();
+    assert!(
+        x.max.y <= 800.0 - 24.0,
+        "Properties scrolled into view: {x:?}"
+    );
+
+    // Each title collapses its panel to its band.
+    h.get_by_label_contains("Properties ·").click();
+    h.run();
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "X").is_none(),
+        "Properties collapsed"
+    );
+    h.get_by_label("Project Settings").scroll_to_me();
+    h.run();
+    h.get_by_label("Project Settings").click();
+    h.run();
+    assert!(!settings_body_shown(&h), "Project Settings collapsed");
+    let settings = settings_band(&h);
+    let properties = properties_band(&h).expect("still selected");
+    assert_eq!(settings.height(), 32.0, "a 32-px band");
+    assert_eq!(properties.height(), 32.0, "a 32-px band");
+    assert!(
+        (properties.min.y - settings.max.y).abs() <= 1.0,
+        "collapsed, the bands stack: {settings:?} {properties:?}"
+    );
+    let sections = h.state().app().prefs().sections.clone();
+    assert_eq!(sections.get("panel.project_settings"), Some(&false));
+    assert_eq!(sections.get("panel.properties"), Some(&false));
+
+    // After a restart, both stay closed.
+    eframe::App::on_exit(h.state_mut());
+    drop(h);
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    let sections = h.state().app().prefs().sections.clone();
+    assert_eq!(sections.get("panel.project_settings"), Some(&false));
+    assert_eq!(sections.get("panel.properties"), Some(&false));
+    assert!(!settings_body_shown(&h), "closed after the restart");
+    select_only(&mut h, "i4");
+    assert!(properties_band(&h).is_some());
+    assert!(h.query_by_role_and_label(Role::TextInput, "X").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 23 (#615), capability 60: Project Settings is open on a new
+/// project (thickness unset, a project-level error) whatever `gui.toml`
+/// says, and follows it on the plaque.
+#[test]
+fn project_settings_opens_on_a_project_error() {
+    let dir = scratch("settings-error");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let config = dir.join("config");
+    let mut file = GuiPrefs::default();
+    file.sections
+        .insert("panel.project_settings".to_owned(), false);
+    gui_prefs::save(&Paths::in_dir(config.clone()), &file).unwrap();
+    let dialogs = QueuedDialogs::default();
+
+    let h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
+    assert_eq!(
+        h.state().app().project().stock.thickness_mm,
+        None,
+        "a new project has no thickness"
+    );
+    assert!(settings_body_shown(&h), "open on the error");
+    assert_eq!(
+        h.state()
+            .app()
+            .prefs()
+            .sections
+            .get("panel.project_settings"),
+        Some(&false),
+        "the preference stays the user's"
+    );
+    drop(h);
+
+    let h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    assert!(
+        !settings_body_shown(&h),
+        "the plaque follows the preference"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 23 (#615), capability 53: Units is Project Settings' first row,
+/// a `mm` / `in` segmented control; choosing `in` is one undo step and
+/// changes no stored length.
+#[test]
+fn units_is_the_first_row_of_project_settings() {
+    let dir = scratch("settings-units");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let band = settings_band(&h);
+    let mm = h.get_by_role_and_label(Role::RadioButton, "mm");
+    assert_eq!(mm.accesskit_node().is_selected(), Some(true), "in mm");
+    let mm = mm.rect();
+    let inch = h.get_by_role_and_label(Role::RadioButton, "in").rect();
+    assert!(band.max.y <= mm.min.y, "under the title");
+    assert!((mm.min.y - inch.min.y).abs() < 0.5, "one row");
+    // No field or button sits between the title and the control.
+    let first = h
+        .query_all_by_role(Role::TextInput)
+        .chain(h.query_all_by_role(Role::Button))
+        .chain(h.query_all_by_role(Role::ComboBox))
+        .map(|n| n.rect())
+        .filter(|r| r.min.x >= band.min.x - 0.5 && r.max.x <= band.max.x + 0.5)
+        .filter(|r| r.min.y >= band.max.y - 0.5)
+        .map(|r| r.min.y)
+        .fold(f32::INFINITY, f32::min);
+    assert!(mm.min.y <= first, "Units is the first row: {mm:?}, {first}");
+    let stock = h.get_by_role_and_label(Role::Button, "Stock").rect();
+    assert!(mm.max.y <= stock.min.y, "above Stock");
+
+    let before = h.state().app().project().clone();
+    let steps = undo_steps(&h);
+    h.get_by_role_and_label(Role::RadioButton, "in").click();
+    h.run();
+    let after = h.state().app().project().clone();
+    assert_eq!(after.display_units, dc_project::Units::Inch);
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("Set display units"));
+    let mut same = after;
+    same.display_units = before.display_units;
+    assert_eq!(same, before, "no stored length changes");
     std::fs::remove_dir_all(&dir).unwrap();
 }
