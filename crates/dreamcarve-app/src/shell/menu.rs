@@ -70,7 +70,7 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     item(
                         ui,
                         strings,
-                        StrKey::AppMenuStockOrigin,
+                        StrKey::AppMenuProjectSettings,
                         None,
                         Action::ShowProject,
                         out,

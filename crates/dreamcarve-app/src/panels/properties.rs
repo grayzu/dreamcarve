@@ -176,91 +176,85 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, ids: &[InstanceId], out:
     let Some(placement) = properties::placement(project, ids) else {
         return;
     };
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    field_row(ui, state, &placement, ids, Field::X, out);
-                    field_row(ui, state, &placement, ids, Field::Y, out);
-                    field_row(ui, state, &placement, ids, Field::W, out);
-                    padlock(ui, state);
-                    field_row(ui, state, &placement, ids, Field::H, out);
-                    field_row(ui, state, &placement, ids, Field::Rotation, out);
+            field_row(ui, state, &placement, ids, Field::X, out);
+            field_row(ui, state, &placement, ids, Field::Y, out);
+            field_row(ui, state, &placement, ids, Field::W, out);
+            padlock(ui, state);
+            field_row(ui, state, &placement, ids, Field::H, out);
+            field_row(ui, state, &placement, ids, Field::Rotation, out);
 
-                    ui.horizontal(|ui| {
-                        let (rect, label) =
-                            ui.allocate_exact_size(egui::vec2(LABEL_PX, 26.0), Sense::hover());
-                        let mirror = strings.get(StrKey::PlacementMirror);
-                        label.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::Role::Label, true, mirror)
-                        });
-                        ui.painter().text(
-                            egui::pos2(rect.left(), rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            mirror,
-                            TextStyle::Body.resolve(ui.style()),
-                            palette.text_secondary,
-                        );
-                        for (icon, key, edit) in [
-                            (
-                                Icon::MirrorLeftRight,
-                                StrKey::PlacementMirrorHorizontal,
-                                Edit::MirrorHorizontal,
-                            ),
-                            (
-                                Icon::MirrorTopBottom,
-                                StrKey::PlacementMirrorVertical,
-                                Edit::MirrorVertical,
-                            ),
-                        ] {
-                            let spec = ButtonSpec::new(Kind::Secondary, "")
-                                .icon(icon, theme::ICON_SMALL_PX)
-                                .tooltip(strings.get(key));
-                            if button(ui, spec).clicked() {
-                                push_edit(state, ids, edit, out);
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let (rect, label) =
+                    ui.allocate_exact_size(egui::vec2(LABEL_PX, 26.0), Sense::hover());
+                let mirror = strings.get(StrKey::PlacementMirror);
+                label.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, mirror));
+                ui.painter().text(
+                    egui::pos2(rect.left(), rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    mirror,
+                    TextStyle::Body.resolve(ui.style()),
+                    palette.text_secondary,
+                );
+                for (icon, key, edit) in [
+                    (
+                        Icon::MirrorLeftRight,
+                        StrKey::PlacementMirrorHorizontal,
+                        Edit::MirrorHorizontal,
+                    ),
+                    (
+                        Icon::MirrorTopBottom,
+                        StrKey::PlacementMirrorVertical,
+                        Edit::MirrorVertical,
+                    ),
+                ] {
+                    let spec = ButtonSpec::new(Kind::Secondary, "")
+                        .icon(icon, theme::ICON_SMALL_PX)
+                        .tooltip(strings.get(key));
+                    if button(ui, spec).clicked() {
+                        push_edit(state, ids, edit, out);
+                    }
+                }
+            });
+            ui.add_space(8.0);
 
-                    let mixed = strings.get(StrKey::PlacementMixed);
-                    if let Some(visible) = flag_row(
-                        ui,
-                        strings.get(StrKey::PlacementVisible),
-                        placement.visible,
-                        mixed,
-                    ) {
-                        out.push(Action::Run(Box::new(dc_app::Command::SetInstanceFlags {
-                            ids: ids.to_vec(),
-                            visible: Some(visible),
-                            locked: None,
-                        })));
-                    }
-                    if let Some(locked) = flag_row(
-                        ui,
-                        strings.get(StrKey::PlacementLocked),
-                        placement.locked,
-                        mixed,
-                    ) {
-                        out.push(Action::Run(Box::new(dc_app::Command::SetInstanceFlags {
-                            ids: ids.to_vec(),
-                            visible: None,
-                            locked: Some(locked),
-                        })));
-                    }
-                    ui.add_space(8.0);
-                    let targeted = if placement.targeted_by.is_empty() {
-                        strings.get(StrKey::PlacementNotTargeted).to_owned()
-                    } else {
-                        strings.fmt(
-                            StrKey::PlacementTargetedBy,
-                            &[("names", &placement.targeted_by.join(", "))],
-                        )
-                    };
-                    text(ui, &targeted, TextStyle::Small, palette.text_secondary);
-                });
+            let mixed = strings.get(StrKey::PlacementMixed);
+            if let Some(visible) = flag_row(
+                ui,
+                strings.get(StrKey::PlacementVisible),
+                placement.visible,
+                mixed,
+            ) {
+                out.push(Action::Run(Box::new(dc_app::Command::SetInstanceFlags {
+                    ids: ids.to_vec(),
+                    visible: Some(visible),
+                    locked: None,
+                })));
+            }
+            if let Some(locked) = flag_row(
+                ui,
+                strings.get(StrKey::PlacementLocked),
+                placement.locked,
+                mixed,
+            ) {
+                out.push(Action::Run(Box::new(dc_app::Command::SetInstanceFlags {
+                    ids: ids.to_vec(),
+                    visible: None,
+                    locked: Some(locked),
+                })));
+            }
+            ui.add_space(8.0);
+            let targeted = if placement.targeted_by.is_empty() {
+                strings.get(StrKey::PlacementNotTargeted).to_owned()
+            } else {
+                strings.fmt(
+                    StrKey::PlacementTargetedBy,
+                    &[("names", &placement.targeted_by.join(", "))],
+                )
+            };
+            text(ui, &targeted, TextStyle::Small, palette.text_secondary);
         });
 }
 
@@ -342,125 +336,120 @@ pub(crate) fn tabs(ui: &mut Ui, state: &FrameState<'_>, ids: &[TabId], out: &mut
     let Some(values) = dc_app::viewport::tabs::values(project, ids) else {
         return;
     };
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(12, 8))
         .show(ui, |ui| {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    tab_length_row(
-                        ui,
-                        state,
-                        ids,
-                        (StrKey::PlacementTabWidth, "width"),
-                        values.width_mm,
-                        TabEdit::Width,
-                        out,
-                    );
-                    tab_length_row(
-                        ui,
-                        state,
-                        ids,
-                        (StrKey::PlacementTabHeight, "height"),
-                        values.height_mm,
-                        TabEdit::Height,
-                        out,
-                    );
-                    let shapes = [
-                        (TabShape::Rect, strings.get(StrKey::EditorChoiceRect)),
-                        (TabShape::Smooth, strings.get(StrKey::EditorChoiceSmooth)),
-                    ];
-                    let labels: Vec<&str> = shapes.iter().map(|(_, l)| *l).collect();
-                    let current = values
-                        .shape
-                        .and_then(|s| shapes.iter().position(|(shape, _)| *shape == s))
-                        .unwrap_or(labels.len());
-                    let (_, picked) = row(ui, strings.get(StrKey::PlacementTabShape), |ui| {
-                        segmented(
-                            ui,
-                            Id::unique("tab_field_shape"),
-                            &labels,
-                            current,
-                            ui.available_width(),
-                        )
-                    });
-                    if let Some((shape, _)) = picked.and_then(|i| shapes.get(i)) {
-                        push_tab_edit(state, ids, TabEdit::Shape(*shape), out);
-                    }
-                    ui.add_space(4.0);
+            tab_length_row(
+                ui,
+                state,
+                ids,
+                (StrKey::PlacementTabWidth, "width"),
+                values.width_mm,
+                TabEdit::Width,
+                out,
+            );
+            tab_length_row(
+                ui,
+                state,
+                ids,
+                (StrKey::PlacementTabHeight, "height"),
+                values.height_mm,
+                TabEdit::Height,
+                out,
+            );
+            let shapes = [
+                (TabShape::Rect, strings.get(StrKey::EditorChoiceRect)),
+                (TabShape::Smooth, strings.get(StrKey::EditorChoiceSmooth)),
+            ];
+            let labels: Vec<&str> = shapes.iter().map(|(_, l)| *l).collect();
+            let current = values
+                .shape
+                .and_then(|s| shapes.iter().position(|(shape, _)| *shape == s))
+                .unwrap_or(labels.len());
+            let (_, picked) = row(ui, strings.get(StrKey::PlacementTabShape), |ui| {
+                segmented(
+                    ui,
+                    Id::unique("tab_field_shape"),
+                    &labels,
+                    current,
+                    ui.available_width(),
+                )
+            });
+            if let Some((shape, _)) = picked.and_then(|i| shapes.get(i)) {
+                push_tab_edit(state, ids, TabEdit::Shape(*shape), out);
+            }
+            ui.add_space(4.0);
 
-                    let units = project.display_units;
-                    let one = match ids {
-                        [one] => project.tabs.iter().find(|t| t.id == *one),
-                        _ => None,
-                    };
-                    if let Some(tab) = one
-                        && let Some(at) = dc_job::tabs::tab_point(project, tab)
-                    {
-                        let text = format!(
-                            "{}, {}",
-                            units::field_text(at.x, units),
-                            units::field_text(at.y, units)
-                        );
-                        let name = strings.get(StrKey::PlacementTabPosition);
-                        let (label_response, output) = row(ui, name, |ui| {
-                            unit_field(
-                                ui,
-                                UnitField {
-                                    enabled: false,
-                                    ..UnitField::new(
-                                        Id::unique("tab_field_position"),
-                                        name,
-                                        &text,
-                                        units::suffix(units),
-                                    )
-                                },
+            let units = project.display_units;
+            let one = match ids {
+                [one] => project.tabs.iter().find(|t| t.id == *one),
+                _ => None,
+            };
+            if let Some(tab) = one
+                && let Some(at) = dc_job::tabs::tab_point(project, tab)
+            {
+                let text = format!(
+                    "{}, {}",
+                    units::field_text(at.x, units),
+                    units::field_text(at.y, units)
+                );
+                let name = strings.get(StrKey::PlacementTabPosition);
+                let (label_response, output) = row(ui, name, |ui| {
+                    unit_field(
+                        ui,
+                        UnitField {
+                            enabled: false,
+                            ..UnitField::new(
+                                Id::unique("tab_field_position"),
+                                name,
+                                &text,
+                                units::suffix(units),
                             )
-                        });
-                        let _ = output.response.labelled_by(label_response.id);
-                        ui.add_space(4.0);
-                        let crossing: Vec<&str> = state
-                            .app
-                            .scene()
-                            .tab(&tab.id)
-                            .map(|m| {
-                                m.crossed_by
-                                    .iter()
-                                    .filter_map(|op| {
-                                        project
-                                            .operations
-                                            .iter()
-                                            .find(|o| o.id() == op)
-                                            .map(dc_project::Operation::name)
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let sentence = if crossing.is_empty() {
-                            strings.get(StrKey::PlacementTabNotCrossed).to_owned()
-                        } else {
-                            strings.fmt(
-                                StrKey::PlacementTabCrossedBy,
-                                &[("names", &crossing.join(", "))],
-                            )
-                        };
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(sentence)
-                                    .text_style(TextStyle::Small)
-                                    .color(palette.text_secondary),
-                            )
-                            .wrap(),
-                        );
-                        ui.add_space(8.0);
-                    }
-                    let spec =
-                        ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementTabDelete))
-                            .icon(Icon::Trash2, theme::ICON_SMALL_PX)
-                            .tooltip(strings.get(StrKey::PlacementTabDeleteHelp));
-                    if button(ui, spec).clicked() {
-                        out.push(Action::run(dc_app::Command::DeleteTabs(ids.to_vec())));
-                    }
+                        },
+                    )
                 });
+                let _ = output.response.labelled_by(label_response.id);
+                ui.add_space(4.0);
+                let crossing: Vec<&str> = state
+                    .app
+                    .scene()
+                    .tab(&tab.id)
+                    .map(|m| {
+                        m.crossed_by
+                            .iter()
+                            .filter_map(|op| {
+                                project
+                                    .operations
+                                    .iter()
+                                    .find(|o| o.id() == op)
+                                    .map(dc_project::Operation::name)
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let sentence = if crossing.is_empty() {
+                    strings.get(StrKey::PlacementTabNotCrossed).to_owned()
+                } else {
+                    strings.fmt(
+                        StrKey::PlacementTabCrossedBy,
+                        &[("names", &crossing.join(", "))],
+                    )
+                };
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(sentence)
+                            .text_style(TextStyle::Small)
+                            .color(palette.text_secondary),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(8.0);
+            }
+            let spec = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::PlacementTabDelete))
+                .icon(Icon::Trash2, theme::ICON_SMALL_PX)
+                .tooltip(strings.get(StrKey::PlacementTabDeleteHelp));
+            if button(ui, spec).clicked() {
+                out.push(Action::run(dc_app::Command::DeleteTabs(ids.to_vec())));
+            }
         });
 }
