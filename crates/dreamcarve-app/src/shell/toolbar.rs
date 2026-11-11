@@ -3,18 +3,18 @@
 
 //! The toolbar (functional spec, capability 50; `experience.md`, section
 //! 2, "Menu bar and toolbar"): 40 px on `surface.panel`, quiet buttons with
-//! a 20-px icon and a label in groups 16 px apart, the file name and the
-//! unsaved dot right of centre, and Export as the one primary button at
-//! the right end, which opens the export sheet (#547). The Tab tool arms
-//! the Viewport's tab adding (#546). Picture, which a later slice brings,
-//! is shown disabled with the reason.
+//! a 20-px icon and a label in groups 16 px apart, and Export as the one
+//! primary button at the right end, which opens the export sheet (#547).
+//! No file name: the project's name is the OS window title (#615). The
+//! Tab tool arms the Viewport's tab adding (#546). *Add picture*, which a
+//! later slice brings, is shown disabled with the reason.
 
 use dc_app::StrKey;
-use eframe::egui::{self, Align, Layout, Sense, TextStyle, Ui};
+use eframe::egui::{self, Align, Layout, Ui};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
-use crate::widgets::button::{ButtonSpec, Kind, button, text};
+use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
 
 /// The toolbar's height, px.
@@ -70,12 +70,12 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     out.push(Action::Redo);
                 }
                 ui.add_space(GROUP_GAP_PX);
-                if button(ui, quiet(StrKey::AppToolbarImport, Icon::FileInput)).clicked() {
+                if button(ui, quiet(StrKey::AppToolbarAddDrawing, Icon::FileInput)).clicked() {
                     out.push(Action::ImportDrawing);
                 }
                 button(
                     ui,
-                    quiet(StrKey::AppToolbarPicture, Icon::ImagePlus)
+                    quiet(StrKey::AppToolbarAddPicture, Icon::ImagePlus)
                         .enabled(false)
                         .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable)),
                 );
@@ -108,20 +108,6 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     if button(ui, export).clicked() {
                         out.push(Action::OpenExport);
                     }
-                    ui.add_space(ui.available_width() * 0.35);
-                    if state.app.is_dirty() {
-                        let (rect, response) =
-                            ui.allocate_exact_size(egui::vec2(8.0, 8.0), Sense::hover());
-                        ui.painter()
-                            .circle_filled(rect.center(), 3.0, palette.text_secondary);
-                        response.on_hover_text(strings.get(StrKey::AppToolbarUnsaved));
-                    }
-                    text(
-                        ui,
-                        &state.display_name,
-                        TextStyle::Body,
-                        palette.text_secondary,
-                    );
                 });
             });
         });

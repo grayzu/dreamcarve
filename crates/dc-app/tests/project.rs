@@ -524,3 +524,49 @@ fn thickness_unset_disables_export() {
     assert_eq!(Field::StockThickness.status(h.app.warnings()), None);
     assert_eq!(project::export_refusal(&h.app), None);
 }
+
+/// Slice 23 (#615), capability 60: Project Settings opens on an error in
+/// one of its own fields (the thickness unset), not on an operation's or
+/// a tool's, and not on a warning.
+#[test]
+fn settings_error_is_a_project_settings_field_only() {
+    let mut h = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    assert!(!project::settings_error(h.app.warnings()), "the plaque");
+    type_into(&mut h, Field::StockThickness, "");
+    assert!(project::settings_error(h.app.warnings()), "thickness unset");
+
+    let at = |field: &str, tier: Tier| dc_job::Finding {
+        field: Some(field.to_owned()),
+        code: None,
+        message: String::new(),
+        tier,
+        op: None,
+        shape: None,
+    };
+    for field in [
+        "heights.clearance_mm",
+        "post_processor",
+        "post_processor.file_extension",
+        "origin.xy",
+        "arc_fit_tolerance_mm",
+    ] {
+        assert!(
+            project::settings_error(&[at(field, Tier::Error)]),
+            "{field}"
+        );
+    }
+    for field in [
+        "tools[t1].feed_mm_min",
+        "operations[o1].depth_mm",
+        "stockade",
+    ] {
+        assert!(
+            !project::settings_error(&[at(field, Tier::Error)]),
+            "{field}"
+        );
+    }
+    assert!(!project::settings_error(&[at(
+        "stock.thickness_mm",
+        Tier::Warning
+    )]));
+}

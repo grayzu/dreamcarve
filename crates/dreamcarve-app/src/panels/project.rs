@@ -1,11 +1,13 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The Project panel (`docs/specs/phase-4/functional.md`, capabilities 60,
-//! 61 and 62; mock-up `03-stock-origin.svg`): what the Properties area
-//! shows when nothing is selected, and what Project ▸ Stock and Origin…
-//! opens. Five sections: Stock, Origin, Heights, Tolerances (folded away)
-//! and Post-processor. Every row edits the project in place and applies
+//! Project Settings (`docs/specs/phase-4/functional.md`, capabilities 53,
+//! 60, 61 and 62; mock-up `03-stock-origin.svg`): the body of the upper
+//! collapsible panel of the left column's lower half (`panels::side`),
+//! which Project ▸ Project Settings… opens. Units first, a `mm` / `in`
+//! segmented control (#615), then five sections: Stock, Origin, Heights,
+//! Tolerances (folded away) and Post-processor. Every row edits the
+//! project in place and applies
 //! when it is left, one undo step, with no OK or Cancel (`experience.md`,
 //! section 1); every field shows the file's validation message under
 //! itself. What each row writes, its text and its message come from
@@ -20,7 +22,7 @@
 use dc_app::project::{self, Choice, Field, FieldStatus, Offer, OriginPreset};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::{Finding, Tier};
-use dc_project::{OriginZ, Project, SpindleControl, ToolChangeMode};
+use dc_project::{OriginZ, Project, SpindleControl, ToolChangeMode, Units};
 use eframe::egui::{self, Id, Ui};
 
 use crate::shell::theme;
@@ -80,7 +82,8 @@ impl Cx<'_> {
     }
 }
 
-/// Draws the panel into the Properties area.
+/// Draws the panel's body under its title band; the left column's
+/// scroll area holds it.
 pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let cx = Cx {
         strings: state.app.strings(),
@@ -88,21 +91,46 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         findings: state.app.warnings(),
         sections: &state.prefs.sections,
     };
-    egui::ScrollArea::vertical()
-        .id_salt("project_panel")
-        .auto_shrink(false)
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(MARGIN_PX, 4))
         .show(ui, |ui| {
-            egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(MARGIN_PX, 4))
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
-                    stock(ui, &cx, out);
-                    origin(ui, &cx, out);
-                    heights(ui, &cx, out);
-                    tolerances(ui, &cx, out);
-                    post(ui, state, &cx, out);
-                });
+            ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
+            units_row(ui, &cx, out);
+            stock(ui, &cx, out);
+            origin(ui, &cx, out);
+            heights(ui, &cx, out);
+            tolerances(ui, &cx, out);
+            post(ui, state, &cx, out);
         });
+}
+
+/// **Units**, the first row (capability 53): a `mm` / `in` segmented
+/// control setting the project's display units, one undo step that
+/// changes no stored length.
+fn units_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
+    const OPTIONS: [Units; 2] = [Units::Mm, Units::Inch];
+    ui.horizontal(|ui| {
+        row::label(
+            ui,
+            cx.strings.get(StrKey::ProjectUnits),
+            cx.strings.get(StrKey::ProjectUnitsHelp),
+            Some("display_units"),
+        );
+        let labels = [
+            cx.strings.get(StrKey::ProjectUnitsMm),
+            cx.strings.get(StrKey::ProjectUnitsIn),
+        ];
+        let selected = OPTIONS
+            .iter()
+            .position(|u| *u == cx.project.display_units)
+            .unwrap_or(0);
+        let width = ui.available_width();
+        if let Some(units) = segmented(ui, Id::unique("project.units"), &labels, selected, width)
+            .and_then(|n| OPTIONS.get(n))
+        {
+            out.push(Action::run(Command::SetDisplayUnits(*units)));
+        }
+    });
 }
 
 /// A section with its header's located count; the action that flips it

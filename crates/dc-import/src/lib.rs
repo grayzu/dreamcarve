@@ -242,6 +242,13 @@ pub enum ImportWarning {
         /// or empty; empty for text and images.
         group: String,
     },
+    /// The stroker could not build the outline of a path's stroke (3.4,
+    /// `prep_stroke_failed`), so the path's stroke was left out of the
+    /// prepared drawing.
+    PrepStrokeFailed {
+        /// Name of the path.
+        path: String,
+    },
     /// Pieces or holes whose widest point is under the default minimum
     /// detail (3.4, `feature_below_size`).
     FeatureBelowSize {
@@ -307,6 +314,7 @@ impl ImportWarning {
             Self::SvgHoleAsSeparatePath { .. } => "svg_hole_as_separate_path",
             Self::SvgStrokeOnlyPath { .. } => "svg_stroke_only_path",
             Self::SvgHiddenObject { .. } => "svg_hidden_object",
+            Self::PrepStrokeFailed { .. } => "prep_stroke_failed",
             Self::FeatureBelowSize { .. } => "feature_below_size",
         }
     }
@@ -436,6 +444,10 @@ impl std::fmt::Display for ImportWarning {
                     ),
                 }
             }
+            Self::PrepStrokeFailed { path } => write!(
+                f,
+                "the stroke of {path} could not be turned into an area and was left out"
+            ),
             Self::FeatureBelowSize {
                 count,
                 smallest_mm,
@@ -514,6 +526,10 @@ mod warning {
                     code_page: "ANSI_932".into(),
                 },
                 "dxf_code_page_unsupported",
+            ),
+            (
+                ImportWarning::PrepStrokeFailed { path: "p".into() },
+                "prep_stroke_failed",
             ),
         ];
         for (warning, code) in cases {

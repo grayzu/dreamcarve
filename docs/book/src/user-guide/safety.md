@@ -213,7 +213,11 @@ never cuts on both boards.
       mill, in its own run.
     - an [Inlay](inlay.md): the V-bit's cone, by rule 14, against its
       board's own material: the design on the female, the surround on the
-      male. A clearing pass is held as a V-Carve's is, as a Pocket of the
+      male. The surround's outer edge is worked out again from the
+      project, not read from the program: with a drawn
+      [`boundary`](inlay.md#the-boundary), from the boundary instances as
+      they are now, so a program exported before a boundary shape was moved
+      fails rule 14 and rule 12 and has to be exported again. A clearing pass is held as a V-Carve's is, as a Pocket of the
       board's floor. A male's [cut-out](inlay.md#cutting-the-plug-free) is
       held to the band's flat floor ring round the mirrored design (the
       surround's floor, out to the band's edge when a clearing pass cuts
