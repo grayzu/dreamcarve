@@ -189,10 +189,10 @@ struct StartSetting {
 /// The start-plane setting of `op`, for the operations cut from a start
 /// plane; `None` for the others. This is the list of start-plane
 /// operations: a V-Carve and a countersink Drill (format 21); a Photo
-/// V-Carve (3.4) joins it here, and [`start_plane`] and [`check`] then
-/// cover it. An Inlay is exempt (its start plane is the stock top or the
-/// plug's own design). The matches are exhaustive so a new operation or
-/// Drill cycle must say.
+/// V-Carve (sub-phase 3.5, format 27) joins it here with its generator
+/// (#646), and [`start_plane`] and [`check`] then cover it. An Inlay is
+/// exempt (its start plane is the stock top or the plug's own design).
+/// The matches are exhaustive so a new operation or Drill cycle must say.
 fn start_setting(op: &Operation) -> Option<StartSetting> {
     match op {
         Operation::VCarve(carve) => Some(StartSetting {
@@ -216,6 +216,13 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
         | Operation::Bore(_)
         | Operation::Engrave(_)
         | Operation::Inlay(_) => None,
+        // Format 27 (#644): the record is here before the generator.
+        // Nothing is cut for a Photo V-Carve yet (`generate_photo`
+        // refuses it), so there is no start plane to check; validation
+        // already reports `start_depth_uncleared` for it.
+        // TODO(#646): its `start_depth_mm` and
+        // `start_plane_cleared_externally`, as a V-Carve's.
+        Operation::PhotoVCarve(_) => None,
     }
 }
 
@@ -384,11 +391,13 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
     let cuts_open = match op {
         Operation::Engrave(_) => true,
         Operation::Profile(profile) => profile.side.cuts_open_paths(),
+        // A Photo V-Carve has no targets (format 27): it carves a bitmap.
         Operation::Pocket(_)
         | Operation::Drill(_)
         | Operation::Bore(_)
         | Operation::VCarve(_)
-        | Operation::Inlay(_) => false,
+        | Operation::Inlay(_)
+        | Operation::PhotoVCarve(_) => false,
     };
     // #207: Left and Right skip closed outlines.
     let cuts_closed = match op {
@@ -399,6 +408,7 @@ fn targets_of(project: &Project, op: &Operation) -> Vec<(ShapeRef, Target)> {
         | Operation::Engrave(_)
         | Operation::VCarve(_)
         | Operation::Inlay(_) => true,
+        Operation::PhotoVCarve(_) => false,
     };
     let mut shapes = Vec::new();
     for instance_id in op.targets() {
@@ -602,6 +612,9 @@ mod tests {
                     Operation::Bore(bore) => crate::bore::generate_bore(project, bore),
                     Operation::Drill(_) => panic!("these tests use no Drill operations"),
                     Operation::VCarve(_) => panic!("these tests use no V-Carve operations"),
+                    Operation::PhotoVCarve(_) => {
+                        panic!("these tests use no Photo V-Carve operations")
+                    }
                     // #436: an Inlay's V-bit run on the stock (#498: the
                     // female's, first), the one the order check is given.
                     Operation::Inlay(inlay) => {

@@ -7278,7 +7278,11 @@ fn v25_project_exports_the_same_programs() {
         assert!(current.contains("\"boundary\": [],"), "{stem}: {current}");
         let v25: Vec<&str> = current
             .lines()
-            .filter(|l| !l.trim_start().starts_with("\"boundary\":"))
+            .filter(|l| {
+                // Nor the bitmap list of format 27.
+                let l = l.trim_start();
+                !l.starts_with("\"boundary\":") && !l.starts_with("\"bitmaps\":")
+            })
             .collect();
         let v25 = (v25.join("\n") + "\n").replacen(
             &format!("\"version\": {},", dc_project::CURRENT_VERSION),
@@ -7572,7 +7576,8 @@ fn preview_draws_the_boundary_on_the_male_board() {
 #[test]
 fn dc_boundary_fixture_is_the_frame_as_boundary() {
     let text = std::fs::read_to_string(tests_fixture("dc-boundary.dcv")).expect("fixture readable");
-    assert!(text.contains("\"version\": 26,"), "format 26: {text}");
+    // The boundary is format 26's; the file is kept at the current format.
+    assert!(text.contains("\"version\": 27,"), "format 27: {text}");
     // Exactly the three lines of `dc.dcv` that the boundary replaces.
     let plain = std::fs::read_to_string(tests_fixture("dc.dcv")).expect("fixture readable");
     let mut derived = plain;

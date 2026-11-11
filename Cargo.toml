@@ -83,6 +83,18 @@ toml = { version = "1.1", default-features = false, features = ["parse", "serde"
 # codecs. Fusion writes deflate, so only the deflate decoder is on, through
 # flate2's pure-Rust zlib-rs backend.
 zip = { version = "9.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+# Decodes the picture a bitmap stores (phase 3 design, "Bitmap import and
+# storage"; format 27, #644): `dc-project` reads the PNG's header and its
+# 8-bit gray samples, under an explicit `png::Limits`; `dc-import` will
+# decode and encode with it (#645). The crate has no default features. It
+# inflates with `fdeflate` and `flate2`, the latter already in the tree for
+# `zip`, on the `zlib-rs` backend `zip` turns on.
+png = { version = "0.18", default-features = false }
+# The text form of that PNG in a `.dcv` (standard alphabet, padded).
+# Default features are off: `simd-unsafe` adds hand-written AVX2 and NEON
+# decoders in `unsafe` code, and a file is decoded once, on load; `std`
+# adds only the `Error` impl. `alloc` is `decode` into a `Vec`.
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 # Property tests (dev-dependency only, issue #72; `docs/rust-guidelines.md`,
 # "Tests"). Default features are off: `fork` and `timeout` run each case in
 # a child process (rusty-fork, tempfile), and `bit-set` serves collection

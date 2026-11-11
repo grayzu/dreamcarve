@@ -584,7 +584,7 @@ folder are app preferences, kept outside the project.
     | Inlay (format 25, #498) | Depth, one set for both boards (68a): `depth_mm`, `glue_gap_mm`, `plug_depth_mm`, `margin_mm`, `outline_rounding_mm` (off for `null`), `through_cut_allowance_mm`. Male board: `male_board.width_mm` and `height_mm` (the stock's for `null`), `male_board.thickness_mm`. Clearing: `clearing` (70), `step_over_fraction`. Cut-out: off, or `tool`, `tabs` request, `through_cut_allowance_mm`. Order: `machining_order`. Heights: `safe_z_mm`. |
     | Photo V-Carve | Targets: `image`. Depth: `max_depth_mm`, `start_depth_mm`, `invert`. Strategy: `line_angle_deg`, `line_spacing_fraction` (as a percentage), `strategy` (Raster, Hatch), `sample_mm`. Heights: `safe_z_mm`, `stepover_retract_mm`. |
 
-    Photo V-Carve lands with phase 3.4 (format v25); its editor is a slice
+    Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
     of this phase that waits for it, and nothing else in the phase does
     (open question 10, decided 2026-11-02).
 68a. **Inlay: both boards from one project** (`06-operation-vcarve.svg`;
@@ -990,7 +990,7 @@ byte-identical output with the program's header date pinned (`--date`).
     gives the quick start's committed programs.
 77. **Photo V-Carve** (56, 68). The gradient fixture with a Photo V-Carve
     at `init`'s defaults draws the grooves `--preview` draws; `check`'s
-    groove count appears in the operation's status. Runs once phase 3.4
+    groove count appears in the operation's status. Runs once phase 3.5
     has landed.
 78. **Tabs** (69). *Place tabs* on the coaster's Profile with a request of
     four writes the four placed tabs `tabs place --count 4` writes and
@@ -1286,7 +1286,7 @@ day.
 | 7 | Editing library tools in place in phase 4, rather than phase 5 as the plan says? | Keep phase 5. *Save to library* from a project tool covers the common case now. **Reversed 2026-11-10** by the screenshot review: library editing is in phase 4 (64a). |
 | 8 | Pan gesture (72): middle-drag, Space-drag, or both? | Both, plus two-finger scroll on a trackpad. |
 | 9 | Appearance: must both light and dark ship in phase 4, or is following the OS with one palette enough? | Both, since following the OS implies both; the palette is the design spec's and the toolpath colours must read on both. |
-| 10 | Phase 3.4 (Photo V-Carve, format v25) may land after phase 4 opens. Gate its editor as one slice on v25, or hold phase 4 for 3.5? | Gate the slice. Everything else in this phase is independent of it. |
+| 10 | Phase 3.5 (Photo V-Carve, format v27; it was 3.4 and v25 when this was asked) may land after phase 4 opens. Gate its editor as one slice on v27, or hold phase 4 for it? | Gate the slice. Everything else in this phase is independent of it. |
 | 11 | Where app preferences live (layout, recent files, visibility, export folders): beside `config.toml` in the user config directory? | Yes, as `gui.toml` beside it, documented in the Configuration chapter. Never in the `.dcv`. |
 | 12 | Window and panel minimums (50): is 1280 × 768 the floor, or must the app work on a 1366 × 768 laptop with panels collapsed? | 1280 × 768 with both side panels open at their minimum; below that the panels collapse to strips rather than the window refusing. |
 | 13 | Inlay sibling check: should the Warnings panel compare a `<stem>-male.dcv` beside the open female? | Withdrawn 2026-11-02: the maintainer asked why there was a side at all, and the answer was the file. #498 puts both boards in one project (68a), so there is nothing to compare. |

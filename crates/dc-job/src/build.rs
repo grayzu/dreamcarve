@@ -28,8 +28,8 @@
 
 use dc_cam::{
     CamError, RunLabel, ShapeRef, ToolRun, Toolpath, Warning, generate_bore, generate_drill,
-    generate_engrave, generate_inlay_board, generate_pocket, generate_profile, generate_vcarve,
-    order, placed_tabs,
+    generate_engrave, generate_inlay_board, generate_photo, generate_pocket, generate_profile,
+    generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::{EmitOp, Estimate, ExportWarning, Extents, Program, ProgramSplit, emit_programs};
 use dc_project::{Board, Operation, OperationId, Project, Severity, ToolChangeMode, validate};
@@ -359,6 +359,9 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
                 .collect::<Result<Vec<_>, _>>()
                 .map(|runs| (runs, w))
         }),
+        // Format 27 (#644): refused with `CamError::PhotoNotBuilt` until
+        // the generator lands (#646), so the error below names it.
+        Operation::PhotoVCarve(op) => generate_photo(project, op).map(|(t, w)| (plain(t), w)),
         // Generated above, board by board.
         Operation::Inlay(_) => return out,
     };

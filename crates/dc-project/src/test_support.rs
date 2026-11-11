@@ -367,7 +367,8 @@ pub fn sample_photo_v_carve() -> PhotoVCarveOp {
 /// The sample project with the 90° V-bit `t2`, [`sample_bitmap`] and
 /// [`sample_photo_v_carve`] after its Profile: a valid project with no
 /// validation problems (format 27). Matches the committed fixture
-/// `tests/fixtures/dcv/v27/photo.dcv`.
+/// `tests/fixtures/dcv/v27/photo.dcv`, but for the bytes of the PNG, which
+/// a release of the encoder may change; the pixels are the same.
 pub fn photo_project() -> Project {
     let mut project = sample_project();
     project.tools.push(tool_v_bit_90());

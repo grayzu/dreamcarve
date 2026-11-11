@@ -131,6 +131,10 @@
 //!   after `outline_rounding_mm` in every Inlay. Empty, the male's band
 //!   is `margin_mm` and `outline_rounding_mm` as it was, so the file
 //!   exports what it did, byte for byte.
+//! - **27**: bitmaps and the Photo V-Carve (sub-phase 3.5, #644):
+//!   `"bitmaps": []` after `instances`. A version 26 file holds no
+//!   picture and no `photo_v_carve` operation, so it exports what it did,
+//!   byte for byte; one that holds either is refused.
 
 use crate::ids::OperationId;
 use crate::post_processor::{
@@ -142,7 +146,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 26;
+pub const CURRENT_VERSION: u32 = 27;
 
 /// Something a migration changed that the user should hear about, though
 /// the file loads (#498).
@@ -203,6 +207,7 @@ fn step(from: u32) -> Option<Step> {
         23 => Some(v23_to_v24),
         24 => Some(v24_to_v25),
         25 => Some(v25_to_v26),
+        26 => Some(v26_to_v27),
         _ => None,
     }
 }
@@ -1110,6 +1115,42 @@ fn v25_to_v26(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
     Ok(root)
 }
 
+/// Version 26 → 27 (sub-phase 3.5, #644): bitmaps and the Photo V-Carve.
+/// Inserts `"bitmaps": []` after `instances` (at the end when it is
+/// missing). Operations are unchanged. Fails if the root already has
+/// `bitmaps`, or an operation is a `photo_v_carve`: the list and the kind
+/// arrive together in 27, so that is not a version 26 file.
+fn v26_to_v27(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    if root.contains_key("bitmaps") {
+        return Err("a version 26 file has no `bitmaps`, but this one does".into());
+    }
+    let photo = root
+        .get("operations")
+        .and_then(Value::as_array)
+        .and_then(|ops| {
+            ops.iter()
+                .position(|op| op.get("kind").and_then(Value::as_str) == Some("photo_v_carve"))
+        });
+    if let Some(i) = photo {
+        return Err(format!(
+            "`operations[{i}]` is a photo_v_carve, which a version 26 file cannot hold"
+        ));
+    }
+    let at_end = !root.contains_key("instances");
+    let mut out = Map::new();
+    for (k, v) in root {
+        let after = k == "instances";
+        out.insert(k, v);
+        if after {
+            out.insert("bitmaps".into(), Value::Array(Vec::new()));
+        }
+    }
+    if at_end {
+        out.insert("bitmaps".into(), Value::Array(Vec::new()));
+    }
+    Ok(out)
+}
+
 /// `map` with key `from` renamed `to`, in its place. Fails if `to` is
 /// already there, naming it under `at` (a path prefix such as
 /// `operations[1].`).
@@ -1346,6 +1387,21 @@ mod tests {
             })
             .collect();
         *fields = old;
+    }
+
+    /// `root`, a file from before format 27 whose other fields are the
+    /// current ones already, as the current version holds it: its
+    /// `version`, and `"bitmaps": []` after `instances`.
+    fn at_current(root: &Value) -> Value {
+        let mut out = Map::new();
+        for (key, value) in root.as_object().unwrap() {
+            out.insert(key.clone(), value.clone());
+            if key == "instances" {
+                out.insert("bitmaps".into(), json!([]));
+            }
+        }
+        out.insert("version".into(), json!(CURRENT_VERSION));
+        Value::Object(out)
     }
 
     fn sample_root_at(version: u32) -> Value {
@@ -2626,6 +2682,7 @@ mod tests {
         let mut others = migrated.clone();
         others["tools"] = before["tools"].clone();
         others["version"] = json!(15);
+        others.as_object_mut().unwrap().shift_remove("bitmaps");
         assert_eq!(others, before);
         assert_eq!(
             migrate(sample_root_at(15), 15).unwrap(),
@@ -2777,8 +2834,7 @@ mod tests {
         let mut root = sample_root_at(17);
         let drill = serde_json::to_value(Operation::Drill(sample_drill())).unwrap();
         root["operations"].as_array_mut().unwrap().push(drill);
-        let mut expected = root.clone();
-        expected["version"] = json!(CURRENT_VERSION);
+        let expected = at_current(&root);
         assert_eq!(migrate(root, 17).unwrap(), expected);
         assert_eq!(
             migrate(sample_root_at(17), 17).unwrap(),
@@ -2825,7 +2881,7 @@ mod tests {
         let mut expected: Value =
             serde_json::from_str(&text.replace("\"allowance_mm\"", "\"stock_to_leave_mm\""))
                 .unwrap();
-        expected["version"] = json!(CURRENT_VERSION);
+        expected = at_current(&expected);
         assert_eq!(
             serde_json::to_string_pretty(&migrated).unwrap(),
             serde_json::to_string_pretty(&expected).unwrap()
@@ -2916,8 +2972,7 @@ mod tests {
             let op = serde_json::to_value(op).unwrap();
             root["operations"].as_array_mut().unwrap().push(op);
         }
-        let mut expected = root.clone();
-        expected["version"] = json!(CURRENT_VERSION);
+        let expected = at_current(&root);
         let migrated = migrate(root, 19).unwrap();
         assert_eq!(migrated, expected);
         assert_eq!(
@@ -2980,8 +3035,7 @@ mod tests {
             let op = serde_json::to_value(op).unwrap();
             root["operations"].as_array_mut().unwrap().push(op);
         }
-        let mut expected = root.clone();
-        expected["version"] = json!(CURRENT_VERSION);
+        let expected = at_current(&root);
         let migrated = migrate(root, 20).unwrap();
         assert_eq!(migrated, expected);
         assert_eq!(
@@ -3073,8 +3127,7 @@ mod tests {
             let op = serde_json::to_value(op).unwrap();
             root["operations"].as_array_mut().unwrap().push(op);
         }
-        let mut expected = root.clone();
-        expected["version"] = json!(CURRENT_VERSION);
+        let expected = at_current(&root);
         let migrated = migrate(root, 21).unwrap();
         assert_eq!(migrated, expected);
         assert_eq!(
@@ -3620,6 +3673,7 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .shift_remove("boundary");
+        v25.as_object_mut().unwrap().shift_remove("bitmaps");
         v25["version"] = json!(25);
         let text25 = serde_json::to_string_pretty(&v25).unwrap();
 
@@ -3776,7 +3830,12 @@ mod tests {
         let loaded = load(V27_PHOTO_FIXTURE).unwrap();
         assert_eq!(loaded.project.version, CURRENT_VERSION);
         assert_eq!(loaded.problems, vec![]);
-        assert_eq!(loaded.project, photo_project());
+        // The same project but for the PNG's bytes: an encoder release
+        // may write the same pixels differently, so no test compares
+        // them (design spec, "Data model"); the pixels are compared below.
+        let mut expected = photo_project();
+        expected.bitmaps[0].png_base64 = loaded.project.bitmaps[0].png_base64.clone();
+        assert_eq!(loaded.project, expected);
         assert_eq!(crate::save(&loaded.project).unwrap(), text);
         let Some(Operation::PhotoVCarve(photo)) = loaded.project.operations.last() else {
             panic!("a Photo V-Carve");

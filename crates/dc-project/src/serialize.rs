@@ -8,7 +8,8 @@
 //! settings first and the geometry last, each vertex on one line
 //! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes, reads `version`, migrates to
 //! [`crate::CURRENT_VERSION`], deserializes strictly (unknown fields and missing
-//! fields both fail), and then validates. A schema error names the path to
+//! fields both fail), checks that each bitmap's picture is base64 holding a
+//! PNG header (format 27; no image data is decoded), and then validates. A schema error names the path to
 //! the bad value and, when the file has a value there, its line and column
 //! (#65).
 //!
@@ -17,10 +18,14 @@
 //! a caller such as the CLI `check` command can report all of them; callers
 //! that machine the project must refuse it when [`Loaded::has_errors`].
 
+use crate::bitmap::BitmapError;
+use crate::ids::BitmapId;
 use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::{MigrationNote, migrate_with_notes};
-use crate::model::{BoreOp, DrillOp, EngraveOp, PocketOp, ProfileOp, Project, VCarveOp};
+use crate::model::{
+    BoreOp, DrillOp, EngraveOp, PhotoVCarveOp, PocketOp, ProfileOp, Project, VCarveOp,
+};
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
 use serde::Serialize;
@@ -94,6 +99,17 @@ pub enum LoadError {
     NonFinite {
         /// Path to the field.
         field: String,
+    },
+    /// A bitmap's stored picture cannot be read (format 27): its
+    /// `png_base64` is not base64 or not a PNG, which [`load`] refuses,
+    /// or, from [`crate::Bitmap::pixels`], its PNG is not 8-bit grayscale
+    /// of the bitmap's size within [`crate::MAX_BITMAP_SIDE_PX`].
+    #[error("bitmap `{id}` cannot be read: {reason}")]
+    Bitmap {
+        /// The bitmap.
+        id: BitmapId,
+        /// What is wrong with its picture.
+        reason: BitmapError,
     },
 }
 
@@ -172,6 +188,14 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         migrate_with_notes(root, version).map_err(|err| locate_migration(err, bytes))?;
     let project = deserialize_project(&root, bytes)?;
     check_post_processor(&project, bytes)?;
+    // Format 27 (#644): each picture's text is base64 and starts with a
+    // PNG header, or the file does not load. The header's contents, and
+    // the image data behind it, are not `load`'s: validation reads the
+    // header and `Bitmap::pixels` the data, so opening a file costs
+    // nothing per pixel (phase 3 security review M4).
+    for bitmap in &project.bitmaps {
+        bitmap.check_stored()?;
+    }
     let problems = validate(&project);
     // serde_json rejects NaN and out-of-range numbers while parsing, so this
     // is a backstop for the "reject non-finite at the boundary" rule.
@@ -310,6 +334,7 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
         "bore" => serde_path_to_error::deserialize::<_, BoreOp>(&fields).err(),
         "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
         "v_carve" => serde_path_to_error::deserialize::<_, VCarveOp>(&fields).err(),
+        "photo_v_carve" => serde_path_to_error::deserialize::<_, PhotoVCarveOp>(&fields).err(),
         _ => None,
     }
 }
@@ -1835,8 +1860,12 @@ mod tests {
         use crate::test_support::{gray_png_base64, photo_project};
         let mut p = photo_project();
         // 64 × 32 pixels of noise: a few kilobytes of base64.
-        let bytes: Vec<u8> = (0..64 * 32_u32)
-            .map(|i| (i.wrapping_mul(2_654_435_761) >> 24) as u8)
+        let mut state = 1_u32;
+        let bytes: Vec<u8> = (0..64 * 32)
+            .map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (state >> 24) as u8
+            })
             .collect();
         p.bitmaps[0].width_px = 64;
         p.bitmaps[0].height_px = 32;

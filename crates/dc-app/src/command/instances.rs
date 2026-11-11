@@ -227,7 +227,9 @@ pub(super) fn delete(project: &Project, ids: &[InstanceId]) -> Result<Project, C
     next.instances.retain(|i| !ids.contains(&i.id));
     next.tabs.retain(|t| !ids.contains(&t.instance));
     for operation in &mut next.operations {
-        super::operations::targets_mut(operation).retain(|t| !ids.contains(t));
+        if let Some(targets) = super::operations::targets_mut(operation) {
+            targets.retain(|t| !ids.contains(t));
+        }
     }
     let used: Vec<_> = next
         .instances

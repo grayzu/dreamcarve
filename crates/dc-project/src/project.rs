@@ -8,11 +8,11 @@
 //! "Crate boundaries"); `dc-cam` calls them.
 
 use crate::ids::InstanceId;
-use crate::model::{Operation, Project, ToolKind, VCarveOp};
+use crate::model::{Bitmap, Operation, Project, ToolKind, VCarveOp};
 use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
 use dc_geometry::{
-    Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Region, area_mm2, as_circle, difference,
-    floor_regions, nest, point_segment_distance_mm,
+    Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Region, area_mm2, as_circle,
+    difference, floor_regions, nest, point_segment_distance_mm,
 };
 
 /// The plane an earlier operation cleared under the footprint of an
@@ -202,22 +202,13 @@ impl Footprint {
     fn of(project: &Project, op: &Operation, tolerance_mm: f64) -> Option<Self> {
         match op {
             Operation::VCarve(carve) => {
-                let outlines = closed_outlines(project, &carve.targets)?;
-                if outlines.is_empty() {
-                    return None;
-                }
-                let (regions, _) = nest(outlines.clone()).ok()?;
-                let slack_mm2 = tolerance_mm
-                    * outlines
-                        .iter()
-                        .map(|c| c.polyline().length_mm())
-                        .sum::<f64>();
-                Some(Self::Outlines {
-                    outlines,
-                    regions,
-                    tolerance_mm,
-                    slack_mm2,
-                })
+                Self::outlines(closed_outlines(project, &carve.targets)?, tolerance_mm)
+            }
+            // Format 27: a Photo V-Carve cuts inside its picture's
+            // footprint rectangle (design spec, "Start depth", step 1).
+            Operation::PhotoVCarve(photo) => {
+                let bitmap = project.bitmaps.iter().find(|b| b.id == photo.image)?;
+                Self::outlines(vec![bitmap_outline(bitmap)?], tolerance_mm)
             }
             Operation::Drill(drill) if drill.cycle.is_countersink() => {
                 let tool = project.tools.iter().find(|t| t.id == drill.tool)?;
@@ -246,6 +237,26 @@ impl Footprint {
             | Operation::Engrave(_)
             | Operation::Inlay(_) => None,
         }
+    }
+
+    /// The footprint of closed `outlines`, nested even-odd; `None` when
+    /// there are none or they do not nest.
+    fn outlines(outlines: Vec<Contour>, tolerance_mm: f64) -> Option<Self> {
+        if outlines.is_empty() {
+            return None;
+        }
+        let (regions, _) = nest(outlines.clone()).ok()?;
+        let slack_mm2 = tolerance_mm
+            * outlines
+                .iter()
+                .map(|c| c.polyline().length_mm())
+                .sum::<f64>();
+        Some(Self::Outlines {
+            outlines,
+            regions,
+            tolerance_mm,
+            slack_mm2,
+        })
     }
 
     /// True when `regions` hold the whole footprint, inside a region and
@@ -284,6 +295,19 @@ impl Footprint {
             }),
         }
     }
+}
+
+/// The footprint rectangle of `bitmap` as a closed outline, in project
+/// space (Y-up): from (`x_mm`, `y_mm`), `width_mm` wide and `height_mm`
+/// tall. `None` when it is no rectangle: a value is not finite, or a side
+/// is not above 0, which validation reports.
+fn bitmap_outline(bitmap: &Bitmap) -> Option<Contour> {
+    let values = [bitmap.x_mm, bitmap.y_mm, bitmap.width_mm, bitmap.height_mm];
+    if !(values.iter().all(|v| v.is_finite()) && bitmap.width_mm > 0.0 && bitmap.height_mm > 0.0) {
+        return None;
+    }
+    let corner = Point::new(bitmap.x_mm, bitmap.y_mm);
+    Contour::new(Polyline::rect(corner, bitmap.width_mm, bitmap.height_mm)).ok()
 }
 
 /// The closed outlines of `targets`, placed in project space, in target

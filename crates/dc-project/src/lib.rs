@@ -25,9 +25,10 @@ mod validate;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+pub use bitmap::{BitmapColour, BitmapError, BitmapHeader, Grayscale, MAX_BITMAP_SIDE_PX};
 pub use countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
 pub use history::{History, MAX_UNDO_STEPS};
-pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
+pub use ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
     BandEdge, BandSource, BoundaryInstance, BoundaryProblem, DrawnBoundary, EdgePass,
     INLAY_MERGE_MM, MaleBand, band_edge, band_edge_of, boundary_instance, boundary_regions,
@@ -36,11 +37,12 @@ pub use inlay::{
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};
 pub use model::{
-    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
+    Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
     DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayCutOut, InlayOp,
     LastPass, Lead, MachineOrigin, MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, ParkXy,
-    PeckRetract, PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
-    TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
+    PeckRetract, PhotoStrategy, PhotoVCarveOp, PlacedTab, PocketOp, ProfileOp, Project, Side,
+    StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units, VCarveOp,
+    VCarveStrategy, WallPass,
 };
 pub use post_processor::{
     ArcFormat, Axis, BundledDefinition, CannedCycles, Coolant, CoordinateSystem, DecimalPlaces,

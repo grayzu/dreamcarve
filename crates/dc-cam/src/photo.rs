@@ -13,6 +13,23 @@
 //! in one line why nothing is cut for it: never a panic, and never an
 //! empty toolpath that would export as a program which cuts nothing.
 
+use crate::error::CamError;
+use crate::toolpath::Toolpath;
+use crate::warning::Warning;
+use dc_project::{PhotoVCarveOp, Project};
+
+/// Generates the toolpath of Photo V-Carve `op` of `project`.
+///
+/// Not built yet (#646): always [`CamError::PhotoNotBuilt`], naming the
+/// operation. No bitmap is decoded and no move is made.
+// TODO(#646): the generator; then remove `CamError::PhotoNotBuilt`.
+pub fn generate_photo(
+    _project: &Project,
+    op: &PhotoVCarveOp,
+) -> Result<(Toolpath, Vec<Warning>), CamError> {
+    Err(CamError::PhotoNotBuilt { op: op.id.clone() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
