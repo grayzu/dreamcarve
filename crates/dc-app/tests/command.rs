@@ -98,8 +98,9 @@ fn kind(command: &Command) -> &'static str {
         Command::SwitchPost { .. } => "SwitchPost",
         Command::SetPostSettings(_) => "SetPostSettings",
         Command::AddTools(_) => "AddTools",
+        Command::NewTool(_) => "NewTool",
         Command::UpdateTool(_) => "UpdateTool",
-        Command::RemoveTool(_) => "RemoveTool",
+        Command::DeleteTool(_) => "DeleteTool",
         Command::ImportDrawing { .. } => "ImportDrawing",
         Command::TransformInstances { .. } => "TransformInstances",
         Command::SetInstanceFlags { .. } => "SetInstanceFlags",
@@ -195,8 +196,9 @@ fn every_command() -> Vec<(Project, Command)> {
             }),
         ),
         (plaque.clone(), Command::AddTools(vec![t9])),
+        (plaque.clone(), dc_app::tools::new_tool(&plaque)),
         (plaque.clone(), Command::UpdateTool(renamed_t2)),
-        (plaque.clone(), Command::RemoveTool(ToolId::new("t1"))),
+        (plaque.clone(), Command::DeleteTool(ToolId::new("t1"))),
         (
             plaque.clone(),
             Command::ImportDrawing {
@@ -409,9 +411,10 @@ fn labels_name_the_thing() {
         "Delete “Screw holes”"
     );
     assert_eq!(
-        label(Command::RemoveTool(ToolId::new("t1"))),
-        "Remove tool “Set me”"
+        label(Command::DeleteTool(ToolId::new("t1"))),
+        "Delete tool “Set me”"
     );
+    assert_eq!(label(dc_app::tools::new_tool(&before)), "New tool “tool4”");
     assert_eq!(
         label(Command::CentreOnStock(vec![instance("i4")])),
         "Centre “square” on stock"
@@ -572,7 +575,7 @@ fn delete_removes_targets_tabs_and_the_unused_definition() {
 /// removed, and the refusal names the operations.
 #[test]
 fn remove_tool_in_use_is_refused_naming_operations() {
-    match Command::RemoveTool(ToolId::new("t2")).apply(&plaque()) {
+    match Command::DeleteTool(ToolId::new("t2")).apply(&plaque()) {
         Err(CommandError::ToolInUse { tool, operations }) => {
             assert_eq!(tool, "1/4 end mill");
             assert_eq!(operations, vec!["Panel", "Square recess", "Cut out"]);

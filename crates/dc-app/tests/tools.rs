@@ -235,7 +235,7 @@ fn remove_in_use_is_refused_naming_operations() {
         ["Panel", "Square recess", "Cut out"]
     );
 
-    let refused = harness.run(Command::RemoveTool(t2.clone())).unwrap_err();
+    let refused = harness.run(Command::DeleteTool(t2.clone())).unwrap_err();
     assert!(
         matches!(refused, CommandError::ToolInUse { .. }),
         "{refused:?}"
@@ -258,8 +258,8 @@ fn remove_in_use_is_refused_naming_operations() {
     );
     assert!(tools::unused_hint(harness.warnings(), &t2).is_none());
 
-    let label = harness.run(Command::RemoveTool(t1)).unwrap();
-    assert_eq!(label, "Remove tool “Set me”");
+    let label = harness.run(Command::DeleteTool(t1)).unwrap();
+    assert_eq!(label, "Delete tool “Set me”");
     let ids: Vec<&str> = harness
         .app
         .project()
@@ -561,4 +561,155 @@ fn rust_files(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     }
     files.sort();
     files
+}
+
+/// The names of `project`'s tools, in order.
+fn names(project: &Project) -> Vec<&str> {
+    project.tools.iter().map(|t| t.name.as_str()).collect()
+}
+
+/// Slice 29 (#621; functional 63, acceptance 100): *New tool* on an empty
+/// project makes `tool1`, an end mill with `init`'s placeholder geometry
+/// (6.35 mm, 2 flutes), as one undo step `New tool “tool1”`; the second
+/// is `tool2`. The number is the tool's place in the list, or the next
+/// free one when that name is taken: on a project whose third tool is
+/// already `tool4`, the fourth is `tool5`.
+#[test]
+fn new_tool_is_a_placeholder_named_by_number() {
+    let mut harness = Harness::from_project(dc_app::App::new_project().unwrap());
+    assert!(harness.app.project().tools.is_empty());
+    let label = harness
+        .run(tools::new_tool(harness.app.project()))
+        .expect("a new tool is added");
+    assert_eq!(label, "New tool “tool1”");
+    let first = harness.app.project().tools[0].clone();
+    assert_eq!(first.id, ToolId::new("t1"));
+    assert_eq!(first.name, "tool1");
+    assert_eq!(first.cutter, ToolKind::EndMill);
+    dc_geometry::assert_approx_eq!(first.diameter_mm, 6.35, 1e-9);
+    assert_eq!(first.flutes, 2);
+    assert_eq!(first.number, None, "its number is its place in the list");
+    assert_eq!(first.vendor, None);
+    assert_eq!(first.product_id, None);
+
+    harness.run(tools::new_tool(harness.app.project())).unwrap();
+    assert_eq!(names(harness.app.project()), ["tool1", "tool2"]);
+    assert_eq!(harness.app.project().tools[1].id, ToolId::new("t2"));
+    harness.app.undo();
+    assert_eq!(
+        names(harness.app.project()),
+        ["tool1"],
+        "one undo step each"
+    );
+
+    // The plaque's third tool renamed `tool4`: the fourth skips to `tool5`.
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let third = Tool {
+        name: "tool4".into(),
+        ..tool(harness.app.project(), "t3").clone()
+    };
+    harness.run(Command::UpdateTool(third)).unwrap();
+    let label = harness.run(tools::new_tool(harness.app.project())).unwrap();
+    assert_eq!(label, "New tool “tool5”");
+    assert_eq!(
+        names(harness.app.project()),
+        ["Set me", "1/4 end mill", "tool4", "tool5"]
+    );
+    assert_eq!(harness.app.project().tools[3].id, ToolId::new("t4"));
+}
+
+/// Slice 29 (#621; principle 5, S20): a new tool has no feed, plunge rate,
+/// RPM, step-down or stepover, on an empty project and on one whose other
+/// tools have them, and its editor shows those fields empty.
+#[test]
+fn new_tool_never_fills_a_rate() {
+    for project in [dc_app::App::new_project().unwrap(), plaque()] {
+        let mut harness = Harness::from_project(project);
+        harness.run(tools::new_tool(harness.app.project())).unwrap();
+        let new = harness.app.project().tools.last().unwrap().clone();
+        assert_eq!(new.feed_mm_min, None);
+        assert_eq!(new.plunge_mm_min, None);
+        assert_eq!(new.rpm, None);
+        assert_eq!(new.step_down_mm, None);
+        assert_eq!(new.step_over_fraction, None);
+        assert!(tools::lacks_rate(&new), "the row's red mark");
+        for field in [
+            ToolField::Feed,
+            ToolField::Plunge,
+            ToolField::Rpm,
+            ToolField::StepDown,
+            ToolField::StepOver,
+        ] {
+            assert_eq!(tools::field_text(&new, field, Units::Mm), "", "{field:?}");
+        }
+    }
+}
+
+/// Slice 29 (#621; acceptance 100): a new tool given to an operation
+/// blocks export with the CLI's refusal for the saved file, naming each
+/// unset rate; typing the three rates in lifts it.
+#[test]
+fn export_refuses_a_new_tool_until_its_rates_are_set() {
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    harness.run(tools::new_tool(harness.app.project())).unwrap();
+    let new = harness.app.project().tools.last().unwrap().clone();
+    assert_eq!(new.id, ToolId::new("t4"));
+    let panel = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .find(|op| op.name() == "Panel")
+        .unwrap()
+        .clone();
+    let row = dc_app::editor::fields::row_for(&panel, "tool").expect("Panel has a tool row");
+    let command = dc_app::editor::set_tool(&panel, row, &new.id)
+        .unwrap()
+        .expect("the tool changes");
+    harness.run(command).unwrap();
+    harness.generate();
+
+    let options = dc_app::export::Options::new(DATE, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(&harness.app, &options) else {
+        panic!("the plan waits after generation finished");
+    };
+    let saved = dc_project::load(harness.save().unwrap().as_bytes())
+        .expect("the saved file loads")
+        .project;
+    let cli = dc_job::build_board(&saved, ProgramSplit::ProjectDefault, DATE, None);
+    assert_eq!(ready.findings, cli.findings, "the CLI's refusal");
+    assert!(ready.programs.is_empty(), "export is refused");
+    for field in ["feed_mm_min", "plunge_mm_min", "rpm"] {
+        let located = format!("tools[t4].{field}");
+        assert!(
+            cli.findings
+                .errors
+                .iter()
+                .any(|f| f.field.as_deref() == Some(located.as_str())),
+            "{located} is named: {:?}",
+            cli.findings.errors
+        );
+    }
+
+    let mut set = new;
+    for (field, text) in [
+        (ToolField::Feed, "1000"),
+        (ToolField::Plunge, "300"),
+        (ToolField::Rpm, "18000"),
+    ] {
+        set = tools::set_field(&set, field, text, Units::Mm).unwrap();
+    }
+    harness.run(Command::UpdateTool(set)).unwrap();
+    harness.generate();
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(&harness.app, &options) else {
+        panic!("the plan waits after generation finished");
+    };
+    assert!(
+        !ready.findings.errors.iter().any(|f| f
+            .field
+            .as_deref()
+            .is_some_and(|f| f.starts_with("tools[t4]"))),
+        "{:?}",
+        ready.findings.errors
+    );
 }
