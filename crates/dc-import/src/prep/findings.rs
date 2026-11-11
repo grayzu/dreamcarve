@@ -16,12 +16,12 @@
 
 use super::DEFAULT_MIN_DETAIL_PCT;
 use super::stroke::{self, Budget};
-use super::walk::{HiddenReason, PaintedPath, StrokePaint, walk};
+use super::walk::{HiddenReason, PaintedPath, walk};
 use crate::svg::{self, SvgImportOptions};
 use crate::{ImportError, ImportWarning};
 use dc_geometry::{
-    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, FillRule, Rect, Region, area_mm2, intersection,
-    merge_fills, resolve_fill, union,
+    EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Rect, Region, area_mm2, intersection, merge_fills,
+    resolve_fill, union,
     width::{hole_is_narrower_than, is_narrower_than},
 };
 use std::collections::BTreeMap;
@@ -53,10 +53,8 @@ pub fn findings(
             let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
             resolve_fill(&profiles, fill.rule, tolerance_mm)
         });
-        let stroked = match &path.stroke {
-            Some(stroke) => stroke_regions(path, stroke, tolerance_mm, &mut budget)?,
-            None => Vec::new(),
-        };
+        // The checks only report; a failed stroke is `image-prep`'s warning.
+        let (stroked, _) = stroke::regions(path, tolerance_mm, &mut budget)?;
         shapes.push(Shape {
             name: path.name.clone(),
             filled,
@@ -142,23 +140,6 @@ struct Shape {
     filled: Vec<Region>,
     /// The stroke's area, resolved nonzero.
     stroked: Vec<Region>,
-}
-
-/// The area of `path`'s stroke, in millimetres, Y-up, from the guarded
-/// stroker ([`stroke::outline`]), which charges `budget` before it builds.
-fn stroke_regions(
-    path: &PaintedPath,
-    stroke: &StrokePaint,
-    tolerance_mm: f64,
-    budget: &mut Budget,
-) -> Result<Vec<Region>, ImportError> {
-    let Some(outline) = stroke::outline(path, stroke, tolerance_mm, budget)? else {
-        return Ok(Vec::new());
-    };
-    let mm = svg::to_mm_path(&outline, path.to_mm);
-    let profiles = svg::build_profiles(&mm, tolerance_mm);
-    budget.spend(profiles.iter().map(|p| p.vertices().len()).sum())?;
-    Ok(resolve_fill(&profiles, FillRule::NonZero, tolerance_mm))
 }
 
 /// Every pair `(i, j)`, `i < j`, of `boxes` that overlap or touch, by a

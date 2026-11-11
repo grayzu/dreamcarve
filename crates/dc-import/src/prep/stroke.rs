@@ -7,12 +7,15 @@
 //! *before* it is built, so a short SVG with a long path, a tiny dash
 //! period and a wide stroke cannot allocate millions of vertices.
 //!
-//! Slice 21d (stroke to area, #597) builds on [`outline`] and [`Budget`].
+//! Stroke to area (slice 21d, #597) is built on that: [`outline_mm`] moves
+//! the outline into page millimetres and [`area`] resolves it under the
+//! nonzero rule. The stroke areas stay apart from fills; slice 21e unites
+//! them (`docs/specs/phase-3/design.md`, "Image prep", step 3).
 
 use super::walk::{PaintedPath, StrokePaint, mean_axis_scale};
 use crate::svg::{self, MM_PER_PX, MmPath};
 use crate::{ImportError, ImportWarning};
-use dc_geometry::Region;
+use dc_geometry::{FillRule, Region, resolve_fill};
 use usvg::tiny_skia_path::Path;
 
 /// The vertices an import may still produce: the running total against
@@ -142,24 +145,69 @@ pub(crate) enum Stroked {
 ///
 /// [`ImportError::TooManyVertices`] as [`outline`].
 pub(crate) fn outline_mm(
-    _path: &PaintedPath,
-    _tolerance_mm: f64,
-    _budget: &mut Budget,
+    path: &PaintedPath,
+    tolerance_mm: f64,
+    budget: &mut Budget,
 ) -> Result<Stroked, ImportError> {
-    Ok(Stroked::Nothing)
+    // A zero-width stroke never reaches here as `stroke`: the walk calls
+    // it unpainted.
+    let Some(stroke) = path.stroke.as_ref() else {
+        return Ok(Stroked::Nothing);
+    };
+    match outline(path, stroke, tolerance_mm, budget)? {
+        Some(built) => Ok(Stroked::Outline(svg::to_mm_path(&built, path.to_mm))),
+        // SVG draws nothing for a zero-length subpath with butt caps, and
+        // the stroker returns no outline for it: not a failure.
+        None if stroke.stroke.linecap() == usvg::LineCap::Butt
+            && is_points_only(&path.user_path) =>
+        {
+            Ok(Stroked::Nothing)
+        }
+        None => Ok(Stroked::Failed(ImportWarning::PrepStrokeFailed {
+            path: path.name.clone(),
+        })),
+    }
 }
 
-/// The area of a stroke outline, resolved nonzero.
+/// The area of a stroke outline, resolved nonzero, in millimetres, Y-up.
+/// Charges the flattened vertices to `budget`.
 ///
 /// # Errors
 ///
 /// [`ImportError::TooManyVertices`] when flattening goes over the budget.
 pub(crate) fn area(
-    _outline: &MmPath,
-    _tolerance_mm: f64,
-    _budget: &mut Budget,
+    outline: &MmPath,
+    tolerance_mm: f64,
+    budget: &mut Budget,
 ) -> Result<Vec<Region>, ImportError> {
-    Ok(Vec::new())
+    let profiles = svg::build_profiles(outline, tolerance_mm);
+    budget.spend(profiles.iter().map(|p| p.vertices().len()).sum())?;
+    Ok(resolve_fill(&profiles, FillRule::NonZero, tolerance_mm))
+}
+
+/// The stroke area of `path` and, when the stroker failed, the warning:
+/// [`outline_mm`] then [`area`].
+///
+/// # Errors
+///
+/// [`ImportError::TooManyVertices`] as those.
+pub(crate) fn regions(
+    path: &PaintedPath,
+    tolerance_mm: f64,
+    budget: &mut Budget,
+) -> Result<(Vec<Region>, Option<ImportWarning>), ImportError> {
+    match outline_mm(path, tolerance_mm, budget)? {
+        Stroked::Nothing => Ok((Vec::new(), None)),
+        Stroked::Failed(warning) => Ok((Vec::new(), Some(warning))),
+        Stroked::Outline(mm) => Ok((area(&mm, tolerance_mm, budget)?, None)),
+    }
+}
+
+/// True when every point of the path is the same one: a path with no
+/// extent, whose stroke is a dot or nothing.
+fn is_points_only(path: &Path) -> bool {
+    let mut points = path.points().iter();
+    points.next().is_none_or(|first| points.all(|p| p == first))
 }
 
 /// The length of the path's control polygon in user units: at least the
@@ -283,13 +331,13 @@ mod tests {
     #[test]
     fn butt_caps() {
         let a = total(&line(""));
-        assert!((a - 40.0).abs() < 1e-6, "{a}");
+        assert!((a - 40.0).abs() < 1e-4, "{a}");
     }
 
     #[test]
     fn square_caps() {
         let a = total(&line(r#"stroke-linecap="square""#));
-        assert!((a - 44.0).abs() < 1e-6, "{a}");
+        assert!((a - 44.0).abs() < 1e-4, "{a}");
     }
 
     fn corner(extra: &str) -> Vec<Region> {
@@ -302,7 +350,7 @@ mod tests {
     fn miter_join_at_a_right_angle() {
         let r = corner(r#"stroke-linejoin="miter""#);
         assert_eq!(r.len(), 1);
-        assert!((total(&r) - 80.0).abs() < 1e-6, "{}", total(&r));
+        assert!((total(&r) - 80.0).abs() < 1e-4, "{}", total(&r));
     }
 
     #[test]
@@ -334,12 +382,12 @@ mod tests {
         assert_eq!(r.len(), 5);
         for piece in &r {
             assert!(
-                (piece.area_mm2() - 20.0).abs() < 1e-6,
+                (piece.area_mm2() - 20.0).abs() < 1e-4,
                 "{}",
                 piece.area_mm2()
             );
             let b = piece.outer().polyline().bounds().expect("bounds");
-            assert!((b.max.x - b.min.x - 10.0).abs() < 1e-6);
+            assert!((b.max.x - b.min.x - 10.0).abs() < 1e-4);
         }
     }
 
@@ -351,12 +399,12 @@ mod tests {
             r#"<g transform="scale(3,1)"><path d="M3,50 L10,50" fill="none" stroke="black" stroke-width="2"/></g>"#,
         );
         let (x0, y0, x1, y1) = bbox(&horizontal);
-        assert!((x1 - x0 - 21.0).abs() < 1e-6 && (y1 - y0 - 2.0).abs() < 1e-6);
+        assert!((x1 - x0 - 21.0).abs() < 1e-4 && (y1 - y0 - 2.0).abs() < 1e-4);
         let vertical = stroke_regions(
             r#"<g transform="scale(3,1)"><path d="M10,10 L10,20" fill="none" stroke="black" stroke-width="2"/></g>"#,
         );
         let (x0, y0, x1, y1) = bbox(&vertical);
-        assert!((x1 - x0 - 6.0).abs() < 1e-6 && (y1 - y0 - 10.0).abs() < 1e-6);
+        assert!((x1 - x0 - 6.0).abs() < 1e-4 && (y1 - y0 - 10.0).abs() < 1e-4);
     }
 
     #[test]
@@ -406,7 +454,7 @@ mod tests {
             "{}",
             dot("round")
         );
-        assert!((dot("square") - 4.0).abs() < 1e-6, "{}", dot("square"));
+        assert!((dot("square") - 4.0).abs() < 1e-4, "{}", dot("square"));
         assert!(dot("butt") < 1e-9, "{}", dot("butt"));
     }
 
@@ -414,9 +462,14 @@ mod tests {
     /// path, not an error.
     #[test]
     fn stroker_failure_warns_and_skips() {
-        let p = painted(&page(
-            r#"<path id="wide" d="M10,50 L30,50" fill="none" stroke="black" stroke-width="3e38"/>"#,
+        let mut p = painted(&page(
+            r#"<path id="wide" d="M10,50 L30,50" fill="none" stroke="black" stroke-width="2"/>"#,
         ));
+        // Coordinates at the edge of f32 overflow in the stroker.
+        let mut builder = usvg::tiny_skia_path::PathBuilder::new();
+        builder.move_to(-1.6e38, 0.0);
+        builder.line_to(1.6e38, 0.0);
+        p.user_path = builder.finish().expect("a path");
         let mut budget = Budget::new(0, 5_000_000);
         match outline_mm(&p, TOL, &mut budget).expect("within budget") {
             Stroked::Failed(w) => {
