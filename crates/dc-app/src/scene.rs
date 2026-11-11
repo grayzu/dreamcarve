@@ -33,6 +33,14 @@
 //! export read them; the Viewport adds [`Scene::board_offset`] as it
 //! draws them.
 //!
+//! While an operation is selected, hovered in the list or having its
+//! targets edited, the Scene holds its target marks (slice 27, #619;
+//! capability 67; [`TargetMarks`]): which shapes draw as targets, in
+//! which colour, and that the rest fade. They are view state, set by the
+//! app when that operation or its targets change and never per frame;
+//! [`Scene::targets_revision`] tells the renderer when to redraw the
+//! shapes for them.
+//!
 //! Not yet: bitmaps (no picture type before phase 3.4; slices 6 and 15).
 
 use std::sync::Arc;
@@ -235,11 +243,45 @@ impl SceneOperation {
     }
 }
 
+/// How a shape draws while an operation's targets are marked (capability
+/// 67; `experience.md`, section 9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeStyle {
+    /// No operation is marked: the shape's own look.
+    Normal,
+    /// A target of the marked operation: its outline 2 px in the
+    /// operation's colour.
+    Target {
+        /// The operation's place in the preview's palette
+        /// ([`TargetMarks::colour`]).
+        colour: usize,
+    },
+    /// Not a target of the marked operation: drawn at 40 %.
+    Faded,
+}
+
+/// The targets the Viewport and the Design Tree mark (capability 67): the
+/// selected operation's, a hovered row's as a preview, or the draft of a
+/// target edit, which follows each click.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TargetMarks {
+    /// The operation whose targets they are.
+    pub op: OperationId,
+    /// Its place in the preview's palette: its toolpath's
+    /// ([`SceneOperation::colour`]) once it has runs, else its position
+    /// in the list, which is its row's.
+    pub colour: usize,
+    /// The marked instances, in the record's or the draft's order.
+    pub targets: Vec<InstanceId>,
+}
+
 /// What the Viewport shows of one snapshot.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Scene {
     revision: u64,
     shapes_revision: u64,
+    targets: Option<TargetMarks>,
+    targets_revision: u64,
     shapes: Vec<Shape>,
     tabs: Vec<TabMark>,
     operations: Vec<SceneOperation>,
@@ -487,6 +529,9 @@ impl Scene {
         Self {
             revision,
             shapes_revision: revision,
+            // The marks are the app's to set; a rebuild keeps them.
+            targets: previous.targets.clone(),
+            targets_revision: previous.targets_revision,
             shapes,
             tabs,
             operations: operations(project, generation, &previous.operations),
@@ -523,6 +568,42 @@ impl Scene {
     #[must_use]
     pub fn shapes_revision(&self) -> u64 {
         self.shapes_revision
+    }
+
+    /// Marks `targets`, or nothing: the revision moves only when they
+    /// differ from what is marked.
+    pub(crate) fn mark_targets(&mut self, targets: Option<TargetMarks>) {
+        if self.targets != targets {
+            self.targets = targets;
+            self.targets_revision = self.targets_revision.wrapping_add(1);
+        }
+    }
+
+    /// The marked operation's targets, while one is marked.
+    #[must_use]
+    pub fn targets(&self) -> Option<&TargetMarks> {
+        self.targets.as_ref()
+    }
+
+    /// Which marks these are: it changes when the marked operation, its
+    /// colour or its targets do, and on nothing else, so the renderer
+    /// redraws the shapes for a change of marks and not per frame.
+    #[must_use]
+    pub fn targets_revision(&self) -> u64 {
+        self.targets_revision
+    }
+
+    /// How instance `id` draws: [`ShapeStyle::Normal`] with nothing
+    /// marked, else a target or faded.
+    #[must_use]
+    pub fn style(&self, id: &InstanceId) -> ShapeStyle {
+        match &self.targets {
+            None => ShapeStyle::Normal,
+            Some(marks) if marks.targets.contains(id) => ShapeStyle::Target {
+                colour: marks.colour,
+            },
+            Some(_) => ShapeStyle::Faded,
+        }
     }
 
     /// The visible instances in file order: the last is drawn on top.

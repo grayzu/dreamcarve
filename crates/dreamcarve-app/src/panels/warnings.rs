@@ -137,6 +137,9 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
         .size_range(Rangef::new(MIN_PX, f32::INFINITY))
         .frame(egui::Frame::NONE.fill(palette.surface_panel))
         .show(ui, |ui| {
+            if state.inert() {
+                ui.disable();
+            }
             let full = ui.max_rect();
             ui.painter().hline(
                 full.x_range(),

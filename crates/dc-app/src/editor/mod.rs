@@ -968,6 +968,10 @@ const CODE_ROWS: &[(&str, &str)] = &[
     ("bore_target_not_circle", "targets"),
     ("bore_no_room", "targets"),
     ("bore_leaves_core", "targets"),
+    // An open path under a kind that needs an inside, and a closed one
+    // under a Left or Right Profile (capability 67; slice 27, #619).
+    ("open_path_skipped", "targets"),
+    ("side_needs_open_path", "targets"),
     ("relief_corner_too_tight", "corner_relief"),
     ("relief_corner_not_cut", "corner_relief"),
 ];

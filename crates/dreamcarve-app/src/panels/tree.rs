@@ -30,6 +30,7 @@ use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
+use crate::widgets::checkbox::{BOX_PX, paint_box};
 use crate::widgets::icon::Icon;
 
 /// A tree row's height, px (`experience.md`, section 3).
@@ -40,6 +41,9 @@ const SECTION_PX: f32 = 28.0;
 const MARGIN_PX: f32 = 12.0;
 /// An icon's hit square, px.
 const ICON_BOX_PX: f32 = 20.0;
+/// The bar on a target row's left edge, px (`experience.md`, section 7,
+/// "Design Tree row").
+const TARGET_BAR_PX: f32 = 3.0;
 
 /// Where the next Shift-click's range starts: the last row clicked.
 fn anchor_id() -> Id {
@@ -226,7 +230,8 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let app = state.app;
     let strings = app.strings();
     let project = app.project();
-    let tree = Tree::build(project);
+    // The marked operation's targets, as the Viewport marks them.
+    let tree = Tree::build(project).with_targets(app.scene().targets());
     egui::ScrollArea::vertical()
         .auto_shrink(false)
         .show(ui, |ui| {
@@ -333,6 +338,9 @@ fn shape_row(
     let strings = state.app.strings();
     let project = state.app.project();
     let selected = state.app.selection().instances().contains(&row.id);
+    // Target editing (capability 67): the row toggles the shape in the
+    // draft, its eye is a checkbox, and nothing else of it answers.
+    let editing = state.app.target_editing();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
     let name = row.name.clone();
@@ -349,6 +357,15 @@ fn shape_row(
         );
     } else if response.hovered() {
         painter.rect_filled(rect, 0.0, palette.surface_hover);
+    }
+    // A target of the marked operation: a 3-px bar in its colour on the
+    // left edge.
+    if let Some(colour) = row.target {
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, egui::vec2(TARGET_BAR_PX, rect.height())),
+            0.0,
+            palette.operation(colour),
+        );
     }
 
     // The eye and the padlock, left.
@@ -368,7 +385,29 @@ fn shape_row(
         palette.text_disabled
     };
     let ids = std::slice::from_ref(&row.id);
-    if icon_button(
+    if let Some(editing) = editing {
+        // The eye's place holds a checkbox: in the draft or not.
+        let on = editing.targets().contains(&row.id);
+        let key = if on {
+            StrKey::TreeTargetOn
+        } else {
+            StrKey::TreeTargetOff
+        };
+        let check_name = strings.fmt(key, &[("name", &row.name)]);
+        let check = ui.interact(
+            eye_rect,
+            ui.make_persistent_id(("tree_target", row.id.as_str())),
+            Sense::click(),
+        );
+        check.widget_info(|| {
+            egui::WidgetInfo::selected(egui::Role::CheckBox, true, on, &check_name)
+        });
+        let square = Rect::from_center_size(eye_rect.center(), egui::Vec2::splat(BOX_PX));
+        paint_box(ui, square, on, check.hovered(), true);
+        if check.clicked() {
+            out.push(Action::ToggleTarget(row.id.clone()));
+        }
+    } else if icon_button(
         ui,
         eye_rect,
         ui.make_persistent_id(("tree_eye", row.id.as_str())),
@@ -382,7 +421,7 @@ fn shape_row(
     {
         out.push(Action::Run(Box::new(command)));
     }
-    let row_hovered = ui.rect_contains_pointer(rect);
+    let row_hovered = ui.rect_contains_pointer(rect) && editing.is_none();
     let (lock_icon, lock_name, lock_colour) = if row.locked {
         (
             Icon::Lock,
@@ -406,7 +445,7 @@ fn shape_row(
         (lock_icon, lock_colour),
         lock_name,
         strings.get(StrKey::TreeLockHelp),
-        true,
+        editing.is_none(),
     )
     .clicked()
         && let Some(command) = dc_app::tree::toggle_locked(project, ids)
@@ -464,6 +503,31 @@ fn shape_row(
     .on_hover_text(hover);
 
     let mut right = count_rect.left() - 8.0;
+    // The `target` glyph before the count, in the operation's colour.
+    if let (Some(colour), Some(marks)) = (row.target, state.app.scene().targets()) {
+        let r = Rect::from_center_size(
+            egui::pos2(right - ICON_BOX_PX / 2.0, rect.center().y),
+            egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
+        );
+        glyph(ui, r, Icon::Target, palette.operation(colour));
+        let op_name = row
+            .operations
+            .iter()
+            .find(|o| o.id == marks.op)
+            .map(|o| o.name.clone())
+            .or_else(|| {
+                let op = project.operations.iter().find(|o| *o.id() == marks.op)?;
+                Some(op.name().to_owned())
+            })
+            .unwrap_or_default();
+        ui.interact(
+            r,
+            ui.make_persistent_id(("tree_target_mark", row.id.as_str())),
+            Sense::hover(),
+        )
+        .on_hover_text(strings.fmt(StrKey::TreeTargetOf, &[("name", &op_name)]));
+        right = r.left() - 4.0;
+    }
     if row.linked {
         let r = Rect::from_center_size(
             egui::pos2(right - ICON_BOX_PX / 2.0, rect.center().y),
@@ -536,6 +600,12 @@ fn shape_row(
         }
     }
 
+    if editing.is_some() {
+        if response.clicked() {
+            out.push(Action::ToggleTarget(row.id.clone()));
+        }
+        return response;
+    }
     if response.double_clicked() {
         ui.data_mut(|d| d.insert_temp(renaming_id(), (row.id.clone(), row.name.clone(), true)));
     } else if response.clicked() {
@@ -552,7 +622,7 @@ fn shape_row(
         } else {
             vec![row.id.clone()]
         };
-        context_menu(ui, strings, project, (&row.id, &chosen), out);
+        context_menu(ui, state, (&row.id, &chosen), out);
     });
     response
 }
@@ -561,12 +631,39 @@ fn shape_row(
 /// (capability 57). *Rename* renames the row itself.
 fn context_menu(
     ui: &mut Ui,
-    strings: &Strings,
-    project: &Project,
+    state: &FrameState<'_>,
     (on, ids): (&InstanceId, &[InstanceId]),
     out: &mut Vec<Action>,
 ) {
-    for item in dc_app::tree::menu(project, ids) {
+    let app = state.app;
+    let (strings, project) = (app.strings(), app.project());
+    // The selected operation: the one the editor shows (capability 57).
+    let op = app
+        .editing()
+        .and_then(|id| project.operations.iter().find(|o| o.id() == id));
+    for item in dc_app::tree::menu(project, ids, op) {
+        // *Add to "Panel"* and *Remove from "Panel"*, under their own rule.
+        if let (MenuItem::AddTo | MenuItem::RemoveFrom, Some(op)) = (item, op) {
+            if item == MenuItem::AddTo || !ids.iter().any(|id| !op.targets().contains(id)) {
+                ui.separator();
+            }
+            let key = if item == MenuItem::AddTo {
+                StrKey::TreeAddTo
+            } else {
+                StrKey::TreeRemoveFrom
+            };
+            if ui
+                .button(strings.fmt(key, &[("name", op.name())]))
+                .clicked()
+            {
+                match dc_app::tree::target_command(op, item, ids) {
+                    Ok(command) => out.extend(command.map(Action::run)),
+                    Err(e) => out.push(Action::Refused(e.to_string())),
+                }
+                ui.close();
+            }
+            continue;
+        }
         let key = match item {
             MenuItem::Rename => StrKey::TreeRenameItem,
             MenuItem::Hide => StrKey::TreeHide,
@@ -577,6 +674,7 @@ fn context_menu(
             MenuItem::Delete => StrKey::TreeDelete,
             MenuItem::ZoomTo => StrKey::TreeZoomTo,
             MenuItem::AddOperation => StrKey::TreeAddOperation,
+            MenuItem::AddTo | MenuItem::RemoveFrom => continue,
         };
         if item == MenuItem::AddOperation {
             ui.separator();

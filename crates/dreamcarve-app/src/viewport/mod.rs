@@ -26,10 +26,13 @@
 //! flips once, in `dc_app::Camera::to_screen`, which the painter and the
 //! pointer go through; the GPU never works in Y-down. While the Project
 //! panel's *Click on the view* is armed, a click sets the park point
-//! instead of the selection and Escape disarms it (#536). While the
-//! operation editor's *Pick…* is armed, each click on a shape adds it to
-//! the operation's targets until Escape, and while its Targets group is
-//! hovered the targets draw in `shape.hover` (#539). While a point row's
+//! instead of the selection and Escape disarms it (#536). While an
+//! operation is selected, hovered in the list or having its targets
+//! edited, its targets draw over the toolpaths in its colour and the
+//! other shapes fade (slice 27, #619; capability 67); in target editing
+//! a bar across the top of the pane says so ([`target_bar`]), a click
+//! toggles the shape under it, a marquee adds what it touches and an
+//! Alt-marquee removes, and nothing is selected or moved. While a point row's
 //! *Pick on the view* is armed, the next click sets that point (a
 //! Profile's start point) and disarms it, as the park point's does (#540).
 //! Placed tabs (#546): a press on a tab (tabs win over the shape they sit
@@ -68,6 +71,7 @@ use crate::panels::{editor, empty, project, properties};
 use crate::shell::focus;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState, shortcut_action};
+use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
 use crate::widgets::icon::Icon;
 use renderer::{Frame, Layer, LayerData, StyleId, StyleTable, ToolpathData};
 
@@ -90,6 +94,8 @@ const CROSSHAIR_GAP_PX: f32 = 3.0;
 /// its centre gap, px.
 const MALE_CROSSHAIR_ARM_PX: f32 = 8.0;
 const MALE_CROSSHAIR_GAP_PX: f32 = 2.0;
+/// The target-editing bar's height, px (`experience.md`, section 3).
+const TARGET_BAR_PX: f32 = 32.0;
 /// The park point's radius, px.
 const PARK_RADIUS_PX: f32 = 6.0;
 /// A transform handle's square and circle, px (`experience.md`, section 8).
@@ -274,6 +280,15 @@ impl ViewportState {
         let camera = app.view().camera;
         self.cursor_mm = over.map(|p| camera.to_world(pane_pos(pane, p)));
         let hit = match (over, &self.drag) {
+            // Target editing toggles shapes: a cut under the pointer is
+            // nothing to click.
+            (Some(p), None) if app.target_editing().is_some() => pick::pick(
+                app.scene(),
+                &camera,
+                pane_pos(pane, p),
+                PICK_TOLERANCE_PX,
+                0,
+            ),
             (Some(p), None | Some(Drag::Press { .. })) => pick::pick_with_cuts(
                 app.scene(),
                 &camera,
@@ -430,7 +445,6 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let escape_left_widget = focus::escape_left_widget(ctx);
     let selected = app.selection().instances().to_vec();
     let park_picking = project::park_pick_armed(ctx);
-    let target_picking = editor::target_pick(ctx).is_some();
     let point_picking = editor::point_pick(ctx).is_some();
     let tab_tool_armed = tab_tool::armed(ctx);
     let mut toggle_tab_tool = false;
@@ -461,7 +475,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             toggle_tab_tool = true;
         }
         if !popup_open && keyboard::consume(input, Shortcut::Escape) > 0 && !escape_left_widget {
-            if park_picking || target_picking || point_picking || tab_tool_armed {
+            if park_picking || point_picking || tab_tool_armed {
                 // Disarmed below: the context is locked inside `input_mut`.
                 disarm = true;
             } else {
@@ -505,10 +519,8 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             tab_tool::arm(ctx, false);
         } else if park_picking {
             project::arm_park_pick(ctx, false);
-        } else if point_picking {
-            editor::arm_point_pick(ctx, None);
         } else {
-            editor::arm_target_pick(ctx, None);
+            editor::arm_point_pick(ctx, None);
         }
     }
     actions
@@ -691,8 +703,11 @@ fn is_identity(t: Transform) -> bool {
 
 /// The pointer's gestures this frame: pans move `camera`, a click or a
 /// marquee pushes a new selection, a drag from a shape or a handle
-/// previews a transform and commits it on release. Returns whether the
-/// camera moved.
+/// previews a transform and commits it on release. In target editing
+/// (capability 67) nothing is grabbed: a click toggles the shape under
+/// it in the draft, a marquee adds what it touches and an Alt-marquee
+/// removes, and the selection and the shapes stay as they are. Returns
+/// whether the camera moved.
 fn gestures(
     ui: &Ui,
     pane: Rect,
@@ -721,9 +736,13 @@ fn gestures(
         return false;
     };
     let mut moved = false;
+    let editing_targets = state.app.target_editing().is_some();
     if (pressed || middle_pressed) && response.hovered() && view.drag.is_none() {
         view.drag = Some(if middle_pressed || space {
             Drag::Pan { last: pos }
+        } else if editing_targets {
+            // Nothing is grabbed, so nothing can move.
+            Drag::Marquee { start: pos }
         } else {
             match press_target(state, camera, pane, pos) {
                 None => Drag::Marquee { start: pos },
@@ -806,7 +825,14 @@ fn gestures(
             };
             let ids = pick::touching(state.app.scene(), rect);
             view.clicks.reset();
-            out.push(Action::Select(selection.boxed(&ids, mode)));
+            if editing_targets {
+                out.push(Action::BoxTargets {
+                    ids,
+                    remove: modifiers.alt,
+                });
+            } else {
+                out.push(Action::Select(selection.boxed(&ids, mode)));
+            }
         }
         // The release commits the drag: one command, one undo step.
         Some(Drag::Transform { ids, .. }) => {
@@ -815,6 +841,17 @@ fn gestures(
                     ids,
                     delta: preview.delta,
                 })));
+            }
+        }
+        // In target editing a click toggles the shape under it; a click
+        // on anything else is nothing.
+        Some(Drag::Marquee { .. } | Drag::Press { .. }) if editing_targets => {
+            view.clicks.reset();
+            let at = pane_pos(pane, pos);
+            if let Hit::Instance(id) =
+                pick::pick(state.app.scene(), camera, at, PICK_TOLERANCE_PX, 0)
+            {
+                out.push(Action::ToggleTarget(id));
             }
         }
         Some(Drag::Marquee { .. } | Drag::Press { .. }) => {
@@ -855,7 +892,6 @@ fn frame(
     view: &mut ViewportState,
     camera: &Camera,
     palette: &Palette,
-    highlighted: &[InstanceId],
 ) -> Frame {
     let app = state.app;
     let project = app.project();
@@ -872,18 +908,12 @@ fn frame(
     let origin = project.origin.xy.point_mm(&project.stock);
     let origin_key = (origin.x.to_bits(), origin.y.to_bits());
     let selected = app.selection().instances().to_vec();
-    let mut hover: Vec<InstanceId> = view
+    let hover: Vec<InstanceId> = view
         .hover
         .iter()
         .filter(|id| !selected.contains(id))
         .cloned()
         .collect();
-    // The hovered Targets group's targets (capability 67).
-    for id in highlighted {
-        if !selected.contains(id) && !hover.contains(id) {
-            hover.push(id.clone());
-        }
-    }
 
     let grid_layer = view.layer(
         Layer::Grid,
@@ -904,10 +934,27 @@ fn frame(
         .unwrap_or_default();
     let placed = view.preview.as_ref().map(|p| p.placed);
     let placed_key = placed.map(|t| t.coeffs().map(f64::to_bits));
+    // The marks are the Scene's, set when the marked operation or its
+    // targets change: the two layers that show them rebuild then, and
+    // not per frame (acceptance 87).
+    let marks = scene.targets_revision();
     let shapes_layer = view.layer(
         Layer::Shapes,
-        key((scene.shapes_revision(), band, &moving)),
+        key((scene.shapes_revision(), band, &moving, marks)),
         || layers::shapes(scene, tolerance, &moving),
+    );
+    // A target that is also selected draws a halo under its selection.
+    let haloed: Vec<InstanceId> = scene.targets().map_or_else(Vec::new, |m| {
+        m.targets
+            .iter()
+            .filter(|id| selected.contains(id))
+            .cloned()
+            .collect()
+    });
+    let targets_layer = view.layer(
+        Layer::Targets,
+        key((scene.shapes_revision(), band, &moving, marks, &haloed)),
+        || layers::targets(scene, tolerance, &haloed, &moving),
     );
     let hover_layer = view.layer(
         Layer::Hover,
@@ -960,6 +1007,7 @@ fn frame(
             shapes_layer,
             arrows_layer,
             extents_layer,
+            targets_layer,
             hover_layer,
             selection_layer,
         ],
@@ -1158,6 +1206,10 @@ fn transform_handles(
 ) {
     let palette = Palette::current(ui);
     let app = state.app;
+    // Nothing moves in target editing, so there is nothing to grab.
+    if app.target_editing().is_some() {
+        return;
+    }
     let ids = view
         .preview
         .as_ref()
@@ -1328,6 +1380,93 @@ fn male_board_marks(
     );
 }
 
+/// The target-editing bar (capability 67; `experience.md`, section 8,
+/// "Target editing"): 32 px across the top of the pane while target
+/// editing is on, `accent.soft` with a 1-px `accent` rule under it; the
+/// `target` glyph and *Editing targets of "Panel": click shapes to add or
+/// remove them* on the left, *Cancel* (Escape) and *Done* (Enter) on the
+/// right. It lies over the pane and takes the clicks on it, so none
+/// reaches the drawing under it.
+fn target_bar(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let app = state.app;
+    let Some(editing) = app.target_editing() else {
+        return;
+    };
+    let palette = Palette::current(ui);
+    let strings = app.strings();
+    let name = app
+        .project()
+        .operations
+        .iter()
+        .find(|o| o.id() == editing.op())
+        .map_or_else(|| editing.op().as_str().to_owned(), |o| o.name().to_owned());
+    let rect = Rect::from_min_size(pane.min, egui::vec2(pane.width(), TARGET_BAR_PX));
+    ui.interact(
+        rect,
+        egui::Id::unique("dc.viewport.target_bar"),
+        egui::Sense::click_and_drag(),
+    );
+    let painter = ui.painter_at(rect);
+    // Opaque under the wash, so the drawing does not show through.
+    painter.rect_filled(rect, 0.0, palette.surface_panel);
+    painter.rect_filled(rect, 0.0, palette.accent_soft);
+    painter.hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        Stroke::new(1.0, palette.accent),
+    );
+    let mut bar = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(egui::vec2(12.0, 3.0)))
+            .layout(egui::Layout::right_to_left(egui::Align::Center)),
+    );
+    bar.spacing_mut().item_spacing.x = 8.0;
+    let keys = |key: Key| crate::shell::window::shortcut_text(ui.ctx(), Modifiers::NONE, key);
+    let done_hint = strings.fmt(
+        StrKey::EditorTargetsDoneHint,
+        &[("keys", &keys(Key::Enter))],
+    );
+    let cancel_hint = strings.fmt(
+        StrKey::EditorTargetsCancelHint,
+        &[("keys", &keys(Key::Escape))],
+    );
+    let done = ButtonSpec::new(ButtonKind::Primary, strings.get(StrKey::EditorTargetsDone))
+        .tooltip(&done_hint);
+    if button(&mut bar, done).clicked() {
+        out.push(Action::CommitTargets);
+    }
+    let cancel = ButtonSpec::new(
+        ButtonKind::Secondary,
+        strings.get(StrKey::EditorTargetsCancel),
+    )
+    .tooltip(&cancel_hint);
+    if button(&mut bar, cancel).clicked() {
+        out.push(Action::CancelTargets);
+    }
+    bar.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        let (glyph_rect, _) = ui.allocate_exact_size(
+            egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
+            egui::Sense::hover(),
+        );
+        let glyph = Icon::Target.galley(ui, theme::ICON_SMALL_PX, palette.accent);
+        ui.painter().galley(
+            glyph_rect.center() - glyph.size() / 2.0,
+            glyph,
+            palette.accent,
+        );
+        let text = strings.fmt(StrKey::EditorTargetsEditing, &[("name", &name)]);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(text)
+                    .text_style(TextStyle::Body)
+                    .color(palette.text_primary),
+            )
+            .truncate()
+            .selectable(false),
+        );
+    });
+}
+
 /// Draws the Viewport in the central panel; returns its rectangle.
 pub(crate) fn show(
     ui: &mut Ui,
@@ -1382,18 +1521,14 @@ pub(crate) fn show(
             if let Some(at) = at {
                 moved |= scroll_and_pinch(ui, pane, pane_pos(pane, at), &mut camera);
             }
-            let picking = editor::target_pick(ui.ctx());
-            let point = editor::point_pick(ui.ctx());
-            let adding_tabs = tab_tool::armed(ui.ctx());
-            if (project::park_pick_armed(ui.ctx())
-                || picking.is_some()
-                || point.is_some()
-                || adding_tabs)
-                && response.hovered()
-            {
+            let editing_targets = app.target_editing().is_some();
+            let point = editor::point_pick(ui.ctx()).filter(|_| !editing_targets);
+            let adding_tabs = tab_tool::armed(ui.ctx()) && !editing_targets;
+            let park = project::park_pick_armed(ui.ctx()) && !editing_targets;
+            if (park || point.is_some() || adding_tabs) && response.hovered() {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
-            if project::park_pick_armed(ui.ctx())
+            if park
                 && response.clicked()
                 && let Some(at) = response.interact_pointer_pos()
             {
@@ -1423,29 +1558,6 @@ pub(crate) fn show(
                 view.drag = None;
                 view.clicks.reset();
                 out.extend(tab_tool::click(app, &camera, pane_pos(pane, at)).map(Action::run));
-            } else if let Some(op) = picking
-                && response.clicked()
-                && let Some(at) = response.interact_pointer_pos()
-            {
-                // An armed click adds the shape under it to the targets;
-                // the selection stays as it is.
-                view.drag = None;
-                view.clicks.reset();
-                let hit = pick::pick(
-                    app.scene(),
-                    &camera,
-                    pane_pos(pane, at),
-                    PICK_TOLERANCE_PX,
-                    0,
-                );
-                if let Hit::Instance(id) = hit
-                    && let Some(op) = app.project().operations.iter().find(|o| *o.id() == op)
-                {
-                    match dc_app::editor::targets::add(op, &[id]) {
-                        Ok(command) => out.extend(command.map(Action::run)),
-                        Err(e) => out.push(Action::Refused(e.to_string())),
-                    }
-                }
             } else {
                 moved |= gestures(ui, pane, &response, state, view, &mut camera, out);
             }
@@ -1459,6 +1571,12 @@ pub(crate) fn show(
                 Some(Drag::Refused) => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
                 Some(Drag::Transform { .. } | Drag::Tab { .. }) => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+                }
+                // The pointing hand over a shape a click would toggle.
+                None if editing_targets => {
+                    if view.hover.is_some() && response.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
                 }
                 None if view.hover_tab.is_some() && !adding_tabs => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
@@ -1481,10 +1599,10 @@ pub(crate) fn show(
                 );
                 painter.rect_filled(male, 0.0, palette.viewport_stock_fill);
             }
-            let highlighted = editor::highlighted_targets(ui.ctx());
-            let frame = frame(state, view, &camera, palette, &highlighted);
+            let frame = frame(state, view, &camera, palette);
             painter.add(renderer::callback(pane, frame));
             overlay(ui, pane, state, view, &camera);
+            target_bar(ui, pane, state, out);
             let derived = view.derived.clone();
             let covers: Vec<Rect> = if state.show_empty {
                 empty::card(ui, pane, state, out);

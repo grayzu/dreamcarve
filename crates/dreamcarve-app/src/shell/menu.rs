@@ -64,6 +64,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .inner_margin(egui::Margin::symmetric(4, 0)),
         )
         .show(ui, |ui| {
+            if state.inert() {
+                ui.disable();
+            }
             egui::MenuBar::new().ui(ui, |ui| {
                 let strings = state.app.strings();
                 ui.menu_button(strings.get(StrKey::AppMenuFile), |ui| file(ui, state, out));

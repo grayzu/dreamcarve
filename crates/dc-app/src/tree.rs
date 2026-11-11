@@ -19,10 +19,13 @@
 //! construction rows have no counterpart here.
 
 use dc_geometry::{Transform, as_circle};
-use dc_project::{FeatureDefinition, InstanceId, OperationId, Project, TabId};
+use dc_project::{FeatureDefinition, InstanceId, Operation, OperationId, Project, TabId};
 
 use crate::command::Command;
+use crate::editor::targets;
+use crate::error::CommandError;
 use crate::mixed::common_bool;
+use crate::scene::TargetMarks;
 
 /// What a shape row's glyph says the shape is (`experience.md`, section
 /// 6: Lucide `square`, `circle` and `spline`).
@@ -85,6 +88,10 @@ pub struct ShapeRow {
     /// The operations whose targets name it, in project order: the row's
     /// count, and its hover's list.
     pub operations: Vec<OperationRef>,
+    /// It is a target of the marked operation (capability 67): that
+    /// operation's place in the palette, for the bar on the row's left
+    /// edge. `None` until [`Tree::with_targets`] marks the rows.
+    pub target: Option<usize>,
 }
 
 /// The placed tabs on one outline, as one row.
@@ -181,6 +188,7 @@ impl Tree {
                             name: op.name().to_owned(),
                         })
                         .collect(),
+                    target: None,
                 }
             })
             .collect();
@@ -216,6 +224,20 @@ impl Tree {
             tabs,
             pictures: Vec::new(),
         }
+    }
+
+    /// The tree with `marks`' targets marked (capability 67): the rows of
+    /// the selected operation's targets, of a hovered row's, or of a
+    /// target edit's draft, as the Scene holds them
+    /// ([`crate::Scene::targets`]); with `None`, no row.
+    #[must_use]
+    pub fn with_targets(mut self, marks: Option<&TargetMarks>) -> Self {
+        for row in &mut self.shapes {
+            row.target = marks
+                .filter(|m| m.targets.contains(&row.id))
+                .map(|m| m.colour);
+        }
+        self
     }
 
     /// Every line, top to bottom: each section's header, then its rows.
@@ -293,6 +315,12 @@ pub enum MenuItem {
     /// *Add operation ▸*: the Operations tab's Add menu for the rows
     /// (`crate::operations::add_menu`).
     AddOperation,
+    /// *Add to "Panel"*: the rows added to the selected operation's
+    /// targets ([`target_command`]).
+    AddTo,
+    /// *Remove from "Panel"*: the rows taken out of the selected
+    /// operation's targets, which deletes nothing.
+    RemoveFrom,
 }
 
 /// Whether every one of `ids` is visible, and whether every one is locked.
@@ -303,11 +331,13 @@ fn all(project: &Project, ids: &[InstanceId]) -> (bool, bool) {
 
 /// The menu for `ids`, as the shell lists it: Rename, Hide or Show (Show
 /// when any is hidden), Lock or Unlock (Unlock when every one is locked),
-/// Duplicate, Delete, Zoom to, Add operation.
+/// Duplicate, Delete, Zoom to, Add operation, and, while operation `op`
+/// is selected, *Add to* it when it lacks one of `ids` and *Remove from*
+/// it when it targets one (capability 57).
 #[must_use]
-pub fn menu(project: &Project, ids: &[InstanceId]) -> [MenuItem; 7] {
+pub fn menu(project: &Project, ids: &[InstanceId], op: Option<&Operation>) -> Vec<MenuItem> {
     let (visible, locked) = all(project, ids);
-    [
+    let mut items = vec![
         MenuItem::Rename,
         if visible {
             MenuItem::Hide
@@ -323,12 +353,40 @@ pub fn menu(project: &Project, ids: &[InstanceId]) -> [MenuItem; 7] {
         MenuItem::Delete,
         MenuItem::ZoomTo,
         MenuItem::AddOperation,
-    ]
+    ];
+    if let Some(op) = op {
+        if ids.iter().any(|id| !op.targets().contains(id)) {
+            items.push(MenuItem::AddTo);
+        }
+        if ids.iter().any(|id| op.targets().contains(id)) {
+            items.push(MenuItem::RemoveFrom);
+        }
+    }
+    items
+}
+
+/// The command *Add to* or *Remove from* runs on `ids` for the selected
+/// operation `op`: one `UpdateOperation`, labelled *Set targets of
+/// "Panel"*; `None` for any other item, or when nothing would change.
+///
+/// # Errors
+///
+/// [`CommandError::FieldRefused`] if the file refuses the record.
+pub fn target_command(
+    op: &Operation,
+    item: MenuItem,
+    ids: &[InstanceId],
+) -> Result<Option<Command>, CommandError> {
+    match item {
+        MenuItem::AddTo => targets::add(op, ids),
+        MenuItem::RemoveFrom => targets::remove(op, ids),
+        _ => Ok(None),
+    }
 }
 
 /// The command `item` runs on `ids`; `None` for the items that are not a
-/// change to the project (Rename, Zoom to, Add operation) or with nothing
-/// chosen.
+/// change to the project (Rename, Zoom to, Add operation), for the two
+/// that change an operation ([`target_command`]), or with nothing chosen.
 #[must_use]
 pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Option<Command> {
     if ids.is_empty()
@@ -351,7 +409,11 @@ pub fn menu_command(project: &Project, item: MenuItem, ids: &[InstanceId]) -> Op
         MenuItem::Unlock => Some(flags(None, Some(false))),
         MenuItem::Duplicate => Some(Command::DuplicateInstances(ids)),
         MenuItem::Delete => Some(Command::DeleteInstances(ids)),
-        MenuItem::Rename | MenuItem::ZoomTo | MenuItem::AddOperation => None,
+        MenuItem::Rename
+        | MenuItem::ZoomTo
+        | MenuItem::AddOperation
+        | MenuItem::AddTo
+        | MenuItem::RemoveFrom => None,
     }
 }
 

@@ -41,6 +41,22 @@ const MARGIN_PX: f32 = 12.0;
 /// The Add menu's width, px: its longest reason on one line.
 const MENU_PX: f32 = 260.0;
 
+/// Where the row under the pointer leaves its operation for the shell.
+fn hovered_id() -> Id {
+    Id::unique("dc.operations.hovered")
+}
+
+/// The operation whose row the pointer was over in the frame just drawn:
+/// its targets are marked as a preview until the pointer leaves
+/// (capability 67). Taken, so a list no longer drawn previews nothing.
+pub(crate) fn take_hovered(ctx: &egui::Context) -> Option<OperationId> {
+    ctx.data_mut(|d| {
+        let hovered = d.get_temp::<OperationId>(hovered_id());
+        d.remove::<OperationId>(hovered_id());
+        hovered
+    })
+}
+
 /// The row being dragged, while its grip is held.
 fn dragging_id() -> Id {
     Id::unique("dc.operations.dragging")
@@ -55,12 +71,6 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let editing = app
         .editing()
         .and_then(|id| app.project().operations.iter().find(|o| o.id() == id));
-    // *Pick…* is the edited operation's: another, or none, disarms it.
-    if let Some(picking) = panels::editor::target_pick(ui.ctx())
-        && editing.is_none_or(|op| *op.id() != picking)
-    {
-        panels::editor::arm_target_pick(ui.ctx(), None);
-    }
     if let Some((picking, _)) = panels::editor::point_pick(ui.ctx())
         && editing.is_none_or(|op| *op.id() != picking)
     {
@@ -373,6 +383,11 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
     }
     if response.clicked() {
         out.push(Action::EditOperation(row.id.clone()));
+    }
+    // The row under the pointer previews its targets on the Viewport and
+    // in the Design Tree (capability 67), whichever of its cells it is on.
+    if ui.is_enabled() && ui.rect_contains_pointer(rect) {
+        ui.data_mut(|d| d.insert_temp(hovered_id(), row.id.clone()));
     }
     if ui.data(|d| d.get_temp::<OperationId>(reveal_id())).as_ref() == Some(&row.id) {
         ui.data_mut(|d| d.remove::<OperationId>(reveal_id()));

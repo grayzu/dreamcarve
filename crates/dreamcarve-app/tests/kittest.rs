@@ -2393,6 +2393,66 @@ fn target_marquee_and_the_selection_shortcuts() {
         h.state().app().undo_label(),
         Some("Set targets of “Square recess”")
     );
+
+    // The window's close button is Cancel first: the unsaved-changes
+    // sheet opens over a window that answers again.
+    h.get_by_label("Edit targets").click();
+    h.run();
+    assert!(draft_of(&h).is_some());
+    press_close(&mut h);
+    h.step();
+    h.run();
+    assert!(draft_of(&h).is_none(), "closing cancels target editing");
+    click_in_sheet(&mut h, "Cancel");
+    assert_eq!(targets_of(&h, "op2"), ["i3"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 27 (#619; capability 67): hovering an operation's row in the
+/// list previews its targets' marks, on the Viewport and in the Design
+/// Tree, until the pointer leaves; the selected operation's come back.
+#[test]
+fn hovering_an_operation_row_previews_its_targets() {
+    let dir = scratch("target-preview");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let marked = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .scene()
+            .targets()
+            .map(|m| (m.op.as_str().to_owned(), m.targets.len()))
+    };
+    assert_eq!(marked(&h), None, "no operation is selected");
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    assert_eq!(marked(&h), Some(("op1".to_owned(), 2)));
+
+    let row = h
+        .get_by_role_and_label(Role::ListItem, "Screw holes")
+        .rect()
+        .center();
+    h.event(egui::Event::PointerMoved(row));
+    h.run();
+    assert_eq!(marked(&h), Some(("op3".to_owned(), 4)), "previewed");
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op1"),
+        "the editor stays on the Panel"
+    );
+
+    let viewport = h.state().layout().viewport.center();
+    h.event(egui::Event::PointerMoved(viewport));
+    h.run();
+    assert_eq!(marked(&h), Some(("op1".to_owned(), 2)), "the pointer left");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2416,7 +2476,7 @@ fn tree_context_menu_adds_and_removes_targets() {
     h.get_by_role_and_label(Role::TreeItem, "square")
         .click_secondary();
     h.run();
-    h.get_by_label("Duplicate");
+    h.get_by_label("Rename");
     assert!(h.query_by_label(add).is_none() && h.query_by_label(remove).is_none());
     h.key_press(egui::Key::Escape);
     h.run();

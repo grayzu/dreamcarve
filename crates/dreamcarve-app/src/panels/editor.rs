@@ -12,13 +12,13 @@
 //! message under itself, and shows its help with its `.dcv` field name on
 //! hover of its label.
 //!
-//! Setup's Targets row lists the targets with a remove button each,
-//! highlights them on the Viewport while it is hovered
-//! ([`highlighted_targets`]), and has *Add selected*, *Replace with
-//! selected* and *Pick…*, which arms the Viewport: each click on a shape
-//! adds it until Escape ([`target_pick`]). Both are view state kept in
-//! egui's memory, as the Project panel's park pick is, so the Viewport
-//! reads them without the panel holding project data.
+//! Setup's Targets row is one line (slice 27, #619; capability 67): the
+//! `target` glyph, the count and the names ([`targets::row_summary`]), a
+//! warning glyph when a target carries one, a pencil that enters target
+//! editing on the drawing (so does a double-click on the row) and a `⋯`
+//! menu with *Use selection* and *Add selection*. There is no list of
+//! names here: the targets are marked on the Viewport and in the Design
+//! Tree. While target editing is on the row reads the draft.
 //!
 //! Clicking a Warnings row that names a field opens its operation here and
 //! focuses that field ([`request_focus`]).
@@ -54,7 +54,7 @@
 
 use dc_app::editor::{self, FieldKind, Group, Row, Slot, fields, summary, targets};
 use dc_app::operations::Kind;
-use dc_app::{Command, Selection, StrKey, Strings};
+use dc_app::{App, Command, Selection, StrKey, Strings};
 use dc_job::Tier;
 use dc_project::{InstanceId, Operation, OperationId, Project, Tool, ToolKind};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
@@ -80,27 +80,8 @@ const SEGMENT_LABEL_PX: f32 = 56.0;
 const NESTED_PX: f32 = 16.0;
 /// The header band's height, px.
 const HEADER_PX: f32 = 32.0;
-
-/// Where the Viewport's target pick is armed, and for which operation.
-fn pick_id() -> Id {
-    Id::unique("dc.editor.target_pick")
-}
-
-/// The operation whose targets the next Viewport clicks add, while
-/// *Pick…* is armed.
-pub(crate) fn target_pick(ctx: &egui::Context) -> Option<OperationId> {
-    ctx.data(|d| d.get_temp::<OperationId>(pick_id()))
-}
-
-/// Arms the Viewport's target pick for `op`, or disarms it.
-pub(crate) fn arm_target_pick(ctx: &egui::Context, op: Option<OperationId>) {
-    ctx.data_mut(|d| match op {
-        Some(op) => {
-            d.insert_temp(pick_id(), op);
-        }
-        None => d.remove::<OperationId>(pick_id()),
-    });
-}
+/// The gap between a row's trailing icon buttons, px.
+const BUTTON_GAP_PX: f32 = 2.0;
 
 /// Where the Viewport's point pick is armed, for which operation and row.
 fn point_pick_id() -> Id {
@@ -140,19 +121,6 @@ pub(crate) fn point_at(
     }
 }
 
-/// Where this frame's hovered Targets group leaves its targets.
-fn highlight_id() -> Id {
-    Id::unique("dc.editor.highlight")
-}
-
-/// The targets of the Targets group the pointer is over this frame, for
-/// the Viewport to draw in `shape.hover`; taken, so a group no longer
-/// drawn highlights nothing.
-pub(crate) fn highlighted_targets(ctx: &egui::Context) -> Vec<InstanceId> {
-    ctx.data_mut(|d| d.remove_temp::<Vec<InstanceId>>(highlight_id()))
-        .unwrap_or_default()
-}
-
 /// Where a Warnings row's field waits to be focused.
 fn focus_id() -> Id {
     Id::unique("dc.editor.focus")
@@ -166,6 +134,9 @@ pub(crate) fn request_focus(ctx: &egui::Context, op: OperationId, field: String)
 
 /// What every row reads.
 pub(super) struct Cx<'a> {
+    /// The app, for what a row reads beyond the project (the draft of a
+    /// target edit).
+    app: &'a App,
     pub(super) strings: &'a Strings,
     pub(super) project: &'a Project,
     located: editor::Located<'a>,
@@ -188,6 +159,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         .and_then(|(_, field)| fields::row_for(op, &field))
         .map(|r| r.key);
     let cx = Cx {
+        app,
         strings,
         project,
         located: editor::Located::of(app.warnings(), op),
@@ -500,14 +472,6 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .inner;
     let status = status.filter(|_| required.is_none());
     match row.kind {
-        // Hovering the targets marks them on the Viewport.
-        FieldKind::InstanceList => {
-            let block = ui.scope(|ui| target_list(ui, cx, out)).response;
-            if block.contains_pointer() {
-                let ids = cx.op.targets().to_vec();
-                ui.data_mut(|d| d.insert_temp(highlight_id(), ids));
-            }
-        }
         FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
         // Nothing to derive it from: validation's message in place of the
         // number.
@@ -613,9 +577,9 @@ pub(super) fn control(
         FieldKind::Toggle(_) => switch(ui, cx, slot, out),
         FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
         FieldKind::InstanceList => {
-            // Setup's Targets row: its label, the list under it.
+            // Setup's Targets row: one line (capability 67).
             label(ui, cx, slot);
-            None
+            Some(targets_row(ui, cx, slot, out))
         }
         FieldKind::ClearingList => {
             // The list itself is under the row.
@@ -1150,89 +1114,104 @@ fn tool_picker(
     Some(response)
 }
 
-/// The Targets group's list and buttons (capability 67).
-fn target_list(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
+/// Setup's Targets row (capability 67; `experience.md`, section 7,
+/// "Targets row"): `target`, then `2 shapes · pocket, island` cut at the
+/// row's end with every name in its tooltip, a `triangle-alert` when a
+/// target carries a warning, and at the right end the pencil (*Edit
+/// targets*) and `⋯` (*Use selection*, *Add selection*). A double-click
+/// on the summary enters target editing too.
+fn targets_row(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>, out: &mut Vec<Action>) -> egui::Response {
     let palette = Palette::current(ui);
     let strings = cx.strings;
     let op = cx.op;
-    let listed = targets::list(cx.project, op);
-    let refused_id = Id::unique(("dc.editor.targets", op.id().as_str())).with("refused");
-    egui::Frame::NONE
-        .fill(palette.surface_sunken)
-        .stroke(egui::Stroke::new(1.0, palette.border_strong))
-        .corner_radius(4.0)
-        .inner_margin(egui::Margin::symmetric(8, 4))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            for target in &listed {
-                ui.horizontal(|ui| {
-                    ui.set_min_height(22.0);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&target.name).text_style(TextStyle::Body),
-                        )
-                        .truncate()
-                        .selectable(false),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let remove =
-                            strings.fmt(StrKey::EditorTargetsRemove, &[("name", &target.name)]);
-                        let spec = ButtonSpec::new(ButtonKind::Quiet, "")
-                            .icon(Icon::X, theme::ICON_SMALL_PX)
-                            .tooltip(&remove)
-                            .height(22.0);
-                        if button(ui, spec).clicked() {
-                            commit(ui, refused_id, targets::remove(op, &target.id), out);
-                        }
-                    });
-                });
-            }
-            let summary = match listed.len() {
-                0 => strings.get(StrKey::EditorTargetsNone).to_owned(),
-                1 => strings.get(StrKey::EditorTargetsOne).to_owned(),
-                n => strings.fmt(StrKey::EditorTargetsMany, &[("count", &n.to_string())]),
-            };
-            ui.label(
-                egui::RichText::new(summary)
-                    .text_style(TextStyle::Small)
-                    .color(palette.text_secondary),
-            );
-        });
-    let picking = target_pick(ui.ctx()).as_ref() == Some(op.id());
-    ui.horizontal_wrapped(|ui| {
+    let summary = targets::row_summary(cx.app, op);
+    let refused_id = control_id(op, slot.key()).with("refused");
+    // The two icon buttons sit together at the row's end, so the names
+    // keep what room there is.
+    ui.spacing_mut().item_spacing.x = BUTTON_GAP_PX;
+    let buttons = 2.0 * (HEIGHT_PX + BUTTON_GAP_PX);
+    let width = (ui.available_width() - buttons).max(0.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, HEIGHT_PX), Sense::hover());
+    let response = ui.interact(rect, control_id(op, slot.key()), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &summary.text));
+    let colour = if ui.is_enabled() {
+        palette.text_primary
+    } else {
+        palette.text_disabled
+    };
+    let glyph = Icon::Target.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    let mut left = rect.left();
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - glyph.size().y / 2.0),
+        glyph,
+        palette.text_secondary,
+    );
+    left += theme::ICON_SMALL_PX + 6.0;
+    let mut right = rect.right();
+    if summary.warning {
+        let alert =
+            Icon::TriangleAlert.galley(ui, theme::ICON_SMALL_PX, palette.status_warning.stroke);
+        right -= theme::ICON_SMALL_PX;
+        ui.painter().galley(
+            egui::pos2(right, rect.center().y - alert.size().y / 2.0),
+            alert,
+            palette.status_warning.stroke,
+        );
+        right -= 6.0;
+    }
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        summary.text.clone(),
+        TextStyle::Body.resolve(ui.style()),
+        colour,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width((right - left).max(0.0));
+    let galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - galley.size().y / 2.0),
+        galley,
+        colour,
+    );
+    if response.double_clicked() {
+        out.push(Action::EditTargets(op.id().clone()));
+    }
+    let response = if summary.names.is_empty() {
+        response
+    } else {
+        response.on_hover_text(&summary.names)
+    };
+
+    let edit_name = strings.get(StrKey::EditorTargetsEdit);
+    let edit = ButtonSpec::new(ButtonKind::Quiet, "")
+        .icon(Icon::Pencil, theme::ICON_SMALL_PX)
+        .tooltip(edit_name)
+        .width(HEIGHT_PX);
+    if button(ui, edit).clicked() {
+        out.push(Action::EditTargets(op.id().clone()));
+    }
+    let menu_name = strings.get(StrKey::EditorTargetsMenu);
+    let more = button(
+        ui,
+        ButtonSpec::new(ButtonKind::Quiet, "")
+            .icon(Icon::Ellipsis, theme::ICON_SMALL_PX)
+            .tooltip(menu_name)
+            .width(HEIGHT_PX),
+    );
+    egui::Popup::menu(&more).show(|ui| {
         let has = !cx.selected.is_empty();
-        let add = ButtonSpec::new(
-            ButtonKind::Secondary,
-            strings.get(StrKey::EditorTargetsAddSelected),
-        )
-        .enabled(has);
-        if button(ui, add).clicked() {
-            commit(ui, refused_id, targets::add(op, cx.selected), out);
-        }
-        let replace = ButtonSpec::new(
-            ButtonKind::Secondary,
-            strings.get(StrKey::EditorTargetsReplace),
-        )
-        .enabled(has);
-        if button(ui, replace).clicked() {
-            commit(ui, refused_id, targets::replace(op, cx.selected), out);
-        }
-        let pick_kind = if picking {
-            ButtonKind::Primary
-        } else {
-            ButtonKind::Secondary
+        let reason = strings.get(StrKey::EditorTargetsSelectFirst);
+        let item = |ui: &mut Ui, key: StrKey| {
+            ui.add_enabled(has, egui::Button::new(strings.get(key)))
+                .on_disabled_hover_text(reason)
+                .clicked()
         };
-        let pick = ButtonSpec::new(pick_kind, strings.get(StrKey::EditorTargetsPick))
-            .icon(Icon::Crosshair, theme::ICON_SMALL_PX);
-        if button(ui, pick).clicked() {
-            let armed = (!picking).then(|| op.id().clone());
-            arm_target_pick(ui.ctx(), armed);
+        if item(ui, StrKey::EditorTargetsUseSelection) {
+            commit(ui, refused_id, targets::replace(op, cx.selected), out);
+            ui.close();
+        }
+        if item(ui, StrKey::EditorTargetsAddSelection) {
+            commit(ui, refused_id, targets::add(op, cx.selected), out);
+            ui.close();
         }
     });
-    if picking {
-        row::hint(ui, strings.get(StrKey::EditorTargetsPicking));
-    }
-    if let Some(reason) = ui.data(|d| d.get_temp::<String>(refused_id)) {
-        row::message(ui, Tier::Error, &reason);
-    }
+    response
 }

@@ -112,6 +112,13 @@ pub enum Icon {
     Layers,
     /// `circle-check`: the status bar's *No problems*.
     CircleCheck,
+    /// `target`: an operation's targets (the Setup row, the tree's mark,
+    /// the target-editing bar).
+    Target,
+    /// `pencil`: Edit targets.
+    Pencil,
+    /// `ellipsis`: a row's menu of further actions.
+    Ellipsis,
 }
 
 impl Icon {
@@ -167,6 +174,9 @@ impl Icon {
             Self::PencilLine => "pencil-line",
             Self::MoveDown => "move-down",
             Self::Layers => "layers",
+            Self::Target => "target",
+            Self::Pencil => "pencil",
+            Self::Ellipsis => "ellipsis",
             Self::CircleCheck => "circle-check",
         }
     }
@@ -223,12 +233,15 @@ impl Icon {
             Self::MoveDown => '\u{e48c}',
             Self::Layers => '\u{e529}',
             Self::CircleCheck => '\u{e226}',
+            Self::Target => '\u{e180}',
+            Self::Pencil => '\u{e1f9}',
+            Self::Ellipsis => '\u{e0b6}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 51] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -277,6 +290,9 @@ impl Icon {
         Self::MoveDown,
         Self::Layers,
         Self::CircleCheck,
+        Self::Target,
+        Self::Pencil,
+        Self::Ellipsis,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

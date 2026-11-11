@@ -258,7 +258,8 @@ fn marquee_adds_alt_marquee_removes() {
     assert!(!written.targets().contains(&id("i3")));
 
     // Removing every target is accepted, as a hand-edited file is: the
-    // Warnings panel says `operation_has_no_targets`.
+    // Warnings panel has validation's `operation_has_no_targets`, an
+    // error located at the targets.
     assert!(harness.app.edit_targets(&panel()));
     let all = operation(&harness, "op1").targets().to_vec();
     harness.app.box_targets(&all, true);
@@ -268,7 +269,7 @@ fn marquee_adds_alt_marquee_removes() {
         harness
             .warnings()
             .iter()
-            .any(|f| f.code.as_deref() == Some("operation_has_no_targets"))
+            .any(|f| f.field.as_deref() == Some("operations[op1].targets"))
     );
 }
 
