@@ -71,8 +71,9 @@ project, two boards](#one-project-two-boards).
 | `depth_mm` | How deep the female's pocket is, above 0. See [The four values](#the-four-values). |
 | `glue_gap_mm` | The gap left under the seated plug, 0 or more and below `depth_mm`. The value you change to adjust the fit. |
 | `plug_depth_mm` | How much deeper than its walls need the male cuts the band round the plug, above 0. |
-| `margin_mm` | How far beyond the design the male's band reaches, above 0. Needed once the male is cut; the female ignores it. |
+| `margin_mm` | How far beyond the design the male's band reaches, above 0. Needed once the male is cut, unless a `boundary` draws the band's edge; the female ignores it. |
 | `outline_rounding_mm` | `null`, or how much the male's band is rounded, above 0: its outer edge curves in no tighter than this radius, and gaps narrower than about twice it fill. The female ignores it. See [The band's outer edge](#the-bands-outer-edge). |
+| `boundary` | `[]`, or a list of instance ids such as `["i3"]`: closed shapes whose union is the band's outer edge, in place of `margin_mm` and `outline_rounding_mm`, which are then ignored. The design must lie strictly inside them, and they are not targets. The female ignores it. See [The boundary](#the-boundary). |
 | `clearing` | End-mill clearing passes for the flat floor, as a [V-Carve's](v-carve.md#clearing-passes), largest end mill first, on both boards. `[]` for none. On the male, the first whose end mill fits the band's floor also cuts the band's outer edge upright. |
 | `step_over_fraction` | How far apart the V-bit's rings are where it clears floor itself, as a fraction of its cut width at the floor, above 0 and at most 1. `null` uses the tool's. Always needed: both boards have a floor. Use 0.1. See [The V-bit floor](v-carve.md#the-v-bit-floor). |
 | `machining_order` | `"full_depth_first"` or `"pass_first"`. An Inlay is cut in one pass, so both give the same program. |
@@ -81,7 +82,7 @@ project, two boards](#one-project-two-boards).
 | `cut_out` | The male's: `null`, or an end-mill pass that frees the plug from the male board, run last: `{ "tool": …, "tabs": …, "through_cut_allowance_mm": … }`. See [Cutting the plug free](#cutting-the-plug-free). The female ignores it. |
 
 The depth, glue gap and plug depth are always needed, and the margin
-once the male is cut: `null` until set, and `check` names each one still
+once the male is cut (not with a [boundary](#the-boundary)): `null` until set, and `check` names each one still
 unset.
 
 ## The four values
@@ -357,7 +358,8 @@ quick start's D's counter does.
 
 The male cuts the **surround**: the design mirrored, then offset outward
 by `margin_mm` and rounded (see [The band's outer
-edge](#the-bands-outer-edge)), less the mirrored design itself. So the band round the
+edge](#the-bands-outer-edge)), or else the area inside a drawn [boundary](#the-boundary),
+less the mirrored design itself. So the band round the
 design is carved, and so is every hole in the design: the quick start's
 D's counter is a hole through the plug, which the counter left standing
 in the pocket fills. The design stands as the plug.
@@ -574,6 +576,177 @@ plug out. Without a cut-out (`"cut_out": null`), saw round the plug,
 through the board, inside the band, between the plug's foot and the
 band's outer edge: a bandsaw or scroll saw.
 
+## The boundary
+
+By default the male's band is the design grown by `margin_mm` and rounded
+by `outline_rounding_mm`. A **boundary** draws the band's **outer edge**
+instead: you draw a closed shape round the design in your drawing program,
+the way Corbin's add-in and VCarve ask for a boundary vector, and the male
+is cut inside it. Use it for a band that is not an even margin all round:
+an oval round a word, a rectangle round a motif, a contour that follows the
+design three or four millimetres out.
+
+The idea follows the public documentation of those two products; nothing
+was learned from their output or their files.
+
+### Drawing it and naming it
+
+1. Draw the boundary in the same drawing as the design: a closed shape,
+   larger than the design, with the whole design inside it. Draw it round
+   the design **as it reads**, not mirrored (see [Mirrored with the
+   design](#mirrored-with-the-design)).
+2. `init` imports it like any other shape, as an instance. In the project
+   file, `instances` lists each with its `name`, the shape's id in the
+   drawing, and its `id`, `i1`, `i2` and so on. Find the boundary's.
+3. List that id in the Inlay's `boundary`. Leave it out of `targets`: a
+   shape cannot be its own boundary.
+4. Set `margin_mm` and `outline_rounding_mm` to `null`. With a boundary
+   they do nothing, and they are not needed.
+
+The quick start's drawing already has such a shape, its 90 × 60 mm
+`frame`, which nothing cuts; it is instance `i3` of `dc.dcv`. Make it the
+boundary of the quick start's Inlay with this edit:
+
+<!-- doc-test: edit dc.dcv -->
+```json
+"margin_mm": null,
+"outline_rounding_mm": null,
+"boundary": [ "i3" ],
+```
+
+Then `check` and `export` as before:
+
+<!-- doc-test: run -->
+```sh
+dreamcarve check dc.dcv
+dreamcarve export dc.dcv
+```
+
+The male's line in the report now says where its band comes from:
+
+```text
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, …; band: drawn boundary i3, narrowest band 8.319 mm (open edge, edge pass t2); clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 1.587 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.731 mm out from the design, through the board to 0.200 mm below it.
+```
+
+`--preview` draws each boundary shape on the male board, mirrored with the
+design, as a dashed outline under the male's toolpaths, listed in the
+legend as "boundary (male board)".
+
+The boundary is an ordinary instance, so another operation may cut it: a
+[Profile](profile.md) of the oval on the female board, say, to cut the
+finished piece's outline.
+
+### What it replaces
+
+The boundary replaces `margin_mm` and `outline_rounding_mm`; it does not
+add to them. A drawn edge cannot also be "the design grown by a margin",
+and a second number that has to agree with the picture would be a way to
+fail an export for a reason you cannot see. A project that has both
+warns `inlay_margin_ignored` for each value set, at the field, and the
+boundary wins. To use the margin again, empty `boundary` (`[]`).
+
+What the margin decided, the boundary decides from the **narrowest
+band**: the least distance from the design's outlines to the drawn edge.
+`check` prints it (8.319 mm above). The band is only as wide as that at
+that one place, so the rules that say whether the band works read that
+figure, as they read the margin for a computed band:
+
+- whether the edge pass's end mill fits the band's flat floor, so that it
+  cuts the edge upright: the narrowest band less `plug_depth_mm ×
+  tan(α/2)` must be at least its diameter;
+- whether the V-bit's flank at the plug's foot stays inside the band: the
+  narrowest band at least `(depth_mm − glue_gap_mm + 2 × plug_depth_mm) ×
+  tan(α/2)`;
+- whether there is room for the cut-out ([Room](#cutting-the-plug-free)).
+
+So the edge is open, cut upright by the end mill, along the whole
+boundary, or it is a V wall along the whole boundary: one decision, taken
+from the least room. An oval round a word is 20 mm wide at its ends and
+8 mm at its sides, and the 8 mm decides. Where the band is wider the end
+mill clears all of it. A band that is too narrow gives the same
+`inlay_band_edge_v_wall` and `inlay_cut_out_no_room` as a narrow margin,
+with the figure to widen it to: draw the boundary wider at its narrowest
+place.
+
+The end mill cuts the drawn edge as it cuts any band's. It rounds a
+convex corner by its own radius, so a square boundary has corners of
+1.5875 mm radius with the 1/8 in end mill; that is the tool's shape, not a
+fault in the drawing. With an open edge a notch in the drawn outline
+narrower than the end mill is filled in. With a V wall the edge is cut
+exactly as drawn.
+
+### Mirrored with the design
+
+The plug is glued in face down, so the male is cut with the design
+mirrored left to right (see [The mirror](#the-mirror-and-which-way-to-flip-the-plug)).
+The boundary is mirrored with it, about the same vertical line, the middle
+of the targets' bounding box. You draw the boundary round the design as
+you see it, and the band always lies round the plug the way you drew it.
+The room to the boundary on each side swaps sides with the design: a
+boundary drawn 3 mm right of the lettering's centre leaves 5.3 mm on the
+lettering's left and 11.3 mm on its right as drawn, and the male's
+mirrored lettering stands with 11.3 mm on the left and 5.3 mm on the
+right. `check` and `export` say so with the same `inlay_male_mirrored`
+note as ever. The female never reads `boundary`.
+
+### The cut-out runs inside it
+
+The cut-out follows the boundary as it follows a computed band's edge, on
+the inside: with an open edge its cutter's centre is one radius inside the
+boundary, so its wall runs along the end mill's upright wall and it cuts
+nothing the carve left. So the freed plug is **smaller than the boundary
+by the cut-out tool's diameter**: 3.175 mm all round for the 1/8 in end
+mill. With a V wall the floor ends at the slope's foot, `plug_depth_mm ×
+tan(α/2)` inside the edge, and the plug is smaller by that as well as the
+diameter: 4.33 mm all round for a 60° bit, a 2 mm plug depth and the 1/8 in
+end mill. Draw the boundary that much
+larger than the plug you want when its size matters: an oval 96 × 84 mm
+frees a plug 89.65 × 77.65 mm with the 1/8 in end mill.
+
+### Several boundaries
+
+`boundary` is a list. The band's edge is the **union** of the listed
+shapes, and each part of the design must lie inside that union, not
+necessarily inside one shape. Use one oval round everything, or one shape
+round each separate group of parts and list them all. A shape that holds
+no part of the design warns `inlay_boundary_empty`; it still widens the
+band.
+
+A shape with a hole in it (a ring) has the hole ignored,
+`inlay_boundary_hole_ignored`: board left standing in the band would hold
+the plug off the pocket, so the hole is cut as band too.
+
+### At the board's edge
+
+The boundary may run past the male board, and past the stock. The band is
+clipped to the male board as [At the board's edge](#the-bands-outer-edge)
+says (`inlay_band_clipped` names the edges and the narrowest band left),
+and the design must still stand clear of the board's edge. Mirroring
+swaps the side: a boundary drawn 6 mm past the stock's right edge runs 6
+mm past the male board's **left** edge.
+
+### Errors and warnings
+
+Each is located at `operations[i].boundary` (or `boundary[j]` for one
+entry), and is listed with the others in [Warnings](warnings.md).
+`check` raises the boundary's checks once the male is cut; the female,
+which ignores the list, checks nothing of it.
+
+| Code | When |
+| --- | --- |
+| `inlay_boundary_unknown` (error) | An id in `boundary` is no instance of the project. |
+| `inlay_boundary_open` (error) | A boundary instance has an open outline. Close it in the drawing; an open path is not skipped, because a boundary you meant and lost would silently become no band. |
+| `inlay_boundary_is_target` (error) | An instance is both a target and a boundary. |
+| `inlay_boundary_crosses_design` (error) | The boundary touches or crosses the design, or part of the design lies outside it. The message gives the worst point and how far past the edge it is. Draw the boundary wider there. |
+| `inlay_boundary_empty` (warning) | A listed shape holds no part of the design. |
+| `inlay_boundary_hole_ignored` (warning) | A listed shape has a hole, which is ignored. |
+| `inlay_margin_ignored` (warning) | `margin_mm` or `outline_rounding_mm` is set beside a boundary. |
+
+Every program for a boundary is held to the [safety rules](safety.md)
+like any Inlay's, with the band worked out again from the boundary
+instances in the project at the time of the check. A boundary moved after
+you exported fails the old program; export again.
+
 ## Clearing passes
 
 Both boards take the [clearing passes](v-carve.md#clearing-passes), as a
@@ -739,10 +912,11 @@ These stop `check` and `export`.
 | `operation_value_unset` | "operations[…].depth_mm is not set", and the same for `glue_gap_mm`, `plug_depth_mm`, and once the male board's thickness is set `margin_mm` | Set the value. |
 | `out_of_range` | `depth_mm` or `plug_depth_mm` is not above 0, or `glue_gap_mm` is below 0 | Set a value in range. |
 | `inlay_glue_gap_not_below_depth` | "… has glue_gap_mm … mm, not below its depth_mm … mm; the male starts depth_mm − glue_gap_mm below the stock top, so its plug would have no wall to seat …" | Make the glue gap smaller than the depth. |
-| `inlay_margin_positive` | "… is a male inlay with margin_mm … mm; its surround is carved that far beyond the design, so it must be above 0 …" | Set a margin above 0; 5 to 8 mm. |
+| `inlay_margin_positive` | "… is a male inlay with margin_mm … mm; its surround is carved that far beyond the design, so it must be above 0 …" | Set a margin above 0; 5 to 8 mm. With a [boundary](#the-boundary) no margin is needed. |
 | `inlay_male_board_size` | "… has male_board.width_mm … mm; the male board's size must be above 0. Set it to null to use the stock's" (or `height_mm`) | Set the male board's size above 0, or `null` for the stock's. |
 | `inlay_male_board_thickness` | "… has male_board.thickness_mm … mm; measure the male board and set its thickness, above 0" | Set the male board's measured thickness. |
 | `inlay_male_boards_differ` | "… cuts its male on a male_board other than operation …'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board" | Give every Inlay the same `male_board`. See [Two Inlays](#two-inlays). |
+| `inlay_boundary_unknown`, `inlay_boundary_open`, `inlay_boundary_is_target`, `inlay_boundary_crosses_design` | The drawn [boundary](#errors-and-warnings) names no instance, has an open outline, is also a target, or does not enclose the design | Close, rename or redraw it as the message says. |
 | `inlay_outline_rounding` | "… has outline_rounding_mm … mm; the male's band is rounded by that radius, so it must be above 0 …" | Set a radius above 0, or `null` for none. |
 | `v_carve_needs_v_bit` | "operation … carves with tool …, an end mill; a carve's depth follows the angle of a V-bit, so use a V-bit" | Give the Inlay a V-bit. |
 | `v_bit_angle_range` | "tool … has an included angle of … degrees; …" | Fix the tool's `included_angle_deg`. |
@@ -766,6 +940,9 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 | `inlay_plug_base_thin` | The male leaves less than 6 mm of the male board under its band. |
 | `inlay_band_edge_v_wall` | A male has clearing passes, but none fits its band's floor, so the V-bit cuts the band's outer edge as a sloped wall; it names the margin that would let a pass cut it upright. |
 | `inlay_band_clipped` | The male's band runs past the male board's edge, so it is clipped to the board there; it names the edges and the narrowest band left. |
+| `inlay_margin_ignored` | `margin_mm` or `outline_rounding_mm` is set beside a `boundary`, which replaces both ([The boundary](#what-it-replaces)). |
+| `inlay_boundary_empty` | A listed boundary shape holds no part of the design. |
+| `inlay_boundary_hole_ignored` | A listed boundary shape has a hole; it is ignored and cut as band ([The boundary](#several-boundaries)). |
 | `inlay_parts_merged` | Two parts of the design come closer than the merge distance, so both boards cut them as one shape ([Parts that nearly touch](#parts-that-nearly-touch)). |
 | `inlay_hole_filled` | A hole of the design is narrower than the merge distance everywhere, so both boards cut it as part of the shape round it ([Parts that nearly touch](#parts-that-nearly-touch)). |
 | `vcarve_target_open` | A target is an open path; it is skipped. |

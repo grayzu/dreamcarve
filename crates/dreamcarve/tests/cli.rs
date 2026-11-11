@@ -7457,6 +7457,235 @@ fn preview_draws_the_boundary_on_the_male_board() {
     assert!(!plain.contains("boundary (male board)"), "{plain}");
 }
 
+/// #605 (slice 21l): `tests/fixtures/dc-boundary.dcv` is the tutorial
+/// project `dc.dcv` with the 90 × 60 mm `frame` (`i3`) as the drawn
+/// boundary of its Inlay and nothing else changed: `margin_mm` and
+/// `outline_rounding_mm` `null`, `boundary` `["i3"]`. It is a format 26
+/// file; its boundary instance is the frame; `check` is clean of the
+/// boundary's codes; and `export` writes the five programs of the pair,
+/// the male's band now the drawn frame.
+#[test]
+fn dc_boundary_fixture_is_the_frame_as_boundary() {
+    let text = std::fs::read_to_string(tests_fixture("dc-boundary.dcv")).expect("fixture readable");
+    assert!(text.contains("\"version\": 26,"), "format 26: {text}");
+    // Exactly the three lines of `dc.dcv` that the boundary replaces.
+    let plain = std::fs::read_to_string(tests_fixture("dc.dcv")).expect("fixture readable");
+    let mut derived = plain;
+    for (from, to) in [
+        ("\"margin_mm\": 8.0,", "\"margin_mm\": null,"),
+        (
+            "\"outline_rounding_mm\": 10.0,",
+            "\"outline_rounding_mm\": null,",
+        ),
+        ("\"boundary\": [],", "\"boundary\": [ \"i3\" ],"),
+    ] {
+        assert_eq!(derived.matches(from).count(), 1, "{from}");
+        derived = derived.replace(from, to);
+    }
+    assert!(derived == text, "dc-boundary.dcv drifted from dc.dcv");
+
+    let dir = work_dir("dc_boundary_fixture_is_the_frame_as_boundary");
+    let dcv = copy_fixture(&dir, "dc-boundary.dcv", "dc-boundary.dcv");
+    let project = load_file(&dcv).project;
+    let inlay = the_inlay(&project);
+    assert_eq!(inlay.boundary, [InstanceId::new("i3")]);
+    assert_eq!((inlay.margin_mm, inlay.outline_rounding_mm), (None, None));
+    let frame = project
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == "i3")
+        .expect("the boundary is an instance");
+    assert_eq!(frame.name, "frame");
+    assert!(!inlay.targets.contains(&frame.id), "not a target");
+
+    let out = run(&dir, &["check", "dc-boundary.dcv"]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    for code in warning_codes(&report) {
+        assert!(
+            !code.starts_with("inlay_boundary") && code != "inlay_margin_ignored",
+            "{code}: {report}"
+        );
+    }
+    assert!(
+        report.contains("band: drawn boundary i3, narrowest band 8.3"),
+        "{report}"
+    );
+    let out = run(&dir, &["export", "dc-boundary.dcv", "--date", FIXED_DATE]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(programs_in(&dir).len(), 5);
+}
+
+/// The distance the compass's pockets stand clear of the oval, mm: the
+/// oval's 42 mm half-height less the pockets' 32.5 mm reach (the ring's
+/// inner radius).
+const COMPASS_BAND_MM: f64 = 9.5;
+
+/// #605, acceptance 61s, the "Line-art inlay" test part: the compass
+/// (`tests/fixtures/prep/compass-regions.svg`, what `image-prep` returns in
+/// regions mode for `compass.svg`, until that command is built) with the
+/// 96 × 84 mm oval, the second path of the drawing, as the Inlay's
+/// `boundary`. The stock and the male board are the test part's
+/// 130 × 100 × 12 mm (the acceptance text's "110 × 80 mm board" is the
+/// lettered pair's); the Inlay is the lettered pair's with the compass's
+/// values: `boundary` the oval, `margin_mm` and `outline_rounding_mm`
+/// `null`. Both boards export, every program passing S1 to S19 (`export`
+/// writes nothing otherwise, and every run also passes `assert_run_safe`);
+/// the plug seats within 0.05 mm (the heightfield simulation of the
+/// `dc-cam` seat tests); the male's band is the oval, its narrowest 9.5 mm,
+/// with an open edge; and every program's cuts leave at least 3 mm of
+/// board at each edge.
+#[test]
+fn compass_inlay_exports_both_boards() {
+    let dir = work_dir("compass_inlay_exports_both_boards");
+    copy_fixture(&dir, "prep/compass-regions.svg", "compass-regions.svg");
+    let out = run(&dir, &["init", "compass-regions.svg", "-o", "compass.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stdout(&out).contains("Imported 9 shape(s)"),
+        "eight pockets and the oval: {}",
+        stdout(&out)
+    );
+
+    // The test part's boards and the lettered pair's tools and Inlay.
+    let path = dir.join("compass.dcv");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("dcv readable"))
+            .expect("dcv is JSON");
+    let tutorial: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(tests_fixture("dc-boundary.dcv")).expect("fixture readable"),
+    )
+    .expect("fixture is JSON");
+    let (width_mm, height_mm, thickness_mm) = (130.0, 100.0, 12.0);
+    value["stock"] = serde_json::json!({
+        "width_mm": width_mm, "height_mm": height_mm, "thickness_mm": thickness_mm
+    });
+    // `init` makes the stock the drawing plus 10 mm all round, 116 × 104
+    // mm with the oval at its centre (58, 52); move the drawing to the
+    // middle of the test part's stock, (65, 50).
+    for instance in value["instances"].as_array_mut().expect("instances") {
+        let t = instance["transform"].as_array_mut().expect("a transform");
+        t[4] = serde_json::json!(t[4].as_f64().expect("a number") + (width_mm / 2.0 - 58.0));
+        t[5] = serde_json::json!(t[5].as_f64().expect("a number") + (height_mm / 2.0 - 52.0));
+    }
+    let pockets: Vec<serde_json::Value> = (1..=8).map(|k| format!("i{k}").into()).collect();
+    let mut inlay = tutorial["operations"][0].clone();
+    inlay["name"] = "compass".into();
+    inlay["targets"] = pockets.into();
+    inlay["boundary"] = serde_json::json!(["i9"]);
+    value["tools"] = tutorial["tools"].clone();
+    value["operations"] = serde_json::json!([inlay]);
+    std::fs::write(&path, serde_json::to_string_pretty(&value).expect("json")).expect("written");
+
+    let project = load_file(&path).project;
+    let inlay = the_inlay(&project);
+    let oval = project
+        .instances
+        .iter()
+        .find(|i| i.name == "oval")
+        .expect("the oval is an instance");
+    assert_eq!(inlay.boundary, std::slice::from_ref(&oval.id));
+    assert!(!inlay.targets.contains(&oval.id));
+    assert_eq!(inlay.targets.len(), 8, "the eight pockets");
+    assert_eq!(
+        (
+            inlay.depth_mm,
+            inlay.glue_gap_mm,
+            inlay.plug_depth_mm,
+            inlay.margin_mm,
+            inlay.outline_rounding_mm,
+            inlay.step_over_fraction,
+        ),
+        (Some(4.0), Some(1.0), Some(2.0), None, None, Some(0.1)),
+        "the test part's values"
+    );
+    assert_eq!(project.on_male_board(inlay).stock.width_mm, width_mm);
+    assert_eq!(project.on_male_board(inlay).stock.height_mm, height_mm);
+
+    let out = run(&dir, &["export", "compass.dcv", "--date", FIXED_DATE]);
+    let report = format!("{}{}", stdout(&out), stderr(&out));
+    assert_eq!(out.status.code(), Some(0), "{report}");
+    let written = programs_in(&dir);
+    assert_eq!(
+        written,
+        [
+            "compass-female-1-T2.nc",
+            "compass-female-2-T1.nc",
+            "compass-male-1-T2.nc",
+            "compass-male-2-T1.nc",
+            "compass-male-3-T2.nc",
+        ],
+        "{report}"
+    );
+    for code in warning_codes(&report) {
+        assert!(
+            !code.starts_with("inlay_boundary") && code != "inlay_margin_ignored",
+            "{code}: {report}"
+        );
+    }
+    assert_approx_eq!(mirror_x_mm(&report), width_mm / 2.0, 1e-9);
+    let band = report
+        .lines()
+        .find(|l| l.contains("(male board)") && l.contains("band: drawn boundary"))
+        .unwrap_or_else(|| panic!("{report}"));
+    let (_, narrowest) = band
+        .split_once("narrowest band ")
+        .expect("the narrowest band");
+    let (narrowest, _) = narrowest.split_once(" mm").expect("in mm");
+    assert!(
+        (narrowest.parse::<f64>().expect("a number") - COMPASS_BAND_MM).abs() < 0.02,
+        "{band}"
+    );
+    assert!(band.contains("(open edge, edge pass t2)"), "{band}");
+
+    // Both boards seat within 0.05 mm, every run safe on its board.
+    let (runs, _) = dc_cam::generate_inlay(&project, inlay).expect("the inlay generates");
+    for run in &runs {
+        dc_cam::test_support::assert_run_safe(run, &project, &Operation::Inlay(inlay.clone()));
+    }
+    let fit = dc_cam::test_support::seat::fit(&project, inlay, &runs, 0.2);
+    assert!(
+        fit.male_mm <= dc_cam::test_support::seat::SEAT_MM
+            && fit.seat_mm <= dc_cam::test_support::seat::SEAT_MM,
+        "the plug stands {:.3} mm proud (the male's share {:.3}) at {:?}",
+        fit.seat_mm,
+        fit.male_mm,
+        fit.seat_at
+    );
+
+    // Every cut, with its cutter's radius, stays 3 mm inside the board.
+    for name in &written {
+        let program = std::fs::read_to_string(dir.join(name)).expect("program readable");
+        let number: u32 = name
+            .rsplit_once("-T")
+            .and_then(|(_, n)| n.strip_suffix(".nc"))
+            .and_then(|n| n.parse().ok())
+            .expect("the program's tool number");
+        let radius_mm = project
+            .tools
+            .iter()
+            .find(|t| t.number == Some(number))
+            .expect("the program's tool")
+            .diameter_mm
+            / 2.0;
+        let moves = dc_gcode::parse_motion(&program).expect("program parses");
+        let mut cuts = 0;
+        for m in moves.iter().filter(|m| m.kind.is_cut()) {
+            let (x, y) = (m.to.x.expect("X known"), m.to.y.expect("Y known"));
+            assert!(
+                x - radius_mm >= LETTERED_BORDER_MM
+                    && x + radius_mm <= width_mm - LETTERED_BORDER_MM
+                    && y - radius_mm >= LETTERED_BORDER_MM
+                    && y + radius_mm <= height_mm - LETTERED_BORDER_MM,
+                "{name} line {}: a cut at ({x:.3}, {y:.3}) is less than {LETTERED_BORDER_MM} mm from the edge of the {width_mm} × {height_mm} mm board",
+                m.line
+            );
+            cuts += 1;
+        }
+        assert!(cuts > 0, "{name} cuts");
+    }
+}
+
 /// #498: `export` and `check` group a project's programs by board.
 mod export {
     use super::*;

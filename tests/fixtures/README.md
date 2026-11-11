@@ -78,6 +78,49 @@ The unit tests (`cli::inlay_exports_and_passes_safety`, the `dc-cam`
 inlay tests) still build a four-point star in code: they test geometry,
 not the tutorial.
 
+## `dc-boundary.dcv`
+
+`dc.dcv` with the drawn boundary (#449, #605): its `frame` instance
+(`i3`, the 90 × 60 mm rectangle that nothing else cuts) is the Inlay's
+`boundary`, and `margin_mm` and `outline_rounding_mm` are `null`. Those
+are the only three lines that differ; `cli::dc_boundary_fixture_is_the_frame_as_boundary`
+holds it to that, so a change to `dc.dcv` must be made here too. It is
+what the Inlay chapter's boundary section builds
+(`quick_start::inlay_boundary_chapter_runs`). The frame is 8.319 mm from
+the letters at its nearest (the band is the frame less the mirrored
+letters, so the band's edge is the frame mirrored about X = 55, and the
+frame is symmetric); the edge is open, cut by the end mill, and the
+finished plug is the frame inset by the end mill's diameter, 3.175 mm.
+
+## `prep/compass.svg` and `prep/compass-regions.svg`
+
+The phase 3 line-art inlay test part (`docs/specs/phase-3/functional.md`,
+"Line-art inlay"; #605), drawn by `tools/parity/compass-fixture.ts`. Do
+not edit them by hand; re-run the tool. A synthetic compass in line work,
+standing in for the maintainer's own art, which is never committed.
+
+| Shape | Size, mm | Where (SVG, Y-down) |
+| --- | --- | --- |
+| `ring` | 70 mm tall, strokes 2.5 wide (centre line radius 33.75) | centred on the page, (48, 42) |
+| `spokes` | eight lines from the centre to the ring, every 45 degrees, 2.5 wide | the cross and the four diagonals |
+| `oval` | 96 × 84 ellipse, the boundary | the page |
+
+`compass.svg` is the line art as strokes: what `image-prep --regions`
+takes. `compass-regions.svg` is what that command returns for it, worked
+out from the geometry by the same tool: the eight pockets between the
+strokes, filled polygons (the ring's inner circle, radius 32.5, as 40
+chords each, at most 0.01 mm off it), and the oval unchanged. The ridges
+between the pockets are the strokes' 2.5 mm. It stands in for the
+preparation until `image-prep` exists: `cli::compass_inlay_exports_both_boards`
+imports it with `init`.
+
+The test part's stock and male board are 130 × 100 × 12 mm. `init` makes
+the stock the drawing plus 10 mm all round, 116 × 104 mm here, so the
+test sets the stock and moves the drawing to its centre, as a user does by
+hand. The pockets reach 32.5 mm from the centre, so the oval is 9.5 mm
+from them at its nearest (top and bottom) and the cut-out runs 1.5875 mm
+inside the oval.
+
 ## Font notice
 
 The lettering of `sign.svg` and `dc-inlay.svg` is converted outline data
