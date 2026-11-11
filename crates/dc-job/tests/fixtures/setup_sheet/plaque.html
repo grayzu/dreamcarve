@@ -1,0 +1,72 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>plaque — setup sheet</title>
+<style>
+@page { size: auto; margin: 15mm; }
+body { margin: 0; color: #000; background: #fff; font-family: -apple-system, "Segoe UI", Inter, sans-serif; font-size: 11pt; line-height: 1.35; }
+h1 { font-size: 16pt; margin: 0 0 2pt; }
+h2 { font-size: 12pt; margin: 14pt 0 4pt; }
+h3 { font-size: 11pt; margin: 0 0 4pt; }
+p { margin: 0 0 6pt; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 0.5pt solid #000; padding: 3pt 8pt 3pt 0; text-align: left; vertical-align: top; }
+th { font-weight: 600; width: 32%; }
+td { font-variant-numeric: tabular-nums; }
+section { page-break-inside: avoid; break-inside: avoid; margin: 0 0 12pt; }
+ul { margin: 0; padding-left: 14pt; }
+footer { margin-top: 18pt; border-top: 0.5pt solid #000; padding-top: 4pt; font-size: 9pt; }
+</style>
+</head>
+<body>
+<h1>plaque — setup sheet</h1>
+<p>Exported 2026-10-15</p>
+<table>
+<tr><th>Post-processor</th><td>grblHAL, definition version 4</td></tr>
+<tr><th>Units</th><td>Millimetres</td></tr>
+<tr><th>Stock (width × height × thickness)</th><td>170.000 mm × 120.000 mm × 11.800 mm</td></tr>
+<tr><th>XY zero</th><td>Bottom-left corner of the stock</td></tr>
+<tr><th>Z zero</th><td>Top of the stock</td></tr>
+</table>
+<h2>Programs, in the order to run them</h2>
+<section>
+<h3>1. plaque-1-T2.nc</h3>
+<table>
+<tr><th>Tool</th><td>T2 1/8 end mill</td></tr>
+<tr><th>Type</th><td>End mill</td></tr>
+<tr><th>Diameter</th><td>3.175 mm</td></tr>
+<tr><th>Operations</th><td>Screw holes, Border and squiggle</td></tr>
+<tr><th>Before you start</th><td>fit T2 1/8 end mill and set work zero (X, Y and Z) with it.</td></tr>
+<tr><th>Estimated time</th><td>46 s</td></tr>
+<tr><th>Extents, tool centre</th><td>X 15.000..155.000, Y 15.000..105.000 mm</td></tr>
+<tr><th>Extents, bit edge (keep clamps outside)</th><td>X 13.412..156.588, Y 13.412..106.588 mm</td></tr>
+<tr><th>Z range, tool centre</th><td>Z -12.000..15.000 mm</td></tr>
+</table>
+</section>
+<section>
+<h3>2. plaque-2-T1.nc</h3>
+<table>
+<tr><th>Tool</th><td>T1 1/4 end mill</td></tr>
+<tr><th>Type</th><td>End mill</td></tr>
+<tr><th>Diameter</th><td>6.350 mm</td></tr>
+<tr><th>Operations</th><td>Panel, Square recess, Cut out</td></tr>
+<tr><th>Before you start</th><td>fit T1 1/4 end mill and set Z zero with it. Keep X and Y zero.</td></tr>
+<tr><th>Estimated time</th><td>2 min 54 s</td></tr>
+<tr><th>Extents, tool centre</th><td>X 6.825..163.175, Y 6.825..116.175 mm</td></tr>
+<tr><th>Extents, bit edge (keep clamps outside)</th><td>X 3.650..166.350, Y 3.650..119.350 mm</td></tr>
+<tr><th>Z range, tool centre</th><td>Z -12.000..15.000 mm</td></tr>
+</table>
+</section>
+<h2>Warnings</h2>
+<ul>
+<li>Warning unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation</li>
+</ul>
+<h2>Notes</h2>
+<ul>
+<li>This program does not change the tool length offset (G43.1). If your sender sets one, set it before you set Z zero.</li>
+<li>If you used G51 on this controller, soft-reset it and check that $G shows G50 before you start: grblHAL&#39;s G50 does not clear a scale that leaves X at 1, such as G51 Z-1.</li>
+</ul>
+<footer>plaque · 2026-10-15 · DreamCarve 0.0.0-test</footer>
+</body>
+</html>
