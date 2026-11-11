@@ -441,6 +441,13 @@ fn emit_program_as_is(name: &str, project: &Project) -> String {
                 let (t, w) = generate_pocket(project, p).expect("the pocket generates");
                 (EmitOp::from((op.clone(), tool, t)), w)
             }
+            // Format 27 (#644): no golden case holds one before the
+            // generator and its goldens (#646, #647).
+            Operation::PhotoVCarve(p) => {
+                let (t, w) =
+                    dc_cam::generate_photo(project, p).expect("the Photo V-Carve generates");
+                (EmitOp::from((op.clone(), tool, t)), w)
+            }
             Operation::Engrave(p) => {
                 let (t, w) = generate_engrave(project, p).expect("the engrave generates");
                 (EmitOp::from((op.clone(), tool, t)), w)

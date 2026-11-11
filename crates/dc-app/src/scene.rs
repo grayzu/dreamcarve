@@ -33,7 +33,7 @@
 //! export read them; the Viewport adds [`Scene::board_offset`] as it
 //! draws them.
 //!
-//! Not yet: bitmaps (no picture type before phase 3.4; slices 6 and 15).
+//! Not yet: bitmaps (no picture type before phase 3.5; slices 6 and 15).
 
 use std::sync::Arc;
 

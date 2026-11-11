@@ -157,6 +157,7 @@ impl App {
             operations: Vec::new(),
             tabs: Vec::new(),
             instances: Vec::new(),
+            bitmaps: Vec::new(),
             post_processor,
             definitions: BTreeMap::new(),
         })

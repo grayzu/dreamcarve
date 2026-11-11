@@ -13,7 +13,7 @@
 //! an Inlay when it has a closed outline, a Drill or a Bore when it has a
 //! circle (`dc_geometry::as_circle` on the placed outline, as the Drill
 //! generator decides), a Profile or an Engrave always, and a Photo V-Carve
-//! needs a picture, which no project holds before phase 3.4.
+//! needs a picture, which no project holds before phase 3.5.
 //!
 //! A new operation targets the selection, takes the project's first tool
 //! whose type fits (a V-bit for V-Carve, Inlay and Photo V-Carve; an end
@@ -57,7 +57,7 @@ pub enum Kind {
     VCarve,
     /// A V-bit inlay, both boards.
     Inlay,
-    /// Carve a picture in grooves (phase 3.4; no record before it).
+    /// Carve a picture in grooves (phase 3.5; no record before it).
     PhotoVCarve,
 }
 
@@ -85,6 +85,7 @@ impl Kind {
             Operation::Engrave(_) => Self::Engrave,
             Operation::VCarve(_) => Self::VCarve,
             Operation::Inlay(_) => Self::Inlay,
+            Operation::PhotoVCarve(_) => Self::PhotoVCarve,
         }
     }
 
@@ -238,7 +239,7 @@ fn next_id(project: &Project) -> OperationId {
 
 /// A new operation of `kind` on `targets` with the CLI's defaults, the
 /// first fitting tool (or none, the empty id) and the next free name and
-/// id; `None` for a Photo V-Carve, which has no record before phase 3.4.
+/// id; `None` for a Photo V-Carve, which has no record before phase 3.5.
 #[must_use]
 pub fn new_operation(
     project: &Project,

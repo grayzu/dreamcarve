@@ -129,7 +129,7 @@ The fields, in the order DreamCarve writes them:
 
 | Field | Meaning |
 | --- | --- |
-| `version` | Format version. This build writes `26`. |
+| `version` | Format version. This build writes `27`. |
 | `name` | The project name, written at the top of the program. `init` uses the drawing's file name. |
 | `display_units` | `"mm"` or `"inch"`: the units of the G-code (`G21` or `G20`), and of the depths `export` prints. A bare number in this file stays in millimetres either way; write `"0.5 in"` to give a value in inches ([Values with units](#values-with-units)). |
 | `flatten_tolerance_mm` | How far, at most, short straight moves may stray from a curve: more than 0 and at most 0.1. Default 0.01. `init` uses it when it imports the drawing; export uses it for the ramps of smooth tabs on curves. |
@@ -141,6 +141,7 @@ The fields, in the order DreamCarve writes them:
 | `operations` | The operations, in cutting order. |
 | `tabs` | The project's placed tabs. See [`tabs`](#tabs). |
 | `instances` | Placed copies of the shapes. |
+| `bitmaps` | Pictures placed on the stock, each stored in the file, for a Photo V-Carve to carve (from format version 27). `[]` in a project made from a drawing. |
 | `post_processor` | Which bundled post-processor and version, and your settings for it. See [`post_processor`](#post_processor). |
 | `definitions` | The shapes, keyed by id. Last, because it is most of the file. |
 
@@ -538,6 +539,7 @@ that changes the project). A file from a newer DreamCarve is refused.
 | 24 | Adds each Inlay's `outline_rounding_mm`, after its `margin_mm`, `null` on upgrade: the radius the male's band is rounded by. In the same release the male's band changed: when a clearing pass fits the band's flat floor, its end mill cuts the band's outer edge upright and the cut-out runs along the wider floor's outer edge, where an older build cut a V wall there. An upgraded male with such a pass gives a different program, the same as the project written at version 24 ([Inlay: the band's outer edge](inlay.md#the-bands-outer-edge)). |
 | 25 | One Inlay cuts both boards (#498): each Inlay's `side` is replaced, in its place, by `male_board`. A `"female"` Inlay gets `{ "width_mm": null, "height_mm": null, "thickness_mm": null }`, so it exports the female programs it did, warning `inlay_male_board_unset`. A `"male"` Inlay gets its stock's width, height and thickness, so it exports the male programs it did, byte for byte; and it now also cuts the female on the stock, which `check` and `export` print as a `note:`. In a project with an Inlay every program is now named after its board, `<stem>-female-<k>-T<n>` and `<stem>-male-<k>-T<n>` ([Inlay: projects from before format 25](inlay.md#projects-from-before-format-25)). |
 | 26 | Adds each Inlay's `boundary`, after its `outline_rounding_mm`, `[]` on upgrade (#449): the shapes that draw the male band's outer edge. Empty, the band is `margin_mm` and `outline_rounding_mm` as before, so a version 25 file exports the same programs, byte for byte. A male that lists one is cut inside it, mirrored with the design ([Inlay: the boundary](inlay.md#the-boundary)). |
+| 27 | Adds `bitmaps`, after `instances`, `[]` on upgrade (#644): the pictures a project holds, and with them the `"photo_v_carve"` operation kind that carves one. A version 26 file holds neither, so it exports the same programs, byte for byte. This build reads and checks a Photo V-Carve but does not cut one yet: `check` and `export` stop at it until it is disabled. |
 
 ## What `check` reports
 

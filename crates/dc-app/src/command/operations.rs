@@ -23,6 +23,7 @@ macro_rules! with_record {
             Operation::Engrave($inner) => $body,
             Operation::VCarve($inner) => $body,
             Operation::Inlay($inner) => $body,
+            Operation::PhotoVCarve($inner) => $body,
         }
     };
 }
@@ -41,9 +42,19 @@ pub(super) fn enabled_mut(operation: &mut Operation) -> &mut bool {
     with_record!(operation, |op| &mut op.enabled)
 }
 
-/// The operation's targets, to change.
-pub(super) fn targets_mut(operation: &mut Operation) -> &mut Vec<InstanceId> {
-    with_record!(operation, |op| &mut op.targets)
+/// The operation's targets, to change; `None` for a Photo V-Carve, which
+/// carves a bitmap and targets no instance (format 27).
+pub(super) fn targets_mut(operation: &mut Operation) -> Option<&mut Vec<InstanceId>> {
+    match operation {
+        Operation::Profile(op) => Some(&mut op.targets),
+        Operation::Pocket(op) => Some(&mut op.targets),
+        Operation::Drill(op) => Some(&mut op.targets),
+        Operation::Bore(op) => Some(&mut op.targets),
+        Operation::Engrave(op) => Some(&mut op.targets),
+        Operation::VCarve(op) => Some(&mut op.targets),
+        Operation::Inlay(op) => Some(&mut op.targets),
+        Operation::PhotoVCarve(_) => None,
+    }
 }
 
 /// Gives the operation another id and name, for a copy.

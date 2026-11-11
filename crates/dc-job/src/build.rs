@@ -28,8 +28,8 @@
 
 use dc_cam::{
     CamError, RunLabel, ShapeRef, ToolRun, Toolpath, Warning, generate_bore, generate_drill,
-    generate_engrave, generate_inlay_board, generate_pocket, generate_profile, generate_vcarve,
-    order, placed_tabs,
+    generate_engrave, generate_inlay_board, generate_photo, generate_pocket, generate_profile,
+    generate_vcarve, order, placed_tabs,
 };
 use dc_gcode::{EmitOp, Estimate, ExportWarning, Extents, Program, ProgramSplit, emit_programs};
 use dc_project::{Board, Operation, OperationId, Project, Severity, ToolChangeMode, validate};
@@ -359,6 +359,9 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
                 .collect::<Result<Vec<_>, _>>()
                 .map(|runs| (runs, w))
         }),
+        // Format 27 (#644): refused with `CamError::PhotoNotBuilt` until
+        // the generator lands (#646), so the error below names it.
+        Operation::PhotoVCarve(op) => generate_photo(project, op).map(|(t, w)| (plain(t), w)),
         // Generated above, board by board.
         Operation::Inlay(_) => return out,
     };
@@ -811,6 +814,44 @@ mod tests {
         };
         project.operations = vec![Operation::VCarve(carve)];
         project
+    }
+
+    /// #644: a Photo V-Carve is in the project file (format 27) before
+    /// its generator is built (#646). Until then a project with an
+    /// enabled one validates, and building it is one error that names the
+    /// operation: no program, and no toolpath for a preview, so nothing
+    /// that cuts nothing is ever written. The project's other operations
+    /// export once it is disabled.
+    #[test]
+    fn photo_v_carve_is_not_generated_yet() {
+        let project = dc_project::test_support::photo_project();
+        assert!(!validation(&project).has_errors());
+        let built = build(&project, ProgramSplit::ProjectDefault, "2026-01-01");
+        assert!(built.programs.is_empty(), "{:?}", built.programs.len());
+        assert_eq!(built.generated, None);
+        let expected = dc_cam::CamError::PhotoNotBuilt {
+            op: OperationId::new("o8"),
+        }
+        .to_string();
+        let errors: Vec<(&str, Option<&str>)> = built
+            .findings
+            .errors
+            .iter()
+            .map(|f| (f.message.as_str(), f.op.as_ref().map(OperationId::as_str)))
+            .collect();
+        assert_eq!(errors, [(expected.as_str(), Some("o8"))]);
+
+        let generated = generate_operation(&project, &OperationId::new("o8"));
+        assert!(generated.runs.is_empty());
+        assert_eq!(generated.findings.errors.len(), 1);
+
+        let mut disabled = project;
+        if let Some(Operation::PhotoVCarve(photo)) = disabled.operations.last_mut() {
+            photo.enabled = false;
+        }
+        let built = build(&disabled, ProgramSplit::ProjectDefault, "2026-01-01");
+        assert!(!built.findings.has_errors(), "{:?}", built.findings);
+        assert_eq!(built.programs.len(), 1, "the Profile's program");
     }
 
     /// #406: the summary names a carve's clearing run `o6 (clearing t1)`
