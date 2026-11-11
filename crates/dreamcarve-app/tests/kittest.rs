@@ -1962,6 +1962,22 @@ fn field_commits_on_blur_not_per_keystroke() {
     assert_eq!(after.depth_mm, Some(9.5), "leaving the field writes it");
     assert_eq!(undo_steps(&h), steps + 1, "as one step");
     assert_eq!(h.state().app().undo_label(), Some("Set depth of “Cut out”"));
+
+    // Escape restores the field and writes nothing (section 7), though the
+    // Viewport takes the key before the editor draws (#618).
+    h.get_by_role_and_label(Role::TextInput, "Depth").focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("7".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let dc_project::Operation::Profile(after) = operation_of(&h, "op4") else {
+        panic!("still a Profile");
+    };
+    assert_eq!(after.depth_mm, Some(9.5), "Escape writes nothing");
+    assert_eq!(undo_steps(&h), steps + 1);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2090,6 +2106,23 @@ fn warnings_row_focuses_its_field() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Opens the operation editor's group `title` (slice 26, #618: every group
+/// but Setup starts closed): its header, the rightmost button of that
+/// name, since the editor is the right-hand panel.
+fn open_group(h: &mut Harness<'_, dreamcarve_app::Shell>, title: &str) {
+    let header = h
+        .query_all_by_role_and_label(Role::Button, title)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {title} group"));
+    header.scroll_to_me();
+    h.run();
+    h.query_all_by_role_and_label(Role::Button, title)
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .unwrap_or_else(|| panic!("no {title} group"))
+        .click();
+    h.run();
+}
+
 /// Clicks the Toolpaths card's button `label`: the rightmost of that name,
 /// since the Design Tree's group rows have a *Show all* and *Hide all* of
 /// their own, for shapes.
@@ -2191,8 +2224,9 @@ fn clearing_tools(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> Vec<Strin
 /// Capability 70 and acceptance 75 in the window (slice 13, #542): on the
 /// sign's Background, *Add pass* appends the 3.175 mm end mill's pass;
 /// dragging its grip above the first pass is one step and shows
-/// `clearing_not_descending`'s message under the list; the editor's foot
-/// shows `check`'s carve summary once the carve has generated.
+/// `clearing_not_descending`'s message under the list. The carve summary
+/// is no longer the editor's foot (slice 26, #618):
+/// `editor_has_no_check_says_box`.
 #[test]
 fn clearing_list_adds_and_drags() {
     let dir = scratch("clearing-list");
@@ -2237,24 +2271,6 @@ fn clearing_list_adds_and_drags() {
         h.query_by_label(&warning).is_some(),
         "the warning shows under the list"
     );
-
-    // Generated, the foot shows check's line for the carve.
-    let op2 = dc_project::OperationId::new("op2");
-    for _ in 0..400 {
-        if !dc_app::editor::carve_summary(h.state().app(), &op2).is_empty() {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-        h.run();
-    }
-    let summary = dc_app::editor::carve_summary(h.state().app(), &op2);
-    assert_eq!(summary.len(), 1, "the carve generated");
-    h.run();
-    assert!(
-        h.query_by_label(&summary[0]).is_some(),
-        "the editor's foot shows {}",
-        summary[0]
-    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -2295,6 +2311,8 @@ fn start_point_click_on_the_viewport() {
         !h.get_by_label("Place tabs").accesskit_node().is_disabled(),
         "the Profile's tab request can be placed (#546)"
     );
+    // The start point is Strategy's, closed until opened (#618).
+    open_group(&mut h, "Strategy");
 
     h.get_by_label("Pick on the view").scroll_to_me();
     h.run();
@@ -2389,6 +2407,13 @@ fn inlay_editor_shows_the_male_board() {
     );
     h.get_by_role_and_label(Role::ListItem, "DC").click();
     h.run();
+    // The derived line and the margin are Depth's, closed until opened;
+    // the values and the board thickness are Setup's (#618).
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Band margin")
+            .is_none()
+    );
+    open_group(&mut h, "Depth");
     for label in [
         "Inlay depth",
         "Glue gap",

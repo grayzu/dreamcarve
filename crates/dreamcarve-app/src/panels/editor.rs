@@ -12,7 +12,7 @@
 //! message under itself, and shows its help with its `.dcv` field name on
 //! hover of its label.
 //!
-//! The Targets group lists the targets with a remove button each,
+//! Setup's Targets row lists the targets with a remove button each,
 //! highlights them on the Viewport while it is hovered
 //! ([`highlighted_targets`]), and has *Add selected*, *Replace with
 //! selected* and *Pick…*, which arms the Viewport: each click on a shape
@@ -39,12 +39,22 @@
 //! same renderers ([`control`]) inside the clearing list's block
 //! ([`crate::panels::clearing`]); a flat depth is a switch and a field; a
 //! tool picker lists only the tools that fit and shows a V-bit's cone
-//! height under itself; and the editor's foot is `check`'s carve summary
-//! for the operation ([`status_line`]).
+//! height under itself.
+//!
+//! Slice 26 (#618, the review redesign; capabilities 66, 66a, 66b): the
+//! header holds the name, renamed in place ([`header`]: click it, double-
+//! click the band or press F2; Enter commits one step, Escape reverts);
+//! *enabled* is the list's checkbox. Setup comes first and never closes;
+//! every other group starts closed with its values summarised in its
+//! header ([`editor::summary`]), and opens by itself, once per showing,
+//! when it holds a located error or warning. An unset value the file needs
+//! shows *Required* in its field, the message its tooltip. `check`'s carve
+//! summary is no longer drawn here (slice 28 makes it a note in the
+//! Warnings drawer).
 
-use dc_app::editor::{self, FieldKind, Group, Row, Slot, fields, targets};
+use dc_app::editor::{self, FieldKind, Group, Row, Slot, fields, summary, targets};
 use dc_app::operations::Kind;
-use dc_app::{Command, StrKey, Strings};
+use dc_app::{Command, Selection, StrKey, Strings};
 use dc_job::Tier;
 use dc_project::{InstanceId, Operation, OperationId, Project, Tool, ToolKind};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
@@ -56,10 +66,10 @@ use crate::widgets::checkbox::checkbox as check_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
 use crate::widgets::row::{self, GAP_PX};
-use crate::widgets::section::section;
+use crate::widgets::section::{Header, section_with};
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
-use crate::widgets::unit_field::{HEIGHT_PX, UnitField, field as unit_field};
+use crate::widgets::unit_field::{HEIGHT_PX, Required, UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 12;
@@ -191,8 +201,10 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         .iter()
         .position(|o| o.id() == op.id())
         .unwrap_or(0);
-    header(ui, &cx, index);
-    status_line(ui, &cx, &editor::carve_summary(app, op.id()));
+    let selected = matches!(app.selection(), Selection::Operation(id) if id == op.id());
+    header(ui, &cx, index, selected, out);
+    let kind = Kind::of(op);
+    let opening = opens_now(ui, op, &cx.located);
     egui::ScrollArea::vertical()
         .id_salt(("operation_editor", op.id().as_str()))
         .auto_shrink(false)
@@ -202,117 +214,227 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
                     for (group, rows) in fields::groups(op) {
-                        let name = group.section();
-                        let open = state.prefs.sections.get(name).copied().unwrap_or(true);
-                        if !open && focus.is_some_and(|key| rows.iter().any(|r| r.key == key)) {
+                        let name = group.section(kind);
+                        let open = summary::open(&state.prefs.sections, kind, group);
+                        let wants = opening.contains(&group)
+                            || focus.is_some_and(|key| rows.iter().any(|r| r.key == key));
+                        if !open && wants {
                             out.push(Action::SetSection {
-                                name: name.to_owned(),
+                                name: name.clone(),
                                 open: true,
                             });
                         }
-                        let located = cx.located.group(group);
-                        let inner = ui.scope(|ui| {
-                            section(
-                                ui,
-                                Id::unique(("dc.editor.group", name)),
-                                strings.get(group.title()),
+                        let summary = if open {
+                            String::new()
+                        } else {
+                            summary::group(project, strings, op, group)
+                        };
+                        let clicked = section_with(
+                            ui,
+                            Id::unique(("dc.editor.group", name.as_str())),
+                            strings.get(group.title()),
+                            Header {
                                 open,
-                                located,
-                                |ui| {
-                                    for row in &rows {
-                                        render(ui, &cx, row, out);
-                                    }
-                                },
-                            )
-                        });
-                        if inner.inner {
-                            out.push(Action::SetSection {
-                                name: name.to_owned(),
-                                open: !open,
-                            });
-                        }
-                        if group == Group::Targets && inner.response.contains_pointer() {
-                            let ids = op.targets().to_vec();
-                            ui.data_mut(|d| d.insert_temp(highlight_id(), ids));
+                                located: cx.located.group(group),
+                                summary: &summary,
+                                collapses: group.collapses(),
+                            },
+                            |ui| {
+                                for row in &rows {
+                                    render(ui, &cx, row, out);
+                                }
+                            },
+                        );
+                        if clicked {
+                            out.push(Action::SetSection { name, open: !open });
                         }
                     }
                 });
         });
 }
 
-/// The 32-px title band: the kind's glyph in the operation's colour, then
-/// `Name · Kind`.
-fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize) {
+/// The groups of `op` to open this frame: those holding a located error
+/// or warning ([`summary::opened`]) that have not opened by themselves
+/// since the editor began showing `op`, so each opens once and the user
+/// can close it again (capability 66).
+fn opens_now(ui: &Ui, op: &Operation, located: &editor::Located<'_>) -> Vec<Group> {
+    let id = Id::unique("dc.editor.auto_opened");
+    let (shown, mut done): (Option<OperationId>, Vec<Group>) = ui
+        .data(|d| d.get_temp::<(OperationId, Vec<Group>)>(id))
+        .map_or((None, Vec::new()), |(shown, done)| (Some(shown), done));
+    if shown.as_ref() != Some(op.id()) {
+        done.clear();
+    }
+    let now: Vec<Group> = summary::opened(op, located)
+        .into_iter()
+        .filter(|g| !done.contains(g))
+        .collect();
+    done.extend(now.iter().copied());
+    ui.data_mut(|d| d.insert_temp(id, (op.id().clone(), done)));
+    now
+}
+
+/// Where the header's rename field keeps its text, and whether it has
+/// just opened (to select the name and take the focus).
+fn rename_id(op: &Operation) -> Id {
+    Id::unique(("dc.editor.rename", op.id().as_str()))
+}
+
+/// The 32-px header band (capability 66; section 7, "Editor header"): the
+/// kind's glyph in the operation's colour, the name, editable in place,
+/// `· Kind` in text.secondary, and the operation's worst located tier's
+/// glyph at the right. Clicking the name, double-clicking the band, or F2
+/// while the operation is the selection makes the name a field with the
+/// name selected; Enter or leaving it commits one undo step
+/// ([`editor::rename`]), Escape reverts. No enabled checkbox: that is the
+/// list row's.
+fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let kind = Kind::of(cx.op);
+    let name = cx.op.name();
     let title = cx.strings.fmt(
         StrKey::EditorTitle,
-        &[
-            ("name", cx.op.name()),
-            ("kind", cx.strings.get(kind.label())),
-        ],
+        &[("name", name), ("kind", cx.strings.get(kind.label()))],
     );
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::hover());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &title));
+    let (rect, band) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::click());
+    band.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &title));
     let glyph = Rect::from_center_size(
         egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
         egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
     );
     op_glyph(ui.painter(), glyph, kind, palette.operation(index));
-    ui.painter().text(
-        egui::pos2(glyph.right() + 8.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        &title,
-        TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
-        palette.text_primary,
+
+    // The worst located finding about the operation, at the right end.
+    let worst = [Tier::Error, Tier::Warning, Tier::Hint]
+        .into_iter()
+        .find(|tier| {
+            cx.findings
+                .iter()
+                .any(|f| f.op.as_ref() == Some(cx.op.id()) && f.tier == *tier)
+        });
+    let mut right = rect.right() - 12.0;
+    if let Some(tier) = worst {
+        let (icon, colours) = match tier {
+            Tier::Error => (Icon::CircleX, palette.status_error),
+            Tier::Warning => (Icon::TriangleAlert, palette.status_warning),
+            Tier::Hint => (Icon::Info, palette.status_info),
+        };
+        let galley = icon.galley(ui, theme::ICON_SMALL_PX, colours.stroke);
+        right -= galley.size().x;
+        ui.painter().galley(
+            egui::pos2(right, rect.center().y - galley.size().y / 2.0),
+            galley,
+            colours.stroke,
+        );
+        right -= 8.0;
+    }
+
+    let font = TextStyle::Name(theme::TITLE.into()).resolve(ui.style());
+    let kind_text = cx.strings.fmt(
+        StrKey::EditorHeaderKind,
+        &[("kind", cx.strings.get(kind.label()))],
+    );
+    let kind_galley = ui.painter().layout_no_wrap(
+        kind_text,
+        TextStyle::Body.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let left = glyph.right() + 8.0;
+    let name_room = (right - left - kind_galley.size().x - 8.0).max(24.0);
+    let name_rect = Rect::from_min_max(
+        egui::pos2(left - 4.0, rect.top() + 4.0),
+        egui::pos2(left + name_room, rect.bottom() - 4.0),
+    );
+
+    let field_id = rename_id(cx.op);
+    let renaming: Option<(String, bool)> = ui.data(|d| d.get_temp(field_id));
+    let name_right = if let Some((mut text, fresh)) = renaming {
+        let edit = ui.put(
+            name_rect,
+            egui::TextEdit::singleline(&mut text)
+                .id(field_id)
+                .font(font)
+                .desired_width(name_rect.width()),
+        );
+        let edit = edit.accessible_name(cx.strings.fmt(StrKey::EditorRename, &[("name", name)]));
+        if fresh {
+            edit.request_focus();
+            if let Some(mut s) = egui::text_edit::TextEditState::load(ui.ctx(), field_id) {
+                s.cursor
+                    .set_char_range(Some(egui::text::CCursorRange::select_all_str(&text)));
+                s.store(ui.ctx(), field_id);
+            }
+        }
+        if edit.lost_focus() && !fresh {
+            ui.data_mut(|d| d.remove::<(String, bool)>(field_id));
+            // The Viewport takes the Escape key before the editor draws,
+            // and the focus router says when it left a field.
+            let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape))
+                || crate::shell::focus::escape_left_widget(ui.ctx());
+            if !escaped {
+                commit(
+                    ui,
+                    field_id.with("refused"),
+                    editor::rename(cx.op, &text),
+                    out,
+                );
+            }
+        } else {
+            ui.data_mut(|d| d.insert_temp(field_id, (text, false)));
+        }
+        name_rect.right()
+    } else {
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(name.to_owned(), font, palette.text_primary);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(name_room);
+        let galley = ui.painter().layout_job(job);
+        let at = Rect::from_min_size(
+            egui::pos2(left - 4.0, rect.top() + 4.0),
+            egui::vec2(galley.size().x + 8.0, rect.height() - 8.0),
+        );
+        let response = ui
+            .interact(at, field_id.with("name"), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::Text);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name));
+        if response.hovered() {
+            ui.painter().rect_stroke(
+                at,
+                4.0,
+                egui::Stroke::new(1.0, palette.border_default),
+                egui::StrokeKind::Inside,
+            );
+        }
+        ui.painter().galley(
+            egui::pos2(left, rect.center().y - galley.size().y / 2.0),
+            galley,
+            palette.text_primary,
+        );
+        let f2 = selected
+            && ui.memory(|m| m.focused().is_none())
+            && ui.input(|i| i.key_pressed(egui::Key::F2));
+        if response.clicked() || band.double_clicked() || f2 {
+            ui.data_mut(|d| d.insert_temp(field_id, (name.to_owned(), true)));
+            ui.ctx().request_repaint();
+        }
+        at.right()
+    };
+    ui.painter().galley(
+        egui::pos2(
+            name_right + 4.0,
+            rect.center().y - kind_galley.size().y / 2.0,
+        ),
+        kind_galley,
+        palette.text_secondary,
     );
     ui.painter().hline(
         rect.x_range(),
         rect.bottom() - 0.5,
         egui::Stroke::new(1.0, palette.border_default),
     );
-}
-
-/// The editor's status line, at its foot (slice 13, #542; mock-up 06):
-/// `check`'s carve summary for the operation, as `check` prints it, from
-/// the result the app holds ([`editor::carve_summary`]). Nothing for a
-/// kind `check` prints no such line for, or while the operation has no
-/// current result.
-fn status_line(ui: &mut Ui, cx: &Cx<'_>, lines: &[String]) {
-    if lines.is_empty() {
-        return;
+    if let Some(reason) = ui.data(|d| d.get_temp::<String>(field_id.with("refused"))) {
+        row::message(ui, Tier::Error, &reason);
     }
-    let palette = Palette::current(ui);
-    egui::Panel::bottom(Id::unique(("dc.editor.status", cx.op.id().as_str())))
-        .resizable(false)
-        .show_separator_line(true)
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.surface_panel)
-                .inner_margin(egui::Margin::symmetric(MARGIN_PX, 6)),
-        )
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 2.0;
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(cx.strings.get(StrKey::EditorCarveSummary))
-                        .text_style(TextStyle::Small)
-                        .color(palette.text_secondary),
-                )
-                .selectable(false),
-            );
-            for line in lines {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(line)
-                            .text_style(TextStyle::Small)
-                            .color(palette.text_primary),
-                    )
-                    .wrap(),
-                );
-            }
-        });
 }
 
 /// The id of the control at `key` (a row's key path, a clearing pass's
@@ -352,11 +474,40 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         .or(status.map(|s| s.tier));
     let focused = cx.focus == Some(row.key);
     let offered = editor::offered_for(cx.project, cx.op, row);
+    // An unset value with an error or a warning on it, and no default of
+    // the tool's or the stock's, is required (capability 66b): *Required*
+    // in the field and the message its tooltip, not a line under it.
+    let required = status.filter(|s| {
+        refused.is_none()
+            && s.tier != Tier::Hint
+            && typed_kind(row.kind)
+            && slot.value_text(cx.project, cx.op).is_empty()
+            && slot.placeholder(cx.project, cx.strings, cx.op).is_none()
+    });
     let response = ui
-        .horizontal(|ui| control(ui, cx, &slot, &offered, tier, focused, out))
+        .horizontal(|ui| {
+            control(
+                ui,
+                cx,
+                &slot,
+                &offered,
+                tier,
+                required.map(|s| s.message),
+                focused,
+                out,
+            )
+        })
         .inner;
+    let status = status.filter(|_| required.is_none());
     match row.kind {
-        FieldKind::InstanceList => target_list(ui, cx, out),
+        // Hovering the targets marks them on the Viewport.
+        FieldKind::InstanceList => {
+            let block = ui.scope(|ui| target_list(ui, cx, out)).response;
+            if block.contains_pointer() {
+                let ids = cx.op.targets().to_vec();
+                ui.data_mut(|d| d.insert_temp(highlight_id(), ids));
+            }
+        }
         FieldKind::ClearingList => crate::panels::clearing::list(ui, cx, row, out),
         // Nothing to derive it from: validation's message in place of the
         // number.
@@ -405,15 +556,37 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
     }
 }
 
+/// Whether a row of `kind` is a typed field, which can show the
+/// required-field look.
+const fn typed_kind(kind: FieldKind) -> bool {
+    matches!(
+        kind,
+        FieldKind::Length
+            | FieldKind::Rate
+            | FieldKind::Angle
+            | FieldKind::Percentage
+            | FieldKind::Count
+            | FieldKind::Seconds
+            | FieldKind::LengthList
+    )
+}
+
 /// The control of `slot`, by its kind, indented under its feature or
 /// variant when its key is nested: what a row of the operation and a row
-/// of a clearing pass both draw. `offered` is what a tool picker lists.
+/// of a clearing pass both draw. `offered` is what a tool picker lists;
+/// `required`, the file's message while a typed field is an unset
+/// required value.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one renderer's inputs, each read by some kind of row"
+)]
 pub(super) fn control(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     offered: &[&Tool],
     tier: Option<Tier>,
+    required: Option<&str>,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -424,8 +597,7 @@ pub(super) fn control(
         ui.add_space(NESTED_PX);
     }
     match slot.row.kind {
-        FieldKind::Text
-        | FieldKind::Length
+        FieldKind::Length
         | FieldKind::Rate
         | FieldKind::Angle
         | FieldKind::Percentage
@@ -433,7 +605,7 @@ pub(super) fn control(
         | FieldKind::Seconds
         | FieldKind::LengthList => {
             label(ui, cx, slot);
-            typed(ui, cx, slot, id, tier, focused, out)
+            typed(ui, cx, slot, id, tier, required, focused, out)
         }
         FieldKind::SwitchedLength => switched_length(ui, cx, slot, id, tier, focused, out),
         FieldKind::Choice(options) => choice(ui, cx, slot, id, options, out),
@@ -441,7 +613,8 @@ pub(super) fn control(
         FieldKind::Toggle(_) => switch(ui, cx, slot, out),
         FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
         FieldKind::InstanceList => {
-            // The Targets group's own block, under the row.
+            // Setup's Targets row: its label, the list under it.
+            label(ui, cx, slot);
             None
         }
         FieldKind::ClearingList => {
@@ -487,13 +660,19 @@ fn label(ui: &mut Ui, cx: &Cx<'_>, slot: &Slot<'_>) {
 }
 
 /// A typed field: the unit field, its placeholder the tool's value while
-/// `null`, and ⟲ while it has its own.
+/// `null`, and ⟲ while it has its own; while `required` (the file's
+/// message), the required-field look.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one renderer's inputs, each read by some kind of row"
+)]
 fn typed(
     ui: &mut Ui,
     cx: &Cx<'_>,
     slot: &Slot<'_>,
     id: Id,
     tier: Option<Tier>,
+    required: Option<&str>,
     focused: bool,
     out: &mut Vec<Action>,
 ) -> Option<egui::Response> {
@@ -515,6 +694,10 @@ fn typed(
             placeholder: &placeholder,
             tier,
             reset,
+            required: required.map(|message| Required {
+                placeholder: cx.strings.get(StrKey::EditorRequired),
+                message,
+            }),
             ..UnitField::new(
                 id,
                 name,
@@ -597,7 +780,7 @@ fn switched_length(
         return Some(switch);
     }
     ui.add_space(GAP_PX);
-    typed(ui, cx, slot, id, tier, focused, out)
+    typed(ui, cx, slot, id, tier, None, focused, out)
 }
 
 /// A choice: segmented for two to four options whose labels fit 56 px

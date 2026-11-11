@@ -17,6 +17,12 @@
 //!
 //! One form for every panel: the Project panel (#536), the Tools tab
 //! (#537), the placement fields (#534) and the operation editor (#539).
+//!
+//! An unset value the file needs before export (functional spec, 66b;
+//! section 7, "required (unset)"; slice 26, #618) is [`UnitField::required`]:
+//! the error outline, `circle-x` inside the field before the unit,
+//! *Required* as the placeholder, and the file's message as the tooltip,
+//! with no message line under it.
 
 use dc_job::Tier;
 use eframe::egui::{
@@ -60,6 +66,19 @@ pub(crate) struct UnitField<'a> {
     /// The ⟲ button's tooltip, when the field shows one (a tool-derived
     /// field holding a value of its own).
     pub reset: Option<&'a str>,
+    /// The required-field look (functional 66b), while the value is unset
+    /// and the file needs it: the placeholder (*Required*) and the file's
+    /// message, its tooltip. The caller draws no message under the field.
+    pub required: Option<Required<'a>>,
+}
+
+/// An unset required value's placeholder and message.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Required<'a> {
+    /// *Required*, from the string table.
+    pub placeholder: &'a str,
+    /// The file's message (`tools[t1].feed_mm_min is not set…`).
+    pub message: &'a str,
 }
 
 impl<'a> UnitField<'a> {
@@ -77,6 +96,7 @@ impl<'a> UnitField<'a> {
             disabled_reason: None,
             tier: None,
             reset: None,
+            required: None,
         }
     }
 }
@@ -110,12 +130,20 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let background = ui.painter().add(egui::Shape::Noop);
     let unit_px = if spec.unit.is_empty() { 0.0 } else { UNIT_PX };
     let reset_px = if spec.reset.is_some() { RESET_PX } else { 0.0 };
+    // The required look's glyph, before the unit (section 7).
+    let glyph_px = if spec.required.is_some() {
+        theme::ICON_SMALL_PX + 4.0
+    } else {
+        0.0
+    };
+    let tier = spec.required.map_or(spec.tier, |_| Some(Tier::Error));
+    let placeholder_text = spec.required.map_or(spec.placeholder, |r| r.placeholder);
     // One line of text, centred in the 26-px control.
     let line_px = ui.text_style_height(&TextStyle::Body);
     let text_rect = Rect::from_min_max(
         egui::pos2(rect.left() + PADDING_PX, rect.center().y - line_px / 2.0),
         egui::pos2(
-            rect.right() - PADDING_PX - unit_px - reset_px,
+            rect.right() - PADDING_PX - unit_px - reset_px - glyph_px,
             rect.center().y + line_px / 2.0,
         ),
     );
@@ -127,7 +155,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     if !spec.enabled {
         child.disable();
     }
-    let placeholder = egui::RichText::new(spec.placeholder.to_owned()).color(palette.text_disabled);
+    let placeholder = egui::RichText::new(placeholder_text.to_owned()).color(palette.text_disabled);
     let response = child
         .add(
             TextEdit::singleline(&mut text)
@@ -177,7 +205,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
 
     if ui.is_rect_visible(rect) {
         let hovered = spec.enabled && (frame_response.hovered() || response.hovered());
-        let outline = match spec.tier {
+        let outline = match tier {
             Some(Tier::Error) => palette.status_error.stroke,
             Some(Tier::Warning) => palette.status_warning.stroke,
             _ if !spec.enabled => palette.border_default,
@@ -210,11 +238,27 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
                 colour,
             );
         }
+        if spec.required.is_some() {
+            let glyph = Icon::CircleX.galley(ui, theme::ICON_SMALL_PX, palette.status_error.stroke);
+            let right = rect.right() - PADDING_PX - unit_px - reset_px;
+            ui.painter().galley(
+                egui::pos2(
+                    right - glyph.size().x - 2.0,
+                    rect.center().y - glyph.size().y / 2.0,
+                ),
+                glyph,
+                palette.status_error.stroke,
+            );
+        }
     }
-    let response = match (spec.enabled, spec.disabled_reason) {
-        (false, Some(reason)) => {
+    let response = match (spec.enabled, spec.disabled_reason, spec.required) {
+        (false, Some(reason), _) => {
             frame_response.on_hover_text(reason);
             response.on_disabled_hover_text(reason)
+        }
+        (true, _, Some(required)) => {
+            frame_response.on_hover_text(required.message);
+            response.on_hover_text(required.message)
         }
         _ => response,
     };

@@ -369,7 +369,6 @@ fn other_value(
 ) -> Option<Value> {
     let number = current.as_f64();
     Some(match row.kind {
-        FieldKind::Text => Value::from(format!("{} edited", current.as_str().unwrap_or(""))),
         FieldKind::Length | FieldKind::Rate | FieldKind::Seconds => {
             Value::from(number.map_or(2.5, |n| n + 1.25))
         }
@@ -432,16 +431,14 @@ fn other_value(
 /// Upstream's `testEveryFieldNamesADeclaredGroup` and
 /// `testEveryKindRendersAtLeastOneGroup`: the groups render once each, in
 /// capability 66's order, every row names one of them, and every kind
-/// with a record shows Identity, Targets, Tool and Heights; a group with
-/// no row for the operation is not shown.
+/// with a record shows Setup and Heights; a group with no row for the
+/// operation is not shown.
 #[test]
 fn groups_render_in_the_fixed_order() {
     assert_eq!(
         Group::ALL,
         [
-            Group::Identity,
-            Group::Targets,
-            Group::Tool,
+            Group::Setup,
             Group::Depth,
             Group::MaleBoard,
             Group::Strategy,
@@ -462,7 +459,7 @@ fn groups_render_in_the_fixed_order() {
         let mut sorted = shown.clone();
         sorted.sort_by_key(|g| Group::ALL.iter().position(|a| a == g));
         assert_eq!(shown, sorted, "{kind:?}: groups in the fixed order");
-        for group in [Group::Identity, Group::Targets, Group::Tool, Group::Heights] {
+        for group in [Group::Setup, Group::Heights] {
             assert!(shown.contains(&group), "{kind:?} shows {group:?}");
         }
         for (group, rows) in fields::groups(&op) {
@@ -493,14 +490,15 @@ fn profile_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "side",
             "depth_mm",
+            "tabs",
+            "tabs.placement",
+            "tabs.placement.count",
             "step_down_mm",
             "through_cut_allowance_mm",
-            "side",
             "direction",
             "start",
             "last_pass",
@@ -508,9 +506,6 @@ fn profile_golden_render_order() {
             "entry.ramp.angle_deg",
             "lead",
             "corner_relief",
-            "tabs",
-            "tabs.placement",
-            "tabs.placement.count",
             "tabs.width_mm",
             "tabs.height_mm",
             "tabs.shape",
@@ -536,18 +531,16 @@ fn pocket_and_engrave_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
+            "strategy",
             "step_down_mm",
             "stock_to_leave_mm",
             "through_cut_allowance_mm",
-            "strategy",
+            "direction",
             "wall_pass",
             "step_over_fraction",
-            "direction",
             "rest_of",
             "entry",
             "entry.ramp.angle_deg",
@@ -564,9 +557,18 @@ fn pocket_and_engrave_golden_render_order() {
     .unwrap();
     let keys: Vec<&str> = fields::rows(&raster).iter().map(|r| r.key).collect();
     assert_eq!(
-        keys.get(8..10),
-        Some(["strategy", "strategy.raster.angle_deg"].as_slice()),
-        "the raster angle follows the strategy"
+        keys.get(3..8),
+        Some(
+            [
+                "strategy",
+                "step_down_mm",
+                "stock_to_leave_mm",
+                "through_cut_allowance_mm",
+                "strategy.raster.angle_deg"
+            ]
+            .as_slice()
+        ),
+        "the raster angle leads Strategy, its strategy chosen in Setup"
     );
     let stepover = fields::rows(&pocket)
         .into_iter()
@@ -580,8 +582,6 @@ fn pocket_and_engrave_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
@@ -775,18 +775,23 @@ fn located_warning_matches_its_row() {
     let status = editor::status(harness.warnings(), &project, &profile, row).unwrap();
     assert_eq!(status.tier, Tier::Error);
     assert_eq!(status.message, finding.message);
-    // Closed, the Depth header counts the depth's error and the tool's
-    // unset step-down, which the step-down row takes while it is `null`.
+    // Closed, the Depth header counts the tool's unset step-down, which
+    // the step-down row takes while it is `null`; the depth itself is a
+    // Setup row (slice 26, #618), and Setup counts its error.
     assert_eq!(
         editor::group_status(harness.warnings(), &project, &profile, Group::Depth),
-        Some((Tier::Error, 2))
+        Some((Tier::Error, 1))
     );
-    let name = fields::rows(&profile)
+    assert!(matches!(
+        editor::group_status(harness.warnings(), &project, &profile, Group::Setup),
+        Some((Tier::Error, _))
+    ));
+    let side = fields::rows(&profile)
         .into_iter()
-        .find(|r| r.key == "name")
+        .find(|r| r.key == "side")
         .unwrap();
     assert_eq!(
-        editor::status(harness.warnings(), &project, &profile, name),
+        editor::status(harness.warnings(), &project, &profile, side),
         None
     );
 
@@ -1152,7 +1157,7 @@ fn profile_tab_request_round_trips() {
     let profile = op_of(&h, &id);
     let tabs = row_of(&profile, "tabs");
     assert!(matches!(tabs.kind, FieldKind::TabRequest));
-    assert_eq!(tabs.group, Group::CornersAndTabs);
+    assert_eq!(tabs.group, Group::Setup, "Setup holds the request (66a)");
     assert!(editor::switched(&profile, tabs));
 
     // Off is `null`, and its rows go.
@@ -1358,24 +1363,22 @@ fn drill_cycle_fields_follow_the_cycle() {
     );
     let simple = op_of(&h, &id);
     let simple_keys = [
-        "name",
-        "enabled",
         "targets",
         "tool",
+        "cycle",
         "depth_mm",
         "retract_mm",
         "through_cut_allowance_mm",
-        "cycle",
         "dwell_s",
         "allow_tool_wider_than_hole",
         "safe_z_mm",
     ];
     assert_eq!(keys(&simple), simple_keys, "a simple Drill");
     for (key, group) in [
-        ("depth_mm", Group::Depth),
+        ("cycle", Group::Setup),
+        ("depth_mm", Group::Setup),
         ("retract_mm", Group::Depth),
         ("through_cut_allowance_mm", Group::Depth),
-        ("cycle", Group::Strategy),
         ("dwell_s", Group::Strategy),
         ("allow_tool_wider_than_hole", Group::Strategy),
         ("safe_z_mm", Group::Heights),
@@ -1412,14 +1415,12 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&peck),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "cycle",
             "depth_mm",
             "retract_mm",
             "through_cut_allowance_mm",
-            "cycle",
             "cycle.peck.peck_depth_mm",
             "cycle.peck.retract",
             "dwell_s",
@@ -1520,24 +1521,25 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&sink),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "cycle",
+            "cycle.countersink.diameter_mm",
             "cycle.countersink",
             "retract_mm",
             "through_cut_allowance_mm",
-            "cycle",
-            "cycle.countersink.diameter_mm",
             "cycle.countersink.start_depth_mm",
             "cycle.countersink.start_plane_cleared_externally",
             "dwell_s",
             "safe_z_mm",
         ]
     );
-    assert_eq!(row_of(&sink, "cycle.countersink").group, Group::Depth);
+    assert_eq!(row_of(&sink, "cycle.countersink").group, Group::Setup);
+    assert_eq!(
+        row_of(&sink, "cycle.countersink.diameter_mm").group,
+        Group::Setup
+    );
     for key in [
-        "cycle.countersink.diameter_mm",
         "cycle.countersink.start_depth_mm",
         "cycle.countersink.start_plane_cleared_externally",
     ] {
@@ -1585,8 +1587,6 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&bore),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
@@ -1598,7 +1598,7 @@ fn drill_cycle_fields_follow_the_cycle() {
         ]
     );
     for (key, group) in [
-        ("depth_mm", Group::Depth),
+        ("depth_mm", Group::Setup),
         ("pitch_mm", Group::Depth),
         ("stock_to_leave_mm", Group::Depth),
         ("through_cut_allowance_mm", Group::Depth),
@@ -1645,17 +1645,21 @@ fn countersink_depth_is_derived_and_read_only() {
     );
     let derived = row_of(&sink, "cycle.countersink");
     assert!(matches!(derived.kind, FieldKind::CountersinkDepth));
-    assert_eq!(derived.group, Group::Depth);
+    assert_eq!(derived.group, Group::Setup);
     assert_eq!(strings.get(derived.label), "Depth");
     assert_eq!(derived.unit(), fields::Unit::Length);
-    let depth_group = fields::groups(&sink)
+    let setup: Vec<&str> = fields::groups(&sink)
         .into_iter()
-        .find(|(g, _)| *g == Group::Depth)
-        .expect("a Depth group")
-        .1;
+        .find(|(g, _)| *g == Group::Setup)
+        .expect("a Setup group")
+        .1
+        .iter()
+        .map(|r| r.key)
+        .collect();
     assert_eq!(
-        depth_group[0].key, "cycle.countersink",
-        "first, as Depth is"
+        setup.last(),
+        Some(&"cycle.countersink"),
+        "in the depth's place, after the mouth (capability 66a)"
     );
 
     let tip = 2.5 + dc_project::countersink_depth_mm(6.0, 90.0).unwrap();
@@ -1823,9 +1827,9 @@ fn drill_and_bore_target_warnings_land_under_targets() {
             status.message
         );
         let (tier, count) = located
-            .group(Group::Targets)
-            .expect("a closed Targets group shows them");
-        assert_eq!(tier, Tier::Warning);
+            .group(Group::Setup)
+            .expect("Setup, which holds the Targets row, counts them");
+        assert_ne!(tier, Tier::Hint, "{id}");
         assert!(count >= codes.len(), "{id}: {count}");
     }
 }
@@ -1873,13 +1877,17 @@ fn clearing_list_orders_and_warns() {
     let lettering = op_of(&h, "op3");
     let list = row_of(&lettering, "clearing");
     assert!(matches!(list.kind, FieldKind::ClearingList));
-    assert_eq!(list.group, Group::Strategy);
+    assert_eq!(
+        list.group,
+        Group::Setup,
+        "a V-Carve's passes are Setup's (66a)"
+    );
     assert!(clearing::passes(&lettering, list).is_empty());
 
     // The floor to clear: the flat depth is off at `null` until typed.
     let flat = row_of(&lettering, "flat_depth_mm");
     assert!(matches!(flat.kind, FieldKind::SwitchedLength));
-    assert_eq!(flat.group, Group::Depth);
+    assert_eq!(flat.group, Group::Setup);
     assert!(!editor::switched(&lettering, flat));
     let typed = editor::commit_text(h.app.project(), &lettering, flat, "2.5");
     run_edit(&mut h, typed);
@@ -2268,15 +2276,20 @@ fn inlay_both_boards() {
     assert_eq!(
         shown,
         vec![
-            (Group::Identity, vec!["name", "enabled"]),
-            (Group::Targets, vec!["targets"]),
-            (Group::Tool, vec!["tool"]),
             (
-                Group::Depth,
+                Group::Setup,
                 vec![
+                    "targets",
+                    "tool",
                     "depth_mm",
                     "glue_gap_mm",
                     "plug_depth_mm",
+                    "male_board.thickness_mm",
+                ]
+            ),
+            (
+                Group::Depth,
+                vec![
                     "margin_mm",
                     "outline_rounding_mm",
                     "through_cut_allowance_mm",
@@ -2285,11 +2298,7 @@ fn inlay_both_boards() {
             ),
             (
                 Group::MaleBoard,
-                vec![
-                    "male_board.width_mm",
-                    "male_board.height_mm",
-                    "male_board.thickness_mm",
-                ]
+                vec!["male_board.width_mm", "male_board.height_mm",]
             ),
             (Group::Strategy, vec!["step_over_fraction", "clearing"]),
             (
