@@ -793,7 +793,10 @@ mod warning {
             ),
             (ImportWarning::Image16Bit, "image_16_bit"),
             (ImportWarning::ImageAlphaFlattened, "image_alpha_flattened"),
-            (ImportWarning::ImageColourConverted, "image_colour_converted"),
+            (
+                ImportWarning::ImageColourConverted,
+                "image_colour_converted",
+            ),
         ];
         for (warning, code) in cases {
             assert_eq!(warning.code(), code, "{warning}");

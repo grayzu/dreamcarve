@@ -76,9 +76,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Decoded, ImportError> {
         match row.interlace() {
             InterlaceInfo::Null(_) => {
                 let start = next_row.checked_mul(width).ok_or_else(row_error)?;
-                let out = pixels
-                    .get_mut(start..start + count)
-                    .ok_or_else(row_error)?;
+                let out = pixels.get_mut(start..start + count).ok_or_else(row_error)?;
                 converter.row(eight_bit, channels, out);
                 next_row += 1;
             }

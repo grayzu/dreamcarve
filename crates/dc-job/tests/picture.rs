@@ -23,8 +23,8 @@ use dc_job::picture::{PictureSize, picture_into, picture_rows};
 use dc_job::preview::render;
 use dc_job::{JobError, ProgramSplit, project_from};
 use dc_project::{
-    BitmapId, Grayscale, Operation, OperationId, PhotoStrategy, PostProcessorRef, Severity,
-    ToolId, ToolKind, Units, validate,
+    BitmapId, Grayscale, Operation, OperationId, PhotoStrategy, PostProcessorRef, Severity, ToolId,
+    ToolKind, Units, validate,
 };
 
 use common::{DATE, load_dcv, repo_root};
@@ -115,7 +115,10 @@ fn picture_project_holds_the_bitmap_and_a_photo_v_carve() {
         .into_iter()
         .filter(|p| p.severity() == Severity::Error)
         .collect();
-    assert!(errors.iter().all(dc_project::Problem::is_unset_value), "{errors:?}");
+    assert!(
+        errors.iter().all(dc_project::Problem::is_unset_value),
+        "{errors:?}"
+    );
     let fields: Vec<String> = errors.iter().filter_map(|p| p.field()).collect();
     for field in [
         "stock.thickness_mm",
@@ -325,7 +328,9 @@ fn preview_draws_each_bitmap_under_the_toolpaths() {
     // Under everything else drawn on the stock.
     let at = svg.find("<image").unwrap();
     for later in [r#"class="shapes""#, r#"class="operation"#] {
-        let found = svg.find(later).unwrap_or_else(|| panic!("{later} in {svg}"));
+        let found = svg
+            .find(later)
+            .unwrap_or_else(|| panic!("{later} in {svg}"));
         assert!(at < found, "the picture is drawn before {later}");
     }
     // A project with no bitmap draws no image.

@@ -233,7 +233,14 @@ fn image_add_places_a_picture_and_image_list_shows_it() {
     );
     assert_eq!(
         list_row(&listing, "b1"),
-        ["b1", "gradient", "64x32", "60.000x30.000", "20.000,30.000", "-"]
+        [
+            "b1",
+            "gradient",
+            "64x32",
+            "60.000x30.000",
+            "20.000,30.000",
+            "-"
+        ]
     );
 
     // The default corner is the origin; --name names it.
@@ -321,7 +328,14 @@ fn image_add_converts_colour_and_says_so() {
     copy_photo(&dir, "gradient.png", "gradient.jpg");
     let out = run(
         &dir,
-        &["image", "add", "plaque.dcv", "gradient.jpg", "--width", "16"],
+        &[
+            "image",
+            "add",
+            "plaque.dcv",
+            "gradient.jpg",
+            "--width",
+            "16",
+        ],
     );
     assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
     assert!(
@@ -332,7 +346,14 @@ fn image_add_converts_colour_and_says_so() {
     copy_photo(&dir, "gradient.png", "gradient.gif");
     let out = run(
         &dir,
-        &["image", "add", "plaque.dcv", "gradient.gif", "--width", "16"],
+        &[
+            "image",
+            "add",
+            "plaque.dcv",
+            "gradient.gif",
+            "--width",
+            "16",
+        ],
     );
     assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
     assert!(stderr(&out).contains("PNG or JPEG"), "{}", stderr(&out));

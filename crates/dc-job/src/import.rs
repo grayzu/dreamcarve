@@ -79,7 +79,7 @@ pub fn drawing_into(project: &Project, import: Drawing) -> (Project, Vec<Instanc
 
 /// One past the highest `<prefix><n>` among `ids`, or 1 when none has that
 /// form, so every id handed out after it is free.
-fn next_free<'a>(ids: impl Iterator<Item = &'a str>, prefix: char) -> u64 {
+pub(crate) fn next_free<'a>(ids: impl Iterator<Item = &'a str>, prefix: char) -> u64 {
     ids.filter_map(|id| id.strip_prefix(prefix)?.parse::<u64>().ok())
         .max()
         .map_or(1, |highest| highest.saturating_add(1))

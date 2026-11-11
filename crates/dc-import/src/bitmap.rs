@@ -400,10 +400,16 @@ mod tests {
         assert_eq!((gradient.width_px, gradient.height_px), (64, 32));
         assert_eq!(warnings, []);
         let at = |i: u32, j: u32| gradient.bytes[(j * 64 + i) as usize];
-        assert_eq!((at(0, 0), at(63, 0), at(31, 0), at(32, 0)), (0, 255, 125, 130));
+        assert_eq!(
+            (at(0, 0), at(63, 0), at(31, 0), at(32, 0)),
+            (0, 255, 125, 130)
+        );
         assert!((block_mean(&gradient, 8, 12) - 255.0).abs() < f64::EPSILON);
         assert!(block_mean(&gradient, 48, 12).abs() < f64::EPSILON);
-        assert_eq!((at(7, 12), at(16, 12), at(8, 11), at(8, 20)), (28, 65, 32, 32));
+        assert_eq!(
+            (at(7, 12), at(16, 12), at(8, 11), at(8, 20)),
+            (28, 65, 32, 32)
+        );
     }
 
     /// Rec. 601: `round(0.299 R + 0.587 G + 0.114 B)`.
@@ -527,7 +533,10 @@ mod tests {
         assert_eq!(pixels.bytes, [76]);
         assert_eq!(
             warnings,
-            [ImportWarning::Image16Bit, ImportWarning::ImageColourConverted]
+            [
+                ImportWarning::Image16Bit,
+                ImportWarning::ImageColourConverted
+            ]
         );
     }
 
@@ -890,7 +899,10 @@ mod tests {
         };
         assert_eq!(bitmap.pixels().unwrap(), pixels);
         let png = encode(&pixels).unwrap();
-        assert_eq!(import(&png, ImageFormat::Png).unwrap(), (pixels, Vec::new()));
+        assert_eq!(
+            import(&png, ImageFormat::Png).unwrap(),
+            (pixels, Vec::new())
+        );
 
         // A JPEG's gray, stored, reads back as that gray.
         let (gray, _) = import(COLOUR_JPG, ImageFormat::Jpeg).unwrap();
