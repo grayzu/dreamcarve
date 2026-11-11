@@ -333,3 +333,63 @@ fn picture_at_width_equals_image_add() {
     // `dc_job::project_from::picture` and `Command::ImportPicture` (#544).
     panic!("Import picture is not built: the picture importer is not built yet");
 }
+
+/// Slice 35 (#627), capability 55 and acceptance 103: the sheet's preview
+/// is the drawing alone, for an import and for a new project: its bounds
+/// are the drawing's, as drawn (no shift onto a stock), and it holds one
+/// outline per profile the drawing has, so no stock outline.
+#[test]
+fn preview_is_the_drawing_alone() {
+    for path in ["plaque.dxf", "sign.svg"] {
+        for purpose in [Purpose::Import, Purpose::New] {
+            let file = fixture(path);
+            let format = if path.ends_with(".dxf") {
+                DrawingFormat::Dxf
+            } else {
+                DrawingFormat::Svg
+            };
+            let model = DrawingImport::open(format, path, read(&file), purpose);
+            let drawing = model.drawing().expect("the fixture imports");
+            let preview = model.preview().expect("a preview");
+            assert_eq!(
+                Some(preview.bounds),
+                drawing.bounds(),
+                "{path} {purpose:?}: the preview's bounds are the drawing's"
+            );
+            let (definitions, instances) = match drawing {
+                Drawing::Svg(import) => (&import.definitions, &import.instances),
+                Drawing::Dxf(import) => (&import.definitions, &import.instances),
+            };
+            let profiles: usize = instances
+                .iter()
+                .filter_map(|i| definitions.iter().find(|d| d.id == i.definition))
+                .map(|d| d.profiles.len())
+                .sum();
+            assert_eq!(
+                preview.outlines.len(),
+                profiles,
+                "{path} {purpose:?}: one outline per profile, no stock outline"
+            );
+            let stock = App::new_project().expect("a new project").stock;
+            let fitted = dc_job::project_from::fit_stock(
+                preview.bounds,
+                dc_job::project_from::STOCK_MARGIN_MM,
+            );
+            for outline in &preview.outlines {
+                let b = outline.bounds().expect("an outline has bounds");
+                for (w, h) in [
+                    (stock.width_mm, stock.height_mm),
+                    (fitted.width_mm, fitted.height_mm),
+                ] {
+                    assert!(
+                        !(b.min.x.abs() < 1e-9
+                            && b.min.y.abs() < 1e-9
+                            && (b.max.x - w).abs() < 1e-9
+                            && (b.max.y - h).abs() < 1e-9),
+                        "{path} {purpose:?}: an outline is a stock box"
+                    );
+                }
+            }
+        }
+    }
+}

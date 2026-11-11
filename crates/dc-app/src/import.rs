@@ -58,6 +58,16 @@ pub struct Summary {
     pub layers: usize,
 }
 
+/// What the sheet's preview draws (capability 55): the drawing's outlines
+/// as drawn and their bounds, and nothing else, so no stock outline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Preview {
+    /// The shapes' outlines, mm, Y-up, the drawing's origin at 0,0.
+    pub outlines: Vec<Polyline>,
+    /// Their bounds, mm: the drawing's.
+    pub bounds: Rect,
+}
+
 /// The sheet's state: the file, the options, and the last read.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DrawingImport {
@@ -290,6 +300,14 @@ impl DrawingImport {
     #[must_use]
     pub fn bounds(&self) -> Option<Rect> {
         self.read.as_ref().ok()?.0.bounds()
+    }
+
+    /// The sheet's preview: the drawing alone, as drawn (capability 55),
+    /// with no stock outline and no origin, for the sheet to fit to its
+    /// box. `None` when nothing would be imported.
+    #[must_use]
+    pub fn preview(&self) -> Option<Preview> {
+        None
     }
 
     /// Reads the bytes with the current options and keeps the result.
