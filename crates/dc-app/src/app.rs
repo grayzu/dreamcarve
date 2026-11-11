@@ -74,6 +74,9 @@ pub struct App {
     last_resets: Vec<SettingReset>,
     /// What the Viewport draws, rebuilt with the snapshot and the results.
     scene: Scene,
+    /// How many times the project has been replaced (New, Open, New from
+    /// drawing), so the shell can tell a new project from an edit.
+    replaced: u64,
 }
 
 /// What opening a file reported (capability 51): the migration notes and
@@ -117,6 +120,7 @@ impl App {
             source_map: None,
             last_resets: Vec::new(),
             scene: Scene::default(),
+            replaced: 0,
         };
         app.refresh_findings();
         app.rebuild_scene();
@@ -205,9 +209,20 @@ impl App {
         self.notes.clear();
         self.source_map = None;
         self.last_resets.clear();
+        self.replaced += 1;
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
+    }
+
+    /// How many times the project has been replaced since the app began:
+    /// *New*, *Open*, *New from drawing* and an example each count one;
+    /// an edit, undo or save does not. The shell compares it between
+    /// frames to apply what a newly opened project starts with (the CAM
+    /// panel's tab, Project Settings' open rule).
+    #[must_use]
+    pub const fn replaced(&self) -> u64 {
+        self.replaced
     }
 
     /// Imports the drawing `sheet` shows into the project, placed as

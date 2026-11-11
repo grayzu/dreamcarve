@@ -181,7 +181,7 @@ the code they test.
 | Module | Contents |
 | --- | --- |
 | `lib.rs` | The crate's surface: `App`, `Command`, `CommandError`, the history, selection, view, generation, strings, units and preferences types. |
-| `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes; `editing`, the operation the editor shows, apart from the shapes selected, and `toggle_hidden`, an operation's eye. |
+| `app.rs` | `App`: the project history with its labels, `run`, `undo` and `redo` returning the step's label, `open`, `serialize` and `mark_saved` with `is_dirty`, the selection and view, `pending`, `accept` and `warnings`; `new_project`, the empty project *New* makes; `editing`, the operation the editor shows, apart from the shapes selected, and `toggle_hidden`, an operation's eye; `replaced`, which counts the projects opened so the shell tells a new project from an edit. |
 | `command.rs` | `Command`, every change to the project: `apply` returns the next snapshot and never touches the caller's; `label` names the undo step from the string table. `command/instances.rs` holds the transforms about the selection's bounding-box centre, linked copies, deletion and stock fitting; `command/operations.rs` the operation list, tool removal and the field an edit changed. |
 | `error.rs` | `CommandError`: a locked shape, an unknown id, a tool in use, a value that cannot be stored, a value that is not a length, and the lower crates' errors. |
 | `history.rs` | `LabelledHistory`: `dc_project::History` with one label per past and future snapshot. |

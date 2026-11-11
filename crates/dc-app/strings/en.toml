@@ -60,12 +60,16 @@ delete_tabs = "Delete {count} tabs"
 centre_on_stock = "Centre {subject} on stock"
 fit_stock = "Fit stock to shapes"
 
-# The Project panel (slice 7, #536; functional spec, capabilities 60 and
-# 62; mock-up 03): what the Properties area shows with nothing selected.
-# Each field has a label and a one-sentence `_help`, shown on the label's
-# hover above the `.dcv` field it writes (`experience.md`, section 7).
+# Project Settings (slice 7, #536; slice 23, #615; functional spec,
+# capabilities 53, 60 and 62; mock-up 03): the upper collapsible panel of
+# the left column's lower half. Each field has a label and a one-sentence
+# `_help`, shown on the label's hover above the `.dcv` field it writes
+# (`experience.md`, section 7).
 [project]
-title = "Project · {name}"
+units = "Units"
+units_help = "The units every length and feed is shown and typed in. The file stores millimetres either way."
+units_mm = "mm"
+units_in = "in"
 
 [project.stock]
 title = "Stock"
@@ -152,7 +156,9 @@ no_canned = "Not offered: {name} has no canned cycles."
 # messages the status bar shows after a file action.
 [app]
 title = "{name} — DreamCarve"
-title_unsaved = "{name} • — DreamCarve"
+title_unsaved = "{name}* — DreamCarve"
+# The window title's name before the project has a file.
+untitled = "Untitled"
 
 [app.menu]
 file = "File"
@@ -190,7 +196,7 @@ theme_system = "System"
 theme_light = "Light"
 theme_dark = "Dark"
 fit_stock = "Fit Stock to Shapes…"
-stock_origin = "Stock and Origin…"
+project_settings = "Project Settings…"
 tool_library = "Tool Library…"
 user_guide = "User Guide"
 about = "About DreamCarve"
@@ -200,21 +206,20 @@ open = "Open"
 save = "Save"
 undo = "Undo"
 redo = "Redo"
-import = "Import"
-picture = "Picture"
+add_drawing = "Add drawing"
+add_picture = "Add picture"
 fit = "Fit"
 tab_tool = "Tab tool"
 tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
 export = "Export"
-unsaved = "Unsaved changes"
 
 [app.panel]
 design_tree = "Design Tree"
-properties = "Properties"
+project_settings = "Project Settings"
+cam = "CAM"
 operations = "Operations · {count}"
 tools = "Tools · {count}"
 no_shapes = "No shapes yet."
-no_selection = "Select a shape to see its placement."
 no_operations = "Select shapes on the drawing, then Add an operation."
 no_tools = "Add a tool from the library."
 show_left = "Show the Design Tree"

@@ -75,11 +75,10 @@ fn opens_plaque_renders_and_exports() {
         "the empty state is not shown over a project with shapes"
     );
     let title = harness.state().title().to_owned();
-    assert!(
-        title.contains("plaque.dcv"),
-        "the title names the file: {title}"
+    assert_eq!(
+        title, "plaque — DreamCarve",
+        "the title names the project, with no unsaved marker"
     );
-    assert!(!title.contains('•'), "and has no unsaved marker: {title}");
     // The opened file heads the recent list, and gui.toml says so.
     assert_eq!(harness.state().app().prefs().recent.first(), Some(&plaque));
 
@@ -192,7 +191,7 @@ fn unsaved_changes_prompt() {
     );
     widen_stock(&mut h);
     assert!(
-        h.state().title().contains('•'),
+        h.state().title().starts_with("plaque*"),
         "the title marks the change"
     );
     let edited = h.state().app().project().clone();
@@ -211,8 +210,8 @@ fn unsaved_changes_prompt() {
         );
     }
     assert!(
-        sheet.query_by_label_contains("plaque.dcv").is_some(),
-        "the sheet names the file"
+        sheet.query_by_label_contains("“plaque”").is_some(),
+        "the sheet names the project (capability 51)"
     );
     click_in_sheet(&mut h, "Cancel");
     assert!(
@@ -1151,8 +1150,8 @@ fn park_point_click_on_the_viewport() {
     );
     assert!(h.state().app().selection().is_empty());
     assert!(
-        h.query_by_label("Project · plaque.dcv").is_some(),
-        "the Properties area is the Project panel"
+        h.query_by_label("Project Settings").is_some(),
+        "the left column has Project Settings"
     );
     assert_eq!(h.state().app().project().heights.park, None);
 
@@ -3448,7 +3447,14 @@ fn depth_legend_leaves_the_extents_caption_readable() {
 fn assert_no_file_name(h: &Harness<'_, dreamcarve_app::Shell>, what: &str) {
     let found: Vec<String> = h
         .query_all_by_label_contains("plaque.dcv")
-        .map(|n| format!("{:?}", n.accesskit_node().label()))
+        .map(|n| {
+            format!(
+                "{:?} {:?} {:?}",
+                n.accesskit_node().role(),
+                n.accesskit_node().label(),
+                n.accesskit_node().value()
+            )
+        })
         .collect();
     assert!(found.is_empty(), "{what}: {found:?}");
 }
@@ -3492,7 +3498,7 @@ fn cam_tabs(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<(String, bool, egui::
         .map(|n| {
             (
                 n.accesskit_node().label().unwrap_or_default(),
-                n.accesskit_node().is_selected() == Some(true),
+                n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True),
                 n.rect(),
             )
         })
@@ -3702,7 +3708,11 @@ fn units_is_the_first_row_of_project_settings() {
     );
     let band = settings_band(&h);
     let mm = h.get_by_role_and_label(Role::RadioButton, "mm");
-    assert_eq!(mm.accesskit_node().is_selected(), Some(true), "in mm");
+    assert_eq!(
+        mm.accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True),
+        "in mm"
+    );
     let mm = mm.rect();
     let inch = h.get_by_role_and_label(Role::RadioButton, "in").rect();
     assert!(band.max.y <= mm.min.y, "under the title");

@@ -60,6 +60,15 @@ pub fn file_name(path: &Path) -> String {
     )
 }
 
+/// `path`'s file name without its extension: `plaque` for
+/// `plaque.dcv`, the window title's name (capability 50).
+pub fn stem(path: &Path) -> String {
+    path.file_stem().map_or_else(
+        || file_name(path),
+        |stem| stem.to_string_lossy().into_owned(),
+    )
+}
+
 /// What a dropped or chosen file is, by its extension.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileKind {
