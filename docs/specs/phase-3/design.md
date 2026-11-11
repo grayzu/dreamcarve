@@ -1077,6 +1077,32 @@ size, footprint and any import warning. `image list` prints a table `ID
 NAME PX FOOTPRINT_MM AT_MM USED_BY` (`USED_BY`: the Photo V-Carve
 operations naming it, `-` for none).
 
+Decided in #645. The pipeline moved to `dc-job` in phase 4, so the logic
+of `init` on a picture and of `image add`/`list` is there, for the app's
+*Import picture* (#544) to call: `dc_job::project_from::picture` (the
+project), `dc_job::picture::{PictureSize, bitmap, picture_into,
+picture_rows}` (placing a decoded picture, the next free `b<n>`, the
+list's rows), and `dc_job::preview` draws the `<image>`; the `dreamcarve`
+crate's `image.rs` and `init.rs` read the file, call
+`dc_import::bitmap::import`, print and stage the write. The side not given
+is the pixels' proportion of the side given, and both are rounded to
+`LENGTH_DECIMALS` places, well inside validation's 1e-6 on the
+proportions; a size that is not a positive length is
+`JobError::PictureSize` (exit 2), a footprint past `MAX_COORDINATE_MM`
+`JobError::PictureOutOfRange` (`image add`) or `StockTooLarge` (`init`).
+`image add`'s `--width`/`--height` are a required clap group (exit 2
+naming both); `--at` is `x,y` in mm, negative allowed. The `PX`,
+`FOOTPRINT_MM` and `AT_MM` cells are `64x32`, `60.000x30.000` and
+`20.000,30.000`, so each cell is one word; `USED_BY` joins operation ids
+with commas. `init` on a picture prints `Imported a 64 × 32 px picture
+…`, `Wrote …: stock …, picture b1 (64 × 32 px) on 100.000 × 50.000 mm at
+(10.000, 10.000) …`, and the located `null`s, as for a drawing. The
+picture is drawn with `class="picture"` and the bitmap's id, after the
+stock outline and before the shapes; a bitmap whose pixels cannot be read
+is left out of the picture (generation reports it). The CLI tests are in
+`crates/dreamcarve/tests/cli/picture.rs`, a module of `tests/cli.rs`, so
+the slice running beside this one does not edit the same lines.
+
 `check` and `export` print, for a V-Carve or Inlay, the deepest cut and
 whether a flat floor exists and who clears it; for a Photo V-Carve, the
 picture's footprint, the groove count and the full-depth groove width;
@@ -2793,6 +2819,35 @@ seeds cover the four bench bits, mm and inch.
    `Sub`, compression `BITMAP_PNG_COMPRESSION` (the crate's `Default`
    level pinned by name), so the bytes are a function of the pixels.
    Base64 standard alphabet with padding (`base64` crate).
+
+   Decided in #645. The conversion is one function
+   (`dc-import/src/bitmap/gray.rs`) in integers, rounded once, half up:
+   `Y = ((299 R + 587 G + 114 B)·a + 1000·255·(255 − a)) / (1000·255)`,
+   the formula above with the compositing folded in; an opaque gray pixel
+   is its own value. The warnings describe what the pixels lost, not the
+   file's colour type: `ImageColourConverted` when a pixel that is not
+   wholly transparent has unequal channels, `ImageAlphaFlattened` when a
+   pixel's alpha is below 255, `Image16Bit` for 16-bit samples, in that
+   order (an RGB file of grays, or an RGBA file opaque everywhere, says
+   nothing). A PNG is converted a row at a time, Adam7 passes placed with
+   `png::expand_interlaced_row`, so the memory is the gray picture and a
+   row; the decoder's `Limits` are `MAX_BITMAP_SIDE_PX²` bytes, with text
+   and colour-profile chunks skipped. A JPEG's frame size is read by
+   walking its marker segments before `zune-jpeg` is called, so
+   `ImageTooLarge` names the header's size; the decoder then runs in
+   strict mode (a scan that runs out of data is an error, not a picture
+   padded with gray), on its safe scalar path (`set_use_unsafe(false)`,
+   the `x86` and `neon` features off), with `set_max_width`/`height` at
+   the side limit and `JPEG_MAX_SCANS` = 100, to RGB, which is converted
+   to gray in place. Its memory is three bytes a pixel, and for a
+   progressive picture its coefficients, both bounded by the side limit.
+   Two cases a decoder cannot tell from a whole file are read as one: a
+   JPEG missing only its end-of-image marker, its scan whole, and one
+   whose scan ends at its end-of-image marker before the frame is full,
+   which `zune-jpeg` fills as JPEG decoders do. The first loses no pixel;
+   the second is no larger than its header. A magic that is neither
+   format's is `ImageDecode`; one that is the other format's is
+   `ImageFormatMismatch { extension, found }`, both `ImageFormat`s.
 4. **Load.** `Bitmap::pixels` decodes the base64 and the PNG; a PNG that
    is not 8-bit grayscale, or whose size disagrees with
    `width_px`/`height_px`, is `LoadError::Bitmap { id, reason }`
@@ -3137,11 +3192,11 @@ crates/dc-project/src/{model.rs (+ VCarveOp, VCarveStrategy, InlayOp, MaleBoard,
 crates/dc-cam/src/{vcarve.rs (Carve, blocks, cone_height_mm, cone_in_material), vcarve/{medial.rs (chains, pruning, simplify, blocks, links), offset.rs, floor.rs, clearing.rs (ToolRun per pass)}, inlay.rs, photo.rs, drill.rs (+ countersink), pocket.rs (+ pocket_regions, the entry point on resolved regions), pocket/rest.rs (reach shared with clearing; left_by takes several references), order.rs (+ start_depth_mismatch, start_depth_uncleared, calling dc_project::cleared_start_plane), block.rs (+ entry_z_mm), sequence.rs (+ stay_down_links, entry_z_mm), test_support.rs (+ assert_cone_in_material), warning.rs, error.rs}
 crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing-run floor), error.rs (+ variants), safety.rs (dispatch, descent exemption)}
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}, prep.rs (3.4: PrepOptions, Prepared, findings, design_findings, prepare, write_svg), prep/{walk.rs (visible geometry, paint intent), findings.rs, stroke.rs (tiny-skia stroker wrapper), run.rs (the pipeline), report.rs (PrepReport), write.rs}}
-crates/dc-job/src/prep_report.rs (render the report; 3.4)
-crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), preview.rs (+ <image>, the male board, the boundary), prep.rs (image-prep; 3.4)}
-tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}, prep-fixture.ts (the 3.4 drawings)}
+crates/dc-job/src/{prep_report.rs (render the report; 3.4), picture.rs (PictureSize, bitmap, picture_into, picture_rows; #645), project_from.rs (+ picture, photo_v_bit, default_photo_v_carve; #645), preview.rs (+ <image>, the male board, the boundary)}
+crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), prep.rs (image-prep; 3.4)}
+tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}, prep-fixture.ts (the 3.4 drawings), photo-fixtures.ts (gradient.png and the colour JPEGs; #645)}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
-tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, compass-regions.svg, speckled-dc.svg, jagged-dc.svg}}
+tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png, colour.jpg, colour-progressive.jpg}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, compass-regions.svg, speckled-dc.svg, jagged-dc.svg}}
 crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv
 crates/dreamcarve/tests/{fixtures,expected}/inlay-migration/ (the two-file pairs of formats 23 and 24 and their programs, #498)
 ```
@@ -3243,7 +3298,7 @@ for V operations.
 - A V-Carve floor as the start plane (#426): `project::v_carve_floor_clears_its_start_plane` (a hole inside the floor region at `s0 + F` is cleared; one inside the targets but on the slope is not), `project::disabled_or_later_v_carve_does_not_clear`, `project::v_carve_without_a_flat_depth_does_not_clear`, `drill::countersink_on_a_v_carve_floor_engages_only_its_own_depth`, `validate::countersink_on_a_v_carve_floor_is_not_uncleared`.
 
 **dc-import — bitmap**
-- `bitmap::png_gray_8_reads_as_is`, `bitmap::png_rgb_converts_by_luminance_and_warns`, `bitmap::png_rgba_flattens_on_white`, `bitmap::png_16_bit_takes_the_high_byte`, `bitmap::png_palette_expands`, `bitmap::jpeg_reads_and_converts`, `bitmap::extension_and_magic_must_agree`, `bitmap::too_large_is_refused`, `bitmap::encode_is_deterministic`, `bitmap::encode_then_decode_round_trips`.
+- `bitmap::png_gray_8_reads_as_is`, `bitmap::png_rgb_converts_by_luminance_and_warns`, `bitmap::png_rgba_flattens_on_white`, `bitmap::png_16_bit_takes_the_high_byte`, `bitmap::png_palette_expands`, `bitmap::jpeg_reads_and_converts`, `bitmap::extension_and_magic_must_agree`, `bitmap::too_large_is_refused`, `bitmap::encode_is_deterministic`, `bitmap::encode_then_decode_round_trips`; added in #645 for the security rules: `bitmap::truncated_or_corrupt_picture_is_refused` (PNG and JPEG cut short, a bad CRC, data that is not zlib, 0 × 0, a header claiming more than its data), `bitmap::png_interlaced_reads_as_the_same_picture`, `bitmap::gray::tests::gray_is_rec_601_on_white`; and in `dc-job/tests/picture.rs` the library twins of the CLI tests (`picture_project_holds_the_bitmap_and_a_photo_v_carve`, `picture_into_appends_the_next_bitmap`, `picture_rows_name_the_photo_v_carves_using_each`, `picture_size_must_be_a_positive_length`, `preview_draws_each_bitmap_under_the_toolpaths`).
 
 **dc-cam — photo**
 - `photo::move_budget_refuses_a_microscopic_sample_step` (L3), `photo::link_height_clears_the_stock_top_when_the_start_plane_is_only_vouched_for` (L1), `photo::uncleared_start_depth_is_refused` (M2).
@@ -3257,7 +3312,7 @@ for V operations.
 - `safety::s17_check_is_fast_on_the_sign` (the sign fixture's two carves under 2 s, as `s9_check_is_fast_*`).
 
 **dreamcarve (integration, `tests/`)**
-- `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`.
+- `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`; `cli::preview_draws_the_picture_of_image_add` (#645: the `<image>` half of the preview test, which needs no generator).
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
 - `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v26_project_exports_the_same_programs`, `cli::photo_quick_start_runs` (the chapter's commands).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).

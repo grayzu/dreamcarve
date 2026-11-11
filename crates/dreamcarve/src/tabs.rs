@@ -76,7 +76,7 @@ fn requests_of(project: &Project) -> usize {
 }
 
 /// Prints `warnings` as `warning: <code>: <message>` on stderr.
-fn print_warnings(warnings: &[Warning]) {
+pub(crate) fn print_warnings(warnings: &[Warning]) {
     for w in warnings {
         let message = match w.op() {
             Some(op) => format!("operation `{op}`: {w}"),

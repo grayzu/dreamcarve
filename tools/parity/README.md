@@ -119,3 +119,22 @@ The output is byte-identical run to run (Node 23.6 or newer, or
 `npx tsx compass-fixture.ts`). It writes only the drawings; the project
 built from them is the test's (`cli::compass_inlay_exports_both_boards`).
 `tests/fixtures/README.md` lists the shapes.
+
+## The photo fixtures
+
+`photo-fixtures.ts` writes the Photo V-Carve test pictures (#645):
+`tests/fixtures/photo/gradient.png`, acceptance 58 and 59's 64 × 32
+gradient with a white and a black block, and `colour.jpg` and
+`colour-progressive.jpg`, a 16 × 16 picture of four flat colour blocks as
+a baseline and a progressive JPEG. It encodes both formats itself (the
+PNG with Node's `zlib`, the JPEG as flat 8 × 8 blocks of DC coefficients
+alone), so it needs nothing installed:
+
+```sh
+cd tools/parity
+node photo-fixtures.ts
+```
+
+The output is byte-identical run to run (Node 23.6 or newer, or
+`npx tsx photo-fixtures.ts`). The pictures are synthetic: no photograph
+is ever committed. `tests/fixtures/README.md` gives their pixel values.
