@@ -463,8 +463,8 @@ fn library_window_adds_ticked_rows() {
     h.run();
     let sheet = h.get_by_role(Role::Dialog);
     assert!(
-        sheet.query_by_label_contains("tools.json").is_some(),
-        "the header names the library file"
+        sheet.query_by_label("Tool Library").is_some(),
+        "the header is the sheet's title (mock-up 04)"
     );
     assert!(
         sheet
@@ -474,11 +474,19 @@ fn library_window_adds_ticked_rows() {
             .is_some(),
         "no library yet, so no rows"
     );
+    // The empty library's two ways to fill it, under its sentence (slice
+    // 30, #622): *New tool* and *Import…* (the header has Import… too).
+    assert!(sheet.query_by_label("New tool").is_some());
+    assert_eq!(sheet.query_all_by_label("Import…").count(), 2);
 
     // Import… the Fusion sample: the report replaces the table.
     let sample = common::fixture("fusion/sample.tools");
     dialogs.answer(&sample);
-    h.get_by_role(Role::Dialog).get_by_label("Import…").click();
+    h.get_by_role(Role::Dialog)
+        .query_all_by_label("Import…")
+        .next()
+        .unwrap()
+        .click();
     h.run();
     assert_eq!(dialogs.asked(), ["open_library"]);
     let bytes = std::fs::read(&sample).unwrap();
@@ -2936,13 +2944,14 @@ fn tick_library_row(h: &mut Harness<'_, dreamcarve_app::Shell>, name: &str) {
     h.run();
 }
 
-/// #581, decision 2 (#537 deviation 7): the Tool Library's *Delete* asks
-/// first, naming the ticked tools, in place of the table (never a sheet
-/// above a sheet). *Cancel* keeps them and leaves the file alone;
-/// *Delete* takes them out of the library file. The library is outside
-/// project history, so the project does not change either way.
+/// #581, decision 2 (#537 deviation 7), and slice 30 (#622, capability
+/// 64): the Tool Library's *Delete* asks first, naming the ticked tools,
+/// in place of the panes (never a sheet above a sheet). *Cancel* keeps
+/// them and leaves the file alone; *Delete* takes them out of the library
+/// file. With nothing ticked it asks about the selected tool. The library
+/// is outside project history, so the project does not change either way.
 #[test]
-fn library_delete_asks_and_names_the_tools() {
+fn library_delete_asks_in_place_and_names_the_tools() {
     let dir = scratch("library-remove");
     let config = dir.join("config");
     std::fs::create_dir_all(&config).unwrap();
@@ -2974,6 +2983,18 @@ fn library_delete_asks_and_names_the_tools() {
             .query_by_label(question)
             .is_some(),
         "the sheet asks, naming the tools"
+    );
+    assert_eq!(
+        h.query_all_by_role(Role::Dialog).count(),
+        1,
+        "in place: no second sheet"
+    );
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_role(Role::CheckBox).is_none()
+            && sheet.query_by_role(Role::ListItem).is_none()
+            && sheet.query_by_label("Revert changes").is_none(),
+        "the question replaces the panes"
     );
     assert_eq!(
         std::fs::read_to_string(config.join("tools.json")).unwrap(),
@@ -3043,6 +3064,39 @@ fn library_delete_asks_and_names_the_tools() {
         h.state().app().project(),
         &project,
         "projects keep their copies"
+    );
+
+    // Nothing ticked: Delete asks about the selected tool, by name.
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "3 mm Ball End Mill")
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "3 mm Ball End Mill")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
+    h.run();
+    let one = "Delete 1 tool from your library: 3 mm Ball End Mill? Projects keep their copies.";
+    assert!(
+        h.get_by_role(Role::Dialog).query_by_label(one).is_some(),
+        "the selected tool, named"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(
+        h.get_by_role(Role::Dialog).query_by_label(one).is_none(),
+        "Escape is Cancel"
+    );
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_role_and_label(Role::ListItem, "3 mm Ball End Mill")
+            .is_some(),
+        "and keeps the tool"
+    );
+    assert_eq!(
+        std::fs::read_to_string(config.join("tools.json")).unwrap(),
+        dc_library::save(&expected).unwrap()
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }

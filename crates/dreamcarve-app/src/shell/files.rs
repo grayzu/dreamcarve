@@ -256,6 +256,7 @@ mod tests {
         prefs.visibility.arrows = true;
         prefs.tab.width_mm = 12.0;
         prefs.tab.shape = dc_project::TabShape::Smooth;
+        prefs.library_units = Some(dc_project::Units::Inch);
         prefs.sections.insert("project.stock".to_owned(), false);
         prefs.recent = vec![PathBuf::from("/a.dcv"), PathBuf::from("/b.dcv")];
         prefs

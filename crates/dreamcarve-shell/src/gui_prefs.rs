@@ -446,6 +446,7 @@ mod tests {
                 height_mm: 2.5,
                 shape: TabShape::Smooth,
             },
+            library_units: Some(LibraryUnits::In),
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);
