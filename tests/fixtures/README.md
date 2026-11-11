@@ -121,6 +121,38 @@ hand. The pockets reach 32.5 mm from the centre, so the oval is 9.5 mm
 from them at its nearest (top and bottom) and the cut-out runs 1.5875 mm
 inside the oval.
 
+## `photo/gradient.png`, `photo/colour.jpg`, `photo/colour-progressive.jpg`
+
+The Photo V-Carve test pictures (sub-phase 3.5, #645), written by
+`tools/parity/photo-fixtures.ts`. Do not edit them by hand; re-run the
+tool. They are synthetic: no photograph is committed, and a tutorial uses
+the reader's own picture.
+
+`gradient.png` is acceptance 58 and 59's picture: 64 × 32 pixels, 8-bit
+grayscale, no interlace. Pixel column `i` (0 at the left) holds
+`round(255 · i / 63)`, black at the left edge to white at the right, but
+for two 8 × 8 blocks. Rows count from 0 at the top, as the stored pixels
+do; on the stock the top row is the highest Y.
+
+| Block | Value | Columns | Rows | At 100 mm wide (`init`'s 10 mm margin added), mm |
+| --- | --- | --- | --- | --- |
+| white | 255 | 8 to 15 | 12 to 19 | X 22.5 to 35.0, Y 28.75 to 41.25 |
+| black | 0 | 48 to 55 | 12 to 19 | X 85.0 to 97.5, Y 28.75 to 41.25 |
+
+Each block sits in the half of the gradient of the opposite tone, so
+neither block's depth is the gradient's round it. Columns 31 and 32
+straddle the middle: they hold 125 and 130, the 50 % gray between them at
+X 50 mm of the footprint (60 mm with the margin). A pixel is 1.5625 mm
+square at 100 mm wide.
+
+`colour.jpg` (baseline) and `colour-progressive.jpg` (progressive, one DC
+scan) are a 16 × 16 picture of four flat 8 × 8 blocks, 4:4:4 YCbCr with a
+quantisation table of ones: top left rgb(200, 60, 40), top right
+rgb(40, 160, 80), bottom left rgb(50, 70, 200), bottom right
+rgb(128, 128, 128). Their Rec. 601 luminances, which `image add` converts
+them to within a level or two of the JPEG round trip, are 100, 115, 79
+and 128 (`bitmap::jpeg_reads_and_converts`).
+
 ## Font notice
 
 The lettering of `sign.svg` and `dc-inlay.svg` is converted outline data
