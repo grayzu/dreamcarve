@@ -2563,6 +2563,22 @@ rerun it, in `tests/fixtures/prep/README.md`. The procedure:
 `prep::defaults::fixtures_keep_their_intent_at_the_defaults` pins the
 result, so a later change to a constant fails the sweep's own scoring.
 
+*How the scoring was made runnable (slice 21f, #599).* A mark goes exactly
+when its widest point is under the threshold, so "every seeded speck at or
+below `1.5 ×` the threshold gone" cannot hold at any value when specks lie
+between the threshold and `1.5 ×` it, and no swept value both removes the
+0.8 % specks and keeps the 0.9 % details. The fixture therefore has three
+bands (the README lists them): *noise* (0.06 to 0.19 % of `H`, what a
+trace leaves; Inkscape's own 2 px filter is 0.2 % of a 1000 px picture),
+*small* (0.25 to 0.8 %, reported, not scored) and *intended* (0.9 % and
+up). A `min_detail` passes when every noise mark is gone and no intended
+detail is, and the test also checks the contract itself for every mark (gone
+exactly when under the threshold). The smooth criteria are as listed; the
+output-vertex distance holds at every value because simplification keeps a
+subset of the input's vertices, and stays as a guard. The changed-area share
+is taken of the design's box. Result: `min_detail` 0.2 and `smooth` 0.05,
+the proposals; the maintainer's art (step 4) is the remaining check.
+
 **Report format and codes.** `render` writes the text of functional 49e,
 one line per fact, in this order, a line omitted when it has nothing to say
 (no strokes, no drops): `Prepared <in> → <out> (<mode>)`, `Read:`,

@@ -102,6 +102,8 @@ fn kind(command: &Command) -> &'static str {
         Command::RemoveTool(_) => "RemoveTool",
         Command::ImportDrawing { .. } => "ImportDrawing",
         Command::TransformInstances { .. } => "TransformInstances",
+        Command::RotateInstances { .. } => "RotateInstances",
+        Command::FlipInstances { .. } => "FlipInstances",
         Command::SetInstanceFlags { .. } => "SetInstanceFlags",
         Command::RenameInstance { .. } => "RenameInstance",
         Command::DuplicateInstances(_) => "DuplicateInstances",
@@ -209,6 +211,20 @@ fn every_command() -> Vec<(Project, Command)> {
             Command::TransformInstances {
                 ids: vec![instance("i1")],
                 delta: Transform::rotate(FRAC_PI_2),
+            },
+        ),
+        (
+            plaque.clone(),
+            Command::RotateInstances {
+                ids: vec![instance("i4")],
+                angle_deg: -90.0,
+            },
+        ),
+        (
+            plaque.clone(),
+            Command::FlipInstances {
+                ids: vec![instance("i4")],
+                flip: dc_app::arrange::Flip::Horizontal,
             },
         ),
         (
@@ -458,6 +474,14 @@ fn locked_instances_refuse_transforms() {
         Command::TransformInstances {
             ids: vec![instance("i1")],
             delta: Transform::scale(-1.0, 1.0),
+        },
+        Command::RotateInstances {
+            ids: vec![instance("i1")],
+            angle_deg: 30.0,
+        },
+        Command::FlipInstances {
+            ids: vec![instance("i1")],
+            flip: dc_app::arrange::Flip::Vertical,
         },
         Command::CentreOnStock(vec![instance("i1")]),
     ];

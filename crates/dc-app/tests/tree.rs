@@ -19,7 +19,7 @@ mod common;
 
 use dc_app::Command;
 use dc_app::test_support::Harness;
-use dc_app::tree::{MenuItem, Tree};
+use dc_app::tree::{Line, MenuItem, Section, ShapeGlyph, Tree};
 use dc_geometry::Transform;
 use dc_project::{InstanceId, OperationId};
 
@@ -30,7 +30,7 @@ fn id(s: &str) -> InstanceId {
 }
 
 /// Capability 57: one row per instance in file order, each with its eye,
-/// padlock, *open* badge (the plaque's squiggle is its one open path) and
+/// padlock, shape glyph (the plaque's squiggle is its one open path) and
 /// *linked* badge (only rows whose definition another row shares); below,
 /// the Tabs section groups placed tabs by the outline they sit on, and the
 /// Pictures section is empty until phase 3.4. The section header's eye and
@@ -70,7 +70,11 @@ fn rows_follow_file_order_with_badges() {
 
     for row in &tree.shapes {
         let name = row.name.as_str();
-        assert_eq!(row.open, name == "squiggle", "{name}: open badge");
+        assert_eq!(
+            row.glyph == ShapeGlyph::Open,
+            name == "squiggle",
+            "{name}: open-path glyph"
+        );
         assert_eq!(
             row.linked,
             name == "square" || name == "square (2)",
@@ -128,6 +132,61 @@ fn rows_follow_file_order_with_badges() {
     let lock = dc_app::tree::toggle_locked(harness.app.project(), &all).expect("a command");
     harness.run(lock).expect("locks all");
     assert!(harness.app.project().instances.iter().all(|i| i.locked));
+}
+
+/// Slice 25 (#617; capability 57, acceptance 96): every shape row leads
+/// with a glyph saying what the shape is: the plaque's screw holes are
+/// circles, its outline a closed outline, its squiggle an open path. No
+/// row carries a text badge: the word "open" is in no row's model.
+#[test]
+fn rows_carry_a_shape_glyph() {
+    let tree = Tree::build(&plaque());
+    let glyph = |name: &str| {
+        tree.shapes
+            .iter()
+            .find(|r| r.name == name)
+            .unwrap_or_else(|| panic!("a row for {name}"))
+            .glyph
+    };
+    assert_eq!(glyph("holes-1"), ShapeGlyph::Circle);
+    assert_eq!(glyph("outline"), ShapeGlyph::Closed);
+    assert_eq!(glyph("squiggle"), ShapeGlyph::Open);
+    assert_eq!(glyph("square"), ShapeGlyph::Closed);
+    for row in &tree.shapes {
+        let model = format!("{row:?}");
+        assert!(
+            !model.contains("open"),
+            "{}: no text badge in the row model: {model}",
+            row.name
+        );
+    }
+}
+
+/// Slice 25 (#617; capability 57, acceptance 96): an empty section is its
+/// header alone. The plaque has no tabs placed and no pictures, so its
+/// Tabs header is followed straight by the Pictures header, and that is
+/// the tree's last line, with no *None* row after it.
+#[test]
+fn empty_sections_have_no_placeholder_row() {
+    let tree = Tree::build(&plaque());
+    let lines = tree.lines();
+    assert!(matches!(lines.first(), Some(Line::Header(Section::Shapes))));
+    let shapes = lines.iter().filter(|l| matches!(l, Line::Shape(_))).count();
+    assert_eq!(shapes, tree.shapes.len(), "a line per shape");
+    let pictures = lines
+        .iter()
+        .position(|l| matches!(l, Line::Header(Section::Pictures)))
+        .expect("a Pictures header");
+    assert_eq!(
+        pictures + 1,
+        lines.len(),
+        "nothing follows the Pictures header"
+    );
+    let tabs = lines
+        .iter()
+        .position(|l| matches!(l, Line::Header(Section::Tabs)))
+        .expect("a Tabs header");
+    assert_eq!(tabs + 1, pictures, "the empty Tabs section is its header");
 }
 
 /// Capability 57: each row counts the operations targeting it, and the
