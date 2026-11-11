@@ -984,7 +984,7 @@ impl<'a> Located<'a> {
     /// The findings of `findings` located on `op`'s rows: each at a field
     /// under the row that holds it, and each of the generator's warnings
     /// about `op` that name no field under the row its code is about
-    /// ([`CODE_ROWS`]: `bore_no_room` under Targets,
+    /// (by code: `bore_no_room` under Targets,
     /// `relief_corner_too_tight` under the corner relief).
     #[must_use]
     pub fn of(findings: &'a [Finding], op: &Operation) -> Self {
