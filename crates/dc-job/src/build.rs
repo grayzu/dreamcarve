@@ -850,6 +850,24 @@ mod tests {
                 "Photo V-Carve o8 `Photo V-Carve`: picture `ramp` (b1), 40.000 mm by 20.000 mm at (15.000 mm, 15.000 mm), 11 grooves 3.000 mm wide at the full depth of 1.500 mm."
             ]
         );
+        // #648: export's operation line names the picture, not "0
+        // target(s)", and the full depth.
+        let lines = crate::summary::describe_operations(
+            &project,
+            built
+                .generated
+                .as_deref()
+                .expect("every operation generated"),
+        );
+        let photo = lines
+            .iter()
+            .find(|l| l.starts_with("o8 "))
+            .unwrap_or_else(|| panic!("a line for o8: {lines:?}"));
+        assert!(
+            photo.starts_with("o8 `Photo V-Carve`: tool `t2` (")
+                && photo.ends_with("), picture `ramp` (b1), 1.500 mm deep at most"),
+            "{photo}"
+        );
 
         let mut overlapping = project;
         if let Some(Operation::PhotoVCarve(photo)) = overlapping.operations.last_mut() {

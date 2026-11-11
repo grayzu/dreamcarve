@@ -9474,6 +9474,12 @@ mod tests {
         assert!(approx_eq(engagement_mm, 3.5, 1e-9), "{engagement_mm}");
         assert!(from_stock_top);
         assert_eq!(field.as_deref(), Some("operations[o8].max_depth_mm"));
+        // #648: a Photo has no flat depth; the message names its own field.
+        let message = validate(&vouched)[0].to_string();
+        assert!(
+            message.contains("plus its max_depth_mm)") && !message.contains("flat depth"),
+            "{message}"
+        );
         // Cleared by a Pocket at the start depth: the maximum depth alone.
         let mut pocketed = vouched.clone();
         photo_mut(&mut pocketed).start_plane_cleared_externally = false;

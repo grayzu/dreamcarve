@@ -69,6 +69,9 @@ const INLAY: &str = "docs/book/src/quick-start/inlay.md";
 /// The line-art quick start (sub-phase 3.4), relative to the repository root.
 const LINE_ART: &str = "docs/book/src/quick-start/line-art.md";
 
+/// The photo quick start (sub-phase 3.5), relative to the repository root.
+const PHOTO: &str = "docs/book/src/quick-start/photo.md";
+
 /// The marker that opens every step comment.
 const MARKER: &str = "<!-- doc-test:";
 
@@ -426,6 +429,13 @@ struct Run<'a> {
 /// Runs every marked step of `run.chapter` in order, in an empty folder
 /// holding the drawing, and returns the folder.
 fn run_chapter(name: &str, run: &Run<'_>) -> PathBuf {
+    run_chapter_with(name, run, &[])
+}
+
+/// [`run_chapter`], with more files in the folder: each `(fixture, name)`
+/// is copied in beside the drawing before the first step, as the chapter
+/// tells the reader to put them there.
+fn run_chapter_with(name: &str, run: &Run<'_>, also: &[(&str, &str)]) -> PathBuf {
     let chapter = run.chapter;
     let path = repo_root().join(chapter);
     let text = std::fs::read_to_string(&path)
@@ -439,6 +449,10 @@ fn run_chapter(name: &str, run: &Run<'_>) -> PathBuf {
     let dir = work_dir(name);
     let (fixture, drawing) = run.swap.unwrap_or(run.drawing);
     std::fs::copy(repo_root().join(fixture), dir.join(drawing)).expect("drawing copied");
+    for (fixture, copy) in also {
+        std::fs::copy(repo_root().join(fixture), dir.join(copy))
+            .unwrap_or_else(|e| panic!("cannot copy {fixture}: {e}"));
+    }
 
     for step in &steps {
         match step {
@@ -1487,5 +1501,419 @@ fn preparing_artwork_chapter_runs() {
         "messy-regions.svg",
     ] {
         assert!(dir.join(written).exists(), "the chapter writes {written}");
+    }
+}
+
+/// The Photo V-Carve chapter of the user guide (sub-phase 3.5, #648).
+const PHOTO_GUIDE: &str = "docs/book/src/user-guide/photo-v-carve.md";
+
+/// The Images chapter of the user guide (sub-phase 3.5, #648).
+const IMAGES: &str = "docs/book/src/user-guide/images.md";
+
+/// The project-file chapter of the user guide.
+const PROJECT_FILE: &str = "docs/book/src/user-guide/project-file.md";
+
+/// The Warnings chapter of the user guide.
+const WARNINGS: &str = "docs/book/src/user-guide/warnings.md";
+
+/// The synthetic picture the photo chapters start from (#645): 64 × 32
+/// pixels, a black-to-white ramp with a white block in its dark half and a
+/// black one in its light half.
+const GRADIENT: (&str, &str) = ("tests/fixtures/photo/gradient.png", "gradient.png");
+
+/// The text of the chapter at `path`, relative to the repository root.
+fn chapter_text(path: &str) -> String {
+    std::fs::read_to_string(repo_root().join(path))
+        .unwrap_or_else(|e| panic!("cannot read the chapter {path}: {e}"))
+}
+
+/// Runs `dreamcarve args…` in `dir` with no user config; returns its exit
+/// code and what it printed, stdout then stderr.
+fn dreamcarve(dir: &Path, args: &[&str]) -> (Option<i32>, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_dreamcarve"))
+        .current_dir(dir)
+        .env("DREAMCARVE_CONFIG_DIR", dir.join("config"))
+        .args(args)
+        .output()
+        .expect("binary runs");
+    (
+        out.status.code(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// The keys of the first object of the `list` array of the project at
+/// `dcv`, in file order.
+fn keys_of(dcv: &Path, list: &str) -> Vec<String> {
+    let text = std::fs::read_to_string(dcv).expect("project readable");
+    let value: serde_json::Value = serde_json::from_str(&text).expect("project is JSON");
+    value[list][0]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} has a {list} entry", dcv.display()))
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// An empty folder for test `name` holding `gradient.dcv`, written by
+/// `init` on the gradient picture.
+fn picture_project(name: &str) -> PathBuf {
+    let dir = work_dir(name);
+    std::fs::copy(repo_root().join(GRADIENT.0), dir.join(GRADIENT.1)).expect("picture copied");
+    let (code, report) = dreamcarve(&dir, &["init", "gradient.png", "--width", "100"]);
+    assert_eq!(code, Some(0), "{report}");
+    dir
+}
+
+/// #648: "Carving a photo", the photo quick start, run as written on the
+/// synthetic `tests/fixtures/photo/gradient.png` (design spec, Test plan:
+/// `cli::photo_quick_start_runs`; filed here, beside the chapter runner,
+/// as `quick_start::photo_quick_start_runs`). `init` on the picture, the
+/// hand edit of the three values to set (the stock's thickness, the
+/// Photo's `max_depth_mm`, the V-bit's feeds and speed), `check
+/// --preview` and `export` exit as the chapter says; the chapter shows the
+/// operation `init` writes as it writes it, and the summary line `check`
+/// prints. Export writes one program, `gradient.nc`, which passes the
+/// rules a user can check on the program alone and, checked here
+/// independently of the safety pass, S19: every cut in the picture's
+/// 100 × 50 mm footprint at (10, 10), no deeper than `max_depth_mm`, the
+/// moves between grooves fed at `stepover_retract_mm` above the stock top,
+/// and no arc.
+#[test]
+fn photo_quick_start_runs() {
+    let run = Run {
+        chapter: PHOTO,
+        drawing: GRADIENT,
+        swap: None,
+    };
+    let text = chapter_text(PHOTO);
+    let steps = steps(PHOTO, &text);
+    for (what, has) in [
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+        (
+            "contains",
+            steps.iter().any(|s| matches!(s, Step::Contains { .. })),
+        ),
+    ] {
+        assert!(has, "{PHOTO} has no `{what}` step");
+    }
+    for (needle, what) in [
+        (
+            "dreamcarve init gradient.png --width 100",
+            "starts from the picture",
+        ),
+        ("\"max_depth_mm\": 1.5", "sets the depth"),
+        ("\"thickness_mm\"", "sets the stock thickness"),
+        ("\"feed_mm_min\"", "sets the feeds"),
+        ("--preview", "previews the grooves"),
+        ("invert", "says how to carve a dark wood"),
+        ("example", "presents the feeds as examples"),
+        (
+            "../user-guide/photo-v-carve.md",
+            "points to the Photo V-Carve chapter",
+        ),
+        ("../user-guide/images.md", "points to the Images chapter"),
+    ] {
+        assert!(text.contains(needle), "{PHOTO} {what}");
+    }
+    let dir = run_chapter("photo_quick_start_runs", &run);
+
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(programs, ["gradient.nc"]);
+    assert!(dir.join("gradient.svg").exists(), "the preview is written");
+
+    // The summary line the chapter shows is the one `check` prints.
+    let (code, report) = dreamcarve(&dir, &["check", "gradient.dcv"]);
+    assert_eq!(code, Some(0), "{report}");
+    let summary = report
+        .lines()
+        .find(|l| l.starts_with("Photo V-Carve "))
+        .unwrap_or_else(|| panic!("check prints the Photo's line: {report}"));
+    assert!(
+        text.contains(summary),
+        "{PHOTO} shows the summary line `check` prints: {summary}"
+    );
+
+    let program = std::fs::read_to_string(dir.join("gradient.nc")).expect("program readable");
+    assert_program_safe(
+        "gradient.nc",
+        &program,
+        &Limits {
+            safe_z_mm: 5.0,
+            floor_mm: 12.0,
+            stock_mm: (120.0, 70.0),
+            radius_mm: 3.175,
+            feed_mm_min: 1000.0,
+            plunge_mm_min: 300.0,
+            spindle: "M3 S18000",
+            cone_half_angle_deg: Some(30.0),
+        },
+    );
+    let tol = 1e-3;
+    let moves = dc_gcode::parse_motion(&program).expect("program parses");
+    for m in moves.iter().filter(|m| m.kind.is_cut()) {
+        assert!(
+            m.kind == MotionKind::Linear,
+            "gradient.nc:{}: a groove is straight moves, never an arc",
+            m.line
+        );
+        let (Some(x), Some(y), Some(z)) = (m.to.x, m.to.y, m.to.z) else {
+            panic!("gradient.nc:{}: a cut before the first position", m.line);
+        };
+        assert!(
+            (10.0 - tol..=110.0 + tol).contains(&x) && (10.0 - tol..=60.0 + tol).contains(&y),
+            "gradient.nc:{}: ({x}, {y}) is outside the picture (S19)",
+            m.line
+        );
+        assert!(
+            z >= -1.5 - tol,
+            "gradient.nc:{}: Z {z} is deeper than max_depth_mm (S19)",
+            m.line
+        );
+        let across = m
+            .from
+            .x
+            .zip(m.from.y)
+            .is_some_and(|(fx, fy)| (fx - x).abs() > tol || (fy - y).abs() > tol);
+        if across && z > tol {
+            assert!(
+                (z - 1.0).abs() < tol && m.from.z.is_some_and(|fz| (fz - 1.0).abs() < tol),
+                "gradient.nc:{}: a move between grooves away from the 1 mm link height (S19)",
+                m.line
+            );
+        }
+    }
+}
+
+/// #648: the Photo V-Carve chapter, run as written on the gradient picture:
+/// `init`, the values to set, `check`, and each refusal the chapter
+/// teaches, made and undone by hand edits (a step too fine for the move
+/// cap, an uncleared start plane and vouching for it, a picture moved off
+/// the stock, a depth past the cone, grooves that overlap). Every command
+/// exits as the chapter says. The chapter shows the operation `init`
+/// writes, names every field of it and every code a Photo can be refused
+/// or warned with, and says what does not apply (arc fitting).
+#[test]
+fn photo_v_carve_chapter_runs() {
+    let text = chapter_text(PHOTO_GUIDE);
+    let steps = steps(PHOTO_GUIDE, &text);
+    for (what, has) in [
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+        (
+            "contains",
+            steps.iter().any(|s| matches!(s, Step::Contains { .. })),
+        ),
+    ] {
+        assert!(has, "{PHOTO_GUIDE} has no `{what}` step");
+    }
+    let dcv = picture_project("photo_v_carve_chapter_fields").join("gradient.dcv");
+    let fields = keys_of(&dcv, "operations");
+    assert!(
+        fields.contains(&"line_spacing_fraction".to_owned()),
+        "{fields:?}"
+    );
+    for field in &fields {
+        assert!(
+            text.contains(&format!("`{field}`")),
+            "{PHOTO_GUIDE} names the field `{field}`"
+        );
+    }
+    for code in [
+        "photo_lines_overlap",
+        "photo_line_angle_range",
+        "photo_line_spacing_positive",
+        "photo_sample_positive",
+        "photo_retract_positive",
+        "photo_unknown_bitmap",
+        "start_depth_uncleared",
+        "start_depth_mismatch",
+        "v_bit_cone_exceeded",
+    ] {
+        assert!(text.contains(code), "{PHOTO_GUIDE} names `{code}`");
+    }
+    for (needle, what) in [
+        ("Max Carving Depth", "gives VCarve's names"),
+        ("RasterCarve", "gives RasterCarve's names"),
+        (
+            "2 · max_depth_mm · tan(α / 2)",
+            "gives the full-depth groove width",
+        ),
+        ("cone height", "bounds the depth by the cone"),
+        ("Arc fitting", "says arc fitting does not apply"),
+        ("S19", "explains S19"),
+        ("S7", "explains S7 at the picture's edge"),
+        ("2 000 000", "gives the move cap"),
+        (
+            "half its width",
+            "says an edge groove reaches half its width past the picture",
+        ),
+        ("contrast", "says how to prepare the picture"),
+        ("images.md", "points to the Images chapter"),
+        ("../quick-start/photo.md", "points to the quick start"),
+    ] {
+        assert!(text.contains(needle), "{PHOTO_GUIDE} {what}");
+    }
+    run_chapter(
+        "photo_v_carve_chapter_runs",
+        &Run {
+            chapter: PHOTO_GUIDE,
+            drawing: GRADIENT,
+            swap: None,
+        },
+    );
+}
+
+/// #648: the Images chapter, run as written: `init` on the gradient
+/// picture and its usage error, `image list`, and `image add` on a project
+/// made from a drawing (`tests/fixtures/plaque.dxf`), with the colour
+/// picture `tests/fixtures/photo/colour.jpg` and its warning. The chapter
+/// shows the `bitmaps` entry `init` writes as it writes it, names every
+/// field of it, and gives the limits a picture is held to.
+#[test]
+fn images_chapter_runs() {
+    let text = chapter_text(IMAGES);
+    let steps = steps(IMAGES, &text);
+    assert!(
+        steps.iter().any(|s| matches!(s, Step::Contains { .. })),
+        "{IMAGES} shows the bitmap as init writes it"
+    );
+    let dcv = picture_project("images_chapter_fields").join("gradient.dcv");
+    let fields = keys_of(&dcv, "bitmaps");
+    assert!(fields.contains(&"png_base64".to_owned()), "{fields:?}");
+    for field in &fields {
+        assert!(
+            text.contains(&format!("`{field}`")),
+            "{IMAGES} names the field `{field}`"
+        );
+    }
+    for (needle, what) in [
+        ("--width", "gives --width"),
+        ("--height", "gives --height"),
+        ("--at", "gives --at"),
+        ("--name", "gives --name"),
+        ("image_colour_converted", "names the colour warning"),
+        ("image_alpha_flattened", "names the transparency warning"),
+        ("image_16_bit", "names the 16-bit warning"),
+        ("8192", "gives the side limit"),
+        (
+            "4 to 8 pixels per millimetre",
+            "says how many pixels are plenty",
+        ),
+        ("rotate", "says a picture cannot be rotated"),
+        ("photo-v-carve.md", "points to the Photo V-Carve chapter"),
+    ] {
+        assert!(text.contains(needle), "{IMAGES} {what}");
+    }
+    let dir = run_chapter_with(
+        "images_chapter_runs",
+        &Run {
+            chapter: IMAGES,
+            drawing: GRADIENT,
+            swap: None,
+        },
+        &[
+            ("tests/fixtures/photo/colour.jpg", "colour.jpg"),
+            ("tests/fixtures/plaque.dxf", "plaque.dxf"),
+        ],
+    );
+    let (code, list) = dreamcarve(&dir, &["image", "list", "plaque.dcv"]);
+    assert_eq!(code, Some(0), "{list}");
+    assert_eq!(list.lines().count(), 3, "two pictures added: {list}");
+}
+
+/// #648: the project-file chapter documents format 27: every field of a
+/// bitmap and of a Photo V-Carve, as `init` writes them, the operation
+/// kind, and a Versions row that no longer says a Photo is not cut.
+#[test]
+fn project_file_chapter_documents_format_27() {
+    let text = chapter_text(PROJECT_FILE);
+    let dir = picture_project("project_file_chapter_documents_format_27");
+    for list in ["bitmaps", "operations"] {
+        for field in keys_of(&dir.join("gradient.dcv"), list) {
+            assert!(
+                text.contains(&format!("`{field}`")),
+                "{PROJECT_FILE} names the {list} field `{field}`"
+            );
+        }
+    }
+    for (needle, what) in [
+        ("| `\"photo_v_carve\"` |", "has a row for the Photo V-Carve"),
+        ("## `bitmaps`", "has a bitmaps section"),
+        ("one line", "says png_base64 is on one line"),
+        ("images.md", "points to the Images chapter"),
+        ("photo-v-carve.md", "points to the Photo V-Carve chapter"),
+    ] {
+        assert!(text.contains(needle), "{PROJECT_FILE} {what}");
+    }
+    assert!(
+        !text.contains("does not cut one yet"),
+        "{PROJECT_FILE} still says a Photo V-Carve is not cut"
+    );
+}
+
+/// #648: the Warnings chapter lists every code sub-phase 3.5 added: the
+/// picture importer's warnings (#645), validation's Photo V-Carve and
+/// bitmap codes (#644), the Photo's readings of the start-plane and cone
+/// codes, and the importer's errors, which have no code. (`dc-cam`'s
+/// `every_warning_code_has_a_variant` covers the generator's warnings.)
+#[test]
+fn warnings_chapter_lists_the_photo_codes() {
+    let text = chapter_text(WARNINGS);
+    let import = [
+        dc_import::ImportWarning::Image16Bit,
+        dc_import::ImportWarning::ImageAlphaFlattened,
+        dc_import::ImportWarning::ImageColourConverted,
+    ];
+    let validation = [
+        "photo_line_angle_range",
+        "photo_line_spacing_positive",
+        "photo_lines_overlap",
+        "photo_sample_positive",
+        "photo_retract_positive",
+        "photo_unknown_bitmap",
+        "bitmap_footprint_aspect",
+        "bitmap_pixels_mismatch",
+        "bitmap_not_grayscale_8",
+        "duplicate_bitmap_id",
+        "bitmap_empty",
+        "bitmap_too_large",
+        "bitmap_footprint_positive",
+        "bitmap_unreadable",
+    ];
+    for code in import.iter().map(|w| w.code()).chain(validation) {
+        assert!(
+            text.contains(&format!("| `{code}` |")),
+            "{WARNINGS} lists `{code}`"
+        );
+    }
+    let photo = text
+        .split("## Photo V-Carve")
+        .nth(1)
+        .unwrap_or_else(|| panic!("{WARNINGS} has a Photo V-Carve section"));
+    for code in [
+        "start_depth_uncleared",
+        "start_depth_mismatch",
+        "v_bit_cone_exceeded",
+    ] {
+        assert!(
+            photo.contains(code),
+            "{WARNINGS}'s Photo V-Carve section says what `{code}` means for a Photo"
+        );
+    }
+    for message in ["is named as a", "could not be read", "a side is at most"] {
+        assert!(
+            text.contains(message),
+            "{WARNINGS} gives the importer's error `{message}`"
+        );
     }
 }
