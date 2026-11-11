@@ -176,6 +176,7 @@ fn inlay(side: Board) -> InlayOp {
         plug_depth_mm: Some(PLUG_DEPTH_MM),
         margin_mm: Some(MARGIN_MM),
         outline_rounding_mm: None,
+        boundary: Vec::new(),
         clearing: Vec::new(),
         step_over_fraction: None,
         machining_order: MachiningOrder::FullDepthFirst,
@@ -782,6 +783,43 @@ fn glue_gap_at_or_above_depth_is_an_error() {
             ..
         })
     ));
+}
+
+/// #602: until the generator cuts a drawn band (slice 21j) a male that
+/// lists a boundary is refused, never cut with the margin's band: a
+/// boundary that has a problem is `InlayBoundary` with it, one that is
+/// sound `InlayBoundaryNotCut`. The female ignores the list, and an empty
+/// list changes nothing.
+#[test]
+fn a_boundary_is_refused_until_it_is_cut() {
+    let project = star_project(THICKNESS_MM);
+    let nowhere = InlayOp {
+        boundary: vec![dc_project::InstanceId::new("nowhere")],
+        ..inlay(Board::Male)
+    };
+    assert!(matches!(
+        try_inlay(&project, &nowhere),
+        Err(CamError::InlayBoundary {
+            problem: dc_project::BoundaryProblem::Unknown { .. },
+            ..
+        })
+    ));
+    let target = InlayOp {
+        boundary: nowhere.targets.clone(),
+        ..inlay(Board::Male)
+    };
+    assert!(matches!(
+        try_inlay(&project, &target),
+        Err(CamError::InlayBoundary {
+            problem: dc_project::BoundaryProblem::IsTarget { .. },
+            ..
+        })
+    ));
+    let female = InlayOp {
+        boundary: nowhere.boundary,
+        ..inlay(Board::Female)
+    };
+    assert!(try_inlay(&project, &female).is_ok());
 }
 
 /// Acceptance 57: on a 10 mm board the male leaves 10 − 5 = 5 mm under

@@ -7291,7 +7291,12 @@ fn v25_project_exports_the_same_programs() {
         std::fs::write(dir.join("new.dcv"), &current).expect("dcv written");
         for file in ["old.dcv", "new.dcv"] {
             let out = run(&dir, &["export", file, "--date", FIXED_DATE]);
-            assert_eq!(out.status.code(), Some(0), "{stem} {file}: {}", stderr(&out));
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "{stem} {file}: {}",
+                stderr(&out)
+            );
         }
         let programs = programs_in(&dir);
         let old: Vec<&String> = programs.iter().filter(|n| n.starts_with("old-")).collect();

@@ -8,7 +8,7 @@
 
 use crate::boolean::{difference, difference_within, intersection, union};
 use crate::contour::Contour;
-use crate::distance::segment_distance_mm;
+use crate::distance::{closest_points, segment_distance_mm};
 use crate::offset::offset;
 use crate::point::{EPS_MM, Point, Rect};
 use crate::polyline::{Polyline, Segment, Vertex};
@@ -93,15 +93,221 @@ pub fn rounded_band(
     if !(usable(margin_mm) && (rounding_mm == 0.0 || usable(rounding_mm))) {
         return Vec::new();
     }
-    let united = filled(union(
+    close_grown(
         &grown_outers(regions, margin_mm + rounding_mm, Bays::Island),
-        &[],
+        rounding_mm,
         tolerance_mm,
-    ));
+    )
+}
+
+/// A band closed by `rounding_mm`, `(B ⊕ r) ⊖ r` (design spec, "Drawn
+/// boundary"; #449): `band` united, grown outward by `rounding_mm` with
+/// round joins, united again and inset by it. The closing
+/// [`rounded_band`] ends with, on an edge that was drawn instead of
+/// grown. Outward corners stay as they are, inward corners tighter than
+/// `rounding_mm` become arcs of that radius, and a notch or slot narrower
+/// than twice it fills; nothing leaves the band but what the closing
+/// moves into the notches. With `rounding_mm` 0 it is the band united.
+/// Holes of the band are never offset and the result has none (#484).
+/// Outers come back counter-clockwise (mm, Y-up, ADR-0001), in a fixed
+/// order. Empty when `rounding_mm` is neither 0 nor a positive finite
+/// number.
+#[must_use]
+pub fn closed_band(band: &[Region], rounding_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    if !(rounding_mm == 0.0 || usable(rounding_mm)) {
+        return Vec::new();
+    }
+    close_grown(
+        &grown_outers(band, rounding_mm, Bays::Island),
+        rounding_mm,
+        tolerance_mm,
+    )
+}
+
+/// The tail [`rounded_band`] and [`closed_band`] share: `grown`, a band
+/// already grown by `rounding_mm`, united, its holes filled (#484) and
+/// inset by `rounding_mm` ([`floor_regions`]). With `rounding_mm` 0 the
+/// union is the band.
+fn close_grown(grown: &[Region], rounding_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    let united = filled(union(grown, &[], tolerance_mm));
     if rounding_mm == 0.0 {
         return united;
     }
     floor_regions(&united, rounding_mm, tolerance_mm)
+}
+
+/// A drawn band (`docs/specs/phase-3/design.md`, "Drawn boundary"; #449):
+/// the outers of the `boundary` regions, united. Holes are dropped
+/// (a hole would leave board standing in the band, #484), and so are the
+/// holes the union of several shapes rings round. Outers come back
+/// counter-clockwise (mm, Y-up), in [`crate::union`]'s order. Empty when
+/// `boundary` is.
+#[must_use]
+pub fn drawn_band(boundary: &[Region], tolerance_mm: f64) -> Vec<Region> {
+    let outers: Vec<Region> = boundary
+        .iter()
+        .filter_map(|r| single_region(r.outer().clone()))
+        .collect();
+    filled(union(&outers, &[], tolerance_mm))
+}
+
+/// Where a design stands in a band ([`band_clearance`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BandClearance {
+    /// Every part of the design is inside the band with its outlines at
+    /// least `narrowest_mm` from the band's edge; the nearest point of the
+    /// design is `(x_mm, y_mm)`. Infinite for an empty design.
+    Inside {
+        /// The least distance from the design's outlines to the band's
+        /// edge, mm.
+        narrowest_mm: f64,
+        /// X of the design's point nearest the edge, mm.
+        x_mm: f64,
+        /// Y of the design's point nearest the edge, mm.
+        y_mm: f64,
+    },
+    /// Some part of the design touches the edge (within [`EPS_MM`]),
+    /// crosses it, or lies outside the band.
+    Crosses {
+        /// X of the worst point, mm.
+        x_mm: f64,
+        /// Y of the worst point, mm.
+        y_mm: f64,
+        /// How far past the edge the worst point is, mm: 0 for a touch.
+        /// For a design vertex outside the band, its distance to the
+        /// edge; for an edge that cuts into the design without leaving a
+        /// design vertex outside, how far its farthest vertex reaches in.
+        depth_mm: f64,
+    },
+}
+
+/// Where `design` stands in `band` (design spec, "Drawn boundary", step
+/// 3; #449): [`BandClearance::Inside`] with the least distance from the
+/// design's outlines to the band's edge and the design's point there, or
+/// [`BandClearance::Crosses`] when any part touches the edge (within
+/// [`EPS_MM`]), crosses it or lies outside the band, at the worst point.
+/// Only the design's outers count (a hole is farther from the edge than
+/// its outer), and arcs are followed; `tolerance_mm` is the chord
+/// tolerance the outside test samples them at. An empty design is inside
+/// with an infinite clearance; any design is outside an empty band.
+#[must_use]
+pub fn band_clearance(design: &[Region], band: &[Region], tolerance_mm: f64) -> BandClearance {
+    let edges: Vec<(Segment, Rect)> = band
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .flat_map(|c| c.polyline().segments())
+        .map(|s| (s, segment_box(s)))
+        .collect();
+    let in_band = |p: Point| band.iter().any(|r| r.contains_point(p));
+    let edge_distance = |p: Point| {
+        edges
+            .iter()
+            .map(|(s, _)| segment_distance_to_point(*s, p))
+            .fold(f64::INFINITY, f64::min)
+    };
+
+    // A design vertex outside the band: the farthest from the edge.
+    let mut worst: Option<(Point, f64)> = None;
+    for region in design {
+        let flat = region.outer().polyline().with_arcs_flattened(tolerance_mm);
+        for vertex in flat.vertices() {
+            let p = vertex.point();
+            if in_band(p) {
+                continue;
+            }
+            let depth_mm = if edges.is_empty() {
+                0.0
+            } else {
+                edge_distance(p)
+            };
+            if worst.is_none_or(|(_, d)| depth_mm > d) {
+                worst = Some((p, depth_mm));
+            }
+        }
+    }
+    if let Some((p, depth_mm)) = worst {
+        return BandClearance::Crosses {
+            x_mm: p.x,
+            y_mm: p.y,
+            depth_mm,
+        };
+    }
+
+    // Every vertex is inside: the least gap between the outlines.
+    let mut nearest: Option<(f64, Point)> = None;
+    for segment in design.iter().flat_map(|r| r.outer().polyline().segments()) {
+        let segment_rect = segment_box(segment);
+        for (edge, edge_rect) in &edges {
+            if nearest.is_some_and(|(d, _)| box_gap_mm(segment_rect, *edge_rect) >= d) {
+                continue;
+            }
+            let (on_design, on_edge) = closest_points(segment, *edge);
+            let gap_mm = on_design.distance_to(on_edge);
+            if nearest.is_none_or(|(d, _)| gap_mm < d) {
+                nearest = Some((gap_mm, on_design));
+            }
+        }
+    }
+    let Some((gap_mm, at)) = nearest else {
+        return BandClearance::Inside {
+            narrowest_mm: f64::INFINITY,
+            x_mm: 0.0,
+            y_mm: 0.0,
+        };
+    };
+    if gap_mm > EPS_MM {
+        return BandClearance::Inside {
+            narrowest_mm: gap_mm,
+            x_mm: at.x,
+            y_mm: at.y,
+        };
+    }
+    // The edge meets the design: how far does it reach in? The farthest of
+    // its vertices inside a design part, from the design's outlines.
+    let design_distance = |p: Point| {
+        design
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .flat_map(|c| c.polyline().segments())
+            .map(|s| segment_distance_to_point(s, p))
+            .fold(f64::INFINITY, f64::min)
+    };
+    let reach = band
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .flat_map(|c| c.polyline().vertices())
+        .map(|v| v.point())
+        .filter(|p| design.iter().any(|r| r.contains_point(*p)))
+        .map(|p| (p, design_distance(p)))
+        .filter(|(_, d)| *d > EPS_MM)
+        .fold(None, |best: Option<(Point, f64)>, (p, d)| match best {
+            Some((_, b)) if b >= d => best,
+            _ => Some((p, d)),
+        });
+    match reach {
+        Some((p, depth_mm)) => BandClearance::Crosses {
+            x_mm: p.x,
+            y_mm: p.y,
+            depth_mm,
+        },
+        None => BandClearance::Crosses {
+            x_mm: at.x,
+            y_mm: at.y,
+            depth_mm: 0.0,
+        },
+    }
+}
+
+/// The distance from `p` to `segment`, mm, following an arc.
+fn segment_distance_to_point(segment: Segment, p: Point) -> f64 {
+    crate::distance::point_segment_distance_mm(segment, p)
+}
+
+/// The distance between boxes `a` and `b`, mm; 0 when they overlap.
+fn box_gap_mm(a: Rect, b: Rect) -> f64 {
+    let dx = (a.min.x - b.max.x).max(b.min.x - a.max.x).max(0.0);
+    let dy = (a.min.y - b.max.y).max(b.min.y - a.max.y).max(0.0);
+    dx.hypot(dy)
 }
 
 /// `regions` with their holes filled: each outer alone (#484). A hole of
@@ -1501,15 +1707,20 @@ mod tests {
             (added - fillet).abs() < 0.05,
             "added {added}, fillet {fillet}"
         );
+        // The union flattens the grown corner's arc to chords within the
+        // tolerance, which the inset leaves as a corner at most that far
+        // in (and a bay's fillet, an arc, is not near any of these).
         for (x, y) in corners {
+            let nearest = closed[0]
+                .outer()
+                .polyline()
+                .vertices()
+                .iter()
+                .map(|v| v.point().distance_to(Point::new(x, y)))
+                .fold(f64::INFINITY, f64::min);
             assert!(
-                closed[0]
-                    .outer()
-                    .polyline()
-                    .vertices()
-                    .iter()
-                    .any(|v| (v.point().x - x).abs() < 1e-6 && (v.point().y - y).abs() < 1e-6),
-                "outward corner ({x}, {y}) stays sharp"
+                nearest < 2.0 * TOL,
+                "outward corner ({x}, {y}) stays sharp: {nearest} off"
             );
         }
 

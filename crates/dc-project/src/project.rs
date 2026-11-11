@@ -288,7 +288,7 @@ impl Footprint {
 
 /// The closed outlines of `targets`, placed in project space, in target
 /// then profile order; `None` when one does not resolve.
-fn closed_outlines(project: &Project, targets: &[InstanceId]) -> Option<Vec<Contour>> {
+pub(crate) fn closed_outlines(project: &Project, targets: &[InstanceId]) -> Option<Vec<Contour>> {
     let mut outlines = Vec::new();
     for id in targets {
         let instance = project.instances.iter().find(|i| &i.id == id)?;

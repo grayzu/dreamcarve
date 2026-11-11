@@ -127,6 +127,10 @@
 //!   stock, so its male programs are cut on the same board, byte for
 //!   byte; it now also cuts the female on the stock, which
 //!   [`migrate_with_notes`] notes ([`MigrationNote::MaleInlayGainsFemale`]).
+//! - **26**: the Inlay's drawn boundary (#449, #602): `"boundary": []`
+//!   after `outline_rounding_mm` in every Inlay. Empty, the male's band
+//!   is `margin_mm` and `outline_rounding_mm` as it was, so the file
+//!   exports what it did, byte for byte.
 
 use crate::ids::OperationId;
 use crate::post_processor::{
@@ -138,7 +142,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 25;
+pub const CURRENT_VERSION: u32 = 26;
 
 /// Something a migration changed that the user should hear about, though
 /// the file loads (#498).
@@ -198,6 +202,7 @@ fn step(from: u32) -> Option<Step> {
         22 => Some(v22_to_v23),
         23 => Some(v23_to_v24),
         24 => Some(v24_to_v25),
+        25 => Some(v25_to_v26),
         _ => None,
     }
 }
@@ -1067,6 +1072,44 @@ fn v24_to_v25(mut root: Map<String, Value>) -> Result<Map<String, Value>, String
     Ok(root)
 }
 
+/// Version 25 → 26 (#449, #602): an Inlay's drawn boundary. Inserts
+/// `"boundary": []` after `outline_rounding_mm` (at the end when it is
+/// missing) in every Inlay, so a version 25 file's band is still its
+/// margin and rounding. Other operations are unchanged. Fails if an Inlay
+/// already has `boundary`: that is not a version 25 file.
+fn v25_to_v26(mut root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let Some(ops) = root.get_mut("operations").and_then(Value::as_array_mut) else {
+        return Ok(root);
+    };
+    for (i, op) in ops.iter_mut().enumerate() {
+        if op.get("kind").and_then(Value::as_str) != Some("inlay") {
+            continue;
+        }
+        let Value::Object(fields) = std::mem::take(op) else {
+            return Err(format!("`operations[{i}]` is not an object"));
+        };
+        if fields.contains_key("boundary") {
+            return Err(format!(
+                "a version 25 file has no `operations[{i}].boundary`, but this one does"
+            ));
+        }
+        let at_end = !fields.contains_key("outline_rounding_mm");
+        let mut out = Map::new();
+        for (k, v) in fields {
+            let after = k == "outline_rounding_mm";
+            out.insert(k, v);
+            if after {
+                out.insert("boundary".into(), Value::Array(Vec::new()));
+            }
+        }
+        if at_end {
+            out.insert("boundary".into(), Value::Array(Vec::new()));
+        }
+        *op = Value::Object(out);
+    }
+    Ok(root)
+}
+
 /// `map` with key `from` renamed `to`, in its place. Fails if `to` is
 /// already there, naming it under `at` (a path prefix such as
 /// `operations[1].`).
@@ -1277,11 +1320,13 @@ mod tests {
 
     /// `op` (an operation as the current version writes it) as version 24
     /// wrote it, when it is an Inlay: `side` in place of `male_board`,
-    /// `"male"` when the board has a thickness, else `"female"` (#498).
+    /// `"male"` when the board has a thickness, else `"female"` (#498),
+    /// and no `boundary` (#449).
     fn as_v24(op: &mut Value) {
         let Some(fields) = op.as_object_mut() else {
             return;
         };
+        fields.shift_remove("boundary");
         let Some(board) = fields.get("male_board") else {
             return;
         };
@@ -3274,7 +3319,7 @@ mod tests {
         for (k, v) in fields {
             if k == "male_board" {
                 old.insert("side".into(), json!(side));
-            } else {
+            } else if k != "boundary" {
                 old.insert(k, v);
             }
         }

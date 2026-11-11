@@ -365,8 +365,11 @@ for the pair from the design and set its male_board``.
 Fixtures
 `crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26}/sample.dcv`,
 each holding the kinds its version has; `v25` is the previous version's
-and `v26` the current one's until sub-phase 3.5 adds `v27`. The `v26`
-sample's Inlay lists a boundary instance.
+and `v26` the current one's until sub-phase 3.5 adds `v27`. `sample.dcv`
+is always the saved `sample_project()` (the Profile sample, no Inlay;
+`serialize::CURRENT_FIXTURE`), so the boundary's file is its neighbour,
+`v26/inlay-boundary.dcv`: the sample with a frame instance `i2` and an
+Inlay of `i1` whose `boundary` lists `i2` (`migrate::version_26_fixtures_load`).
 
 **Validation** (`validate.rs`), errors unless marked:
 
@@ -479,8 +482,14 @@ sample's Inlay lists a boundary instance.
   `inlay_margin_ignored` (warning: `margin_mm` or `outline_rounding_mm` is
   set with a boundary; at the field set; `outline_rounding_mm`'s own
   `inlay_outline_rounding` range check still runs, so a bad value is not
-  hidden by being ignored). The female ignores the whole list: nothing is
-  checked until the male is cut, as for the margin.
+  hidden by being ignored; a `margin_mm` that is not above 0 is ignored
+  too, not `inlay_margin_positive`). `margin_mm` is not required with a
+  boundary. The female ignores the whole list: nothing is checked until
+  the male is cut, as for the margin. An entry's problems (`unknown`,
+  `open`, `is_target`) are all reported, each at its entry; the geometry
+  (`crosses_design`, `empty`) is checked once every entry resolves.
+  `inlay_boundary_empty` means no area of the entry's shapes is shared with
+  the design.
 - The cut-out (format 23, #443), checked once the male is cut (#498;
   until then the female ignores it, and `inlay_cut_out_needs_male`,
   the error for a cut-out on a female side, is gone with `side`):
@@ -700,8 +709,17 @@ instance_name)` and `InlayBoundaryHoleIgnored (op, instance,
 instance_name, profile)`, and the error `CamError::InlayBoundary { op,
 problem: BoundaryProblem }` (`Unknown { instance }`, `Open { instance,
 profile }`, `IsTarget { instance }`, `CrossesDesign { x_mm, y_mm,
-distance_mm }`, "Drawn boundary"), which validation reports under the
-codes above.
+distance_mm }`, "Drawn boundary"). Validation is in `dc-project`, which
+cannot name `CamError`: it reports the boundary under the codes above as
+`Problem` variants (`InlayBoundaryUnknown`, `InlayBoundaryOpen`,
+`InlayBoundaryIsTarget`, `InlayBoundaryCrossesDesign`, `InlayBoundaryEmpty`,
+`InlayBoundaryHoleIgnored`, `InlayMarginIgnored`), and `BoundaryProblem`
+lives in `dc-project`. `CamError::InlayBoundary` is the generator's form
+(re-checked, as every generator re-checks validation). The generator's
+warnings (`InlayMarginIgnored`, `InlayBoundaryEmpty`,
+`InlayBoundaryHoleIgnored` in `dc-cam`) wait for slice 21j, which cuts the
+band: until then a male that lists a boundary is refused with
+`CamError::InlayBoundaryNotCut`, so no file exports a band that ignores it.
 
 ### dc-gcode
 
@@ -858,8 +876,11 @@ pub fn simplify_regions(regions: &[Region], tolerance_mm: f64) -> (Vec<Region>, 
 pub fn drawn_band(boundary: &[Region], tolerance_mm: f64) -> Vec<Region>;
 /// A band closed by `rounding_mm`, `(B ⊕ r) ⊖ r`, round joins: the
 /// closing `rounded_band` ends with, on an edge that was drawn instead of
-/// grown. `rounded_band(regions, M, R)` is now `closed_band(offset of the
-/// design's outers by M + R, R)`, and unchanged for every input.
+/// grown. `closed_band` grows `B` by `r` itself; `rounded_band(regions, M,
+/// R)` grows the design's outers by `M + R` in one offset (not `M`, then
+/// `R`, which would round differently) and shares `closed_band`'s tail
+/// (union, fill the holes, inset by `R`), so it is unchanged for every
+/// input, to the last place.
 pub fn closed_band(band: &[Region], rounding_mm: f64, tolerance_mm: f64) -> Vec<Region>;
 /// Where a design stands in a band.
 pub enum BandClearance {

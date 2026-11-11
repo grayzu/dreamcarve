@@ -9,6 +9,14 @@ phases bump the patch number.
 
 ### Added
 
+- **A drawn boundary for the male Inlay's band; format version 26 (#449,
+  #602).** An Inlay can list `boundary`, instances whose closed outlines
+  are the band's outer edge in place of `margin_mm` and
+  `outline_rounding_mm`. `check` validates it (unknown, open, target,
+  crossing or touching the design, empty, holes ignored, margin ignored);
+  a male that lists one is not exported yet. Older files upgrade with
+  `"boundary": []` and export the same programs. Photo V-Carve moves to
+  format 27.
 - **V-Carve in the project file; format version 20.** A project can hold a
   `"v_carve"` operation, with its strategy, clearing passes, flat depth and
   start depth, and `check` validates it: the tool must be a V-bit, the flat
