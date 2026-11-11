@@ -394,3 +394,33 @@ fn tiers_match_the_cli() {
         "{text}"
     );
 }
+
+/// Capability 76 (#549, row 11): the drawer names a group only when there
+/// are two or more, since a lone heading labels the only thing there. The
+/// quick-start plaque's one finding is the project's unused tool: one
+/// group, no heading. The version 14 plaque adds its Drill's findings: a
+/// project row and an operation's rows, two groups, two headings.
+#[test]
+fn single_group_has_no_heading() {
+    let mut one = Harness::open(&read(&repo_root().join("tests/fixtures/plaque.dcv")))
+        .expect("the plaque opens");
+    one.generate();
+    let groups = warnings::panel(&one.app);
+    assert_eq!(groups.len(), 1, "{groups:?}");
+    assert_eq!(groups[0].op, None, "the project's");
+    assert!(
+        groups.iter().all(|g| !g.heading),
+        "one group has no heading"
+    );
+
+    let path = repo_root().join("crates/dreamcarve/tests/fixtures/holds-slug-migration/plaque.dcv");
+    let two = generated("plaque.dcv", &read(&path));
+    let groups = warnings::panel(&two.app);
+    let ops: Vec<Option<OperationId>> = groups.iter().map(|g| g.op.clone()).collect();
+    assert_eq!(
+        ops,
+        [None, Some(OperationId::new("op3"))],
+        "the project's, then the Drill's"
+    );
+    assert!(groups.iter().all(|g| g.heading), "two groups, two headings");
+}

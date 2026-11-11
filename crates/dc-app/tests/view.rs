@@ -18,21 +18,100 @@
 mod common;
 
 use dc_app::test_support::Harness;
-use dc_app::view::{ColourMode, DEPTH_STEPS, Visibility, depth_legend};
+use dc_app::view::{ColourMode, DEPTH_STEPS, Visibility, depth_legend, operation_key};
 use dc_app::{Command, Selection};
 use dc_geometry::{Point, approx_eq};
 use dc_project::OperationId;
 
 use common::plaque_bytes;
 
+/// The plaque's legend ticks as the legend writes them.
+fn tick_texts(harness: &Harness) -> Vec<String> {
+    let legend = depth_legend(harness.app.project(), harness.app.scene()).expect("the plaque cuts");
+    legend
+        .ticks
+        .iter()
+        .map(|t| t.text(harness.app.strings()))
+        .collect()
+}
+
+/// The plaque with a clearance height of 10 mm and every operation's safe
+/// Z at 5 mm (the fixture leaves the clearance unset and retracts to
+/// 15 mm), and Z zero where `z` says.
+fn plaque_with_heights(z: &str) -> Harness {
+    let text = String::from_utf8(plaque_bytes()).expect("UTF-8");
+    let text = text
+        .replace("\"safe_z_mm\": 15.0", "\"safe_z_mm\": 5.0")
+        .replace("\"clearance_mm\": null", "\"clearance_mm\": 10.0")
+        .replace("\"z\": \"stock_top\"", &format!("\"z\": \"{z}\""));
+    let mut harness = Harness::open(text.as_bytes()).expect("the plaque opens");
+    harness.generate();
+    harness
+}
+
+/// Capability 73a, acceptance 80 (#549, row 13): above the stock top the
+/// legend has the band where the bit moves without cutting, with ticks at
+/// the clearance height and each distinct safe Z; then the stock top and
+/// each operation's depth, in work coordinates with an explicit sign.
+/// With Z zero at the stock bottom the stock top reads `+11.8` and the
+/// cuts count up from the bottom: every one at or above it but the
+/// through cuts, which go the through-cut allowance (0.2 mm) below.
+#[test]
+fn depth_legend_ticks_include_clearance_and_safe_z() {
+    let harness = plaque_with_heights("stock_top");
+    assert_eq!(
+        tick_texts(&harness),
+        [
+            "+10 clearance",
+            "+5 safe Z",
+            "0 stock top",
+            "\u{2212}1 Border and squiggle",
+            "\u{2212}4 Panel",
+            "\u{2212}6 Square recess",
+            "\u{2212}12 Screw holes, Cut out",
+        ]
+    );
+    let legend = depth_legend(harness.app.project(), harness.app.scene()).unwrap();
+    let above: Vec<bool> = legend.ticks.iter().map(|t| t.fraction < 0.0).collect();
+    assert_eq!(
+        above,
+        [true, true, false, false, false, false, false],
+        "the clearance and safe Z sit in the band above the ramp"
+    );
+    assert!(
+        legend.ticks[0].fraction < legend.ticks[1].fraction,
+        "clearance above safe Z"
+    );
+
+    let harness = plaque_with_heights("stock_bottom");
+    assert_eq!(
+        tick_texts(&harness),
+        [
+            "+21.8 clearance",
+            "+16.8 safe Z",
+            "+11.8 stock top",
+            "+10.8 Border and squiggle",
+            "+7.8 Panel",
+            "+5.8 Square recess",
+            "\u{2212}0.2 Screw holes, Cut out",
+        ]
+    );
+
+    // The fixture as committed: no clearance height set, so the band has
+    // the safe Z alone.
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    harness.generate();
+    assert_eq!(&tick_texts(&harness)[..2], ["+15 safe Z", "0 stock top"]);
+}
+
 /// Acceptance 80: on the plaque (stock 11.8 mm thick, top at Z 11.8), the
-/// legend's ticks are the stock top, each operation's depth and the
-/// deepest cut, in project units with the unit once at the top: `0 mm`,
-/// then the engraving at 1, the Panel pocket at 4, the Square recess at 6
-/// and the bores and the cut-out at 12 (each cuts 12 mm through the
-/// 11.8 mm stock), the deepest. *By depth* colours the Panel pocket's
-/// floor moves by their Z: each sits at the Panel's tick on the ramp, a
-/// third of the way down, and every shallower pass of it above that.
+/// cutting ramp's ticks are the stock top, each operation's depth and the
+/// deepest cut: the engraving at 1, the Panel pocket at 4, the Square
+/// recess at 6 and the bores and the cut-out at 12 (each cuts 12 mm
+/// through the 11.8 mm stock), the deepest. *By depth* colours the Panel
+/// pocket's floor moves by their Z: each sits at the Panel's tick on the
+/// ramp, a third of the way down, and every shallower pass of it above
+/// that.
 #[test]
 fn depth_legend_labels_stock_top_each_depth_and_deepest() {
     let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
@@ -44,27 +123,22 @@ fn depth_legend_labels_stock_top_each_depth_and_deepest() {
     assert!(approx_eq(legend.ramp.top_z_mm, top, 1e-9));
     assert!(approx_eq(legend.ramp.deepest_z_mm, top - 12.0, 1e-6));
 
-    let labels: Vec<(&str, Vec<&str>)> = legend
-        .ticks
+    let cuts: Vec<_> = legend.ticks.iter().filter(|t| t.fraction >= 0.0).collect();
+    let labels: Vec<(&str, Vec<&str>)> = cuts
         .iter()
-        .map(|t| {
-            (
-                t.label.as_str(),
-                t.operations.iter().map(String::as_str).collect(),
-            )
-        })
+        .map(|t| (t.label.as_str(), t.operations().collect()))
         .collect();
     assert_eq!(
         labels,
         [
-            ("0 mm", vec![]),
+            ("0", vec![]),
             ("\u{2212}1", vec!["Border and squiggle"]),
             ("\u{2212}4", vec!["Panel"]),
             ("\u{2212}6", vec!["Square recess"]),
             ("\u{2212}12", vec!["Screw holes", "Cut out"]),
         ]
     );
-    let flags: Vec<(bool, bool)> = legend.ticks.iter().map(|t| (t.top, t.deepest)).collect();
+    let flags: Vec<(bool, bool)> = cuts.iter().map(|t| (t.top, t.deepest)).collect();
     assert_eq!(
         flags,
         [
@@ -75,7 +149,7 @@ fn depth_legend_labels_stock_top_each_depth_and_deepest() {
             (false, true)
         ]
     );
-    for (tick, depth) in legend.ticks.iter().zip([0.0, 1.0, 4.0, 6.0, 12.0]) {
+    for (tick, depth) in cuts.iter().zip([0.0, 1.0, 4.0, 6.0, 12.0]) {
         assert!(
             approx_eq(tick.fraction, depth / 12.0, 1e-6),
             "{}: at {} on the ramp",
@@ -93,7 +167,7 @@ fn depth_legend_labels_stock_top_each_depth_and_deepest() {
         clippy::cast_precision_loss,
         reason = "a fraction of 255"
     )]
-    let panel_step = (legend.ticks[2].fraction * (DEPTH_STEPS - 1) as f64).round() as u8;
+    let panel_step = (cuts[2].fraction * (DEPTH_STEPS - 1) as f64).round() as u8;
     let mut floor_moves = 0;
     for run in panel.runs.iter() {
         for m in run.run.toolpath.moves.iter().filter(|m| !m.is_rapid()) {
@@ -109,7 +183,7 @@ fn depth_legend_labels_stock_top_each_depth_and_deepest() {
     assert!(floor_moves > 10, "{floor_moves} floor moves");
 }
 
-/// An inch project's legend is in inches, the unit once at the top.
+/// An inch project's legend is in inches: the unit once, in its title.
 #[test]
 fn depth_legend_is_in_project_units() {
     let mut project = common::plaque();
@@ -117,9 +191,52 @@ fn depth_legend_is_in_project_units() {
     let mut harness = Harness::from_project(project);
     harness.generate();
     let legend = depth_legend(harness.app.project(), harness.app.scene()).unwrap();
+    assert_eq!(legend.units, dc_project::Units::Inch);
     let labels: Vec<&str> = legend.ticks.iter().map(|t| t.label.as_str()).collect();
-    assert_eq!(labels.first(), Some(&"0 in"));
+    assert_eq!(labels.first(), Some(&"+0.591"), "15 mm is 0.591 in");
     assert_eq!(labels.last(), Some(&"\u{2212}0.472"), "12 mm is 0.472 in");
+}
+
+/// Capability 73 (`experience.md`, section 9, "Toolpath view popover"):
+/// the by-operation key lists one entry per enabled operation in list
+/// order, named as the file names it, in the colour the Viewport draws
+/// it: the preview palette's, by the operation's index in the Scene. A
+/// disabled operation has no entry and takes no colour.
+#[test]
+fn by_operation_key_lists_each_operation_colour() {
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    harness.generate();
+    let key = operation_key(harness.app.scene());
+    let names: Vec<&str> = key.iter().map(|e| e.name.as_str()).collect();
+    let file: Vec<&str> = harness
+        .app
+        .project()
+        .operations
+        .iter()
+        .map(|o| o.name())
+        .collect();
+    assert_eq!(names, file, "every operation, in list order");
+    let colours: Vec<usize> = key.iter().map(|e| e.colour).collect();
+    assert_eq!(colours, [0, 1, 2, 3, 4], "the palette by index");
+    for (entry, op) in key.iter().zip(harness.app.scene().operations()) {
+        assert_eq!(entry.id, op.id);
+        assert_eq!(entry.colour, op.colour, "the colour the Viewport draws");
+    }
+
+    // Disable the Panel pocket: it leaves the key, the rest close up.
+    harness
+        .run(Command::SetOperationEnabled {
+            id: OperationId::new("op1"),
+            enabled: false,
+        })
+        .unwrap();
+    harness.generate();
+    let key = operation_key(harness.app.scene());
+    let names: Vec<&str> = key.iter().map(|e| e.name.as_str()).collect();
+    assert!(!names.contains(&"Panel"), "{names:?}");
+    assert_eq!(names.len(), 4);
+    let colours: Vec<usize> = key.iter().map(|e| e.colour).collect();
+    assert_eq!(colours, [0, 1, 2, 3]);
 }
 
 /// Acceptance 81 (capability 73): toggling every visibility control, both

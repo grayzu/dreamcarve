@@ -36,6 +36,45 @@ fn camera(centre: Point, px_per_mm: f64) -> Camera {
     }
 }
 
+/// `experience.md`, section 9, "Depth legend" (#616): Fit leaves the
+/// legend's strip at the pane's left free. With a 260-px strip the
+/// bounds sit inside the rest of the pane, within the margin, and fill
+/// its width; with no strip, or one that is not a number, it is
+/// [`Camera::fit`].
+#[test]
+fn fit_beside_leaves_the_left_strip_free() {
+    let viewport_px = Vec2::new(900.0, 640.0);
+    let bounds = Rect {
+        min: Point::new(0.0, 0.0),
+        max: Point::new(170.0, 120.0),
+    };
+    let strip_px = 260.0;
+    let mut cam = camera(Point::new(0.0, 0.0), 1.0);
+    cam.viewport_px = viewport_px;
+    cam.fit_beside(bounds, strip_px);
+    let mut tight = false;
+    for p in corners(bounds) {
+        let s = cam.to_screen(p);
+        assert!(
+            s.x_px >= strip_px + FIT_MARGIN_PX - EPS
+                && s.x_px <= viewport_px.x - FIT_MARGIN_PX + EPS,
+            "{p:?} at {s:?} is under the strip"
+        );
+        assert!(s.y_px >= FIT_MARGIN_PX - EPS && s.y_px <= viewport_px.y - FIT_MARGIN_PX + EPS);
+        tight |= approx_eq(s.x_px, strip_px + FIT_MARGIN_PX, 1e-6);
+    }
+    assert!(tight, "the fit fills the width beside the strip");
+
+    let mut plain = cam;
+    plain.fit(bounds);
+    let mut none = cam;
+    none.fit_beside(bounds, 0.0);
+    assert_eq!(plain, none);
+    let mut bad = cam;
+    bad.fit_beside(bounds, f64::NAN);
+    assert_eq!(plain, bad, "a strip that is not a number is none");
+}
+
 fn assert_point(got: Point, want: Point, what: &str) {
     assert!(
         approx_eq(got.x, want.x, EPS) && approx_eq(got.y, want.y, EPS),

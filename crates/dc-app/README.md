@@ -11,7 +11,8 @@ Viewport's geometry (the `Scene` it draws, with each operation's runs and
 marks, the camera with the one Y flip, picking, the grid, the transform
 handles and the direction arrows' placement, ported from PureCutCNC),
 the toolpath display's view state (`view`: visibility, *By depth*'s ramp
-and legend, the program extents), the Design Tree's
+and legend, the by-operation key, the program extents), the status bar's
+cells (`status`), the Design Tree's
 rows (`tree`), the Properties panel's placement fields (`properties`,
 with the mixed values of `mixed`, ported from PureCutCNC), the project
 tools' editing rules (`tools`), the Tool Library window's model

@@ -12,9 +12,13 @@
 //! it is about. Clicking a row selects the operation or the shape it
 //! names; a row on an operation's field opens the operation in the editor
 //! with that field focused (#539). *Copy* puts
-//! `check`'s text on the clipboard; *Regenerate All* forces generation.
+//! `check`'s text on the clipboard. Each group is named above its rows
+//! only when there are two or more (#616); the drawer has no Regenerate
+//! button, since *Regenerate all* lives in the status bar after Stop
+//! (capability 71).
 
 use dc_app::StrKey;
+use dc_app::status::counted;
 use dc_app::warnings::{self, Counts, Group, Level, Row};
 use eframe::egui::{self, Rangef, Sense, TextStyle, Ui};
 
@@ -57,15 +61,6 @@ fn tier(level: Level, palette: &Palette) -> (Icon, egui::Color32, StrKey) {
             palette.text_secondary,
             StrKey::AppWarningsLevelNote,
         ),
-    }
-}
-
-/// `n` of a thing as the status bar counts it: `1 warning`, `3 warnings`.
-pub(crate) fn counted(strings: &dc_app::Strings, n: usize, one: StrKey, many: StrKey) -> String {
-    if n == 1 {
-        strings.get(one).to_owned()
-    } else {
-        strings.fmt(many, &[("count", &n.to_string())])
     }
 }
 
@@ -166,7 +161,9 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
                     }
                     let mut stripe = false;
                     for group in &groups {
-                        group_header(ui, &group_title(state, group));
+                        if group.heading {
+                            group_header(ui, &group_title(state, group));
+                        }
                         for row in &group.rows {
                             draw_row(ui, state, row, stripe, out);
                             stripe = !stripe;
@@ -176,8 +173,7 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
         });
 }
 
-/// The 32-px header: the title left; *Copy*, *Regenerate All* and the
-/// close button right.
+/// The 32-px header: the title left; *Copy* and the close button right.
 fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
@@ -205,14 +201,6 @@ fn header(ui: &mut Ui, state: &FrameState<'_>, counts: Counts, out: &mut Vec<Act
         .clicked()
         {
             out.push(Action::ToggleWarnings);
-        }
-        if button(
-            ui,
-            ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppGenerationRegenerateAll)),
-        )
-        .clicked()
-        {
-            out.push(Action::RegenerateAll);
         }
         if button(
             ui,

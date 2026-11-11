@@ -117,6 +117,18 @@ fn click(h: &mut H, label: &str) {
     h.run();
 }
 
+/// Opens the toolpath view from the status bar (#616), clicks each of
+/// `labels` in it, and closes it with Escape.
+fn toolpath_view(h: &mut H, labels: &[&str]) {
+    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.run();
+    for label in labels {
+        click(h, label);
+    }
+    h.key_press(egui::Key::Escape);
+    h.run();
+}
+
 fn open_operation(h: &mut H, name: &str) {
     h.get_by_role_and_label(Role::ListItem, name).click();
     h.run();
@@ -206,17 +218,14 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "12-tools-tab");
     h.get_by_label_contains("Operations ·").click();
     h.run();
-    h.query_all_by_label("By depth")
-        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
-        .expect("the card's By depth segment")
-        .click();
+    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
     h.run();
+    shoot(&mut h, "13-toolpath-view");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    toolpath_view(&mut h, &["By depth"]);
     shoot(&mut h, "13-by-depth-legend");
-    h.query_all_by_label("By operation")
-        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
-        .expect("the card's By operation segment")
-        .click();
-    h.run();
+    toolpath_view(&mut h, &["By operation"]);
     click(&mut h, "Project");
     click(&mut h, "Tool Library…");
     shoot(&mut h, "14-tool-library-sheet");
@@ -231,19 +240,11 @@ fn scenes(dir: &Path) -> bool {
 
     // The minimum window of spec 50, in By depth (#549's first comment).
     let mut h = window(dir, Some(plaque), 1280.0, 768.0).unwrap();
-    h.query_all_by_label("By depth")
-        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
-        .expect("the card's By depth segment")
-        .click();
-    h.run();
-    click(&mut h, "Program extents");
+    toolpath_view(&mut h, &["By depth"]);
+    toolpath_view(&mut h, &["Program extents"]);
     shoot(&mut h, "16-minimum-window-by-depth");
-    click(&mut h, "Program extents");
-    h.query_all_by_label("By operation")
-        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
-        .expect("the card's By operation segment")
-        .click();
-    h.run();
+    toolpath_view(&mut h, &["Program extents"]);
+    toolpath_view(&mut h, &["By operation"]);
     drop(h);
 
     // The sign: Drill and V-Carve.

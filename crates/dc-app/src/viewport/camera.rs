@@ -146,18 +146,32 @@ impl Camera {
     /// [`FIT_MARGIN_PX`] round it on both axes, within the zoom limits.
     /// Extents under a millimetre count as one.
     pub fn fit(&mut self, bounds: Rect) {
+        self.fit_beside(bounds, 0.0);
+    }
+
+    /// [`Camera::fit`] in the pane less a strip `left_px` wide at its left
+    /// edge, which something drawn over the pane keeps (the depth legend;
+    /// `experience.md`, section 9: "Fit leaves room for it on the left").
+    /// A strip that is not finite and positive counts as none.
+    pub fn fit_beside(&mut self, bounds: Rect, left_px: f64) {
+        let left_px = if left_px.is_finite() && left_px > 0.0 {
+            left_px.min(self.viewport_px.x / 2.0)
+        } else {
+            0.0
+        };
         let room = |px: f64| (px - 2.0 * FIT_MARGIN_PX).max(1.0);
         let width_mm = bounds.width_mm().max(MIN_FIT_EXTENT_MM);
         let height_mm = bounds.height_mm().max(MIN_FIT_EXTENT_MM);
-        let px_per_mm = (room(self.viewport_px.x) / width_mm)
+        let px_per_mm = (room(self.viewport_px.x - left_px) / width_mm)
             .min(room(self.viewport_px.y) / height_mm)
             .clamp(MIN_PX_PER_MM, MAX_PX_PER_MM);
         if !px_per_mm.is_finite() {
             return;
         }
         self.px_per_mm = px_per_mm;
+        // The bounds' centre sits half the strip right of the pane's.
         self.centre_mm = Point::new(
-            (bounds.min.x + bounds.max.x) / 2.0,
+            (bounds.min.x + bounds.max.x) / 2.0 - left_px / 2.0 / px_per_mm,
             (bounds.min.y + bounds.max.y) / 2.0,
         );
     }

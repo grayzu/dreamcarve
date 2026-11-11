@@ -1,22 +1,26 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The status bar (functional spec, capability 50; `experience.md`,
-//! section 2, "Status bar"): 24 px on `surface.panel` under a rule; cells
-//! of 12-px text 12 px apart, split by 1-px rules: units, stock size,
-//! cursor in project units (`experience.md`, section 9: `X 64.2  Y 51.8`,
-//! one decimal in mm, three in inches), generation state (*Generating k
-//! of n…* and Stop), the counts of each tier with their glyphs (the button
-//! that opens the Warnings drawer), the programs' estimated time
-//! (capability 78), the shape under the pointer (section 8, "Hover"), and
-//! the last message.
+//! The status bar (functional spec, capability 50b; `experience.md`,
+//! section 2, "Status bar"; slice 24, #616): 24 px on `surface.panel`
+//! under a rule; cells of 12-px text 12 px apart, split by 1-px rules.
+//! The cells are `dc_app::status`'s, drawn left to right: the units
+//! button and its menu, the cursor's fixed cell, the *Toolpaths* button
+//! and its popover (`shell::toolpaths`), generation (*Generating k of
+//! n…* and Stop, or *Stopped* and *Regenerate all*), the counts (the
+//! button that opens the Warnings drawer), the estimate, the Z range, a
+//! drag, the shape under the pointer and the last message. A cell with
+//! nothing to say is not drawn and takes no rule. No stock size: Project
+//! Settings shows it.
 
-use dc_app::{StrKey, warnings};
+use dc_app::status::{self, CountsCell, GenerationAction, GenerationCell, Inputs};
+use dc_app::warnings::Level;
+use dc_app::{Command, StrKey};
 use dc_project::Units;
-use eframe::egui::{self, TextStyle, Ui};
+use eframe::egui::{self, Sense, TextStyle, Ui};
 
-use crate::panels::warnings::counted;
 use crate::shell::theme::{self, Palette};
+use crate::shell::toolpaths;
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring, text};
 use crate::widgets::icon::Icon;
@@ -24,128 +28,131 @@ use crate::widgets::spinner::spinner;
 
 /// The status bar's height, px.
 const HEIGHT_PX: f32 = 24.0;
-
-/// `value` to at most `decimals` places, trailing zeros dropped, as the
-/// mock-up writes a stock (`Stock 160 × 100 × 12 mm`).
-fn number(value: f64, decimals: usize) -> String {
-    let text = format!("{value:.decimals$}");
-    if text.contains('.') {
-        text.trim_end_matches('0').trim_end_matches('.').to_owned()
-    } else {
-        text
-    }
-}
+/// The cursor cell's fixed width, px, so the cells after it hold still.
+const CURSOR_PX: f32 = 120.0;
 
 /// A cell's rule on its right.
 fn rule(ui: &mut Ui, palette: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, HEIGHT_PX - 8.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, HEIGHT_PX - 8.0), Sense::hover());
     ui.painter().rect_filled(rect, 0.0, palette.border_default);
 }
 
-/// A count with its tier glyph, in the tier's colour (section 1,
-/// principle 3: never colour without a glyph).
-fn count(ui: &mut Ui, icon: Icon, colour: egui::Color32, label: &str) {
-    let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
-    let (rect, _) = ui.allocate_exact_size(glyph.size(), egui::Sense::hover());
-    ui.painter().galley(rect.min, glyph, colour);
-    text(ui, label, TextStyle::Small, colour);
+/// A glyph in `colour` at the small icon size.
+fn glyph(ui: &mut Ui, icon: Icon, colour: egui::Color32) {
+    let galley = icon.galley(ui, theme::ICON_SMALL_PX, colour);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    ui.painter().galley(rect.min, galley, colour);
+}
+
+/// The units cell: a quiet button reading `mm` or `in` with a
+/// `chevron-down`, whose two-row menu switches the project's display
+/// units (capability 53) as Project Settings' switch does: one undo step.
+fn units(ui: &mut Ui, state: &FrameState<'_>, label: &str, current: Units, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let small = TextStyle::Small.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), small, palette.text_secondary);
+    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    let size = egui::vec2(
+        galley.size().x + 4.0 + chevron.size().x + 12.0,
+        HEIGHT_PX - 4.0,
+    );
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let response = response.on_hover_text(strings.get(StrKey::AppStatusUnitsHint));
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    if response.hovered() || open {
+        let wash = if open {
+            palette.surface_active
+        } else {
+            palette.surface_hover
+        };
+        ui.painter().rect_filled(rect, 4.0, wash);
+    }
+    let x = rect.left() + 6.0;
+    ui.painter().galley(
+        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
+        galley.clone(),
+        palette.text_secondary,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            x + galley.size().x + 4.0,
+            rect.center().y - chevron.size().y / 2.0,
+        ),
+        chevron,
+        palette.text_secondary,
+    );
+    focus_ring(ui, &response);
+    egui::Popup::menu(&response)
+        .align(egui::RectAlign::TOP_START)
+        .show(|ui| {
+            for (units, key) in [
+                (Units::Mm, StrKey::AppStatusUnitsMm),
+                (Units::Inch, StrKey::AppStatusUnitsInch),
+            ] {
+                let row = ui.add(egui::Button::new(strings.get(key)).selected(units == current));
+                if row.clicked() {
+                    if units != current {
+                        out.push(Action::run(Command::SetDisplayUnits(units)));
+                    }
+                    ui.close();
+                }
+            }
+        });
 }
 
 /// The generation cell (capability 71; `experience.md`, section 8,
-/// "Progress"): *Generating k of n…* with the spinner and a quiet *Stop*
-/// while an operation is pending, *Checking…* while only the project-level
-/// pass runs, *Stopped* once Stop held anything back, else *Idle*.
-fn generation(ui: &mut Ui, state: &FrameState<'_>, palette: &Palette, out: &mut Vec<Action>) {
-    let strings = state.app.strings();
-    let generation = state.app.generation();
-    let secondary = palette.text_secondary;
-    let running = match generation.progress() {
-        Some(progress) => Some(strings.fmt(
-            StrKey::AppGenerationGenerating,
-            &[
-                ("at", &progress.at.to_string()),
-                ("of", &progress.of.to_string()),
-            ],
-        )),
-        None if generation.busy() => Some(strings.get(StrKey::AppGenerationChecking).to_owned()),
-        None => None,
+/// "Progress"): the spinner while anything is pending, the text, and Stop
+/// or, after Stop, *Regenerate all*: the only place that command lives.
+fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut Vec<Action>) {
+    if cell.spinner {
+        spinner(ui, "");
+    }
+    let colour = if cell.spinner {
+        palette.text_primary
+    } else {
+        palette.text_secondary
     };
-    match running {
-        Some(label) => {
-            spinner(ui, "");
-            text(ui, &label, TextStyle::Small, palette.text_primary);
-            let stop = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppGenerationStop))
-                .height(HEIGHT_PX - 4.0);
-            if button(ui, stop).clicked() {
-                out.push(Action::StopGeneration);
-            }
-        }
-        None if generation.stopped() => {
-            text(
-                ui,
-                strings.get(StrKey::AppGenerationStopped),
-                TextStyle::Small,
-                secondary,
-            );
-        }
-        None => {
-            text(
-                ui,
-                strings.get(StrKey::AppStatusIdle),
-                TextStyle::Small,
-                secondary,
-            );
+    text(ui, &cell.text, TextStyle::Small, colour);
+    if let Some(action) = &cell.action {
+        let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(HEIGHT_PX - 4.0);
+        if button(ui, spec).clicked() {
+            out.push(match action.action {
+                GenerationAction::Stop => Action::StopGeneration,
+                GenerationAction::RegenerateAll => Action::RegenerateAll,
+            });
         }
     }
 }
 
 /// The counts cell (`experience.md`, section 2, "Status bar"): each tier
-/// with rows as its glyph and count in its colour, or *No warnings*; one
-/// button that opens and closes the Warnings drawer.
-fn counts(ui: &mut Ui, state: &FrameState<'_>, palette: &Palette, out: &mut Vec<Action>) {
+/// with rows as its glyph and count in its colour, or `circle-check` and
+/// *No problems*; one button that opens and closes the Warnings drawer.
+fn counts(ui: &mut Ui, state: &FrameState<'_>, cell: &CountsCell, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let counts = warnings::counts(state.app);
-    let cell = ui.horizontal(|ui| {
-        if counts.errors == 0 && counts.warnings == 0 && counts.hints == 0 {
-            text(
-                ui,
-                strings.get(StrKey::AppStatusNoWarnings),
-                TextStyle::Small,
-                palette.text_secondary,
-            );
+    let inner = ui.horizontal(|ui| {
+        if let Some(none) = &cell.none {
+            glyph(ui, Icon::CircleCheck, palette.text_secondary);
+            text(ui, none, TextStyle::Small, palette.text_secondary);
         }
-        if counts.errors > 0 {
-            let label = counted(
-                strings,
-                counts.errors,
-                StrKey::AppStatusError,
-                StrKey::AppStatusErrors,
-            );
-            count(ui, Icon::CircleX, palette.status_error.text, &label);
-        }
-        if counts.warnings > 0 {
-            let label = counted(
-                strings,
-                counts.warnings,
-                StrKey::AppStatusWarning,
-                StrKey::AppStatusWarnings,
-            );
-            count(ui, Icon::TriangleAlert, palette.status_warning.text, &label);
-        }
-        if counts.hints > 0 {
-            let label = counted(
-                strings,
-                counts.hints,
-                StrKey::AppWarningsHint,
-                StrKey::AppWarningsHints,
-            );
-            count(ui, Icon::Info, palette.status_info.text, &label);
+        for (level, label) in &cell.tiers {
+            let (icon, colour) = match level {
+                Level::Error => (Icon::CircleX, palette.status_error.text),
+                Level::Warning => (Icon::TriangleAlert, palette.status_warning.text),
+                Level::Hint | Level::Note => (Icon::Info, palette.status_info.text),
+            };
+            glyph(ui, icon, colour);
+            text(ui, label, TextStyle::Small, colour);
         }
     });
     let response = ui.interact(
-        cell.response.rect,
+        inner.response.rect,
         ui.make_persistent_id("warnings_counts"),
-        egui::Sense::click(),
+        Sense::click(),
     );
     let title = strings.get(StrKey::AppWarningsTitle);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
@@ -153,20 +160,6 @@ fn counts(ui: &mut Ui, state: &FrameState<'_>, palette: &Palette, out: &mut Vec<
         out.push(Action::ToggleWarnings);
     }
     focus_ring(ui, &response);
-}
-
-/// The status bar's Z range while the program extents are shown
-/// (capability 74; `experience.md`, section 9): the tool centre's, in
-/// machine coordinates as `check` prints it.
-fn z_range(state: &FrameState<'_>) -> Option<String> {
-    let app = state.app;
-    if !app.view().visibility.extents {
-        return None;
-    }
-    let finished = app.generation().finished()?;
-    let extents = dc_app::view::program_extents(app.project(), finished)?;
-    let z = dc_app::view::range_label(extents.z?, extents.units);
-    Some(app.strings().fmt(StrKey::AppToolpathsZRange, &[("z", &z)]))
 }
 
 /// Draws the status bar.
@@ -188,110 +181,73 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 full.top(),
                 egui::Stroke::new(1.0, palette.border_default),
             );
+            let inputs = Inputs {
+                cursor_mm: state.pointer.cursor_mm,
+                drag: state.pointer.drag.as_deref(),
+                hover: state
+                    .pointer
+                    .hover
+                    .as_ref()
+                    .map(|(name, locked)| (name.as_str(), *locked)),
+                message: state.message,
+                estimate: state.estimate,
+            };
+            let cells = status::cells(state.app, &inputs);
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 12.0;
-                let strings = state.app.strings();
-                let project = state.app.project();
-                let units = project.display_units;
                 let secondary = palette.text_secondary;
-                let unit_key = match units {
-                    Units::Mm => StrKey::AppStatusMm,
-                    Units::Inch => StrKey::AppStatusInch,
-                };
-                text(ui, strings.get(unit_key), TextStyle::Small, secondary);
+                units(ui, state, &cells.units_label, cells.units, out);
                 rule(ui, palette);
-                let decimals = match units {
-                    Units::Mm => 1,
-                    Units::Inch => 3,
-                };
-                let length = |mm: f64| number(dc_app::units::to_display(mm, units), decimals);
-                let thickness = project
-                    .stock
-                    .thickness_mm
-                    .map_or_else(|| strings.get(StrKey::AppStatusUnset).to_owned(), length);
-                let stock = strings.fmt(
-                    StrKey::AppStatusStock,
-                    &[
-                        ("width", &length(project.stock.width_mm)),
-                        ("height", &length(project.stock.height_mm)),
-                        ("thickness", &thickness),
-                        ("unit", strings.get(unit_key)),
-                    ],
-                );
-                text(ui, &stock, TextStyle::Small, secondary);
-                rule(ui, palette);
-                let cursor = state.pointer.cursor_mm.map_or_else(
-                    || strings.get(StrKey::AppStatusCursorNone).to_owned(),
-                    |p| {
-                        let coordinate = |mm: f64| {
-                            let text =
-                                format!("{:.decimals$}", dc_app::units::to_display(mm, units));
-                            // No "-0.0" at the origin.
-                            if text
-                                .trim_start_matches('-')
-                                .chars()
-                                .all(|c| c == '0' || c == '.')
-                            {
-                                text.trim_start_matches('-').to_owned()
-                            } else {
-                                text
-                            }
-                        };
-                        strings.fmt(
-                            StrKey::AppViewportCursor,
-                            &[("x", &coordinate(p.x)), ("y", &coordinate(p.y))],
-                        )
+                // The cursor's fixed cell, blank off the Viewport.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(CURSOR_PX, HEIGHT_PX),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_width(CURSOR_PX);
+                        if !cells.cursor.is_empty() {
+                            text(ui, &cells.cursor, TextStyle::Small, secondary);
+                        }
                     },
                 );
-                text(ui, &cursor, TextStyle::Small, secondary);
-                // A drag's travel, scale or angle (#534).
-                if let Some(drag) = &state.pointer.drag {
+                if cells.toolpaths {
                     rule(ui, palette);
-                    text(ui, drag, TextStyle::Small, palette.text_primary);
+                    let open = toolpaths::is_open(ui.ctx());
+                    let spec = ButtonSpec::new(
+                        Kind::Quiet,
+                        state.app.strings().get(StrKey::AppToolpathsTitle),
+                    )
+                    .icon(Icon::Layers, theme::ICON_SMALL_PX)
+                    .height(HEIGHT_PX - 4.0)
+                    .pressed(open);
+                    let response = button(ui, spec);
+                    toolpaths::popover(ui, &response, state.app, out);
+                }
+                if let Some(cell) = &cells.generation {
+                    rule(ui, palette);
+                    generation(ui, cell, palette, out);
                 }
                 rule(ui, palette);
-                generation(ui, state, palette, out);
-                rule(ui, palette);
-                counts(ui, state, palette, out);
-                // Capability 78: every program's estimated time, the CLI's
-                // numbers.
-                if let Some(time) = dc_app::export::total_time(state.app, state.estimate) {
-                    rule(ui, palette);
-                    let label = strings.fmt(StrKey::ExportStatusTotal, &[("time", &time)]);
-                    text(ui, &label, TextStyle::Small, secondary)
-                        .on_hover_text(strings.get(StrKey::ExportStatusTotalHelp));
-                }
-                // Capability 74: the program's Z range beside its boxes.
-                if let Some(z) = z_range(state) {
-                    rule(ui, palette);
-                    text(ui, &z, TextStyle::Small, secondary);
-                }
-                if let Some((name, locked)) = &state.pointer.hover {
-                    rule(ui, palette);
-                    let label = if *locked {
-                        strings.fmt(StrKey::AppViewportHoverLocked, &[("name", name)])
-                    } else {
-                        name.clone()
-                    };
-                    text(ui, &label, TextStyle::Small, palette.text_primary);
-                }
-                if let Some(message) = state.message {
-                    rule(ui, palette);
-                    text(ui, message, TextStyle::Small, secondary);
+                counts(ui, state, &cells.counts, out);
+                for (cell, colour) in [
+                    // Capability 78: every program's estimated time.
+                    (&cells.estimate, secondary),
+                    // Capability 74: the program's Z range beside its boxes.
+                    (&cells.z_range, secondary),
+                    // A drag's travel, scale or angle (#534).
+                    (&cells.drag, palette.text_primary),
+                    (&cells.hover, palette.text_primary),
+                    (&cells.message, secondary),
+                ] {
+                    if let Some(label) = cell {
+                        rule(ui, palette);
+                        let response = text(ui, label, TextStyle::Small, colour);
+                        if std::ptr::eq(cell, &cells.estimate) {
+                            response.on_hover_text(
+                                state.app.strings().get(StrKey::ExportStatusTotalHelp),
+                            );
+                        }
+                    }
                 }
             });
         });
-}
-
-#[cfg(test)]
-mod tests {
-    use super::number;
-
-    #[test]
-    fn stock_numbers_drop_trailing_zeros() {
-        assert_eq!(number(160.0, 1), "160");
-        assert_eq!(number(11.8, 1), "11.8");
-        assert_eq!(number(4.724_409, 3), "4.724");
-        assert_eq!(number(3.5, 3), "3.5");
-    }
 }
