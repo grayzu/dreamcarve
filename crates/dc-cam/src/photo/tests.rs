@@ -150,6 +150,11 @@ fn full_width_mm() -> f64 {
 
 /// The Z of `groove` at every point of its moves that lies in `region`
 /// (X range, Y range), checked every 0.1 mm along them.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a test: a count of 0.1 mm steps along a short move"
+)]
 fn z_in(grooves: &[Vec<Point3>], xs: (f64, f64), ys: (f64, f64)) -> Vec<f64> {
     let mut out = Vec::new();
     for groove in grooves {

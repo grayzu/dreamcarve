@@ -498,7 +498,12 @@ impl Plane {
         };
         let depth_mm = start_depth_mm + max_depth_mm;
         let limit_mm = thickness_mm + op.through_cut_allowance_mm;
-        if !(depth_mm <= limit_mm + EPS_MM) {
+        // Not a number (an allowance that is not one) is refused too.
+        let within = matches!(
+            depth_mm.partial_cmp(&(limit_mm + EPS_MM)),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        );
+        if !within {
             return Err(CamError::BelowMaterialBottom {
                 op: op.id.clone(),
                 depth_mm,

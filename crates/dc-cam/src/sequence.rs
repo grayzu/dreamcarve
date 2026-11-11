@@ -127,9 +127,9 @@ pub struct SequenceInput<'a> {
     /// retract to safe Z. The caller vouches that the Z is in the air
     /// over every block (security review L1). `None` for every other
     /// generator, whose output it leaves as it was. It is not the
-    /// cleared-area stay-down link ([`Link::StayDown`]) nor a raster
-    /// Pocket's stay-down links (`pocket::raster`), which run at the cut's
-    /// own depth.
+    /// stay-down link through cleared area that [`sequence`](fn@sequence)
+    /// writes between two Pocket blocks, nor a raster Pocket's stay-down
+    /// links (`pocket::raster`): both run at the cut's own depth.
     pub groove_link_z_mm: Option<f64>,
 }
 
@@ -189,6 +189,10 @@ pub fn plan(input: &SequenceInput<'_>) -> Result<Vec<usize>, CamError> {
 /// changed in #214) and a plunge for the rest. Zero-length moves are never
 /// written. The first block is reached by a rapid at safe Z; the last is
 /// followed by a rapid up to safe Z.
+/// With [`SequenceInput::groove_link_z_mm`] set (a Photo V-Carve, #646),
+/// consecutive blocks of one shape and group are joined instead by a
+/// groove link: a rise at feed to that Z, a move across there at feed,
+/// and the next block's plunge.
 ///
 /// Fails as [`plan`] does.
 #[must_use = "the toolpath is the whole point"]

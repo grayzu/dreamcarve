@@ -132,7 +132,7 @@ gives each message and what to do.
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
 | `start_depth_negative` | A `start_depth_mm` is below 0. |
-| `start_depth_uncleared` | A carve or countersink starts below the stock top, no enabled Pocket before it, nor the flat floor of an enabled V-Carve before it, contains its targets, and `start_plane_cleared_externally` is `false`. |
+| `start_depth_uncleared` | A carve, countersink or Photo V-Carve starts below the stock top, no enabled Pocket before it, nor the flat floor of an enabled V-Carve before it, contains its targets (for a countersink, the whole of its V-bit at each hole; for a Photo V-Carve, its picture's footprint), and `start_plane_cleared_externally` is `false`. |
 | `flatten_tolerance_range` | `flatten_tolerance_mm` is above 0.1 mm, which the safety checks' slack cannot allow. |
 
 The safety pass adds two errors of its own for a V-Carve's program,
