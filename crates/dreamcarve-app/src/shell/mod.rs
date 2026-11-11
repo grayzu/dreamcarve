@@ -11,5 +11,6 @@ pub(crate) mod menu;
 pub(crate) mod status;
 pub mod theme;
 pub(crate) mod toolbar;
+pub(crate) mod toolpaths;
 pub mod window;
 pub(crate) mod worker;

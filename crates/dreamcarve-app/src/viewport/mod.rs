@@ -38,8 +38,8 @@
 //! click on an outline adds a tab there, until Escape; Delete removes the
 //! selected tabs ([`tab_tool`]).
 
-mod card;
 mod layers;
+mod legend;
 mod lod;
 pub(crate) mod renderer;
 pub(crate) mod tab_tool;
@@ -167,6 +167,10 @@ pub(crate) struct ViewportState {
     fit_pending: bool,
     /// The camera is as Fit left it, so a resized pane fits again.
     fitted: bool,
+    /// The strip at the pane's left that the depth legend keeps, px, as
+    /// the last frame laid it out: what Fit leaves free (0 without the
+    /// legend).
+    legend_px: f32,
     drag: Option<Drag>,
     /// The transform being dragged, drawn but not yet a command.
     preview: Option<Preview>,
@@ -240,6 +244,12 @@ impl ViewportState {
     /// Fits the camera to the project at the next frame, as after an open.
     pub(crate) fn fit_on_next_frame(&mut self) {
         self.fit_pending = true;
+    }
+
+    /// The strip at the pane's left that Fit leaves for the depth legend,
+    /// px.
+    pub(crate) fn fit_reserve_px(&self) -> f64 {
+        f64::from(self.legend_px)
     }
 
     /// Records that the camera was just fitted (F), so a resize refits.
@@ -1341,8 +1351,21 @@ pub(crate) fn show(
             let resized = (camera.viewport_px.x - size.x).abs() > 0.5
                 || (camera.viewport_px.y - size.y).abs() > 0.5;
             camera.viewport_px = size;
-            if view.fit_pending || (view.fitted && resized) {
-                camera.fit(camera::fit_bounds(app.project(), app.scene()));
+            // The depth legend's strip, while By depth is on: Fit leaves
+            // it free, and a fitted view refits when it comes or goes.
+            let legend_px = view
+                .derived(app)
+                .legend
+                .filter(|_| app.view().colour == ColourMode::ByDepth)
+                .filter(|_| !state.show_empty)
+                .map_or(0.0, |legend| legend::reserve_px(ui, app, &legend));
+            let reserve_changed = (legend_px - view.legend_px).abs() > 0.5;
+            view.legend_px = legend_px;
+            if view.fit_pending || (view.fitted && (resized || reserve_changed)) {
+                camera.fit_beside(
+                    camera::fit_bounds(app.project(), app.scene()),
+                    f64::from(legend_px),
+                );
                 view.fit_pending = false;
                 view.fitted = true;
             }
@@ -1462,12 +1485,18 @@ pub(crate) fn show(
                 empty::card(ui, pane, state, out);
                 Vec::new()
             } else {
-                let legend = derived.as_ref().and_then(|d| d.legend.clone());
-                let (card, legend) = card::show(ui, pane, app, legend.as_ref(), out);
-                std::iter::once(card).chain(legend).collect()
+                // Capability 73a: the depth legend while By depth is on,
+                // whether or not the toolpath view is open.
+                derived
+                    .as_ref()
+                    .and_then(|d| d.legend.as_ref())
+                    .filter(|_| app.view().colour == ColourMode::ByDepth)
+                    .map(|legend| legend::draw_legend(ui, pane, app, legend))
+                    .into_iter()
+                    .collect()
             };
-            // After the card and legend, so the caption can step out from
-            // under them; it stays on the pane's layer, below both.
+            // After the legend, so the caption can step out from under
+            // it; it stays on the pane's layer, below it.
             if let Some(extents) = derived
                 .as_ref()
                 .and_then(|d| d.extents)
@@ -1477,7 +1506,7 @@ pub(crate) fn show(
                     window_pos(pane, &camera, extents.edge_mm.min),
                     window_pos(pane, &camera, extents.edge_mm.max),
                 );
-                card::extents_caption(ui, &painter, app, &extents, edge, &covers);
+                legend::extents_caption(ui, &painter, app, &extents, edge, &covers);
             }
             pane
         })

@@ -21,14 +21,19 @@
 //! *By depth* (capability 73; `experience.md`, section 5, "Depth ramp"):
 //! every cutting move takes its colour from a ramp running from pale at
 //! the stock top to dark at the deepest cut in the project. [`DepthRamp`]
-//! places a Z on it; [`depth_legend`] labels it at the stock top, at each
-//! operation's depth and at the deepest cut, in project units.
+//! places a Z on it; [`depth_legend`] labels it in work coordinates: the
+//! clearance height and each safe Z in the band above the stock top
+//! (capability 73a), then the stock top, each operation's depth and the
+//! deepest cut, in project units. [`operation_key`] is *By operation*'s
+//! key.
 
 use std::collections::BTreeSet;
 
 use dc_geometry::Rect;
 use dc_job::{AxisRange, Finished};
-use dc_project::{Board, OperationId, Project, Units};
+use dc_project::{Board, OperationId, OriginZ, Project, Units};
+
+use crate::strings::{StrKey, Strings};
 
 use crate::scene::Scene;
 use crate::selection::Selection;
@@ -192,34 +197,92 @@ fn cutting_z_mm(toolpath: &dc_job::Toolpath) -> impl Iterator<Item = f64> + '_ {
         .map(|m| m.to.z)
 }
 
+/// What a tick of the depth legend names.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TickName {
+    /// The clearance height (`heights.clearance_mm`).
+    Clearance,
+    /// An operation's safe Z, each distinct height once.
+    SafeZ,
+    /// The stock top.
+    StockTop,
+    /// An operation cutting to this depth, by name.
+    Operation(String),
+}
+
+impl TickName {
+    /// The name as the legend writes it.
+    #[must_use]
+    pub fn text<'a>(&'a self, strings: &'a Strings) -> &'a str {
+        match self {
+            Self::Clearance => strings.get(StrKey::AppToolpathsClearance),
+            Self::SafeZ => strings.get(StrKey::AppToolpathsSafeZ),
+            Self::StockTop => strings.get(StrKey::AppToolpathsStockTop),
+            Self::Operation(name) => name,
+        }
+    }
+}
+
 /// One labelled tick of the depth legend.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LegendTick {
-    /// Where on the ramp, 0 at the stock top, 1 at the deepest cut.
+    /// Where on the legend: on the cutting ramp, 0 at the stock top and 1
+    /// at the deepest cut; in the band above it, negative, −1 at the
+    /// highest non-cutting height.
     pub fraction: f64,
-    /// The depth below the stock top, mm, 0 or more.
+    /// The depth below the stock top, mm: negative above it.
     pub depth_mm: f64,
-    /// The depth as the legend writes it, in project units: the unit
-    /// once, at the top (`0 mm`), then a signed number (`−6`, `−12.2`).
+    /// The height as the legend writes it: work-coordinate Z in project
+    /// units, signed (`+10`, `0`, `−6`, `+11.8`); the unit is in the
+    /// legend's title.
     pub label: String,
-    /// The operations cutting to this depth, by name, in list order.
-    pub operations: Vec<String>,
+    /// What sits at this height, top to bottom of the legend's text.
+    pub names: Vec<TickName>,
     /// The stock top.
     pub top: bool,
     /// The deepest cut in the project.
     pub deepest: bool,
 }
 
-/// The depth legend of *By depth* (capability 73; `experience.md`,
-/// section 9): ticks at the stock top, at each operation's depth and at
-/// the deepest cut, top first. Operations at one depth share a tick;
-/// the deepest cut is always some operation's depth, so it is that tick.
+impl LegendTick {
+    /// The operations cutting to this depth, by name, in list order.
+    pub fn operations(&self) -> impl Iterator<Item = &str> {
+        self.names.iter().filter_map(|n| match n {
+            TickName::Operation(name) => Some(name.as_str()),
+            _ => None,
+        })
+    }
+
+    /// The names as the legend writes them: `Screw holes, Cut out`.
+    #[must_use]
+    pub fn names_text(&self, strings: &Strings) -> String {
+        let names: Vec<&str> = self.names.iter().map(|n| n.text(strings)).collect();
+        names.join(", ")
+    }
+
+    /// The tick as one line: `−6 Square recess`.
+    #[must_use]
+    pub fn text(&self, strings: &Strings) -> String {
+        format!("{} {}", self.label, self.names_text(strings))
+    }
+}
+
+/// The depth legend of *By depth* (functional spec, capability 73a;
+/// `experience.md`, section 9): above the stock top, the band where the
+/// bit moves without cutting, with ticks at the clearance height and each
+/// distinct safe Z; then ticks at the stock top, at each operation's
+/// depth and at the deepest cut, top first. Heights that coincide share a
+/// tick; the deepest cut is always some operation's depth, so it is that
+/// tick. Labels are work-coordinate Z: with Z zero at the stock bottom
+/// the stock top reads its thickness.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DepthLegend {
-    /// The ramp the ticks sit on.
+    /// The ramp the cutting ticks sit on.
     pub ramp: DepthRamp,
     /// The ticks, top first.
     pub ticks: Vec<LegendTick>,
+    /// The project units the labels are in.
+    pub units: Units,
 }
 
 /// The legend of `scene`'s toolpaths in `project`, or `None` when nothing
@@ -228,14 +291,62 @@ pub struct DepthLegend {
 pub fn depth_legend(project: &Project, scene: &Scene) -> Option<DepthLegend> {
     let ramp = DepthRamp::of(project, scene)?;
     let units = project.display_units;
-    let mut ticks = vec![LegendTick {
+    // Work Z zero, as a depth below the stock top (mm).
+    let zero_depth_mm = match project.origin.z {
+        OriginZ::StockTop => 0.0,
+        OriginZ::StockBottom => ramp.top_z_mm,
+    };
+    let label = |depth_mm: f64| signed_label(zero_depth_mm - depth_mm, units);
+
+    // The non-cutting heights above the stock top, highest first.
+    let mut above: Vec<(f64, TickName)> = Vec::new();
+    if let Some(clearance) = project.heights.clearance_mm {
+        above.push((clearance, TickName::Clearance));
+    }
+    for op in scene.operations() {
+        let Some(safe) = project
+            .operations
+            .iter()
+            .find(|o| *o.id() == op.id)
+            .map(dc_project::Operation::safe_z_mm)
+            .filter(|z| z.is_finite() && *z > 0.0)
+        else {
+            continue;
+        };
+        let seen = above
+            .iter()
+            .any(|(h, n)| *n == TickName::SafeZ && (h - safe).abs() <= LEGEND_MERGE_MM);
+        if !seen {
+            above.push((safe, TickName::SafeZ));
+        }
+    }
+    above.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let highest = above.first().map_or(0.0, |a| a.0);
+    let mut ticks: Vec<LegendTick> = Vec::new();
+    for (height_mm, name) in above {
+        match ticks.last_mut() {
+            Some(last) if (last.depth_mm + height_mm).abs() <= LEGEND_MERGE_MM => {
+                last.names.push(name);
+            }
+            _ => ticks.push(LegendTick {
+                fraction: -height_mm / highest,
+                depth_mm: -height_mm,
+                label: label(-height_mm),
+                names: vec![name],
+                top: false,
+                deepest: false,
+            }),
+        }
+    }
+
+    ticks.push(LegendTick {
         fraction: 0.0,
         depth_mm: 0.0,
-        label: format!("0 {}", crate::units::suffix(units)),
-        operations: Vec::new(),
+        label: label(0.0),
+        names: vec![TickName::StockTop],
         top: true,
         deepest: false,
-    }];
+    });
     let mut depths: Vec<(f64, String)> = Vec::new();
     for op in scene.operations() {
         let deepest = op
@@ -252,13 +363,13 @@ pub fn depth_legend(project: &Project, scene: &Scene) -> Option<DepthLegend> {
     for (depth_mm, name) in depths {
         match ticks.last_mut() {
             Some(last) if !last.top && (last.depth_mm - depth_mm).abs() <= LEGEND_MERGE_MM => {
-                last.operations.push(name);
+                last.names.push(TickName::Operation(name));
             }
             _ => ticks.push(LegendTick {
                 fraction: ramp.fraction(ramp.top_z_mm - depth_mm),
                 depth_mm,
-                label: depth_label(depth_mm, units),
-                operations: vec![name],
+                label: label(depth_mm),
+                names: vec![TickName::Operation(name)],
                 top: false,
                 deepest: false,
             }),
@@ -267,7 +378,35 @@ pub fn depth_legend(project: &Project, scene: &Scene) -> Option<DepthLegend> {
     if let Some(last) = ticks.last_mut().filter(|t| !t.top) {
         last.deepest = true;
     }
-    Some(DepthLegend { ramp, ticks })
+    Some(DepthLegend { ramp, ticks, units })
+}
+
+/// One entry of the toolpath view's by-operation key (capability 73).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyEntry {
+    /// The operation.
+    pub id: OperationId,
+    /// Its name, from the file.
+    pub name: String,
+    /// The preview palette's index the Viewport draws its first run in
+    /// ([`crate::scene::SceneOperation::colour`]); the shell takes it
+    /// modulo the palette's eight.
+    pub colour: usize,
+}
+
+/// The by-operation key: every enabled operation in list order with the
+/// colour the Viewport draws it in.
+#[must_use]
+pub fn operation_key(scene: &Scene) -> Vec<KeyEntry> {
+    scene
+        .operations()
+        .iter()
+        .map(|op| KeyEntry {
+            id: op.id.clone(),
+            name: op.name.clone(),
+            colour: op.colour,
+        })
+        .collect()
 }
 
 /// Two operations whose depths differ by less than this share a tick,
@@ -384,16 +523,17 @@ pub fn range_label(range: AxisRange, units: Units) -> String {
     )
 }
 
-/// `depth_mm` below the top as the legend writes it: negative, in
-/// `units`, two decimals in mm and three in inches at most, trailing
-/// zeros dropped, with a true minus sign.
+/// A work-coordinate Z (`z_mm`) as the legend writes it, in `units`: two
+/// decimals in mm and three in inches at most, trailing zeros dropped,
+/// with an explicit `+` above zero and a true minus below; `0` at zero.
 #[must_use]
-pub fn depth_label(depth_mm: f64, units: Units) -> String {
+pub fn signed_label(z_mm: f64, units: Units) -> String {
     let decimals = match units {
         Units::Mm => 2,
         Units::Inch => 3,
     };
-    let text = format!("{:.decimals$}", crate::units::to_display(depth_mm, units));
+    let value = crate::units::to_display(z_mm, units);
+    let text = format!("{:.decimals$}", value.abs());
     let text = if text.contains('.') {
         text.trim_end_matches('0').trim_end_matches('.').to_owned()
     } else {
@@ -401,7 +541,9 @@ pub fn depth_label(depth_mm: f64, units: Units) -> String {
     };
     if text.chars().all(|c| c == '0' || c == '.') {
         "0".to_owned()
-    } else {
+    } else if value < 0.0 {
         format!("\u{2212}{text}")
+    } else {
+        format!("+{text}")
     }
 }

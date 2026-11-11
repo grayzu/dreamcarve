@@ -93,6 +93,10 @@ pub enum Icon {
     PencilLine,
     /// `move-down`: a drill.
     MoveDown,
+    /// `layers`: the status bar's Toolpaths button.
+    Layers,
+    /// `circle-check`: the status bar's *No problems*.
+    CircleCheck,
 }
 
 impl Icon {
@@ -141,6 +145,8 @@ impl Icon {
             Self::Triangle => "triangle",
             Self::PencilLine => "pencil-line",
             Self::MoveDown => "move-down",
+            Self::Layers => "layers",
+            Self::CircleCheck => "circle-check",
         }
     }
 
@@ -188,12 +194,14 @@ impl Icon {
             Self::Triangle => '\u{e192}',
             Self::PencilLine => '\u{e4f0}',
             Self::MoveDown => '\u{e48c}',
+            Self::Layers => '\u{e529}',
+            Self::CircleCheck => '\u{e226}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 42] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -234,6 +242,8 @@ impl Icon {
         Self::Triangle,
         Self::PencilLine,
         Self::MoveDown,
+        Self::Layers,
+        Self::CircleCheck,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

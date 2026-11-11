@@ -19,6 +19,7 @@ pub mod project;
 pub mod properties;
 pub mod scene;
 pub mod selection;
+pub mod status;
 pub mod strings;
 pub mod tools;
 pub mod tree;

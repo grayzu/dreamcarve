@@ -49,6 +49,9 @@ pub struct ButtonSpec<'a> {
     pub width_px: Option<f32>,
     /// Whether it can be pressed.
     pub enabled: bool,
+    /// Whether it shows pressed, as a button does while its popover is
+    /// open.
+    pub pressed: bool,
 }
 
 impl<'a> ButtonSpec<'a> {
@@ -65,6 +68,7 @@ impl<'a> ButtonSpec<'a> {
             height_px: 26.0,
             width_px: None,
             enabled: true,
+            pressed: false,
         }
     }
 
@@ -104,6 +108,13 @@ impl<'a> ButtonSpec<'a> {
         self
     }
 
+    /// Shown pressed or not.
+    #[must_use]
+    pub const fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
+        self
+    }
+
     /// Enabled or not.
     #[must_use]
     pub const fn enabled(mut self, enabled: bool) -> Self {
@@ -118,9 +129,10 @@ fn colours(
     kind: Kind,
     response: &Response,
     enabled: bool,
+    held: bool,
 ) -> (Color32, Stroke, Color32) {
     let hovered = enabled && response.hovered();
-    let pressed = enabled && response.is_pointer_button_down_on();
+    let pressed = enabled && (held || response.is_pointer_button_down_on());
     let wash = if pressed {
         palette.surface_active
     } else if hovered {
@@ -215,7 +227,7 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
 
     if ui.is_rect_visible(rect) {
-        let (fill, stroke, text) = colours(palette, spec.kind, &response, enabled);
+        let (fill, stroke, text) = colours(palette, spec.kind, &response, enabled, spec.pressed);
         let painter = ui.painter_at(rect.expand(4.0));
         painter.rect(rect, 4.0, fill, stroke, StrokeKind::Inside);
         let mut x = match spec.width_px {
