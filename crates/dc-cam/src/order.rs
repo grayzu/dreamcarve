@@ -49,7 +49,7 @@ use dc_project::{Board, ClearedPlane, DrillCycle, Operation, OperationId, Projec
 ///   own end mills before its V-bit's (#406), whether or not a pass
 ///   reaches anything;
 /// - [`Warning::StartDepthMismatch`] for every enabled operation cut from
-///   a start plane (a V-Carve, a countersink Drill) whose footprint an
+///   a start plane (a V-Carve, a countersink Drill, a Photo V-Carve) whose footprint an
 ///   earlier floor at another depth holds, a Pocket's or a V-Carve's flat
 ///   floor ([`start_plane`]), in project order. These read the project
 ///   only, not `generated`.
@@ -188,10 +188,10 @@ struct StartSetting {
 
 /// The start-plane setting of `op`, for the operations cut from a start
 /// plane; `None` for the others. This is the list of start-plane
-/// operations: a V-Carve and a countersink Drill (format 21); a Photo
-/// V-Carve (sub-phase 3.5, format 27) joins it here with its generator
-/// (#646), and [`start_plane`] and [`check`] then cover it. An Inlay is
-/// exempt (its start plane is the stock top or the plug's own design).
+/// operations: a V-Carve, a countersink Drill (format 21) and a Photo
+/// V-Carve (sub-phase 3.5, format 27, #646), whose footprint is its
+/// picture's rectangle. An Inlay is exempt (its start plane is the stock
+/// top or the plug's own design).
 /// The matches are exhaustive so a new operation or Drill cycle must say.
 fn start_setting(op: &Operation) -> Option<StartSetting> {
     match op {
@@ -216,13 +216,11 @@ fn start_setting(op: &Operation) -> Option<StartSetting> {
         | Operation::Bore(_)
         | Operation::Engrave(_)
         | Operation::Inlay(_) => None,
-        // Format 27 (#644): the record is here before the generator.
-        // Nothing is cut for a Photo V-Carve yet (`generate_photo`
-        // refuses it), so there is no start plane to check; validation
-        // already reports `start_depth_uncleared` for it.
-        // TODO(#646): its `start_depth_mm` and
-        // `start_plane_cleared_externally`, as a V-Carve's.
-        Operation::PhotoVCarve(_) => None,
+        // Format 27 (#646): as a V-Carve's.
+        Operation::PhotoVCarve(photo) => Some(StartSetting {
+            start_depth_mm: photo.start_depth_mm,
+            cleared_externally: photo.start_plane_cleared_externally,
+        }),
     }
 }
 
@@ -535,12 +533,13 @@ mod tests {
     use crate::warning::WarningCode;
     use dc_geometry::{Point, Polyline, Transform, Vertex};
     use dc_project::test_support::{
-        sample_pocket, sample_project, sample_v_carve, tool_6_35_upcut, tool_v_bit_90,
+        sample_bitmap, sample_photo_v_carve, sample_pocket, sample_project, sample_v_carve,
+        tool_6_35_upcut, tool_v_bit_90,
     };
     use dc_project::{
         DefinitionId, EngraveOp, FeatureDefinition, FeatureInstance, InstanceId, MachiningOrder,
-        OperationId, PocketOp, Problem, ProfileOp, Severity, Side, Stock, TabPlacement, TabShape,
-        TabSpec, ToolId, VCarveOp, validate,
+        OperationId, PhotoVCarveOp, PocketOp, Problem, ProfileOp, Severity, Side, Stock,
+        TabPlacement, TabShape, TabSpec, ToolId, VCarveOp, validate,
     };
 
     /// The sample project (100 × 100 × 6 mm stock, the 50 × 30 mm rectangle
@@ -1592,13 +1591,95 @@ mod tests {
             .expect("the project has the Pocket o2")
     }
 
-    /// The V-Carve `o6` of `project`.
+    /// The V-Carve `o6` of `project`, or its Photo V-Carve `o8`.
     fn the_carve(project: &Project) -> &Operation {
         project
             .operations
             .iter()
-            .find(|op| op.id().as_str() == "o6")
-            .expect("the project has the V-Carve o6")
+            .find(|op| matches!(op.id().as_str(), "o6" | "o8"))
+            .expect("the project has the V-Carve o6 or the Photo V-Carve o8")
+    }
+
+    /// The project of [`carve_in_pocket`] with, in place of its V-Carve,
+    /// the sample picture `b1` (40 × 20 mm at (15, 15), inside the
+    /// rectangle) and a Photo V-Carve `o8` of it 1 mm deep at most with
+    /// the 90° V-bit, starting `start_depth_mm` below the stock top.
+    fn photo_in_pocket(pocket_depth_mm: Option<f64>, start_depth_mm: f64) -> Project {
+        let mut project = carve_in_pocket(pocket_depth_mm, 0.0);
+        project
+            .operations
+            .retain(|op| !matches!(op, Operation::VCarve(_)));
+        project.bitmaps.push(sample_bitmap());
+        project
+            .operations
+            .push(Operation::PhotoVCarve(PhotoVCarveOp {
+                max_depth_mm: Some(1.0),
+                start_depth_mm,
+                ..sample_photo_v_carve()
+            }));
+        project
+    }
+
+    /// The design spec, "Start depth": a Photo V-Carve is a start-plane
+    /// operation (sub-phase 3.5, #646), its footprint its picture's
+    /// rectangle: a Pocket that holds the footprint at the start depth is
+    /// quiet, a shallower one warns `start_depth_mismatch`, and none is
+    /// validation's `start_depth_uncleared`, unless vouched for. A Pocket
+    /// that holds only part of the picture clears nothing.
+    #[test]
+    fn photo_footprint_is_checked_too() {
+        let project = photo_in_pocket(Some(2.0), 2.0);
+        assert_eq!(validate(&project), vec![]);
+        assert_eq!(plane_of(&project), Some(("cleared", Some("o2".into()))));
+        assert_eq!(check(&project, &[]), vec![]);
+
+        let project = photo_in_pocket(Some(1.0), 2.0);
+        assert_eq!(uncleared(&project), vec![]);
+        assert_eq!(plane_of(&project), Some(("mismatch", Some("o2".into()))));
+        assert_eq!(
+            mismatches(&project),
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o8"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
+                start_depth_mm: 2.0,
+                floor_depth_mm: Some(1.0),
+            }]
+        );
+
+        let mut project = photo_in_pocket(None, 2.0);
+        assert_eq!(plane_of(&project), Some(("uncleared", None)));
+        let errors = uncleared(&project);
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert_eq!(
+            errors[0].field().as_deref(),
+            Some("operations[o8].start_depth_mm")
+        );
+        assert!(
+            errors[0]
+                .to_string()
+                .contains("contains its picture's footprint"),
+            "{}",
+            errors[0]
+        );
+        assert_eq!(check(&project, &[]), vec![]);
+        if let Some(Operation::PhotoVCarve(photo)) = project.operations.last_mut() {
+            photo.start_plane_cleared_externally = true;
+        }
+        assert_eq!(plane_of(&project), Some(("cleared_externally", None)));
+        assert_eq!(uncleared(&project), vec![]);
+
+        assert_eq!(
+            plane_of(&photo_in_pocket(None, 0.0)),
+            Some(("stock_top", None))
+        );
+
+        // The picture moved to X 45 to 85 crosses the rectangle's edge (60).
+        let mut project = photo_in_pocket(Some(2.0), 2.0);
+        project.bitmaps[0].x_mm = 45.0;
+        assert_eq!(plane_of(&project), Some(("uncleared", None)));
+        assert_eq!(uncleared(&project).len(), 1);
+        assert_eq!(mismatches(&project), vec![]);
     }
 
     /// What [`start_plane`] says of the V-Carve `o6`, with the containing
@@ -1801,6 +1882,19 @@ mod tests {
             );
             cases.push((name, floored, kind));
         }
+        // #646: a Photo V-Carve's footprint, its picture's rectangle.
+        cases.push(("photo matching", photo_in_pocket(Some(2.0), 2.0), "cleared"));
+        cases.push((
+            "photo shallower",
+            photo_in_pocket(Some(1.0), 2.0),
+            "mismatch",
+        ));
+        cases.push(("photo deeper", photo_in_pocket(Some(3.0), 2.0), "mismatch"));
+        cases.push(("photo none", photo_in_pocket(None, 2.0), "uncleared"));
+        cases.push(("photo stock top", photo_in_pocket(None, 0.0), "stock_top"));
+        let mut crossing = photo_in_pocket(Some(2.0), 2.0);
+        crossing.bitmaps[0].x_mm = 45.0;
+        cases.push(("photo crossing", crossing, "uncleared"));
 
         for (name, project, expected) in &cases {
             let containing = dc_project::cleared_start_plane(project, the_carve(project))

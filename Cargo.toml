@@ -95,6 +95,12 @@ png = { version = "0.18", default-features = false }
 # decoders in `unsafe` code, and a file is decoded once, on load; `std`
 # adds only the `Error` impl. `alloc` is `decode` into a `Vec`.
 base64 = { version = "0.23", default-features = false, features = ["alloc"] }
+# Decodes a JPEG picture for `dc-import::bitmap` (phase 3 design, "Bitmap
+# import and storage", step 1; #645): baseline and progressive, pure Rust,
+# one dependency (`zune-core`), both MIT OR Apache-2.0 OR Zlib. Default
+# features are off: `x86` and `neon` add SIMD paths in `unsafe` code and
+# `std` only the `Error` impl; the decoder runs on its safe scalar path.
+zune-jpeg = { version = "0.5", default-features = false }
 # Property tests (dev-dependency only, issue #72; `docs/rust-guidelines.md`,
 # "Tests"). Default features are off: `fork` and `timeout` run each case in
 # a child process (rusty-fork, tempfile), and `bit-set` serves collection

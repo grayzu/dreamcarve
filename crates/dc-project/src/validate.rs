@@ -85,6 +85,18 @@ pub enum Severity {
     Warning,
 }
 
+/// What an earlier floor must hold to clear an operation's start plane
+/// ([`Problem::StartDepthUncleared`]), as its message names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartFootprint {
+    /// A V-Carve's targets.
+    Targets,
+    /// A countersink's V-bit, its whole diameter, at each hole (#425).
+    BitAtEachHole,
+    /// A Photo V-Carve's picture's footprint rectangle (#646).
+    Picture,
+}
+
 /// One finding of [`validate`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum Problem {
@@ -626,9 +638,9 @@ pub enum Problem {
         /// countersink's `cycle.countersink.start_depth_mm` (format 21).
         field: &'static str,
     },
-    /// An enabled V-Carve or countersink Drill starts below the stock top,
-    /// no enabled earlier Pocket, nor the flat floor of an enabled earlier
-    /// V-Carve (#426), holds its footprint, and it does not
+    /// An enabled V-Carve, countersink Drill or Photo V-Carve starts below
+    /// the stock top, no enabled earlier Pocket, nor the flat floor of an
+    /// enabled earlier V-Carve (#426), holds its footprint, and it does not
     /// say another program cleared the start plane (format 20; capability
     /// 41; phase 3 security review M2). An error.
     StartDepthUncleared {
@@ -641,6 +653,8 @@ pub enum Problem {
         /// The field, under the operation, as for
         /// [`Problem::StartDepthNegative`].
         field: &'static str,
+        /// What a floor must hold for it (#646).
+        footprint: StartFootprint,
     },
     /// An enabled countersink Drill cuts with a tool that is not a V-bit
     /// (format 21; capability 44): its depth follows the bit's angle. An
@@ -1861,12 +1875,13 @@ impl fmt::Display for Problem {
                 operation,
                 name,
                 start_depth_mm,
-                field,
+                footprint,
+                ..
             } => {
-                let what = if *field == COUNTERSINK_START_DEPTH {
-                    "the whole of its V-bit at each hole"
-                } else {
-                    "its targets"
+                let what = match footprint {
+                    StartFootprint::Targets => "its targets",
+                    StartFootprint::BitAtEachHole => "the whole of its V-bit at each hole",
+                    StartFootprint::Picture => "its picture's footprint",
                 };
                 write!(
                     f,
@@ -3188,6 +3203,7 @@ impl Validator {
                 name: drill.name.clone(),
                 start_depth_mm,
                 field: COUNTERSINK_START_DEPTH,
+                footprint: StartFootprint::BitAtEachHole,
             });
         }
         let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
@@ -3363,6 +3379,7 @@ impl Validator {
                 name: carve.name.clone(),
                 start_depth_mm,
                 field: "start_depth_mm",
+                footprint: StartFootprint::Targets,
             });
         }
         // The flanks engage from the start plane only when a floor at
@@ -3533,6 +3550,7 @@ impl Validator {
                 name: photo.name.clone(),
                 start_depth_mm,
                 field: "start_depth_mm",
+                footprint: StartFootprint::Picture,
             });
         }
         let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
@@ -7523,6 +7541,7 @@ mod tests {
                 name: "V-Carve".into(),
                 start_depth_mm: 1.0,
                 field: "start_depth_mm",
+                footprint: StartFootprint::Targets,
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);
@@ -7573,6 +7592,7 @@ mod tests {
                 name: "Photo V-Carve".into(),
                 start_depth_mm: 1.0,
                 field: "start_depth_mm",
+                footprint: StartFootprint::Picture,
             }]
         );
         assert_eq!(
@@ -7852,6 +7872,7 @@ mod tests {
                 name: "Drill".into(),
                 start_depth_mm: 0.1,
                 field: "cycle.countersink.start_depth_mm",
+                footprint: StartFootprint::BitAtEachHole,
             }]
         );
         assert_eq!(problems[0].severity(), Severity::Error);

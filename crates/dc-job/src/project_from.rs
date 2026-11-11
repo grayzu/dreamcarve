@@ -18,18 +18,23 @@
 //! until the user fills them in (S3, #64, #98): a drawing cannot say what
 //! the material or the machine is. The step-down is the tool's: the
 //! operation's, which would override it, stays `null` too.
+//!
+//! [`picture`] is the same for a picture (format 27; #645): the bitmap
+//! placed with the same margin, a 60° V-bit and one Photo V-Carve.
 
 use std::collections::BTreeMap;
 
-use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Rect, Transform};
+use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, MAX_COORDINATE_MM, Point, Rect, Transform};
 use dc_project::{
-    CURRENT_VERSION, CornerRelief, CutDirection, Entry, Heights, MachineOrigin, MachiningOrder,
-    Operation, OperationId, OriginXy, OriginZ, PostProcessorRef, ProfileOp, Project, Side, StartAt,
-    Stock, TabPlacement, TabShape, TabSpec, Tool, ToolId, ToolKind, Units,
+    BitmapId, CURRENT_VERSION, CornerRelief, CutDirection, Entry, Grayscale, Heights,
+    MachineOrigin, MachiningOrder, Operation, OperationId, OriginXy, OriginZ, PhotoStrategy,
+    PhotoVCarveOp, PostProcessorRef, ProfileOp, Project, Side, StartAt, Stock, TabPlacement,
+    TabShape, TabSpec, Tool, ToolId, ToolKind, Units,
 };
 
 use crate::error::JobError;
 use crate::import::Drawing;
+use crate::picture::PictureSize;
 
 /// Margin between the drawing's bounds and each stock edge, mm.
 pub const STOCK_MARGIN_MM: f64 = 10.0;
@@ -271,3 +276,130 @@ pub fn default_profile(targets: Vec<dc_project::InstanceId>, tool: ToolId) -> Pr
         start: StartAt::Auto,
     }
 }
+
+/// The project `dreamcarve init` writes for a picture, named `name` (the
+/// picture's file stem; design spec, "CLI"; functional spec, capability
+/// 46): the bitmap `b1` of `pixels` at `size`, placed as a drawing is,
+/// its bottom-left corner [`STOCK_MARGIN_MM`] in from the stock's (the
+/// margin S7 needs, since a full-depth groove at the picture's edge
+/// reaches half its width past the footprint), with the stock sized round
+/// it; the V-bit `t1` ([`photo_v_bit`]); and the Photo V-Carve `op1` of
+/// it ([`default_photo_v_carve`]). The thickness, the Photo's maximum
+/// depth and the tool's feeds and speed are left unset (S3): a picture
+/// cannot say what the material or the machine is.
+///
+/// # Errors
+///
+/// [`JobError::PictureSize`] for a size that is not a positive length,
+/// [`JobError::StockTooLarge`] when the footprint with the margin is past
+/// [`MAX_COORDINATE_MM`], and [`JobError::Picture`] when the pixels
+/// cannot be encoded.
+pub fn picture(
+    name: &str,
+    pixels: &Grayscale,
+    size: PictureSize,
+    post_processor: PostProcessorRef,
+    display_units: Units,
+) -> Result<Project, JobError> {
+    let (width_mm, height_mm) = size.footprint_mm(pixels.width_px, pixels.height_px)?;
+    let fit = fit_stock(
+        Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(width_mm, height_mm),
+        },
+        STOCK_MARGIN_MM,
+    );
+    if fit.width_mm > MAX_COORDINATE_MM || fit.height_mm > MAX_COORDINATE_MM {
+        return Err(JobError::StockTooLarge {
+            width_mm: fit.width_mm,
+            height_mm: fit.height_mm,
+            margin_mm: STOCK_MARGIN_MM,
+            limit_mm: MAX_COORDINATE_MM,
+        });
+    }
+    let corner = fit.shift.apply(Point::new(0.0, 0.0));
+    let bitmap = crate::picture::bitmap(BitmapId::new(BITMAP_ID), name, pixels, size, corner)?;
+    let tool = photo_v_bit();
+    let photo = default_photo_v_carve(bitmap.id.clone(), tool.id.clone());
+    Ok(Project {
+        version: CURRENT_VERSION,
+        name: name.to_owned(),
+        display_units,
+        flatten_tolerance_mm: FLATTEN_TOLERANCE_DEFAULT_MM,
+        arc_fit_tolerance_mm: Some(ARC_FIT_TOLERANCE_MM),
+        stock: Stock {
+            width_mm: fit.width_mm,
+            height_mm: fit.height_mm,
+            thickness_mm: None,
+        },
+        origin: MachineOrigin {
+            xy: OriginXy::BottomLeft,
+            z: OriginZ::StockTop,
+        },
+        heights: Heights::unset(),
+        definitions: BTreeMap::new(),
+        instances: Vec::new(),
+        bitmaps: vec![bitmap],
+        tools: vec![tool],
+        operations: vec![Operation::PhotoVCarve(photo)],
+        tabs: Vec::new(),
+        post_processor,
+    })
+}
+
+/// The id of the bitmap `init` writes for a picture.
+const BITMAP_ID: &str = "b1";
+/// The V-bit `init` writes for a picture: 60°, 1/4", as the design spec
+/// names it; a common photo bit, and the user sets the one they have.
+const PHOTO_V_BIT_ANGLE_DEG: f64 = 60.0;
+
+/// The tool `t1` of a picture's project: a 60° V-bit, 6.35 mm, two
+/// flutes, named "Set me" with no feeds, speed or step-down, as `init`'s
+/// end mill is.
+#[must_use]
+pub fn photo_v_bit() -> Tool {
+    Tool {
+        cutter: ToolKind::VBit {
+            included_angle_deg: PHOTO_V_BIT_ANGLE_DEG,
+        },
+        ..placeholder_tool(ToolId::new(TOOL_ID), TOOL_NAME)
+    }
+}
+
+/// The Photo V-Carve `op1` of bitmap `image` with `tool`, with the values
+/// of the design spec ("CLI"): no maximum depth (the user sets it; never
+/// defaulted), from the stock top, grooves at 22.5° 1.1 groove widths
+/// apart, raster, not inverted, sampled every 0.25 mm, a 1 mm lift
+/// between grooves, safe Z 5 mm. The app's *Add ▸ Photo V-Carve* can start
+/// from it too.
+#[must_use]
+pub fn default_photo_v_carve(image: BitmapId, tool: ToolId) -> PhotoVCarveOp {
+    PhotoVCarveOp {
+        id: OperationId::new(OPERATION_ID),
+        name: "Photo V-Carve".into(),
+        enabled: true,
+        image,
+        tool,
+        max_depth_mm: None,
+        start_depth_mm: 0.0,
+        start_plane_cleared_externally: false,
+        line_angle_deg: PHOTO_LINE_ANGLE_DEG,
+        line_spacing_fraction: PHOTO_LINE_SPACING_FRACTION,
+        strategy: PhotoStrategy::Raster,
+        invert: false,
+        sample_mm: PHOTO_SAMPLE_MM,
+        stepover_retract_mm: PHOTO_STEPOVER_RETRACT_MM,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: SAFE_Z_MM,
+    }
+}
+
+/// The Photo V-Carve's line angle, degrees from X (VCarve's and
+/// RasterCarve's 22.5°).
+const PHOTO_LINE_ANGLE_DEG: f64 = 22.5;
+/// The distance between grooves, in groove widths at full depth.
+const PHOTO_LINE_SPACING_FRACTION: f64 = 1.1;
+/// How often the picture is sampled along a groove, mm.
+const PHOTO_SAMPLE_MM: f64 = 0.25;
+/// How high the bit lifts to step to the next groove, mm.
+const PHOTO_STEPOVER_RETRACT_MM: f64 = 1.0;

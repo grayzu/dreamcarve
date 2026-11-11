@@ -33,6 +33,35 @@ pub enum JobError {
         /// The coordinate limit, mm.
         limit_mm: f64,
     },
+    /// A picture's width or height is not a positive, finite length
+    /// ([`crate::picture::PictureSize`]).
+    #[error("a picture's width or height must be a positive length in mm, not {size_mm}")]
+    PictureSize {
+        /// The size asked for, mm.
+        size_mm: f64,
+    },
+    /// A picture's footprint would reach further from the origin than
+    /// [`dc_geometry::MAX_COORDINATE_MM`] ([`crate::picture::picture_into`]).
+    #[error(
+        "the picture's footprint, {width_mm:.3} × {height_mm:.3} mm at ({x_mm:.3}, {y_mm:.3}), \
+         reaches beyond {limit_mm} mm from the origin"
+    )]
+    PictureOutOfRange {
+        /// X of the footprint's bottom-left corner, mm.
+        x_mm: f64,
+        /// Y of the footprint's bottom-left corner, mm.
+        y_mm: f64,
+        /// The footprint's width, mm.
+        width_mm: f64,
+        /// The footprint's height, mm.
+        height_mm: f64,
+        /// The coordinate limit, mm.
+        limit_mm: f64,
+    },
+    /// The picture's pixels could not be encoded as the PNG a bitmap
+    /// stores.
+    #[error(transparent)]
+    Picture(#[from] dc_import::ImportError),
     /// Tabs were asked for a Profile that holds no tab request
     /// ([`crate::tabs::place_request`]).
     #[error("operation `{op}` has no tab request to place")]

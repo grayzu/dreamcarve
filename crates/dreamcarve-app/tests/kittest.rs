@@ -168,7 +168,7 @@ fn click_in_sheet(harness: &mut Harness<'_, dreamcarve_app::Shell>, label: &str)
 }
 
 /// Acceptance 88 (unsaved changes, capability 51): closing a changed
-/// project asks; *Cancel* keeps it open and unchanged; *Discard* loses the
+/// project asks; *Cancel* keeps it open and unchanged; *Don't Save* loses the
 /// changes; *Save* writes the file before closing. Opening a second
 /// project asks the same.
 #[test]
@@ -203,7 +203,7 @@ fn unsaved_changes_prompt() {
     );
     h.run();
     let sheet = h.get_by_role(Role::Dialog);
-    for label in ["Save", "Discard", "Cancel"] {
+    for label in ["Save", "Don't Save", "Cancel"] {
         assert!(
             sheet.query_by_label(label).is_some(),
             "the sheet offers {label}"
@@ -226,11 +226,14 @@ fn unsaved_changes_prompt() {
     );
     assert!(h.state().app().is_dirty());
 
-    // Discard closes without writing.
+    // Don't Save closes without writing.
     press_close(&mut h);
     h.run();
-    click_in_sheet(&mut h, "Discard");
-    assert!(h.state().close_allowed(), "Discard lets the window close");
+    click_in_sheet(&mut h, "Don't Save");
+    assert!(
+        h.state().close_allowed(),
+        "Don't Save lets the window close"
+    );
     assert_eq!(std::fs::read(&plaque).unwrap(), original, "nothing written");
 
     // Save writes the file, then closes.
@@ -249,7 +252,7 @@ fn unsaved_changes_prompt() {
     assert_eq!(std::fs::read_to_string(&plaque).unwrap(), expected);
     assert!(dialogs.asked().is_empty(), "a saved file needs no dialog");
 
-    // Opening a second project asks too: Cancel keeps the first, Discard
+    // Opening a second project asks too: Cancel keeps the first, Don't Save
     // opens the second.
     let sign = copy_fixture("sign.dcv", &dir);
     let dialogs = QueuedDialogs::default();
@@ -268,7 +271,7 @@ fn unsaved_changes_prompt() {
     dialogs.answer(&sign);
     command_key(&h, egui::Key::O);
     h.run();
-    click_in_sheet(&mut h, "Discard");
+    click_in_sheet(&mut h, "Don't Save");
     assert_eq!(dialogs.asked(), ["open_project"]);
     assert_eq!(h.state().app().source(), Some(sign.as_path()));
     assert!(!h.state().app().is_dirty());
@@ -1265,7 +1268,7 @@ fn drop_of_svg_opens_the_import_sheet() {
     drop_file(&mut h, &sign);
     let sheet = h.get_by_role(Role::Dialog);
     assert!(
-        sheet.query_by_label("Import drawing").is_some(),
+        sheet.query_by_label("Add drawing to project").is_some(),
         "the sheet's title"
     );
     assert!(
@@ -1286,18 +1289,20 @@ fn drop_of_svg_opens_the_import_sheet() {
         "nothing is imported before Import"
     );
 
-    h.get_by_role(Role::Dialog).get_by_label("Import").click();
-    h.run();
-    assert!(
-        h.query_by_role(Role::Dialog).is_none(),
-        "Import closes the sheet"
-    );
-    let app = h.state().app();
     let (import, _) = dc_import::import_svg(
         &std::fs::read(&sign).unwrap(),
         &dc_import::SvgImportOptions::default(),
     )
     .unwrap();
+    // Mock-up 02: the footer counts what it adds.
+    let add = format!("Add {} shapes", import.instances.len());
+    h.get_by_role(Role::Dialog).get_by_label(&add).click();
+    h.run();
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "{add} closes the sheet"
+    );
+    let app = h.state().app();
     assert_eq!(app.project().instances.len(), import.instances.len());
     assert_eq!(
         app.selection().instances().len(),
@@ -1326,7 +1331,10 @@ fn drop_of_svg_opens_the_import_sheet() {
         "a DXF has options"
     );
     assert!(
-        sheet.get_by_label("Import").accesskit_node().is_disabled(),
+        sheet
+            .get_by_label("Add shapes")
+            .accesskit_node()
+            .is_disabled(),
         "Import is disabled until units are chosen"
     );
     // No Cancel button (`experience.md`, section 13, item 9): the
@@ -1351,12 +1359,13 @@ fn drop_of_svg_opens_the_import_sheet() {
     // A dropped project still opens, asking first about the import.
     let plaque = common::fixture("plaque.dcv");
     drop_file(&mut h, &plaque);
-    click_in_sheet(&mut h, "Discard");
+    click_in_sheet(&mut h, "Don't Save");
     assert_eq!(h.state().app().source(), Some(plaque.as_path()));
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Capability 51 and acceptance 63 (#535): File ▸ New from Drawing… asks
+/// Capability 51 and acceptance 63 (#535): File ▸ New Project from
+/// Drawing… asks
 /// for a drawing, shows it in the same sheet, and *Create project* makes
 /// the project `dc_app::App::new_from_drawing` makes: `init`'s stock and
 /// shapes, no tool, no operation, no file yet.
@@ -1369,11 +1378,11 @@ fn new_from_drawing_through_the_sheet() {
     dialogs.answer(&coaster);
     h.get_by_label("File").click();
     h.run();
-    h.get_by_label("New from Drawing…").click();
+    h.get_by_label("New Project from Drawing…").click();
     h.run();
     assert_eq!(dialogs.asked(), ["open_drawing"]);
     let sheet = h.get_by_role(Role::Dialog);
-    assert!(sheet.query_by_label("New from drawing").is_some());
+    assert!(sheet.query_by_label("New project from drawing").is_some());
     sheet.get_by_label("Create project").click();
     h.run();
     assert!(h.query_by_role(Role::Dialog).is_none());
@@ -4832,6 +4841,16 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
     for toggle in TOOLPATH_TOGGLES {
         assert!(h.query_by_label(toggle).is_none(), "closed: {toggle}");
     }
+
+    // Slice 35 (#627), capability 79a: View ▸ Toolpaths… opens it too.
+    h.get_by_label("View").click();
+    h.run();
+    h.get_by_label("Toolpaths…").click();
+    h.run();
+    for toggle in TOOLPATH_TOGGLES {
+        let rect = h.get_by_label(toggle).rect();
+        assert!(rect.max.y <= button.min.y, "from the menu: {toggle}");
+    }
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -5230,6 +5249,335 @@ fn example_opens_untitled() {
             "{example}: Save asks where, got {asked:?}"
         );
         assert!(h.state().app().source().is_none(), "cancelled: no file");
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The labels of the open `title` menu's rows, top to bottom: its
+/// buttons, checkboxes and submenus. A row's label ends with its
+/// shortcut's text, when it has one.
+fn menu_rows(h: &Harness<'_, dreamcarve_app::Shell>, title: &str) -> Vec<String> {
+    let button = h
+        .query_all_by_role(Role::Button)
+        .find(|n| n.accesskit_node().label().as_deref() == Some(title))
+        .unwrap_or_else(|| panic!("no {title} menu"));
+    button
+        .query_all_by_role(Role::Menu)
+        .next()
+        .unwrap_or_else(|| panic!("the {title} menu is open"))
+        .query_all(
+            egui_kittest::kittest::by()
+                .predicate(|node| matches!(node.role(), Role::Button | Role::CheckBox)),
+        )
+        .map(|n| n.accesskit_node().label().unwrap_or_default())
+        .collect()
+}
+
+/// The open `title` menu's rows are `expected`, in order, each followed
+/// by nothing or its shortcut.
+fn assert_menu(h: &Harness<'_, dreamcarve_app::Shell>, title: &str, expected: &[&str]) {
+    let rows = menu_rows(h, title);
+    let same = rows.len() == expected.len()
+        && rows
+            .iter()
+            .zip(expected)
+            .all(|(row, want)| row == want || row.starts_with(&format!("{want} ")));
+    assert!(same, "{title} menu: {rows:?}, want {expected:?}");
+}
+
+/// Opens the menu bar's `title` menu.
+fn open_menu(h: &mut Harness<'_, dreamcarve_app::Shell>, title: &str) {
+    h.get_by_label(title).click();
+    h.run();
+}
+
+/// Slice 35 (#627), capability 79a and acceptance 103: the File menu's
+/// rows are 79a's list in its order, new-project and add-to-project
+/// apart (*Save Setup Sheet…* joins them only after an export). The View
+/// and Project menus are 79a's too.
+#[test]
+fn file_menu_labels_in_order() {
+    let dir = scratch("file-menu");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+
+    open_menu(&mut h, "File");
+    assert_menu(
+        &h,
+        "File",
+        &[
+            "New",
+            "New Project from Drawing…",
+            "New Project from Picture…",
+            "Open…",
+            "Open Recent",
+            "Save",
+            "Save As…",
+            "Add Drawing to Project…",
+            "Add Picture to Project…",
+            "Export G-code…",
+            "Quit",
+        ],
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    open_menu(&mut h, "View");
+    assert_menu(
+        &h,
+        "View",
+        &[
+            "Design Tree and Properties",
+            "CAM panel",
+            "Toolpaths…",
+            "Warnings",
+            "Fit View",
+            "Zoom to Selection",
+            "Appearance",
+        ],
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    open_menu(&mut h, "Project");
+    assert_menu(
+        &h,
+        "Project",
+        &["Project Settings…", "Tool Library…", "Fit Stock to Shapes…"],
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Slice 35 (#627), capability 79a: View ▸ Appearance holds three checked
+/// choices; System is checked by default; choosing Dark checks it alone,
+/// sets `Prefs::theme`, keeps it in `gui.toml` and applies the dark
+/// visuals over a light OS.
+#[test]
+fn appearance_has_three_checked_choices() {
+    use egui::accesskit::Toggled;
+
+    let dir = scratch("appearance");
+    let config = dir.join("config");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
+    h.input_mut().system_theme = Some(egui::Theme::Light);
+    h.run();
+
+    let checked = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<(String, bool)> {
+        ["System", "Light", "Dark"]
+            .into_iter()
+            .map(|label| {
+                let node = h.get_by_label(label);
+                assert_ne!(
+                    node.accesskit_node().role(),
+                    Role::CheckBox,
+                    "{label}: a choice of three is not a checkbox"
+                );
+                let toggled = node.accesskit_node().toggled();
+                assert!(toggled.is_some(), "{label} is a checked choice");
+                (label.to_owned(), toggled == Some(Toggled::True))
+            })
+            .collect()
+    };
+    let open_appearance = |h: &mut Harness<'_, dreamcarve_app::Shell>| {
+        open_menu(h, "View");
+        h.get_by_label("Appearance").hover();
+        h.run();
+    };
+
+    open_appearance(&mut h);
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::System);
+    assert_eq!(
+        checked(&h),
+        [
+            ("System".to_owned(), true),
+            ("Light".to_owned(), false),
+            ("Dark".to_owned(), false)
+        ]
+    );
+
+    h.get_by_label("Dark").click();
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Dark);
+    assert_eq!(
+        h.ctx.theme(),
+        egui::Theme::Dark,
+        "Dark wins over a light OS"
+    );
+    assert!(h.ctx.global_style().visuals.dark_mode);
+    assert_eq!(
+        h.ctx.global_style().visuals.panel_fill,
+        theme::DARK.surface_panel
+    );
+    let saved = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
+    assert_eq!(saved.theme, gui_prefs::Theme::Dark);
+
+    open_appearance(&mut h);
+    assert_eq!(
+        checked(&h),
+        [
+            ("System".to_owned(), false),
+            ("Light".to_owned(), false),
+            ("Dark".to_owned(), true)
+        ]
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The labels of the unsaved-changes sheet's buttons, sorted.
+fn sheet_buttons(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<String> {
+    let mut labels: Vec<String> = h
+        .get_by_role(Role::Dialog)
+        .query_all_by_role(Role::Button)
+        .map(|n| n.accesskit_node().label().unwrap_or_default())
+        .collect();
+    labels.sort();
+    labels
+}
+
+/// What asks the unsaved-changes sheet, in a test.
+#[derive(Debug, Clone, Copy)]
+enum Ask {
+    Close,
+    Quit,
+    Open,
+    New,
+    NewFromDrawing,
+}
+
+impl Ask {
+    const ALL: [Self; 5] = [
+        Self::Close,
+        Self::Quit,
+        Self::Open,
+        Self::New,
+        Self::NewFromDrawing,
+    ];
+
+    fn press(self, h: &mut Harness<'_, dreamcarve_app::Shell>) {
+        match self {
+            Self::Close => press_close(h),
+            Self::Quit => command_key(h, egui::Key::Q),
+            Self::Open => command_key(h, egui::Key::O),
+            Self::New => command_key(h, egui::Key::N),
+            Self::NewFromDrawing => {
+                open_menu(h, "File");
+                h.get_by_label("New Project from Drawing…").click();
+            }
+        }
+        h.run();
+    }
+}
+
+/// Slice 35 (#627), capability 51 and acceptance 88: on close, quit,
+/// *Open*, *New* and *New Project from Drawing…* with unsaved changes,
+/// the sheet's buttons are exactly *Save*, *Don't Save* and *Cancel*;
+/// *Cancel* keeps the project and its changes; *Don't Save* goes ahead
+/// without writing the file.
+#[test]
+fn unsaved_sheet_is_save_dont_save_cancel() {
+    let dir = scratch("unsaved-three");
+    let config = dir.join("config");
+    let sign = copy_fixture("sign.dcv", &dir);
+    for ask in Ask::ALL {
+        let plaque = copy_fixture("plaque.dcv", &dir);
+        let original = std::fs::read(&plaque).unwrap();
+        let dialogs = QueuedDialogs::default();
+        let mut h = harness(
+            options(&config, Some(plaque.clone()), &dialogs),
+            1280.0,
+            800.0,
+        );
+        widen_stock(&mut h);
+        let edited = h.state().app().project().clone();
+
+        ask.press(&mut h);
+        assert_eq!(
+            sheet_buttons(&h),
+            ["Cancel", "Don't Save", "Save"],
+            "{ask:?}: the sheet's buttons"
+        );
+        click_in_sheet(&mut h, "Cancel");
+        assert!(h.query_by_role(Role::Dialog).is_none(), "{ask:?}: Cancel");
+        assert_eq!(h.state().app().project(), &edited, "{ask:?}: kept");
+        assert!(h.state().app().is_dirty());
+        assert!(!h.state().close_allowed());
+        assert!(dialogs.asked().is_empty(), "{ask:?}: Cancel asks nothing");
+
+        if matches!(ask, Ask::Open) {
+            dialogs.answer(&sign);
+        }
+        ask.press(&mut h);
+        click_in_sheet(&mut h, "Don't Save");
+        assert_eq!(
+            std::fs::read(&plaque).unwrap(),
+            original,
+            "{ask:?}: Don't Save writes nothing"
+        );
+        let app = h.state().app();
+        match ask {
+            Ask::Close | Ask::Quit => assert!(h.state().close_allowed(), "{ask:?}"),
+            Ask::Open => {
+                assert_eq!(dialogs.asked(), ["open_project"]);
+                assert_eq!(app.source(), Some(sign.as_path()));
+            }
+            Ask::New => {
+                assert_eq!(app.source(), None);
+                assert!(app.project().instances.is_empty(), "a new project");
+            }
+            Ask::NewFromDrawing => assert_eq!(dialogs.asked(), ["open_drawing"]),
+        }
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Slice 35 (#627), capability 51: *Save* on the sheet of an untitled
+/// project asks where first; cancelling that dialog cancels the whole
+/// action, so the window stays, nothing opens and the changes are kept;
+/// answering it writes the file and then goes ahead.
+#[test]
+fn save_on_untitled_asks_where_and_cancel_cancels_all() {
+    let dir = scratch("unsaved-untitled");
+    let config = dir.join("config");
+    for ask in Ask::ALL {
+        let dialogs = QueuedDialogs::default();
+        let mut h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
+        widen_stock(&mut h);
+        let edited = h.state().app().project().clone();
+
+        ask.press(&mut h);
+        click_in_sheet(&mut h, "Save");
+        let asked = dialogs.asked();
+        assert_eq!(asked.len(), 1, "{ask:?}: one dialog: {asked:?}");
+        assert!(
+            asked[0].starts_with("save_project "),
+            "{ask:?}: Save asks where first: {asked:?}"
+        );
+        assert!(h.query_by_role(Role::Dialog).is_none());
+        assert!(!h.state().close_allowed(), "{ask:?}: the window stays");
+        assert_eq!(h.state().app().project(), &edited, "{ask:?}: kept");
+        assert!(h.state().app().is_dirty(), "{ask:?}: still unsaved");
+        assert_eq!(h.state().app().source(), None);
+
+        // Answered, Save writes there and then goes ahead.
+        let path = dir.join(format!("{ask:?}.dcv"));
+        dialogs.answer(&path);
+        ask.press(&mut h);
+        click_in_sheet(&mut h, "Save");
+        let written = std::fs::read_to_string(&path).expect("the file is written");
+        assert!(!written.is_empty());
+        let last = dialogs.asked().last().cloned().unwrap_or_default();
+        match ask {
+            Ask::Close | Ask::Quit => assert!(h.state().close_allowed(), "{ask:?}"),
+            Ask::Open => assert_eq!(last, "open_project"),
+            Ask::New => assert!(h.state().app().source().is_none(), "a new project"),
+            Ask::NewFromDrawing => assert_eq!(last, "open_drawing"),
+        }
     }
     std::fs::remove_dir_all(&dir).ok();
 }

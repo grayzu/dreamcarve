@@ -2443,9 +2443,12 @@ impl<'a> Writer<'a> {
                 });
             }
         }
+        // A Photo V-Carve's grooves are never fitted (#646): their points
+        // are not on arcs, and S19 holds every cut to a straight one.
         let fitting = self
             .arc_fit_tolerance_mm
-            .filter(|_| self.post.motion.arc_interpolation);
+            .filter(|_| self.post.motion.arc_interpolation)
+            .filter(|_| !matches!(op, Operation::PhotoVCarve(_)));
         let (fitted, fallback_runs) = match fitting {
             Some(tolerance_mm) => {
                 let fitted = arcfit::fit(&toolpath.moves, tolerance_mm);

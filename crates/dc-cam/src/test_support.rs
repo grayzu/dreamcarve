@@ -14,13 +14,13 @@
 
 pub mod seat;
 
-use crate::entry::CLEARED_POINT_TOLERANCE_MM;
+use crate::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::vcarve::{carve_regions, cone_height_mm, cone_in_material, start_plane};
-use dc_geometry::{EPS_MM, approx_eq};
-use dc_project::{Board, InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
+use dc_geometry::{EPS_MM, Point3, approx_eq};
+use dc_project::{Board, InlayOp, Operation, PhotoVCarveOp, Project, Tool, ToolKind, VCarveOp};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -55,6 +55,13 @@ use dc_project::{Board, InlayOp, Operation, Project, Tool, ToolKind, VCarveOp};
 ///    [`crate::vcarve::cone_in_material`] on the carve's regions, start
 ///    plane and engagement as the project gives them (an Inlay male's: the
 ///    mirrored design's surround, engaged from the stock top).
+/// 7. **Grooves (S19).** For a Photo V-Carve (#646), every cutting move
+///    that ends at or below the start plane ends inside the picture's
+///    footprint, no deeper than the maximum depth below the start plane
+///    and with the flanks engaged no deeper than the cone; every one that
+///    moves across above the start plane is at the link height (the
+///    start plane plus `stepover_retract_mm`, or no lower than the stock
+///    top plus the entry clearance when the plane is only vouched for).
 ///
 /// Panics with the offending move index on the first violation. An
 /// Inlay's toolpath is held as its female's, on the stock; a male's run is
@@ -102,7 +109,84 @@ fn assert_safe_on(toolpath: &Toolpath, project: &Project, op: &Operation, board:
         Operation::Inlay(inlay) => {
             assert_inlay_cone_in_material(toolpath, project, inlay, tool, board);
         }
+        Operation::PhotoVCarve(photo) => assert_grooves_in_picture(toolpath, project, photo, tool),
         _ => {}
+    }
+}
+
+/// S19 on the toolpath of Photo V-Carve `op` (check 7 of [`assert_safe`]),
+/// its footprint, planes and link height re-derived from the project.
+fn assert_grooves_in_picture(
+    toolpath: &Toolpath,
+    project: &Project,
+    op: &PhotoVCarveOp,
+    tool: &Tool,
+) {
+    let bitmap = project
+        .bitmaps
+        .iter()
+        .find(|b| b.id == op.image)
+        .expect("the Photo V-Carve's bitmap is in the project");
+    let (min_x, min_y) = (bitmap.x_mm, bitmap.y_mm);
+    let (max_x, max_y) = (min_x + bitmap.width_mm, min_y + bitmap.height_mm);
+    let thickness_mm = project.stock.thickness_mm.expect("stock has a thickness");
+    let plane = thickness_mm - op.start_depth_mm;
+    let max_depth_mm = op
+        .max_depth_mm
+        .expect("the Photo V-Carve has a maximum depth");
+    let cleared = op.start_depth_mm <= 0.0
+        || dc_project::cleared_start_plane(project, &Operation::PhotoVCarve(op.clone()))
+            .is_some_and(|p| p.is_at(op.start_depth_mm));
+    let (engaged_from, link_z) = if cleared {
+        (plane, plane + op.stepover_retract_mm)
+    } else {
+        (
+            thickness_mm,
+            (plane + op.stepover_retract_mm).max(thickness_mm + ENTRY_CLEARANCE_MM),
+        )
+    };
+    let cone_mm = cone_height_mm(tool).expect("the V-bit has a cone");
+    let mut previous: Option<Point3> = None;
+    for (i, mv) in toolpath.moves.iter().enumerate() {
+        let from = previous;
+        previous = Some(mv.to);
+        if !mv.is_cut() {
+            continue;
+        }
+        assert_eq!(
+            mv.kind,
+            MoveKind::Linear,
+            "move {i} of a groove is an arc: {mv:?}"
+        );
+        let p = mv.to;
+        let across = from.is_some_and(|f| f.xy().distance_to(p.xy()) > EPS_MM);
+        if p.z <= plane + EPS_MM {
+            assert!(
+                p.x >= min_x - EPS_MM
+                    && p.x <= max_x + EPS_MM
+                    && p.y >= min_y - EPS_MM
+                    && p.y <= max_y + EPS_MM,
+                "move {i} leaves the picture (S19): {mv:?}"
+            );
+            assert!(
+                p.z >= plane - max_depth_mm - EPS_MM,
+                "move {i} is below the maximum depth (S19): {mv:?}"
+            );
+            assert!(
+                engaged_from - p.z <= cone_mm + EPS_MM,
+                "move {i} engages the flanks past the cone: {mv:?}"
+            );
+            assert!(
+                !across || from.is_some_and(|f| f.z <= plane + EPS_MM),
+                "move {i} cuts across from above the start plane (S19): {mv:?}"
+            );
+        } else if across {
+            assert!(
+                approx_eq(p.z, link_z, EPS_MM)
+                    && from.is_some_and(|f| approx_eq(f.z, link_z, EPS_MM)),
+                "move {i} crosses between grooves away from the link height {link_z} (S19): {mv:?}"
+            );
+        }
     }
 }
 

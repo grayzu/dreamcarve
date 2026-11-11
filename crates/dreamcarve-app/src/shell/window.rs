@@ -400,8 +400,12 @@ pub(crate) enum Action {
     CommitTargets,
     /// The target-editing bar's *Cancel* (Escape).
     CancelTargets,
-    /// Open the export sheet (File ▸ Export…, the toolbar, ⌘E; #547).
+    /// Open the export sheet (File ▸ Export G-code…, the toolbar, ⌘E;
+    /// #547).
     OpenExport,
+    /// Open the toolpath view's popover (View ▸ Toolpaths…, capability
+    /// 79a), as the status bar's *Toolpaths* button does.
+    OpenToolpaths,
     /// Something the export sheet asked for.
     Export(panels::export::Request),
     /// Save the last export's setup sheet (the result's footer, File ▸
@@ -440,7 +444,8 @@ impl Action {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Answer {
     Save,
-    Discard,
+    /// *Don't Save*: go ahead, losing the changes.
+    DontSave,
     Cancel,
 }
 
@@ -1197,6 +1202,9 @@ impl Shell {
             Action::SetCamera(camera) => self.app.view_mut().camera = camera,
             Action::SetVisibility(visibility) => self.app.set_visibility(visibility),
             Action::SetColour(colour) => self.app.set_colour(colour),
+            Action::OpenToolpaths => {
+                egui::Popup::open_id(ctx, crate::shell::toolpaths::popover_id());
+            }
             Action::ShowAllToolpaths => self.app.view_mut().show_all(),
             Action::HideAllToolpaths => {
                 let scene = self.app.scene().clone();
@@ -1405,7 +1413,7 @@ impl Shell {
         };
         match answer {
             Answer::Cancel => {}
-            Answer::Discard => self.perform(ctx, pending),
+            Answer::DontSave => self.perform(ctx, pending),
             Answer::Save => {
                 if self.save(false) {
                     self.perform(ctx, pending);

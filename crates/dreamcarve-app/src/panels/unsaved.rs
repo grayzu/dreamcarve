@@ -3,8 +3,10 @@
 
 //! The unsaved-changes sheet (functional spec, capability 51 and
 //! acceptance 88; `experience.md`, section 8, "Destructive actions" and
-//! "Sheets"): 420 px on `surface.raised` over a scrim, the file's name,
-//! *Discard* on the left and *Cancel* and *Save* on the right. Enter is
+//! "Sheets"; mock-up 14): 420 px on `surface.raised` over a scrim, the
+//! project's name, *Don't Save* on the left and *Cancel* and *Save* on the
+//! right, the three buttons the platforms' own sheets have (review
+//! 2026-11-10). It asks on close, quit, *Open* and every *New*. Enter is
 //! Save; Escape, or a click on the scrim, is Cancel. One of the app's two
 //! confirmations; the other is the Tool Library's *Delete*, asked in place
 //! of the library's table (`panels::library`).
@@ -58,11 +60,11 @@ pub(crate) fn sheet(ctx: &egui::Context, strings: &Strings, file: &str, out: &mu
             ui.add_space(24.0);
             let mut answer = None;
             ui.horizontal(|ui| {
-                let discard =
-                    ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppUnsavedDiscard))
+                let dont_save =
+                    ButtonSpec::new(Kind::Destructive, strings.get(StrKey::AppUnsavedDontSave))
                         .height(FOOTER_PX);
-                if button(ui, discard).clicked() {
-                    answer = Some(Answer::Discard);
+                if button(ui, dont_save).clicked() {
+                    answer = Some(Answer::DontSave);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let save = ButtonSpec::new(Kind::Primary, strings.get(StrKey::AppUnsavedSave))

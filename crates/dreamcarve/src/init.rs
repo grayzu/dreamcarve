@@ -20,6 +20,12 @@
 //! material or the machine. `init` lists each of them as
 //! `coaster.dcv:line:column: …`, a link an editor or terminal opens at the
 //! `null` to replace (#76).
+//!
+//! On a picture (`.png`, `.jpg`, `.jpeg`; format 27, #645) `init` takes
+//! exactly one of `--width` and `--height` and writes the project
+//! [`dc_job::project_from::picture`] builds: the picture as bitmap `b1`
+//! with the drawing's margin round it, a 60° V-bit and one Photo V-Carve,
+//! the thickness, the maximum depth and the feeds unset.
 
 use std::path::Path;
 use std::process::ExitCode;
@@ -36,6 +42,7 @@ use dreamcarve_shell::StagedFile;
 
 use crate::cli::{Failure, InitArgs, UnitsArg, lookup_post, read_file};
 use crate::config;
+use crate::image::{import_picture, picture_format, picture_name, picture_size, placement_failure};
 use crate::output::{errln, outln};
 
 /// Runs `init`.
@@ -53,6 +60,16 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
             "--join-tolerance and --layer apply to DXF drawings only",
         ));
     }
+    let picture = picture_format(&args.drawing);
+    let size = match picture {
+        Some(_) => Some(picture_size(args.width, args.height)?),
+        None if args.width.is_some() || args.height.is_some() => {
+            return Err(Failure::usage(
+                "--width and --height apply to pictures (.png, .jpg, .jpeg) only",
+            ));
+        }
+        None => None,
+    };
     let output = args
         .output
         .clone()
@@ -63,6 +80,28 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
             "{} already exists; remove it or choose another file with -o",
             output.display()
         )));
+    }
+    if let (Some(format), Some(size)) = (picture, size) {
+        let pixels = import_picture(&args.drawing, format)?;
+        outln!(
+            "Imported a {} × {} px picture from {}.",
+            pixels.width_px,
+            pixels.height_px,
+            args.drawing.display()
+        )?;
+        let display_units = args.units.unwrap_or(UnitsArg::Mm).into();
+        let project = project_from::picture(
+            &picture_name(&args.drawing),
+            &pixels,
+            size,
+            post,
+            display_units,
+        )
+        .map_err(placement_failure)?;
+        let text = dc_project::save(&project).map_err(Failure::error)?;
+        StagedFile::write(&output, text.as_bytes())?.commit()?;
+        report_picture(&project, &output, &text)?;
+        return Ok(ExitCode::SUCCESS);
     }
 
     let bytes = read_file(&args.drawing)?;
@@ -227,6 +266,18 @@ fn report(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
             "{untargeted} shape(s) are open paths and are not cut; `dreamcarve check` lists them."
         )?;
     }
+    values_to_set(project, output, text)?;
+    outln!(
+        "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
+         the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
+        output.display(),
+        output.display()
+    )
+}
+
+/// Prints the values `export` refuses without, one a line, each located
+/// in `text`, the file as written.
+fn values_to_set(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
     outln!("Values to set; export refuses until every one is set:")?;
     let map = SourceMap::parse(text).ok();
     for problem in validate(project).iter().filter(|p| p.is_unset_value()) {
@@ -238,9 +289,34 @@ fn report(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
             None => outln!("{problem}")?,
         }
     }
+    Ok(())
+}
+
+/// [`report`] for a picture's project: the bitmap and the Photo V-Carve
+/// written, then the values to set (the thickness, the maximum depth, the
+/// V-bit's feeds and speed).
+fn report_picture(project: &Project, output: &Path, text: &str) -> Result<(), Failure> {
+    for bitmap in &project.bitmaps {
+        outln!(
+            "Wrote {}: stock {:.2} × {:.2} mm, post-processor {}, picture {} ({} × {} px) \
+             on {:.3} × {:.3} mm at ({:.3}, {:.3}), carved by one Photo V-Carve.",
+            output.display(),
+            project.stock.width_mm,
+            project.stock.height_mm,
+            project.post_processor.id,
+            bitmap.id,
+            bitmap.width_px,
+            bitmap.height_px,
+            bitmap.width_mm,
+            bitmap.height_mm,
+            bitmap.x_mm,
+            bitmap.y_mm,
+        )?;
+    }
+    values_to_set(project, output, text)?;
     outln!(
-        "Next: edit {} and replace each `null` listed above. To cut through, `depth_mm` is \
-         the thickness plus `through_cut_allowance_mm`. Then run `dreamcarve check {}`.",
+        "Next: edit {} and replace each `null` listed above; the tool is a 60° V-bit, so set \
+         the one you have. Then run `dreamcarve check {}`.",
         output.display(),
         output.display()
     )
