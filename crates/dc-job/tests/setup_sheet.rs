@@ -205,8 +205,7 @@ fn matches_the_export() {
             warning.message
         );
     }
-    for note in dc_job::report::notes(project, &exported.programs, ProgramSplit::ProjectDefault)
-    {
+    for note in dc_job::report::notes(project, &exported.programs, ProgramSplit::ProjectDefault) {
         assert!(html.contains(&escaped(&note)), "the note {note}");
     }
     assert!(html.contains(DATE), "the export date");

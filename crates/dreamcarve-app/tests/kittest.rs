@@ -1788,6 +1788,121 @@ fn program_details_start_closed() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Capabilities 77a and 77b, acceptance 102 (#625): after *Export* the
+/// sheet's content is the result: `2 programs written`, the files in run
+/// order and the folder with *Show in folder*, and *Run instructions*
+/// closed, whose steps and notes show once it is opened. *Save setup
+/// sheet…* asks where, suggesting `plaque-setup.html` beside the
+/// programs, and writes the page the plan renders; nothing else is
+/// written and the project is unchanged. *Done* closes the sheet, and the
+/// sheet can still be saved from the File menu.
+#[test]
+fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
+    use eframe::egui::accesskit::Toggled;
+    use egui_kittest::kittest::NodeT as _;
+
+    let dir = scratch("export-result");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let project_bytes = std::fs::read(&plaque).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque.clone()), &dialogs),
+        1280.0,
+        900.0,
+    );
+    settle_export(&mut h);
+    command_key(&h, egui::Key::E);
+    h.run();
+    settle_export(&mut h);
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    let names = ready.names("plaque");
+    h.get_by_role(Role::Dialog).get_by_label("Export").click();
+    h.run();
+
+    let strings = dc_app::Strings::english();
+    let result = ready.result(&names, &dir, &strings);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label("2 programs written").is_some(),
+        "Status"
+    );
+    for name in &names {
+        assert!(sheet.query_by_label(name).is_some(), "Files lists {name}");
+    }
+    assert!(
+        sheet.query_by_label(&dir.display().to_string()).is_some(),
+        "the folder"
+    );
+    assert!(sheet.query_by_label("Show in folder").is_some());
+    assert!(sheet.query_by_label("Copy path").is_some());
+    let header = sheet.get_by_label("Run instructions");
+    assert_eq!(header.accesskit_node().toggled(), Some(Toggled::False));
+    let first_step = &result.instructions.steps[0].before;
+    assert!(
+        sheet.query_by_label(first_step).is_none(),
+        "the steps are hidden while closed"
+    );
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Run instructions")
+        .click();
+    h.run();
+    let sheet = h.get_by_role(Role::Dialog);
+    for step in &result.instructions.steps {
+        assert!(
+            sheet.query_by_label(&step.before).is_some(),
+            "{}",
+            step.before
+        );
+    }
+    for note in &result.instructions.notes {
+        assert!(sheet.query_by_label(note).is_some(), "the note {note}");
+    }
+
+    // Save setup sheet…: the dialog suggests the page beside the programs.
+    let page = dir.join("plaque-setup.html");
+    dialogs.answer(&page);
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Save setup sheet…")
+        .click();
+    h.run();
+    assert_eq!(
+        dialogs.asked().last().cloned(),
+        Some(format!("save_setup_sheet {}", page.display()))
+    );
+    let written = std::fs::read_to_string(&page).expect("the setup sheet is written");
+    assert!(
+        written == ready.setup_sheet(&names, env!("CARGO_PKG_VERSION"), &strings),
+        "the page the plan renders"
+    );
+    let mut files: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "config")
+        .collect();
+    files.sort();
+    let mut expected: Vec<String> = names.clone();
+    expected.extend(["plaque-setup.html".to_owned(), "plaque.dcv".to_owned()]);
+    expected.sort();
+    assert_eq!(files, expected, "the programs, the page and the project");
+    assert_eq!(std::fs::read(&plaque).unwrap(), project_bytes);
+    assert!(!h.state().app().is_dirty(), "saving it changes nothing");
+
+    h.get_by_role(Role::Dialog).get_by_label("Done").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
+    h.get_by_label("File").click();
+    h.run();
+    assert!(
+        h.query_by_label("Save Setup Sheet…").is_some(),
+        "File ▸ Save Setup Sheet… after an export"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A project of 500 shapes, built here and never committed: 500 linked
 /// copies of a 12 mm circle on a 25 × 20 grid at 20 mm pitch, on
 /// 510 × 410 × 12 mm stock, with a 3 mm Pocket and a medial V-Carve on

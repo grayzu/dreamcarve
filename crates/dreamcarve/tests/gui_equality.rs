@@ -19,7 +19,8 @@
 //! byte, on every post-processor, with and without the program-split
 //! override; the Viewport's SVG dump is the file `--preview` writes
 //! (slice 32, #624: the sheet no longer writes the preview); and the
-//! result sheet's text is the CLI's report.
+//! result's text is the CLI's report, every line of it in exactly one of
+//! the result's three parts (slice 33, #625).
 
 #![allow(
     clippy::expect_used,

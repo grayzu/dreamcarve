@@ -441,10 +441,7 @@ fn result_holds_every_fact_of_the_cli_report() {
         ("plaque", ProgramSplit::OneProgram),
     ] {
         let harness = generated(&read(&fixture(&format!("{name}.dcv"))));
-        let options = Options {
-            split,
-            ..options()
-        };
+        let options = Options { split, ..options() };
         let ready = ready(&harness, &options);
         assert!(ready.blocked().is_none(), "{name}: nothing blocks");
         let names = ready.names(name);

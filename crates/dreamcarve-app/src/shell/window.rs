@@ -25,7 +25,7 @@ use std::time::Instant;
 use dc_app::import::{DrawingFormat, Purpose};
 use dc_app::{App, Command, Prefs, StrKey, Strings};
 use dc_job::EstimateConfig;
-use dreamcarve_shell::{GuiPrefs, Paths, config, gui_prefs};
+use dreamcarve_shell::{GuiPrefs, Paths, StagedFile, commit_all, config, gui_prefs};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, Rect, Vec2, ViewportCommand};
 
 use crate::keyboard::{self, Command as Shortcut};
@@ -90,6 +90,11 @@ pub trait Dialogs {
     fn export_folder(&mut self, _title: &str, _start: Option<&Path>) -> Option<PathBuf> {
         None
     }
+    /// Asks where to save the setup sheet, suggesting `file_name` in
+    /// `dir`, beside the programs (capability 77b).
+    fn save_setup_sheet(&mut self, _title: &str, _dir: &Path, _file_name: &str) -> Option<PathBuf> {
+        None
+    }
 }
 
 /// The OS's open and save dialogs, through `rfd` (design open question 3).
@@ -98,6 +103,7 @@ pub struct NativeDialogs {
     project_filter: String,
     drawing_filter: String,
     library_filter: String,
+    setup_sheet_filter: String,
 }
 
 impl NativeDialogs {
@@ -108,6 +114,7 @@ impl NativeDialogs {
             project_filter: strings.get(StrKey::AppDialogProjectFilter).to_owned(),
             drawing_filter: strings.get(StrKey::AppDialogDrawingFilter).to_owned(),
             library_filter: strings.get(StrKey::AppDialogLibraryFilter).to_owned(),
+            setup_sheet_filter: strings.get(StrKey::ExportSetupSheetFilter).to_owned(),
         }
     }
 }
@@ -157,6 +164,15 @@ impl Dialogs for NativeDialogs {
             None => dialog,
         }
         .pick_folder()
+    }
+
+    fn save_setup_sheet(&mut self, title: &str, dir: &Path, file_name: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(&self.setup_sheet_filter, &["html"])
+            .set_directory(dir)
+            .set_file_name(file_name)
+            .save_file()
     }
 }
 
@@ -313,6 +329,9 @@ pub(crate) enum Action {
     OpenExport,
     /// Something the export sheet asked for.
     Export(panels::export::Request),
+    /// Save the last export's setup sheet (the result's footer, File ▸
+    /// Save Setup Sheet…; capability 77b).
+    SaveSetupSheet,
 }
 
 impl Action {
@@ -365,6 +384,9 @@ pub struct Shell {
     import: Option<panels::import::Sheet>,
     /// The export sheet, while open (#547).
     export: Option<panels::export::Sheet>,
+    /// The setup sheet of this project's last export, for File ▸ Save
+    /// Setup Sheet… (capability 77b); gone when another project opens.
+    setup_sheet: Option<panels::export::SetupSheet>,
     /// `config.toml`'s `[estimate]`: the estimates' settings, as the CLI
     /// reads them (capability 78).
     estimate: EstimateConfig,
@@ -453,6 +475,7 @@ impl Shell {
             library: None,
             import: None,
             export: None,
+            setup_sheet: None,
             estimate,
             empty_dismissed: false,
             message,
@@ -592,6 +615,7 @@ impl Shell {
                 Ok(project) => {
                     self.app.reset(project);
                     self.empty_dismissed = false;
+                    self.setup_sheet = None;
                     self.viewport.fit_on_next_frame();
                 }
                 Err(e) => self.message = Some(e.to_string()),
@@ -630,6 +654,7 @@ impl Shell {
             Ok(opened) => {
                 self.app.prefs_mut().push_recent(path.to_path_buf());
                 self.empty_dismissed = false;
+                self.setup_sheet = None;
                 self.viewport.fit_on_next_frame();
                 let count = opened.notes.len().to_string();
                 self.message = Some(if opened.notes.is_empty() {
@@ -668,6 +693,7 @@ impl Shell {
             Example::Coaster => coaster().map(|project| self.app.reset(project)),
         };
         self.empty_dismissed = false;
+        self.setup_sheet = None;
         self.viewport.fit_on_next_frame();
         if let Err(reason) = result {
             self.message = Some(reason);
@@ -790,6 +816,7 @@ impl Shell {
                     }),
                     Purpose::New => self.app.new_from_drawing(model).map(|()| {
                         self.empty_dismissed = false;
+                        self.setup_sheet = None;
                         self.viewport.fit_on_next_frame();
                         self.strings()
                             .fmt(StrKey::AppMessageNewFromDrawing, &[("name", &name)])
@@ -1035,6 +1062,7 @@ impl Shell {
                 ctx.request_repaint();
             }
             Action::Export(request) => self.export_request(request),
+            Action::SaveSetupSheet => self.save_setup_sheet(),
             Action::PlaceTabs(op) => {
                 let notes = self.app.notes().len();
                 match self.app.place_tabs(&op) {
@@ -1045,6 +1073,35 @@ impl Shell {
                 }
             }
         }
+    }
+
+    /// Writes the last export's setup sheet where the user picks, beside
+    /// the programs by default, through the staged write (capability
+    /// 77b). Writing it is not an export: no program, no project change.
+    fn save_setup_sheet(&mut self) {
+        let Some(setup) = self.setup_sheet.clone() else {
+            return;
+        };
+        let strings = self.strings().clone();
+        let title = strings.get(StrKey::ExportSetupSheetTitle);
+        let Some(path) = self
+            .dialogs
+            .save_setup_sheet(title, &setup.dir, &setup.file_name)
+        else {
+            return;
+        };
+        let written = StagedFile::write(&path, setup.html.as_bytes())
+            .and_then(|staged| commit_all(vec![staged]));
+        self.message = Some(match written {
+            Ok(()) => strings.fmt(
+                StrKey::ExportSetupSheetSaved,
+                &[("path", &path.display().to_string())],
+            ),
+            Err(e) => strings.fmt(
+                StrKey::ExportSetupSheetFailed,
+                &[("reason", &e.to_string())],
+            ),
+        });
     }
 
     /// What the export sheet asked for.
@@ -1068,6 +1125,19 @@ impl Shell {
                 if let Some(sheet) = self.export.as_mut()
                     && let Some(message) = panels::export::export(sheet, &mut self.app)
                 {
+                    self.message = Some(message);
+                    self.setup_sheet = sheet.setup_sheet().cloned();
+                }
+            }
+            Request::Copied => {
+                let folder = self
+                    .setup_sheet
+                    .as_ref()
+                    .map(|s| s.dir.display().to_string());
+                if let Some(path) = folder {
+                    let message = self
+                        .strings()
+                        .fmt(StrKey::ExportResultCopied, &[("path", &path)]);
                     self.message = Some(message);
                 }
             }
@@ -1302,6 +1372,9 @@ pub(crate) struct FrameState<'a> {
     /// The estimates' settings, for the status bar's total and an
     /// operation row's hover (capability 78).
     pub estimate: &'a EstimateConfig,
+    /// Whether this project has been exported, so File ▸ Save Setup
+    /// Sheet… has a sheet to save.
+    pub setup_sheet: bool,
 }
 
 impl eframe::App for Shell {
@@ -1349,6 +1422,7 @@ impl eframe::App for Shell {
             pointer,
             warnings_open: self.warnings_open,
             estimate: &self.estimate,
+            setup_sheet: self.setup_sheet.is_some(),
         };
         focus::mark(ui, Region::Menu);
         menu::bar(ui, &state, &mut actions);

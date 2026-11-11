@@ -34,6 +34,8 @@ pub enum Icon {
     X,
     /// `circle-x`: an error.
     CircleX,
+    /// `circle-check`: a success, the export result's status.
+    CircleCheck,
     /// `triangle-alert`: a warning.
     TriangleAlert,
     /// `panel-left-open`: reopen the left column.
@@ -112,6 +114,7 @@ impl Icon {
             Self::Download => "download",
             Self::X => "x",
             Self::CircleX => "circle-x",
+            Self::CircleCheck => "circle-check",
             Self::TriangleAlert => "triangle-alert",
             Self::PanelLeftOpen => "panel-left-open",
             Self::PanelRightOpen => "panel-right-open",
@@ -159,6 +162,7 @@ impl Icon {
             Self::Download => '\u{e0b2}',
             Self::X => '\u{e1b2}',
             Self::CircleX => '\u{e084}',
+            Self::CircleCheck => '\u{e226}',
             Self::TriangleAlert => '\u{e193}',
             Self::PanelLeftOpen => '\u{e21d}',
             Self::PanelRightOpen => '\u{e434}',
@@ -193,7 +197,7 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 40] = [
+    pub const ALL: [Self; 41] = [
         Self::FolderOpen,
         Self::Save,
         Self::Undo,
@@ -205,6 +209,7 @@ impl Icon {
         Self::Download,
         Self::X,
         Self::CircleX,
+        Self::CircleCheck,
         Self::TriangleAlert,
         Self::PanelLeftOpen,
         Self::PanelRightOpen,

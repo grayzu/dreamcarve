@@ -25,16 +25,17 @@
 //! *Export* stages every program and moves them into place with
 //! `dreamcarve_shell::commit_all`, every one or none, after the CLI's
 //! check: never over the project file. The project file is never
-//! written. The result
-//! replaces the sheet's content in place: the CLI's report text and
-//! *Show in folder*. The header's `x`, Escape and the scrim close it; no
-//! Cancel (`experience.md`, section 13, item 9).
+//! written. The result (capability 77a, #625) replaces
+//! the sheet's content in place: Status, Files and Run instructions
+//! (`panels::result`), with *Save setup sheet…* (capability 77b) and
+//! *Done*. The header's `x`, Escape and the scrim close it; no Cancel
+//! (`experience.md`, section 13, item 9).
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use dc_app::export::{Boards, Options, Ready};
+use dc_app::export::{Boards, ExportResult, Options, Ready};
 use dc_app::project::{self as project_model, Offer};
 use dc_app::{App, SnapshotId, StrKey, Strings};
 use dc_job::{EstimateConfig, ProgramSplit, Tier};
@@ -76,6 +77,8 @@ pub(crate) enum Request {
     /// Close the sheet and open the Warnings drawer at the errors that
     /// block export.
     ShowErrors,
+    /// The result's folder was copied: say so.
+    Copied,
 }
 
 /// The plan being built off the UI thread, and what it was asked for.
@@ -84,11 +87,26 @@ struct Planning {
     results: Receiver<Ready>,
 }
 
-/// What an export wrote: the folder and the CLI's report.
+/// What an export wrote: its result and its setup sheet.
 #[derive(Debug, Clone, PartialEq)]
 struct Done {
     dir: PathBuf,
-    report: Vec<String>,
+    result: ExportResult,
+    setup: SetupSheet,
+    /// Whether *Run instructions* is open: closed when the result shows.
+    instructions: bool,
+}
+
+/// The setup sheet of the last export (capability 77b): the page, and
+/// where *Save setup sheet…* offers to put it, beside the programs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SetupSheet {
+    /// The page.
+    pub html: String,
+    /// The folder the programs went to.
+    pub dir: PathBuf,
+    /// `<stem>-setup.html`.
+    pub file_name: String,
 }
 
 /// The sheet's state between frames.
@@ -235,6 +253,11 @@ impl Sheet {
     pub(crate) fn dir(&self) -> Option<&Path> {
         self.dir.as_deref()
     }
+
+    /// The setup sheet of what this sheet wrote, once it has.
+    pub(crate) fn setup_sheet(&self) -> Option<&SetupSheet> {
+        self.done.as_ref().map(|done| &done.setup)
+    }
 }
 
 /// Writes the plan's files for `app`, every one or none, and remembers
@@ -252,10 +275,18 @@ pub(crate) fn export(sheet: &mut Sheet, app: &mut App) -> Option<String> {
         if ready.blocked().is_some() {
             return None;
         }
-        write(sheet, ready, app.source(), &strings)
+        write(sheet, ready, app.source(), &strings).map(|(dir, names)| {
+            let result = ready.result(&names, &dir, &strings);
+            let setup = SetupSheet {
+                html: ready.setup_sheet(&names, env!("CARGO_PKG_VERSION"), &strings),
+                dir: dir.clone(),
+                file_name: dc_job::setup_sheet::file_name(sheet.stem.trim()),
+            };
+            (dir, result, setup, names.len())
+        })
     };
     match written {
-        Ok((dir, report, count)) => {
+        Ok((dir, result, setup, count)) => {
             if let Some(source) = app.source().map(Path::to_path_buf) {
                 app.prefs_mut().export_dirs.insert(source, dir.clone());
             }
@@ -267,7 +298,12 @@ pub(crate) fn export(sheet: &mut Sheet, app: &mut App) -> Option<String> {
                 ],
             );
             sheet.failure = None;
-            sheet.done = Some(Done { dir, report });
+            sheet.done = Some(Done {
+                dir,
+                result,
+                setup,
+                instructions: false,
+            });
             Some(message)
         }
         Err(reason) => {
@@ -277,14 +313,14 @@ pub(crate) fn export(sheet: &mut Sheet, app: &mut App) -> Option<String> {
     }
 }
 
-/// Stages and commits `ready`'s files: the folder, the report and how
-/// many files, or why none was written.
+/// Stages and commits `ready`'s files: the folder and the file names,
+/// or why none was written.
 fn write(
     sheet: &Sheet,
     ready: &Ready,
     source: Option<&Path>,
     strings: &Strings,
-) -> Result<(PathBuf, Vec<String>, usize), String> {
+) -> Result<(PathBuf, Vec<String>), String> {
     let Some(dir) = sheet.dir.clone() else {
         return Err(strings.get(StrKey::ExportNoFolder).to_owned());
     };
@@ -310,9 +346,10 @@ fn write(
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
     commit_all(staged).map_err(|e| e.to_string())?;
-    let outputs: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
-    let report = ready.report(&outputs, None);
-    Ok((dir, report, files.len()))
+    // The result names each file as the CLI run in that folder does; the
+    // folder is its own line.
+    let names = files.into_iter().map(|(name, _)| name).collect();
+    Ok((dir, names))
 }
 
 /// A stem that names a file in the folder: not empty, no separator.
@@ -388,8 +425,10 @@ fn body(ui: &mut Ui, app: &App, display_name: &str, sheet: &mut Sheet, out: &mut
         strings.fmt(StrKey::ExportTitle, &[("name", display_name)])
     };
     header(ui, strings, &title, out);
-    if let Some(done) = &sheet.done {
-        result(ui, strings, done, out);
+    if let Some(done) = &mut sheet.done {
+        if crate::panels::result::show(ui, strings, &done.result, done.instructions, out) {
+            done.instructions = !done.instructions;
+        }
         return;
     }
     let busy = dc_app::export::waits(app) || sheet.planning(app);
@@ -832,35 +871,6 @@ fn blocking_line(ui: &mut Ui, strings: &Strings, line: &str, out: &mut Vec<Actio
             out.push(Action::Export(Request::ShowErrors));
         }
     });
-}
-
-/// The result, in place of the sheet's content: the CLI's report and
-/// *Show in folder*.
-fn result(ui: &mut Ui, strings: &Strings, done: &Done, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    ui.add_space(8.0);
-    let room = (ui.available_height() - FOOTER_PX - 24.0).max(160.0);
-    egui::ScrollArea::both()
-        .max_height(room)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for line in &done.report {
-                text(ui, line, TextStyle::Monospace, palette.text_primary);
-            }
-        });
-    ui.add_space(12.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), FOOTER_PX),
-        Layout::left_to_right(Align::Center),
-        |ui| {
-            let show = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::ExportShowInFolder))
-                .icon(Icon::FolderOpen, theme::ICON_SMALL_PX)
-                .height(FOOTER_PX);
-            if button(ui, show).clicked() {
-                out.push(Action::Export(Request::ShowInFolder));
-            }
-        },
-    );
 }
 
 /// `text` wrapped to the width.
