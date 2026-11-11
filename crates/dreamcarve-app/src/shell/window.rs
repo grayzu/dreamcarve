@@ -272,18 +272,20 @@ pub(crate) enum Action {
     CopyWarnings,
     /// Stop generation (the status bar's *Stop*).
     StopGeneration,
-    /// Regenerate every operation (View ▸ Regenerate All, the drawer).
+    /// Regenerate every operation (the status bar's *Regenerate all*,
+    /// offered after Stop).
     RegenerateAll,
     /// Open a page of the book (a warning code's chapter entry).
     OpenUrl(String),
-    /// What the Viewport draws of a toolpath (the Toolpaths card's
+    /// What the Viewport draws of a toolpath (the toolpath view's
     /// toggles): view state, kept in `gui.toml`.
     SetVisibility(dc_app::Visibility),
-    /// How the Viewport colours toolpaths (the card's colour mode).
+    /// How the Viewport colours toolpaths (the toolpath view's colour
+    /// mode).
     SetColour(dc_app::ColourMode),
-    /// Open every operation's eye (the card's *Show all*).
+    /// Open every operation's eye (the toolpath view's *Show all*).
     ShowAllToolpaths,
-    /// Close every operation's eye (the card's *Hide all*).
+    /// Close every operation's eye (the toolpath view's *Hide all*).
     HideAllToolpaths,
     /// Show an operation in the editor (its row clicked).
     EditOperation(dc_project::OperationId),
@@ -1027,7 +1029,8 @@ impl Shell {
             Action::FitView => {
                 let app = &self.app;
                 let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
-                self.app.view_mut().camera.fit(bounds);
+                let reserve = self.viewport.fit_reserve_px();
+                self.app.view_mut().camera.fit_beside(bounds, reserve);
                 self.viewport.mark_fitted(true);
                 ctx.request_repaint();
             }
