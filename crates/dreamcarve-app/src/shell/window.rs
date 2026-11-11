@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use dc_app::import::{DrawingFormat, Purpose};
+use dc_app::onboarding::Thumbnail;
 use dc_app::{App, Command, Prefs, StrKey, Strings};
 use dc_job::EstimateConfig;
 use dreamcarve_shell::{GuiPrefs, Paths, config, gui_prefs};
@@ -394,6 +395,9 @@ pub struct Shell {
     /// reads them (capability 78).
     estimate: EstimateConfig,
     empty_dismissed: bool,
+    /// The empty state's example thumbnails, built when the card first
+    /// shows and kept: never per frame.
+    thumbnails: Vec<(Example, Thumbnail)>,
     /// The status bar's last message.
     message: Option<String>,
     layout: Layout,
@@ -488,6 +492,7 @@ impl Shell {
             export: None,
             estimate,
             empty_dismissed: false,
+            thumbnails: Vec::new(),
             message,
             layout: Layout {
                 left: PanelShown::Strip,
@@ -527,6 +532,13 @@ impl Shell {
     #[must_use]
     pub fn drawn_toolpaths(&self) -> &[dc_project::OperationId] {
         self.viewport.drawn()
+    }
+
+    /// The empty state's example cards' thumbnails, in the cards' order:
+    /// empty until the card first shows.
+    #[must_use]
+    pub fn example_thumbnails(&self) -> &[(Example, Thumbnail)] {
+        &self.thumbnails
     }
 
     /// The application state, to change.
