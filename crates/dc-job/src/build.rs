@@ -385,12 +385,17 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
 }
 
 /// Whether validation already reports `warning`, so generation does not
-/// repeat it: `clearing_not_descending` (#406) and `inlay_plug_base_thin`
-/// (#434).
+/// repeat it: `clearing_not_descending` (#406), `inlay_plug_base_thin`
+/// (#434) and the drawn boundary's `inlay_margin_ignored`,
+/// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603).
 fn reported_by_validation(warning: &Warning) -> bool {
     matches!(
         warning,
-        Warning::ClearingNotDescending { .. } | Warning::InlayPlugBaseThin { .. }
+        Warning::ClearingNotDescending { .. }
+            | Warning::InlayPlugBaseThin { .. }
+            | Warning::InlayMarginIgnored { .. }
+            | Warning::InlayBoundaryEmpty { .. }
+            | Warning::InlayBoundaryHoleIgnored { .. }
     )
 }
 

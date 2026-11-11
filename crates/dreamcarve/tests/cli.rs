@@ -7315,6 +7315,144 @@ fn v25_project_exports_the_same_programs() {
     }
 }
 
+/// The tutorial project `dc.dcv` with its 90 x 60 mm frame (`i3`) as the
+/// drawn boundary of its Inlay, moved `shift_mm` right (acceptance 61m),
+/// written to `dir/dc.dcv`; `margin_mm` and `outline_rounding_mm` are
+/// cleared, or left set (8 and 10) when `keep_margin`.
+fn dc_with_boundary(dir: &Path, shift_mm: f64, keep_margin: bool) -> PathBuf {
+    let path = copy_fixture(dir, "dc.dcv", "dc.dcv");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("dcv readable"))
+            .expect("dcv is JSON");
+    let inlay = &mut value["operations"][0];
+    inlay["boundary"] = serde_json::json!(["i3"]);
+    if !keep_margin {
+        inlay["margin_mm"] = serde_json::Value::Null;
+        inlay["outline_rounding_mm"] = serde_json::Value::Null;
+    }
+    let frame = value["instances"]
+        .as_array_mut()
+        .expect("instances")
+        .iter_mut()
+        .find(|i| i["id"] == "i3")
+        .expect("the frame");
+    let e = frame["transform"][4].as_f64().expect("a translation");
+    frame["transform"][4] = serde_json::json!(e + shift_mm);
+    std::fs::write(&path, serde_json::to_string_pretty(&value).expect("json")).expect("written");
+    path
+}
+
+/// #603 (slice 21j): `check` and `export` describe a drawn band in the
+/// male's summary line, in place of the margin's: the boundary, the
+/// narrowest band and whether the edge is open, with its pass. A set
+/// `margin_mm` is `inlay_margin_ignored`, once; without a boundary the
+/// line has no band.
+#[test]
+fn boundary_summary_line() {
+    let dir = work_dir("boundary_summary_line");
+    dc_with_boundary(&dir, 3.0, false);
+    for command in ["check", "export"] {
+        let out = run(&dir, &[command, "dc.dcv", "--date", FIXED_DATE]);
+        assert_eq!(out.status.code(), Some(0), "{command}: {}", stderr(&out));
+        let report = stdout(&out);
+        let line = report
+            .lines()
+            .find(|l| l.contains("(male board)") && l.contains("band: drawn boundary"))
+            .unwrap_or_else(|| panic!("{command}: {report}"));
+        assert!(
+            line.contains("band: drawn boundary i3, narrowest band "),
+            "{line}"
+        );
+        assert!(line.contains(" mm (open edge, edge pass t2)"), "{line}");
+        assert!(!report.contains("inlay_margin_ignored"), "{report}");
+    }
+    dc_with_boundary(&dir, 3.0, true);
+    let out = run(&dir, &["check", "dc.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(
+        report.matches("inlay_margin_ignored").count(),
+        2,
+        "margin_mm and outline_rounding_mm, once each: {report}"
+    );
+    copy_fixture(&dir, "dc.dcv", "plain.dcv");
+    let out = run(&dir, &["check", "plain.dcv"]);
+    assert!(!stdout(&out).contains("band: drawn"), "{}", stdout(&out));
+}
+
+/// #603: `--preview` draws each boundary instance on the male board,
+/// mirrored with the design, as a dashed `male-boundary` outline under the
+/// male's runs, with a legend entry; a project with no boundary previews
+/// unchanged.
+#[test]
+fn preview_draws_the_boundary_on_the_male_board() {
+    let dir = work_dir("preview_draws_the_boundary_on_the_male_board");
+    let dcv = dc_with_boundary(&dir, 3.0, false);
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "dc.dcv",
+            "--preview",
+            "preview.svg",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let svg = std::fs::read_to_string(dir.join("preview.svg")).expect("preview written");
+    let boundaries = svg_elements(&svg, "male-boundary");
+    assert_eq!(boundaries.len(), 1, "{svg}");
+    assert!(
+        boundaries[0].contains("stroke-dasharray"),
+        "{}",
+        boundaries[0]
+    );
+    assert!(svg.contains("boundary (male board)"), "{svg}");
+    // Under the male's runs.
+    let at = svg.find("class=\"male-boundary\"").expect("drawn");
+    let first_male_run = svg.find("class=\"operation male\"").expect("male runs");
+    assert!(at < first_male_run, "the boundary is drawn first");
+    // The frame as drawn, mirrored about X = 55 on the male board.
+    let project = load_file(&dcv).project;
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| i.id.as_str() == "i3")
+        .expect("the frame");
+    let profile = &project.definitions[&instance.definition].profiles[0];
+    let drawn = instance
+        .transform
+        .apply_polyline(profile)
+        .expect("placed")
+        .bounds()
+        .expect("bounds");
+    let (min_x, max_x) = (110.0 - drawn.max.x, 110.0 - drawn.min.x);
+    let offset = project.stock.width_mm + 10.0;
+    let points = svg_path_points(svg_attr(boundaries[0], "d"));
+    let got_min = points.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
+    let got_max = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
+    assert!((got_min - (offset + min_x)).abs() < 0.01, "{got_min}");
+    assert!((got_max - (offset + max_x)).abs() < 0.01, "{got_max}");
+
+    // No boundary: unchanged.
+    copy_fixture(&dir, "dc.dcv", "plain.dcv");
+    let out = run(
+        &dir,
+        &[
+            "export",
+            "plain.dcv",
+            "--preview",
+            "plain.svg",
+            "--date",
+            FIXED_DATE,
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let plain = std::fs::read_to_string(dir.join("plain.svg")).expect("preview written");
+    assert!(!plain.contains("male-boundary"), "{plain}");
+    assert!(!plain.contains("boundary (male board)"), "{plain}");
+}
+
 /// #498: `export` and `check` group a project's programs by board.
 mod export {
     use super::*;

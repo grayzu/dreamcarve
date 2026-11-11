@@ -380,6 +380,17 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
     })
 }
 
+/// Placeholder until the drawn band is cut (#603).
+#[must_use]
+pub fn band_edge(
+    _project: &Project,
+    _op: &InlayOp,
+    _mirror: Option<dc_geometry::Transform>,
+    _design: &[Region],
+) -> Option<Vec<Region>> {
+    None
+}
+
 /// What is wrong with one of an Inlay's boundary instances (#449; design
 /// spec, "Drawn boundary"); validation reports each under its own code
 /// (`inlay_boundary_*`), at the entry it names.

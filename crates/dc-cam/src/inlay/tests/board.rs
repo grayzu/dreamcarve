@@ -83,7 +83,12 @@ fn small_cut_out_male() -> InlayOp {
 /// Every sample of every cutting move of `run` ([`cut_samples`]) whose
 /// tool, `radius_mm` round it, reaches past the stock's edge by more than
 /// `slack_mm`.
-fn off_stock(toolpath: &Toolpath, project: &Project, radius_mm: f64, slack_mm: f64) -> Vec<Point3> {
+pub(super) fn off_stock(
+    toolpath: &Toolpath,
+    project: &Project,
+    radius_mm: f64,
+    slack_mm: f64,
+) -> Vec<Point3> {
     let (w, h) = (project.stock.width_mm, project.stock.height_mm);
     cut_samples(toolpath)
         .into_iter()
@@ -97,7 +102,7 @@ fn off_stock(toolpath: &Toolpath, project: &Project, radius_mm: f64, slack_mm: f
 }
 
 /// The diameter of `run`'s tool in `project`, mm.
-fn diameter_of(run: &ToolRun, project: &Project) -> f64 {
+pub(super) fn diameter_of(run: &ToolRun, project: &Project) -> f64 {
     project
         .tools
         .iter()

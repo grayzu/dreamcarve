@@ -15,6 +15,7 @@
 
 mod board;
 mod boards;
+mod boundary;
 mod line_art;
 mod near;
 mod seats;
@@ -785,13 +786,11 @@ fn glue_gap_at_or_above_depth_is_an_error() {
     ));
 }
 
-/// #602: until the generator cuts a drawn band (slice 21j) a male that
-/// lists a boundary is refused, never cut with the margin's band: a
-/// boundary that has a problem is `InlayBoundary` with it, one that is
-/// sound `InlayBoundaryNotCut`. The female ignores the list, and an empty
-/// list changes nothing.
+/// #602: a male whose boundary has a problem is refused with it, as
+/// `InlayBoundary` (validation reports it first). The female ignores the
+/// list.
 #[test]
-fn a_boundary_is_refused_until_it_is_cut() {
+fn a_boundary_with_a_problem_is_refused() {
     let project = star_project(THICKNESS_MM);
     let nowhere = InlayOp {
         boundary: vec![dc_project::InstanceId::new("nowhere")],
