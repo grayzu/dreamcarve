@@ -19,12 +19,13 @@ use dc_project::{
 };
 
 use crate::command::Command;
+use crate::editor::targets::Editing;
 use crate::error::CommandError;
 use crate::generation::{Generation, Job, JobResult, SnapshotId, Work};
 use crate::history::LabelledHistory;
 use crate::import::DrawingImport;
 use crate::prefs::Prefs;
-use crate::scene::Scene;
+use crate::scene::{Scene, TargetMarks};
 use crate::selection::Selection;
 use crate::strings::{StrKey, Strings};
 use crate::view::{ColourMode, View, Visibility};
@@ -43,8 +44,15 @@ pub struct App {
     selection: Selection,
     /// The operation the editor shows: the Operations list's selection,
     /// independent of the shapes selected (`experience.md`, section 8,
-    /// "Selection"), so *Add selected* can read the Viewport's.
+    /// "Selection"), so *Add selection* can read the Viewport's.
     editing: Option<OperationId>,
+    /// The operation whose row the pointer is over in the list: its
+    /// targets are marked as a preview until the pointer leaves
+    /// (capability 67).
+    previewed: Option<OperationId>,
+    /// Target editing, while it is on: the draft of one operation's
+    /// targets (capability 67).
+    target_edit: Option<Editing>,
     view: View,
     generation: Generation,
     strings: Strings,
@@ -106,6 +114,8 @@ impl App {
             history: LabelledHistory::new(project),
             selection: Selection::Nothing,
             editing: None,
+            previewed: None,
+            target_edit: None,
             view,
             generation,
             strings,
@@ -205,6 +215,8 @@ impl App {
         self.history = LabelledHistory::new(project);
         self.selection = Selection::Nothing;
         self.editing = None;
+        self.previewed = None;
+        self.target_edit = None;
         self.source = path;
         self.saved = saved;
         self.notes.clear();
@@ -380,8 +392,12 @@ impl App {
     ///
     /// # Errors
     ///
-    /// The command's [`CommandError`]; nothing changes.
+    /// The command's [`CommandError`], or [`CommandError::EditingTargets`]
+    /// while an operation's targets are being edited; nothing changes.
     pub fn run(&mut self, command: Command) -> Result<String, CommandError> {
+        if self.target_edit.is_some() {
+            return Err(CommandError::EditingTargets);
+        }
         let after = command.apply(self.history.current())?;
         Ok(self.commit(&command, after))
     }
@@ -398,6 +414,9 @@ impl App {
     /// The command's [`CommandError`] (the operation is not a Profile,
     /// holds no request, or cannot be placed); nothing changes.
     pub fn place_tabs(&mut self, op: &OperationId) -> Result<String, CommandError> {
+        if self.target_edit.is_some() {
+            return Err(CommandError::EditingTargets);
+        }
         let (after, warnings) = dc_job::tabs::place_request(self.history.current(), op)?;
         let label = self.commit(&Command::PlaceTabs { op: op.clone() }, after);
         for w in &warnings {
@@ -463,16 +482,24 @@ impl App {
         label
     }
 
-    /// Steps back one snapshot; the label of the step undone.
+    /// Steps back one snapshot; the label of the step undone. Nothing
+    /// while an operation's targets are being edited.
     pub fn undo(&mut self) -> Option<String> {
+        if self.target_edit.is_some() {
+            return None;
+        }
         let label = self.history.undo()?;
         self.last_resets.clear();
         self.snapshot_changed();
         Some(label)
     }
 
-    /// Steps forward one snapshot; the label of the step redone.
+    /// Steps forward one snapshot; the label of the step redone. Nothing
+    /// while an operation's targets are being edited.
     pub fn redo(&mut self) -> Option<String> {
+        if self.target_edit.is_some() {
+            return None;
+        }
         let label = self.history.redo()?;
         self.last_resets.clear();
         self.snapshot_changed();
@@ -531,6 +558,11 @@ impl App {
         {
             self.editing = None;
         }
+        if let Some(id) = &self.previewed
+            && !project.operations.iter().any(|o| o.id() == id)
+        {
+            self.previewed = None;
+        }
         self.refresh_dirty();
         self.refresh_findings();
         self.rebuild_scene();
@@ -547,6 +579,43 @@ impl App {
             revision,
             &self.scene,
         );
+        self.refresh_marks();
+    }
+
+    /// Marks the targets the Viewport and the Design Tree show
+    /// (capability 67): the draft of a target edit, else the hovered
+    /// row's operation, else the one the editor shows. Called when one of
+    /// those, the snapshot or a result changes; never per frame.
+    fn refresh_marks(&mut self) {
+        let project = self.history.current();
+        let draft = self.target_edit.as_ref();
+        let marked = draft
+            .map(Editing::op)
+            .or(self.previewed.as_ref())
+            .or(self.editing.as_ref());
+        let marks = marked.and_then(|id| {
+            let (index, op) = project
+                .operations
+                .iter()
+                .enumerate()
+                .find(|(_, o)| o.id() == id)?;
+            // The toolpath's colour once there is one, else the row's.
+            let colour = self
+                .scene
+                .operation(id)
+                .filter(|o| !o.runs.is_empty())
+                .map_or(index, |o| o.colour);
+            let targets = match draft {
+                Some(editing) => editing.targets().to_vec(),
+                None => op.targets().to_vec(),
+            };
+            Some(TargetMarks {
+                op: id.clone(),
+                colour,
+                targets,
+            })
+        });
+        self.scene.mark_targets(marks);
     }
 
     /// What the Viewport draws and picks from: rebuilt when the snapshot
@@ -563,6 +632,7 @@ impl App {
         let revision = self.scene.revision().wrapping_add(1);
         self.scene
             .refresh_operations(self.history.current(), &self.generation, revision);
+        self.refresh_marks();
     }
 
     fn refresh_findings(&mut self) {
@@ -583,13 +653,18 @@ impl App {
     }
 
     /// Selects `selection`, less anything the project does not have. Not
-    /// an undo step.
+    /// an undo step. Nothing while an operation's targets are being
+    /// edited: a click there toggles a target ([`App::toggle_target`]).
     pub fn select(&mut self, selection: Selection) {
+        if self.target_edit.is_some() {
+            return;
+        }
         self.selection = selection;
         self.selection.retain_existing(self.history.current());
         if let Selection::Operation(id) = &self.selection {
             self.editing = Some(id.clone());
         }
+        self.refresh_marks();
     }
 
     /// The operation the editor shows, when one is (capability 66).
@@ -599,8 +674,13 @@ impl App {
     }
 
     /// Shows operation `id` in the editor, or none; the shapes selected
-    /// stay selected. Not an undo step.
+    /// stay selected, and the operation's targets are marked on the
+    /// Viewport and in the Design Tree (capability 67). Not an undo step.
+    /// Nothing while an operation's targets are being edited.
     pub fn edit(&mut self, id: Option<OperationId>) {
+        if self.target_edit.is_some() {
+            return;
+        }
         self.editing = id.filter(|id| {
             self.history
                 .current()
@@ -608,6 +688,117 @@ impl App {
                 .iter()
                 .any(|o| o.id() == id)
         });
+        self.refresh_marks();
+    }
+
+    /// Marks operation `id`'s targets as a preview while the pointer is
+    /// over its row in the list, or ends the preview (capability 67).
+    /// View state.
+    pub fn preview_targets(&mut self, id: Option<OperationId>) {
+        let id = id.filter(|id| {
+            self.history
+                .current()
+                .operations
+                .iter()
+                .any(|o| o.id() == id)
+        });
+        if self.previewed != id {
+            self.previewed = id;
+            self.refresh_marks();
+        }
+    }
+
+    /// The operation whose targets are previewed
+    /// ([`App::preview_targets`]).
+    #[must_use]
+    pub fn previewed(&self) -> Option<&OperationId> {
+        self.previewed.as_ref()
+    }
+
+    /// Enters target editing on operation `id` (capability 67; the
+    /// Targets row's *Edit*): the editor shows it, a draft of its targets
+    /// is held, and until [`App::commit_targets`] or
+    /// [`App::cancel_targets`] nothing is selected, run or undone.
+    /// Returns whether the project has the operation.
+    pub fn edit_targets(&mut self, id: &OperationId) -> bool {
+        let Some(op) = self
+            .history
+            .current()
+            .operations
+            .iter()
+            .find(|o| o.id() == id)
+        else {
+            return false;
+        };
+        self.target_edit = Some(Editing::of(op));
+        self.editing = Some(id.clone());
+        self.refresh_marks();
+        true
+    }
+
+    /// Target editing's draft, while it is on.
+    #[must_use]
+    pub fn target_editing(&self) -> Option<&Editing> {
+        self.target_edit.as_ref()
+    }
+
+    /// A click on shape `id` while target editing: in the draft or out of
+    /// it. The marks follow; nothing is written.
+    pub fn toggle_target(&mut self, id: &InstanceId) {
+        if let Some(editing) = self.target_edit.as_mut() {
+            editing.toggle(id);
+            self.refresh_marks();
+        }
+    }
+
+    /// A marquee over `ids` while target editing: each added to the
+    /// draft, or with Alt held (`remove`) taken out of it.
+    pub fn box_targets(&mut self, ids: &[InstanceId], remove: bool) {
+        if let Some(editing) = self.target_edit.as_mut() {
+            editing.boxed(ids, remove);
+            self.refresh_marks();
+        }
+    }
+
+    /// *Done*: ends target editing and writes the draft as one undo step
+    /// (*Set targets of "Panel"*), whose label is returned; `None` when
+    /// the draft is what the operation targets, or target editing is off.
+    ///
+    /// # Errors
+    ///
+    /// [`CommandError::FieldRefused`] if the file refuses the record;
+    /// target editing stays on, the draft as it was.
+    pub fn commit_targets(&mut self) -> Result<Option<String>, CommandError> {
+        let Some(editing) = self.target_edit.take() else {
+            return Ok(None);
+        };
+        let command = match editing.command(self.history.current()) {
+            Ok(command) => command,
+            Err(e) => {
+                self.target_edit = Some(editing);
+                return Err(e);
+            }
+        };
+        match command {
+            Some(command) => match self.run(command) {
+                Ok(label) => Ok(Some(label)),
+                Err(e) => {
+                    self.target_edit = Some(editing);
+                    Err(e)
+                }
+            },
+            None => {
+                self.refresh_marks();
+                Ok(None)
+            }
+        }
+    }
+
+    /// *Cancel*: ends target editing; the operation is as it was.
+    pub fn cancel_targets(&mut self) {
+        if self.target_edit.take().is_some() {
+            self.refresh_marks();
+        }
     }
 
     /// The eye of operation `id`'s row: its toolpath hidden or shown on

@@ -206,6 +206,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .stroke(egui::Stroke::NONE),
         )
         .show(ui, |ui| {
+            if state.inert() {
+                ui.disable();
+            }
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = 4.0;
                 let strings = state.app.strings();

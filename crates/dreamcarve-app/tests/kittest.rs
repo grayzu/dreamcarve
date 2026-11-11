@@ -2302,13 +2302,48 @@ fn field_commits_on_blur_not_per_keystroke() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Capability 67: the Targets group's *Pick…* arms the Viewport, and each
-/// click on a shape adds it to the operation's targets, one step each,
-/// without changing the selection, until Escape; after Escape a click
-/// selects as usual.
+/// The targets of operation `id`, as ids.
+fn targets_of(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> Vec<String> {
+    operation_of(h, id)
+        .targets()
+        .iter()
+        .map(|t| t.as_str().to_owned())
+        .collect()
+}
+
+/// A point of shape `id`'s outline on the window, where a click picks it.
+fn outline_point(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> egui::Pos2 {
+    let shape = h
+        .state()
+        .app()
+        .scene()
+        .shape(&dc_project::InstanceId::new(id))
+        .expect("the shape is drawn")
+        .clone();
+    common::on_screen(h, shape.flat[0].vertices()[0].point())
+}
+
+/// The target-editing bar's text for the Panel.
+const EDITING_PANEL: &str = "Editing targets of “Panel”: click shapes to add or remove them";
+
+/// The draft's targets while target editing is on, as ids.
+fn draft_of(h: &Harness<'_, dreamcarve_app::Shell>) -> Option<Vec<String>> {
+    h.state()
+        .app()
+        .target_editing()
+        .map(|e| e.targets().iter().map(|t| t.as_str().to_owned()).collect())
+}
+
+/// Slice 27 (#619; capability 67, acceptance 98): the Targets row's
+/// *Edit targets* enters target editing, and a bar across the top of the
+/// Viewport says so, with *Done* and *Cancel*. A click on a shape or on a
+/// Design Tree row toggles it in the draft; nothing is selected, nothing
+/// moves and nothing is written. Escape is *Cancel*: the file is as it
+/// was. Enter is *Done*: one undo step, `Set targets of "Panel"`. The
+/// mode over, a click selects again.
 #[test]
-fn pick_targets_until_escape() {
-    let dir = scratch("pick-targets");
+fn target_editing_bar_enter_is_done_escape_is_cancel() {
+    let dir = scratch("target-editing");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let dialogs = QueuedDialogs::default();
     let mut h = harness(
@@ -2316,60 +2351,287 @@ fn pick_targets_until_escape() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Border and squiggle")
-        .click();
+    select_only(&mut h, "i1");
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
     h.run();
-    let targets = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<String> {
-        operation_of(h, "op5")
-            .targets()
-            .iter()
-            .map(|t| t.as_str().to_owned())
-            .collect()
-    };
-    assert_eq!(targets(&h), ["i9", "i10"]);
-    // A point of each shape's outline, where a click picks it.
-    let outline_point = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| {
-        let shape = h
-            .state()
-            .app()
-            .scene()
-            .shape(&dc_project::InstanceId::new(id))
-            .expect("the shape is drawn")
-            .clone();
-        common::on_screen(h, shape.flat[0].vertices()[0].point())
-    };
-
-    h.get_by_label("Pick…").click();
-    h.run();
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i3"]);
+    assert!(h.query_by_label(EDITING_PANEL).is_none(), "no bar yet");
+    // The row says how many and which; there is no list of names.
+    h.get_by_label("2 shapes · pocket, island");
+    assert!(h.query_by_label("Remove island").is_none());
+    let start = h.state().app().project().clone();
     let selection = h.state().app().selection().clone();
-    let steps = undo_steps(&h);
+
+    h.get_by_label("Edit targets").click();
+    h.run();
+    h.get_by_label(EDITING_PANEL);
+    h.get_by_label("Done");
+    h.get_by_label("Cancel");
+    assert_eq!(draft_of(&h).unwrap(), ["i2", "i3"]);
+
+    // A click on the square adds it to the draft, and only to the draft.
     let square = outline_point(&h, "i4");
     common::click_at(&mut h, square, egui::Modifiers::NONE);
-    assert_eq!(
-        targets(&h),
-        ["i9", "i10", "i4"],
-        "the click adds the square"
-    );
-    let pocket = outline_point(&h, "i2");
-    common::click_at(&mut h, pocket, egui::Modifiers::NONE);
-    assert_eq!(targets(&h), ["i9", "i10", "i4", "i2"], "and the next one");
-    assert_eq!(undo_steps(&h), steps + 2, "one step each");
+    assert_eq!(draft_of(&h).unwrap(), ["i2", "i3", "i4"]);
+    h.get_by_label("3 shapes · pocket, island, square");
     assert_eq!(h.state().app().selection(), &selection, "nothing selected");
+    assert_eq!(h.state().app().project(), &start, "nothing written");
+    // A drag from a shape moves nothing: it is a marquee, which adds.
+    common::drag(
+        &mut h,
+        square,
+        square + egui::vec2(60.0, -40.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(h.state().app().project(), &start, "nothing moved");
+    assert_eq!(h.state().app().selection(), &selection);
+    assert_eq!(undo_steps(&h), 0);
+    // The rest of the window is inert: another operation's row, Undo's
+    // shortcut and Delete do nothing.
+    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    h.run();
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op1")
+    );
+    assert_eq!(h.state().app().project(), &start);
 
+    // Escape is Cancel.
     h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label(EDITING_PANEL).is_none(), "the bar went");
+    assert!(draft_of(&h).is_none());
+    assert_eq!(h.state().app().project(), &start, "Cancel writes nothing");
+    assert_eq!(undo_steps(&h), 0);
+    assert_eq!(h.state().app().selection(), &selection);
+
+    // Again: the square on the Viewport, the island's row in the tree,
+    // then Enter.
+    h.get_by_label("Edit targets").click();
+    h.run();
+    let square = outline_point(&h, "i4");
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
+    h.get_by_role_and_label(Role::TreeItem, "island").click();
+    h.run();
+    assert_eq!(draft_of(&h).unwrap(), ["i2", "i4"]);
+    assert_eq!(h.state().app().selection(), &selection, "the row toggled");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert!(h.query_by_label(EDITING_PANEL).is_none(), "the bar went");
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i4"]);
+    assert_eq!(undo_steps(&h), 1, "the whole edit is one step");
+    assert_eq!(h.state().app().undo_label(), Some("Set targets of “Panel”"));
+
+    // The bar's own buttons: Cancel, then Done.
+    h.get_by_label("Edit targets").click();
     h.run();
     let outline = outline_point(&h, "i1");
     common::click_at(&mut h, outline, egui::Modifiers::NONE);
-    assert_eq!(
-        targets(&h),
-        ["i9", "i10", "i4", "i2"],
-        "Escape ended picking"
-    );
+    h.get_by_label("Cancel").click();
+    h.run();
+    assert!(draft_of(&h).is_none());
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i4"]);
+    h.get_by_label("Edit targets").click();
+    h.run();
+    common::click_at(&mut h, outline, egui::Modifiers::NONE);
+    h.get_by_label("Done").click();
+    h.run();
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i4", "i1"]);
+    assert_eq!(undo_steps(&h), 2);
+
+    // The mode over, a click selects as usual.
+    let square = outline_point(&h, "i4");
+    common::click_at(&mut h, square, egui::Modifiers::NONE);
     assert_eq!(
         h.state().app().selection(),
-        &dc_app::Selection::Instances(vec![dc_project::InstanceId::new("i1")]),
-        "and a click selects again"
+        &dc_app::Selection::Instances(vec![dc_project::InstanceId::new("i4")]),
     );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 27 (#619; capability 67): in target editing a marquee adds every
+/// shape it touches and an Alt-marquee removes them; the Targets row's
+/// `⋯` menu holds *Use selection* and *Add selection*, one step each.
+#[test]
+fn target_marquee_and_the_selection_shortcuts() {
+    let dir = scratch("target-marquee");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.get_by_role_and_label(Role::ListItem, "Square recess")
+        .click();
+    h.run();
+    assert_eq!(targets_of(&h, "op2"), ["i4"]);
+
+    // A box round the four screw holes' first, from empty stock.
+    let hole = h
+        .state()
+        .app()
+        .scene()
+        .shape(&dc_project::InstanceId::new("i5"))
+        .expect("drawn")
+        .bounds
+        .expect("a box");
+    let from = common::on_screen(
+        &h,
+        dc_geometry::Point::new(hole.min.x - 1.0, hole.min.y - 1.0),
+    );
+    let to = common::on_screen(
+        &h,
+        dc_geometry::Point::new(hole.max.x + 1.0, hole.max.y + 1.0),
+    );
+    h.get_by_label("Edit targets").click();
+    h.run();
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    assert_eq!(draft_of(&h).unwrap(), ["i4", "i5"], "the marquee adds");
+    // Alt held: the same box removes.
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::ALT));
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.event(egui::Event::ModifiersChanged(egui::Modifiers::NONE));
+    assert_eq!(draft_of(&h).unwrap(), ["i4"], "the Alt-marquee removes");
+    common::drag(&mut h, from, to, egui::PointerButton::Primary);
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(targets_of(&h, "op2"), ["i4", "i5"]);
+    assert_eq!(undo_steps(&h), 1);
+
+    // The row's menu, with the island selected.
+    select_only(&mut h, "i3");
+    h.get_by_label("Target actions").click();
+    h.run();
+    h.get_by_label("Add selection").click();
+    h.run();
+    assert_eq!(targets_of(&h, "op2"), ["i4", "i5", "i3"]);
+    h.get_by_label("Target actions").click();
+    h.run();
+    h.get_by_label("Use selection").click();
+    h.run();
+    assert_eq!(targets_of(&h, "op2"), ["i3"]);
+    assert_eq!(undo_steps(&h), 3);
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Set targets of “Square recess”")
+    );
+
+    // The window's close button is Cancel first: the unsaved-changes
+    // sheet opens over a window that answers again.
+    h.get_by_label("Edit targets").click();
+    h.run();
+    assert!(draft_of(&h).is_some());
+    press_close(&mut h);
+    h.step();
+    h.run();
+    assert!(draft_of(&h).is_none(), "closing cancels target editing");
+    click_in_sheet(&mut h, "Cancel");
+    assert_eq!(targets_of(&h, "op2"), ["i3"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 27 (#619; capability 67): hovering an operation's row in the
+/// list previews its targets' marks, on the Viewport and in the Design
+/// Tree, until the pointer leaves; the selected operation's come back.
+#[test]
+fn hovering_an_operation_row_previews_its_targets() {
+    let dir = scratch("target-preview");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let marked = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .scene()
+            .targets()
+            .map(|m| (m.op.as_str().to_owned(), m.targets.len()))
+    };
+    assert_eq!(marked(&h), None, "no operation is selected");
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    assert_eq!(marked(&h), Some(("op1".to_owned(), 2)));
+
+    let row = h
+        .get_by_role_and_label(Role::ListItem, "Screw holes")
+        .rect()
+        .center();
+    h.event(egui::Event::PointerMoved(row));
+    h.run();
+    assert_eq!(marked(&h), Some(("op3".to_owned(), 4)), "previewed");
+    assert_eq!(
+        h.state()
+            .app()
+            .editing()
+            .map(dc_project::OperationId::as_str),
+        Some("op1"),
+        "the editor stays on the Panel"
+    );
+
+    let viewport = h.state().layout().viewport.center();
+    h.event(egui::Event::PointerMoved(viewport));
+    h.run();
+    assert_eq!(marked(&h), Some(("op1".to_owned(), 2)), "the pointer left");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 27 (#619; capability 57, acceptance 98): while an operation is
+/// selected the Design Tree's context menu offers *Add to "Panel"* on a
+/// row that is not its target and *Remove from "Panel"* on one that is,
+/// each one undo step; with no operation selected it offers neither.
+#[test]
+fn tree_context_menu_adds_and_removes_targets() {
+    let dir = scratch("tree-targets");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let (add, remove) = ("Add to “Panel”", "Remove from “Panel”");
+
+    // No operation selected: neither.
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_secondary();
+    h.run();
+    h.get_by_label("Rename");
+    assert!(h.query_by_label(add).is_none() && h.query_by_label(remove).is_none());
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    h.get_by_role_and_label(Role::ListItem, "Panel").click();
+    h.run();
+    h.get_by_role_and_label(Role::TreeItem, "square")
+        .click_secondary();
+    h.run();
+    assert!(
+        h.query_by_label(remove).is_none(),
+        "the square is no target"
+    );
+    h.get_by_label(add).click();
+    h.run();
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i3", "i4"]);
+    assert_eq!(h.state().app().undo_label(), Some("Set targets of “Panel”"));
+    assert_eq!(undo_steps(&h), 1);
+
+    h.get_by_role_and_label(Role::TreeItem, "island")
+        .click_secondary();
+    h.run();
+    assert!(h.query_by_label(add).is_none(), "the island is a target");
+    h.get_by_label(remove).click();
+    h.run();
+    assert_eq!(targets_of(&h, "op1"), ["i2", "i4"]);
+    assert_eq!(undo_steps(&h), 2);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

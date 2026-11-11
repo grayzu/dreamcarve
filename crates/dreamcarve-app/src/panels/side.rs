@@ -338,6 +338,11 @@ pub(crate) fn left(
                 .frame(frame(palette))
                 .show(ui, |ui| {
                     focus::mark(ui, Region::Properties);
+                    // Target editing leaves the Design Tree live and
+                    // nothing else (capability 67).
+                    if state.inert() {
+                        ui.disable();
+                    }
                     // Fill the panel, or it shrinks to its content.
                     ui.set_min_height(ui.available_height());
                     lower_half(ui, state, out);
@@ -398,6 +403,9 @@ pub(crate) fn right(
         .default_size(default)
         .frame(frame(palette))
         .show_collapsible(ui, &mut expanded, |ui| {
+            if state.inert() {
+                ui.disable();
+            }
             header(ui, strings.get(StrKey::AppPanelCam));
             tabs(ui, state, tab);
             match tab {

@@ -5,7 +5,10 @@
 //! (`docs/specs/phase-4/design.md`, "The Viewport renderer"; `experience.md`
 //! section 9): the grid and the axes over the stock, the stock's outline,
 //! the shapes, the hovered shape and the selection (drawn through a
-//! drag's preview transform while one is in progress). With an Inlay, the
+//! drag's preview transform while one is in progress). While an
+//! operation's targets are marked (slice 27, #619; capability 67) the
+//! shapes that are not its targets fade to 40 % and its targets draw over
+//! the toolpaths, 2 px in its colour ([`targets`]). With an Inlay, the
 //! stock layer carries the male board beside it too (slice 14, #543): its
 //! dashed outline and the design mirrored on it, and its male runs are
 //! drawn moved onto it by the Scene's display offset. Arcs are flattened
@@ -15,7 +18,7 @@
 //! emitted motion.
 
 use dc_app::Scene;
-use dc_app::scene::{SceneOperation, StrokeKind, strokes};
+use dc_app::scene::{SceneOperation, ShapeStyle, StrokeKind, strokes};
 use dc_app::view::{DepthRamp, Visibility};
 use dc_app::viewport::arrows::{ArrowCache, ArrowMove, ArrowVisibility, moves_of};
 use dc_app::viewport::grid::Grid;
@@ -87,7 +90,12 @@ fn push_path(out: &mut Vec<Segment>, points: &[Point], closed: bool, style: impl
 }
 
 /// `outline` flattened to `tolerance_mm` and pushed in `style`.
-fn push_outline(out: &mut Vec<Segment>, outline: &Polyline, tolerance_mm: f64, style: StyleId) {
+fn push_outline(
+    out: &mut Vec<Segment>,
+    outline: &Polyline,
+    tolerance_mm: f64,
+    style: impl Into<StyleWord>,
+) {
     let flat = outline.with_arcs_flattened(tolerance_mm);
     let points: Vec<Point> = flat.vertices().iter().map(|v| v.point()).collect();
     push_path(out, &points, flat.is_closed(), style);
@@ -189,7 +197,8 @@ fn push_placed(
 
 /// Every visible shape but those in `moving` (drawn by the selection layer
 /// where a drag will put them): closed solid, open dashed, locked in its
-/// grey.
+/// grey; while an operation's targets are marked, every shape that is not
+/// one of them at 40 % (capability 67).
 #[must_use]
 pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) -> Vec<Segment> {
     let mut out = Vec::new();
@@ -198,6 +207,7 @@ pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) ->
         .iter()
         .filter(|s| !moving.contains(&s.instance))
     {
+        let faded = scene.style(&shape.instance) == ShapeStyle::Faded;
         for outline in &shape.outlines {
             let style = match (shape.locked, outline.is_closed()) {
                 (false, true) => StyleId::Shape,
@@ -205,7 +215,51 @@ pub(crate) fn shapes(scene: &Scene, tolerance_mm: f64, moving: &[InstanceId]) ->
                 (true, true) => StyleId::Locked,
                 (true, false) => StyleId::LockedOpen,
             };
-            push_outline(&mut out, outline, tolerance_mm, style);
+            let word = if faded {
+                StyleWord::faded(style)
+            } else {
+                StyleWord::from(style)
+            };
+            push_outline(&mut out, outline, tolerance_mm, word);
+        }
+    }
+    out
+}
+
+/// The marked operation's targets (capability 67; `experience.md`,
+/// section 9): each visible target's outlines 2 px in the operation's
+/// colour, drawn over the toolpaths; one that is also among `selected`
+/// 4 px, a halo under its selection stroke. Those in `moving` are left
+/// to the selection layer, which draws them where a drag will put them.
+#[must_use]
+pub(crate) fn targets(
+    scene: &Scene,
+    tolerance_mm: f64,
+    selected: &[InstanceId],
+    moving: &[InstanceId],
+) -> Vec<Segment> {
+    let mut out = Vec::new();
+    let Some(marks) = scene.targets() else {
+        return out;
+    };
+    for id in marks.targets.iter().filter(|id| !moving.contains(id)) {
+        let Some(shape) = scene.shape(id) else {
+            continue;
+        };
+        let halo = selected.contains(id);
+        for outline in &shape.outlines {
+            let style = match (halo, outline.is_closed()) {
+                (false, true) => StyleId::Target,
+                (false, false) => StyleId::TargetOpen,
+                (true, true) => StyleId::TargetHalo,
+                (true, false) => StyleId::TargetHaloOpen,
+            };
+            push_outline(
+                &mut out,
+                outline,
+                tolerance_mm,
+                StyleWord::target(style, marks.colour),
+            );
         }
     }
     out
@@ -478,6 +532,78 @@ mod tests {
             let error_px = tolerance_mm(b) * px_per_mm;
             assert!(error_px < 0.5 + 1e-9, "{px_per_mm} px/mm: {error_px} px");
         }
+    }
+
+    /// The quick-start plaque, opened in place.
+    fn plaque() -> dc_app::App {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/plaque.dcv");
+        let bytes = std::fs::read(&path).unwrap_or_default();
+        let new = dc_app::App::new_project().unwrap_or_else(|e| panic!("{e}"));
+        let mut app = dc_app::App::new(new, dc_app::Strings::english(), dc_app::Prefs::default());
+        app.open(&bytes, None)
+            .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        app
+    }
+
+    /// Slice 27 (#619; capability 67): with the Panel marked, every
+    /// outline that is not one of its targets carries the faded bit and
+    /// its targets' do not, and the Targets layer holds the targets'
+    /// outlines alone, in the operation's colour, in the halo's rows for
+    /// one that is also selected. A target being dragged is the selection
+    /// layer's. With nothing marked nothing fades and the layer is empty.
+    #[test]
+    #[allow(clippy::panic, reason = "test code reports failure by panicking")]
+    fn marked_targets_fade_the_rest() {
+        let mut app = plaque();
+        let tolerance = tolerance_mm(band(4.0));
+        let id = |s: &str| InstanceId::new(s);
+        let count = |app: &dc_app::App, ids: &[InstanceId]| {
+            let rows = (StyleId::Selected, StyleId::SelectedOpen);
+            highlighted(app.scene(), ids, tolerance, rows, None).len()
+        };
+        let all = shapes(app.scene(), tolerance, &[]);
+        assert!(all.iter().all(|s| !s.style.is_faded()));
+        assert!(targets(app.scene(), tolerance, &[], &[]).is_empty());
+
+        app.edit(Some(dc_project::OperationId::new("op1")));
+        let panel = [id("i2"), id("i3")];
+        let marked = shapes(app.scene(), tolerance, &[]);
+        assert_eq!(marked.len(), all.len(), "the same outlines");
+        let plain = marked.iter().filter(|s| !s.style.is_faded()).count();
+        assert_eq!(plain, count(&app, &panel), "only the targets stay whole");
+        for (was, is) in all.iter().zip(&marked) {
+            assert_eq!(was.style.row(), is.style.row(), "a fade keeps the row");
+        }
+
+        let layer = targets(app.scene(), tolerance, &[], &[]);
+        assert_eq!(layer.len(), count(&app, &panel));
+        assert!(layer.iter().all(|s| s.style.row() == StyleId::Target as u32
+            && s.style.colour_slot() == 3
+            && !s.style.is_faded()));
+
+        // The island selected too: its outline in the halo's row.
+        let haloed = targets(app.scene(), tolerance, &[id("i3")], &[]);
+        let halo = haloed
+            .iter()
+            .filter(|s| s.style.row() == StyleId::TargetHalo as u32)
+            .count();
+        assert_eq!(halo, count(&app, &[id("i3")]));
+        assert_eq!(haloed.len(), layer.len());
+
+        // The island dragged: the selection layer draws it.
+        let dragged = targets(app.scene(), tolerance, &[id("i3")], &[id("i3")]);
+        assert_eq!(dragged.len(), count(&app, &[id("i2")]));
+
+        // An open target is dashed like any open shape.
+        app.edit(Some(dc_project::OperationId::new("op5")));
+        let engraved = targets(app.scene(), tolerance, &[], &[]);
+        assert!(
+            engraved
+                .iter()
+                .any(|s| s.style.row() == StyleId::TargetOpen as u32)
+        );
+        assert!(engraved.iter().all(|s| s.style.colour_slot() == 2));
     }
 
     /// A closed path closes once, and the dash phase runs on along it.

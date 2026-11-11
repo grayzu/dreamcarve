@@ -126,6 +126,11 @@ pub enum CommandError {
         /// Why the drawing cannot be imported with these options.
         reason: String,
     },
+    /// A change was asked while an operation's targets are being edited
+    /// (functional spec, capability 67: "nothing else can be selected or
+    /// moved"): *Done* or *Cancel* comes first.
+    #[error("finish editing the targets first: Done or Cancel")]
+    EditingTargets,
     /// *Fit stock to shapes* with no visible shape to fit round.
     #[error("there are no visible shapes to fit the stock to")]
     NoShapes,
