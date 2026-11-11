@@ -93,6 +93,11 @@ fn generate(project: &Project) -> Result<EmitOp, CamError> {
             let (toolpath, _) = generate_pocket(project, p)?;
             EmitOp::from((op, tool, toolpath))
         }
+        // Format 27 (#644): no property generates one yet (#646).
+        Operation::PhotoVCarve(p) => {
+            let (toolpath, _) = dc_cam::generate_photo(project, p)?;
+            EmitOp::from((op, tool, toolpath))
+        }
         Operation::Drill(d) => {
             let (drilled, _) = generate_drill(project, d)?;
             EmitOp::drill(op, tool, drilled)

@@ -9,6 +9,18 @@ phases bump the patch number.
 
 ### Added
 
+- **Bitmaps and the Photo V-Carve in the project file; format version 27
+  (#644).** A project can hold pictures, `bitmaps`, each an 8-bit
+  grayscale PNG stored in the file with its place and size on the stock,
+  and a `"photo_v_carve"` operation that names one. `check` validates
+  both: the V-bit, the maximum depth against the bit's cone, the start
+  plane, the line angle, spacing, sample step and retract, and each
+  picture's size, proportions and PNG, read from the PNG's header alone.
+  A picture is at most 8192 pixels on a side; one that is larger, is not
+  8-bit grayscale, or cannot be decoded is refused with a message that
+  names it, whatever the file claims. Nothing cuts a Photo V-Carve yet:
+  `check` and `export` stop at an enabled one and say so. Older files
+  upgrade with `"bitmaps": []` and export the same programs.
 - **`dreamcarve image-prep` and the import checks (#462, #598, #600, #601).**
   `init` now checks an SVG and prints a warning for each kind of problem
   it finds, changing nothing: overlapping outlines (`shapes_overlap`), a

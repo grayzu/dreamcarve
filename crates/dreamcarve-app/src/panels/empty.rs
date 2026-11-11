@@ -8,7 +8,7 @@
 //! 40-px rows, the three quick starts' examples, and a close button. The
 //! card goes when a shape arrives or on its close button.
 //!
-//! *Import a picture* waits for phase 3.4's picture import and says so;
+//! *Import a picture* waits for phase 3.5's picture import and says so;
 //! *Import a drawing* opens the Import drawing sheet on the chosen file.
 
 use dc_app::StrKey;

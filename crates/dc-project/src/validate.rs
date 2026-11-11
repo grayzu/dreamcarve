@@ -58,12 +58,14 @@
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
 
+use crate::bitmap::{BitmapColour, BitmapError, MAX_BITMAP_SIDE_PX};
 use crate::countersink::{COUNTERSINK_TOLERANCE_MM, countersink_depth_mm};
-use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::model::{
-    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp, EngraveOp,
-    Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PlacedTab, PocketOp,
-    ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp, VCarveStrategy,
+    Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, DrillCycle, DrillOp,
+    EngraveOp, Entry, InlayOp, LastPass, Lead, Operation, OriginXy, PeckRetract, PhotoVCarveOp,
+    PlacedTab, PocketOp, ProfileOp, Project, Side, TabPlacement, TabSpec, Tool, ToolKind, VCarveOp,
+    VCarveStrategy,
 };
 use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
@@ -901,6 +903,166 @@ pub enum Problem {
         /// The hole's place among its definition's profiles.
         profile: usize,
     },
+    /// A Photo V-Carve's `line_angle_deg` is not in [0, 180) (format 27;
+    /// capability 47). An error.
+    PhotoLineAngleRange {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The angle set, degrees.
+        line_angle_deg: f64,
+    },
+    /// A Photo V-Carve's `line_spacing_fraction` is not above 0 (format
+    /// 27). An error.
+    PhotoLineSpacingPositive {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The fraction set.
+        line_spacing_fraction: f64,
+    },
+    /// A Photo V-Carve's `line_spacing_fraction` is below 1, so its
+    /// grooves overlap at full depth (format 27). A warning.
+    PhotoLinesOverlap {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The fraction set.
+        line_spacing_fraction: f64,
+    },
+    /// A Photo V-Carve's `sample_mm` is not above 0 (format 27). An
+    /// error.
+    PhotoSamplePositive {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The value set, mm.
+        sample_mm: f64,
+    },
+    /// A Photo V-Carve's `stepover_retract_mm` is not above 0 (format
+    /// 27). An error.
+    PhotoRetractPositive {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The value set, mm.
+        stepover_retract_mm: f64,
+    },
+    /// A Photo V-Carve's `image` names no bitmap of the project (format
+    /// 27). An error.
+    PhotoUnknownBitmap {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The id it names.
+        bitmap: BitmapId,
+    },
+    /// A bitmap's footprint does not have its picture's proportions:
+    /// `height_mm / width_mm` is off `height_px / width_px` by more than
+    /// 1e-6, so the picture would be stretched (format 27). An error.
+    BitmapFootprintAspect {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The footprint's width, mm.
+        width_mm: f64,
+        /// The footprint's height, mm.
+        height_mm: f64,
+        /// The picture's width, pixels.
+        width_px: u32,
+        /// The picture's height, pixels.
+        height_px: u32,
+    },
+    /// A bitmap's `width_px` × `height_px` is not its PNG's size, read
+    /// from the PNG's header (format 27). An error.
+    BitmapPixelsMismatch {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The bitmap's `width_px`.
+        width_px: u32,
+        /// The bitmap's `height_px`.
+        height_px: u32,
+        /// The PNG's width, pixels.
+        png_width_px: u32,
+        /// The PNG's height, pixels.
+        png_height_px: u32,
+    },
+    /// A bitmap's PNG is not 8-bit grayscale, read from its header
+    /// (format 27): DreamCarve wrote it, so a hand edit is the only way.
+    /// An error.
+    BitmapNotGrayscale8 {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The PNG's colour type.
+        colour: BitmapColour,
+        /// The PNG's bits per sample.
+        bit_depth: u8,
+    },
+    /// Two bitmaps share an id (format 27). An error.
+    DuplicateBitmapId {
+        /// The id used twice.
+        id: BitmapId,
+    },
+    /// A bitmap's `width_px` or `height_px` is 0 (format 27). An error.
+    BitmapEmpty {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The bitmap's `width_px`.
+        width_px: u32,
+        /// The bitmap's `height_px`.
+        height_px: u32,
+    },
+    /// A bitmap's `width_px` or `height_px` is above
+    /// [`MAX_BITMAP_SIDE_PX`] (format 27; phase 3 security review M4). An
+    /// error.
+    BitmapTooLarge {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The bitmap's `width_px`.
+        width_px: u32,
+        /// The bitmap's `height_px`.
+        height_px: u32,
+        /// [`MAX_BITMAP_SIDE_PX`].
+        limit_px: u32,
+    },
+    /// A bitmap's `width_mm` or `height_mm` is not above 0 (format 27;
+    /// security review M4). An error.
+    BitmapFootprintPositive {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// The field at fault: `width_mm` or `height_mm`.
+        field: &'static str,
+        /// The value set, mm.
+        value: f64,
+    },
+    /// A bitmap's `png_base64` is not base64 or does not start with a PNG
+    /// header (format 27, #644). [`crate::load`] refuses such a file, so
+    /// only a project built in code gets here. An error.
+    BitmapUnreadable {
+        /// The bitmap.
+        bitmap: BitmapId,
+        /// Its display name.
+        name: String,
+        /// What is wrong with the picture.
+        reason: BitmapError,
+    },
 }
 
 /// The fastest feed or plunge rate a used tool may have, mm/min (#67).
@@ -998,6 +1160,20 @@ impl Problem {
             Self::InlayBoundaryCrossesDesign { .. } => "inlay_boundary_crosses_design",
             Self::InlayBoundaryEmpty { .. } => "inlay_boundary_empty",
             Self::InlayBoundaryHoleIgnored { .. } => "inlay_boundary_hole_ignored",
+            Self::PhotoLineAngleRange { .. } => "photo_line_angle_range",
+            Self::PhotoLineSpacingPositive { .. } => "photo_line_spacing_positive",
+            Self::PhotoLinesOverlap { .. } => "photo_lines_overlap",
+            Self::PhotoSamplePositive { .. } => "photo_sample_positive",
+            Self::PhotoRetractPositive { .. } => "photo_retract_positive",
+            Self::PhotoUnknownBitmap { .. } => "photo_unknown_bitmap",
+            Self::BitmapFootprintAspect { .. } => "bitmap_footprint_aspect",
+            Self::BitmapPixelsMismatch { .. } => "bitmap_pixels_mismatch",
+            Self::BitmapNotGrayscale8 { .. } => "bitmap_not_grayscale_8",
+            Self::DuplicateBitmapId { .. } => "duplicate_bitmap_id",
+            Self::BitmapEmpty { .. } => "bitmap_empty",
+            Self::BitmapTooLarge { .. } => "bitmap_too_large",
+            Self::BitmapFootprintPositive { .. } => "bitmap_footprint_positive",
+            Self::BitmapUnreadable { .. } => "bitmap_unreadable",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -1022,7 +1198,21 @@ impl Problem {
             | Self::InlayPlugBaseThin { .. }
             | Self::InlayMarginIgnored { .. }
             | Self::InlayBoundaryEmpty { .. }
-            | Self::InlayBoundaryHoleIgnored { .. } => Severity::Warning,
+            | Self::InlayBoundaryHoleIgnored { .. }
+            | Self::PhotoLinesOverlap { .. } => Severity::Warning,
+            Self::PhotoLineAngleRange { .. }
+            | Self::PhotoLineSpacingPositive { .. }
+            | Self::PhotoSamplePositive { .. }
+            | Self::PhotoRetractPositive { .. }
+            | Self::PhotoUnknownBitmap { .. }
+            | Self::BitmapFootprintAspect { .. }
+            | Self::BitmapPixelsMismatch { .. }
+            | Self::BitmapNotGrayscale8 { .. }
+            | Self::DuplicateBitmapId { .. }
+            | Self::BitmapEmpty { .. }
+            | Self::BitmapTooLarge { .. }
+            | Self::BitmapFootprintPositive { .. }
+            | Self::BitmapUnreadable { .. } => Severity::Error,
             Self::InlayBoundaryUnknown { .. }
             | Self::InlayBoundaryOpen { .. }
             | Self::InlayBoundaryIsTarget { .. }
@@ -1268,6 +1458,53 @@ impl Problem {
             } => Some(format!("operations[{operation}].boundary[{index}]")),
             Self::InlayBoundaryCrossesDesign { operation, .. } => {
                 Some(format!("operations[{operation}].boundary"))
+            }
+            Self::PhotoLineAngleRange { operation, .. } => {
+                Some(format!("operations[{operation}].line_angle_deg"))
+            }
+            Self::PhotoLineSpacingPositive { operation, .. }
+            | Self::PhotoLinesOverlap { operation, .. } => {
+                Some(format!("operations[{operation}].line_spacing_fraction"))
+            }
+            Self::PhotoSamplePositive { operation, .. } => {
+                Some(format!("operations[{operation}].sample_mm"))
+            }
+            Self::PhotoRetractPositive { operation, .. } => {
+                Some(format!("operations[{operation}].stepover_retract_mm"))
+            }
+            Self::PhotoUnknownBitmap { operation, .. } => {
+                Some(format!("operations[{operation}].image"))
+            }
+            Self::BitmapFootprintAspect { bitmap, .. } => {
+                Some(format!("bitmaps[{bitmap}].height_mm"))
+            }
+            Self::BitmapPixelsMismatch { bitmap, .. } => {
+                Some(format!("bitmaps[{bitmap}].width_px"))
+            }
+            Self::BitmapNotGrayscale8 { bitmap, .. } | Self::BitmapUnreadable { bitmap, .. } => {
+                Some(format!("bitmaps[{bitmap}].png_base64"))
+            }
+            Self::DuplicateBitmapId { .. } => None,
+            // At the side at fault, the width when both are.
+            Self::BitmapEmpty {
+                bitmap, width_px, ..
+            } => Some(if *width_px == 0 {
+                format!("bitmaps[{bitmap}].width_px")
+            } else {
+                format!("bitmaps[{bitmap}].height_px")
+            }),
+            Self::BitmapTooLarge {
+                bitmap,
+                width_px,
+                limit_px,
+                ..
+            } => Some(if width_px > limit_px {
+                format!("bitmaps[{bitmap}].width_px")
+            } else {
+                format!("bitmaps[{bitmap}].height_px")
+            }),
+            Self::BitmapFootprintPositive { bitmap, field, .. } => {
+                Some(format!("bitmaps[{bitmap}].{field}"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -1540,7 +1777,7 @@ impl fmt::Display for Problem {
                 included_angle_deg,
             } => write!(
                 f,
-                "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve, an Inlay or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth"
+                "tool `{name}` (`{tool}`) has an included angle of {included_angle_deg} degrees; a V-Carve, an Inlay, a Photo V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees to work out its depth"
             ),
             Self::VBitConeExceeded {
                 operation,
@@ -1812,6 +2049,124 @@ impl fmt::Display for Problem {
                 f,
                 "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
             ),
+            Self::PhotoLineAngleRange {
+                operation,
+                name,
+                line_angle_deg,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has line_angle_deg {line_angle_deg}; the grooves' angle is 0 degrees or more and less than 180"
+            ),
+            Self::PhotoLineSpacingPositive {
+                operation,
+                name,
+                line_spacing_fraction,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}; the spacing of the grooves is a fraction of a groove's width, above 0"
+            ),
+            Self::PhotoLinesOverlap {
+                operation,
+                name,
+                line_spacing_fraction,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has line_spacing_fraction {line_spacing_fraction}, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges"
+            ),
+            Self::PhotoSamplePositive {
+                operation,
+                name,
+                sample_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has sample_mm {sample_mm} mm; the distance between samples along a groove is above 0"
+            ),
+            Self::PhotoRetractPositive {
+                operation,
+                name,
+                stepover_retract_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has stepover_retract_mm {stepover_retract_mm} mm; the lift between grooves is above 0"
+            ),
+            Self::PhotoUnknownBitmap {
+                operation, bitmap, ..
+            } => write!(
+                f,
+                "operation `{operation}` carves bitmap `{bitmap}`, which does not exist"
+            ),
+            Self::BitmapFootprintAspect {
+                bitmap,
+                name,
+                width_mm,
+                height_mm,
+                width_px,
+                height_px,
+            } => {
+                let fitting_height_mm = width_mm * f64::from(*height_px) / f64::from(*width_px);
+                let fitting_width_mm = height_mm * f64::from(*width_px) / f64::from(*height_px);
+                write!(
+                    f,
+                    "bitmap `{name}` (`{bitmap}`) is {width_mm} × {height_mm} mm, which is not the shape of its {width_px} × {height_px} px picture; set height_mm to {fitting_height_mm} mm, or width_mm to {fitting_width_mm} mm, so the picture is not stretched"
+                )
+            }
+            Self::BitmapPixelsMismatch {
+                bitmap,
+                name,
+                width_px,
+                height_px,
+                png_width_px,
+                png_height_px,
+            } => write!(
+                f,
+                "bitmap `{name}` (`{bitmap}`) says it is {width_px} × {height_px} px, but its PNG is {png_width_px} × {png_height_px} px; set width_px and height_px to the PNG's size"
+            ),
+            Self::BitmapNotGrayscale8 {
+                bitmap,
+                name,
+                colour,
+                bit_depth,
+            } => write!(
+                f,
+                "the PNG of bitmap `{name}` (`{bitmap}`) is {bit_depth}-bit {colour}, not 8-bit grayscale; import the picture again so that DreamCarve converts it"
+            ),
+            Self::DuplicateBitmapId { id } => write!(f, "bitmap id `{id}` is used twice"),
+            Self::BitmapEmpty {
+                bitmap,
+                name,
+                width_px,
+                height_px,
+            } => write!(
+                f,
+                "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture has at least one pixel each way"
+            ),
+            Self::BitmapTooLarge {
+                bitmap,
+                name,
+                width_px,
+                height_px,
+                limit_px,
+            } => write!(
+                f,
+                "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture is at most {limit_px} px on a side, so scale it down before adding it"
+            ),
+            Self::BitmapFootprintPositive {
+                bitmap,
+                name,
+                field,
+                value,
+            } => write!(
+                f,
+                "bitmap `{name}` (`{bitmap}`) has {field} {value} mm; a picture's footprint has a width and a height above 0"
+            ),
+            Self::BitmapUnreadable {
+                bitmap,
+                name,
+                reason,
+            } => write!(
+                f,
+                "the picture of bitmap `{name}` (`{bitmap}`) cannot be read: {reason}"
+            ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
                 "operation `{name}` (`{operation}`) countersinks, so allow_tool_wider_than_hole has no effect: a countersink's V-bit is wider than the hole by design, and a hole at least as wide as the mouth is skipped instead; set it to false"
@@ -1898,6 +2253,11 @@ const STOCK_SIDE: &str = "a value greater than 0 and at most 6000 mm";
 const COORDINATE: &str = "a value from -6000 to 6000 mm";
 const COEFFICIENT: &str = "a value from -6000 to 6000";
 const REACH: &str = "a shape that stays within 6000 mm of the origin";
+const BITMAP_REACH: &str = "a footprint that stays within 6000 mm of the origin";
+/// How far a bitmap's `height_mm / width_mm` may be from its `height_px /
+/// width_px` (format 27): a ratio, so no unit. Wide enough for a
+/// footprint written to six decimals, far below one pixel of stretch.
+const BITMAP_ASPECT_TOLERANCE: f64 = 1e-6;
 // Spells out `MAX_RATE_MM_MIN`; a test checks they agree.
 const RATE: &str = "a value greater than 0 and at most 20000 mm/min";
 
@@ -1969,6 +2329,8 @@ impl Validator {
                 Operation::Drill(drill) if drill.enabled && drill.cycle.is_countersink() => {
                     Some(&drill.tool)
                 }
+                // And of an enabled Photo V-Carve (format 27).
+                Operation::PhotoVCarve(photo) if photo.enabled => Some(&photo.tool),
                 _ => None,
             })
             .collect();
@@ -1985,7 +2347,7 @@ impl Validator {
                 Operation::Pocket(op) => op.step_down_mm.is_none(),
                 Operation::Engrave(op) => op.step_down_mm.is_none(),
                 Operation::Bore(op) => op.pitch_mm.is_none(),
-                Operation::VCarve(_) | Operation::Inlay(_) => false,
+                Operation::VCarve(_) | Operation::Inlay(_) | Operation::PhotoVCarve(_) => false,
                 Operation::Drill(op) => matches!(
                     op.cycle,
                     DrillCycle::Peck {
@@ -2170,6 +2532,9 @@ impl Validator {
                 // An Inlay's values are its own (format 22): checked with
                 // the rest of its fields, in file order.
                 _ if matches!(op, Operation::Inlay(_)) => {}
+                // A Photo V-Carve's depth is its `max_depth_mm` (format
+                // 27), checked with the rest of its fields too.
+                _ if matches!(op, Operation::PhotoVCarve(_)) => {}
                 _ if matches!(op, Operation::Drill(drill) if drill.cycle.is_countersink()) => {}
                 Some(depth_mm) => self.positive(&format!("{at}.depth_mm"), depth_mm),
                 None => self.problems.push(Problem::OperationValueUnset {
@@ -2193,6 +2558,7 @@ impl Validator {
                 Operation::Engrave(op) => self.engrave(op, &at),
                 Operation::VCarve(carve) => self.v_carve(p, op, carve, tool, &at),
                 Operation::Inlay(inlay) => self.inlay(p, inlay, tool, &at),
+                Operation::PhotoVCarve(photo) => self.photo_v_carve(p, op, photo, tool, &at),
             }
         }
 
@@ -2327,6 +2693,18 @@ impl Validator {
             }
         }
 
+        // Format 27: the pictures, after the instances as the file holds
+        // them.
+        let mut seen = BTreeSet::new();
+        for bitmap in &p.bitmaps {
+            if !seen.insert(&bitmap.id) {
+                self.problems.push(Problem::DuplicateBitmapId {
+                    id: bitmap.id.clone(),
+                });
+            }
+            self.bitmap(bitmap);
+        }
+
         if !is_safe_file_extension(&p.post_processor.file_extension) {
             self.problems.push(Problem::UnsafeFileExtension {
                 extension: p.post_processor.file_extension.clone(),
@@ -2369,7 +2747,8 @@ impl Validator {
     /// in effect is at most the tool's diameter; corner relief has a tool
     /// step-down to step at; a V-bit engraves no deeper than its cone.
     fn enabled_operation(&mut self, op: &Operation, tool: Option<&Tool>, at: &str) {
-        if op.targets().is_empty() {
+        // A Photo V-Carve carves a bitmap, not instances (format 27).
+        if op.targets().is_empty() && !matches!(op, Operation::PhotoVCarve(_)) {
             self.problems.push(Problem::OperationHasNoTargets {
                 operation: op.id().clone(),
                 name: op.name().to_owned(),
@@ -2380,7 +2759,7 @@ impl Validator {
         // step-down to check. So are a countersink's (format 21,
         // [`Self::enabled_countersink`]): its V-bit is no unusual drill.
         let own_rules = match op {
-            Operation::VCarve(_) | Operation::Inlay(_) => true,
+            Operation::VCarve(_) | Operation::Inlay(_) | Operation::PhotoVCarve(_) => true,
             Operation::Drill(drill) => drill.cycle.is_countersink(),
             Operation::Profile(_)
             | Operation::Pocket(_)
@@ -2396,7 +2775,8 @@ impl Validator {
             Operation::Drill(_)
             | Operation::Engrave(_)
             | Operation::VCarve(_)
-            | Operation::Inlay(_) => false,
+            | Operation::Inlay(_)
+            | Operation::PhotoVCarve(_) => false,
         };
         if offsets_by_radius && !tool.cutter.is_flat() {
             self.problems.push(Problem::CutterNotFlat {
@@ -2435,7 +2815,10 @@ impl Validator {
         }
         let own_step_down = match op {
             Operation::Profile(op) => op.step_down_mm,
-            Operation::Bore(_) | Operation::VCarve(_) | Operation::Inlay(_) => None,
+            Operation::Bore(_)
+            | Operation::VCarve(_)
+            | Operation::Inlay(_)
+            | Operation::PhotoVCarve(_) => None,
             Operation::Pocket(op) => op.step_down_mm,
             Operation::Engrave(op) => op.step_down_mm,
             Operation::Drill(op) => match op.cycle {
@@ -2494,7 +2877,8 @@ impl Validator {
             | Operation::Bore(_)
             | Operation::Engrave(_)
             | Operation::VCarve(_)
-            | Operation::Inlay(_) => CornerRelief::None,
+            | Operation::Inlay(_)
+            | Operation::PhotoVCarve(_) => CornerRelief::None,
         };
         if relief != CornerRelief::None && tool.step_down_mm.is_none() && own_step_down.is_some() {
             self.problems.push(Problem::ReliefNeedsStepDown {
@@ -3023,8 +3407,272 @@ impl Validator {
         }
     }
 
+    /// A Photo V-Carve's own fields, in file order, then, when it is
+    /// enabled, its tool, start plane and cone rules (format 27;
+    /// `docs/specs/phase-3/design.md`, "Validation"). It has no targets:
+    /// `image` names a bitmap of the project.
+    fn photo_v_carve(
+        &mut self,
+        p: &Project,
+        op: &Operation,
+        photo: &PhotoVCarveOp,
+        tool: Option<&Tool>,
+        at: &str,
+    ) {
+        let (operation, name) = (&photo.id, &photo.name);
+        if !p.bitmaps.iter().any(|b| b.id == photo.image) {
+            self.problems.push(Problem::PhotoUnknownBitmap {
+                operation: operation.clone(),
+                name: name.clone(),
+                bitmap: photo.image.clone(),
+            });
+        }
+        // Never defaulted: unset is an error, as any operation's depth.
+        match photo.max_depth_mm {
+            Some(max_depth_mm) => self.positive(&format!("{at}.max_depth_mm"), max_depth_mm),
+            None => self.problems.push(Problem::OperationValueUnset {
+                operation: operation.clone(),
+                name: name.clone(),
+                field: "max_depth_mm",
+            }),
+        }
+        let start_depth_ok = self.finite(&format!("{at}.start_depth_mm"), photo.start_depth_mm);
+        if start_depth_ok && photo.start_depth_mm < 0.0 {
+            self.problems.push(Problem::StartDepthNegative {
+                operation: operation.clone(),
+                name: name.clone(),
+                start_depth_mm: photo.start_depth_mm,
+                field: "start_depth_mm",
+            });
+        }
+        let line_angle_deg = photo.line_angle_deg;
+        if self.finite(&format!("{at}.line_angle_deg"), line_angle_deg)
+            && !(0.0..180.0).contains(&line_angle_deg)
+        {
+            self.problems.push(Problem::PhotoLineAngleRange {
+                operation: operation.clone(),
+                name: name.clone(),
+                line_angle_deg,
+            });
+        }
+        let line_spacing_fraction = photo.line_spacing_fraction;
+        if self.finite(
+            &format!("{at}.line_spacing_fraction"),
+            line_spacing_fraction,
+        ) {
+            if line_spacing_fraction <= 0.0 {
+                self.problems.push(Problem::PhotoLineSpacingPositive {
+                    operation: operation.clone(),
+                    name: name.clone(),
+                    line_spacing_fraction,
+                });
+            } else if line_spacing_fraction < 1.0 {
+                self.problems.push(Problem::PhotoLinesOverlap {
+                    operation: operation.clone(),
+                    name: name.clone(),
+                    line_spacing_fraction,
+                });
+            }
+        }
+        if self.finite(&format!("{at}.sample_mm"), photo.sample_mm) && photo.sample_mm <= 0.0 {
+            self.problems.push(Problem::PhotoSamplePositive {
+                operation: operation.clone(),
+                name: name.clone(),
+                sample_mm: photo.sample_mm,
+            });
+        }
+        if self.finite(
+            &format!("{at}.stepover_retract_mm"),
+            photo.stepover_retract_mm,
+        ) && photo.stepover_retract_mm <= 0.0
+        {
+            self.problems.push(Problem::PhotoRetractPositive {
+                operation: operation.clone(),
+                name: name.clone(),
+                stepover_retract_mm: photo.stepover_retract_mm,
+            });
+        }
+        self.non_negative(
+            &format!("{at}.through_cut_allowance_mm"),
+            photo.through_cut_allowance_mm,
+        );
+        self.positive(&format!("{at}.safe_z_mm"), photo.safe_z_mm);
+        if photo.enabled {
+            self.enabled_photo_v_carve(p, op, photo, tool);
+        }
+    }
+
+    /// The rules of an enabled Photo V-Carve that need its tool and the
+    /// project (format 27), as a V-Carve's ([`Self::enabled_v_carve`]):
+    /// it carves with a V-bit; a start depth below the stock top is
+    /// cleared by an earlier floor that holds the picture's footprint, or
+    /// vouched for; and the bit's flanks engage no deeper than its cone,
+    /// counting the start depth unless such a floor is at it.
+    fn enabled_photo_v_carve(
+        &mut self,
+        p: &Project,
+        op: &Operation,
+        photo: &PhotoVCarveOp,
+        tool: Option<&Tool>,
+    ) {
+        self.carving_tools(p, &photo.id, &photo.name, tool, &[]);
+
+        let start_depth_mm = photo.start_depth_mm;
+        if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0) {
+            return;
+        }
+        let below_top = start_depth_mm > 0.0;
+        let cleared = if below_top {
+            cleared_start_plane(p, op)
+        } else {
+            None
+        };
+        if below_top && cleared.is_none() && !photo.start_plane_cleared_externally {
+            self.problems.push(Problem::StartDepthUncleared {
+                operation: photo.id.clone(),
+                name: photo.name.clone(),
+                start_depth_mm,
+                field: "start_depth_mm",
+            });
+        }
+        let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
+        let from_stock_top = below_top && !cleared_at_start;
+        let Some(tool) = tool else {
+            return;
+        };
+        let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+            return;
+        };
+        if !(included_angle_deg > 0.0
+            && included_angle_deg < 180.0
+            && tool.diameter_mm.is_finite()
+            && tool.diameter_mm > 0.0)
+        {
+            return;
+        }
+        let Some(max_depth_mm) = photo.max_depth_mm.filter(|d| d.is_finite() && *d > 0.0) else {
+            return;
+        };
+        let engagement_mm = max_depth_mm + if from_stock_top { start_depth_mm } else { 0.0 };
+        let cone_height_mm = tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
+        if engagement_mm > cone_height_mm + EPS_MM {
+            self.problems.push(Problem::VBitConeExceeded {
+                operation: photo.id.clone(),
+                name: photo.name.clone(),
+                tool_name: tool.name.clone(),
+                engagement_mm,
+                cone_height_mm,
+                from_stock_top,
+                field: "max_depth_mm",
+            });
+        }
+    }
+
+    /// A bitmap's fields, in file order (format 27;
+    /// `docs/specs/phase-3/design.md`, "Validation"; security review M4):
+    /// a size of at least one pixel each way and at most
+    /// [`MAX_BITMAP_SIDE_PX`]; a footprint above 0 each way, on the
+    /// coordinate range at both corners, with the picture's proportions;
+    /// and a PNG that is 8-bit grayscale of that size. Only the PNG's
+    /// header is read, never its image data, so the checks cost nothing
+    /// per pixel.
+    fn bitmap(&mut self, bitmap: &Bitmap) {
+        let at = format!("bitmaps[{}]", bitmap.id);
+        let (id, name) = (&bitmap.id, &bitmap.name);
+        let (width_px, height_px) = (bitmap.width_px, bitmap.height_px);
+        // The size as the bitmap states it: one mistake, reported once.
+        let empty = width_px == 0 || height_px == 0;
+        let too_large = width_px > MAX_BITMAP_SIDE_PX || height_px > MAX_BITMAP_SIDE_PX;
+        if empty {
+            self.problems.push(Problem::BitmapEmpty {
+                bitmap: id.clone(),
+                name: name.clone(),
+                width_px,
+                height_px,
+            });
+        } else if too_large {
+            self.problems.push(Problem::BitmapTooLarge {
+                bitmap: id.clone(),
+                name: name.clone(),
+                width_px,
+                height_px,
+                limit_px: MAX_BITMAP_SIDE_PX,
+            });
+        }
+        let size_ok = !empty && !too_large;
+
+        let x_ok = self.coordinate(&format!("{at}.x_mm"), bitmap.x_mm);
+        let y_ok = self.coordinate(&format!("{at}.y_mm"), bitmap.y_mm);
+        let mut sides_ok = true;
+        for (field, value, corner_ok, corner) in [
+            ("width_mm", bitmap.width_mm, x_ok, bitmap.x_mm),
+            ("height_mm", bitmap.height_mm, y_ok, bitmap.y_mm),
+        ] {
+            let field_at = format!("{at}.{field}");
+            if !self.finite(&field_at, value) {
+                sides_ok = false;
+            } else if value <= 0.0 {
+                self.problems.push(Problem::BitmapFootprintPositive {
+                    bitmap: id.clone(),
+                    name: name.clone(),
+                    field,
+                    value,
+                });
+                sides_ok = false;
+            } else if corner_ok && corner + value > MAX_COORDINATE_MM {
+                // The far corner; the near one is reported at `x_mm` or
+                // `y_mm`, and not again here.
+                self.out_of_range(field_at, corner + value, BITMAP_REACH);
+            }
+        }
+        if size_ok && sides_ok {
+            let footprint = bitmap.height_mm / bitmap.width_mm;
+            let pixels = f64::from(height_px) / f64::from(width_px);
+            if (footprint - pixels).abs() > BITMAP_ASPECT_TOLERANCE {
+                self.problems.push(Problem::BitmapFootprintAspect {
+                    bitmap: id.clone(),
+                    name: name.clone(),
+                    width_mm: bitmap.width_mm,
+                    height_mm: bitmap.height_mm,
+                    width_px,
+                    height_px,
+                });
+            }
+        }
+
+        // The stored picture, from its header alone.
+        match bitmap.read_header() {
+            Err(reason) => self.problems.push(Problem::BitmapUnreadable {
+                bitmap: id.clone(),
+                name: name.clone(),
+                reason,
+            }),
+            Ok(header) => {
+                if size_ok && (header.width_px, header.height_px) != (width_px, height_px) {
+                    self.problems.push(Problem::BitmapPixelsMismatch {
+                        bitmap: id.clone(),
+                        name: name.clone(),
+                        width_px,
+                        height_px,
+                        png_width_px: header.width_px,
+                        png_height_px: header.height_px,
+                    });
+                }
+                if !header.is_grayscale_8() {
+                    self.problems.push(Problem::BitmapNotGrayscale8 {
+                        bitmap: id.clone(),
+                        name: name.clone(),
+                        colour: header.colour,
+                        bit_depth: header.bit_depth,
+                    });
+                }
+            }
+        }
+    }
+
     /// The tool rules of enabled carve `operation` (`name`), a V-Carve
-    /// (format 20) or an Inlay (format 22): it carves with a V-bit, and
+    /// (format 20), an Inlay (format 22) or a Photo V-Carve (format 27,
+    /// which has no clearing passes): it carves with a V-bit, and
     /// each clearing pass cuts with a flat end mill no wider than the pass
     /// before (a warning).
     fn carving_tools(
@@ -3742,7 +4390,8 @@ mod tests {
         ToolKind,
     };
     use crate::test_support::{
-        profile_mut, sample_bore, sample_drill, sample_engrave, sample_pocket, sample_project,
+        photo_project, profile_mut, sample_bore, sample_drill, sample_engrave, sample_pocket,
+        sample_project,
     };
     use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
@@ -6527,7 +7176,25 @@ mod tests {
             assert_eq!(problems[0].severity(), Severity::Error);
             assert_eq!(problems[0].code(), "v_carve_needs_v_bit");
             assert_eq!(problems[0].field().as_deref(), Some("operations[o6].tool"));
+
+            // A Photo V-Carve's depth follows the angle too (format 27).
+            let mut p = photo_project();
+            p.tools[1].cutter = cutter.clone();
+            let problems = validate(&p);
+            assert_eq!(
+                problems,
+                vec![Problem::VCarveNeedsVBit {
+                    operation: OperationId::new("o8"),
+                    name: "Photo V-Carve".into(),
+                    tool: ToolId::new("t2"),
+                    tool_name: "90° V-bit".into(),
+                    cutter: cutter.describe(),
+                }],
+                "{cutter:?}"
+            );
+            assert_eq!(problems[0].field().as_deref(), Some("operations[o8].tool"));
         }
+        assert_eq!(validate(&photo_project()), vec![]);
     }
 
     /// A V-bit a V-Carve uses must have an angle above 0° and below 180°:
@@ -6893,6 +7560,53 @@ mod tests {
         // From the stock top, nothing needs clearing.
         let p = carve_project(|carve| carve.flat_depth_mm = Some(1.0));
         assert_eq!(validate(&p), vec![]);
+
+        // A Photo V-Carve (format 27): its footprint is the picture's
+        // rectangle, 40 × 20 mm at (15, 15), inside the sample rectangle
+        // the Pocket clears.
+        let p = photo_with(|photo| photo.start_depth_mm = 1.0);
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::StartDepthUncleared {
+                operation: OperationId::new("o8"),
+                name: "Photo V-Carve".into(),
+                start_depth_mm: 1.0,
+                field: "start_depth_mm",
+            }]
+        );
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o8].start_depth_mm")
+        );
+
+        let mut acknowledged = p.clone();
+        photo_mut(&mut acknowledged).start_plane_cleared_externally = true;
+        assert_eq!(validate(&acknowledged), vec![]);
+
+        let mut pocketed = p.clone();
+        pocketed.operations.insert(1, rectangle_pocket(1.0));
+        assert_eq!(validate(&pocketed), vec![]);
+
+        let mut disabled = pocketed.clone();
+        if let Some(Operation::Pocket(pocket)) = disabled.operations.get_mut(1) {
+            pocket.enabled = false;
+        }
+        assert_eq!(uncleared(&disabled).len(), 1, "{:?}", validate(&disabled));
+
+        let mut after = p.clone();
+        after.operations.push(rectangle_pocket(1.0));
+        assert_eq!(uncleared(&after).len(), 1, "{:?}", validate(&after));
+
+        // The picture moved so its right half is past the Pocket's wall.
+        let mut outside = pocketed.clone();
+        outside.bitmaps[0].x_mm = 40.0;
+        assert_eq!(uncleared(&outside).len(), 1, "{:?}", validate(&outside));
+
+        // A Photo V-Carve that names no bitmap has no footprint to hold.
+        let mut unknown = pocketed.clone();
+        photo_mut(&mut unknown).image = crate::ids::BitmapId::new("b9");
+        assert_eq!(uncleared(&unknown).len(), 1, "{:?}", validate(&unknown));
     }
 
     /// Security review H4: with the start plane only vouched for, the bit's
@@ -8665,5 +9379,804 @@ mod tests {
             inlay.boundary = vec![InstanceId::new("i1")];
         });
         assert_eq!(validate(&roomy), vec![]);
+    }
+
+    // Format 27: bitmaps and the Photo V-Carve (`docs/specs/phase-3/
+    // design.md`, "Validation"; security review M4).
+
+    /// The Photo V-Carve `o8` of [`photo_project`], to edit.
+    fn photo_mut(p: &mut Project) -> &mut crate::model::PhotoVCarveOp {
+        p.operations
+            .iter_mut()
+            .find_map(|op| match op {
+                Operation::PhotoVCarve(op) => Some(op),
+                _ => None,
+            })
+            .expect("a Photo V-Carve")
+    }
+
+    /// [`photo_project`] with its Photo V-Carve as `edit` leaves it.
+    fn photo_with(edit: impl FnOnce(&mut crate::model::PhotoVCarveOp)) -> Project {
+        let mut p = photo_project();
+        edit(photo_mut(&mut p));
+        p
+    }
+
+    /// [`photo_project`] with its bitmap `b1` as `edit` leaves it.
+    fn bitmap_with(edit: impl FnOnce(&mut crate::model::Bitmap)) -> Project {
+        let mut p = photo_project();
+        edit(&mut p.bitmaps[0]);
+        p
+    }
+
+    /// The one problem of `p`, an error with `code`, whose field is
+    /// `field` and locates in the saved file.
+    fn only_error(p: &Project, code: &str, field: &str) -> Problem {
+        let problems = validate(p);
+        only_located(p, &problems, Severity::Error);
+        assert_eq!(problems[0].code(), code, "{problems:?}");
+        assert_eq!(problems[0].field().as_deref(), Some(field), "{problems:?}");
+        problems[0].clone()
+    }
+
+    /// Capability 47: a `max_depth_mm` deeper than the bit's cone is tall
+    /// would cut with the shank. The 90°, 6.35 mm bit's cone is 3.175 mm.
+    /// The engagement sum applies as to a V-Carve: a start depth the user
+    /// only vouches for counts from the stock top, one a Pocket clears
+    /// does not.
+    #[test]
+    fn photo_max_depth_beyond_cone_is_error() {
+        let p = photo_with(|photo| photo.max_depth_mm = Some(3.5));
+        let (engagement_mm, cone_height_mm, from_stock_top, field) = cone_exceeded(&validate(&p));
+        assert!(approx_eq(engagement_mm, 3.5, 1e-9), "{engagement_mm}");
+        assert!(approx_eq(cone_height_mm, 3.175, 1e-9), "{cone_height_mm}");
+        assert!(!from_stock_top);
+        assert_eq!(field.as_deref(), Some("operations[o8].max_depth_mm"));
+        let message = validate(&p)[0].to_string();
+        assert!(message.contains("3.175 mm"), "{message}");
+        assert_eq!(validate(&p)[0].code(), "v_bit_cone_exceeded");
+
+        for (max_depth_mm, angle) in [(3.0, 90.0), (3.175, 90.0), (3.5, 60.0)] {
+            let mut p = photo_with(|photo| photo.max_depth_mm = Some(max_depth_mm));
+            p.tools[1].cutter = ToolKind::VBit {
+                included_angle_deg: angle,
+            };
+            assert_eq!(validate(&p), vec![], "{max_depth_mm} mm, {angle}°");
+        }
+
+        // 2 + 1.5 mm from the stock top, the start plane only vouched for.
+        let vouched = photo_with(|photo| {
+            photo.start_depth_mm = 2.0;
+            photo.start_plane_cleared_externally = true;
+        });
+        let (engagement_mm, _, from_stock_top, field) = cone_exceeded(&validate(&vouched));
+        assert!(approx_eq(engagement_mm, 3.5, 1e-9), "{engagement_mm}");
+        assert!(from_stock_top);
+        assert_eq!(field.as_deref(), Some("operations[o8].max_depth_mm"));
+        // Cleared by a Pocket at the start depth: the maximum depth alone.
+        let mut pocketed = vouched.clone();
+        photo_mut(&mut pocketed).start_plane_cleared_externally = false;
+        pocketed.operations.insert(1, rectangle_pocket(2.0));
+        assert_eq!(validate(&pocketed), vec![]);
+
+        // The maximum depth is a depth, more than 0.
+        let p = photo_with(|photo| photo.max_depth_mm = Some(0.0));
+        assert_eq!(
+            validate(&p),
+            vec![Problem::OutOfRange {
+                field: "operations[o8].max_depth_mm".into(),
+                value: 0.0,
+                expected: POSITIVE,
+            }]
+        );
+    }
+
+    /// The maximum depth is never defaulted: `null` is
+    /// `operation_value_unset`, one of the values `init` lists.
+    #[test]
+    fn photo_max_depth_unset_is_error() {
+        let p = photo_with(|photo| photo.max_depth_mm = None);
+        let problem = only_error(&p, "operation_value_unset", "operations[o8].max_depth_mm");
+        assert_eq!(
+            problem,
+            Problem::OperationValueUnset {
+                operation: OperationId::new("o8"),
+                name: "Photo V-Carve".into(),
+                field: "max_depth_mm",
+            }
+        );
+        assert!(problem.is_unset_value());
+        assert_eq!(
+            problem.to_string(),
+            "operations[o8].max_depth_mm is not set (mm) for operation `Photo V-Carve`"
+        );
+    }
+
+    /// Capability 47: the line angle is in [0, 180); the spacing, the
+    /// sample step and the step-over retract are above 0. Each has its own
+    /// code and its own field.
+    #[test]
+    fn photo_angle_and_spacing_ranges() {
+        for angle in [180.0, -1.0, 360.0] {
+            let p = photo_with(|photo| photo.line_angle_deg = angle);
+            let problem = only_error(
+                &p,
+                "photo_line_angle_range",
+                "operations[o8].line_angle_deg",
+            );
+            assert_eq!(
+                problem,
+                Problem::PhotoLineAngleRange {
+                    operation: OperationId::new("o8"),
+                    name: "Photo V-Carve".into(),
+                    line_angle_deg: angle,
+                },
+                "{angle}"
+            );
+        }
+        for angle in [0.0, 90.0, 179.999] {
+            let p = photo_with(|photo| photo.line_angle_deg = angle);
+            assert_eq!(validate(&p), vec![], "{angle}");
+        }
+
+        for fraction in [0.0, -0.5] {
+            let p = photo_with(|photo| photo.line_spacing_fraction = fraction);
+            let problem = only_error(
+                &p,
+                "photo_line_spacing_positive",
+                "operations[o8].line_spacing_fraction",
+            );
+            assert_eq!(
+                problem,
+                Problem::PhotoLineSpacingPositive {
+                    operation: OperationId::new("o8"),
+                    name: "Photo V-Carve".into(),
+                    line_spacing_fraction: fraction,
+                },
+                "{fraction}"
+            );
+        }
+
+        for sample_mm in [0.0, -0.25] {
+            let p = photo_with(|photo| photo.sample_mm = sample_mm);
+            let problem = only_error(&p, "photo_sample_positive", "operations[o8].sample_mm");
+            assert_eq!(
+                problem,
+                Problem::PhotoSamplePositive {
+                    operation: OperationId::new("o8"),
+                    name: "Photo V-Carve".into(),
+                    sample_mm,
+                },
+                "{sample_mm}"
+            );
+        }
+
+        for retract_mm in [0.0, -1.0] {
+            let p = photo_with(|photo| photo.stepover_retract_mm = retract_mm);
+            let problem = only_error(
+                &p,
+                "photo_retract_positive",
+                "operations[o8].stepover_retract_mm",
+            );
+            assert_eq!(
+                problem,
+                Problem::PhotoRetractPositive {
+                    operation: OperationId::new("o8"),
+                    name: "Photo V-Carve".into(),
+                    stepover_retract_mm: retract_mm,
+                },
+                "{retract_mm}"
+            );
+        }
+
+        // A disabled Photo V-Carve's values are checked all the same.
+        let p = photo_with(|photo| {
+            photo.enabled = false;
+            photo.sample_mm = 0.0;
+        });
+        let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+        assert!(codes.contains(&"photo_sample_positive"), "{codes:?}");
+    }
+
+    /// Capability 47: grooves closer than one groove width overlap, which
+    /// is allowed and worth saying: a warning, never an error.
+    #[test]
+    fn photo_spacing_below_one_warns() {
+        let p = photo_with(|photo| photo.line_spacing_fraction = 0.9);
+        let problems = validate(&p);
+        let message = only_located(&p, &problems, Severity::Warning);
+        assert_eq!(
+            problems,
+            vec![Problem::PhotoLinesOverlap {
+                operation: OperationId::new("o8"),
+                name: "Photo V-Carve".into(),
+                line_spacing_fraction: 0.9,
+            }]
+        );
+        assert_eq!(problems[0].code(), "photo_lines_overlap");
+        assert!(!problems[0].is_error());
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o8].line_spacing_fraction")
+        );
+        assert!(message.contains("0.9"), "{message}");
+        for fraction in [1.0, 1.1, 3.0] {
+            let p = photo_with(|photo| photo.line_spacing_fraction = fraction);
+            assert_eq!(validate(&p), vec![], "{fraction}");
+        }
+    }
+
+    /// A Photo V-Carve carves one bitmap of the project, named by its id.
+    #[test]
+    fn photo_names_a_missing_bitmap() {
+        use crate::ids::BitmapId;
+        let p = photo_with(|photo| photo.image = BitmapId::new("b9"));
+        let problem = only_error(&p, "photo_unknown_bitmap", "operations[o8].image");
+        assert_eq!(
+            problem,
+            Problem::PhotoUnknownBitmap {
+                operation: OperationId::new("o8"),
+                name: "Photo V-Carve".into(),
+                bitmap: BitmapId::new("b9"),
+            }
+        );
+        assert_eq!(
+            problem.to_string(),
+            "operation `o8` carves bitmap `b9`, which does not exist"
+        );
+        // An instance's id is not a bitmap's.
+        let p = photo_with(|photo| photo.image = BitmapId::new("i1"));
+        only_error(&p, "photo_unknown_bitmap", "operations[o8].image");
+        // A dangling reference is reported for a disabled operation too.
+        let p = photo_with(|photo| {
+            photo.enabled = false;
+            photo.image = BitmapId::new("b9");
+        });
+        let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+        assert!(codes.contains(&"photo_unknown_bitmap"), "{codes:?}");
+    }
+
+    /// The rules every operation follows hold for a Photo V-Carve as for a
+    /// V-Carve: its tool exists and has its rates, its angle is a V-bit's,
+    /// its safe Z is above 0, its allowance and start depth 0 or more. It
+    /// has no targets, and that is not `operation_has_no_targets`.
+    #[test]
+    fn photo_follows_the_rules_of_a_used_tool() {
+        let clean = photo_project();
+        assert_eq!(validate(&clean), vec![]);
+        assert!(clean.operations[1].targets().is_empty());
+
+        let mut p = photo_project();
+        p.tools[1].feed_mm_min = None;
+        p.tools[1].plunge_mm_min = None;
+        let fields: Vec<_> = validate(&p)
+            .into_iter()
+            .map(|problem| match problem {
+                Problem::ToolValueUnset { tool, field, .. } => (tool, field),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(
+            fields,
+            [
+                (ToolId::new("t2"), "feed_mm_min"),
+                (ToolId::new("t2"), "plunge_mm_min"),
+            ]
+        );
+
+        let p = photo_with(|photo| photo.tool = ToolId::new("t9"));
+        let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+        assert_eq!(codes, ["unused_tool", "dangling_tool"]);
+
+        for angle in [0.0, 180.0] {
+            let mut p = photo_project();
+            p.tools[1].cutter = ToolKind::VBit {
+                included_angle_deg: angle,
+            };
+            assert_eq!(
+                validate(&p),
+                vec![Problem::VBitAngleRange {
+                    tool: ToolId::new("t2"),
+                    name: "90° V-bit".into(),
+                    included_angle_deg: angle,
+                }],
+                "{angle}"
+            );
+        }
+
+        let p = photo_with(|photo| photo.safe_z_mm = 0.0);
+        only_error(&p, "out_of_range", "operations[o8].safe_z_mm");
+        let p = photo_with(|photo| photo.through_cut_allowance_mm = -1.0);
+        only_error(
+            &p,
+            "out_of_range",
+            "operations[o8].through_cut_allowance_mm",
+        );
+        let p = photo_with(|photo| photo.start_depth_mm = -1.0);
+        let problem = only_error(&p, "start_depth_negative", "operations[o8].start_depth_mm");
+        assert_eq!(
+            problem,
+            Problem::StartDepthNegative {
+                operation: OperationId::new("o8"),
+                name: "Photo V-Carve".into(),
+                start_depth_mm: -1.0,
+                field: "start_depth_mm",
+            }
+        );
+    }
+
+    /// The footprint keeps the picture's proportions: `height_mm /
+    /// width_mm` is `height_px / width_px` within 1e-6, so a picture is
+    /// never stretched. The sample is 4 × 2 pixels on 40 × 20 mm.
+    #[test]
+    fn bitmap_aspect_must_match_pixels() {
+        for height_mm in [21.0, 19.0, 20.001, 40.0] {
+            let p = bitmap_with(|bitmap| bitmap.height_mm = height_mm);
+            let problem = only_error(&p, "bitmap_footprint_aspect", "bitmaps[b1].height_mm");
+            assert_eq!(
+                problem,
+                Problem::BitmapFootprintAspect {
+                    bitmap: crate::ids::BitmapId::new("b1"),
+                    name: "ramp".into(),
+                    width_mm: 40.0,
+                    height_mm,
+                    width_px: 4,
+                    height_px: 2,
+                },
+                "{height_mm}"
+            );
+        }
+        let p = bitmap_with(|bitmap| bitmap.height_mm = 21.0);
+        assert_eq!(
+            validate(&p)[0].to_string(),
+            "bitmap `ramp` (`b1`) is 40 × 21 mm, which is not the shape of its 4 × 2 px picture; set height_mm to 20 mm, or width_mm to 42 mm, so the picture is not stretched"
+        );
+        // Within 1e-6 of the pixels' proportions.
+        for height_mm in [20.0, 20.000_01, 19.999_99] {
+            let p = bitmap_with(|bitmap| bitmap.height_mm = height_mm);
+            assert_eq!(validate(&p), vec![], "{height_mm}");
+        }
+        // Any size, the same proportions.
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_mm = 1.0;
+            bitmap.height_mm = 0.5;
+        });
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// Security review M4: a footprint has a width and a height above 0,
+    /// and both its corners are on the coordinate range, 6000 mm from the
+    /// origin, as every coordinate of a project is.
+    #[test]
+    fn bitmap_footprint_must_be_positive_and_on_the_coordinate_range() {
+        use crate::ids::BitmapId;
+        for (width_mm, height_mm, field, value) in [
+            (0.0, 20.0, "width_mm", 0.0),
+            (-40.0, 20.0, "width_mm", -40.0),
+            (40.0, 0.0, "height_mm", 0.0),
+            (40.0, -20.0, "height_mm", -20.0),
+        ] {
+            let p = bitmap_with(|bitmap| {
+                bitmap.width_mm = width_mm;
+                bitmap.height_mm = height_mm;
+            });
+            let problem = only_error(
+                &p,
+                "bitmap_footprint_positive",
+                &format!("bitmaps[b1].{field}"),
+            );
+            assert_eq!(
+                problem,
+                Problem::BitmapFootprintPositive {
+                    bitmap: BitmapId::new("b1"),
+                    name: "ramp".into(),
+                    field,
+                    value,
+                },
+                "{width_mm} × {height_mm}"
+            );
+        }
+        // Both at fault: both named, and no aspect on top.
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_mm = 0.0;
+            bitmap.height_mm = 0.0;
+        });
+        let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
+        assert_eq!(
+            codes,
+            ["bitmap_footprint_positive", "bitmap_footprint_positive"]
+        );
+
+        // The near corner.
+        for (field, x_mm, y_mm) in [
+            ("x_mm", 6001.0, 15.0),
+            ("x_mm", -6001.0, 15.0),
+            ("y_mm", 15.0, 6001.0),
+            ("y_mm", 15.0, -6001.0),
+        ] {
+            let p = bitmap_with(|bitmap| {
+                bitmap.x_mm = x_mm;
+                bitmap.y_mm = y_mm;
+            });
+            // Reported once, at the corner, not again at the far one.
+            let problem = only_error(&p, "out_of_range", &format!("bitmaps[b1].{field}"));
+            assert!(
+                matches!(problem, Problem::OutOfRange { expected, .. } if expected == COORDINATE),
+                "{problem:?}"
+            );
+        }
+        // The far corner: `x_mm + width_mm`, `y_mm + height_mm`.
+        let p = bitmap_with(|bitmap| bitmap.x_mm = 5990.0);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::OutOfRange {
+                field: "bitmaps[b1].width_mm".into(),
+                value: 6030.0,
+                expected: BITMAP_REACH,
+            }]
+        );
+        let p = bitmap_with(|bitmap| bitmap.y_mm = 5990.0);
+        assert_eq!(
+            validate(&p),
+            vec![Problem::OutOfRange {
+                field: "bitmaps[b1].height_mm".into(),
+                value: 6010.0,
+                expected: BITMAP_REACH,
+            }]
+        );
+        assert!(BITMAP_REACH.contains("6000 mm"), "{BITMAP_REACH}");
+        // On the range, though off the stock: where a picture lies on the
+        // stock is the generator's and the safety pass's (S19).
+        let p = bitmap_with(|bitmap| {
+            bitmap.x_mm = -5990.0;
+            bitmap.y_mm = 5980.0;
+        });
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// A bitmap's id is its own: a Photo V-Carve names one picture by it.
+    #[test]
+    fn duplicate_bitmap_id_is_error() {
+        let mut p = photo_project();
+        p.bitmaps.push(crate::test_support::sample_bitmap());
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::DuplicateBitmapId {
+                id: crate::ids::BitmapId::new("b1"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "duplicate_bitmap_id");
+        assert_eq!(problems[0].field(), None);
+        assert_eq!(problems[0].to_string(), "bitmap id `b1` is used twice");
+        // A second picture under its own id is fine, used or not.
+        p.bitmaps[1].id = crate::ids::BitmapId::new("b2");
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// `width_px` and `height_px` are the stored PNG's size. The check
+    /// reads the PNG's header alone.
+    #[test]
+    fn bitmap_pixels_must_match_the_png() {
+        // 8 × 4 keeps the footprint's proportions, so only the size is off.
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_px = 8;
+            bitmap.height_px = 4;
+        });
+        let problem = only_error(&p, "bitmap_pixels_mismatch", "bitmaps[b1].width_px");
+        assert_eq!(
+            problem,
+            Problem::BitmapPixelsMismatch {
+                bitmap: crate::ids::BitmapId::new("b1"),
+                name: "ramp".into(),
+                width_px: 8,
+                height_px: 4,
+                png_width_px: 4,
+                png_height_px: 2,
+            }
+        );
+        assert_eq!(
+            problem.to_string(),
+            "bitmap `ramp` (`b1`) says it is 8 × 4 px, but its PNG is 4 × 2 px; set width_px and height_px to the PNG's size"
+        );
+        // The limit is inclusive: 8192 × 4096 is a size a picture may
+        // have, so here only the PNG disagrees.
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_px = MAX_BITMAP_SIDE_PX;
+            bitmap.height_px = MAX_BITMAP_SIDE_PX / 2;
+        });
+        only_error(&p, "bitmap_pixels_mismatch", "bitmaps[b1].width_px");
+    }
+
+    /// A project stores 8-bit grayscale: DreamCarve wrote the PNG, so a
+    /// hand edit is the only way to another kind. Read from the header.
+    #[test]
+    fn bitmap_png_must_be_8_bit_grayscale() {
+        use crate::bitmap::BitmapColour;
+        use crate::test_support::png_base64;
+        let cases = [
+            (
+                png::ColorType::Rgb,
+                png::BitDepth::Eight,
+                3,
+                BitmapColour::Rgb,
+                8,
+            ),
+            (
+                png::ColorType::Grayscale,
+                png::BitDepth::Sixteen,
+                2,
+                BitmapColour::Grayscale,
+                16,
+            ),
+        ];
+        for (colour_type, depth, bytes_per_pixel, colour, bit_depth) in cases {
+            let p = bitmap_with(|bitmap| {
+                bitmap.png_base64 =
+                    png_base64(4, 2, colour_type, depth, &vec![7; 8 * bytes_per_pixel]);
+            });
+            let problem = only_error(&p, "bitmap_not_grayscale_8", "bitmaps[b1].png_base64");
+            assert_eq!(
+                problem,
+                Problem::BitmapNotGrayscale8 {
+                    bitmap: crate::ids::BitmapId::new("b1"),
+                    name: "ramp".into(),
+                    colour,
+                    bit_depth,
+                },
+                "{colour_type:?}"
+            );
+        }
+        let p = bitmap_with(|bitmap| {
+            bitmap.png_base64 =
+                png_base64(4, 2, png::ColorType::Rgb, png::BitDepth::Eight, &[7; 24]);
+        });
+        assert_eq!(
+            validate(&p)[0].to_string(),
+            "the PNG of bitmap `ramp` (`b1`) is 8-bit RGB, not 8-bit grayscale; import the picture again so that DreamCarve converts it"
+        );
+    }
+
+    /// A picture has at least one pixel each way.
+    #[test]
+    fn bitmap_with_no_pixels_is_error() {
+        for (width_px, height_px, field) in [(0, 2, "width_px"), (4, 0, "height_px")] {
+            let p = bitmap_with(|bitmap| {
+                bitmap.width_px = width_px;
+                bitmap.height_px = height_px;
+            });
+            let problem = only_error(&p, "bitmap_empty", &format!("bitmaps[b1].{field}"));
+            assert_eq!(
+                problem,
+                Problem::BitmapEmpty {
+                    bitmap: crate::ids::BitmapId::new("b1"),
+                    name: "ramp".into(),
+                    width_px,
+                    height_px,
+                },
+                "{width_px} × {height_px}"
+            );
+        }
+        // Both 0: reported once, at the width.
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_px = 0;
+            bitmap.height_px = 0;
+        });
+        only_error(&p, "bitmap_empty", "bitmaps[b1].width_px");
+    }
+
+    /// Security review M4: a side above `MAX_BITMAP_SIDE_PX`, 8192, is an
+    /// error from the bitmap's own numbers, before anything is decoded.
+    #[test]
+    fn bitmap_above_the_side_limit_is_error() {
+        assert_eq!(MAX_BITMAP_SIDE_PX, 8192);
+        for (width_px, height_px, field) in [
+            (9000, 4500, "width_px"),
+            (8193, 8193, "width_px"),
+            (4, 8193, "height_px"),
+        ] {
+            let p = bitmap_with(|bitmap| {
+                bitmap.width_px = width_px;
+                bitmap.height_px = height_px;
+                // The footprint follows the pixels, so only the size is off.
+                bitmap.width_mm = f64::from(width_px) / 100.0;
+                bitmap.height_mm = f64::from(height_px) / 100.0;
+            });
+            let problem = only_error(&p, "bitmap_too_large", &format!("bitmaps[b1].{field}"));
+            assert_eq!(
+                problem,
+                Problem::BitmapTooLarge {
+                    bitmap: crate::ids::BitmapId::new("b1"),
+                    name: "ramp".into(),
+                    width_px,
+                    height_px,
+                    limit_px: 8192,
+                },
+                "{width_px} × {height_px}"
+            );
+        }
+        let p = bitmap_with(|bitmap| {
+            bitmap.width_px = 9000;
+            bitmap.height_px = 4500;
+        });
+        assert_eq!(
+            validate(&p)[0].to_string(),
+            "bitmap `ramp` (`b1`) is 9000 × 4500 px; a picture is at most 8192 px on a side, so scale it down before adding it"
+        );
+    }
+
+    /// A project built in code can hold a `png_base64` that `load` would
+    /// have refused: validation names it instead of passing it on to the
+    /// generator. (Not in the design's list; #644 records it.)
+    #[test]
+    fn bitmap_that_cannot_be_read_is_error() {
+        use crate::bitmap::BitmapError;
+        for (text, base64) in [("QUJD", false), ("not base64!", true), ("", false)] {
+            let p = bitmap_with(|bitmap| bitmap.png_base64 = text.into());
+            let problems = validate(&p);
+            assert_eq!(problems.len(), 1, "{text:?}: {problems:?}");
+            let Problem::BitmapUnreadable {
+                bitmap,
+                name,
+                reason,
+            } = &problems[0]
+            else {
+                panic!("{text:?}: {problems:?}");
+            };
+            assert_eq!(bitmap.as_str(), "b1");
+            assert_eq!(name, "ramp");
+            assert_eq!(
+                matches!(reason, BitmapError::Base64 { .. }),
+                base64,
+                "{reason:?}"
+            );
+            assert_eq!(problems[0].severity(), Severity::Error);
+            assert_eq!(problems[0].code(), "bitmap_unreadable");
+            assert_eq!(
+                problems[0].field().as_deref(),
+                Some("bitmaps[b1].png_base64")
+            );
+        }
+    }
+
+    /// Security review M4: validation reads a picture's header and never
+    /// its image data, so a shared file costs nothing per pixel to check.
+    /// A PNG that is a valid header followed by bytes that are no image
+    /// data validates clean; `pixels` is where it fails.
+    #[test]
+    fn validation_reads_only_the_png_header() {
+        use base64::Engine as _;
+        let engine = base64::engine::general_purpose::STANDARD;
+        let mut png = engine
+            .decode(photo_project().bitmaps[0].png_base64.clone())
+            .unwrap();
+        for byte in png.iter_mut().skip(33) {
+            *byte = 0x55;
+        }
+        let p = bitmap_with(|bitmap| bitmap.png_base64 = engine.encode(&png));
+        assert_eq!(validate(&p), vec![]);
+        assert!(p.bitmaps[0].pixels().is_err());
+    }
+
+    /// Every bitmap and Photo V-Carve problem has its own stable code, and
+    /// only the overlap is a warning.
+    #[test]
+    fn bitmap_and_photo_problems_have_their_own_codes() {
+        use crate::bitmap::{BitmapColour, BitmapError};
+        use crate::ids::BitmapId;
+        let operation = OperationId::new("o8");
+        let bitmap = BitmapId::new("b1");
+        let name = String::from("n");
+        let problems = [
+            Problem::PhotoLineAngleRange {
+                operation: operation.clone(),
+                name: name.clone(),
+                line_angle_deg: 180.0,
+            },
+            Problem::PhotoLineSpacingPositive {
+                operation: operation.clone(),
+                name: name.clone(),
+                line_spacing_fraction: 0.0,
+            },
+            Problem::PhotoLinesOverlap {
+                operation: operation.clone(),
+                name: name.clone(),
+                line_spacing_fraction: 0.5,
+            },
+            Problem::PhotoSamplePositive {
+                operation: operation.clone(),
+                name: name.clone(),
+                sample_mm: 0.0,
+            },
+            Problem::PhotoRetractPositive {
+                operation: operation.clone(),
+                name: name.clone(),
+                stepover_retract_mm: 0.0,
+            },
+            Problem::PhotoUnknownBitmap {
+                operation,
+                name: name.clone(),
+                bitmap: bitmap.clone(),
+            },
+            Problem::BitmapFootprintAspect {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                width_mm: 1.0,
+                height_mm: 1.0,
+                width_px: 2,
+                height_px: 1,
+            },
+            Problem::BitmapPixelsMismatch {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                width_px: 1,
+                height_px: 1,
+                png_width_px: 2,
+                png_height_px: 2,
+            },
+            Problem::BitmapNotGrayscale8 {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                colour: BitmapColour::Rgb,
+                bit_depth: 8,
+            },
+            Problem::DuplicateBitmapId { id: bitmap.clone() },
+            Problem::BitmapEmpty {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                width_px: 0,
+                height_px: 0,
+            },
+            Problem::BitmapTooLarge {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                width_px: 9000,
+                height_px: 1,
+                limit_px: 8192,
+            },
+            Problem::BitmapFootprintPositive {
+                bitmap: bitmap.clone(),
+                name: name.clone(),
+                field: "width_mm",
+                value: 0.0,
+            },
+            Problem::BitmapUnreadable {
+                bitmap,
+                name,
+                reason: BitmapError::Png {
+                    message: "x".into(),
+                },
+            },
+        ];
+        let codes: Vec<&str> = problems.iter().map(Problem::code).collect();
+        assert_eq!(
+            codes,
+            [
+                "photo_line_angle_range",
+                "photo_line_spacing_positive",
+                "photo_lines_overlap",
+                "photo_sample_positive",
+                "photo_retract_positive",
+                "photo_unknown_bitmap",
+                "bitmap_footprint_aspect",
+                "bitmap_pixels_mismatch",
+                "bitmap_not_grayscale_8",
+                "duplicate_bitmap_id",
+                "bitmap_empty",
+                "bitmap_too_large",
+                "bitmap_footprint_positive",
+                "bitmap_unreadable",
+            ]
+        );
+        for problem in &problems {
+            assert_eq!(
+                problem.is_error(),
+                problem.code() != "photo_lines_overlap",
+                "{problem:?}"
+            );
+            let message = problem.to_string();
+            assert!(!message.is_empty() && !message.ends_with('.'), "{message}");
+        }
     }
 }

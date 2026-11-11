@@ -134,20 +134,27 @@ pub struct Bitmap {
     pub png_base64: String,
 }
 impl Bitmap {
-    /// The PNG header alone: dimensions, colour type, bit depth. Cheap;
-    /// what validation and `image list` read.
+    /// The PNG header alone: dimensions, colour type, bit depth. Cheap:
+    /// it decodes the 33 bytes of the signature and `IHDR`, the first 44
+    /// base64 characters, with `Decoder::read_header_info`, whatever the
+    /// picture's size. What `load`, validation and `image list` read.
     pub fn header(&self) -> Result<BitmapHeader, LoadError>;
     /// The pixels, row-major from the top row of the picture, 0 black to
     /// 255 white. Checks the header against `width_px`, `height_px` and
     /// `MAX_BITMAP_SIDE_PX` before decoding any image data, decodes
     /// under an explicit `png::Limits` of `MAX_BITMAP_SIDE_PX² + one
-    /// row` bytes with text chunks ignored, and computes the pixel count
-    /// with `checked_mul` (security review M4). Decodes on each call (no
+    /// row` bytes with text and colour-profile chunks ignored (the
+    /// chunks a PNG compresses beside its image data; #644), and
+    /// computes the pixel count with `checked_mul` (security review M4). Decodes on each call (no
     /// cache in the model; `Clone` stays cheap and correct); only
     /// generation and the preview call it.
     pub fn pixels(&self) -> Result<Grayscale, LoadError>;
 }
 pub struct Grayscale { pub width_px: u32, pub height_px: u32, pub bytes: Vec<u8> }
+pub struct BitmapHeader { pub width_px: u32, pub height_px: u32, pub colour: BitmapColour, pub bit_depth: u8 }
+pub enum BitmapColour { Grayscale, GrayscaleAlpha, Rgb, Rgba, Indexed }
+/// The `reason` of `LoadError::Bitmap { id, reason }` (#644).
+pub enum BitmapError { Base64 { .. }, Png { .. }, Empty { .. }, TooLarge { .. }, SizeMismatch { .. }, NotGrayscale8 { .. } }
 
 pub enum Operation {
     Profile(ProfileOp), Pocket(PocketOp), Drill(DrillOp), Engrave(EngraveOp),
@@ -341,7 +348,9 @@ every Inlay (#448), `v24_to_v25` replaces each Inlay's `side`, in its
 place, with its `male_board` (#498), `v25_to_v26` inserts
 `"boundary": []` after `outline_rounding_mm` in every Inlay (#449), and
 `v26_to_v27` inserts `"bitmaps": []` after `instances` (it was
-`v25_to_v26` until the boundary took 26). A file from any earlier version
+`v25_to_v26` until the boundary took 26), and refuses a file that says
+26 and already holds `bitmaps` or a `photo_v_carve` operation: the list
+and the kind arrive together. A file from any earlier version
 exports the same bytes as the same project written at the current
 version; a male Inlay with a fitting clearing pass from version 22 or 23
 exports differently from the build that wrote it (#448 changed its band
@@ -363,9 +372,11 @@ operations[op1] `DC` was the male of a two-file inlay pair (format 24);
 for the pair from the design and set its male_board``.
 
 Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26}/sample.dcv`,
-each holding the kinds its version has; `v25` is the previous version's
-and `v26` the current one's until sub-phase 3.5 adds `v27`. `sample.dcv`
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv`,
+each holding the kinds its version has; `v26` is the previous version's
+and `v27` the current one's (sub-phase 3.5, #644), with its neighbour
+`v27/photo.dcv`, the sample with a bitmap `b1` and a Photo V-Carve of it
+(`migrate::version_27_fixtures_load`). `sample.dcv`
 is always the saved `sample_project()` (the Profile sample, no Inlay;
 `serialize::CURRENT_FIXTURE`), so the boundary's file is its neighbour,
 `v26/inlay-boundary.dcv`: the sample with a frame instance `i2` and an
@@ -515,8 +526,17 @@ Inlay of `i1` whose `boundary` lists `i2` (`migrate::version_26_fixtures_load`).
   `height_mm` not above 0), and the `MAX_COORDINATE_MM` bound on the
   footprint's far corner (`x_mm + width_mm`, `y_mm + height_mm`). The
   size, colour-type and bit-depth checks read the PNG header only
-  (`Decoder::read_info`), never the image data, so validation of a
-  shared file costs nothing per pixel (security review M4).
+  (`Bitmap::header`, which is `Decoder::read_header_info` on the first
+  33 bytes), never the image data, so validation of a
+  shared file costs nothing per pixel (security review M4). A size at
+  fault is reported once: `bitmap_empty` or `bitmap_too_large` from the
+  bitmap's own numbers, and then no `bitmap_pixels_mismatch` or
+  `bitmap_footprint_aspect` on top; `bitmap_footprint_aspect` is located
+  at `height_mm`, `bitmap_pixels_mismatch` at `width_px`,
+  `bitmap_not_grayscale_8` at `png_base64`. `bitmap_unreadable` (added
+  by #644): the `png_base64` is not base64 or does not start with a PNG
+  header. `load` refuses such a file, so only a project built in code,
+  as the app builds one, reaches validation with it.
 - `drill_cutter_unusual` does not fire for a countersink Drill (its tool
   is a V-bit on purpose).
 
@@ -1951,7 +1971,7 @@ top instead, "Inlay" step 1):
 cleared (a match), mismatch, cleared externally or uncleared, from one
 list of start-plane operations (`start_setting`, an exhaustive match on
 `Operation`: V-Carve in 3.1; the countersink Drill and the Photo V-Carve
-join it in 3.2 and 3.4). `order::check` warns only the mismatch, read
+join it in 3.2 and 3.5). `order::check` warns only the mismatch, read
 from the project's enabled operations, not from the generated toolpaths;
 `check` and `export` print it at the operation's `start_depth_mm`. The
 uncleared case is reported once, by validation: `export::build` stops at
@@ -2778,7 +2798,17 @@ seeds cover the four bench bits, mm and inch.
    `width_px`/`height_px`, is `LoadError::Bitmap { id, reason }`
    (validation reports the same as `bitmap_pixels_mismatch` /
    `bitmap_not_grayscale_8` with a location; `load` fails only when the
-   base64 or PNG cannot be decoded at all).
+   base64 or PNG cannot be decoded at all). Decided in #644: `load`
+   checks that all of `png_base64` is base64 (in pieces, without
+   holding the decoded bytes) and reads the PNG's header, and fails
+   with `LoadError::Bitmap` when either cannot be done. It decodes no
+   image data, so a file costs nothing per pixel to open; what the
+   header says (its size against `width_px`, `height_px` and
+   `MAX_BITMAP_SIDE_PX`, its colour type and bit depth) is validation's,
+   as errors with a location, and a picture whose image data is corrupt
+   or cut short behind a good header loads and fails in `pixels`, when
+   something needs the pixels. `reason` is a `BitmapError`, never a
+   string, so a caller can tell the cases apart.
 5. **Placement.** Row 0 of the pixels is the picture's **top** row and
    sits at `y = y_mm + height_mm` (Y-up). Pixel `(i, j)` (column `i`,
    row `j`) covers `x ∈ [x_mm + i · w, x_mm + (i+1) · w]`, `y ∈ [y_mm +
@@ -3169,10 +3199,10 @@ for V operations.
 - Property (`proptest`, small): `medial::every_node_is_inside_its_region`, `medial::every_clearance_equals_the_exact_distance` on random convex polygons.
 
 **dc-project**
-- `migrate::v19_to_v22_steps_bump_the_version_only`, `migrate::v22_project_gains_an_empty_bitmap_list`, `migrate::v22_with_bitmaps_already_present_fails`, `migrate::version_19_to_22_fixtures_load`, `cli::v19_project_exports_the_same_program`.
-- `serialize::v_carve_inlay_photo_round_trip`, `serialize::v_carve_strategy_is_string_or_object`, `serialize::countersink_cycle_round_trips`, `serialize::bitmap_png_is_one_line`, `bitmap::pixels_decode_the_stored_png`, `bitmap::wrong_size_png_is_an_error`, `bitmap::colour_png_is_an_error`.
-- `validate::v_carve_with_end_mill_is_error`, `validate::v_bit_angle_out_of_range_is_error`, `validate::flat_depth_beyond_cone_is_error`, `validate::photo_max_depth_beyond_cone_is_error`, `validate::countersink_depth_beyond_cone_is_error`, `validate::clearing_needs_a_flat_depth`, `validate::clearing_pass_needs_a_flat_end_mill`, `validate::clearing_wider_than_the_pass_before_warns`, `validate::clearing_pass_naming_no_tool_is_error`, `serialize::clearing_passes_round_trip`, `validate::countersink_mouth_wider_than_tool_is_error`, `validate::negative_start_depth_is_error`, `validate::inlay_glue_gap_must_be_below_depth`, `validate::inlay_male_needs_margin`, `validate::thin_plug_base_warns`, `validate::photo_angle_and_spacing_ranges`, `validate::photo_spacing_below_one_warns`, `validate::photo_names_a_missing_bitmap`, `validate::bitmap_aspect_must_match_pixels`, `validate::countersink_drill_with_v_bit_is_not_unusual`.
-- Security review additions: `validate::uncleared_start_depth_is_an_error_unless_acknowledged` (M2: V-Carve, Photo and countersink; a containing Pocket at the depth is quiet; a disabled one does not count), `validate::male_inlay_engagement_beyond_the_cone_is_error` (H4: `D 2.5, G 0.25, P 1.5` with a 90° 6.35 mm bit fails; the star's `4, 1, 2` with the 60° bit passes), `validate::acknowledged_start_depth_counts_toward_the_cone` (H4), `validate::flatten_tolerance_above_0_1_mm_is_error` (L6), `bitmap::empty_or_oversized_bitmap_is_refused_from_the_header` (M4: a 0 × 0 and a 9000 × 10 PNG are refused without decoding image data), `bitmap::decompression_bomb_is_refused_by_the_decoder_limit` (M4: a 1 MB base64 string holding an 8192 × 8192 stream fails under the limit, not out of memory), `bitmap::header_lying_about_size_is_refused` (M4), `validate::bitmap_footprint_must_be_positive_and_on_the_coordinate_range` (M4).
+- `migrate::v19_to_v22_steps_bump_the_version_only`, `migrate::v26_to_v27_adds_an_empty_bitmap_list`, `migrate::v26_with_bitmaps_already_present_fails` (a `photo_v_carve` operation in a version 26 file is refused the same way), each version's `migrate::version_<n>_fixture_loads` from 19 to 26 (they were one `version_19_to_22_fixtures_load` in the draft), `migrate::version_27_fixtures_load`, `cli::v19_project_exports_the_same_program`. (The Photo names said `v22` while Photo V-Carve was format 23; it is 27, #644.)
+- `serialize::v_carve_inlay_photo_round_trip`, `serialize::v_carve_strategy_is_string_or_object`, `serialize::countersink_cycle_round_trips`, `serialize::bitmap_png_is_one_line`, `serialize::photo_v_carve_is_format_27`, `serialize::load_checks_a_bitmap_from_its_header_alone`, `bitmap::pixels_decode_the_stored_png`, `bitmap::wrong_size_png_is_an_error`, `bitmap::colour_png_is_an_error`, `bitmap::undecodable_bitmap_is_a_typed_error`.
+- `validate::v_carve_with_end_mill_is_error`, `validate::v_bit_angle_out_of_range_is_error`, `validate::flat_depth_beyond_cone_is_error`, `validate::photo_max_depth_beyond_cone_is_error`, `validate::countersink_depth_beyond_cone_is_error`, `validate::clearing_needs_a_flat_depth`, `validate::clearing_pass_needs_a_flat_end_mill`, `validate::clearing_wider_than_the_pass_before_warns`, `validate::clearing_pass_naming_no_tool_is_error`, `serialize::clearing_passes_round_trip`, `validate::countersink_mouth_wider_than_tool_is_error`, `validate::negative_start_depth_is_error`, `validate::inlay_glue_gap_must_be_below_depth`, `validate::inlay_male_needs_margin`, `validate::thin_plug_base_warns`, `validate::photo_angle_and_spacing_ranges`, `validate::photo_spacing_below_one_warns`, `validate::photo_names_a_missing_bitmap`, `validate::bitmap_aspect_must_match_pixels`, `validate::countersink_drill_with_v_bit_is_not_unusual`; one per bitmap code the list above left without a test (#644): `validate::duplicate_bitmap_id_is_error`, `validate::bitmap_pixels_must_match_the_png`, `validate::bitmap_png_must_be_8_bit_grayscale`, `validate::bitmap_with_no_pixels_is_error`, `validate::bitmap_above_the_side_limit_is_error`, `validate::bitmap_that_cannot_be_read_is_error`, `validate::photo_max_depth_unset_is_error`, and `validate::validation_reads_only_the_png_header` (M4).
+- Security review additions: `validate::uncleared_start_depth_is_an_error_unless_acknowledged` (M2: V-Carve, Photo and countersink; a containing Pocket at the depth is quiet; a disabled one does not count), `validate::male_inlay_engagement_beyond_the_cone_is_error` (H4: `D 2.5, G 0.25, P 1.5` with a 90° 6.35 mm bit fails; the star's `4, 1, 2` with the 60° bit passes), `validate::acknowledged_start_depth_counts_toward_the_cone` (H4), `validate::flatten_tolerance_above_0_1_mm_is_error` (L6), `bitmap::empty_or_oversized_bitmap_is_refused_from_the_header` (M4: a 0 × 0 and a 9000 × 10 PNG are refused without decoding image data), `bitmap::decompression_bomb_is_bounded_by_the_decoder_limit` (M4: a string under 1 MB whose colour-profile or text chunk inflates to twice 8192 × 8192 bytes reads as the 4 × 4 picture it is, the chunk skipped; a decoder that does read the profile, under the limit, drops it. It was `…_is_refused_…` in the draft: `png` 0.18 never fails a picture for a profile it cannot hold, so the bomb is bounded, not refused, #644), `bitmap::header_lying_about_size_is_refused` (M4), `validate::bitmap_footprint_must_be_positive_and_on_the_coordinate_range` (M4).
 
 **dc-cam — vcarve (medial)**
 - `vcarve::square_clamps_at_flat_depth_and_surfaces_at_corners` (port: `testGeneratorSquare`: 20 × 20, 60°, flat 2: every cut inside the square, min Z −2 ± 1e-6, max Z ≥ −1e-6, no warnings, continuity).
@@ -3229,7 +3259,7 @@ for V operations.
 **dreamcarve (integration, `tests/`)**
 - `cli::init_on_a_picture_writes_a_bitmap_and_a_photo_v_carve` (acceptance 58: `--width 100` → 100 × 50; `--height 50` the same; both or neither exit 2), `cli::image_add_places_a_picture_and_image_list_shows_it`, `cli::image_add_converts_colour_and_says_so`, `cli::moved_dcv_exports_the_same_program`, `cli::picture_past_the_stock_edge_fails_s7`.
 - `cli::check_prints_the_carve_summary_and_the_mirror_note`, `cli::check_warns_start_depth_mismatch`, `cli::preview_draws_the_bitmap_under_the_grooves`.
-- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v22_project_exports_the_same_program`, `cli::photo_quick_start_runs` (the chapter's commands).
+- `cli::sign_exports_four_programs_in_tool_run_order` (acceptance 61: `fixtures/sign.svg`; every program passes S1–S19; the preview has the floor rings, the serif lines, two countersinks and the tabbed outline), `cli::lettered_inlay_exports_both_boards` (#446, #498; was `cli::lettered_inlay_female_and_male_export`: the one project `fixtures/dc.dcv` from `fixtures/dc-inlay.svg` exports `dc-female-1-T2.nc` and `-2-T1` (T2 clearing, T1 V-bit) and `dc-male-1-T2.nc`, `-2-T1` and `-3-T2` (T2 clearing, T1 V-bit, T2 cut-out), byte for byte the programs the old two-file pair exported; all pass S1–S18; the mirror note is printed), `cli::lettered_inlay_fits_its_board` (every cut inside the 110 × 80 mm board with at least 3 mm to spare; the cut-out `margin_mm / 2` out from the mirrored letters), `cli::lettered_male_is_the_mirror_of_the_female` (the male's design outlines are the female's mirrored about the stated X, within the flatten tolerance), `cli::v26_project_exports_the_same_programs`, `cli::photo_quick_start_runs` (the chapter's commands).
 - `quick_start::v_carved_sign_chapter_runs` (as the phase 2 plaque's).
 
 **dc-gcode (integration, `tests/golden.rs`)**
@@ -3517,10 +3547,16 @@ and 21i start at once.
 Goal: a photograph carved.
 
 22. **Format v27: bitmaps and Photo V-Carve** (v24 until #448, v25
-    until #498, v26 until 3.4's boundary). `Bitmap`, `BitmapId`,
+    until #498, v26 until 3.4's boundary; #644). `Bitmap`, `BitmapId`,
     `MAX_BITMAP_SIDE_PX`, `Bitmap::header` and `pixels` with their limits,
     `PhotoVCarveOp`, `PhotoStrategy`, `v26_to_v27`, validation; the `png`
-    and `base64` dependencies. Tests: the dc-project bitmap and Photo
+    and `base64` dependencies. The record lands before its generator, so
+    until slice 24 `dc_cam::generate_photo` has its final signature and
+    refuses every operation with `CamError::PhotoNotBuilt`, which
+    `check` and `export` print; `order::start_setting` gives a Photo no
+    start plane and the safety pass holds a Photo's run to no material
+    (`Material::Unresolved`, every cut fails S9). Slice 24 replaces all
+    three. Tests: the dc-project bitmap and Photo
     tests with the M4 additions. [3.4]
 23. **Bitmap import and the CLI.** `dc-import::bitmap` with `png` and
     `zune-jpeg`; `init` on a picture; `image add`/`list`; the preview

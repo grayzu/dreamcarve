@@ -71,6 +71,11 @@ id_type!(
     /// Identifies a [`crate::PlacedTab`] (#105).
     TabId
 );
+id_type!(
+    /// Identifies a [`crate::Bitmap`] (format 27): `b1`, `b2`, … A
+    /// bitmap is not an instance, and its id is not an [`InstanceId`].
+    BitmapId
+);
 
 #[cfg(test)]
 mod tests {

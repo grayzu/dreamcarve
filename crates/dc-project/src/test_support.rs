@@ -4,16 +4,17 @@
 //! Fixture builders for tests in this crate and, with the `test-support`
 //! feature, in crates that depend on it (`docs/rust-guidelines.md`, "Tests").
 
-use crate::ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
+use crate::ids::{BitmapId, DefinitionId, InstanceId, OperationId, TabId, ToolId};
 use crate::migrate::CURRENT_VERSION;
 use crate::model::{
-    Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
+    Bitmap, Board, BoreOp, ClearanceStrategy, ClearingPass, CornerRelief, CutDirection, DrillCycle,
     DrillOp, EngraveOp, Entry, FeatureDefinition, FeatureInstance, Heights, InlayOp, MachineOrigin,
-    MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PlacedTab, PocketOp, ProfileOp,
-    Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec, Tool, ToolKind, Units,
-    VCarveOp, VCarveStrategy, WallPass,
+    MachiningOrder, MaleBoard, Operation, OriginXy, OriginZ, PhotoStrategy, PhotoVCarveOp,
+    PlacedTab, PocketOp, ProfileOp, Project, Side, StartAt, Stock, TabPlacement, TabShape, TabSpec,
+    Tool, ToolKind, Units, VCarveOp, VCarveStrategy, WallPass,
 };
 use crate::post_processor::{PostProcessorRef, bundled_definition};
+use base64::Engine as _;
 use dc_geometry::{FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Transform};
 use std::collections::BTreeMap;
 
@@ -66,7 +67,8 @@ pub fn tool_v_bit_90() -> Tool {
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
-/// yet. Matches the committed fixture `tests/fixtures/dcv/v26/sample.dcv`.
+/// yet, and no bitmap. Matches the committed fixture
+/// `tests/fixtures/dcv/v27/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),
@@ -100,6 +102,7 @@ pub fn sample_project() -> Project {
             z_top_mm: Some(6.0),
             z_bottom_mm: Some(0.0),
         }],
+        bitmaps: Vec::new(),
         tools: vec![tool_6_35_upcut()],
         operations: vec![Operation::Profile(ProfileOp {
             id: OperationId::new("o1"),
@@ -268,6 +271,112 @@ pub fn sample_v_carve() -> VCarveOp {
         through_cut_allowance_mm: 0.0,
         safe_z_mm: 5.0,
     }
+}
+
+/// `bytes`, the samples of a `width_px` × `height_px` picture top row
+/// first, as the text a [`Bitmap`] stores in `png_base64` (format 27): a
+/// PNG of colour type `colour` at `depth` bits a sample, in base64 with
+/// the standard alphabet and padding. `bytes` must hold what that colour
+/// type takes, three bytes a pixel for RGB.
+#[allow(
+    clippy::expect_used,
+    reason = "a fixture builder: a size that does not match its samples is a broken test"
+)]
+pub fn png_base64(
+    width_px: u32,
+    height_px: u32,
+    colour: png::ColorType,
+    depth: png::BitDepth,
+    bytes: &[u8],
+) -> String {
+    let mut png = Vec::new();
+    let mut encoder = png::Encoder::new(&mut png, width_px, height_px);
+    encoder.set_color(colour);
+    encoder.set_depth(depth);
+    let mut writer = encoder.write_header().expect("the PNG header is written");
+    writer
+        .write_image_data(bytes)
+        .expect("the samples fit the picture");
+    writer.finish().expect("the PNG is finished");
+    base64::engine::general_purpose::STANDARD.encode(png)
+}
+
+/// `bytes`, 8-bit gray samples top row first, as a [`Bitmap`]'s
+/// `png_base64`: the one form a project stores ([`png_base64`]).
+pub fn gray_png_base64(width_px: u32, height_px: u32, bytes: &[u8]) -> String {
+    png_base64(
+        width_px,
+        height_px,
+        png::ColorType::Grayscale,
+        png::BitDepth::Eight,
+        bytes,
+    )
+}
+
+/// The samples of [`sample_bitmap`], top row first: 4 × 2 pixels, a ramp
+/// from black at the left to white at the right, the bottom row a step
+/// darker so the rows differ.
+pub const SAMPLE_BITMAP_BYTES: [u8; 8] = [0, 85, 170, 255, 0, 64, 128, 192];
+
+/// A valid bitmap, id `b1` (format 27): the 4 × 2 pixel ramp
+/// [`SAMPLE_BITMAP_BYTES`], placed with its bottom-left corner at (15,
+/// 15), inside the sample rectangle, and 40 × 20 mm, so a pixel is 10 mm square
+/// and the picture's aspect is its pixels'.
+pub fn sample_bitmap() -> Bitmap {
+    Bitmap {
+        id: BitmapId::new("b1"),
+        name: "ramp".into(),
+        width_px: 4,
+        height_px: 2,
+        x_mm: 15.0,
+        y_mm: 15.0,
+        width_mm: 40.0,
+        height_mm: 20.0,
+        visible: true,
+        locked: false,
+        png_base64: gray_png_base64(4, 2, &SAMPLE_BITMAP_BYTES),
+    }
+}
+
+/// A valid Photo V-Carve of [`sample_bitmap`] (`b1`) with
+/// [`tool_v_bit_90`] (`t2`), both of which the caller adds to the
+/// project; id `o8` (format 27): 1.5 mm deep at most, within the bit's
+/// 3.175 mm cone, from the stock top, with the values `init` writes
+/// (22.5° lines 1.1 groove widths apart, sampled every 0.25 mm).
+pub fn sample_photo_v_carve() -> PhotoVCarveOp {
+    PhotoVCarveOp {
+        id: OperationId::new("o8"),
+        name: "Photo V-Carve".into(),
+        enabled: true,
+        image: BitmapId::new("b1"),
+        tool: ToolId::new("t2"),
+        max_depth_mm: Some(1.5),
+        start_depth_mm: 0.0,
+        start_plane_cleared_externally: false,
+        line_angle_deg: 22.5,
+        line_spacing_fraction: 1.1,
+        strategy: PhotoStrategy::Raster,
+        invert: false,
+        sample_mm: 0.25,
+        stepover_retract_mm: 1.0,
+        through_cut_allowance_mm: 0.0,
+        safe_z_mm: 5.0,
+    }
+}
+
+/// The sample project with the 90° V-bit `t2`, [`sample_bitmap`] and
+/// [`sample_photo_v_carve`] after its Profile: a valid project with no
+/// validation problems (format 27). Matches the committed fixture
+/// `tests/fixtures/dcv/v27/photo.dcv`, but for the bytes of the PNG, which
+/// a release of the encoder may change; the pixels are the same.
+pub fn photo_project() -> Project {
+    let mut project = sample_project();
+    project.tools.push(tool_v_bit_90());
+    project.bitmaps.push(sample_bitmap());
+    project
+        .operations
+        .push(Operation::PhotoVCarve(sample_photo_v_carve()));
+    project
 }
 
 /// A valid Inlay of the sample rectangle with [`tool_v_bit_90`] (`t2`,
