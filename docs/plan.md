@@ -50,6 +50,7 @@ reference implementation except where this plan says otherwise.
 | Multi-tool export         | One program with tool changes, or one program per tool. The user sets a default once; each export can override it                                                                                                                | phase 2 functional spec    |
 | Toolpath coverage         | Every carving toolpath common in hobby CAM is planned or explicitly excluded; see "Toolpath coverage" below                                                                                                                      | this file                  |
 | Tool import               | Fusion `.tools`/`.json` only, following Autodesk's published schema. Other vendor formats post-1.0                                                                                                                               | phase 2 functional spec    |
+| Drawing preparation       | Opt-in `dreamcarve image-prep`, SVG in and SVG out, no machining inputs, thresholds relative to the design's height; checks at `init` are always on and change nothing. PNG/JPEG tracing deferred; any tracer must be permissively licensed (Potrace is GPL) | phase 3 specs, sub-phase 3.4 |
 | Platforms                 | Windows, macOS, Linux desktop. No tablet, no phone, no web                                                                                                                                                                       | this file                  |
 | Localization              | Strings keyed from the first GUI phase. English only until phase 8                                                                                                                                                               | phase 4 design spec        |
 | Fonts                     | Bundled OFL fonts plus user font files. No system font enumeration                                                                                                                                                               | phase 5 design spec        |
@@ -186,7 +187,13 @@ countersinking on Drill. Carve-quality tests against the golden corpus.
 **Inlay**: the paired female (pocket) and male (plug) V-carve toolpaths,
 both boards from one project (the female on the stock, the male on its
 male board), with the start depth, glue gap and plug depth the technique needs, following
-the method in Corbin's Workshop's documentation for its Fusion inlay add-in.
+the method in Corbin's Workshop's documentation for its Fusion inlay add-in,
+and a user-drawn boundary for the male's band.
+**Image prep**: always-on checks at `init` for what trips an inlay in a
+drawing (overlaps, strokes, hidden objects, specks) and the opt-in
+`dreamcarve image-prep`, which turns an SVG into an inlay-friendly SVG
+(strokes to areas, fills resolved, line art to regions, specks and jaggies
+cleaned, every threshold relative to the design's height).
 **Photo V-Carve**: a grayscale image carved as parallel V-bit lines whose
 depth follows pixel brightness, as Vectric's PhotoVCarve does, with
 RasterCarve as the behaviour and test reference.
@@ -194,19 +201,25 @@ RasterCarve as the behaviour and test reference.
 **Out:** GUI.
 
 **Sub-phases:** delivered one feature at a time, each a GitHub milestone
-with its own format version and bench check: 3.1 V-Carve (v20), 3.2
+with its own bench check and, where it changes the file, its own format
+version: 3.1 V-Carve (v20), 3.2
 Countersink (v21; the sign, test part 1), 3.3 Inlay (v22, v23 for the male's cut-out, v24 for its rounded band and v25 for one file cutting both boards; the lettered inlay pair,
-test part 2), 3.4 Photo V-Carve (v26; the photo, test part 3), 3.5 Release
+test part 2), 3.4 Image Prep (v26 for the drawn boundary; the line-art
+inlay, test part 3), 3.5 Photo V-Carve (v27; the photo, test part 4),
+3.6 Tapered Ball Nose (specified separately, #445), 3.7 Release
 (`v0.3.0`). No tag between them; the slice list is in the phase 3 design
-spec, "Sub-phases".
+spec, "Sub-phases". (3.4 was inserted on 2026-11-10 because preparing
+artwork is the hardest part of making an inlay; it renumbered the later
+sub-phases.)
 
 **Exit:** parity with PureCutCNC's V-carve tests; the phase 3 test parts
 cut: a lettered sign imported as SVG outlines, an inlay pair (female and
-male, cut and fitted, following Corbin's Fusion tutorial), and a photo
+male, cut and fitted, following Corbin's Fusion tutorial), a line-art
+inlay prepared with `image-prep` inside a drawn boundary, and a photo
 V-carve whose toolpath matches RasterCarve's test cases within the
 tolerance the spec states; `v0.3.0`.
 
-**Real cut:** yes, all three parts.
+**Real cut:** yes, all four parts.
 
 **Read first:** `src/engine/toolpaths/vcarve.ts`, the `v_carve_medial`
 operation kind in `src/types/project.ts`, related tests. Inlay has no
@@ -217,7 +230,11 @@ vocabulary. Photo V-Carve has no PureCutCNC reference either: read
 RasterCarve (`../rastercarve`, its Python engine, Rust engine and tests) for
 behaviour and test cases. RasterCarve is GPLv2+, so its code is not ported;
 the phase 3 spec designs the operation from its documented behaviour and
-re-derives the tests, as the ordering research did with FreeCAD.
+re-derives the tests, as the ordering research did with FreeCAD. Image prep
+extends PureCutCNC's SVG import: read `src/import/svg.ts` (paint intent and
+the content warnings) and `classifier.ts` (nesting and ambiguity); it has no
+stroke-to-outline or cleanup to port. PNG and JPEG tracing is deferred, and
+any tracer must be permissively licensed (Potrace is GPL).
 
 ### Phase 4: GUI, CAM only
 
