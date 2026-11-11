@@ -5,7 +5,8 @@ macOS. On macOS, ⌘ takes the place of Ctrl and ⌥ the place of Alt. Each
 menu row shows its shortcut at the right of the row.
 
 The shortcuts that act on the selection (Select All, Duplicate, Delete,
-Hide, Show, Lock, the arrows, F, T and Escape) do nothing while you are
+Hide, Show, Lock, Rename, Rotate, Flip, the arrows, F, T and Escape) do
+nothing while you are
 typing in a field. In a field, Ctrl A selects the field's text, and the
 arrows move the text cursor. The file and undo shortcuts work everywhere
 except in an open sheet.
@@ -28,6 +29,11 @@ except in an open sheet.
 | H | H | Hide the selection | Edit ▸ Hide |
 | Shift+H | ⇧H | Show the selection | Edit ▸ Show |
 | L | L | Lock the selection, or unlock it when every shape in it is locked | Edit ▸ Lock |
+| F2 | F2 | Rename the selected shape in place | Edit ▸ Rename |
+| R | R | Rotate the selection 90° clockwise | Arrange ▸ Rotate 90° Clockwise |
+| Shift+R | ⇧R | Rotate the selection 90° anticlockwise | Arrange ▸ Rotate 90° Anticlockwise |
+| Ctrl+Shift+H | ⇧⌘H | Flip the selection left to right | Arrange ▸ Flip Horizontal |
+| Ctrl+Shift+V | ⇧⌘V | Flip the selection top to bottom | Arrange ▸ Flip Vertical |
 | F | F | Fit the Viewport to the stock and shapes | View ▸ Fit View |
 | Shift+F | ⇧F | Fit the Viewport to the selection | View ▸ Zoom to Selection |
 | T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
