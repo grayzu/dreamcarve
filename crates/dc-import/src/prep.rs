@@ -102,7 +102,8 @@ mod tests {
     }
 
     /// A traced picture's worth of vertices prepares in seconds (a loose
-    /// bound, as `s17_check_is_fast_on_the_sign` is).
+    /// bound, as `s17_check_is_fast_on_the_sign` is: about 4 s locally, 11 s on
+    /// a shared Windows runner, so 60 s catches only a blow-up).
     #[test]
     fn runs_in_seconds_on_traced_scale_art() {
         let art = traced_scale_art();
@@ -111,7 +112,7 @@ mod tests {
         let elapsed = started.elapsed();
         assert!(!prepared.pieces.is_empty());
         assert!(
-            elapsed < Duration::from_secs(10),
+            elapsed < Duration::from_secs(60),
             "100 000 vertices took {elapsed:?}"
         );
     }
