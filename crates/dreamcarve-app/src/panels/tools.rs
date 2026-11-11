@@ -27,7 +27,7 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::icon::Icon;
-use crate::widgets::unit_field::{UnitField, field as unit_field, row, validation_line};
+use crate::widgets::unit_field::{Required, UnitField, field as unit_field, row, validation_line};
 
 /// A list row's height, px (section 3).
 const ROW_PX: f32 = 40.0;
@@ -392,23 +392,36 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         let id = field_id(&tool.id, field);
         let name = strings.get(key);
         let error = error_for(field.file_name());
+        // An unset rate is required (functional 66b; slice 26, #618):
+        // *Required* in the field and the file's message its tooltip, not a
+        // line under it. The held V-bit's angle keeps its line, which says
+        // what to type.
+        let required = error
+            .filter(|_| value.is_empty() && field != ToolField::Angle)
+            .map(|message| Required {
+                placeholder: strings.get(StrKey::EditorRequired),
+                message,
+            });
         let (label, output) = row(ui, name, |ui| {
             let output = unit_field(
                 ui,
                 UnitField {
                     placeholder: hint,
                     tier: error.map(|_| dc_job::Tier::Error),
+                    required,
                     ..UnitField::new(id, name, &value, tools::field_unit(field, units))
                 },
             );
-            if let Some(message) = error {
+            if let (Some(message), None) = (error, required) {
                 validation_line(ui, message);
             }
             output
         });
         let response = output.response.labelled_by(label.id);
         let left = response.lost_focus();
-        response.on_hover_text(field.file_name());
+        if required.is_none() {
+            response.on_hover_text(field.file_name());
+        }
         if held && field == ToolField::Angle {
             // The held switch: a typed angle makes it, one undo step; the
             // field left empty (or Escape) discards it; a refusal keeps it.

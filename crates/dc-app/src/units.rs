@@ -88,6 +88,24 @@ pub fn field_text(value_mm: f64, units: Units) -> String {
     trimmed(&number(to_display(value_mm, units), decimals))
 }
 
+/// Decimal places a closed group's summary shows of a length in
+/// millimetres (functional spec, capability 66): a glance, not the field.
+const SUMMARY_DECIMALS_MM: usize = 2;
+/// Decimal places a summary shows of a length in inches: a thou.
+const SUMMARY_DECIMALS_INCH: usize = 3;
+
+/// A length as a closed group's summary words it: `value_mm` in `units`
+/// to a hundredth of a millimetre or a thou, trailing zeros dropped (`5`,
+/// `0.197`), with no unit.
+#[must_use]
+pub fn summary_text(value_mm: f64, units: Units) -> String {
+    let decimals = match units {
+        Units::Mm => SUMMARY_DECIMALS_MM,
+        Units::Inch => SUMMARY_DECIMALS_INCH,
+    };
+    trimmed(&number(to_display(value_mm, units), decimals))
+}
+
 /// `text`, a formatted decimal, without trailing zeros or a bare point.
 fn trimmed(text: &str) -> String {
     if text.contains('.') {

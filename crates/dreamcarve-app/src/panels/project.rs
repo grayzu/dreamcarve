@@ -34,7 +34,7 @@ use crate::widgets::row::{self, GAP_PX, LABEL_PX};
 use crate::widgets::section::section;
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
-use crate::widgets::unit_field::{UnitField, field as unit_field};
+use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 12;
@@ -188,6 +188,16 @@ fn field_row(
         .or(status.map(|s| s.tier));
     let label = cx.strings.get(field.label());
     let value = field.text(cx.project);
+    // An unset value with an error on it (the stock thickness on a new
+    // project) is required: *Required* in the field, the message its
+    // tooltip, no line under it (functional 66b; slice 26, #618).
+    let required = status
+        .filter(|s| refused.is_none() && value.is_empty() && s.tier == Tier::Error)
+        .map(|s| Required {
+            placeholder: cx.strings.get(StrKey::EditorRequired),
+            message: s.message,
+        });
+    let status = status.filter(|_| required.is_none());
     ui.horizontal(|ui| {
         row::label(ui, label, cx.strings.get(field.help()), Some(field.path()));
         let typed = unit_field(
@@ -202,6 +212,7 @@ fn field_row(
                 disabled_reason,
                 tier,
                 reset: None,
+                required,
             },
         );
         if let Some(text) = typed.committed {
@@ -321,6 +332,7 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
                 disabled_reason: None,
                 tier: refused.as_ref().map(|_| Tier::Error),
                 reset: None,
+                required: None,
             },
         )
         .committed

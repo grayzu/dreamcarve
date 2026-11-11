@@ -488,6 +488,7 @@ photo_v_carve = "Photo V-Carve"
 # placeholder and its reset, the Targets group, the tool picker.
 [editor]
 title = "{name} · {kind}"
+header_kind = "· {kind}"
 tools_value = "tool's: {value}"
 tools_unset = "tool's: not set"
 reset = "Use the tool's value"
@@ -516,8 +517,8 @@ derived_value = "derived: {value}"
 derived_read_only = "Derived from the mouth diameter, the start depth and the V-bit's angle; never typed."
 derived_needs_v_bit = "A countersink's depth follows the angle of a V-bit; pick a V-bit."
 derived_needs_mouth = "A countersink's depth follows its mouth; set a mouth diameter above 0."
-# Slice 13 (#542): a V-bit's cone under the tool picker, the clearing-pass
-# list, and the carve summary in the editor's status line.
+# Slice 13 (#542): a V-bit's cone under the tool picker and the
+# clearing-pass list.
 tool_cone = "cone height {value}"
 clearing_intro = "Cut before the V-bit, largest tool first; each is its own tool run."
 clearing_empty = "No clearing passes: the V-bit clears the floor itself."
@@ -526,7 +527,23 @@ clearing_grip = "Drag to reorder pass {n}"
 clearing_remove = "Remove pass {n}"
 clearing_add = "Add pass"
 clearing_add_hint = "picks the next smaller end mill"
-carve_summary = "check says"
+# Slice 26 (#618): the header's inline rename, the required-field look
+# (also the Project Settings' and the Tools tab's), and a closed group's
+# summary: how a value, a switch off and a list read in it.
+rename = "Rename {name}"
+required = "Required"
+summary_tools = "tool's {value}"
+summary_stock = "same as stock {value}"
+summary_unset = "not set"
+summary_off = "{label} off"
+summary_relief = "relief {value}"
+summary_start = "start {value}"
+summary_raster = "raster {value}"
+summary_wall_pass = "wall {value}"
+summary_retract = "retract {value}"
+summary_passes = "{count} clearing passes"
+summary_one_pass = "1 clearing pass"
+summary_no_passes = "no clearing passes"
 # Slice 14 (#543): an Inlay's male board sizes, its derived line and the
 # base under its band.
 stock_value = "same as stock: {value}"
@@ -540,9 +557,7 @@ inlay_base = "base under the band {base} (at least {least})"
 
 # The editor's groups, in capability 66's order.
 [editor.group]
-identity = "Identity"
-targets = "Targets"
-tool = "Tool"
+setup = "Setup"
 depth = "Depth"
 male_board = "Male board"
 strategy = "Strategy"
@@ -555,10 +570,6 @@ heights = "Heights"
 # Each row's label (the chapters' names) and the one-sentence help its
 # label shows on hover, above the `.dcv` field name.
 [editor.field]
-name = "Name"
-name_help = "The operation's name, as the list, the Warnings panel and the program's comments show it."
-enabled = "Enabled"
-enabled_help = "Whether the operation is cut and exported; a disabled one keeps its settings."
 targets = "Targets"
 targets_help = "The shapes the operation cuts."
 tool = "Tool"

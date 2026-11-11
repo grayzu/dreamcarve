@@ -45,6 +45,13 @@
 //! height are the stock's while `null` ([`StockDefault`]), a derived line
 //! ([`FieldKind::InlayDerived`]), the clearing list, and a Cut-out group
 //! whose tabs are the Profile's tab rows at `cut_out.tabs`.
+//!
+//! Slice 26 (#618, the review redesign; capabilities 66, 66a): there is no
+//! Identity group, since the name is the editor's header and *enabled* the
+//! list's checkbox; the Targets and Tool rows and each kind's required
+//! settings are [`Group::Setup`]'s, the first rows of every table, so
+//! moving a field to Setup was a table edit and nothing else. A row may
+//! name how a closed group's summary words it ([`Row::summary`]).
 
 use dc_project::{Operation, Project, Tool};
 use serde_json::{Value, json};
@@ -54,15 +61,13 @@ use crate::strings::StrKey;
 
 pub use super::set::{get, record, set};
 
-/// An editor group, a collapsible section (capability 66).
+/// An editor group, a section (capability 66): Setup, always open, then
+/// the collapsible ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Group {
-    /// Name, enabled.
-    Identity,
-    /// The target shapes.
-    Targets,
-    /// The tool.
-    Tool,
+    /// The targets, the tool, and the settings every operation of the kind
+    /// needs before it can cut (capability 66a). Never collapses.
+    Setup,
     /// Depths, step-downs, allowances.
     Depth,
     /// An Inlay's male board (capability 68a; slice 14, #543).
@@ -85,10 +90,8 @@ impl Group {
     /// The groups in capability 66's order, the only order they render in,
     /// with an Inlay's Male board after Depth and its Cut-out before Order
     /// (capability 68's Inlay line, mock-up 06).
-    pub const ALL: [Self; 11] = [
-        Self::Identity,
-        Self::Targets,
-        Self::Tool,
+    pub const ALL: [Self; 9] = [
+        Self::Setup,
         Self::Depth,
         Self::MaleBoard,
         Self::Strategy,
@@ -103,9 +106,7 @@ impl Group {
     #[must_use]
     pub const fn title(self) -> StrKey {
         match self {
-            Self::Identity => StrKey::EditorGroupIdentity,
-            Self::Targets => StrKey::EditorGroupTargets,
-            Self::Tool => StrKey::EditorGroupTool,
+            Self::Setup => StrKey::EditorGroupSetup,
             Self::Depth => StrKey::EditorGroupDepth,
             Self::MaleBoard => StrKey::EditorGroupMaleBoard,
             Self::Strategy => StrKey::EditorGroupStrategy,
@@ -117,23 +118,40 @@ impl Group {
         }
     }
 
-    /// Its open state's name in `gui.toml`'s `sections`, shared by every
-    /// operation (capability 66: "open state is remembered").
+    /// Its open state's name in `gui.toml`'s `sections` for an operation
+    /// of `kind`, shared by every operation of the kind (capability 66:
+    /// "the open state of each group is remembered per kind"):
+    /// `operation.pocket.strategy`.
     #[must_use]
-    pub const fn section(self) -> &'static str {
-        match self {
-            Self::Identity => "operation.identity",
-            Self::Targets => "operation.targets",
-            Self::Tool => "operation.tool",
-            Self::Depth => "operation.depth",
-            Self::MaleBoard => "operation.male_board",
-            Self::Strategy => "operation.strategy",
-            Self::EntryAndLeads => "operation.entry",
-            Self::CornersAndTabs => "operation.corners",
-            Self::CutOut => "operation.cut_out",
-            Self::Order => "operation.order",
-            Self::Heights => "operation.heights",
-        }
+    pub fn section(self, kind: Kind) -> String {
+        let group = match self {
+            Self::Setup => "setup",
+            Self::Depth => "depth",
+            Self::MaleBoard => "male_board",
+            Self::Strategy => "strategy",
+            Self::EntryAndLeads => "entry",
+            Self::CornersAndTabs => "corners",
+            Self::CutOut => "cut_out",
+            Self::Order => "order",
+            Self::Heights => "heights",
+        };
+        let kind = match kind {
+            Kind::Profile => "profile",
+            Kind::Pocket => "pocket",
+            Kind::Drill => "drill",
+            Kind::Bore => "bore",
+            Kind::Engrave => "engrave",
+            Kind::VCarve => "v_carve",
+            Kind::Inlay => "inlay",
+            Kind::PhotoVCarve => "photo_v_carve",
+        };
+        format!("operation.{kind}.{group}")
+    }
+
+    /// Whether it collapses: every group but Setup (capability 66a).
+    #[must_use]
+    pub const fn collapses(self) -> bool {
+        !matches!(self, Self::Setup)
     }
 }
 
@@ -257,8 +275,6 @@ pub fn tag_of(value: &Value) -> Option<&str> {
 /// How a row is edited: one shell renderer each.
 #[derive(Debug, Clone, Copy)]
 pub enum FieldKind {
-    /// Free text (the name).
-    Text,
     /// A length, mm in the file, display units on screen.
     Length,
     /// A length that is `null` while its switch is off (a V-Carve's flat
@@ -377,6 +393,10 @@ pub struct Row {
     /// A further rule, for a value the file holds and the generator
     /// ignores; the row applies only when it holds of the record.
     pub applies: Option<fn(&Value) -> bool>,
+    /// How a closed group's summary words its value, `{value}` in it
+    /// (`wall {value}`: `wall last`), where its label or its option alone
+    /// would not say ([`super::summary`]).
+    pub summary: Option<StrKey>,
 }
 
 impl Row {
@@ -404,7 +424,16 @@ impl Row {
     pub fn indented(&self) -> bool {
         self.key.contains('.')
             && !matches!(self.kind, FieldKind::CountersinkDepth)
-            && self.group != Group::MaleBoard
+            && !self.key.starts_with("male_board.")
+    }
+
+    /// The row, its value worded in a summary as `template` says.
+    #[must_use]
+    pub const fn summarised(self, template: StrKey) -> Self {
+        Self {
+            summary: Some(template),
+            ..self
+        }
     }
 
     /// Whether it applies to `record`: its path is there, and its rule
@@ -426,6 +455,7 @@ const fn row(group: Group, key: &'static str, kind: FieldKind, label: StrKey, he
         tool_default: None,
         stock_default: None,
         applies: None,
+        summary: None,
     }
 }
 
@@ -475,36 +505,23 @@ const fn ruled(
 
 // ── The rows every kind has. ───────────────────────────────────────────
 
-const NAME: Row = row(
-    Group::Identity,
-    "name",
-    FieldKind::Text,
-    StrKey::EditorFieldName,
-    StrKey::EditorFieldNameHelp,
-);
-const ENABLED: Row = row(
-    Group::Identity,
-    "enabled",
-    FieldKind::Checkbox,
-    StrKey::EditorFieldEnabled,
-    StrKey::EditorFieldEnabledHelp,
-);
 const TARGETS: Row = row(
-    Group::Targets,
+    Group::Setup,
     "targets",
     FieldKind::InstanceList,
     StrKey::EditorFieldTargets,
     StrKey::EditorFieldTargetsHelp,
 );
 const TOOL: Row = row(
-    Group::Tool,
+    Group::Setup,
     "tool",
     FieldKind::ToolPicker,
     StrKey::EditorFieldTool,
     StrKey::EditorFieldToolHelp,
 );
+/// The depth, a Setup row of every kind that has one (capability 66a).
 const DEPTH: Row = row(
-    Group::Depth,
+    Group::Setup,
     "depth_mm",
     FieldKind::Length,
     StrKey::EditorFieldDepth,
@@ -576,7 +593,8 @@ const CORNER_RELIEF: Row = row(
     FieldKind::Choice(CORNER_RELIEFS),
     StrKey::EditorFieldCornerRelief,
     StrKey::EditorFieldCornerReliefHelp,
-);
+)
+.summarised(StrKey::EditorSummaryRelief);
 const MACHINING_ORDER: Row = row(
     Group::Order,
     "machining_order",
@@ -797,20 +815,48 @@ const V_CARVE_STRATEGIES: &[ChoiceOption] = &[
 
 /// Capability 68's Profile line, every field.
 const PROFILE: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
-    DEPTH,
-    STEP_DOWN,
-    THROUGH_CUT_ALLOWANCE,
     row(
-        Group::Strategy,
+        Group::Setup,
         "side",
         FieldKind::Choice(SIDES),
         StrKey::EditorFieldSide,
         StrKey::EditorFieldSideHelp,
     ),
+    DEPTH,
+    // A tab request: none, a count, or distances; its sizes stay in
+    // Corners and tabs (capability 66a).
+    row(
+        Group::Setup,
+        "tabs",
+        FieldKind::TabRequest,
+        StrKey::EditorFieldTabs,
+        StrKey::EditorFieldTabsHelp,
+    ),
+    row(
+        Group::Setup,
+        "tabs.placement",
+        FieldKind::Choice(TAB_PLACEMENTS),
+        StrKey::EditorFieldTabPlacement,
+        StrKey::EditorFieldTabPlacementHelp,
+    ),
+    row(
+        Group::Setup,
+        "tabs.placement.count",
+        FieldKind::Count,
+        StrKey::EditorFieldTabCount,
+        StrKey::EditorFieldTabCountHelp,
+    ),
+    row(
+        Group::Setup,
+        "tabs.placement.distances_mm",
+        FieldKind::LengthList,
+        StrKey::EditorFieldTabDistances,
+        StrKey::EditorFieldTabDistancesHelp,
+    ),
+    STEP_DOWN,
+    THROUGH_CUT_ALLOWANCE,
     DIRECTION,
     row(
         Group::Strategy,
@@ -818,7 +864,8 @@ const PROFILE: &[Row] = &[
         FieldKind::Choice(STARTS),
         StrKey::EditorFieldStart,
         StrKey::EditorFieldStartHelp,
-    ),
+    )
+    .summarised(StrKey::EditorSummaryStart),
     row(
         Group::Strategy,
         "start.near",
@@ -910,34 +957,6 @@ const PROFILE: &[Row] = &[
     CORNER_RELIEF,
     row(
         Group::CornersAndTabs,
-        "tabs",
-        FieldKind::TabRequest,
-        StrKey::EditorFieldTabs,
-        StrKey::EditorFieldTabsHelp,
-    ),
-    row(
-        Group::CornersAndTabs,
-        "tabs.placement",
-        FieldKind::Choice(TAB_PLACEMENTS),
-        StrKey::EditorFieldTabPlacement,
-        StrKey::EditorFieldTabPlacementHelp,
-    ),
-    row(
-        Group::CornersAndTabs,
-        "tabs.placement.count",
-        FieldKind::Count,
-        StrKey::EditorFieldTabCount,
-        StrKey::EditorFieldTabCountHelp,
-    ),
-    row(
-        Group::CornersAndTabs,
-        "tabs.placement.distances_mm",
-        FieldKind::LengthList,
-        StrKey::EditorFieldTabDistances,
-        StrKey::EditorFieldTabDistancesHelp,
-    ),
-    row(
-        Group::CornersAndTabs,
         "tabs.width_mm",
         FieldKind::Length,
         StrKey::EditorFieldTabWidth,
@@ -977,11 +996,16 @@ const PROFILE: &[Row] = &[
 
 /// Capability 68's Pocket line, every field (slice 11, #540).
 const POCKET: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
     DEPTH,
+    row(
+        Group::Setup,
+        "strategy",
+        FieldKind::Choice(CLEARANCE_STRATEGIES),
+        StrKey::EditorFieldStrategy,
+        StrKey::EditorFieldStrategyHelp,
+    ),
     STEP_DOWN,
     row(
         Group::Depth,
@@ -991,27 +1015,26 @@ const POCKET: &[Row] = &[
         StrKey::EditorFieldStockToLeaveHelp,
     ),
     THROUGH_CUT_ALLOWANCE,
-    row(
-        Group::Strategy,
-        "strategy",
-        FieldKind::Choice(CLEARANCE_STRATEGIES),
-        StrKey::EditorFieldStrategy,
-        StrKey::EditorFieldStrategyHelp,
-    ),
+    // The raster's angle stays with how the cut covers its shapes (mock-up
+    // 05), its strategy chosen in Setup; the direction before the wall
+    // pass, so a closed Strategy reads `Raster 0°, climb, wall last`.
     row(
         Group::Strategy,
         "strategy.raster.angle_deg",
         FieldKind::Angle,
         StrKey::EditorFieldRasterAngle,
         StrKey::EditorFieldRasterAngleHelp,
-    ),
+    )
+    .summarised(StrKey::EditorSummaryRaster),
+    DIRECTION,
     row(
         Group::Strategy,
         "wall_pass",
         FieldKind::Choice(WALL_PASSES),
         StrKey::EditorFieldWallPass,
         StrKey::EditorFieldWallPassHelp,
-    ),
+    )
+    .summarised(StrKey::EditorSummaryWallPass),
     tool_row(
         Group::Strategy,
         "step_over_fraction",
@@ -1020,7 +1043,6 @@ const POCKET: &[Row] = &[
         StrKey::EditorFieldStepOverHelp,
         ToolDefault::StepOver,
     ),
-    DIRECTION,
     row(
         Group::Strategy,
         "rest_of",
@@ -1039,8 +1061,6 @@ const POCKET: &[Row] = &[
 
 /// Capability 68's Engrave line, every field (slice 11, #540).
 const ENGRAVE: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
     DEPTH,
@@ -1075,20 +1095,34 @@ fn tool_width_read(record: &Value) -> bool {
 /// a countersink's depth is derived and shown in place of the typed one
 /// (S18), and the cycle's rows follow the cycle.
 const DRILL: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
+    row(
+        Group::Setup,
+        "cycle",
+        FieldKind::Choice(DRILL_CYCLES),
+        StrKey::EditorFieldCycle,
+        StrKey::EditorFieldCycleHelp,
+    ),
     ruled(
-        Group::Depth,
+        Group::Setup,
         "depth_mm",
         FieldKind::Length,
         StrKey::EditorFieldDepth,
         StrKey::EditorFieldDepthHelp,
         not_countersink,
     ),
+    // A countersink's mouth and its derived depth in the depth's place
+    // (capability 66a; mock-up 07).
     row(
-        Group::Depth,
+        Group::Setup,
+        "cycle.countersink.diameter_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMouthDiameter,
+        StrKey::EditorFieldMouthDiameterHelp,
+    ),
+    row(
+        Group::Setup,
         "cycle.countersink",
         FieldKind::CountersinkDepth,
         StrKey::EditorFieldCountersinkDepth,
@@ -1102,13 +1136,6 @@ const DRILL: &[Row] = &[
         StrKey::EditorFieldRetractHeightHelp,
     ),
     THROUGH_CUT_ALLOWANCE,
-    row(
-        Group::Strategy,
-        "cycle",
-        FieldKind::Choice(DRILL_CYCLES),
-        StrKey::EditorFieldCycle,
-        StrKey::EditorFieldCycleHelp,
-    ),
     tool_row(
         Group::Strategy,
         "cycle.peck.peck_depth_mm",
@@ -1123,20 +1150,14 @@ const DRILL: &[Row] = &[
         FieldKind::Choice(PECK_RETRACTS),
         StrKey::EditorFieldPeckRetract,
         StrKey::EditorFieldPeckRetractHelp,
-    ),
+    )
+    .summarised(StrKey::EditorSummaryRetract),
     row(
         Group::Strategy,
         "cycle.peck.retract.chip_break.gap_mm",
         FieldKind::Length,
         StrKey::EditorFieldChipBreakGap,
         StrKey::EditorFieldChipBreakGapHelp,
-    ),
-    row(
-        Group::Strategy,
-        "cycle.countersink.diameter_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldMouthDiameter,
-        StrKey::EditorFieldMouthDiameterHelp,
     ),
     row(
         Group::Strategy,
@@ -1172,8 +1193,6 @@ const DRILL: &[Row] = &[
 
 /// Capability 68's Bore line, every field (slice 12, #541; mock-up 07).
 const BORE: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
     DEPTH,
@@ -1203,16 +1222,21 @@ const BORE: &[Row] = &[
 /// app (S20). The clearing passes are one block ([`CLEARING_PASS`] are
 /// each pass's rows).
 const V_CARVE: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
     row(
-        Group::Depth,
+        Group::Setup,
         "flat_depth_mm",
         FieldKind::SwitchedLength,
         StrKey::EditorFieldFlatDepth,
         StrKey::EditorFieldFlatDepthHelp,
+    ),
+    row(
+        Group::Setup,
+        "clearing",
+        FieldKind::ClearingList,
+        StrKey::EditorFieldClearing,
+        StrKey::EditorFieldClearingHelp,
     ),
     row(
         Group::Depth,
@@ -1257,13 +1281,6 @@ const V_CARVE: &[Row] = &[
         StrKey::EditorFieldFloorStepOver,
         StrKey::EditorFieldFloorStepOverHelp,
         ToolDefault::StepOver,
-    ),
-    row(
-        Group::Strategy,
-        "clearing",
-        FieldKind::ClearingList,
-        StrKey::EditorFieldClearing,
-        StrKey::EditorFieldClearingHelp,
     ),
     MACHINING_ORDER,
     SAFE_Z,
@@ -1358,30 +1375,37 @@ fn cut_out_template(project: &Project) -> Value {
 /// `cut_out.tabs`. No depth or thickness is ever written by the app
 /// (S20).
 const INLAY: &[Row] = &[
-    NAME,
-    ENABLED,
     TARGETS,
     TOOL,
     row(
-        Group::Depth,
+        Group::Setup,
         "depth_mm",
         FieldKind::Length,
         StrKey::EditorFieldInlayDepth,
         StrKey::EditorFieldInlayDepthHelp,
     ),
     row(
-        Group::Depth,
+        Group::Setup,
         "glue_gap_mm",
         FieldKind::Length,
         StrKey::EditorFieldGlueGap,
         StrKey::EditorFieldGlueGapHelp,
     ),
     row(
-        Group::Depth,
+        Group::Setup,
         "plug_depth_mm",
         FieldKind::Length,
         StrKey::EditorFieldPlugDepth,
         StrKey::EditorFieldPlugDepthHelp,
+    ),
+    // Required for the male to export (capability 66b), so in Setup; the
+    // board's width and height stay in Male board (mock-up 06).
+    row(
+        Group::Setup,
+        "male_board.thickness_mm",
+        FieldKind::Length,
+        StrKey::EditorFieldMaleThickness,
+        StrKey::EditorFieldMaleThicknessHelp,
     ),
     row(
         Group::Depth,
@@ -1418,13 +1442,6 @@ const INLAY: &[Row] = &[
         StrKey::EditorFieldMaleHeight,
         StrKey::EditorFieldMaleHeightHelp,
         StockDefault::Height,
-    ),
-    row(
-        Group::MaleBoard,
-        "male_board.thickness_mm",
-        FieldKind::Length,
-        StrKey::EditorFieldMaleThickness,
-        StrKey::EditorFieldMaleThicknessHelp,
     ),
     tool_row(
         Group::Strategy,

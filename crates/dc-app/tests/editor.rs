@@ -41,6 +41,13 @@
 //! and Cut-out groups (capability 68a, which add two groups to capability
 //! 66's nine for the Inlay alone), the derived line under Depth and the
 //! base under the band, both computed from `dc-project`'s own rules.
+//!
+//! Slice 26 (#618, the review redesign): the name is the editor's header
+//! and *enabled* the list's, so no row edits either; each kind's Setup
+//! rows lead its table; every other group is closed by default with a
+//! one-line summary of its values, and a group holding a located error or
+//! warning opens. The tests named `fields::…` and `summary::…` are the
+//! issue's.
 
 #![allow(
     clippy::panic,
@@ -55,7 +62,7 @@ mod common;
 
 use std::collections::BTreeSet;
 
-use dc_app::editor::{self, FieldKind, Group, clearing, fields};
+use dc_app::editor::{self, FieldKind, Group, clearing};
 use dc_app::operations::{self, Kind};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::Tier;
@@ -223,7 +230,8 @@ fn covers(row: &fields::Row, path: &str) -> bool {
 /// value other than the record's through the editor's own path, is that
 /// value after `dc_project::save` and `dc_project::load` (the CLI's reader),
 /// and set back is the record again. `kind` and `id` are the record's
-/// identity, not settings.
+/// identity, not settings; `name` is edited in the editor's header and
+/// `enabled` by the list's checkbox (slice 26, #618), not by a row.
 #[test]
 fn fields_table_matches_the_records() {
     let project = project();
@@ -266,7 +274,7 @@ fn fields_table_matches_the_records() {
             let mut found = BTreeSet::new();
             leaves(&record, "", &mut found);
             for leaf in found {
-                if leaf == "kind" || leaf == "id" {
+                if matches!(leaf.as_str(), "kind" | "id" | "name" | "enabled") {
                     continue;
                 }
                 // A row whose rule hides it here still covers the leaf: the
@@ -361,7 +369,6 @@ fn other_value(
 ) -> Option<Value> {
     let number = current.as_f64();
     Some(match row.kind {
-        FieldKind::Text => Value::from(format!("{} edited", current.as_str().unwrap_or(""))),
         FieldKind::Length | FieldKind::Rate | FieldKind::Seconds => {
             Value::from(number.map_or(2.5, |n| n + 1.25))
         }
@@ -424,16 +431,14 @@ fn other_value(
 /// Upstream's `testEveryFieldNamesADeclaredGroup` and
 /// `testEveryKindRendersAtLeastOneGroup`: the groups render once each, in
 /// capability 66's order, every row names one of them, and every kind
-/// with a record shows Identity, Targets, Tool and Heights; a group with
-/// no row for the operation is not shown.
+/// with a record shows Setup and Heights; a group with no row for the
+/// operation is not shown.
 #[test]
 fn groups_render_in_the_fixed_order() {
     assert_eq!(
         Group::ALL,
         [
-            Group::Identity,
-            Group::Targets,
-            Group::Tool,
+            Group::Setup,
             Group::Depth,
             Group::MaleBoard,
             Group::Strategy,
@@ -454,7 +459,7 @@ fn groups_render_in_the_fixed_order() {
         let mut sorted = shown.clone();
         sorted.sort_by_key(|g| Group::ALL.iter().position(|a| a == g));
         assert_eq!(shown, sorted, "{kind:?}: groups in the fixed order");
-        for group in [Group::Identity, Group::Targets, Group::Tool, Group::Heights] {
+        for group in [Group::Setup, Group::Heights] {
             assert!(shown.contains(&group), "{kind:?} shows {group:?}");
         }
         for (group, rows) in fields::groups(&op) {
@@ -485,14 +490,15 @@ fn profile_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "side",
             "depth_mm",
+            "tabs",
+            "tabs.placement",
+            "tabs.placement.count",
             "step_down_mm",
             "through_cut_allowance_mm",
-            "side",
             "direction",
             "start",
             "last_pass",
@@ -500,9 +506,6 @@ fn profile_golden_render_order() {
             "entry.ramp.angle_deg",
             "lead",
             "corner_relief",
-            "tabs",
-            "tabs.placement",
-            "tabs.placement.count",
             "tabs.width_mm",
             "tabs.height_mm",
             "tabs.shape",
@@ -528,18 +531,16 @@ fn pocket_and_engrave_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
+            "strategy",
             "step_down_mm",
             "stock_to_leave_mm",
             "through_cut_allowance_mm",
-            "strategy",
+            "direction",
             "wall_pass",
             "step_over_fraction",
-            "direction",
             "rest_of",
             "entry",
             "entry.ramp.angle_deg",
@@ -556,9 +557,18 @@ fn pocket_and_engrave_golden_render_order() {
     .unwrap();
     let keys: Vec<&str> = fields::rows(&raster).iter().map(|r| r.key).collect();
     assert_eq!(
-        keys.get(8..10),
-        Some(["strategy", "strategy.raster.angle_deg"].as_slice()),
-        "the raster angle follows the strategy"
+        keys.get(3..8),
+        Some(
+            [
+                "strategy",
+                "step_down_mm",
+                "stock_to_leave_mm",
+                "through_cut_allowance_mm",
+                "strategy.raster.angle_deg"
+            ]
+            .as_slice()
+        ),
+        "the raster angle leads Strategy, its strategy chosen in Setup"
     );
     let stepover = fields::rows(&pocket)
         .into_iter()
@@ -572,8 +582,6 @@ fn pocket_and_engrave_golden_render_order() {
     assert_eq!(
         keys,
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
@@ -767,18 +775,23 @@ fn located_warning_matches_its_row() {
     let status = editor::status(harness.warnings(), &project, &profile, row).unwrap();
     assert_eq!(status.tier, Tier::Error);
     assert_eq!(status.message, finding.message);
-    // Closed, the Depth header counts the depth's error and the tool's
-    // unset step-down, which the step-down row takes while it is `null`.
+    // Closed, the Depth header counts the tool's unset step-down, which
+    // the step-down row takes while it is `null`; the depth itself is a
+    // Setup row (slice 26, #618), and Setup counts its error.
     assert_eq!(
         editor::group_status(harness.warnings(), &project, &profile, Group::Depth),
-        Some((Tier::Error, 2))
+        Some((Tier::Error, 1))
     );
-    let name = fields::rows(&profile)
+    assert!(matches!(
+        editor::group_status(harness.warnings(), &project, &profile, Group::Setup),
+        Some((Tier::Error, _))
+    ));
+    let side = fields::rows(&profile)
         .into_iter()
-        .find(|r| r.key == "name")
+        .find(|r| r.key == "side")
         .unwrap();
     assert_eq!(
-        editor::status(harness.warnings(), &project, &profile, name),
+        editor::status(harness.warnings(), &project, &profile, side),
         None
     );
 
@@ -1144,7 +1157,7 @@ fn profile_tab_request_round_trips() {
     let profile = op_of(&h, &id);
     let tabs = row_of(&profile, "tabs");
     assert!(matches!(tabs.kind, FieldKind::TabRequest));
-    assert_eq!(tabs.group, Group::CornersAndTabs);
+    assert_eq!(tabs.group, Group::Setup, "Setup holds the request (66a)");
     assert!(editor::switched(&profile, tabs));
 
     // Off is `null`, and its rows go.
@@ -1350,24 +1363,22 @@ fn drill_cycle_fields_follow_the_cycle() {
     );
     let simple = op_of(&h, &id);
     let simple_keys = [
-        "name",
-        "enabled",
         "targets",
         "tool",
+        "cycle",
         "depth_mm",
         "retract_mm",
         "through_cut_allowance_mm",
-        "cycle",
         "dwell_s",
         "allow_tool_wider_than_hole",
         "safe_z_mm",
     ];
     assert_eq!(keys(&simple), simple_keys, "a simple Drill");
     for (key, group) in [
-        ("depth_mm", Group::Depth),
+        ("cycle", Group::Setup),
+        ("depth_mm", Group::Setup),
         ("retract_mm", Group::Depth),
         ("through_cut_allowance_mm", Group::Depth),
-        ("cycle", Group::Strategy),
         ("dwell_s", Group::Strategy),
         ("allow_tool_wider_than_hole", Group::Strategy),
         ("safe_z_mm", Group::Heights),
@@ -1404,14 +1415,12 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&peck),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "cycle",
             "depth_mm",
             "retract_mm",
             "through_cut_allowance_mm",
-            "cycle",
             "cycle.peck.peck_depth_mm",
             "cycle.peck.retract",
             "dwell_s",
@@ -1512,24 +1521,25 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&sink),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
+            "cycle",
+            "cycle.countersink.diameter_mm",
             "cycle.countersink",
             "retract_mm",
             "through_cut_allowance_mm",
-            "cycle",
-            "cycle.countersink.diameter_mm",
             "cycle.countersink.start_depth_mm",
             "cycle.countersink.start_plane_cleared_externally",
             "dwell_s",
             "safe_z_mm",
         ]
     );
-    assert_eq!(row_of(&sink, "cycle.countersink").group, Group::Depth);
+    assert_eq!(row_of(&sink, "cycle.countersink").group, Group::Setup);
+    assert_eq!(
+        row_of(&sink, "cycle.countersink.diameter_mm").group,
+        Group::Setup
+    );
     for key in [
-        "cycle.countersink.diameter_mm",
         "cycle.countersink.start_depth_mm",
         "cycle.countersink.start_plane_cleared_externally",
     ] {
@@ -1577,8 +1587,6 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(
         keys(&bore),
         [
-            "name",
-            "enabled",
             "targets",
             "tool",
             "depth_mm",
@@ -1590,7 +1598,7 @@ fn drill_cycle_fields_follow_the_cycle() {
         ]
     );
     for (key, group) in [
-        ("depth_mm", Group::Depth),
+        ("depth_mm", Group::Setup),
         ("pitch_mm", Group::Depth),
         ("stock_to_leave_mm", Group::Depth),
         ("through_cut_allowance_mm", Group::Depth),
@@ -1637,17 +1645,21 @@ fn countersink_depth_is_derived_and_read_only() {
     );
     let derived = row_of(&sink, "cycle.countersink");
     assert!(matches!(derived.kind, FieldKind::CountersinkDepth));
-    assert_eq!(derived.group, Group::Depth);
+    assert_eq!(derived.group, Group::Setup);
     assert_eq!(strings.get(derived.label), "Depth");
     assert_eq!(derived.unit(), fields::Unit::Length);
-    let depth_group = fields::groups(&sink)
+    let setup: Vec<&str> = fields::groups(&sink)
         .into_iter()
-        .find(|(g, _)| *g == Group::Depth)
-        .expect("a Depth group")
-        .1;
+        .find(|(g, _)| *g == Group::Setup)
+        .expect("a Setup group")
+        .1
+        .iter()
+        .map(|r| r.key)
+        .collect();
     assert_eq!(
-        depth_group[0].key, "cycle.countersink",
-        "first, as Depth is"
+        setup.last(),
+        Some(&"cycle.countersink"),
+        "in the depth's place, after the mouth (capability 66a)"
     );
 
     let tip = 2.5 + dc_project::countersink_depth_mm(6.0, 90.0).unwrap();
@@ -1815,9 +1827,9 @@ fn drill_and_bore_target_warnings_land_under_targets() {
             status.message
         );
         let (tier, count) = located
-            .group(Group::Targets)
-            .expect("a closed Targets group shows them");
-        assert_eq!(tier, Tier::Warning);
+            .group(Group::Setup)
+            .expect("Setup, which holds the Targets row, counts them");
+        assert_ne!(tier, Tier::Hint, "{id}");
         assert!(count >= codes.len(), "{id}: {count}");
     }
 }
@@ -1865,13 +1877,17 @@ fn clearing_list_orders_and_warns() {
     let lettering = op_of(&h, "op3");
     let list = row_of(&lettering, "clearing");
     assert!(matches!(list.kind, FieldKind::ClearingList));
-    assert_eq!(list.group, Group::Strategy);
+    assert_eq!(
+        list.group,
+        Group::Setup,
+        "a V-Carve's passes are Setup's (66a)"
+    );
     assert!(clearing::passes(&lettering, list).is_empty());
 
     // The floor to clear: the flat depth is off at `null` until typed.
     let flat = row_of(&lettering, "flat_depth_mm");
     assert!(matches!(flat.kind, FieldKind::SwitchedLength));
-    assert_eq!(flat.group, Group::Depth);
+    assert_eq!(flat.group, Group::Setup);
     assert!(!editor::switched(&lettering, flat));
     let typed = editor::commit_text(h.app.project(), &lettering, flat, "2.5");
     run_edit(&mut h, typed);
@@ -2260,15 +2276,20 @@ fn inlay_both_boards() {
     assert_eq!(
         shown,
         vec![
-            (Group::Identity, vec!["name", "enabled"]),
-            (Group::Targets, vec!["targets"]),
-            (Group::Tool, vec!["tool"]),
             (
-                Group::Depth,
+                Group::Setup,
                 vec![
+                    "targets",
+                    "tool",
                     "depth_mm",
                     "glue_gap_mm",
                     "plug_depth_mm",
+                    "male_board.thickness_mm",
+                ]
+            ),
+            (
+                Group::Depth,
+                vec![
                     "margin_mm",
                     "outline_rounding_mm",
                     "through_cut_allowance_mm",
@@ -2277,11 +2298,7 @@ fn inlay_both_boards() {
             ),
             (
                 Group::MaleBoard,
-                vec![
-                    "male_board.width_mm",
-                    "male_board.height_mm",
-                    "male_board.thickness_mm",
-                ]
+                vec!["male_board.width_mm", "male_board.height_mm",]
             ),
             (Group::Strategy, vec!["step_over_fraction", "clearing"]),
             (
@@ -2553,4 +2570,223 @@ fn inlay_both_boards() {
         ["set the inlay depth, glue gap and plug depth to see the male's planes"]
     );
     assert!(!alert);
+}
+
+/// The editor's table (`dc_app::editor::fields`), re-exported here so the
+/// tests above name it as before, with slice 26's tests (#618; functional
+/// spec 66, 66a; acceptance 73, 97).
+mod fields {
+    pub use dc_app::editor::fields::*;
+
+    use dc_app::editor::Group;
+    use dc_app::operations::Kind;
+
+    /// Functional 66a: the key paths each kind's Setup holds, in order:
+    /// Targets and Tool, then the kind's rows, a choice's or a switch's own
+    /// rows after it (a Profile's tab count, a countersink's mouth and its
+    /// derived depth in the depth's place).
+    fn setup_keys(kind: Kind) -> &'static [&'static str] {
+        match kind {
+            Kind::Profile => &[
+                "targets",
+                "tool",
+                "side",
+                "depth_mm",
+                "tabs",
+                "tabs.placement",
+                "tabs.placement.count",
+                "tabs.placement.distances_mm",
+            ],
+            Kind::Pocket => &["targets", "tool", "depth_mm", "strategy"],
+            Kind::Drill => &[
+                "targets",
+                "tool",
+                "cycle",
+                "depth_mm",
+                "cycle.countersink.diameter_mm",
+                "cycle.countersink",
+            ],
+            Kind::Bore | Kind::Engrave => &["targets", "tool", "depth_mm"],
+            Kind::VCarve => &["targets", "tool", "flat_depth_mm", "clearing"],
+            Kind::Inlay => &[
+                "targets",
+                "tool",
+                "depth_mm",
+                "glue_gap_mm",
+                "plug_depth_mm",
+                "male_board.thickness_mm",
+            ],
+            // The Picture, the V-bit, the maximum depth: slice 15 (#544)
+            // gives the Photo V-Carve its record, and its table these.
+            Kind::PhotoVCarve => &["picture", "tool", "max_depth_mm"],
+        }
+    }
+
+    /// Functional 66a and acceptance 97: for each kind the table's first
+    /// rows are its Setup rows, Targets and Tool first and then 66a's rows
+    /// in 66a's order, and no Setup row comes after another group's.
+    #[test]
+    fn setup_rows_lead_each_kind() {
+        for kind in Kind::ALL {
+            let rows = table(kind);
+            if kind == Kind::PhotoVCarve && rows.is_empty() {
+                // No record before phase 3.4 (`still_to_come`), so no rows
+                // yet; slice 15 (#544) makes this check its Setup too.
+                continue;
+            }
+            let setup: Vec<&str> = rows
+                .iter()
+                .take_while(|r| r.group == Group::Setup)
+                .map(|r| r.key)
+                .collect();
+            assert_eq!(setup, setup_keys(kind), "{kind:?}: the Setup rows lead");
+            assert!(
+                rows.iter()
+                    .skip(setup.len())
+                    .all(|r| r.group != Group::Setup),
+                "{kind:?}: every Setup row is in the lead"
+            );
+        }
+        assert_eq!(Group::ALL.first(), Some(&Group::Setup), "Setup is first");
+    }
+
+    /// Functional 66 and acceptance 73, 97: no key path is in two groups
+    /// (nor twice in one), so every field of 68 is shown exactly once;
+    /// `fields_table_matches_the_records` is the table-driven half.
+    #[test]
+    fn every_field_appears_once() {
+        for kind in Kind::ALL {
+            let mut seen: Vec<&str> = Vec::new();
+            for row in table(kind) {
+                assert!(
+                    !seen.contains(&row.key),
+                    "{kind:?}: `{}` has two rows",
+                    row.key
+                );
+                seen.push(row.key);
+            }
+        }
+    }
+
+    /// Functional 66: the name is the header's and *enabled* the list's;
+    /// there is no Identity group.
+    #[test]
+    fn no_identity_group() {
+        for kind in Kind::ALL {
+            for row in table(kind) {
+                assert!(
+                    row.key != "name" && row.key != "enabled",
+                    "{kind:?} has a `{}` row",
+                    row.key
+                );
+            }
+        }
+        for row in CLEARING_PASS {
+            assert_ne!(row.key, "name");
+        }
+    }
+}
+
+/// Slice 26's closed-group summaries and open state (#618; functional 66;
+/// design, "The editors": `editor::summary`).
+mod summary {
+    use std::collections::BTreeMap;
+
+    use dc_app::Strings;
+    use dc_app::editor::{self, Group, fields, summary};
+    use dc_app::operations::Kind;
+    use dc_job::{Finding, Tier};
+    use dc_project::{Operation, OperationId, Project, Units};
+
+    use super::common;
+
+    /// The plaque in `units` with its Panel pocket at the spec's numbers:
+    /// a 5 mm safe Z (the plaque's is 15) and its tool's step-down 3 mm
+    /// (the plaque's is 4), the Panel's own step-down `null`.
+    fn panel(units: Units) -> (Project, Operation) {
+        let mut project = common::plaque();
+        project.display_units = units;
+        let at = project
+            .operations
+            .iter()
+            .position(|o| o.id().as_str() == "op1")
+            .expect("the plaque's Panel");
+        let panel = fields::set(&project.operations[at], "safe_z_mm", serde_json::json!(5.0))
+            .expect("a safe Z");
+        project.operations[at] = panel.clone();
+        let tool = project
+            .tools
+            .iter_mut()
+            .find(|t| t.id == *panel.tool())
+            .expect("the Panel's tool");
+        tool.step_down_mm = Some(3.0);
+        (project, panel)
+    }
+
+    /// Functional 66: a closed group's header summarises its values in the
+    /// project's units, through the same rows the fields draw, and a
+    /// tool-derived `null` reads as the tool's value.
+    #[test]
+    fn closed_groups_summarise_their_values() {
+        let strings = Strings::english();
+        let (project, panel) = panel(Units::Mm);
+        assert!(matches!(panel, Operation::Pocket(_)));
+        assert_eq!(
+            summary::group(&project, &strings, &panel, Group::Strategy),
+            "Raster 0°, climb, wall last"
+        );
+        assert_eq!(
+            summary::group(&project, &strings, &panel, Group::Heights),
+            "Safe Z 5 mm"
+        );
+        let depth = summary::group(&project, &strings, &panel, Group::Depth);
+        assert!(
+            depth.starts_with("Step-down tool's 3 mm"),
+            "the step-down is the tool's: {depth}"
+        );
+        let (inch, panel) = self::panel(Units::Inch);
+        assert_eq!(
+            summary::group(&inch, &strings, &panel, Group::Heights),
+            "Safe Z 0.197 in"
+        );
+        // Setup is never closed, so it has no summary.
+        assert_eq!(summary::group(&project, &strings, &panel, Group::Setup), "");
+    }
+
+    /// Functional 66: every group but Setup starts closed; a group holding
+    /// a located warning opens by itself, and only it: the Pocket's
+    /// `relief_corner_too_tight` is Corners and tabs'.
+    #[test]
+    fn located_finding_opens_its_group() {
+        let (_, panel) = panel(Units::Mm);
+        let none = BTreeMap::new();
+        for (group, _) in fields::groups(&panel) {
+            assert_eq!(
+                summary::open(&none, Kind::Pocket, group),
+                group == Group::Setup,
+                "{group:?} on first show"
+            );
+        }
+        let findings = [Finding::warning(
+            "relief_corner_too_tight",
+            "a corner of `pocket` is too tight for its dogbone",
+        )
+        .for_op(Some(OperationId::new("op1")))];
+        assert_eq!(findings[0].tier, Tier::Warning);
+        let located = editor::Located::of(&findings, &panel);
+        assert_eq!(
+            summary::opened(&panel, &located),
+            [Group::CornersAndTabs],
+            "the warning opens Corners and tabs, and nothing else"
+        );
+        assert_eq!(
+            located.group(Group::CornersAndTabs),
+            Some((Tier::Warning, 1)),
+            "and its closed header counts it"
+        );
+        // Another operation's finding opens nothing here.
+        let elsewhere = [findings[0].clone().for_op(Some(OperationId::new("op2")))];
+        let located = editor::Located::of(&elsewhere, &panel);
+        assert!(summary::opened(&panel, &located).is_empty());
+    }
 }
