@@ -1080,13 +1080,23 @@ artwork of the maintainer's is committed):
 61j. **No machining inputs.** `image-prep --help` lists no tool, stock,
  depth, feed or size option, and the output of 61g is the same whatever
  the project it is later used in.
-61k. **Line art to inlay, end to end.** `ring-cross.svg` prepared with
- `--regions`, `init`, an Inlay (60° 6.35 mm V-bit, a 3.175 mm end mill as
- clearing pass, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`) with
- a circular boundary 8 mm beyond the pockets: `init` prints no 49a
- warning, both boards export with every program passing S1–S19, and the
- pair seats within 0.05 mm as in 57. The male is one board carrying four
- plugs, and the female four pockets.
+61k. **Line art to inlay, end to end.** The compass without its oval
+ (`tests/fixtures/prep/compass-art.svg`) prepared with `--regions` (eight
+ pieces, a narrowest gap of 2.5 mm, the same pockets as
+ `compass-regions.svg` within 0.05 mm), then the oval drawn into the
+ prepared file (the test appends it, as a drawing editor does: a stroke
+ that thin is a hairline and would be dropped if it were prepared), `init`,
+ an Inlay (60° 6.35 mm V-bit, a 3.175 mm end mill as clearing pass,
+ `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`) with the oval as its
+ `boundary`: `init` on the prepared file prints no 49a warning, and with
+ the oval it prints one, `svg_stroke_only_path` naming the oval, which is
+ expected (a drawn boundary is a bare outline, and an outline is all the
+ Inlay reads); both boards export with every program passing S1–S19, and
+ the pair seats within 0.05 mm as in 57. The male is one board carrying
+ eight plugs, and the female eight pockets. (Decided in #601: the first
+ text, `ring-cross.svg` with a circular boundary 8 mm beyond the pockets
+ and no 49a warning at all, could not hold: any drawn boundary is
+ stroke-only, filled, or unpainted, and each of those is a 49a warning.)
 61l. **Boundary replaces the margin.** The star fixture (60 mm tip to
  tip), the Inlay of 57 (`depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm:
  2`, the 60° 6.35 mm V-bit) and a boundary of one 80 mm square centred on
@@ -1145,7 +1155,7 @@ artwork of the maintainer's is committed):
  program exported after the move passes. The check never calls a
  generator (S17's rule, unchanged).
 61s. **Bench stand-in.** The line-art inlay's synthetic fixture
- (`tests/fixtures/prep/compass.svg`, see Test parts), prepared with
+ (`tests/fixtures/prep/compass-art.svg`, see Test parts), prepared with
  `--regions`, then an Inlay with a drawn oval boundary, exports both
  boards with every program passing S1–S19, seats within 0.05 mm, and
  every cut lies inside its 130 × 100 mm board (the test part's stock and
@@ -1346,7 +1356,9 @@ their height.
 
 **Compass.** The sub-phase 3.4 bench check: line art prepared by
 `image-prep --regions` and inlaid inside a drawn oval. The drawing is
-`tests/fixtures/prep/compass.svg` (drawn by a script, like the others): a
+`tests/fixtures/prep/compass-art.svg` (drawn by a script, like the others,
+with `compass.svg`, the same with the oval, and `compass-regions.svg`, the
+expected preparation): a
 70 mm tall compass in line work, an outer ring, a cross of four straight
 lines and four diagonals to the ring, every stroke 2.5 mm wide (3.6 % of
 its height), so the board ridges between the pockets are 2.5 mm. It stands
@@ -1362,7 +1374,7 @@ the Inlay names as its `boundary`.
 | Male board | a contrasting dark hardwood (walnut), nominal 12 mm, 130 × 100 mm |
 | T1 | 60° V-bit, 6.35 mm diameter, as the lettered pair's |
 | T2 | 3.175 mm two-flute upcut end mill, as the lettered pair's |
-| Preparation | `image-prep compass.svg --regions`, then `init`; the report's narrowest gap, 2.5 mm, is the ridge the cut should show |
+| Preparation | `image-prep compass-art.svg --regions`, the oval drawn into the result, then `init`; the report's narrowest gap, 2.5 mm, is the ridge the cut should show |
 | Inlay | `op1`, targets the prepared pockets, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `boundary` the oval, `margin_mm` and `outline_rounding_mm` `null`, `step_over_fraction: 0.1`; clearing pass t2 `offset`, climb, ramp 15°; `cut_out` by t2 with four tabs |
 | Safe Z | 10 mm |
 | Controller | grblHAL, one program per tool run |
@@ -1416,7 +1428,7 @@ several, clipping, replacing margin and rounding); Importing and Shapes,
 holes and islands updated (the checks); Warnings updated with every code
 in capability 49g; The project file updated (format 26, `boundary`).
 Quick start: the inlay pair's "Preparing your own design" points to the
-chapter, and a new section "From line art" runs `compass.svg` end to end.
+chapter, and a new section "From line art" runs `compass-art.svg` end to end.
 - User Guide: V-Carve operation (medial lines, flat depth, clearing
 passes, start depth, one pass, the offset strategy, choosing a bit angle);
 Inlay (the method, the four values and what each changes, the two
@@ -1492,8 +1504,8 @@ folded into capabilities 49a to 49g like the table above. Questions 10 to
 | 13  | #449: one boundary per disjoint part, or one overall? | A list of instances, whose union is the edge (49f), so one oval round everything and one shape round each group both work and need no extra field. Each design part must be inside the union, not inside one particular shape. A list costs nothing over one id (`targets` is one already), and it spares the user from unioning shapes in the drawing program. |
 | 14  | #449: the cut-out on the boundary, inside it, or mid ring? | Inside it, exactly as inside the computed band (49f; #461): tool centre one radius in with an open edge, the slope's foot plus a radius in with a V wall. The kerf then lies inside the band's flat floor, so above the floor it cuts nothing the carve left, and the freed plug has no knife edge. Cutting on the boundary would put half the tool in uncut board, and the mid-ring path was replaced in #461 for the maintainer's reason. The price is that the finished plug is the drawn outline inset by the tool's diameter, which the chapter says plainly. |
 | 15  | #449: safety. | The safety pass derives the band from the boundary instances in the project, as it does for #448, with dc-geometry and the shared `male_band` only, never a generator; so a boundary edited after export fails the old program (61r). No new S number. |
-| 16  | Default `--min-detail`. | 0.2 (percent of the design's height): 0.4 mm at 200 mm tall, 0.1 mm at 50 mm. It is the level below which traced art's specks live: Inkscape's Trace Bitmap suppresses specks of 2 px by default, which is 0.2 % of a 1000 px picture, and a V-bit cannot meaningfully carve a piece whose widest point is a few tenths of a millimetre. A proposal: the calibration slice (design spec, slice 21f) runs the synthetic fixtures and traced art at 0.1, 0.2, 0.3 and 0.5 and keeps the smallest value at which the specks go and no intended detail (a serif tip, a counter) does; the README records the sweep, and the value changes here if the sweep says so. The maintainer's own art, which is not committed, is the check on the bench. |
-| 17  | Default `--smooth`. | 0.05 (percent of the height): 0.1 mm at 200 mm tall. Traced edges jitter by about a pixel, 0.05 to 0.1 % of a 1000 px picture; this takes the staircase out and stays within a quarter of the speck threshold, so smoothing cannot remove what `--min-detail` keeps (`prep_smooth_exceeds_detail` warns above half). Chosen by the same sweep. |
+| 16  | Default `--min-detail`. | 0.2 (percent of the design's height): 0.4 mm at 200 mm tall, 0.1 mm at 50 mm. It is the level below which traced art's specks live: Inkscape's Trace Bitmap suppresses specks of 2 px by default, which is 0.2 % of a 1000 px picture, and a V-bit cannot meaningfully carve a piece whose widest point is a few tenths of a millimetre. Calibrated by slice 21f (#599): the sweep over 0.05, 0.1, 0.2, 0.3, 0.5 and 1.0 on the synthetic `speckled-dc.svg` keeps the smallest value at which the trace-noise specks (widest point under 0.2 % of the height) go and no intended detail (0.9 % and up, a serif tip, a counter) does. That is 0.2: 0.1 leaves 10 of 16 noise marks, and 1.0 removes two of six intended details. `tests/fixtures/prep/README.md` records the sweep and how to rerun it. The proposal stands. The maintainer's own art, which is not committed, is the check on the bench. |
+| 17  | Default `--smooth`. | 0.05 (percent of the height): 0.1 mm at 200 mm tall. Traced edges jitter by about a pixel, 0.05 to 0.1 % of a 1000 px picture; this takes the staircase out and stays within a quarter of the speck threshold, so smoothing cannot remove what `--min-detail` keeps (`prep_smooth_exceeds_detail` warns above half). Chosen by the same sweep: on `jagged-dc.svg` 0.02 removes 54 % of the vertices (under the 80 % required), 0.05 removes 89 % and changes 0.08 % of the design's area, and 0.1 changes 0.12 %, over the 0.1 % allowed. The proposal stands. |
 | 18  | When does the report suggest `--regions`? | When the ink's median width is under 2 % of the height (49c). The eagle is 0.7 %, a bold serif letter about 8 %, a plain stroke monogram 3 to 4 %. A suggestion only; the user decides. |
 | 19  | "Relative to the design's height": a wide, short design (a banner 400 × 40 mm) makes every threshold a tenth of what its width would give. | Keep the height, as decided on 2026-11-01, and print it in the report so a surprise is visible. If the maintainer prefers, the longer side is a one-line change in the design (`design_scale_mm`), but it makes the report's "at 100, 200 and 300 mm tall" figures ambiguous for a wide design, which is why height is recommended. |
 | 20  | Nested paths: a path inside another is a hole (as `init` reads it, 49c step 3), whatever the paint, or should paint order and colour decide (a white shape on a black one is a hole, a black one on black is solid)? | Nesting, as `init` does: the prepared file then means exactly what `init` will read, one rule in both places. Reading paint order and colour is the start of colour separation (deferred, see out of scope), and it needs a rule for every colour pair. `svg_hole_as_separate_path` tells the user when two filled paths nest, so the surprise is reported. |

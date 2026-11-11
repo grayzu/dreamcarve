@@ -222,19 +222,72 @@ shank with the V-Carve shank error above. See [Safety](safety.md), rule
 
 ## Import
 
-`init` prints what it could not import before writing the project, as
-`warning: <message>`. One carries a code; the others are plain sentences
-naming what was skipped.
+`init` prints what it found in the drawing before it writes the project, as
+`warning: <code>: <message>`. `check` repeats `shapes_overlap` and
+`feature_below_size`, which it can read from the project's shapes. Import
+warnings never stop `init`, and never change the project it writes. The
+messages that [`image-prep`](preparing-artwork.md) would fix end with "`dreamcarve
+image-prep` would fix this". [Preparing artwork](preparing-artwork.md#the-checks-init-prints)
+explains the checks of the first table with an example.
 
-| Message says | What to do |
-| --- | --- |
-| "`dxf_entities_skipped`: … entity(ies) DreamCarve does not read were skipped: TEXT: 1, …" | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read. Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
-| "block `…` is inserted more than 12 levels deep; the deeper levels were skipped" | A DXF block inserts itself, or nests too deep. Fix the block in the CAD program. |
-| "INSERT of undefined block `…` was skipped" | The DXF places a block it does not define. Re-export the drawing. |
-| "the drawing's text is in code page `…`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters" | A DXF from before AutoCAD 2007 is saved in a code page DreamCarve has no table for, such as a Japanese, Chinese or Korean one. The shapes are right; save the drawing as a 2007 or later DXF to fix the names ([Importing DXF](importing-dxf.md#limits)). |
-| "… text element(s) skipped; convert text to paths to import it" | An SVG holds text. Convert it to paths in Inkscape (Path → Object to Path). |
-| "… image(s) skipped" | An SVG holds pictures, which have no outlines to cut. |
-| "path `…` uses a gradient or pattern; its outline was imported" | Nothing to do: paint never changes the shape. |
-| "clip path on group `…` ignored …", "mask on group `…` ignored …" | The shapes were imported whole, unclipped. Apply the clip in the drawing program if it should cut the shapes. |
-| "closed subpath … of path `…` encloses no area and was dropped", "path `…` has no usable geometry and was skipped" | A path is a point or a line folded back on itself. Delete it from the drawing. |
-| "page size is in … but there is no viewBox, so coordinates are read as CSS pixels (96 per inch)" | Check the size `init` reports; add a `viewBox` to the SVG if it is wrong. |
+### What the drawing holds
+
+These are the checks of [Preparing artwork](preparing-artwork.md#the-checks-init-prints).
+They are found by `init`, `check` repeats the first and last, and
+`image-prep` prints the same codes about the drawing it prepares, in the
+past tense ("were skipped").
+
+| Code | Cause | What to do |
+| --- | --- | --- |
+| `shapes_overlap` | Outlines of different paths cross; the first pair is named, with where they meet, and the number of pairs. | Unite the shapes (Path → Union) or move them apart; or `image-prep`. |
+| `svg_hole_as_separate_path` | A filled path lies wholly inside another filled path, so the project has two shapes and the inner is a hole only in an operation that targets both. | Make each one path with a hole (Path → Combine); or `image-prep`. |
+| `svg_stroke_only_path` | A path has a stroke and no fill, so `init` imports only its centre line, which no Inlay or V-Carve can cut. The message gives the stroke's width. A boundary drawn as a bare outline has this too, and needs no fix ([Preparing artwork](preparing-artwork.md#drawing-the-boundary-after)). | Path → Stroke to Path; or `image-prep`. |
+| `svg_hidden_object` | An object is not drawn (`display:none`, `visibility:hidden`, zero opacity, or neither filled nor stroked) but is imported, and would be cut. | Delete it; or `image-prep`, which skips it. |
+| `svg_object_not_convertible` | Live text, an image, a clip path or a mask. Text and images are skipped; clipped or masked shapes are imported whole. One warning per kind, with the count. | Convert text to paths (Path → Object to Path); trace pictures in Inkscape first; expand clips and masks. |
+| `feature_below_size` | Pieces or holes whose widest point is under the default `--min-detail` of the design's height; the smallest is named. | Nothing is cut wrongly, but a speck that small is not worth carving; `image-prep` drops them. |
+
+### `image-prep` warnings
+
+Printed by `image-prep` before its report. A warning never stops it.
+
+| Code | Cause | What to do |
+| --- | --- | --- |
+| `prep_regions_suggested` | The ink is mostly thin line work: its median width is under 2 % of the design's height. Shapes mode would inlay the lines themselves. | Run again with `--regions` if the spaces between the lines are what you want to inlay ([Line art and --regions](preparing-artwork.md#line-art-and---regions)). |
+| `prep_regions_open_ink` | In regions mode, some pieces of ink enclose no space, so nothing is cut there. | Close the line in the drawing program if a space was meant. |
+| `prep_background_shape` | One filled shape covers nearly all of the drawing and has the art inside or in front of it: probably a page background. | Delete it in the drawing program and prepare again ([A page background](preparing-artwork.md#a-page-background)). |
+| `prep_stroke_failed` | The stroker could not turn the stroke of the named path into an area; the stroke was left out. | Convert the stroke in the drawing program (Path → Stroke to Path), or simplify the path. |
+| `prep_speck_dropped` | Pieces under `--min-detail` were dropped; the count and the widest are given. | Lower `--min-detail` if the widest was something you wanted ([the thresholds](preparing-artwork.md#the-two-thresholds)). |
+| `prep_hole_filled` | Holes under `--min-detail` were filled; the count and the widest are given. | As above. |
+| `prep_smooth_skipped` | Smoothing would have made a piece's outline cross itself or another piece; those pieces were left as they were. | None needed; lower `--smooth` if the edges look rough. |
+| `prep_smooth_exceeds_detail` | `--smooth` is above half of a non-zero `--min-detail`: smoothing that large could remove what the other step keeps. | Lower `--smooth`, or raise `--min-detail`. |
+
+### `image-prep` errors
+
+An error stops `image-prep` and writes nothing. `prep_not_svg` and
+`prep_threshold_range` are usage errors (exit status 2); the others exit 1.
+They print as `error: <code>: <message>`.
+
+| Code | Cause | What to do |
+| --- | --- | --- |
+| `prep_not_svg` | A PNG or JPEG was given. | Trace it in Inkscape (Path → Trace Bitmap), save as SVG and prepare that ([Tracing a picture](preparing-artwork.md#tracing-a-picture-in-inkscape)). |
+| `prep_threshold_range` | `--min-detail` or `--smooth` is outside 0 to 5 percent of the design's height. | Give a value from 0 to 5. |
+| `prep_nothing_left` | No visible shape of any size remains: the drawing is empty or hidden, or everything fell below `--min-detail`. | Check the drawing's layers; lower `--min-detail`. |
+| `prep_output_unreadable` | The prepared shapes would not read back as the shapes they were made as. That is a defect in DreamCarve, and nothing is written. | Report it. |
+
+### Other import messages
+
+An SVG's warnings print as `warning: <code>: <message>`. A DXF's print as
+they always did, a plain sentence after `warning:`, except that the message
+of `dxf_entities_skipped` starts with its code; the table gives each
+code's wording.
+
+| Code | Cause | What to do |
+| --- | --- | --- |
+| `dxf_entities_skipped` | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read; the message counts them by type. | Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
+| `dxf_insert_too_deep` | A DXF block inserts itself, or nests more than 12 levels deep; the deeper levels were skipped. | Fix the block in the CAD program. |
+| `dxf_block_missing` | The DXF places a block it does not define; the insert was skipped. | Re-export the drawing. |
+| `dxf_code_page_unsupported` | A DXF from before AutoCAD 2007 is saved in a code page DreamCarve has no table for, such as a Japanese, Chinese or Korean one. Layer names were read as Windows-1252 and may show wrong characters; the shapes are right. | Save the drawing as a 2007 or later DXF to fix the names ([Importing DXF](importing-dxf.md#limits)). |
+| `svg_paint_server_ignored` | A path uses a gradient or pattern; its outline was imported. | Nothing: paint never changes the shape. |
+| `svg_zero_area_dropped` | A closed subpath of a path encloses no area and was dropped. | A point or a line folded back on itself: delete it from the drawing. |
+| `svg_empty_path` | A path has no usable geometry and was skipped. | Delete it from the drawing. |
+| `svg_physical_size_without_view_box` | The page size is in physical units but there is no `viewBox`, so coordinates are read as CSS pixels (96 per inch). | Check the size `init` reports; add a `viewBox` to the SVG if it is wrong. |

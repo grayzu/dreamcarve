@@ -743,6 +743,12 @@ Then follow this chapter with your own file: `init` it, paste the
 operation, and set each board's measured thickness, the stock's and
 the male board's.
 
+A drawing that needs more than that, such as strokes, hidden layers or
+specks, is prepared by `dreamcarve image-prep`: see [Preparing
+artwork](../user-guide/preparing-artwork.md), and [From line
+art](line-art.md) for the whole route from a drawing of strokes to an inlay,
+with an oval drawn round it as the male's edge.
+
 ## Next steps
 
 - Every setting, the cone-height rule for choosing the bit, and what each

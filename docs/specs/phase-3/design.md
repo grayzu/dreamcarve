@@ -2563,6 +2563,22 @@ rerun it, in `tests/fixtures/prep/README.md`. The procedure:
 `prep::defaults::fixtures_keep_their_intent_at_the_defaults` pins the
 result, so a later change to a constant fails the sweep's own scoring.
 
+*How the scoring was made runnable (slice 21f, #599).* A mark goes exactly
+when its widest point is under the threshold, so "every seeded speck at or
+below `1.5 ×` the threshold gone" cannot hold at any value when specks lie
+between the threshold and `1.5 ×` it, and no swept value both removes the
+0.8 % specks and keeps the 0.9 % details. The fixture therefore has three
+bands (the README lists them): *noise* (0.06 to 0.19 % of `H`, what a
+trace leaves; Inkscape's own 2 px filter is 0.2 % of a 1000 px picture),
+*small* (0.25 to 0.8 %, reported, not scored) and *intended* (0.9 % and
+up). A `min_detail` passes when every noise mark is gone and no intended
+detail is, and the test also checks the contract itself for every mark (gone
+exactly when under the threshold). The smooth criteria are as listed; the
+output-vertex distance holds at every value because simplification keeps a
+subset of the input's vertices, and stays as a guard. The changed-area share
+is taken of the design's box. Result: `min_detail` 0.2 and `smooth` 0.05,
+the proposals; the maintainer's art (step 4) is the remaining check.
+
 **Report format and codes.** `render` writes the text of functional 49e,
 one line per fact, in this order, a line omitted when it has nothing to say
 (no strokes, no drops): `Prepared <in> → <out> (<mode>)`, `Read:`,
@@ -3255,7 +3271,7 @@ and committed as SVG; the numbers in the assertions are acceptance 61a to
 *dreamcarve (integration)*
 - `cli::init_prints_the_import_checks` (61a), `cli::init_project_is_unchanged_by_the_checks` (byte for byte against the project the previous build wrote), `cli::check_repeats_overlap_and_size_findings`, `cli::a_clean_drawing_prints_no_checks`, `cli::dxf_init_is_unchanged`.
 - `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`.
-- `cli::line_art_to_inlay_end_to_end` (61k: `ring-cross.svg` → `--regions` → `init` → Inlay with a circular boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `cli::dc_boundary_fixture_is_the_frame_as_boundary`, `quick_start::inlay_boundary_chapter_runs`, `quick_start::line_art_chapter_runs` (the chapter's commands).
+- `cli::line_art_to_inlay_end_to_end` (61k: `compass-art.svg` → `--regions` → the oval appended → `init` → Inlay with the oval as boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `cli::dc_boundary_fixture_is_the_frame_as_boundary`, `quick_start::inlay_boundary_chapter_runs`, `quick_start::line_art_chapter_runs` (the chapter's commands).
 
 
 ## Sub-phases

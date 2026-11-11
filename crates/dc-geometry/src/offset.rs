@@ -89,16 +89,9 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .map(|&eps| (source.clone(), both(eps)))
         .collect();
     retries.push((source.clone(), fine.clone()));
-    // #611: `remove_redundant` indexes the second vertex of what is left
-    // when it has dropped every vertex of a closed polyline as collinear
-    // (a cross product under its tolerance, so any contour whose area is
-    // under the tolerance, however long) and panics. Such a sliver has no
-    // redundant vertices to remove, only nothing to offset, and the other
-    // retries are left to say so.
-    if contour.signed_area_mm2().abs() > defaults.pos_equal_eps
-        && let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps)
-    {
-        retries.push((from_cavalier(&p), PlineOffsetOptions::default()));
+    // #611, #637: see `without_redundant_vertices`.
+    if let Some(p) = without_redundant_vertices(source, defaults.pos_equal_eps) {
+        retries.push((p, PlineOffsetOptions::default()));
     }
     let decimations =
         DECIMATE_MM.map(|eps_mm| (decimated(source, eps_mm), PlineOffsetOptions::default()));
@@ -411,6 +404,46 @@ pub fn inset_is_empty(contour: &Contour, inset_mm: f64) -> bool {
         return false;
     }
     offset(contour, -inset_mm).is_empty()
+}
+
+/// `polyline` without the vertices `cavalier_contours` counts as redundant
+/// (repeats, and the middle of collinear runs, within `eps_mm`), or `None`
+/// when it removes none or leaves too little to be a contour.
+///
+/// Not `Polyline::remove_redundant` on the closed polyline (#611, #637).
+/// Its closing step reads the second vertex of what is left, so it panics
+/// when it has dropped all but one. It drops a vertex when a cross product
+/// is under the tolerance (1e-5), which is a statement about area and edge
+/// length together, not about size: it holds for any shape under about
+/// 4 µm across, and for a traced one of any size whose vertices are close
+/// enough (a circle of 0.4 mm radius with 200 000 vertices). No test of the contour
+/// before the call can promise a survivor. So the call is made on the same
+/// vertices as an open polyline, which has no closing step: it keeps the
+/// first and the last vertex and never indexes past what it holds, and the
+/// ring is closed here. A first vertex in the middle of a run stays, and
+/// the copy of it the last vertex may be is dropped.
+fn without_redundant_vertices(polyline: &Polyline, eps_mm: f64) -> Option<Polyline> {
+    let mut open = to_cavalier(polyline);
+    open.set_is_closed(false);
+    let reduced = open.remove_redundant(eps_mm)?;
+    let mut vertices: Vec<Vertex> = reduced
+        .iter_vertexes()
+        .map(|v| Vertex::new(v.x, v.y, v.bulge))
+        .collect();
+    if let (Some(first), Some(last)) = (vertices.first(), vertices.last())
+        && vertices.len() > 1
+        && Point::new(first.x, first.y).distance_to(Point::new(last.x, last.y)) <= eps_mm
+    {
+        // The last vertex's bulge is the closing segment's, from where the
+        // ring's first vertex now is.
+        let bulge = last.bulge;
+        vertices.pop();
+        if let Some(end) = vertices.last_mut() {
+            end.bulge = bulge;
+        }
+    }
+    (vertices.len() >= 3 || (vertices.len() == 2 && vertices.iter().any(|v| v.bulge != 0.0)))
+        .then(|| Polyline::new(vertices, true))
 }
 
 pub(crate) fn to_cavalier(polyline: &Polyline) -> CavPolyline {
@@ -813,6 +846,51 @@ mod tests {
             assert!(offset(&triangle, delta_mm).is_empty());
         }
         let _ = offset(&triangle, 0.08);
+    }
+
+    /// #637: a traced circle of 0.3 mm radius with 200 000 vertices, each
+    /// 9.4 µm from the next, is one `remove_redundant` of the closed
+    /// polyline panics on. The open one does not, and what it leaves is
+    /// still a ring round the same area.
+    #[test]
+    fn dense_traced_circle_loses_redundant_vertices_without_a_panic() {
+        let n = 200_000;
+        let vertices: Vec<Vertex> = (0..n)
+            .map(|k| {
+                let a = TAU * f64::from(k) / f64::from(n);
+                Vertex::line(10.0 + 0.3 * a.cos(), 10.0 + 0.3 * a.sin())
+            })
+            .collect();
+        let ring = Polyline::new(vertices, true);
+        if let Some(reduced) = without_redundant_vertices(&ring, 1e-5) {
+            assert!(reduced.is_closed());
+            assert!(reduced.vertices().len() >= 3);
+            let (a, b) = (ring.signed_area_mm2(), reduced.signed_area_mm2());
+            assert!((a - b).abs() < 1e-3 * a.abs(), "{a} against {b}");
+        }
+    }
+
+    /// #637: a ring whose first vertex is in the middle of a straight run
+    /// loses its repeats and collinear vertices, and a ring with nothing
+    /// to lose is `None`.
+    #[test]
+    fn redundant_vertices_are_removed_and_a_clean_ring_is_left_alone() {
+        let clean = Polyline::rect(Point::new(0.0, 0.0), 4.0, 2.0);
+        assert!(without_redundant_vertices(&clean, 1e-5).is_none());
+        let padded = Polyline::new(
+            vec![
+                Vertex::line(0.0, 0.0),
+                Vertex::line(2.0, 0.0),
+                Vertex::line(2.0, 0.0),
+                Vertex::line(4.0, 0.0),
+                Vertex::line(4.0, 2.0),
+                Vertex::line(0.0, 2.0),
+            ],
+            true,
+        );
+        let reduced = without_redundant_vertices(&padded, 1e-5).expect("repeats removed");
+        assert_eq!(reduced.vertices().len(), 4);
+        assert_approx_eq!(reduced.signed_area_mm2(), 8.0, TOL);
     }
 
     /// An offset of no pieces.
