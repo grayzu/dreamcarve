@@ -4,7 +4,7 @@
 //! The app's buttons (`docs/specs/phase-4/experience.md`, section 7,
 //! "Buttons"): quiet (toolbar, row actions), secondary (sheets, the empty
 //! state) and primary (once per surface), with an optional Lucide icon and
-//! a second line. Painted here rather than with egui's `Button` so the
+//! trailing text. Painted here rather than with egui's `Button` so the
 //! accessible name is the label alone (not the icon's private-use code
 //! point), the heights are the spec's, and the focus ring is drawn.
 
@@ -38,16 +38,20 @@ pub struct ButtonSpec<'a> {
     /// The label, and the accessible name. Empty for an icon-only button,
     /// whose name is `tooltip`.
     pub label: &'a str,
-    /// A second line under the label, 12 px.
-    pub hint: Option<&'a str>,
     /// Shown on hover; for an icon-only button, also its accessible name
     /// unless `name` gives one.
     pub tooltip: Option<&'a str>,
     /// The accessible name of an icon-only button whose tooltip says
     /// something else (a disabled button's reason).
     pub name: Option<&'a str>,
+    /// Text at the right edge in text.secondary, such as the action's
+    /// shortcut; not part of the accessible name.
+    pub trailing: Option<&'a str>,
+    /// Whether the content starts at the left edge whatever the style: a
+    /// full-width button in a column of left-aligned ones.
+    pub leading: bool,
     /// Height, px: 26 for a control, 28 in the toolbar and sheet footers,
-    /// 40 for the empty state's rows.
+    /// 32 and 40 for the empty state's actions.
     pub height_px: f32,
     /// Width, px; `None` fits the content.
     pub width_px: Option<f32>,
@@ -67,9 +71,10 @@ impl<'a> ButtonSpec<'a> {
             icon: None,
             icon_px: theme::ICON_SMALL_PX,
             label,
-            hint: None,
             tooltip: None,
             name: None,
+            trailing: None,
+            leading: false,
             height_px: 26.0,
             width_px: None,
             enabled: true,
@@ -85,13 +90,6 @@ impl<'a> ButtonSpec<'a> {
         self
     }
 
-    /// With a second line.
-    #[must_use]
-    pub const fn hint(mut self, hint: &'a str) -> Self {
-        self.hint = Some(hint);
-        self
-    }
-
     /// With a tooltip.
     #[must_use]
     pub const fn tooltip(mut self, tooltip: &'a str) -> Self {
@@ -103,6 +101,20 @@ impl<'a> ButtonSpec<'a> {
     #[must_use]
     pub const fn named(mut self, name: &'a str) -> Self {
         self.name = Some(name);
+        self
+    }
+
+    /// With `trailing` at the right edge.
+    #[must_use]
+    pub const fn trailing(mut self, trailing: &'a str) -> Self {
+        self.trailing = Some(trailing);
+        self
+    }
+
+    /// With the content starting at the left edge.
+    #[must_use]
+    pub const fn leading(mut self) -> Self {
+        self.leading = true;
         self
     }
 
@@ -203,14 +215,8 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     let painter = ui.painter().clone();
     let label = (!spec.label.is_empty())
         .then(|| painter.layout_no_wrap(spec.label.to_owned(), body.clone(), theme::PAINT_TIME));
-    let hint = spec
-        .hint
-        .map(|h| painter.layout_no_wrap(h.to_owned(), small.clone(), theme::PAINT_TIME));
     let icon_w = spec.icon.map_or(0.0, |_| spec.icon_px);
-    let text_w = label
-        .as_ref()
-        .map_or(0.0, |g| g.size().x)
-        .max(hint.as_ref().map_or(0.0, |g| g.size().x));
+    let text_w = label.as_ref().map_or(0.0, |g| g.size().x);
     let inner = icon_w
         + if icon_w > 0.0 && text_w > 0.0 {
             gap
@@ -243,7 +249,7 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
         let painter = ui.painter_at(rect.expand(4.0));
         painter.rect(rect, 4.0, fill, stroke, StrokeKind::Inside);
         let mut x = match spec.width_px {
-            Some(_) if spec.hint.is_none() && spec.kind != Kind::Secondary => {
+            Some(_) if spec.kind != Kind::Secondary && !spec.leading => {
                 rect.center().x - inner / 2.0
             }
             _ => rect.left() + padding,
@@ -257,22 +263,22 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
             painter.galley(at, glyph, text);
             x += spec.icon_px + gap;
         }
-        let line_gap = 2.0;
-        let total_h = label.as_ref().map_or(0.0, |g| g.size().y)
-            + hint.as_ref().map_or(0.0, |g| g.size().y + line_gap);
-        let mut y = rect.center().y - total_h / 2.0;
         if let Some(label) = label {
-            let h = label.size().y;
+            let y = rect.center().y - label.size().y / 2.0;
             painter.galley(egui::pos2(x, y), label, text);
-            y += h + line_gap;
         }
-        if let Some(hint) = hint {
+        if let Some(trailing) = spec.trailing {
             let colour = if enabled {
                 palette.text_secondary
             } else {
                 palette.text_disabled
             };
-            painter.galley(egui::pos2(x, y), hint, colour);
+            let galley = painter.layout_no_wrap(trailing.to_owned(), small, theme::PAINT_TIME);
+            let at = egui::pos2(
+                rect.right() - padding - galley.size().x,
+                rect.center().y - galley.size().y / 2.0,
+            );
+            painter.galley(at, galley, colour);
         }
         focus_ring(ui, &response);
     }
