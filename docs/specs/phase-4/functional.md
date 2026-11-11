@@ -1,6 +1,7 @@
 # Phase 4: GUI, CAM only — Functional Spec
 
-**Status:** accepted (merged in #460, 2026-11-03)
+**Status:** accepted (merged in #460, 2026-11-03); amended by the
+screenshot review of #549 (2026-11-10, see "Review redesign" below)
 **Mock-ups:** `mockups/` (wireframes referenced from the capabilities below;
 `mockups/README.md` lists them and how they are rendered)
 
@@ -31,14 +32,16 @@ operations. The GUI toolkit and the architecture are the design spec's.
 
 ## Users and scenarios
 
-- **Sam** opens the app for the first time. The empty window offers
-  *Import a drawing*, *Open a project* and three examples. Sam imports
+- **Sam** opens the app for the first time. The empty window offers two
+  paths: *your drawing* (import one, or open a project) or *an example*
+  (three pictured cards). Sam imports
   `coaster.svg`: the circle lands on a stock sized round it. They set the
   stock 12 mm thick, pick the 6.35 mm end mill from their library (its
   feeds come with it), select the circle, add an **Outside Profile**, type
   the depth, ask for four tabs, and watch the blue toolpath and its tab
   marks appear over the circle. The Warnings panel is empty. Export writes
-  `coaster.nc`; the dialog says it will take 4 minutes. Sam never sees a
+  `coaster.nc`; the status bar says it will take 4 minutes. Sam saves the
+  setup sheet beside it and prints it from the browser. Sam never sees a
   JSON file.
 - **Sam, later,** opens `plaque.dcv`, the project they built from the CLI
   in phase 2. Every operation is in the list in cut order; the pocket's
@@ -52,9 +55,10 @@ operations. The GUI toolkit and the architecture are the design spec's.
   the project. They build the sign: a V-Carve of the rectangle with the
   oval standing as an island, a clearing pass by the end mill, a 2.5 mm
   flat depth, two countersinks, a tabbed outline. The Export dialog is set
-  to LinuxCNC and lists three programs in the order to run them with what
-  to do before each. Alex opens the preview SVG too, out of habit; it shows
-  what the canvas showed.
+  to LinuxCNC; its *Program Details* list three programs in the order to
+  run them with what to do before each. Alex's club bits came in with
+  inch feeds, so the Tool Library shows inches while the project stays in
+  millimetres.
 - **Alex** makes the inlay pair from one project. They add an Inlay of the
   two letters, type the depth, glue gap, plug depth and margin, and the
   thickness of the plug board. The Viewport shows the female carve on the
@@ -66,8 +70,8 @@ operations. The GUI toolkit and the architecture are the design spec's.
   dialog, and re-cuts the male alone.
 - **Jo** imports a DXF of six small parts drawn on three layers and takes
   only the `CUT` layer. The parts come in as drawn; Jo selects two, moves
-  them off the clamps by dragging, rotates one 90° by typing the angle,
-  and duplicates a third as a linked copy. One Outside Profile targets all
+  them off the clamps by dragging, rotates one 90° with the toolbar's
+  Rotate button, and duplicates a third as a linked copy. One Outside Profile targets all
   six. The program extents overlay shows where the bit's edge reaches, so
   Jo knows the clamps are clear before leaving the desk.
 
@@ -84,15 +88,22 @@ folder are app preferences, kept outside the project.
 ### The workspace
 
 50. **One window, four regions** (mock-up `01-workspace.svg`). A menu
-    bar and toolbar across the top (File, Edit, View, Project, Help; the
-    toolbar holds Open, Save, Undo, Redo, Import, Fit, and Export). On the
-    left the **Design Tree** over the **Properties** panel. In the centre
-    the **Viewport**. On the right the **CAM panel** with two tabs,
-    **Operations** and **Tools**, each a list over an editor. A status bar
-    along the bottom: project units, stock size, cursor position in
-    project millimetres (or inches), generation state, and the warning and
-    error counts, which open the **Warnings** panel as a drawer above the
-    status bar. Side panels resize by dragging their dividers and collapse
+    bar and toolbar across the top (File, Edit, Arrange, View, Project,
+    Help; the toolbar holds Open, Save, Undo, Redo, Add drawing, Add
+    picture, the Arrange group of 58a, Fit, the Tab tool, and Export). The
+    **window title** is the project's name without its extension and the
+    app's name, `plaque — DreamCarve`, with `*` after the name while there
+    are unsaved changes (`plaque* — DreamCarve`) and `Untitled` before the
+    first save; the name appears nowhere else in the chrome (no file name
+    in the toolbar, none above the CAM panel). On the left the **Design
+    Tree** over two collapsible sections, **Project Settings** on top (60)
+    and **Properties** below it (58), present only while something is
+    selected. In the centre the **Viewport**. On the right the **CAM
+    panel**, titled *CAM* like the other panels, with two tabs in workflow
+    order, **Tools** then **Operations**, each a list over an editor. A
+    status bar along the bottom (50b), whose warning and error counts open
+    the **Warnings** panel as a drawer above it. Side panels resize by
+    dragging their dividers and collapse
     to a strip; the layout is remembered between sessions in the app's
     preferences file, `gui.toml` beside `config.toml` in the user config
     directory (open question 11). The window follows the OS light or dark
@@ -115,25 +126,61 @@ folder are app preferences, kept outside the project.
     the first GUI slice merges, with PureCutCNC's own interface as the
     reference for the level of finish. Acceptance test 92's screenshots are
     reviewed against it, and the quick start's screenshots come from the
-    shipped build.
+    shipped build. The CAM panel opens on **Tools** for a project with no
+    tools and on **Operations** otherwise; after that the tab the user
+    picks stays until the next project is opened.
+50b. **Status bar** (`01-workspace.svg`, `09-preview-legend.svg`; review
+    2026-11-10). Cells left to right, each shown only when it has
+    something to say:
+    - **Units**, `mm` or `in`, a quiet button whose menu switches the
+      project's display units (53).
+    - **Cursor**, `X 64.2  Y 51.8` from the origin while the pointer is
+      over the Viewport; empty (no dashes) when it is not.
+    - **Toolpaths**, a button that opens the toolpath view popover (73).
+      Hidden until the project has at least one toolpath.
+    - **Generation**: empty when every toolpath is current; *Generating 2
+      of 5…* with a spinner and *Stop* while any is pending; after Stop,
+      *Stopped* and *Regenerate all*, the only place that command lives
+      (71).
+    - **Counts**: errors, warnings and hints, each a glyph and a number,
+      opening the Warnings drawer (76). *No problems* when all three are
+      zero.
+    - **Estimate**, the program's total time (78), and the **Z range**
+      while program extents are on (74).
+    - **Message**, the last status message (*Saved plaque*, *"square" is
+      locked*), or, while an operation is selected and nothing newer has
+      been said, that operation's carve summary in one line (76a);
+      clicking it opens the drawer at that operation.
+
+    The stock size is not in the status bar: Project Settings shows it.
 51. **Project lifecycle.** *New* makes an empty project with the phase 1
     defaults (100 × 100 mm stock, thickness unset, origin bottom-left and
     Z zero at the stock top, grblHAL at its latest version, no tools, no
-    operations). *New from drawing…* and *New from picture…* do what
+    operations). *New Project from Drawing…* and *New Project from
+    Picture…* start a **new** project and do what
     `init` does (capabilities 1, 20, 46): a stock sized round the drawing
     with its margin, the picture or the shapes placed as `init` places
     them, and, for a picture, one Photo V-Carve on it with `init`'s
-    defaults. *New from drawing* adds the shapes and the stock only: no
+    defaults. They differ from *Add Drawing to Project…* and *Add Picture
+    to Project…* (55, 56), which add to the open project and leave its
+    stock alone; the File menu groups the two pairs apart with a divider.
+    *New Project from Drawing* adds the shapes and the stock only: no
     placeholder tool and no Profile (open question 1, decided 2026-11-02),
     since the empty Operations and Tools lists say what to do next (79) and
     a tool with unset feeds is a trap the library picker avoids. *Open* reads any `.dcv` the CLI
     reads, migrates it, and lists migration notes and validation
     warnings in the Warnings panel. *Save* and *Save As…* write through the
     same serializer as the CLI, so a project opened and saved unchanged is
-    byte-identical. *Recent* lists the last ten files. Closing, opening or
-    quitting with unsaved changes asks to save, discard or cancel. The
-    title bar shows the file name and a marker when unsaved. A `.dcv`
-    dropped on the window, or passed on the command line, opens.
+    byte-identical. *Save As…* is the standard save-a-copy: it writes the
+    project under a new name and the window then edits that file. *Recent*
+    lists the last ten files. Closing the window, quitting, *Open* and
+    *New* (any of the three kinds) with unsaved changes show the
+    unsaved-changes sheet: *Save changes to "plaque"?*, with **Save**,
+    **Don't Save** and **Cancel**; Save on an untitled project asks where
+    first, and Cancel on that dialog cancels the whole action. There is no
+    autosave in this phase (out of scope). The window title shows the
+    project name and the unsaved marker (50). A `.dcv` dropped on the
+    window, or passed on the command line, opens.
 52. **Undo and redo** (Edit menu, Ctrl/⌘ Z and Shift+Ctrl/⌘ Z) walk the
     snapshot history. Every change to the project is a named command and
     one undo step: *Move "Oval"*, *Set depth of "Outside cut"*, *Reorder
@@ -150,26 +197,36 @@ folder are app preferences, kept outside the project.
     file accepts (capability 32): `0.5 in` and `1 1/4 in` in a mm project
     convert on entry; a bare number is in the project's units. The stored
     value stays millimetres and the file is unchanged by the display.
-    Switching units in the Project panel converts the display only, as
-    today, and is undoable.
+    The switch is the first row of Project Settings (**Units**, a `mm` /
+    `in` segmented control above Stock) and the status bar's units menu
+    (50b); both set the same field, convert the display only, and are
+    undoable. The Tool Library has its own display units (64), which are
+    an app preference, not a project field.
 54. **Keyboard.** Standard shortcuts on every platform (⌘ for Ctrl on
     macOS): New, Open, Save, Save As, Import (Ctrl I), Export (Ctrl E),
     Undo, Redo, Select all (Ctrl A), Delete, Duplicate (Ctrl D), Fit view
     (F), Zoom to selection (Shift F), Hide and show selection (H, Shift H),
-    Lock and unlock (L), nudge the selection with the arrow keys by 1 mm
+    Lock and unlock (L), Rename (F2: the selected shape, or the selected
+    operation or tool when its list has focus), Rotate 90° clockwise and
+    anticlockwise (R, Shift R), Flip horizontal and vertical (Ctrl Shift
+    H, Ctrl Shift V), nudge the selection with the arrow keys by 1 mm
     (Shift: 10 mm, Alt: 0.1 mm), Escape clears the selection or closes a
     menu. Every shortcut appears in its menu item and in the Keyboard
     chapter.
 
 ### Bringing geometry in
 
-55. **Import a drawing** (`02-import-dialog.svg`; File ▸ Import…, Ctrl I,
-    or drop an `.svg` or `.dxf` on the window) adds the file's shapes to
+55. **Add a drawing to the project** (`02-import-dialog.svg`; File ▸
+    *Add Drawing to Project…*, Ctrl I, the toolbar's *Add drawing*, or
+    drop an `.svg` or `.dxf` on the window) adds the file's shapes to
     the open project as new feature instances, placed as drawn, with the
     drawing's origin at the stock's bottom-left corner, then selects them so
     the user can move them (open question 2, decided 2026-11-02). The
-    dialog shows the file,
-    the shapes it holds (closed and open counts), and the importer's
+    sheet shows the file,
+    the shapes it holds (closed and open counts), a preview of the drawing
+    alone, fitted to the preview box (no stock outline, no origin, no
+    placement note: the placement rule is in the chapter, and the selected
+    shapes on the Viewport show it), and the importer's
     options: for DXF the units (read from the file, required when it has
     none, as `init --units` is), the join tolerance (default 0.01 mm) and
     a layer list to tick; nothing for SVG. Shapes are named as `init`
@@ -177,7 +234,8 @@ folder are app preferences, kept outside the project.
     read, open paths skipped by nothing yet, duplicate shapes dropped)
     appear in the Warnings panel after the import, once, under the import's
     name. One import is one undo step.
-56. **Import a picture** (File ▸ Import picture…, or drop a `.png`, `.jpg`
+56. **Add a picture to the project** (File ▸ *Add Picture to Project…*,
+    the toolbar's *Add picture*, or drop a `.png`, `.jpg`
     or `.jpeg`) adds a bitmap (capability 46) at the origin, asking for its
     width *or* height in project units with the other following the
     pixels, and reporting a colour-to-grayscale conversion as `image add`
@@ -188,31 +246,61 @@ folder are app preferences, kept outside the project.
     shape; a Photo V-Carve that loses its picture says so.
 57. **Design Tree** (`01-workspace.svg`, left). One row per feature
     instance, in file order, with: an eye (visible), a padlock (locked),
-    the name (double-click to rename), a badge for *open* paths, a *linked*
-    badge when the definition is shared with another row, and a count of
-    the operations targeting it (hover lists them). Below the shapes, a
+    a **shape glyph** that says what the shape is (a closed outline, a
+    circle, or an **open path**, drawn as an open curve with no word
+    beside it; its tooltip says *Open path: Engrave, or a Profile on the
+    line, can cut it*), the name, a *linked* badge when the definition is
+    shared with another row, and a count of the operations targeting it
+    (hover lists them). The word "open" does not appear on the row. A
+    shape is renamed by double-clicking its name, by F2, or by *Rename*
+    in its context menu; all three edit the name in place (one undo
+    step). Below the shapes, a
     **Tabs** section lists placed tabs by the outline they sit on, and a
-    **Pictures** section lists bitmaps. Clicking a row selects it on the
-    Viewport and vice versa; Shift and Ctrl extend the selection; the
-    section header's eye and padlock act on every row in it. The context
-    menu offers Hide/Show, Lock/Unlock, Duplicate, Delete, Zoom to, and
-    *Add operation ▸* with the kinds the selection can take. Rows cannot be
-    reordered or grouped in this phase (folders are phase 5).
+    **Pictures** section lists bitmaps; an empty Tabs or Pictures section
+    shows its header only, without a *None* row. Clicking a row selects it
+    on the Viewport and vice versa; Shift and Ctrl extend the selection; the
+    section header's eye and padlock act on every row in it. The padlock's
+    tooltip says what a lock does: *Locked: cannot be moved, resized,
+    rotated or flipped. Operations still cut it.* While an operation is
+    selected its targets are marked in the tree (67). The context
+    menu offers Rename, Hide/Show, Lock/Unlock, Duplicate, Delete, Zoom to,
+    *Add operation ▸* with the kinds the selection can take, and, while an
+    operation is selected, *Add to "Panel"* or *Remove from "Panel"*. Rows
+    cannot be reordered or grouped in this phase (folders are phase 5).
 58. **Placement** (`01-workspace.svg`, Properties). With one or more
-    instances selected the Properties panel shows, in project units, the
-    selection's **X** and **Y** (bottom-left of its bounding box), **W**
-    and **H**, **Rotation** in degrees and two **Mirror** buttons
-    (horizontal, vertical). Typing a value moves, scales or rotates the
-    selection about its bounding-box centre; a selection of several moves
-    as one. Scale keeps proportions unless the padlock between W and H is
-    opened. On the Viewport the selection drags to move, its corner handles
+    instances selected the Properties section shows, in project units, the
+    selection's **X** and **Y** (bottom-left of its bounding box), and
+    **W** and **H** with a **proportion link** to their right: one
+    chain glyph spanning both rows, linked (the default) or broken.
+    Typing X or Y moves the selection; typing W or H scales it about its
+    bounding-box centre, the other following while the link is closed; a
+    selection of several moves as one. Rotation and mirroring are not
+    properties of a shape: they are actions on the selection (58a). On
+    the Viewport the selection drags to move, its corner handles
     scale, its rotation handle rotates, and the arrow keys nudge (54).
     Every transform is a change to the instances' `transform`; the
     definitions are never touched, so a linked copy's sibling does not
     move. A locked instance shows its handles greyed and refuses every
-    transform, and the status bar says why. *Centre on stock* and *Fit
-    stock to shapes* (61) are in the Project menu. No snapping, no
-    alignment and no distribution: phase 5.
+    transform, and the status bar says why; the Properties section of a
+    locked selection shows its fields read-only with the line *Locked:
+    cannot be moved or resized. Operations still cut it.* and an
+    *Unlock* button. Lock never removes a shape from an operation and
+    never stops it being selected. *Fit stock to shapes* (61) is in the
+    Project menu. No snapping, no alignment and no distribution: phase 5.
+58a. **Arrange** (`01-workspace.svg`, toolbar; review 2026-11-10). The
+    toolbar's Arrange group acts on the selection: **Rotate** (a split
+    button: the button turns the selection 90° clockwise; its chevron
+    opens a popover with an **Angle** field, positive anticlockwise as
+    the Y-up file is, and a *Rotate* button, Enter applying it), **Flip
+    horizontal** and **Flip vertical** (a scale of −1 about the
+    bounding-box centre). The **Arrange** menu holds the same commands
+    with their shortcuts (54), *Rotate 90° anticlockwise*, *Rotate…* (the
+    angle popover), and *Centre on stock* (61). Each is one undo step named for the selection
+    (*Rotate "square" 90°*). The group is disabled, with the reason in
+    its tooltip, when nothing is selected or every selected instance is
+    locked; with some locked, the unlocked ones turn and the status bar
+    names the rest. A picture cannot rotate or flip (56), so a selection
+    of pictures only disables the group with that reason.
 59. **Duplicate and delete.** *Duplicate* makes a linked copy (CONTEXT:
     Linked Copy) offset by 10 mm, named `<name> (2)`, sharing the
     definition, so phase 5's shape editing will edit both. *Delete* removes
@@ -225,13 +313,22 @@ folder are app preferences, kept outside the project.
 
 ### Stock, origin and output setup
 
-60. **Project panel** (`03-stock-origin.svg`; the Properties panel when
-    nothing is selected, and Project ▸ Stock and origin…). **Stock**:
-    width, height, thickness (red until set; export refuses without it, as
-    today). **Origin**: XY at one of the four corners or the centre, or
-    custom X/Y, and Z zero at the stock top or bottom; the Viewport draws
-    the origin as a crosshair and the status bar's coordinates count from
-    it. **Heights** (capability 33): clearance, tool-change machine Z (only
+60. **Project Settings** (`03-stock-origin.svg`; the upper collapsible
+    section of the left column's lower half (50), always present, and
+    Project ▸ Project Settings… opens and scrolls to it). It is open by
+    default on a new project and whenever a project-level field has an
+    error (thickness unset); otherwise it keeps the open state the user
+    last gave it. **Units** first (53). **Stock**:
+    width, height, thickness (marked required until set (66b); export
+    refuses without it, as today). **Origin**: XY at one of the four
+    corners or the centre, or
+    custom X/Y, and Z zero at the stock top or bottom. Changing XY zero
+    moves the origin marker (the `0,0` crosshair and the axis lines
+    through it) to the new point in the same frame; the shapes, the stock
+    and the toolpaths stay where they are on screen, because the origin
+    moves the program's coordinates, not the part. The status bar's
+    coordinates count from the new point, and the Z-zero choice relabels
+    the depth legend (73). **Heights** (capability 33): clearance, tool-change machine Z (only
     offered when the post-processor documents `G53`, greyed with the reason
     otherwise), and park point, which can be typed or clicked on the
     Viewport. **Tolerances**, folded away: flatten tolerance and arc-fit
@@ -241,7 +338,7 @@ folder are app preferences, kept outside the project.
     margin the user types (default `init`'s), keeping the origin preset;
     shapes do not move relative to each other. **Centre on stock** moves
     the selection so its bounding box is centred on the stock.
-62. **Post-processor** (in the Project panel; `03-stock-origin.svg`).
+62. **Post-processor** (in Project Settings; `03-stock-origin.svg`).
     A list of the six bundled definitions with their latest version and a
     note when the project is on an older version. Picking another keeps
     the user's settings the new one can use, as `export --post` does
@@ -256,33 +353,99 @@ folder are app preferences, kept outside the project.
 
 ### Tools
 
-63. **Project tools** (`01-workspace.svg`, right panel, Tools tab). The
+63. **Project tools** (`16-tools-tab.svg`, right panel, Tools tab, the
+    first tab). The
     tools the project embeds, one row each with type icon, name, diameter
     (and angle for a V-bit), number, and a red dot when the tool lacks a
-    feed, plunge rate or RPM. Selecting a row edits it below: name, type
+    feed, plunge rate or RPM. Selecting a row edits it below, in place
+    (selecting *is* editing; there is no Edit button): name, type
     (end mill, ball nose, V-bit with included angle, engraver, drill),
     diameter, flutes, feed, plunge rate, RPM, step-down, stepover, tool
     number, vendor and product id. Feed, plunge and RPM fields are empty,
-    never prefilled: the app invents no feed (principle 5). *Add from
-    library…* opens the picker (64). *Save to library* copies a project
-    tool into the library. *Duplicate* and *Remove*; remove is refused
-    while an operation uses the tool and names the operations. A tool used
-    by no operation shows an `unused_tool` hint, as `check` prints.
-64. **Tool Library** (`04-tool-library.svg`; Project ▸ Tool library…, and
-    the picker from 63 and from an operation's tool field). A window over
-    the library in the user's config directory (capability 21): a search
-    box (name, vendor, diameter), a type filter, and a table with name,
-    type, diameter, angle, flutes, feeds, vendor and product. Rows already
-    in the project are marked. *Add to project* copies the ticked rows into
+    never prefilled: the app invents no feed (principle 5). An unset feed,
+    plunge rate or RPM shows the required-field look (66b), not a
+    paragraph under the field. The list's actions, in this order:
+    - **New tool** makes a tool from scratch, for a bit that is in no
+      library: an end mill named `tool<n>`, where `<n>` is the number the
+      tool takes (its position in the list, or the next free number when
+      that name is taken), with `init`'s placeholder geometry (6.35 mm, 2
+      flutes, the file needs a diameter) and no feed, plunge rate, RPM,
+      step-down or stepover. It is selected with its name field focused
+      and the name selected, so typing renames it; Tab moves to Type, then
+      Diameter. One undo step, *New tool "tool4"*.
+    - **Add from library…** opens the picker (64).
+    - **Duplicate** copies the selected tool below itself as `<name> (2)`.
+    - **Delete** removes it; it is refused while an operation uses the
+      tool (the button disables and its tooltip names the operations).
+
+    *Save to library* (in the editor's footer) copies a project tool into
+    the library. A tool used by no operation shows an `unused_tool` hint,
+    as `check` prints. *Duplicate* and *Delete* name the same actions in
+    every list in the app (Operations, Tools, the Tool Library), and *New
+    tool* is the same command on the Tools tab and in the library;
+    *Remove* never labels a deletion (it is kept only for taking a shape
+    out of an operation's targets, which deletes nothing).
+64. **Tool Library** (`04-tool-library.svg`; Project ▸ Tool Library…, and
+    the picker from 63 and from an operation's tool field). A sheet over
+    the library in the user's config directory (capability 21), in two
+    panes. The left pane: a search box (name, vendor, product, diameter),
+    a type filter, and the library's tools **grouped by vendor** (one
+    collapsible group header per vendor, `IDC Woodcraft · 6`, sorted by
+    name, with *No vendor* last; a search hides groups with no match),
+    each row with name, type, diameter, angle, flutes, feed, plunge, RPM
+    and product; vendor is the group, not a column. Rows already in the
+    project are marked. The right pane edits the selected tool in place
+    (64a). The header holds the library's **display units**, a `mm` /
+    `in` segmented control separate from the project's (53): an app
+    preference kept in `gui.toml`, defaulting to the open project's
+    units, changing only what the sheet shows; the library file stays in
+    millimetres. Actions: **New tool**, **Duplicate** and **Delete** over
+    the list (Delete asks once, in place, since the library is outside
+    project history, and never touches a project's copy); **Import…** and
+    **Export library…** at the right of the header; **Add to project**,
+    the primary button, copies the ticked rows into
     the project under new ids, as `tools add` does; projects keep their
     copies and a library change never alters an open project (ADR-0002).
-    *Import…* reads a Fusion `.tools` or `.json` or a DreamCarve library
-    JSON and shows the per-tool report `tools import` prints (imported,
-    skipped with the reason, already present), with a *Replace existing*
-    switch for `--replace`. *Export…* writes the library as DreamCarve
-    JSON. *Remove* deletes a library tool. Editing a library tool's fields
-    in place is phase 5 (plan: "GUI tool-library editor"); in this phase
-    the path is add to project, edit there, save to library.
+    *Export library…* writes the whole library as one DreamCarve JSON
+    file, to keep a backup or to carry the library to another computer;
+    its tooltip says so. *Import…* reads a Fusion `.tools` or `.json` or
+    a DreamCarve library JSON and shows the review of 64b before anything
+    is written. An empty library shows its sentence and the two ways to
+    fill it, *New tool* and *Import…*.
+64a. **Editing a library tool** (review 2026-11-10; was phase 5).
+    Selecting a library row shows its fields in the right pane, the same
+    fields, order, units and required-field look as a project tool's
+    editor (63), in the library's display units. A field commits on leave
+    and writes the library file at once, through the same staged write
+    the CLI uses; a write that fails leaves the field marked with the
+    reason. Library edits are not project changes: they are not in the
+    Edit menu's history, and they never change a project's copy of the
+    tool. While the sheet is open, *Revert changes* in the pane's footer
+    puts the selected tool back as it was when the sheet opened. *New
+    tool* here makes the same `tool<n>` placeholder as 63, numbered within
+    the library. *Duplicate* copies a tool as `<name> (2)` with a new
+    library id and no `source`, so a later import with *Replace* never
+    overwrites the copy. Editing a tool keeps its `source`, so the import
+    review (64b) shows it as changed when its file is imported again.
+64b. **Importing into the library** (review 2026-11-10). After the file
+    is chosen the sheet's panes are replaced in place (never a second
+    sheet) by the **import review**: the file's name, then the counts
+    `tools import` reports, **New**, **Already in your library** (the same
+    tool), **Changed** (a library tool came from the same source and the
+    file's entry now differs) and **Skipped** (with the reason each is
+    skipped), then the incoming tools in the same grouped table with a
+    status column. When any are *Changed*, a segmented control chooses
+    **Keep mine** (the default: the file's version is added beside yours
+    under a suffixed name, as `tools import` does) or **Replace with
+    imported** (`tools import --replace`: yours is overwritten in place,
+    keeping its id); the counts and statuses update as it changes. The
+    control is absent when nothing is *Changed*, since then it changes
+    nothing. This is where *Replace existing* lives; the library table
+    has no such switch. The footer has *Back* and the primary *Import 21 tools*
+    (its count follows the choice). Import writes the library and returns
+    to the table with a banner, *Imported 21 tools from club.tools. 2
+    skipped.*, whose *Details* reopens the review read-only. The review is
+    the report `tools import` prints, computed without writing.
 
 ### Operations
 
@@ -304,30 +467,107 @@ folder are app preferences, kept outside the project.
     its targets; *Delete* removes it (placed tabs stay: they are the
     part's, ADR-0005).
 66. **Operation editor** (`05-operation-profile.svg`,
-    `06-operation-vcarve.svg`, `07-operation-fields.svg`). The selected
-    operation's fields in named groups, in this order, each group a
-    collapsible section whose open state is remembered: **Identity**
-    (name, enabled), **Targets**, **Tool**, **Depth**, **Strategy**,
-    **Entry and leads**, **Corners and tabs**, **Order**, and **Heights**.
-    A group with no field for the kind is not shown. Every field shows its
+    `06-operation-vcarve.svg`, `07-operation-fields.svg`; reworked by the
+    review, 2026-11-10). The editor's **header** is the operation's kind
+    glyph, its **name**, editable in place (click the name, double-click
+    the row, or F2; Enter commits, Escape reverts, one undo step), and the
+    kind in secondary text (`Panel · Pocket`). There is no Identity group:
+    the name lives in the header and *enabled* only in the list's
+    checkbox (65). Below the header the editor scrolls, and holds, in
+    this order:
+    - **Setup** (66a), always open and never collapsible: the settings
+      every operation of the kind needs before it can cut, so the user
+      sets them without scrolling.
+    - The other groups in the order **Depth**, **Strategy**, **Entry and
+      leads**, **Corners and tabs**, **Order** and **Heights**, each a
+      collapsible section holding the fields of 68 that Setup does not.
+      A group with no field left for the kind is not shown. Groups are
+      **closed by default**, and a closed group's header shows a one-line
+      summary of its values in secondary text (`Strategy · Raster 0°,
+      climb, wall last`; `Heights · Safe Z 5 mm`), so the whole operation
+      reads on one screen and nothing is out of sight without a sign of
+      it; the open state of each group is remembered per kind. A group
+      holding a located error or warning opens by itself and its header
+      carries the glyph and count when closed.
+
+    The editor shows every setting of the kind's record (68): nothing is
+    hidden and nothing is added; the review moved fields, it did not drop
+    them. Every field shows its
     unit, validates on leave, shows the file's validation message under
-    itself, and shows a short help line (the chapter's one-sentence
+    itself (or, for an unset required value, the required-field look,
+    66b), and shows a short help line (the chapter's one-sentence
     definition) on hover of its label. A field whose file value is `null`
     and whose default comes from the tool (step-down, stepover, pitch)
     shows that default as grey placeholder text, `tool's: 3 mm`, and clears
     back to it with its ⟲ button. Warnings and errors that `check` locates
     at a field (capability 25) are shown under that field as well as in the
     Warnings panel. The editor never offers a setting the generator ignores
-    for that kind, and never hides one it reads.
-67. **Targets.** The Targets group lists the operation's target instances
-    by name with a remove button each, highlights them on the Viewport
-    while the group is hovered, and has *Add selected* (the Viewport
-    selection), *Replace with selected*, and *Pick…*, which lets the user
-    click shapes on the Viewport until Escape. A target the kind cannot cut
+    for that kind, and never hides one it reads. The carve summary `check`
+    prints for an operation (*check says…*) is not in the editor: it is a
+    note in the Warnings drawer and the status bar (76a).
+66a. **Setup, per kind.** The first rows of every editor, in this order.
+    Targets and Tool come first for every kind; the rest are the fields
+    that decide where the bit goes and how deep, the ones a new operation
+    of the kind cannot be right without:
+
+    | Kind | Setup rows after Targets and Tool |
+    | --- | --- |
+    | Profile | Side, Depth, Tabs (none, a count, or distances; its sizes stay in Corners and tabs) |
+    | Pocket | Depth, Clearance strategy (Offset or Raster) |
+    | Drill | Cycle, Depth (a countersink's derived depth and its mouth diameter in its place) |
+    | Bore | Depth |
+    | Engrave | Depth |
+    | V-Carve | Flat depth (off, or the depth), Clearing passes (the list of 70) |
+    | Inlay | Inlay depth, Glue gap, Plug depth, Male board thickness |
+    | Photo V-Carve | (Targets is the Picture) Max depth |
+
+    A Setup field keeps its file name, label, unit, help and validation;
+    it is the same row as in 68, moved. The design spec's field table
+    marks which rows are Setup rows, and acceptance 73 still checks every
+    field of 68 is present exactly once.
+66b. **Required values.** A value the file needs before export (a
+    tool's feed, plunge rate and RPM; the stock thickness; an Inlay's male
+    board thickness) shows, while unset: the field's error outline, the
+    `circle-x` glyph inside the field before the unit, and *Required* as
+    its placeholder text. The file's message (*tools[t1].feed_mm_min is
+    not set…*) is the field's tooltip and a row in the Warnings drawer; it
+    is not written under the field. Every other validation error (a
+    value out of range, a depth past the thickness) keeps its message
+    under the field, as 66 says.
+67. **Targets** (`15-targets.svg`; reworked by the review, 2026-11-10).
+    Targets are shown on the drawing, not as a list in the editor.
+    - **Highlight.** While an operation is selected, its targets are
+      marked where the shapes are: on the Viewport each target's outline
+      draws 2 px in the operation's colour and every other shape fades to
+      40 %; in the Design Tree each target row has a bar in the
+      operation's colour on its left edge. Hovering an operation's row in
+      the list shows the same marks as a preview.
+    - **Setup's Targets row** is one line: a target glyph, the count and
+      the first names (`2 shapes · pocket, island`, truncated, all names
+      in its tooltip), a warning glyph when a target carries one, and an
+      **Edit** button.
+    - **Editing targets.** *Edit* (or double-click on the Targets row)
+      enters **target editing**: a bar across the top of the Viewport
+      says *Editing targets of "Panel": click shapes to add or remove
+      them*, with *Done* (Enter) and *Cancel* (Escape). While it is on,
+      clicking a shape on the Viewport or a row in the Design Tree adds it
+      to or removes it from the targets (marquee adds every shape it
+      touches; Alt-marquee removes), tree rows show a checkbox in place of
+      their eye, and nothing else can be selected or moved. *Done* commits
+      the new target list as one undo step (*Set targets of "Panel"*);
+      *Cancel* leaves the operation as it was. The highlight follows each
+      click, so the user sees the result as they go.
+    - **Shortcuts.** With shapes selected, the Targets row's menu (its
+      `⋯` button) offers *Use selection* (replace) and *Add selection*;
+      the Design Tree's context menu offers *Add to "Panel"* and *Remove
+      from "Panel"* (57).
+
+    A target the kind cannot cut
     (an open path for a Pocket, a non-circle for a Drill) is accepted and
     carries the warning `check` gives it (`side_needs_open_path`,
     `drill_target_not_circle`), as a hand-edited file does. A Photo
-    V-Carve's single target is a picture, picked from the Pictures rows.
+    V-Carve's single target is a picture: its Setup row is a **Picture**
+    dropdown of the project's pictures, not target editing.
 68. **Fields per kind.** The editor exposes every setting of the kind's
     record in the project file and nothing else. The table is the
     checklist for acceptance test 73; names are the file's, labels are the
@@ -357,8 +597,9 @@ folder are app preferences, kept outside the project.
     The editor shows the Inlay's values once: inlay depth, glue gap, plug
     depth, margin, outline rounding, through-cut allowance; then the
     **Male board** group: width and height (placeholder *same as stock*),
-    thickness (required for the male to export; `inlay_male_board_unset`
-    under the field until it is set), and the derived base under the band,
+    thickness (required for the male to export; it sits in Setup (66a)
+    and shows the required-field look (66b) until it is set, with
+    `inlay_male_board_unset` in the drawer), and the derived base under the band,
     red below 6 mm (`inlay_plug_base_thin`). Under Depth a read-only line
     shows what the bench needs to see: the male's start plane, its band
     floor, and the flank's engagement against the V-bit's cone height, red
@@ -401,8 +642,13 @@ folder are app preferences, kept outside the project.
     replaces it. A generation error (a tool with no feed, a missing
     thickness) marks the row red and lists in the Warnings panel; the
     operation draws nothing. The status bar shows *Generating 2 of 5…*
-    while any operation is pending. *Stop* cancels generation on a huge
-    project; *Regenerate all* forces it.
+    while any operation is pending. There is no Generate button, because
+    there is nothing to press: an edit is its own request. *Stop* cancels
+    generation on a huge project; after a Stop the status bar shows
+    *Stopped* and **Regenerate all**, which forces every operation to
+    generate again and is the only place that command appears (not the
+    View menu, not the Warnings drawer). The next project edit also ends
+    the stopped state, since it regenerates what it touches.
 
 ### Preview
 
@@ -428,19 +674,37 @@ folder are app preferences, kept outside the project.
     where the display's size is known. Clicking a toolpath selects its
     operation. The Viewport flips Y exactly once; every coordinate the
     user sees is project coordinates.
-73. **Toolpath visibility and colour** (`09-preview-legend.svg`). A
-    small panel in the Viewport's corner holds: the colour mode, **By
-    operation** (default; each operation its own colour, repeating after
-    eight, the same palette as `--preview`) or **By depth** (every cutting
-    move coloured from pale at the stock top to dark at the deepest cut in
-    the project, with a legend bar labelled in project units at the top,
-    bottom and each operation's depth); toggles for *Cuts*, *Rapids*,
-    *Plunges*, *Direction arrows*, *Start points*, *Tab marks*; and *Show
-    only the selected operation*. Each operation's eye (65) hides or shows
-    its toolpath; *Show all* and *Hide all* are in the panel. These are
-    view settings: not in the file, not undoable, remembered between
-    sessions. By operation is the default because it matches `--preview`
-    and the quick-start pictures (open question 6, decided 2026-11-02).
+73. **Toolpath view** (`09-preview-legend.svg`; reworked by the review,
+    2026-11-10). A filter on what the Viewport draws, opened from the
+    status bar's **Toolpaths** button (50b) as a popover above it, and
+    closed by a click elsewhere or Escape; it is not a panel and takes no
+    room on the Viewport. The button is hidden until the project has a
+    toolpath, so a project fresh from a drawing shows only the drawing.
+    The popover holds the colour mode, **By operation** (default; each
+    operation its own colour, repeating after eight, the same palette as
+    `--preview`) or **By depth** (every cutting move coloured from pale at
+    the stock top to dark at the deepest cut in the project), with, under
+    the control, the **key** for the mode chosen: by operation, each
+    operation's swatch and name; by depth, a line saying how the ramp
+    reads. Then toggles for *Cuts*, *Rapids*, *Plunges*, *Direction
+    arrows*, *Start points*, *Tab marks*, *Only the selected operation*
+    and *Program extents* (74), and *Show all* / *Hide all*. Each
+    operation's eye (65) hides or shows its toolpath. These are view
+    settings: not in the file, not undoable, remembered between sessions.
+    By operation is the default because it matches `--preview` and the
+    quick-start pictures (open question 6, decided 2026-11-02).
+73a. **Depth legend.** While By depth is on, a legend sits on the
+    Viewport's bottom-left corner, whether or not the popover is open. It
+    is one vertical scale of Z in project units, from the clearance
+    height at the top to the deepest cut at the bottom, labelled in work
+    coordinates (so with Z zero at the stock bottom the stock top reads
+    `+11.8`): above the stock top, the band where the bit moves without
+    cutting, in the rapid grey, with ticks at the **clearance** height and
+    each distinct **safe Z** (`+10 clearance`, `+5 safe Z`); the stock top
+    (`0 stock top`); then the cutting ramp with a tick at each
+    operation's depth, named (`−6 Square recess`). Rapids and retracts
+    keep their grey dashes on the Viewport in this mode; the legend's
+    grey band is their key.
 74. **Program extents.** A toggle draws the program's XY extents box in
     machine coordinates as `check` prints them (capability 4): the tool
     centre's box and, dashed outside it, the box widened by the largest
@@ -465,33 +729,96 @@ folder are app preferences, kept outside the project.
     and scrolls to the field, or selects the shape; the row's code links to
     its entry in the Warnings chapter. Rows group by operation, project-level
     rows (thickness unset, tool-change height on a post without `G53`,
-    `tool_change_avoidable`) first. The status bar shows the counts; the
-    panel opens from them or from View ▸ Warnings. *Copy* puts the panel's
-    text on the clipboard in `check`'s format.
-77. **Export** (`11-export-dialog.svg`; File ▸ Export G-code…, Ctrl E).
-    The dialog shows: the destination folder and file stem (default the
+    `tool_change_avoidable`) first, under a heading naming the group
+    (*Project*, *Panel · Pocket*). When every row belongs to one group the
+    heading is not shown, since it would label the only thing there; the
+    row still names its operation in its message. The status bar shows the
+    counts; the drawer opens from them or from View ▸ Warnings. Its header
+    holds the counts, *Copy* (the drawer's text on the clipboard in
+    `check`'s format) and close; it has no Regenerate button (71).
+76a. **Carve notes** (`10-warnings-panel.svg`; review 2026-11-10). The
+    summary `check` prints for an operation that carves (deepest cut, flat
+    floor, floor ridges, start plane, the male board's band and cut-out)
+    is information, not a problem, so it is neither in the editor nor
+    counted with the warnings. It is shown as a **note** in the drawer,
+    last in its operation's group, with a quiet `info` glyph in secondary
+    text (not the hint blue), laid out as labelled facts, one per line,
+    under a sub-heading per board when there are two:
+
+    | Female board | |
+    | --- | --- |
+    | Deepest cut | 4.000 mm below the stock top |
+    | Flat floor | at 4.000 mm (depth_mm) |
+    | Floor ridges | 0.400 mm along the rings, up to 0.800 mm at corners no clearing pass reaches |
+
+    The status bar's message cell shows the selected operation's first
+    fact (*Lettering · deepest cut 1.658 mm, no flat depth*) and opens the
+    drawer at its note. *Copy* writes the notes as `check` prints them,
+    so the text the CLI prints is unchanged.
+77. **Export** (`11-export-dialog.svg`; File ▸ Export G-code…, Ctrl E;
+    trimmed by the review, 2026-11-10).
+    The sheet shows: the destination folder and file stem (default the
     project's name beside the project file, remembered per project in the
-    app's preferences); the post-processor with its version (changing it
-    here is the Project panel's switch (62) and a project change); the
+    app's preferences), with the names it will write under the stem
+    (*Writes plaque-1-T2.nc, plaque-2-T1.nc*); the post-processor with
+    its version (changing it
+    here is Project Settings' switch (62) and a project change); the
     program split, *as the project says* (the setting's value shown) or
     overridden for this export to one program per tool or one program with
     tool changes (`--programs-per-tool`, `--one-program`; the override is
     not saved, and *one program* is refused on a post without `M6` with
-    the CLI's message); *Also write the toolpath preview (.svg)*
-    (`--preview`); then the **programs** it will write, one row per tool
+    the CLI's message); with an Inlay, a tick per board, **Female board**
+    and **Male board**: unticking one exports the other alone for this
+    export (`--board`), not saved, which is how the male is re-cut after a
+    fit adjustment. Then **Program Details**, a disclosure **closed by
+    default**, which lists the programs it will write, one row per tool
     run (capability 3): file name, tool, operations, estimated time
     (capability 30) and extents (capability 4), with the step before each
-    (zero the tool, change to T2) as `export` prints them. With an Inlay
-    the rows are grouped under **Female board** and **Male board**, named
-    as #498 names them, and each board has a tick: unticking one exports
-    the other alone for this export (`--board`), not saved, which is how
-    the male is re-cut after a fit adjustment. Errors in the
-    Warnings panel are listed and *Export* is disabled until they are
-    fixed; warnings are listed and do not block. *Export* writes every file
-    or none, as the CLI does (#71), and the result sheet shows the files,
-    the run order and *Show in folder*. Export never changes the project
+    (zero the tool, change to T2) as `export` prints them, grouped by
+    board with an Inlay. The sheet does not list warnings (the status bar
+    counts them), does not repeat the estimated total (the status bar
+    shows it), does not offer the toolpath preview SVG (the Viewport is
+    the preview; `export --preview` still writes it from the CLI), and
+    carries no note about how files are written. When an error blocks
+    export, one line above the footer says so (*1 error blocks export*)
+    with *Show* opening the drawer at it, and *Export* is disabled with
+    the same reason in its tooltip. *Export* writes every file
+    or none, as the CLI does (#71), then shows the result (77a). Export
+    never changes the project
     file: switching the post-processor in the dialog is an undoable project
     change the user saves or not.
+77a. **Export result** (`13-export-result.svg`; review 2026-11-10). The
+    sheet's content is replaced in place by the result, in three parts:
+    - **Status**: a success glyph and *2 programs written* (or, on a
+      failure, an error glyph and the CLI's reason, nothing written).
+    - **Files**: one row per program in run order, number, file name in
+      the monospace face, tool, estimated time; then the **folder** they
+      were written to, with *Show in folder* and *Copy path*.
+    - **Run instructions**, a disclosure closed by default: per program,
+      what to do before it runs (*Fit T2 1/8 end mill and set work zero X,
+      Y and Z with it*), then the controller notes `export` prints (the
+      `G43.1` and `G51` lines), each a separate callout, then the extents
+      and Z range.
+
+    The footer has **Save setup sheet…** on the left and the primary
+    **Done** on the right. The CLI's report text is no longer shown as
+    one block; every fact in it is in one of the three parts.
+77b. **Setup sheet** (`13-export-result.svg`; maintainer decision
+    2026-11-10). *Save setup sheet…* writes one self-contained HTML file,
+    default `<stem>-setup.html` beside the programs, that the user opens
+    and prints from a browser; the app does no printing of its own. It
+    holds: the project name, the export date, the post-processor and its
+    version, the stock (width, height, thickness), the origin (XY zero and
+    Z zero), the display units; then each program in run order with its
+    file name, its tool (name, number, type, diameter, angle, vendor and
+    product), its operations, the step before it, its estimated time, its
+    extents (tool centre and bit edge) and Z range; then the export's
+    warnings and the run instructions' controller notes. It has no script,
+    no external resource and no image, prints on A4 and Letter in black
+    on white, and uses the project's display units. Its text is the CLI's
+    text where the CLI has one (step-before lines, notes, warnings), and
+    the rest comes from the string table (80). Writing it is not an
+    export: it never writes a program and never changes the project.
 78. **Estimate and extents** appear outside the dialog too: each
     operation's row shows its estimated time on hover, and the status bar
     shows the program's total. The numbers are the CLI's (`[estimate]` in
@@ -499,15 +826,41 @@ folder are app preferences, kept outside the project.
 
 ### First run and help
 
-79. **Empty state** (`12-empty-state.svg`). A project with no shapes
-    shows a card over the Viewport: *Import a drawing* (55), *Import a
-    picture* (56), *Open a project*, and the three example projects from
-    the quick starts (coaster, plaque, sign) which open as unsaved copies.
-    The card closes when a shape arrives or on its ✕. An empty Operations
-    list says *Select shapes on the drawing, then Add an operation*; an
-    empty Tools list says *Add a tool from the library*. Help ▸ opens the
+79. **Empty state** (`12-empty-state.svg`; reworked by the review,
+    2026-11-10). A project with no shapes shows a card over the Viewport
+    with the heading *Start a project* and one line, *Bring in a drawing
+    to make toolpaths from, or explore an example.* Below it, two paths
+    side by side, each its own panel so they cannot be read as one list:
+    - **Your drawing**: the primary *Import a drawing…* (SVG or DXF; on an
+      empty project it is *New Project from Drawing*, so the stock is
+      sized round the drawing), then the secondary *Import a picture…*
+      and *Open a project…*, each with its shortcut.
+    - **Examples**: the three quick-start projects (coaster, plaque,
+      sign), each a card with a **thumbnail** of its shapes drawn from the
+      example itself (not a stored image), its name and one line of what
+      it teaches (*Profile with tabs*, *Pockets and holes*, *V-carved
+      lettering*). Opening one opens an
+      untitled copy, so Save asks where; the card says nothing about it.
+
+    The card closes when a shape arrives or on its ✕. Neither path has
+    copy about phases or drawing tools. An empty Tools list says *No tools
+    yet* with *New tool* and *Add from library…* as buttons; an empty
+    Operations list says *Select shapes on the drawing, then Add an
+    operation*. Help ▸ opens the
     book's quick start for the app, the Keyboard chapter, and About
     (version string as the CLI prints it).
+79a. **Menus** (`14-menus-and-sheets.svg`; review 2026-11-10). **File**:
+    New; New Project from Drawing…; New Project from Picture…; Open…;
+    Open Recent ▸ | Save; Save As… | Add Drawing to Project…; Add Picture
+    to Project… | Export G-code…; Save Setup Sheet… (after an export in
+    this session) | Quit. **Edit**: Undo *name*, Redo *name* | Duplicate,
+    Delete, Rename | Select All. **Arrange** (58a).
+    **View**: the two side panels, Toolpaths…, Warnings, Fit, Zoom to
+    Selection, and **Appearance ▸** with three checked choices, *System*
+    (the default, following the OS), *Light* and *Dark*, kept in
+    `gui.toml`. **Project**: Project Settings…, Tool Library…, Fit Stock
+    to Shapes. **Help** (79). A choice of three is a submenu with a check,
+    not a checkbox, since a checkbox cannot say "follow the system".
 80. **Strings.** Every user-visible string in the app comes from one
     string table keyed by id, so phase 8 can translate it; English is the
     only language shipped. Warning text is the CLI's text, from the same
@@ -520,15 +873,25 @@ folder are app preferences, kept outside the project.
   alignment, distribution, arrays, folders, construction geometry (phase 5).
 - Rotating, scaling or mirroring a picture (phase 3 decision; revisit in 5).
 - 3D preview and material-removal simulation (phase 6).
-- Editing library tools in place (phase 5); machine-definition editing
-  (ADR-0004: definitions are bundled); a post-processor converter (phase 8).
+- Machine-definition editing (ADR-0004: definitions are bundled); a
+  post-processor converter (phase 8). Editing library tools in place is
+  **in** this phase since the review (64a, maintainer 2026-11-10).
 - Operation templates, merging, array copies, tiling, nesting, the
   operation booklet, CAM Plan, clamps as obstacles (phase 8 or post-1.0).
-- Printing the design or exporting the design as SVG (phase 8).
+- Printing from the app: the setup sheet (77b) is an HTML file the
+  browser prints. Printing the design or exporting the design as SVG
+  (phase 8).
+- Writing the toolpath preview SVG from the app (`export --preview`
+  writes it; the Viewport is the app's preview).
 - The assistant panel (its own proposal; open question 3).
-- Autosave and crash recovery files, more than one project open at once,
-  multiple windows, tabs, touch and tablet layouts, a web build.
-- Localisation beyond keyed strings; themes beyond following the OS.
+- Autosave and crash recovery files (maintainer 2026-11-10: they need a
+  crash-recovery design and get their own issue), more than one project
+  open at once, multiple windows, tabs, touch and tablet layouts, a web
+  build.
+- Localisation beyond keyed strings; appearances beyond System, Light
+  and Dark.
+- New operation or engine settings: the review moved fields, it added
+  none (maintainer 2026-11-10).
 - Any change to toolpath generation, warnings or G-code: the engine is as
   phase 3 left it. A GUI slice that needs an engine change opens an issue
   against the engine first, as the Inlay editor did (#498, phase 3.3).
@@ -544,7 +907,7 @@ byte-identical output with the program's header date pinned (`--date`).
     and the three quick-start projects opened and saved to a new path is
     byte-identical to the original after the CLI has migrated it to the
     current version. The history is empty after open.
-63. **New from drawing** (51). *New from drawing* on `fixtures/coaster.svg`
+63. **New Project from Drawing** (51). *New Project from Drawing* on `fixtures/coaster.svg`
     yields the project `dreamcarve init` writes for it with the placeholder
     tool and the Profile removed: same stock, same instances, same
     post-processor, no tools, no operations (open question 1).
@@ -553,7 +916,7 @@ byte-identical output with the program's header date pinned (`--date`).
     undo step; a DXF with no `$INSUNITS` disables *Import* until units are
     chosen, with the CLI's message; ticking one layer imports that layer
     only; the unread-entity warning appears once in the Warnings panel.
-65. **Import picture** (56). Importing `fixtures/photo/gradient.png` at
+65. **Add a picture** (56). Importing `fixtures/photo/gradient.png` at
     width 100 adds the bitmap `image add --width 100` adds, at the origin,
     with the grayscale note for a colour file.
 66. **Move, rotate, scale, mirror** (58). With the coaster selected,
@@ -561,7 +924,9 @@ byte-identical output with the program's header date pinned (`--date`).
     translation and nothing else; the toolpath regenerates translated by
     the same vector (compared to the CLI's toolpath for the saved file);
     rotation 90° and scale 50 % produce the transforms the CLI's
-    `locate` tests expect; mirror flips about the bounding-box centre; a
+    `locate` tests expect (rotation through the Arrange group's Rotate
+    popover, 58a); Flip horizontal and vertical flip about the
+    bounding-box centre; a
     locked instance refuses each with a status-bar message. Each is one
     undo step and undo restores the transform exactly.
 67. **Linked copy** (59). Duplicate yields a second instance with the same
@@ -585,7 +950,7 @@ byte-identical output with the program's header date pinned (`--date`).
 71. **Tools** (63, 64). Adding the 6.35 mm end mill from the library writes
     the copy `tools add` writes; clearing its plunge rate marks the tool
     red, lists the CLI's refusal in the Warnings panel and disables
-    *Export*; typing it back clears all three. *Remove* on a tool in use is
+    *Export*; typing it back clears all three. *Delete* on a tool in use is
     refused naming the operation. The library window's import of
     `fixtures/fusion/sample.tools` shows the report `tools import` prints
     (acceptance 35), and the library file equals the CLI's.
@@ -637,9 +1002,12 @@ byte-identical output with the program's header date pinned (`--date`).
     of moves the Viewport draws for an operation is the generator's
     toolpath for the saved file (same count, same endpoints to 1 µm), and
     the Viewport's SVG dump equals `--preview`'s file for that project.
-80. **Depth colouring** (73). On the plaque, *By depth* colours the
-    Pocket's floor moves by their Z and the legend's labels are the stock
-    top, each operation's depth, and the deepest cut, in project units.
+80. **Depth colouring** (73, 73a). On the plaque, *By depth* colours the
+    Pocket's floor moves by their Z and the legend's labels are the
+    clearance height and safe Z above the stock top (positive, in the
+    rapid grey band), the stock top, each operation's depth, and the
+    deepest cut, in project units and work coordinates; with Z zero at
+    the stock bottom the stock top's label is the thickness.
 81. **View state is not project state** (73). Toggling every visibility
     control, panning, zooming and resizing panels leaves the file
     unchanged on save and adds nothing to the undo history.
@@ -652,7 +1020,7 @@ byte-identical output with the program's header date pinned (`--date`).
     inlay-pair projects exported from the app, with the date pinned, give
     files byte-identical to `dreamcarve export` on the saved file, for each
     of the six post-processors, with and without the program-split
-    override; the preview SVG equals `--preview`'s.
+    override; the Viewport's SVG dump equals `--preview`'s (79).
 84. **Export is blocked by errors only** (77). A project with a tool
     lacking a feed shows the error and a disabled *Export*; a project with
     only warnings exports and lists them.
@@ -667,9 +1035,11 @@ byte-identical output with the program's header date pinned (`--date`).
     Pocket and a V-Carve on all of them, the window answers input within
     100 ms while generation runs, the rows show spinners, the stale
     toolpaths show faded, and *Stop* ends generation within a second.
-88. **Unsaved changes** (51). Closing a changed project asks; *Cancel*
-    keeps it open and unchanged; *Discard* loses the changes; *Save* writes
-    the file before closing. Opening a second project does the same.
+88. **Unsaved changes** (51). Closing a changed project shows the sheet
+    with *Save*, *Don't Save* and *Cancel* and no other button; *Cancel*
+    keeps it open and unchanged; *Don't Save* loses the changes; *Save*
+    writes the file before closing. Quitting, *Open* and each *New* do the
+    same.
 89. **Units** (53). An inch project shows every length in inches with
     `in`; typing `1/4 in` in a mm project's depth stores 6.35; typing `0.5`
     in an inch project stores 12.7; the file is unchanged by switching the
@@ -683,6 +1053,91 @@ byte-identical output with the program's header date pinned (`--date`).
 92. **Three platforms** (50). The app launches, opens the plaque, renders
     one frame and exports it in CI on Windows, macOS and Linux (the design
     spec names the headless harness).
+
+Added by the review redesign (2026-11-10); the design spec's review
+slices carry them.
+
+93. **Window title and panels** (50). The plaque opens as `plaque —
+    DreamCarve`; an edit makes it `plaque* — DreamCarve`; a new project is
+    `Untitled — DreamCarve`; no other widget shows `plaque.dcv`. The CAM
+    panel has the title *CAM* and its tabs are Tools then Operations;
+    it opens on Tools for a project with no tools. With nothing selected
+    the left column shows Project Settings and no Properties; with a shape
+    selected it shows both, Project Settings first, each collapsible.
+94. **Status bar** (50b, 71, 73). The status bar never shows the stock
+    size; the cursor cell is empty off the Viewport; the Toolpaths button
+    is absent on a project with shapes and no operation and present once a
+    toolpath exists; the generation cell is empty when idle; after Stop it
+    shows *Regenerate all*, which no menu and no drawer offers; the units
+    menu switches the display units as one undo step.
+95. **Arrange** (58, 58a). With the square selected, the toolbar's Rotate
+    turns it 90° clockwise, the popover's angle 30 rotates it 30°
+    anticlockwise, and each flip mirrors it about its bounding-box centre,
+    each one undo step equal to the transforms of 66; the Properties
+    section offers X, Y, W and H only; with the proportion link broken,
+    W changes alone. With only a locked shape selected the group is
+    disabled with the reason in its tooltip.
+96. **Design Tree** (57). The squiggle's row carries the open-path glyph
+    and no `open` text; F2 and *Rename* each rename a shape in place as one
+    undo step; an empty Pictures section has no *None* row.
+97. **Editor layout** (66, 66a, 66b). For each kind, the editor's first
+    rows after the header are Targets, Tool and that kind's Setup rows of
+    66a in that order; there is no Identity group, no name field below the
+    header and no enabled checkbox in the editor; renaming in the header
+    writes the name as one undo step; every other group is closed on first
+    show with a summary of its values; a group holding a located warning
+    opens; every field of 68 is shown exactly once (acceptance 73's table
+    is unchanged). A tool with no feed shows *Required* and the glyph in
+    the Feed field and no message line under it, and its tooltip is the
+    file's message.
+98. **Targets** (67). Selecting the plaque's Pocket draws its two targets
+    in its colour and fades the rest, and marks their tree rows; target
+    editing adds the square on a click and removes the island on a second
+    click, *Done* writes the new list as one undo step, *Cancel* leaves the
+    file unchanged; *Add to "Panel"* in the tree's context menu adds a
+    shape.
+99. **Carve notes** (76, 76a). On the sign, the Lettering V-Carve's
+    summary appears as a note in its drawer group with *Deepest cut* as a
+    labelled fact, is not counted in the status bar, and *Copy* yields
+    `check`'s text byte for byte; the inlay fixture's notes have a Female
+    board and a Male board sub-heading. With a single group in the drawer,
+    no group heading is shown.
+100. **New tool** (63). *New tool* on an empty project's Tools tab adds an
+    end mill named `tool1`, 6.35 mm, 2 flutes, with no feed, plunge rate,
+    RPM, step-down or stepover, selected, with its name field focused; a
+    second is `tool2`; export is refused naming the unset rates, as the
+    CLI refuses it.
+101. **Tool Library** (64, 64a, 64b). The library sheet groups the
+    fixture library by vendor with *No vendor* last; editing a library
+    tool's feed writes `tools.json` at once, equal to the CLI's library
+    after the same change, and leaves the open project's copy and the undo
+    history unchanged; *Revert changes* restores it; switching the
+    library's units to inches shows `0.25 in` for the 6.35 mm end mill and
+    leaves the file and the project's units unchanged; importing
+    `fixtures/fusion/sample.tools` twice, the second time after editing one
+    of its tools in the library, shows that tool as *Changed*, and *Replace
+    with imported* gives the library `tools import --replace` gives.
+102. **Export sheet and result** (77, 77a, 77b). The export sheet has no
+    preview tick, no warning list, no estimated total and no footer note,
+    and its Program Details are closed; with an error it shows the one
+    blocking line and a disabled Export. After an export the result shows
+    the status, the files in run order and the folder; *Run instructions*
+    is closed and holds the CLI's step-before lines and notes. *Save setup
+    sheet…* writes an HTML file with no `<script>`, no `http` reference and
+    no `<img>`, whose programs, tools, step-before lines, extents and
+    estimates equal the export's, deterministic with the date pinned.
+103. **Empty state and menus** (51, 79, 79a). The empty-state card shows
+    two paths with the actions of 79 and three example cards with
+    thumbnails, and no sentence about phases or unsaved copies; an example
+    opens untitled. The import sheet's preview has no stock outline. The
+    File menu's labels are those of 79a; View ▸ Appearance has System,
+    Light and Dark with one checked; the unsaved-changes sheet's buttons
+    are Save, Don't Save and Cancel.
+104. **Second visual review** (50a). The checklist of `experience.md`
+    section 13, with the review's additions, ticked against a new set of
+    screenshots of every panel, sheet and menu in both appearances at 1×
+    and 2×, each captioned with what it shows; maintainer sign-off on
+    #549.
 
 ## Safety requirements
 
@@ -731,15 +1186,17 @@ program on the bench grblHAL to close the loop. Record below.
 - User guide, new chapters: **The app** (the workspace tour, panels,
   selection, keyboard), **Importing drawings and pictures** (replaces the
   DXF chapter's CLI framing; the DXF detail stays), **Placing shapes**
-  (move, rotate, scale, mirror, linked copies, lock), **Stock, origin and
-  heights**, **Toolpath preview** (colours, visibility, extents, what the
-  marks mean), **Checking and exporting** (the Warnings panel, the export
-  dialog, the result sheet), **Keyboard shortcuts**.
+  (move, the Arrange group, linked copies, lock), **Stock, origin and
+  heights**, **Toolpath preview** (colours, the toolpath view popover, the
+  depth legend, extents, what the marks mean), **Checking and exporting**
+  (the Warnings panel and its notes, the export sheet, the result and
+  the setup sheet), **Keyboard shortcuts**.
 - User guide, updated: Overview (no longer "a command line tool": the app
   first, the CLI as the same engine for scripts), every operation chapter
   with a screenshot of its editor and the field names beside the file
-  names, Tabs (placing and dragging), Tool library (the window, the
-  picker), Post-processors (the Project panel), Configuration (app
+  names and the Setup rows first, Tabs (placing and dragging), Tool
+  library (the sheet, vendor groups, editing in place, library units, the
+  import review, the picker, *New tool*), Post-processors (Project Settings), Configuration (app
   preferences and where they live), Warnings (the panel; "located at the
   field" now means the editor), Inlay (both boards from one project: the
   male board, the per-board export tick; the two-file workflow gone).
@@ -755,7 +1212,8 @@ program on the bench grblHAL to close the loop. Record below.
 
 ## Exit criteria
 
-- [ ] Acceptance tests 62–92 green on Windows, macOS and Linux in CI.
+- [ ] Acceptance tests 62–103 green on Windows, macOS and Linux in CI,
+      and the second visual review (104) signed off on #549.
 - [ ] S20's equality test (83) covers all six post-processors.
 - [ ] The coaster, plaque, sign and inlay pair reproduced in the app from
       their drawings, programs identical to the CLI's (90); the coaster cut
@@ -767,6 +1225,48 @@ program on the bench grblHAL to close the loop. Record below.
 - [ ] Binaries for all three platforms from cargo-dist; the app opens a
       `.dcv` by file association on each.
 - [ ] `v0.4.0` tagged.
+
+## Review redesign
+
+The maintainer reviewed screenshots of the working app on #549
+(2026-11-10, about 80 items keyed by screenshot) and recorded decisions
+the same day. The capabilities above are amended in place; this is the
+record of what changed and why.
+
+- **Decisions.** Library tools are edited in phase 4 (64a), with vendor
+  groups and their own display units. Autosave stays out. Appearance
+  keeps System, Light and Dark (79a). No engine or operation setting is
+  added; each editor's required settings move to its top (66a). The
+  export result gets *Save setup sheet…*, an HTML file printed from a
+  browser (77b).
+- **Answers agreed.** *New tool*, named `tool<n>` (63); *New Project
+  from Drawing…* and *Add Drawing to Project…* (51, 55); Rename on F2
+  and in the context menu (57); *Save*, *Don't Save*, *Cancel* (51);
+  *Regenerate all* only in the status bar after Stop (71); no stock box
+  in the import preview (55); the project name without extension in the
+  window title and the panel called *Project Settings* (50, 60); no name
+  above the CAM panel, which gets a title (50); Project Settings and
+  Properties as separate collapsible sections, Project Settings on top
+  (50); a chain proportion link right of W and H (58); the toolpath view
+  opening from the status bar (73) and hidden until a toolpath exists;
+  no warnings group heading when there is one group (76); no stock size
+  in the status bar (50b).
+- **Designer's calls on the open items.** Targets are shown on the
+  drawing and edited in a target-editing mode (67); the editor's name is
+  in its header and *enabled* only in the list (66); each editor opens
+  with a Setup block and closed groups that summarise their values (66,
+  66a); unset required values show a *Required* field, not a paragraph
+  (66b); carve summaries become structured notes in the drawer and the
+  status bar (76a); the export sheet is trimmed and its result is Status,
+  Files and Run instructions (77, 77a); the empty state offers two
+  distinct paths, the examples pictured (79); open paths get a glyph,
+  not a word (57); Tools comes before Operations (50); rotate and flip
+  become Arrange actions on the toolbar (58a); the depth legend shows the
+  positive Z of non-cutting moves (73a); the library's import becomes a
+  review before writing, which is where *Replace* now lives (64b).
+
+The design spec's "Review redesign slices" carry this work, and the
+second set of screenshots (acceptance 104) closes #549.
 
 ## Open questions
 
@@ -783,7 +1283,7 @@ day.
 | 4 | Export destination (77): ask every time, or remember the last folder per project in app preferences? | Remember per project in app preferences; the default is beside the project file. Never in the `.dcv`. |
 | 5 | Per-export operation subset, as PureCutCNC's export dialog offers? | No. Enabled is the project's state and the file's truth (S20); the dialog shows what will be written. |
 | 6 | Default toolpath colour mode (73): by operation or by depth? | By operation; it matches `--preview` and the quick-start pictures. Depth on a toggle. |
-| 7 | Editing library tools in place in phase 4, rather than phase 5 as the plan says? | Keep phase 5. *Save to library* from a project tool covers the common case now. |
+| 7 | Editing library tools in place in phase 4, rather than phase 5 as the plan says? | Keep phase 5. *Save to library* from a project tool covers the common case now. **Reversed 2026-11-10** by the screenshot review: library editing is in phase 4 (64a). |
 | 8 | Pan gesture (72): middle-drag, Space-drag, or both? | Both, plus two-finger scroll on a trackpad. |
 | 9 | Appearance: must both light and dark ship in phase 4, or is following the OS with one palette enough? | Both, since following the OS implies both; the palette is the design spec's and the toolpath colours must read on both. |
 | 10 | Phase 3.4 (Photo V-Carve, format v25) may land after phase 4 opens. Gate its editor as one slice on v25, or hold phase 4 for 3.5? | Gate the slice. Everything else in this phase is independent of it. |
@@ -793,16 +1293,18 @@ day.
 
 ## Mock-ups
 
-Wireframes, generated by `mockups/render.py`; `mockups/README.md` maps each
-to its capabilities. They show layout, labels and field names, not visual
-design. The plaque from the phase 2 quick start is the project in every
-frame.
+Mock-ups, generated by `mockups/render.py`; `mockups/README.md` maps each
+to its capabilities. Since the review (2026-11-10) they are drawn with
+`experience.md`'s light tokens and control sizes, so they show the look as
+well as the layout, labels and field names; the egui build is still the
+authority on pixels. The plaque from the phase 2 quick start is the project
+in most frames.
 
 ![01 The workspace](mockups/01-workspace.svg)
 
 ![02 Import a drawing](mockups/02-import-dialog.svg)
 
-![03 Project panel: stock, origin, heights, post-processor](mockups/03-stock-origin.svg)
+![03 Project Settings: units, stock, origin, heights, post-processor](mockups/03-stock-origin.svg)
 
 ![04 Tool Library](mockups/04-tool-library.svg)
 
@@ -821,3 +1323,11 @@ frame.
 ![11 Export dialog](mockups/11-export-dialog.svg)
 
 ![12 First run](mockups/12-empty-state.svg)
+
+![13 Export result and setup sheet](mockups/13-export-result.svg)
+
+![14 Menus and the unsaved-changes sheet](mockups/14-menus-and-sheets.svg)
+
+![15 Target highlighting and target editing](mockups/15-targets.svg)
+
+![16 Tools tab: New tool and required values](mockups/16-tools-tab.svg)
