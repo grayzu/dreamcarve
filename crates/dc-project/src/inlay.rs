@@ -21,9 +21,14 @@
 //! wall to the board less the V-bit's radius. The design must still
 //! leave the band's own room there ([`MaleBand::board_room_mm`]).
 
-use crate::ids::ToolId;
+use crate::ids::{InstanceId, ToolId};
 use crate::model::{InlayOp, Operation, Project, Stock, ToolKind};
-use dc_geometry::{EPS_MM, Point, Rect};
+use crate::project::closed_outlines;
+use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
+use dc_geometry::{
+    BandClearance, Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Rect, Region, area_mm2,
+    band_clearance, drawn_band, intersection, merge_near_parts, nest, wall_tolerance_mm,
+};
 
 impl Project {
     /// This project as Inlay `inlay`'s male board cuts it (#498;
@@ -81,11 +86,34 @@ pub enum BandEdge {
     },
 }
 
+/// Where a male Inlay's band edge comes from (#449).
+#[derive(Debug, Clone, PartialEq)]
+pub enum BandSource {
+    /// The design grown by `margin_mm` and closed by
+    /// `outline_rounding_mm` (0 when unset).
+    Computed {
+        /// `margin_mm`, mm.
+        margin_mm: f64,
+        /// `outline_rounding_mm`, mm; 0 when unset.
+        outline_rounding_mm: f64,
+    },
+    /// The drawn boundary ([`InlayOp::boundary`]); `margin_mm` and
+    /// `outline_rounding_mm` are ignored.
+    Drawn {
+        /// The least distance, mm, from the design's outlines to the
+        /// drawn edge ([`DrawnBoundary::narrowest_mm`]).
+        narrowest_mm: f64,
+    },
+}
+
 /// A male Inlay's band, as the generator, validation and the safety pass
 /// derive it (#448).
 #[derive(Debug, Clone, PartialEq)]
 pub struct MaleBand {
-    /// `margin_mm`, `M`.
+    /// Where the edge comes from (#449).
+    pub source: BandSource,
+    /// `margin_mm`, `M`: with a drawn boundary, the narrowest band
+    /// ([`BandSource::Drawn`]), which every rule reads in its place.
     pub margin_mm: f64,
     /// `plug_depth_mm · tan(α/2)`, `P·s`: how far the plug's foot stands
     /// out from the design at the floor, mm.
@@ -249,7 +277,12 @@ fn pass_radii<'p>(
 /// the plug depth or the V-bit is not usable.
 #[must_use]
 pub fn edge_pass(project: &Project, op: &InlayOp) -> Option<EdgePass> {
-    let margin_mm = positive(op.margin_mm)?;
+    edge_pass_at(project, op, band_source(project, op)?.margin_mm())
+}
+
+/// [`edge_pass`] for a band whose margin, or narrowest band, is
+/// `margin_mm`.
+fn edge_pass_at(project: &Project, op: &InlayOp, margin_mm: f64) -> Option<EdgePass> {
     let foot_mm = positive(op.plug_depth_mm)? * slope_of(project, op)?;
     let ring_mm = margin_mm - foot_mm;
     pass_radii(project, op).find_map(|(index, tool, radius_mm)| {
@@ -262,30 +295,67 @@ pub fn edge_pass(project: &Project, op: &InlayOp) -> Option<EdgePass> {
     })
 }
 
+impl BandSource {
+    /// `M`: the margin, or the narrowest band, mm.
+    #[must_use]
+    pub const fn margin_mm(&self) -> f64 {
+        match self {
+            Self::Computed { margin_mm, .. } => *margin_mm,
+            Self::Drawn { narrowest_mm } => *narrowest_mm,
+        }
+    }
+}
+
+/// Where Inlay `op`'s band edge comes from (#449): the drawn boundary
+/// when it has one that resolves with the design strictly inside, else
+/// `margin_mm` and `outline_rounding_mm`. `None` when a value it needs is
+/// unusable: a boundary with a problem ([`drawn_boundary`]), a margin or
+/// a set rounding that is not above 0.
+fn band_source(project: &Project, op: &InlayOp) -> Option<BandSource> {
+    if op.has_boundary() {
+        let drawn = drawn_boundary(project, op).ok()??;
+        return positive(Some(drawn.narrowest_mm))
+            .map(|narrowest_mm| BandSource::Drawn { narrowest_mm });
+    }
+    Some(BandSource::Computed {
+        margin_mm: positive(op.margin_mm)?,
+        outline_rounding_mm: match op.outline_rounding_mm {
+            None => 0.0,
+            some => positive(some)?,
+        },
+    })
+}
+
 /// Inlay `op`'s male band (#448; module docs): its edge, open or a V
 /// wall, and its roundings. `None` when a value the band needs is
-/// unusable: the margin, depth, glue gap or plug depth, an
-/// `outline_rounding_mm` that is set and not above 0, or the V-bit. It
-/// does not read the male board, which only clips it ([`MaleBand::board`]).
+/// unusable: the margin (or, with a drawn boundary, the boundary: it must
+/// resolve with the design inside), depth, glue gap or plug depth, an
+/// `outline_rounding_mm` that is set and not above 0 (without a boundary),
+/// or the V-bit. It does not read the male board, which only clips it
+/// ([`MaleBand::board`]).
 #[must_use]
 pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
     let (slope, v_bit_radius_mm) = v_bit_of(project, op)?;
-    let margin_mm = positive(op.margin_mm)?;
+    let source = band_source(project, op)?;
+    let margin_mm = source.margin_mm();
     let plug_depth_mm = positive(op.plug_depth_mm)?;
     let depth_mm = positive(op.depth_mm)?;
     let glue_gap_mm = op
         .glue_gap_mm
         .filter(|g| g.is_finite() && *g >= 0.0 && *g < depth_mm)?;
-    let outline_rounding_mm = match op.outline_rounding_mm {
-        None => 0.0,
-        some => positive(some)?,
+    let outline_rounding_mm = match &source {
+        BandSource::Computed {
+            outline_rounding_mm,
+            ..
+        } => *outline_rounding_mm,
+        BandSource::Drawn { .. } => 0.0,
     };
     let foot_mm = plug_depth_mm * slope;
     // The V-bit's flank at the plug's foot reaches `(D − G + P)·s` from its
     // tip at the stock top, the tip `P·s` from the design.
     let flank_mm = (depth_mm - glue_gap_mm + 2.0 * plug_depth_mm) * slope;
     let flank_fits = flank_mm <= margin_mm + EPS_MM;
-    let edge = match edge_pass(project, op) {
+    let edge = match edge_pass_at(project, op, margin_mm) {
         Some(pass) if flank_fits => BandEdge::Open(pass),
         _ => BandEdge::VWall {
             margin_needed_mm: pass_radii(project, op)
@@ -299,6 +369,7 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         BandEdge::VWall { .. } => outline_rounding_mm,
     };
     Some(MaleBand {
+        source,
         margin_mm,
         foot_mm,
         outline_rounding_mm,
@@ -307,6 +378,257 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         v_bit_radius_mm,
         flank_mm,
     })
+}
+
+/// What is wrong with one of an Inlay's boundary instances (#449; design
+/// spec, "Drawn boundary"); validation reports each under its own code
+/// (`inlay_boundary_*`), at the entry it names.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BoundaryProblem {
+    /// The id is no instance of the project (`inlay_boundary_unknown`).
+    Unknown {
+        /// The id listed.
+        instance: InstanceId,
+    },
+    /// The instance has a profile that cannot be a closed outline: it is
+    /// open, or it does not make a contour (`inlay_boundary_open`). An
+    /// open profile is an error, not skipped, because a boundary the user
+    /// meant and lost would silently fall back to nothing.
+    Open {
+        /// The instance.
+        instance: InstanceId,
+        /// The profile's place in its definition.
+        profile: usize,
+    },
+    /// The instance is also one of the Inlay's targets
+    /// (`inlay_boundary_is_target`).
+    IsTarget {
+        /// The instance.
+        instance: InstanceId,
+    },
+    /// The drawn edge touches or crosses the design, or part of the
+    /// design lies outside it (`inlay_boundary_crosses_design`); on the
+    /// design after near parts are merged.
+    CrossesDesign {
+        /// X of the worst point, mm.
+        x_mm: f64,
+        /// Y of the worst point, mm.
+        y_mm: f64,
+        /// How far past the edge it is, mm; 0 for a touch.
+        distance_mm: f64,
+    },
+}
+
+/// One boundary instance of an Inlay, in project space (#449).
+#[derive(Debug, Clone, PartialEq)]
+pub struct BoundaryInstance {
+    /// The instance.
+    pub instance: InstanceId,
+    /// Its display name.
+    pub name: String,
+    /// Its definition's closed profiles under its transform, nested
+    /// even-odd as the targets are ([`nest`]).
+    pub regions: Vec<Region>,
+    /// The places, in its definition's profiles, of the profiles that are
+    /// holes: ignored by the band (`inlay_boundary_hole_ignored`).
+    pub holes: Vec<usize>,
+}
+
+/// Boundary instance `id` of Inlay `op`, resolved (#449): its closed
+/// profiles under its transform, nested as the targets are. A problem
+/// when `id` is no instance (or its definition is missing), is a target,
+/// or has a profile that is not a closed outline.
+///
+/// # Errors
+///
+/// The [`BoundaryProblem`] of the entry.
+pub fn boundary_instance(
+    project: &Project,
+    op: &InlayOp,
+    id: &InstanceId,
+) -> Result<BoundaryInstance, BoundaryProblem> {
+    let unknown = || BoundaryProblem::Unknown {
+        instance: id.clone(),
+    };
+    let instance = project
+        .instances
+        .iter()
+        .find(|i| &i.id == id)
+        .ok_or_else(unknown)?;
+    if op.targets.contains(id) {
+        return Err(BoundaryProblem::IsTarget {
+            instance: id.clone(),
+        });
+    }
+    let definition = project
+        .definitions
+        .get(&instance.definition)
+        .ok_or_else(unknown)?;
+    let open = |profile: usize| BoundaryProblem::Open {
+        instance: id.clone(),
+        profile,
+    };
+    let mut contours = Vec::new();
+    for (index, profile) in definition.profiles.iter().enumerate() {
+        if !profile.is_closed() {
+            return Err(open(index));
+        }
+        let placed = instance
+            .transform
+            .apply_polyline(profile)
+            .map_err(|_| open(index))?;
+        contours.push(Contour::new(placed).map_err(|_| open(index))?);
+    }
+    if contours.is_empty() {
+        return Err(open(0));
+    }
+    // Contours and profiles are in step: every profile made one.
+    let (regions, _) = nest(contours).map_err(|_| open(0))?;
+    let holes = regions
+        .iter()
+        .flat_map(|r| r.hole_indices().iter().copied())
+        .collect();
+    Ok(BoundaryInstance {
+        instance: id.clone(),
+        name: instance.name.clone(),
+        regions,
+        holes,
+    })
+}
+
+/// The regions of every instance of Inlay `op`'s `boundary`, in list
+/// order and in project space (#449; design spec, "Drawn boundary", step
+/// 1): the function the targets' regions are collected by, per entry.
+///
+/// # Errors
+///
+/// The first entry's [`BoundaryProblem`] (`Unknown`, `Open` or
+/// `IsTarget`); an open profile is an error, not skipped.
+pub fn boundary_regions(
+    project: &Project,
+    op: &InlayOp,
+) -> Result<Vec<BoundaryInstance>, BoundaryProblem> {
+    op.boundary
+        .iter()
+        .map(|id| boundary_instance(project, op, id))
+        .collect()
+}
+
+/// Inlay `op`'s drawn boundary, derived (#449; design spec, "Drawn
+/// boundary", steps 1 to 3), in project space: not mirrored, which is an
+/// isometry that moves the design with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DrawnBoundary {
+    /// The drawn band `B`: the boundary instances' outer contours united,
+    /// holes dropped ([`dc_geometry::drawn_band`]).
+    pub band: Vec<Region>,
+    /// The least distance, mm, from the design's outlines to the band's
+    /// edge: the narrowest band, `M`.
+    pub narrowest_mm: f64,
+    /// X of the design's point nearest the edge, mm.
+    pub x_mm: f64,
+    /// Y of the design's point nearest the edge, mm.
+    pub y_mm: f64,
+    /// The instances, in list order.
+    pub instances: Vec<BoundaryInstance>,
+    /// The places, in the list, of the instances none of whose shapes
+    /// holds any part of the design (`inlay_boundary_empty`).
+    pub empty: Vec<usize>,
+}
+
+/// Inlay `op`'s drawn boundary, derived and checked against its design
+/// (#449): the instances' regions ([`boundary_regions`]), their drawn
+/// band, and the band's clearance from the design after near parts are
+/// merged (the design the female and the male both use). `Ok(None)` when
+/// `op` has no boundary. A design that does not resolve (a target that
+/// is not an instance) is empty here; validation reports that.
+///
+/// # Errors
+///
+/// A [`BoundaryProblem`]: one of an entry, or `CrossesDesign` when the
+/// edge touches or crosses the design or part of it lies outside.
+pub fn drawn_boundary(
+    project: &Project,
+    op: &InlayOp,
+) -> Result<Option<DrawnBoundary>, BoundaryProblem> {
+    if !op.has_boundary() {
+        return Ok(None);
+    }
+    let instances = boundary_regions(project, op)?;
+    let tolerance_mm = tolerance_mm(project);
+    let all: Vec<Region> = instances
+        .iter()
+        .flat_map(|i| i.regions.iter().cloned())
+        .collect();
+    let band = drawn_band(&all, tolerance_mm);
+    let design = merged_design_of(project, op);
+    let (narrowest_mm, x_mm, y_mm) = match band_clearance(&design, &band, tolerance_mm) {
+        BandClearance::Inside {
+            narrowest_mm,
+            x_mm,
+            y_mm,
+        } => (narrowest_mm, x_mm, y_mm),
+        BandClearance::Crosses {
+            x_mm,
+            y_mm,
+            depth_mm,
+        } => {
+            return Err(BoundaryProblem::CrossesDesign {
+                x_mm,
+                y_mm,
+                distance_mm: depth_mm,
+            });
+        }
+    };
+    let empty = instances
+        .iter()
+        .enumerate()
+        .filter(|(_, instance)| {
+            // A shape that holds no part of the design shares no area with
+            // it.
+            let shapes = drawn_band(&instance.regions, tolerance_mm);
+            !design.is_empty()
+                && area_mm2(&intersection(&shapes, &design, tolerance_mm)) <= EPS_MM * EPS_MM
+        })
+        .map(|(index, _)| index)
+        .collect();
+    Ok(Some(DrawnBoundary {
+        band,
+        narrowest_mm,
+        x_mm,
+        y_mm,
+        instances,
+        empty,
+    }))
+}
+
+/// The flatten tolerance the geometry here is drawn within: the
+/// project's, held to what validation allows (a bad value is reported
+/// there, not trusted here).
+fn tolerance_mm(project: &Project) -> f64 {
+    if project.flatten_tolerance_mm.is_finite() && project.flatten_tolerance_mm > 0.0 {
+        project.flatten_tolerance_mm.min(MAX_FLATTEN_TOLERANCE_MM)
+    } else {
+        FLATTEN_TOLERANCE_DEFAULT_MM
+    }
+}
+
+/// Inlay `op`'s design in project space: its targets' closed outlines
+/// nested even-odd, with the parts that come closer than
+/// [`INLAY_MERGE_MM`] merged into one shape, drawn within its V-bit's wall
+/// tolerance ([`wall_tolerance_mm`], #478), as the generator and the
+/// safety pass merge them (#479). Empty when the targets do not resolve.
+fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
+    let Some(outlines) = closed_outlines(project, &op.targets) else {
+        return Vec::new();
+    };
+    let Ok((design, _)) = nest(outlines) else {
+        return Vec::new();
+    };
+    let tolerance_mm = tolerance_mm(project);
+    let plug_tolerance_mm =
+        slope_of(project, op).map_or(tolerance_mm, |slope| wall_tolerance_mm(tolerance_mm, slope));
+    merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions
 }
 
 /// How close two parts of an Inlay's design may come before both sides
@@ -473,6 +795,177 @@ mod tests {
             ..op.clone()
         };
         assert_eq!(male_band(&p, &unmeasured), male_band(&p, &op));
+    }
+
+    /// The sample project with the V-bit `t2`, an Inlay `o7` of the
+    /// sample rectangle `i1` (10 to 60 by 10 to 40 mm) listing `boundary`
+    /// (male board 6 mm, no margin), and the shapes `shapes` as instances
+    /// `i2`, `i3`, … each a closed rectangle (corner x, y, width, height)
+    /// from the origin.
+    fn bounded(boundary: &[&str], shapes: &[[f64; 4]]) -> (Project, InlayOp) {
+        use crate::ids::{DefinitionId, InstanceId};
+        use crate::model::{FeatureDefinition, FeatureInstance};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        for (k, [x, y, w, h]) in shapes.iter().enumerate() {
+            let id = format!("i{}", k + 2);
+            let definition = DefinitionId::new(format!("d_{id}"));
+            p.definitions.insert(
+                definition.clone(),
+                FeatureDefinition {
+                    id: definition.clone(),
+                    name: id.clone(),
+                    profiles: vec![dc_geometry::Polyline::rect(Point::new(0.0, 0.0), *w, *h)],
+                },
+            );
+            p.instances.push(FeatureInstance {
+                id: InstanceId::new(&id),
+                definition,
+                transform: dc_geometry::Transform::translate(*x, *y),
+                name: format!("Shape {id}"),
+                visible: true,
+                locked: false,
+                z_top_mm: None,
+                z_bottom_mm: None,
+            });
+        }
+        let op = InlayOp {
+            male_board: MaleBoard {
+                width_mm: None,
+                height_mm: None,
+                thickness_mm: Some(6.0),
+            },
+            margin_mm: None,
+            targets: vec![InstanceId::new("i1")],
+            boundary: boundary.iter().map(|b| InstanceId::new(*b)).collect(),
+            ..sample_inlay()
+        };
+        (p, op)
+    }
+
+    /// `boundary_regions` collects each listed instance's regions in
+    /// project space, in list order: the rectangle placed at (0, 0), 80
+    /// by 50 mm, and the one at (5, 5), 30 by 30 mm.
+    #[test]
+    fn boundary_regions_collects_each_instance_in_project_space() {
+        let (p, op) = bounded(
+            &["i3", "i2"],
+            &[[0.0, 0.0, 80.0, 50.0], [5.0, 5.0, 30.0, 30.0]],
+        );
+        let found = boundary_regions(&p, &op).expect("resolves");
+        assert_eq!(found.len(), 2);
+        assert_eq!(found[0].instance, crate::ids::InstanceId::new("i3"));
+        assert_eq!(found[1].instance, crate::ids::InstanceId::new("i2"));
+        let bounds = found[0].regions[0].outer().polyline().bounds().unwrap();
+        assert_eq!((bounds.min.x, bounds.max.x), (5.0, 35.0));
+        assert_eq!((bounds.min.y, bounds.max.y), (5.0, 35.0));
+        assert_eq!(found[1].regions.len(), 1);
+    }
+
+    /// The problems of an entry: an id that is no instance, a target, a
+    /// definition with an open profile (the profile's index).
+    #[test]
+    fn boundary_regions_names_what_is_wrong() {
+        use crate::ids::InstanceId;
+        let (p, op) = bounded(&["nope"], &[]);
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::Unknown {
+                instance: InstanceId::new("nope")
+            })
+        );
+        let (p, op) = bounded(&["i1"], &[]);
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::IsTarget {
+                instance: InstanceId::new("i1")
+            })
+        );
+        let (mut p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        p.definitions
+            .get_mut(&crate::ids::DefinitionId::new("d_i2"))
+            .unwrap()
+            .profiles
+            .insert(
+                0,
+                dc_geometry::Polyline::new(
+                    vec![
+                        dc_geometry::Vertex::line(0.0, 0.0),
+                        dc_geometry::Vertex::line(5.0, 0.0),
+                    ],
+                    false,
+                ),
+            );
+        assert_eq!(
+            boundary_regions(&p, &op),
+            Err(BoundaryProblem::Open {
+                instance: InstanceId::new("i2"),
+                profile: 0
+            })
+        );
+    }
+
+    /// The drawn boundary of an 80 × 50 rectangle round the design (10 to
+    /// 60 by 10 to 40): 10 mm at the narrowest. A rectangle that cuts the
+    /// design is `CrossesDesign` at its farthest point; no boundary is no
+    /// drawn band.
+    #[test]
+    fn drawn_boundary_reads_the_narrowest_band() {
+        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        let drawn = drawn_boundary(&p, &op)
+            .expect("resolves")
+            .expect("a drawn boundary");
+        dc_geometry::assert_approx_eq!(drawn.narrowest_mm, 10.0, 1e-9);
+        assert_eq!(drawn.band.len(), 1);
+        assert!(drawn.empty.is_empty());
+
+        let (p, op) = bounded(&["i2"], &[[30.0, 0.0, 80.0, 50.0]]);
+        let Err(BoundaryProblem::CrossesDesign {
+            x_mm, distance_mm, ..
+        }) = drawn_boundary(&p, &op)
+        else {
+            panic!("the design is cut");
+        };
+        dc_geometry::assert_approx_eq!(x_mm, 10.0, 1e-9);
+        dc_geometry::assert_approx_eq!(distance_mm, 20.0, 1e-9);
+
+        let (p, op) = bounded(&[], &[]);
+        assert!(!op.has_boundary());
+        assert!(drawn_boundary(&p, &op).is_ok_and(|d| d.is_none()));
+    }
+
+    /// With a boundary the male band reads the narrowest band as its
+    /// margin, with no rounding of its own (`BandSource::Drawn`); the
+    /// same Inlay with a margin and no boundary reads the margin.
+    #[test]
+    fn male_band_reads_the_drawn_band_for_its_margin() {
+        let (p, op) = bounded(&["i2"], &[[0.0, 0.0, 80.0, 50.0]]);
+        let band = male_band(&p, &op).expect("a male band");
+        dc_geometry::assert_approx_eq!(band.margin_mm, 10.0, 1e-9);
+        dc_geometry::assert_approx_eq!(band.outline_rounding_mm, 0.0, 1e-12);
+        assert!(
+            matches!(band.source, BandSource::Drawn { narrowest_mm } if (narrowest_mm - 10.0).abs() < 1e-9)
+        );
+
+        let ignored = InlayOp {
+            margin_mm: Some(6.0),
+            outline_rounding_mm: Some(4.0),
+            ..op.clone()
+        };
+        assert_eq!(male_band(&p, &ignored), Some(band));
+        let computed = InlayOp {
+            boundary: Vec::new(),
+            ..ignored
+        };
+        let band = male_band(&p, &computed).expect("a male band");
+        dc_geometry::assert_approx_eq!(band.margin_mm, 6.0, 1e-12);
+        assert_eq!(
+            band.source,
+            BandSource::Computed {
+                margin_mm: 6.0,
+                outline_rounding_mm: 4.0
+            }
+        );
     }
 
     /// #495: an open band is clipped to the stock itself, a V wall the

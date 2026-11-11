@@ -399,7 +399,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v25/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v26/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -1233,6 +1233,7 @@ mod tests {
                 "plug_depth_mm",
                 "margin_mm",
                 "outline_rounding_mm",
+                "boundary",
                 "clearing",
                 "step_over_fraction",
                 "machining_order",
@@ -1569,13 +1570,76 @@ mod tests {
         }
     }
 
-    /// The format chain after #498: format 25 is the one-file Inlay, so the
-    /// Photo V-Carve of sub-phase 3.4 is format 26. A version 25 file
-    /// cannot hold a `photo_v_carve` operation (this build has no such
-    /// kind) nor `bitmaps`; the 3.4 slice adds both behind a bump to 26.
+    /// Format 26 (#449, #602): the Inlay's `boundary` is a list of
+    /// instance ids, saved right after `outline_rounding_mm` as `[]` or
+    /// `["i3"]`, and read back unchanged; every field is required, so a
+    /// file without it is not format 26.
     #[test]
-    fn photo_v_carve_is_format_26() {
-        assert_eq!(crate::CURRENT_VERSION, 25);
+    fn inlay_boundary_round_trips() {
+        use crate::ids::InstanceId;
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            boundary: vec![InstanceId::new("i3"), InstanceId::new("i4")],
+            ..sample_inlay()
+        }));
+        p.operations.push(Operation::Inlay(crate::model::InlayOp {
+            id: crate::ids::OperationId::new("o8"),
+            ..sample_inlay()
+        }));
+        let text = save(&p).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["operations"][1]["boundary"], json!(["i3", "i4"]));
+        assert_eq!(value["operations"][2]["boundary"], json!([]));
+        assert_eq!(load(text.as_bytes()).unwrap().project, p);
+        assert!(
+            load(text.as_bytes())
+                .unwrap()
+                .project
+                .operations
+                .iter()
+                .filter_map(|o| match o {
+                    Operation::Inlay(i) => Some(i.has_boundary()),
+                    _ => None,
+                })
+                .eq([true, false])
+        );
+
+        let without = text.replacen("      \"boundary\": [],\n", "", 1);
+        assert_ne!(without, text, "fixture layout changed:\n{text}");
+        let err = load(without.as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("boundary"), "{err}");
+    }
+
+    /// Format 26 (#602): `boundary` comes right after
+    /// `outline_rounding_mm`, before `clearing`.
+    #[test]
+    fn boundary_is_an_array_after_outline_rounding() {
+        use crate::test_support::{sample_inlay, tool_v_bit_90};
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations.push(Operation::Inlay(sample_inlay()));
+        let value: serde_json::Value = serde_json::from_str(&save(&p).unwrap()).unwrap();
+        let inlay = value["operations"][1].as_object().unwrap();
+        assert!(inlay["boundary"].is_array());
+        let keys: Vec<&str> = inlay.keys().map(String::as_str).collect();
+        let at = keys
+            .iter()
+            .position(|k| *k == "outline_rounding_mm")
+            .unwrap();
+        assert_eq!(keys.get(at + 1), Some(&"boundary"));
+        assert_eq!(keys.get(at + 2), Some(&"clearing"));
+    }
+
+    /// The format chain after the boundary (#602): format 25 is the
+    /// one-file Inlay (#498), 26 the drawn boundary, so the Photo
+    /// V-Carve of sub-phase 3.5 is format 27. A version 26 file cannot
+    /// hold a `photo_v_carve` operation (this build has no such kind)
+    /// nor `bitmaps`; the 3.5 slice adds both behind a bump to 27.
+    #[test]
+    fn photo_v_carve_is_format_27() {
+        assert_eq!(crate::CURRENT_VERSION, 26);
         let text = save(&sample_project()).unwrap();
         let photo = text.replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
         assert_ne!(photo, text, "fixture layout changed:\n{text}");

@@ -226,6 +226,7 @@ its closing `],`, with this, and save:
     "plug_depth_mm": 2.0,
     "margin_mm": 8.0,
     "outline_rounding_mm": 10.0,
+    "boundary": [],
     "clearing": [
       { "tool": "t2", "strategy": "offset", "direction": "climb", "entry": { "ramp": { "angle_deg": 15.0 } } }
     ],
@@ -250,6 +251,7 @@ One **Inlay** operation describes both boards with the same values:
 | `plug_depth_mm` | 2 | The male's flat band is cut 2 mm deeper than the plug's walls need, so the seated plug's backing stands 2 mm clear of the female, room to saw it off. |
 | `margin_mm` | 8 | The male's band reaches 8 mm beyond the letters (Corbin's "Plug Stock Offset"). |
 | `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. |
+| `boundary` | `[]` | No drawn edge: the band is the margin and rounding above. Leave it empty. |
 | `clearing` | `t2` | The end mill clears the flat floor first, on both boards; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
 | `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth, and a fifth at most where they turn a corner: under the glue gap. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |

@@ -42,6 +42,7 @@ start](../quick-start/inlay.md):
   "plug_depth_mm": 2.0,
   "margin_mm": 8.0,
   "outline_rounding_mm": 10.0,
+  "boundary": [],
   "clearing": [
     { "tool": "t2", "strategy": "offset", "direction": "climb", "entry": { "ramp": { "angle_deg": 15.0 } } }
   ],

@@ -348,6 +348,7 @@ pub fn new_operation(
             plug_depth_mm: None,
             margin_mm: None,
             outline_rounding_mm: None,
+            boundary: Vec::new(),
             clearing: Vec::new(),
             step_over_fraction: None,
             machining_order,

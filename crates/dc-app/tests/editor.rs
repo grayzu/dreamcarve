@@ -77,8 +77,10 @@ fn still_to_come(kind: Kind) -> &'static [&'static str] {
         Kind::Drill | Kind::Bore => &[],
         // Complete in slice 13 (#542).
         Kind::VCarve => &[],
-        // Complete in slice 14 (#543).
-        Kind::Inlay => &[],
+        // Complete in slice 14 (#543), but for the drawn boundary (format
+        // 26, #449, #602): the data model lands first; picking its
+        // instances is a row of a later slice.
+        Kind::Inlay => &["boundary"],
         // Slice 15 (#544): no record before phase 3.4.
         Kind::PhotoVCarve => &[],
     }

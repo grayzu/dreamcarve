@@ -298,6 +298,7 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         plug_depth_mm: Some(plug_depth_mm),
         margin_mm: Some(margin_mm),
         outline_rounding_mm: None,
+        boundary: Vec::new(),
         clearing: Vec::new(),
         // The user guide's step-over for an inlay's V-bit floor.
         step_over_fraction: Some(0.1),

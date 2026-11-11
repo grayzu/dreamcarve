@@ -363,6 +363,25 @@ fn on_board<'p>(project: &'p Project, op: &InlayOp, board: Board) -> Cow<'p, Pro
 ///
 /// # Errors
 ///
+/// A male cut with a drawn boundary (format 26, #449) is refused until
+/// the generator cuts the band from it (sub-phase 3.4, slice 21j): the
+/// boundary's own problems as [`CamError::InlayBoundary`], as every
+/// generator re-checks validation, else
+/// [`CamError::InlayBoundaryNotCut`], so a file that lists one never
+/// exports a band that ignores it.
+fn refuse_drawn_boundary(project: &Project, op: &InlayOp, board: Board) -> Result<(), CamError> {
+    if board != Board::Male || !op.has_boundary() {
+        return Ok(());
+    }
+    match dc_project::drawn_boundary(project, op) {
+        Err(problem) => Err(CamError::InlayBoundary {
+            op: op.id.clone(),
+            problem,
+        }),
+        Ok(_) => Err(CamError::InlayBoundaryNotCut { op: op.id.clone() }),
+    }
+}
+
 /// As [`Values`] (an unset or out-of-range value, `InlayGlueGap`,
 /// `InlayMargin`), [`CamError::MissingThickness`] (the board's), and what
 /// [`carve_regions`] refuses.
@@ -372,6 +391,7 @@ pub(crate) fn side(
     board: Board,
     warnings: &mut Vec<Warning>,
 ) -> Result<Side, CamError> {
+    refuse_drawn_boundary(project, op, board)?;
     let values = Values::of(op, board)?;
     side_of(&on_board(project, op, board), op, values, warnings)
 }
@@ -755,6 +775,7 @@ fn generate_on(
             safe_z_mm: op.safe_z_mm,
         });
     }
+    refuse_drawn_boundary(project, op, board)?;
     let values = Values::of(op, board)?;
     let cut_out = checked_cut_out(project, op, values)?;
     let passes = clearing::Passes::of_inlay(op, values.start_depth_mm());

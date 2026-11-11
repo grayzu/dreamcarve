@@ -27,8 +27,9 @@ pub mod width;
 
 pub use boolean::{BooleanOp, boolean, difference, difference_within, intersection, union};
 pub use carve::{
-    band_on_board, floor_regions, inset_outers, is_design_hole, rounded_band, surround,
-    surround_floor_regions, surround_within, wall_tolerance_mm, without_rect_sides,
+    BandClearance, band_clearance, band_on_board, closed_band, drawn_band, floor_regions,
+    inset_outers, is_design_hole, rounded_band, surround, surround_floor_regions, surround_within,
+    wall_tolerance_mm, without_rect_sides,
 };
 pub use circle::{as_circle, fit_circle_kasa};
 pub use contour::Contour;

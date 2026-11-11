@@ -117,6 +117,7 @@ pub(super) fn inlay(side: Board, tool: &str, plug_mm: f64, margin_mm: f64) -> In
         plug_depth_mm: Some(plug_mm),
         margin_mm: Some(margin_mm),
         outline_rounding_mm: None,
+        boundary: Vec::new(),
         clearing: Vec::new(),
         step_over_fraction: Some(0.4),
         machining_order: MachiningOrder::FullDepthFirst,

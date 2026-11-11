@@ -1116,6 +1116,17 @@ pub struct InlayOp {
     /// but the edge pass's radius when the edge is open. Used by the male.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub outline_rounding_mm: Option<f64>,
+    /// A drawn edge for the male's band (format 26, #449): instances whose
+    /// closed outlines, united, are the band's outer edge, in place of
+    /// `margin_mm` and `outline_rounding_mm`. Saved as `"boundary": []` or
+    /// `["i3"]`; empty (`init` and migration) leaves the band the design
+    /// grown by `margin_mm`. With one or more, `margin_mm` and
+    /// `outline_rounding_mm` are ignored (a warning), the design must lie
+    /// strictly inside the union of the boundary, and the narrowest band
+    /// between them takes the margin's place in the edge, cut-out and
+    /// board rules (`docs/specs/phase-3/design.md`, "Drawn boundary").
+    /// The instances are not targets. The female ignores the list.
+    pub boundary: Vec<InstanceId>,
     /// Clearing passes in cut order, largest tool first (capability 40),
     /// on both boards. Empty by default: the V-bit clears its floor
     /// itself.
@@ -1192,6 +1203,13 @@ impl InlayOp {
     #[must_use]
     pub const fn cuts_male(&self) -> bool {
         self.male_board.thickness_mm.is_some()
+    }
+
+    /// Whether the male's band edge is drawn (format 26, #449):
+    /// `boundary` is not empty.
+    #[must_use]
+    pub const fn has_boundary(&self) -> bool {
+        !self.boundary.is_empty()
     }
 }
 

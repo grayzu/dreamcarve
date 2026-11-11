@@ -798,6 +798,108 @@ pub enum Problem {
         /// with an open edge, `2·P·tan(α/2)` plus it with a V wall
         /// ([`crate::MaleBand::cut_out_margin_needed_mm`]).
         needed_mm: f64,
+        /// Whether the band is a drawn boundary (format 26, #449): `margin_mm`
+        /// is then the narrowest band, and the problem is located at
+        /// `boundary`.
+        at_boundary: bool,
+    },
+    /// A male Inlay with a drawn boundary has `margin_mm` or
+    /// `outline_rounding_mm` set (format 26, #449): the boundary replaces
+    /// both, so the value does nothing. A warning, at the field.
+    InlayMarginIgnored {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `margin_mm` or `outline_rounding_mm`.
+        field: &'static str,
+    },
+    /// An Inlay's `boundary` lists an id that is no instance (format 26,
+    /// #449). An error, at the entry.
+    InlayBoundaryUnknown {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The id listed.
+        instance: InstanceId,
+    },
+    /// An Inlay's boundary instance has a profile that is not a closed
+    /// outline (format 26, #449): an open profile is an error, not
+    /// skipped. At the entry.
+    InlayBoundaryOpen {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+        /// The profile's place in its definition.
+        profile: usize,
+    },
+    /// An Inlay's boundary instance is also one of its targets (format 26,
+    /// #449). An error, at the entry.
+    InlayBoundaryIsTarget {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+    },
+    /// An Inlay's drawn edge touches or crosses its design, or part of
+    /// the design lies outside it (format 26, #449): the plug's wall would
+    /// have no band beyond it. The point is the worst one, on the design
+    /// after near parts are merged. An error, at `boundary`.
+    InlayBoundaryCrossesDesign {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// X of the worst point, mm.
+        x_mm: f64,
+        /// Y of the worst point, mm.
+        y_mm: f64,
+        /// How far past the edge it is, mm; 0 for a touch.
+        distance_mm: f64,
+    },
+    /// A boundary instance none of whose shapes holds any part of the
+    /// design (format 26, #449). It still counts in the union. A warning,
+    /// at the entry.
+    InlayBoundaryEmpty {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+        /// The instance's display name.
+        instance_name: String,
+    },
+    /// A boundary shape has a hole (format 26, #449): board standing in
+    /// the band would hold the plug off the female (#484), so the band
+    /// ignores it. A warning, at the entry.
+    InlayBoundaryHoleIgnored {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+        /// The instance's display name.
+        instance_name: String,
+        /// The hole's place among its definition's profiles.
+        profile: usize,
     },
 }
 
@@ -889,6 +991,13 @@ impl Problem {
             Self::InlayMaleBoardThickness { .. } => "inlay_male_board_thickness",
             Self::InlayMaleBoardsDiffer { .. } => "inlay_male_boards_differ",
             Self::InlayCutOutNoRoom { .. } => "inlay_cut_out_no_room",
+            Self::InlayMarginIgnored { .. } => "inlay_margin_ignored",
+            Self::InlayBoundaryUnknown { .. } => "inlay_boundary_unknown",
+            Self::InlayBoundaryOpen { .. } => "inlay_boundary_open",
+            Self::InlayBoundaryIsTarget { .. } => "inlay_boundary_is_target",
+            Self::InlayBoundaryCrossesDesign { .. } => "inlay_boundary_crosses_design",
+            Self::InlayBoundaryEmpty { .. } => "inlay_boundary_empty",
+            Self::InlayBoundaryHoleIgnored { .. } => "inlay_boundary_hole_ignored",
             Self::ClearanceBelowSafeZ { .. } => "clearance_below_safe_z",
             Self::MachineZNotBelowHome { .. } => "machine_z_not_below_home",
             Self::MachineZNeedsG53 { .. } => "machine_z_needs_g53",
@@ -910,8 +1019,15 @@ impl Problem {
             | Self::EngraveDeeperThanCone { .. }
             | Self::ClearingNotDescending { .. }
             | Self::CountersinkIgnoresToolWidth { .. }
-            | Self::InlayPlugBaseThin { .. } => Severity::Warning,
-            Self::CutterNotFlat { .. }
+            | Self::InlayPlugBaseThin { .. }
+            | Self::InlayMarginIgnored { .. }
+            | Self::InlayBoundaryEmpty { .. }
+            | Self::InlayBoundaryHoleIgnored { .. } => Severity::Warning,
+            Self::InlayBoundaryUnknown { .. }
+            | Self::InlayBoundaryOpen { .. }
+            | Self::InlayBoundaryIsTarget { .. }
+            | Self::InlayBoundaryCrossesDesign { .. }
+            | Self::CutterNotFlat { .. }
             | Self::InlayMaleBoardSize { .. }
             | Self::InlayMaleBoardThickness { .. }
             | Self::InlayMaleBoardsDiffer { .. }
@@ -1123,8 +1239,35 @@ impl Problem {
             Self::InlayMaleBoardsDiffer { operation, .. } => {
                 Some(format!("operations[{operation}].male_board"))
             }
-            Self::InlayCutOutNoRoom { operation, .. } => {
-                Some(format!("operations[{operation}].margin_mm"))
+            Self::InlayCutOutNoRoom {
+                operation,
+                at_boundary,
+                ..
+            } => Some(if *at_boundary {
+                format!("operations[{operation}].boundary")
+            } else {
+                format!("operations[{operation}].margin_mm")
+            }),
+            Self::InlayMarginIgnored {
+                operation, field, ..
+            } => Some(format!("operations[{operation}].{field}")),
+            Self::InlayBoundaryUnknown {
+                operation, index, ..
+            }
+            | Self::InlayBoundaryOpen {
+                operation, index, ..
+            }
+            | Self::InlayBoundaryIsTarget {
+                operation, index, ..
+            }
+            | Self::InlayBoundaryEmpty {
+                operation, index, ..
+            }
+            | Self::InlayBoundaryHoleIgnored {
+                operation, index, ..
+            } => Some(format!("operations[{operation}].boundary[{index}]")),
+            Self::InlayBoundaryCrossesDesign { operation, .. } => {
+                Some(format!("operations[{operation}].boundary"))
             }
             Self::ClearanceBelowSafeZ { .. } => Some(CLEARANCE.to_owned()),
             Self::MachineZNotBelowHome { .. } | Self::MachineZNeedsG53 { .. } => {
@@ -1588,9 +1731,86 @@ impl fmt::Display for Problem {
                 diameter_mm,
                 margin_mm,
                 needed_mm,
+                at_boundary,
+            } => {
+                if *at_boundary {
+                    write!(
+                        f,
+                        "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; the drawn boundary is only {margin_mm:.3} mm from the design at its narrowest, so that floor is narrower than the tool and the cut-out would cut into the plug's wall. Draw the boundary at least {needed_mm:.3} mm from the design all round, or use a narrower end mill"
+                    )
+                } else {
+                    write!(
+                        f,
+                        "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm, or use a narrower end mill"
+                    )
+                }
+            }
+            Self::InlayMarginIgnored {
+                operation,
+                name,
+                field,
             } => write!(
                 f,
-                "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; with margin_mm {margin_mm} mm that floor is narrower than the tool, so the cut-out would cut into the plug's wall. Raise margin_mm to at least {needed_mm:.3} mm, or use a narrower end mill"
+                "operation `{name}` (`{operation}`) draws its male's edge with a boundary, so {field} does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set {field} to null, or empty the boundary list to use it"
+            ),
+            Self::InlayBoundaryUnknown {
+                operation,
+                name,
+                index,
+                instance,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is no instance of the project; list the id of a drawn shape that is in it"
+            ),
+            Self::InlayBoundaryOpen {
+                operation,
+                name,
+                index,
+                instance,
+                profile,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, whose profile {profile} is not a closed outline; a boundary must be closed, so close that profile or list another shape"
+            ),
+            Self::InlayBoundaryIsTarget {
+                operation,
+                name,
+                index,
+                instance,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is also one of its targets; the design cannot be its own boundary, so draw a separate shape round it"
+            ),
+            Self::InlayBoundaryCrossesDesign {
+                operation,
+                name,
+                x_mm,
+                y_mm,
+                distance_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has a boundary that touches or crosses its design, or leaves part of it outside: the worst point is at ({x_mm:.3}, {y_mm:.3}), {distance_mm:.3} mm past the boundary's edge; the design must lie strictly inside the boundary, so draw the boundary wider there"
+            ),
+            Self::InlayBoundaryEmpty {
+                operation,
+                name,
+                index,
+                instance,
+                instance_name,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that"
+            ),
+            Self::InlayBoundaryHoleIgnored {
+                operation,
+                name,
+                index,
+                instance,
+                instance_name,
+                profile,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
             ),
             Self::CountersinkIgnoresToolWidth { operation, name } => write!(
                 f,
@@ -2908,6 +3128,9 @@ impl Validator {
             }
             None => unset(self, INLAY_PLUG_DEPTH),
         }
+        // Format 26 (#449): a drawn boundary replaces the margin and the
+        // rounding, so the male needs no margin and ignores one.
+        let drawn = male && inlay.has_boundary();
         match (male, inlay.margin_mm) {
             // The female does not use it.
             (false, Some(margin_mm)) => {
@@ -2915,7 +3138,8 @@ impl Validator {
             }
             (false, None) => {}
             (true, Some(margin_mm)) => {
-                if self.finite(&format!("{at}.margin_mm"), margin_mm) && margin_mm <= 0.0 {
+                if self.finite(&format!("{at}.margin_mm"), margin_mm) && margin_mm <= 0.0 && !drawn
+                {
                     self.problems.push(Problem::InlayMarginPositive {
                         operation: inlay.id.clone(),
                         name: inlay.name.clone(),
@@ -2923,6 +3147,7 @@ impl Validator {
                     });
                 }
             }
+            (true, None) if drawn => {}
             (true, None) => unset(self, "margin_mm"),
         }
         // Format 24 (#448): on either side, so a pair shares it.
@@ -2934,6 +3159,21 @@ impl Validator {
                 name: inlay.name.clone(),
                 rounding_mm,
             });
+        }
+        if drawn {
+            for (field, set) in [
+                ("margin_mm", inlay.margin_mm.is_some()),
+                ("outline_rounding_mm", inlay.outline_rounding_mm.is_some()),
+            ] {
+                if set {
+                    self.problems.push(Problem::InlayMarginIgnored {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        field,
+                    });
+                }
+            }
+            self.boundary(p, inlay);
         }
         self.clearing(p, &inlay.id, &inlay.clearing, at);
         self.v_bit_floor(
@@ -3011,7 +3251,102 @@ impl Validator {
                 diameter_mm: tool.diameter_mm,
                 margin_mm,
                 needed_mm,
+                at_boundary: matches!(band.source, crate::BandSource::Drawn { .. }),
             });
+        }
+    }
+
+    /// A male Inlay's drawn boundary (format 26, #449; design spec,
+    /// "Validation", "Drawn boundary"): each entry resolves (an instance,
+    /// not a target, closed outlines only), and its holes are ignored
+    /// with a warning; then, if every entry resolved, the design lies
+    /// strictly inside the union of the entries (`inlay_boundary_
+    /// crosses_design`, with the worst point), and an entry that holds no
+    /// part of the design warns. Nothing is checked before the male is
+    /// cut, or without a boundary.
+    fn boundary(&mut self, p: &Project, inlay: &InlayOp) {
+        let mut resolved = true;
+        for (index, id) in inlay.boundary.iter().enumerate() {
+            let operation = inlay.id.clone();
+            let name = inlay.name.clone();
+            match crate::boundary_instance(p, inlay, id) {
+                Ok(shape) => {
+                    for &profile in &shape.holes {
+                        self.problems.push(Problem::InlayBoundaryHoleIgnored {
+                            operation: operation.clone(),
+                            name: name.clone(),
+                            index,
+                            instance: id.clone(),
+                            instance_name: shape.name.clone(),
+                            profile,
+                        });
+                    }
+                }
+                Err(problem) => {
+                    resolved = false;
+                    self.problems.push(match problem {
+                        crate::BoundaryProblem::Unknown { instance } => {
+                            Problem::InlayBoundaryUnknown {
+                                operation,
+                                name,
+                                index,
+                                instance,
+                            }
+                        }
+                        crate::BoundaryProblem::Open { instance, profile } => {
+                            Problem::InlayBoundaryOpen {
+                                operation,
+                                name,
+                                index,
+                                instance,
+                                profile,
+                            }
+                        }
+                        crate::BoundaryProblem::IsTarget { instance } => {
+                            Problem::InlayBoundaryIsTarget {
+                                operation,
+                                name,
+                                index,
+                                instance,
+                            }
+                        }
+                        // `boundary_instance` finds no crossing: that is
+                        // the whole list's.
+                        crate::BoundaryProblem::CrossesDesign { .. } => continue,
+                    });
+                }
+            }
+        }
+        if !resolved {
+            return;
+        }
+        match crate::drawn_boundary(p, inlay) {
+            Ok(Some(drawn)) => {
+                for &index in &drawn.empty {
+                    let Some(shape) = drawn.instances.get(index) else {
+                        continue;
+                    };
+                    self.problems.push(Problem::InlayBoundaryEmpty {
+                        operation: inlay.id.clone(),
+                        name: inlay.name.clone(),
+                        index,
+                        instance: shape.instance.clone(),
+                        instance_name: shape.name.clone(),
+                    });
+                }
+            }
+            Err(crate::BoundaryProblem::CrossesDesign {
+                x_mm,
+                y_mm,
+                distance_mm,
+            }) => self.problems.push(Problem::InlayBoundaryCrossesDesign {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                x_mm,
+                y_mm,
+                distance_mm,
+            }),
+            Ok(None) | Err(_) => {}
         }
     }
 
@@ -7844,5 +8179,491 @@ mod tests {
         let codes: Vec<&str> = validate(&p).iter().map(Problem::code).collect();
         assert!(codes.contains(&"clearing_needs_end_mill"), "{codes:?}");
         assert!(!codes.contains(&"clearing_needs_flat_depth"), "{codes:?}");
+    }
+
+    // Format 26: the drawn boundary (#449, #602; `docs/specs/phase-3/
+    // design.md`, "Validation" and "Drawn boundary").
+
+    /// Adds instance `id` of a `w` × `h` mm rectangle with its corner at
+    /// (`x`, `y`) to `p`, with `holes` more rectangles (corner, size) in
+    /// the same definition after it.
+    fn add_shape(p: &mut Project, id: &str, x: f64, y: f64, w: f64, h: f64, holes: &[[f64; 4]]) {
+        let definition = DefinitionId::new(format!("d_{id}"));
+        let mut profiles = vec![Polyline::rect(dc_geometry::Point { x: 0.0, y: 0.0 }, w, h)];
+        profiles.extend(
+            holes.iter().map(|&[hx, hy, hw, hh]| {
+                Polyline::rect(dc_geometry::Point { x: hx, y: hy }, hw, hh)
+            }),
+        );
+        p.definitions.insert(
+            definition.clone(),
+            crate::model::FeatureDefinition {
+                id: definition.clone(),
+                name: format!("Shape {id}"),
+                profiles,
+            },
+        );
+        p.instances.push(crate::model::FeatureInstance {
+            id: InstanceId::new(id),
+            definition,
+            transform: Transform::translate(x, y),
+            name: format!("Boundary {id}"),
+            visible: true,
+            locked: false,
+            z_top_mm: Some(6.0),
+            z_bottom_mm: Some(0.0),
+        });
+    }
+
+    /// [`inlay_project`]'s male (its 10 mm square design `i2` at (20, 20)
+    /// to (30, 30), the sample rectangle `i1`, (10, 10) to (60, 40), round
+    /// it) with no margin and `boundary` listed, as `edit` leaves the
+    /// project. The sample rectangle is the Profile's target, not the
+    /// Inlay's, so it may be a boundary.
+    fn boundary_project(boundary: &[&str], edit: impl FnOnce(&mut Project)) -> Project {
+        let mut p = inlay_project(|inlay| {
+            on_male_board(inlay);
+            inlay.margin_mm = None;
+            inlay.boundary = boundary.iter().map(|b| InstanceId::new(*b)).collect();
+        });
+        edit(&mut p);
+        p
+    }
+
+    /// The Inlay `o7` of `p`.
+    fn the_inlay(p: &Project) -> &crate::model::InlayOp {
+        p.operations
+            .iter()
+            .find_map(|op| match op {
+                Operation::Inlay(inlay) => Some(inlay),
+                _ => None,
+            })
+            .unwrap()
+    }
+
+    /// The sample rectangle round the square leaves 10 mm on three
+    /// sides: a boundary with no margin is valid, whatever else is set.
+    #[test]
+    fn margin_is_not_required_with_a_boundary() {
+        let p = boundary_project(&["i1"], |_| {});
+        assert!(the_inlay(&p).has_boundary());
+        assert_eq!(the_inlay(&p).margin_mm, None);
+        assert_eq!(validate(&p), vec![]);
+        // The same male without a boundary still needs its margin.
+        let p = inlay_project(|inlay| {
+            on_male_board(inlay);
+            inlay.margin_mm = None;
+        });
+        assert_eq!(
+            validate(&p),
+            vec![Problem::OperationValueUnset {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                field: "margin_mm",
+            }]
+        );
+    }
+
+    /// `margin_mm` and `outline_rounding_mm` are replaced by the boundary,
+    /// so a value in either is a warning at that field, one per field set.
+    #[test]
+    fn margin_with_a_boundary_warns_ignored() {
+        let p = boundary_project(&["i1"], |p| {
+            if let Some(Operation::Inlay(inlay)) = p.operations.last_mut() {
+                inlay.margin_mm = Some(6.0);
+            }
+        });
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayMarginIgnored {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                field: "margin_mm",
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(problems[0].code(), "inlay_margin_ignored");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].margin_mm")
+        );
+
+        let p = boundary_project(&["i1"], |p| {
+            if let Some(Operation::Inlay(inlay)) = p.operations.last_mut() {
+                inlay.margin_mm = Some(6.0);
+                inlay.outline_rounding_mm = Some(4.0);
+            }
+        });
+        let problems = validate(&p);
+        let fields: Vec<_> = problems
+            .iter()
+            .map(|p| (p.code(), p.field().unwrap_or_default()))
+            .collect();
+        assert_eq!(
+            fields,
+            vec![
+                ("inlay_margin_ignored", "operations[o7].margin_mm".into()),
+                (
+                    "inlay_margin_ignored",
+                    "operations[o7].outline_rounding_mm".into()
+                ),
+            ]
+        );
+        // A margin that is not above 0 is ignored too, not an error.
+        let p = boundary_project(&["i1"], |p| {
+            if let Some(Operation::Inlay(inlay)) = p.operations.last_mut() {
+                inlay.margin_mm = Some(0.0);
+            }
+        });
+        assert_eq!(
+            validate(&p).iter().map(Problem::code).collect::<Vec<_>>(),
+            vec!["inlay_margin_ignored"]
+        );
+    }
+
+    /// The rounding's own range check still runs with a boundary, so a bad
+    /// value is not hidden by being ignored.
+    #[test]
+    fn bad_outline_rounding_is_still_an_error_with_a_boundary() {
+        let p = boundary_project(&["i1"], |p| {
+            if let Some(Operation::Inlay(inlay)) = p.operations.last_mut() {
+                inlay.outline_rounding_mm = Some(-2.0);
+            }
+        });
+        let problems = validate(&p);
+        assert!(
+            problems.contains(&Problem::InlayOutlineRounding {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                rounding_mm: -2.0,
+            }),
+            "{problems:?}"
+        );
+        assert!(
+            problems.iter().any(|p| p.code() == "inlay_margin_ignored"),
+            "{problems:?}"
+        );
+    }
+
+    /// An id that is no instance is an error at its place in the list,
+    /// as `dangling_tool`.
+    #[test]
+    fn boundary_unknown_instance_is_error() {
+        let p = boundary_project(&["i1", "nowhere"], |_| {});
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayBoundaryUnknown {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                index: 1,
+                instance: InstanceId::new("nowhere"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_boundary_unknown");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary[1]")
+        );
+        assert!(
+            problems[0].to_string().contains("nowhere"),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// An open profile is an error, not skipped: a boundary the user meant
+    /// and lost would fall back to nothing. The message names the
+    /// profile's index in the instance's definition.
+    #[test]
+    fn boundary_open_profile_is_error() {
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 0.0, 0.0, 80.0, 80.0, &[]);
+            let definition = p.definitions.get_mut(&DefinitionId::new("d_i3")).unwrap();
+            definition.profiles.push(Polyline::new(
+                vec![
+                    dc_geometry::Vertex::line(0.0, 0.0),
+                    dc_geometry::Vertex::line(10.0, 0.0),
+                    dc_geometry::Vertex::line(10.0, 10.0),
+                ],
+                false,
+            ));
+        });
+        // (The open profile is also the definition's own warning.)
+        let problems: Vec<Problem> = validate(&p)
+            .into_iter()
+            .filter(|p| p.code().starts_with("inlay_boundary"))
+            .collect();
+        assert_eq!(
+            problems,
+            vec![Problem::InlayBoundaryOpen {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                index: 0,
+                instance: InstanceId::new("i3"),
+                profile: 1,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_boundary_open");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary[0]")
+        );
+        assert!(
+            problems[0].to_string().contains("profile 1"),
+            "{}",
+            problems[0]
+        );
+
+        // An instance with nothing closed is open too.
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 0.0, 0.0, 80.0, 80.0, &[]);
+            p.definitions
+                .get_mut(&DefinitionId::new("d_i3"))
+                .unwrap()
+                .profiles = vec![Polyline::new(
+                vec![
+                    dc_geometry::Vertex::line(0.0, 0.0),
+                    dc_geometry::Vertex::line(10.0, 0.0),
+                ],
+                false,
+            )];
+        });
+        let codes: Vec<&str> = validate(&p)
+            .iter()
+            .map(Problem::code)
+            .filter(|c| c.starts_with("inlay_boundary"))
+            .collect();
+        assert_eq!(codes, vec!["inlay_boundary_open"]);
+    }
+
+    /// The design cannot be its own boundary.
+    #[test]
+    fn boundary_that_is_a_target_is_error() {
+        let p = boundary_project(&["i2"], |_| {});
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayBoundaryIsTarget {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                index: 0,
+                instance: InstanceId::new("i2"),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_boundary_is_target");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary[0]")
+        );
+    }
+
+    /// A boundary whose edge cuts across the design (the square at (20,
+    /// 20) to (30, 30); the boundary's left edge at x = 25) is an error
+    /// at the list, naming the farthest point outside, (20, 20) or (20,
+    /// 30), 5 mm past the edge.
+    #[test]
+    fn boundary_crossing_the_design_is_error_with_the_point() {
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 25.0, 10.0, 40.0, 30.0, &[]);
+        });
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let Problem::InlayBoundaryCrossesDesign {
+            operation,
+            x_mm,
+            y_mm,
+            distance_mm,
+            ..
+        } = &problems[0]
+        else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(operation, &OperationId::new("o7"));
+        dc_geometry::assert_approx_eq!(*x_mm, 20.0, 1e-9);
+        assert!(
+            (*y_mm - 20.0).abs() < 1e-9 || (*y_mm - 30.0).abs() < 1e-9,
+            "{y_mm}"
+        );
+        dc_geometry::assert_approx_eq!(*distance_mm, 5.0, 1e-9);
+        assert_eq!(problems[0].severity(), Severity::Error);
+        assert_eq!(problems[0].code(), "inlay_boundary_crosses_design");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary")
+        );
+        assert!(problems[0].to_string().contains("5.000"), "{}", problems[0]);
+    }
+
+    /// A boundary that runs along the design's edge leaves the plug's
+    /// wall no band: touching is the same error, 0 mm past.
+    #[test]
+    fn boundary_touching_the_design_is_error() {
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 20.0, 10.0, 40.0, 30.0, &[]);
+        });
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        assert!(
+            matches!(
+                &problems[0],
+                Problem::InlayBoundaryCrossesDesign { distance_mm, .. } if distance_mm.abs() < 1e-6
+            ),
+            "{problems:?}"
+        );
+        // A hair of room is enough.
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 19.9, 10.0, 40.0, 30.0, &[]);
+        });
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// A listed instance none of whose shapes holds any part of the design
+    /// is a warning at its place; the design is still held by the rest.
+    #[test]
+    fn boundary_with_no_design_inside_warns() {
+        let p = boundary_project(&["i1", "i3"], |p| {
+            add_shape(p, "i3", 70.0, 70.0, 20.0, 20.0, &[]);
+        });
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayBoundaryEmpty {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                index: 1,
+                instance: InstanceId::new("i3"),
+                instance_name: "Boundary i3".into(),
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(problems[0].code(), "inlay_boundary_empty");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary[1]")
+        );
+    }
+
+    /// A hole in a boundary shape is ignored (board standing in the band
+    /// would hold the plug off the female, #484): a warning naming the
+    /// instance and the hole's profile; the hole may be anywhere.
+    #[test]
+    fn boundary_hole_warns() {
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", 5.0, 5.0, 80.0, 80.0, &[[40.0, 40.0, 20.0, 20.0]]);
+        });
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::InlayBoundaryHoleIgnored {
+                operation: OperationId::new("o7"),
+                name: "Inlay".into(),
+                index: 0,
+                instance: InstanceId::new("i3"),
+                instance_name: "Boundary i3".into(),
+                profile: 1,
+            }]
+        );
+        assert_eq!(problems[0].severity(), Severity::Warning);
+        assert_eq!(problems[0].code(), "inlay_boundary_hole_ignored");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary[0]")
+        );
+        assert!(
+            problems[0].to_string().contains("profile 1"),
+            "{}",
+            problems[0]
+        );
+    }
+
+    /// Only the design must be strictly inside: a boundary may run past
+    /// the 100 × 100 board (open question 12).
+    #[test]
+    fn boundary_may_run_past_the_board() {
+        let p = boundary_project(&["i3"], |p| {
+            add_shape(p, "i3", -20.0, -20.0, 160.0, 160.0, &[]);
+        });
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// Nothing about the boundary is checked until the male is cut: the
+    /// female ignores it, as it ignores the margin.
+    #[test]
+    fn female_only_inlay_ignores_the_boundary() {
+        let p = inlay_project(|inlay| {
+            inlay.margin_mm = Some(6.0);
+            inlay.outline_rounding_mm = Some(3.0);
+            inlay.boundary = vec![InstanceId::new("nowhere"), InstanceId::new("i2")];
+        });
+        assert!(!the_inlay(&p).cuts_male());
+        assert_eq!(validate(&p), vec![]);
+    }
+
+    /// Several boundaries make one edge, their union (open question 13):
+    /// each design part must lie inside the union. Two bars that each
+    /// cross the square, 15 to 25 and 24 to 45 in x, cover it together
+    /// with 5 mm to spare; either alone crosses.
+    #[test]
+    fn several_boundaries_are_a_union() {
+        let both = |p: &mut Project| {
+            add_shape(p, "i3", 15.0, 10.0, 10.0, 30.0, &[]);
+            add_shape(p, "i4", 24.0, 10.0, 21.0, 30.0, &[]);
+        };
+        assert_eq!(validate(&boundary_project(&["i3", "i4"], both)), vec![]);
+        for only in ["i3", "i4"] {
+            let problems = validate(&boundary_project(&[only], both));
+            assert_eq!(problems.len(), 1, "{only}: {problems:?}");
+            assert_eq!(
+                problems[0].code(),
+                "inlay_boundary_crosses_design",
+                "{only}"
+            );
+        }
+    }
+
+    /// The cut-out's floor ring is read from the narrowest band: a
+    /// boundary 3 mm from the 10 mm square leaves the 3.175 mm end mill no
+    /// room on a V wall (it needs 2·P·tan(α/2) + d = 4.175 mm at P 0.5 on
+    /// the 90° bit), and the problem is located at `boundary`, naming the
+    /// 3 mm. With the sample rectangle, 10 mm from the square at its
+    /// nearest, there is room.
+    #[test]
+    fn cut_out_room_reads_the_narrowest_band() {
+        let tight = {
+            let mut p = cut_out_project(|inlay| {
+                inlay.margin_mm = None;
+                inlay.boundary = vec![InstanceId::new("i3")];
+            });
+            add_shape(&mut p, "i3", 17.0, 17.0, 16.0, 16.0, &[]);
+            p
+        };
+        let problems = validate(&tight);
+        assert_eq!(problems.len(), 1, "{problems:?}");
+        let Problem::InlayCutOutNoRoom {
+            margin_mm,
+            needed_mm,
+            ..
+        } = &problems[0]
+        else {
+            panic!("{problems:?}");
+        };
+        dc_geometry::assert_approx_eq!(*margin_mm, 3.0, 1e-9);
+        dc_geometry::assert_approx_eq!(*needed_mm, 1.0 + 3.175, 1e-9);
+        assert_eq!(problems[0].code(), "inlay_cut_out_no_room");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].boundary")
+        );
+
+        let roomy = cut_out_project(|inlay| {
+            inlay.margin_mm = None;
+            inlay.boundary = vec![InstanceId::new("i1")];
+        });
+        assert_eq!(validate(&roomy), vec![]);
     }
 }
