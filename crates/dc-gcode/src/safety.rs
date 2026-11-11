@@ -290,7 +290,11 @@ pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: b
 /// S7 (#62): every cutting move, widened by its operation's tool radius,
 /// stays inside the stock rectangle `[0, width] × [0, height]`, within one
 /// unit in the last written place. Arcs count to their bulge. A cut
-/// outside every operation is checked as a point.
+/// outside every operation is checked as a point. A Photo V-Carve's cut
+/// (#646) is widened at each end by its groove's half-width at the stock
+/// top there, `(thickness − z) · tan(α/2)`, from 0 above the stock to the
+/// tool's radius ([`groove_radius_mm`]): its grooves may run past the
+/// picture's edge, and this is the rule that keeps them on the stock.
 fn check_on_stock(
     blocks: &[Block],
     post: &PostProcessor,
@@ -304,12 +308,22 @@ fn check_on_stock(
             continue;
         }
         let limits = Limits::for_line(mv.line, spans, stock_thickness_mm);
-        let radius_mm = limits.tool.map_or(0.0, |t| t.diameter_mm / 2.0);
+        let full_mm = limits.tool.map_or(0.0, |t| t.diameter_mm / 2.0);
+        let radius_at = |z: Option<f64>| {
+            groove_radius_mm(
+                &limits,
+                stock_thickness_mm,
+                z.map(|z| transform.project_z(z, mv.units)),
+            )
+            .unwrap_or(full_mm)
+        };
         let tolerance_mm = quantum_mm(post, mv.units) + EPS_MM;
+        let widest_mm = radius_at(mv.from.z).max(radius_at(mv.to.z));
         let ends = [mv.from, mv.to]
             .into_iter()
-            .filter_map(|p| Some(Point::new(p.x?, p.y?)));
-        for m in ends.chain(arc_extremes(mv)) {
+            .filter_map(|p| Some((Point::new(p.x?, p.y?), radius_at(p.z))));
+        let extremes = arc_extremes(mv).into_iter().map(|m| (m, widest_mm));
+        for (m, radius_mm) in ends.chain(extremes) {
             let p = transform
                 .to_project(Point3::new(m.x, m.y, 0.0), mv.units)
                 .xy();
@@ -330,6 +344,29 @@ fn check_on_stock(
         }
     }
     Ok(())
+}
+
+/// The half-width, mm, at the stock top of a Photo V-Carve's groove whose
+/// tip is at project `z_mm` (S7, #646): `(thickness − z) · tan(α/2)`, from
+/// 0 above the stock to the tool's radius. `None` for a line of any other
+/// operation, a tool that is not a V-bit of a usable angle, or an unknown
+/// Z, where the full radius holds.
+fn groove_radius_mm(
+    limits: &Limits<'_>,
+    stock_thickness_mm: f64,
+    z_mm: Option<f64>,
+) -> Option<f64> {
+    let (Some(Operation::PhotoVCarve(_)), Some(tool)) = (limits.op, limits.tool) else {
+        return None;
+    };
+    let dc_project::ToolKind::VBit { included_angle_deg } = tool.cutter else {
+        return None;
+    };
+    let slope = (included_angle_deg.to_radians() / 2.0).tan();
+    let usable = included_angle_deg > 0.0 && included_angle_deg < 180.0 && slope.is_finite();
+    let full_mm = tool.diameter_mm / 2.0;
+    let z_mm = z_mm?;
+    (usable && z_mm.is_finite()).then(|| ((stock_thickness_mm - z_mm) * slope).clamp(0.0, full_mm))
 }
 
 /// Checks `text` against S1–S5, S10 and S16 and returns its blocks.

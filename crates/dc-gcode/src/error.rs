@@ -494,6 +494,37 @@ pub enum ExportError {
         /// The Z it reaches, project space, mm.
         found_mm: f64,
     },
+    /// S19 (format 27, #646): a cut of a Photo V-Carve ends outside its
+    /// picture's footprint, below the start plane less its maximum depth,
+    /// or above the start plane while it moves across, away from a link.
+    /// The point is where the line ends, project space.
+    #[error(
+        "emitted line {line} takes operation `{op}`'s V-bit to ({x_mm:.3}, {y_mm:.3}) mm, outside its picture or deeper than its max_depth_mm; a Photo V-Carve's grooves stay in the picture's footprint, between its start plane and its maximum depth below it"
+    )]
+    GrooveOffPicture {
+        /// The Photo V-Carve.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+        /// Where the line ends, project X, mm.
+        x_mm: f64,
+        /// Where the line ends, project Y, mm.
+        y_mm: f64,
+    },
+    /// S19 (format 27, #646): a move across below safe Z between two of a
+    /// Photo V-Carve's grooves is a rapid, or is fed at another height
+    /// than its link height (`stepover_retract_mm` above the start plane,
+    /// or the stock top plus the entry clearance when the start plane is
+    /// only vouched for).
+    #[error(
+        "emitted line {line} moves operation `{op}`'s V-bit between two grooves as a rapid or away from its link height; a Photo V-Carve crosses between grooves fed, at stepover_retract_mm above its start plane"
+    )]
+    GrooveLinkRapid {
+        /// The Photo V-Carve.
+        op: OperationId,
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S6: reading the program back does not reproduce the toolpath: a
     /// move is missing, ends elsewhere, is the wrong kind, turns the wrong
     /// way, has the wrong centre, or has moves the toolpath does not.

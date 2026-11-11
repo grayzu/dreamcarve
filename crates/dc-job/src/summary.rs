@@ -316,6 +316,8 @@ pub enum CarveKind {
     VCarve,
     /// An Inlay: a female board, a male board, or both (#498).
     Inlay,
+    /// A Photo V-Carve (#646): one board, the stock.
+    Photo,
 }
 
 /// Whose top a deepest cut is measured from.
@@ -348,6 +350,12 @@ pub enum FactKey {
     BandEdge,
     /// [`Fact::CutOut`].
     CutOut,
+    /// [`Fact::Picture`].
+    Picture,
+    /// [`Fact::Footprint`].
+    Footprint,
+    /// [`Fact::Grooves`].
+    Grooves,
 }
 
 /// One fact of a carve's summary. Every length is already stated as the
@@ -418,6 +426,34 @@ pub enum Fact {
         /// How far it cuts below the board.
         through: String,
     },
+    /// The picture a Photo V-Carve carves (#646).
+    Picture {
+        /// The bitmap's name.
+        name: String,
+        /// Its id.
+        id: String,
+    },
+    /// Where a Photo V-Carve's grooves lie ([`dc_cam::photo::layout`]).
+    Footprint {
+        /// Its width.
+        width: String,
+        /// Its height.
+        height: String,
+        /// Its lower-left corner's X.
+        x: String,
+        /// Its lower-left corner's Y.
+        y: String,
+    },
+    /// A Photo V-Carve's grooves: how many, a groove's width at the full
+    /// depth, and that depth.
+    Grooves {
+        /// How many.
+        count: usize,
+        /// A groove's width at the full depth.
+        width: String,
+        /// The full depth, `max_depth_mm`.
+        depth: String,
+    },
 }
 
 impl Fact {
@@ -434,6 +470,9 @@ impl Fact {
             Self::Band { .. } => FactKey::Band,
             Self::BandEdge { .. } => FactKey::BandEdge,
             Self::CutOut { .. } => FactKey::CutOut,
+            Self::Picture { .. } => FactKey::Picture,
+            Self::Footprint { .. } => FactKey::Footprint,
+            Self::Grooves { .. } => FactKey::Grooves,
         }
     }
 
@@ -516,6 +555,21 @@ impl Fact {
                     "the cut-out frees the plug along the floor's outer edge, its centre {inset} inside the band's edge and at least {outside} out from the design, through the board to {through} below it"
                 ),
             ),
+            Self::Picture { name, id } => ("", format!("picture `{name}` ({id})")),
+            Self::Footprint {
+                width,
+                height,
+                x,
+                y,
+            } => (", ", format!("{width} by {height} at ({x}, {y})")),
+            Self::Grooves {
+                count,
+                width,
+                depth,
+            } => (
+                ", ",
+                format!("{count} grooves {width} wide at the full depth of {depth}"),
+            ),
         }
     }
 }
@@ -557,6 +611,9 @@ impl CarveFacts {
                     }
                     (CarveKind::Inlay, None) => format!("Inlay {} `{}`", self.op, self.name),
                     (CarveKind::VCarve, _) => format!("V-Carve {} `{}`", self.op, self.name),
+                    (CarveKind::Photo, _) => {
+                        format!("Photo V-Carve {} `{}`", self.op, self.name)
+                    }
                 };
                 let mut line = format!("{head}: ");
                 for (k, fact) in board.facts.iter().enumerate() {
@@ -668,7 +725,8 @@ fn inlay_facts(
     })
 }
 
-/// The facts of each enabled V-Carve or Inlay that `generated` cuts, in
+/// The facts of each enabled V-Carve, Inlay or Photo V-Carve that
+/// `generated` cuts, in
 /// the project's order (functional spec, capability 76a; design spec,
 /// "Warnings"): its deepest cut, whether it has a flat depth (capability
 /// 39) and, when the V-bit cuts a floor, the height of the ridges it
@@ -677,7 +735,9 @@ fn inlay_facts(
 /// male's with its start plane, `depth_mm − glue_gap_mm` below the male
 /// board's top (#436); a male with a cut-out says where it runs and how
 /// far through the board (#443); its deepest cut is the carve's, not the
-/// cut-out's. [`describe_carves`] words them as `check` prints them.
+/// cut-out's. A Photo V-Carve (#646) gives its picture, its grooves'
+/// footprint, and their count and width at its full depth.
+/// [`describe_carves`] words them as `check` prints them.
 #[must_use]
 pub fn carve_facts(project: &Project, generated: &[EmitOp]) -> Vec<CarveFacts> {
     project
@@ -710,6 +770,11 @@ pub fn carve_facts(project: &Project, generated: &[EmitOp]) -> Vec<CarveFacts> {
                         .filter_map(|board| inlay_facts(project, generated, inlay, board))
                         .collect(),
                 ),
+                // #646: its picture's footprint and its grooves.
+                Operation::PhotoVCarve(photo) => (
+                    CarveKind::Photo,
+                    photo_facts(project, generated, photo).into_iter().collect(),
+                ),
                 _ => return None,
             };
             (!boards.is_empty()).then(|| CarveFacts {
@@ -722,14 +787,52 @@ pub fn carve_facts(project: &Project, generated: &[EmitOp]) -> Vec<CarveFacts> {
         .collect()
 }
 
+/// The facts of Photo V-Carve `photo` (#646), when it generated and its
+/// layout resolves: its picture, the footprint of its grooves, and their
+/// count and width at the full depth ([`dc_cam::photo::layout`], the
+/// figures the editor's status line reads, #544).
+fn photo_facts(
+    project: &Project,
+    generated: &[EmitOp],
+    photo: &dc_project::PhotoVCarveOp,
+) -> Option<BoardFacts> {
+    if !generated.iter().any(|e| e.op.id() == &photo.id) {
+        return None;
+    }
+    let layout = dc_cam::photo::layout(project, photo)?;
+    let bitmap = project.bitmaps.iter().find(|b| b.id == photo.image)?;
+    let length = |mm: f64| describe_length(project, mm);
+    let footprint = layout.footprint;
+    Some(BoardFacts {
+        board: None,
+        facts: vec![
+            Fact::Picture {
+                name: bitmap.name.clone(),
+                id: bitmap.id.to_string(),
+            },
+            Fact::Footprint {
+                width: length(footprint.width_mm()),
+                height: length(footprint.height_mm()),
+                x: length(footprint.min.x),
+                y: length(footprint.min.y),
+            },
+            Fact::Grooves {
+                count: layout.grooves,
+                width: length(layout.width_mm),
+                depth: length(photo.max_depth_mm?),
+            },
+        ],
+    })
+}
+
 /// `facts` as `check` prints them: a line per board of each.
 #[must_use]
 pub fn format_carves(facts: &[CarveFacts]) -> Vec<String> {
     facts.iter().flat_map(CarveFacts::lines).collect()
 }
 
-/// One line per enabled V-Carve or Inlay of `generated`, for `check` and
-/// `export`, and one per board an Inlay cuts: [`carve_facts`] as
+/// One line per enabled V-Carve, Inlay or Photo V-Carve of `generated`,
+/// for `check` and `export`, and one per board an Inlay cuts: [`carve_facts`] as
 /// [`format_carves`] words them.
 #[must_use]
 pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {

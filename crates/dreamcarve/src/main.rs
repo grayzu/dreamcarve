@@ -23,6 +23,7 @@ mod check;
 mod cli;
 mod config;
 mod export;
+mod image;
 mod init;
 mod output;
 mod prep;

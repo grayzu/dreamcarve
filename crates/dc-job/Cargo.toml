@@ -23,6 +23,9 @@ serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# A picture stored as another program's PNG, for the preview's re-encoding.
+base64.workspace = true
+png.workspace = true
 dc-cam = { workspace = true, features = ["test-support"] }
 dc-project = { workspace = true, features = ["test-support"] }
 # The setup sheet's tests read its labels from the app's string table.

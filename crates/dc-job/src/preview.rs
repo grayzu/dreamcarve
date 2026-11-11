@@ -42,6 +42,8 @@
 //!   one diameter long in the direction of the first cut after it.
 //! - **Drill holes**: a Drill draws a circle of the bit at each hole
 //!   instead.
+//! - **Pictures** (format 27): each bitmap as an `<image>` at its
+//!   footprint, under everything else drawn on the stock.
 
 use std::f64::consts::PI;
 use std::fmt::Write as _;
@@ -183,6 +185,7 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
             fmt(STOCK_STROKE_MM),
         );
     }
+    write_pictures(&mut svg, project, &frame);
     write_shapes(&mut svg, project, &frame);
     if let Some((_, board)) = &male {
         write_male_shapes(&mut svg, project, &male_frame);
@@ -406,6 +409,38 @@ fn write_male_shapes(svg: &mut String, project: &Project, frame: &Frame) {
         }
     }
     svg.push_str("</g>\n");
+}
+
+/// Each bitmap as an `<image>` of class `picture` at its footprint, under
+/// the shapes and the toolpaths, so the grooves can be checked against
+/// the picture (`docs/specs/phase-3/design.md`, "CLI"). The footprint's
+/// top edge is the picture's top row (Y-up), so the image's corner is the
+/// footprint's top-left, flipped; `preserveAspectRatio="none"` stretches
+/// it to the footprint exactly. The data URI is the decoded pixels encoded
+/// again ([`dc_import::bitmap::stored`]), never the file's own string, and
+/// it is escaped like every attribute (security review L5). A bitmap whose
+/// pixels cannot be read is not drawn: what reads the pixels to cut them
+/// reports it.
+fn write_pictures(svg: &mut String, project: &Project, frame: &Frame) {
+    for bitmap in &project.bitmaps {
+        let Some(png_base64) = bitmap
+            .pixels()
+            .ok()
+            .and_then(|pixels| dc_import::bitmap::stored(&pixels).ok())
+        else {
+            continue;
+        };
+        let _ = writeln!(
+            svg,
+            r#"<image class="picture" id="{}" x="{}" y="{}" width="{}" height="{}" preserveAspectRatio="none" href="{}"/>"#,
+            escape_xml(bitmap.id.as_str()),
+            fmt(frame.x_mm + bitmap.x_mm),
+            fmt(frame.height_mm - (bitmap.y_mm + bitmap.height_mm)),
+            fmt(bitmap.width_mm),
+            fmt(bitmap.height_mm),
+            escape_xml(&format!("data:image/png;base64,{png_base64}")),
+        );
+    }
 }
 
 /// The origin mark of a board `stock` drawn in `frame` (#498): a circle at

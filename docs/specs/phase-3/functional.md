@@ -80,8 +80,8 @@ feathers show as dark wood in light, separated by thin ridges of the
 light board. (The eagle is the maintainer's own art. It motivates this
 section and is never committed; the tests use synthetic drawings.)
 - **Jo** carves a photo of their dog. `dreamcarve init dog.jpg --width 100`
-writes a project holding the picture, placed at the origin 100 mm wide
-with its height from the picture's proportions, and one Photo V-Carve
+writes a project holding the picture, 100 mm wide with its height from
+the picture's proportions and the stock sized round it, and one Photo V-Carve
 operation. Jo sets a 30° V-bit, a 1.5 mm maximum depth and a 22.5° line
 angle, exports, and gets a program of parallel grooves, deeper where the
 photo is dark. On a dark wood they set `invert: true` so the light parts
@@ -439,9 +439,12 @@ is no GUI in this phase.
  `dreamcarve init photo.png --width <mm>` (or `--height <mm>`; exactly
  one, the other follows the picture's proportions, as RasterCarve's
  `--width`/`--height` do) writes a project holding the picture as a
- **bitmap** placed with its bottom-left corner at the origin, and one
- Photo V-Carve operation (47) on it, where `init part.svg` writes one
- Profile. `dreamcarve image add <dcv> <file> --width|--height <mm>  [--at <x>,<y>]` puts a picture into an existing project at a position
+ **bitmap** placed as `init` places a drawing, its bottom-left corner
+ the 10 mm stock margin in from the stock's, with the stock sized round
+ it (a full-depth groove at the picture's edge reaches half its width
+ past the picture, which the margin keeps on the stock; changed in the
+ design spec, #645), and one Photo V-Carve operation (47) on it, where
+ `init part.svg` writes one Profile. `dreamcarve image add <dcv> <file> --width|--height <mm>  [--at <x>,<y>]` puts a picture into an existing project at a position
  in project millimetres (default the origin); `image list <dcv>` prints
  each bitmap's id, name, pixel size, placement and footprint. PNG and
  JPEG are read; a colour picture is converted to grayscale by luminance
@@ -960,8 +963,9 @@ Numbering continues from phase 2's 47.
  its radius inside the edge, its tabs on them; and the pair seats within
  0.05 mm. With the bench's 6.35 mm bits it is refused, the V-bit along
  the plug's foot needing 4.33 mm there.
-58. **Bitmap and placement.** `init fixtures/photo/gradient.png --width  100` (a 64 × 32 pixel picture) writes a project with one bitmap, 100 ×
- 50 mm at the origin, and one Photo V-Carve naming it; `--height 50`
+58. **Bitmap and placement.** `init tests/fixtures/photo/gradient.png --width  100` (a 64 × 32 pixel picture) writes a project with one bitmap, 100 ×
+ 50 mm, inside a 120 × 70 mm stock with `init`'s 10 mm margin (changed
+ in the design spec, #645), and one Photo V-Carve naming it; `--height 50`
  gives the same; both flags, or neither, is an error. `image add  plaque.dcv gradient.png --width 60 --at 20,30` adds a bitmap whose
  footprint is 20..80 × 30..60 mm; `image list` shows it; a colour JPEG
  adds with `image_colour_converted`. Copying only the `.dcv` elsewhere

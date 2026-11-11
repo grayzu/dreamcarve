@@ -411,6 +411,37 @@ fn labelled(strings: &Strings, fact: &Fact) -> NoteFact {
                 &[("inset", inset), ("outside", outside), ("through", through)],
             ),
         ),
+        Fact::Picture { name, id } => (
+            StrKey::AppCarvePicture,
+            strings.fmt(StrKey::AppCarvePictureNamed, &[("name", name), ("id", id)]),
+        ),
+        Fact::Footprint {
+            width,
+            height,
+            x,
+            y,
+        } => (
+            StrKey::AppCarveFootprint,
+            strings.fmt(
+                StrKey::AppCarveFootprintAt,
+                &[("width", width), ("height", height), ("x", x), ("y", y)],
+            ),
+        ),
+        Fact::Grooves {
+            count,
+            width,
+            depth,
+        } => (
+            StrKey::AppCarveGrooves,
+            strings.fmt(
+                StrKey::AppCarveGroovesWide,
+                &[
+                    ("count", &count.to_string()),
+                    ("width", width),
+                    ("depth", depth),
+                ],
+            ),
+        ),
     };
     NoteFact {
         label: strings.get(label).to_owned(),
@@ -430,7 +461,6 @@ pub fn carve_message(app: &App, op: &OperationId) -> Option<String> {
     let parts: Vec<String> = board
         .facts
         .iter()
-        .take(2)
         .filter_map(|fact| match fact {
             Fact::DeepestCut { depth, .. } => {
                 Some(strings.fmt(StrKey::AppCarveSummaryDeepest, &[("depth", depth)]))
@@ -445,8 +475,13 @@ pub fn carve_message(app: &App, op: &OperationId) -> Option<String> {
             Fact::StartPlane { depth } => {
                 Some(strings.fmt(StrKey::AppCarveSummaryStartPlane, &[("depth", depth)]))
             }
+            Fact::Grooves { count, depth, .. } => Some(strings.fmt(
+                StrKey::AppCarveSummaryGrooves,
+                &[("count", &count.to_string()), ("depth", depth)],
+            )),
             _ => None,
         })
+        .take(2)
         .collect();
     let facts_text = parts.join(strings.get(StrKey::AppCarveSummarySeparator));
     Some(strings.fmt(

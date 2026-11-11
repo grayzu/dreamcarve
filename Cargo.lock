@@ -931,22 +931,27 @@ dependencies = [
 name = "dc-import"
 version = "0.2.1"
 dependencies = [
+ "base64",
  "dc-geometry",
  "dc-project",
  "kurbo",
+ "png",
  "thiserror 2.0.21",
  "usvg",
+ "zune-jpeg",
 ]
 
 [[package]]
 name = "dc-job"
 version = "0.2.1"
 dependencies = [
+ "base64",
  "dc-cam",
  "dc-gcode",
  "dc-geometry",
  "dc-import",
  "dc-project",
+ "png",
  "serde",
  "thiserror 2.0.21",
  "toml",

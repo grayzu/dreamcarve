@@ -20,6 +20,7 @@ pub mod build;
 mod error;
 pub mod import;
 pub mod names;
+pub mod picture;
 pub mod prep_report;
 pub mod preview;
 pub mod project_from;

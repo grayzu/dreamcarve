@@ -9,6 +9,19 @@ phases bump the patch number.
 
 ### Added
 
+- **Photo V-Carve cuts (#646).** A Photo V-Carve now carves its picture
+  as parallel V-bit grooves, deeper where the picture is dark (lighter
+  with `invert`), up to `max_depth_mm`: spaced `line_spacing_fraction`
+  times a full-depth groove's width apart at `line_angle_deg`, one
+  through the picture's top-left corner, cut alternately each way, a
+  second set at right angles with `hatch`. Between grooves the bit rises
+  `stepover_retract_mm` above the start plane and crosses at the feed
+  rate. `check` and `export` print the picture's footprint, the groove
+  count and the groove width. The safety pass gains S19: every groove
+  stays inside the picture and above its maximum depth, and every move
+  between grooves is fed at the link height. A picture whose grooves
+  would leave the stock, or that would take more than two million moves,
+  is refused with what to change.
 - **Bitmaps and the Photo V-Carve in the project file; format version 27
   (#644).** A project can hold pictures, `bitmaps`, each an 8-bit
   grayscale PNG stored in the file with its place and size on the stock,

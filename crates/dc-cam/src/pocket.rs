@@ -604,6 +604,7 @@ impl<'p> Setup<'p> {
             feed_mm_min: rates.feed_mm_min,
             plunge_mm_min: rates.plunge_mm_min,
             cut_before: &[],
+            groove_link_z_mm: None,
         };
         let mut toolpath = sequence(&input)?;
         // Design step 10: the separate relief pass after all the passes, for

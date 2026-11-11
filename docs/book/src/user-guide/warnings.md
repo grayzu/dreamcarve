@@ -132,7 +132,7 @@ gives each message and what to do.
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
 | `start_depth_negative` | A `start_depth_mm` is below 0. |
-| `start_depth_uncleared` | A carve or countersink starts below the stock top, no enabled Pocket before it, nor the flat floor of an enabled V-Carve before it, contains its targets, and `start_plane_cleared_externally` is `false`. |
+| `start_depth_uncleared` | A carve, countersink or Photo V-Carve starts below the stock top, no enabled Pocket before it, nor the flat floor of an enabled V-Carve before it, contains its targets (for a countersink, the whole of its V-bit at each hole; for a Photo V-Carve, its picture's footprint), and `start_plane_cleared_externally` is `false`. |
 | `flatten_tolerance_range` | `flatten_tolerance_mm` is above 0.1 mm, which the safety checks' slack cannot allow. |
 
 The safety pass adds two errors of its own for a V-Carve's program,
@@ -219,6 +219,17 @@ to Z …, written as plain moves, and every rapid must stay at or above the
 retract plane; this line ends at Z … (project space)", and holds its bit's
 shank with the V-Carve shank error above. See [Safety](safety.md), rule
 15.
+
+## Photo V-Carve
+
+| Code | Message says | What to do |
+| --- | --- | --- |
+| `photo_lines_overlap` | "… has line_spacing_fraction …, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them" | A Photo V-Carve's grooves are spaced `line_spacing_fraction` times their full-depth width apart. Below 1 the darkest grooves run into each other and the picture loses contrast there. Use 1 or more (1.1 is the default) unless you want that. Validation reports it once; export does not repeat it. |
+
+Export stops when a Photo V-Carve's grooves would need more than
+2 000 000 moves: "operation … would carve its picture in about … moves
+with sample_mm …, more than the 2000000 a Photo V-Carve may make". Raise
+`sample_mm` or `line_spacing_fraction`, or make the picture smaller.
 
 ## Import
 

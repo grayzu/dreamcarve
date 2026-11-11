@@ -338,6 +338,52 @@ pub fn sample_bitmap() -> Bitmap {
     }
 }
 
+/// Acceptance 59's picture (#646), 64 × 32 pixels top row first: black
+/// at its left edge to white at its right, column `c` at
+/// `round(255 · c / 63)`, with a pure black 8 × 8 block at columns 8 to
+/// 15, rows 12 to 19, and a pure white one at columns 48 to 55, rows 12
+/// to 19. The same picture as `tests/fixtures/photo/gradient.png` (#645),
+/// built in code so the generator's tests need no file.
+#[must_use]
+pub fn gradient_bytes() -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(64 * 32);
+    for row in 0..32_u16 {
+        for col in 0..64_u16 {
+            let in_rows = (12..20).contains(&row);
+            let ramp = (col * 255 * 2 + 63) / 126;
+            let g = if in_rows && (8..16).contains(&col) {
+                0
+            } else if in_rows && (48..56).contains(&col) {
+                255
+            } else {
+                ramp
+            };
+            // 255 · c / 63, rounded, is at most 255.
+            bytes.push(u8::try_from(g).unwrap_or(u8::MAX));
+        }
+    }
+    bytes
+}
+
+/// [`gradient_bytes`] as bitmap `b1`, `width_mm` wide (and half that
+/// high) with its bottom-left corner at (`x_mm`, `y_mm`).
+#[must_use]
+pub fn gradient_bitmap(x_mm: f64, y_mm: f64, width_mm: f64) -> Bitmap {
+    Bitmap {
+        id: BitmapId::new("b1"),
+        name: "gradient".into(),
+        width_px: 64,
+        height_px: 32,
+        x_mm,
+        y_mm,
+        width_mm,
+        height_mm: width_mm / 2.0,
+        visible: true,
+        locked: false,
+        png_base64: gray_png_base64(64, 32, &gradient_bytes()),
+    }
+}
+
 /// A valid Photo V-Carve of [`sample_bitmap`] (`b1`) with
 /// [`tool_v_bit_90`] (`t2`), both of which the caller adds to the
 /// project; id `o8` (format 27): 1.5 mm deep at most, within the bit's
