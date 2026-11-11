@@ -18,6 +18,10 @@
 //! are compared in it. What the harness checks is in [`harness::check`];
 //! each case's README lists the differences.
 //!
+//! The Photo V-Carve cases (`photo-raster-*`, #647) are RasterCarve's
+//! programs instead, captured by `tools/parity/photo/capture.py` and
+//! compared groove for groove by [`photo::check`].
+//!
 //! Every phase 2 case uses 150 × 100 × 12 mm stock and a 6.35 mm end mill
 //! at feed 1500, plunge 500 and 18000 RPM unless its comment says
 //! otherwise, with climb milling and safe Z 5 mm above the stock top.

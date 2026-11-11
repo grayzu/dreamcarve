@@ -39,6 +39,14 @@ GOLDEN = REPO_ROOT / "tests" / "golden"
 
 CASE_NAME = re.compile(r"^[a-z0-9-]+$")
 
+# Run by the capture's interpreter with `-I` (no checkout on its path):
+# the Python, OpenCV and NumPy versions, one line.
+DEPENDENCY_VERSIONS = (
+    "import platform, cv2, numpy; "
+    "print(f'{platform.python_version()}, OpenCV {cv2.__version__}, "
+    "NumPy {numpy.__version__}')"
+)
+
 # Each case: its picture in tests/fixtures/photo/, RasterCarve's arguments
 # (before the picture), and the scale from RasterCarve's units to mm.
 CASES = {
@@ -110,7 +118,7 @@ def statistics(stderr):
     return block
 
 
-def readme(case, command, version, commit, stats, notes):
+def readme(case, command, version, commit, deps, stats, notes):
     spec = CASES[case]
     scale = "× 25.4 (RasterCarve writes inches, `G20`)" if spec["units"] == "in" \
         else "× 1 (RasterCarve writes millimetres, `G21`)"
@@ -123,7 +131,7 @@ SPDX-License-Identifier: Apache-2.0
 Captured from RasterCarve {version}, commit `{commit}`, with
 `tools/parity/photo/capture.py --case {case}`
 (the checkout's `rastercarve/` package, the command-line program, clean at
-that commit).
+that commit), run by Python {deps}.
 
 - Picture: `tests/fixtures/photo/{spec["picture"]}` (synthetic; see
   `tests/fixtures/README.md`).
@@ -159,9 +167,9 @@ the picture's bottom-left corner at (`x_mm`, `y_mm`) (ADR-0001), so, with
 - `y_dc = y_mm + height_mm + k · y_rc`
 - `z_dc = thickness_mm + k · z_rc`
 
-The design spec's `y_dc = y_mm + height_mm − y_rc` read RasterCarve's Y as
-growing down the picture; the captured program's Y is negative down the
-picture, so the sign is `+` (#647).
+RasterCarve's Y is negative down the picture, so the sign is `+`; the
+design spec's draft had `− y_rc`, corrected from the captured program
+(#647).
 """
     if notes:
         text += "\n" + notes.rstrip() + "\n"
@@ -178,11 +186,22 @@ def main(argv):
     if not python.is_file():
         sys.exit(f"no interpreter at {python}; pass --python")
     picture = FIXTURES / spec["picture"]
+    commit = git(checkout, "rev-parse", "HEAD")
+    if git(checkout, "status", "--porcelain", "--", "rastercarve"):
+        sys.exit("the checkout's rastercarve/ has uncommitted changes; "
+                 "the README could not name the code that ran")
 
     command = ["python", "-m", "rastercarve", *spec["args"], spec["picture"]]
-    env = {"PATH": os.environ.get("PATH", ""), "PYTHONPATH": str(checkout),
-           "PYTHONHASHSEED": "0", "LC_ALL": "C"}
+    plain_env = {"PATH": os.environ.get("PATH", ""), "PYTHONHASHSEED": "0",
+                 "LC_ALL": "C"}
+    env = {**plain_env, "PYTHONPATH": str(checkout)}
     with tempfile.TemporaryDirectory() as work:
+        # The libraries RasterCarve's output depends on (OpenCV resamples
+        # the picture), asked of the interpreter without the checkout.
+        probe = run([str(python), "-I", "-c", DEPENDENCY_VERSIONS], work,
+                    plain_env)
+        deps = probe.stdout.decode().strip() if probe.returncode == 0 \
+            else "with unknown library versions"
         shutil.copyfile(picture, Path(work) / spec["picture"])
         done = run([str(python), *command[1:]], work, env)
         if done.returncode != 0:
@@ -194,10 +213,6 @@ def main(argv):
     stats = statistics(done.stderr.decode("utf-8", "replace"))
     version_text = (version.stdout or version.stderr).decode().strip()
     version_text = version_text.split()[-1] if version_text else "unknown"
-    commit = git(checkout, "rev-parse", "HEAD")
-    if git(checkout, "status", "--porcelain", "--", "rastercarve"):
-        sys.exit("the checkout's rastercarve/ has uncommitted changes; "
-                 "the README could not name the code that ran")
     notes_path = HERE / f"{case}.notes.md"
     notes = notes_path.read_text() if notes_path.is_file() else ""
 
@@ -205,7 +220,7 @@ def main(argv):
     out.mkdir(parents=True, exist_ok=True)
     (out / "program.nc").write_bytes(program)
     (out / "README.md").write_text(
-        readme(case, command, version_text, commit, stats, notes))
+        readme(case, command, version_text, commit, deps, stats, notes))
     print(f"Wrote {out / 'program.nc'} and {out / 'README.md'}")
 
 

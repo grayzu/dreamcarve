@@ -262,8 +262,16 @@ fn fields_table_matches_the_records() {
             }
         }
         if kind == Kind::PhotoVCarve {
-            assert!(table.is_empty(), "no Photo V-Carve record before 3.5");
-            assert!(records.is_empty());
+            // The committed projects hold Photo V-Carves from 3.5 (the
+            // RasterCarve goldens, #647), but the editor's Photo table is
+            // phase 4's slice 15 (#544), which checks them against it.
+            assert!(table.is_empty(), "no Photo V-Carve table before #544");
+            assert!(
+                records
+                    .iter()
+                    .all(|op| matches!(op, Operation::PhotoVCarve(_))),
+                "Photo V-Carve seeds are Photo V-Carves"
+            );
             continue;
         }
         assert!(!records.is_empty(), "{kind:?} has a new operation");

@@ -2929,7 +2929,10 @@ port.
    nearest pixel centres, clamped to the edge pixels), or `(g/255) ·
    max_depth` with `invert`. The point's `z = start_plane − d`.
    Consecutive samples whose XYZ are collinear within `EPS_MM` are merged
-   into one move (a flat white stretch is one `G1`).
+   into one move (a flat white stretch is one `G1`). The start is the end
+   the groove is cut from, for a groove run along `−u` too, so only the
+   last gap is short (as fixed in #647: #646 sampled such a groove from
+   its far end).
 4. **Blocks.** One `CutBlock` per groove: `entry` the first sample's XY
    and `entry_z_mm` its Z, `descent` empty (straight plunge at the plunge
    rate to `entry_z_mm`), `cuts` the samples as `Linear` moves at their
@@ -3205,8 +3208,9 @@ the golden's (the rectangle's −4.98 against −4.926, where the corner
 diagonals run down onto the floor).
 
 **RasterCarve cases** (`tools/parity/photo/`): `capture.py`, run as
-`python3 -I capture.py --rastercarve ../../../rastercarve --case
-photo-raster-inch`. It invokes the RasterCarve checkout's own virtual
+`python3 -I capture.py --rastercarve <checkout> --case
+photo-raster-inch` (`--python` names an interpreter other than the
+checkout's `.venv/bin/python`; the child's `PYTHONPATH` is the checkout). It invokes the RasterCarve checkout's own virtual
 environment interpreter by absolute path with an argument list (no
 shell), as `python -m rastercarve <args> <fixture>`, from a fresh
 temporary working directory, never adds the checkout to its own
@@ -3223,18 +3227,40 @@ combined work. Hatch is covered by the unit tests alone.
 
 | Case | Picture | Arguments | DreamCarve |
 | --- | --- | --- | --- |
-| `photo-raster-inch` | `ramp.png` (64 × 32, black left to white right, linear) | `--width 0.1` (defaults: 30°, 0.08 in, 22.5°, 110 %, 0.01 in, safe 0.1, feeds 100/30) | 2.54 mm wide at the origin, `max_depth_mm` 2.032, `sample_mm` 0.254, the same bit and angle; the harness scales the golden by 25.4 |
+| `photo-raster-inch` | `ramp.png` (64 × 32, black left to white right, linear) | `--width 0.1` (defaults: 30°, 0.08 in, 22.5°, 110 %, 0.01 in, safe 0.1, feeds 100/30) | 2.54 mm wide at (10, 10), `max_depth_mm` 2.032, `sample_mm` 0.254, the same bit and angle; the harness scales the golden by 25.4 |
 | `photo-raster-metric` | `radial.png` (64 × 64, white centre to black edge, radial) | `--metric --width 100 -t 30 -d 2 -a 22.5 -s 110 -r 0.25 -z 5 -f 1000 -p 300` | as written |
 
-Frame: RasterCarve's X is DreamCarve's X; RasterCarve's Y grows down the
-picture from its top-left origin, so `y_dc = y_mm + height_mm − y_rc`.
+Frame (corrected from the captured programs, #647): RasterCarve's origin
+is the picture's top-left corner, Y up, so the picture lies at `Y ≤ 0`
+and its Z is zero at the stock top. With `k` its unit in mm (25.4 for the
+inch case), `x_dc = x_mm + k · x_rc`, `y_dc = y_mm + height_mm + k ·
+y_rc`, `z_dc = thickness_mm + k · z_rc`. Both projects place the picture
+at (10, 10), `init`'s margin, not at the stock's origin, where the
+full-depth groove's half-width would cross the stock edge (S7).
 Compared groove for groove in order, each sample within 0.01 mm XY and
-0.05 mm Z after mapping and scaling; rapids, the lifts between grooves
-and RasterCarve's final traverse are not compared (its lift height is a
-different setting). Depth differs by at most `max_depth / 256` from
-RasterCarve's quantisation plus its resampling; the smooth fixtures keep
-the resampling difference under 0.01 mm (a 64-pixel ramp over 2.54 mm is
-0.03 mm of depth per pixel).
+0.05 mm Z after mapping and scaling, compared against the other
+program's groove (DreamCarve merges collinear samples), the grooves' ends
+within 0.01 mm, and each point DreamCarve keeps on one of RasterCarve's
+samples (both sample from the groove's start); rapids, the lifts between
+grooves and RasterCarve's final traverse are not compared (its lift
+height is a different setting). Depth differs by `max_depth / 256` from
+RasterCarve's quantisation plus its resampling. As captured (#647), two
+of RasterCarve's own behaviours are allowed for, each in its case alone
+(`Difference` in `crates/dc-gcode/tests/golden/photo.rs`, and the case's README):
+
+- `photo-raster-inch`, `Resampled`: RasterCarve resamples the picture to
+  twice its output resolution (200 PPI) and reads depth from that grid,
+  so shrinking the 64-pixel ramp into 20 pixels makes its depth lag the
+  ramp by up to one resampled pixel, 0.107 mm, not the 0.01 mm this spec
+  first expected. A Z that misses by more than 0.05 mm passes when it is
+  within 0.05 mm of the picture's depth within one resampled pixel
+  (0.127 mm). In `photo-raster-metric`, where RasterCarve enlarges the
+  picture, the depths agree within 0.021 mm.
+- `photo-raster-metric`, `LastLineUncut`: RasterCarve counts 111 lines
+  but cuts 110, leaving the line through the picture's far corner uncut
+  (it does so at some widths and not others). DreamCarve cuts it; its
+  last groove is checked only for lying one spacing past the 110th,
+  inside the picture.
 
 ## Module layout
 
@@ -3246,7 +3272,7 @@ crates/dc-gcode/src/{material.rs (+ S17 exact cone and shank, S18, S19, clearing
 crates/dc-import/src/{bitmap.rs, bitmap/{png.rs, jpeg.rs, gray.rs}, prep.rs (3.4: PrepOptions, Prepared, findings, design_findings, prepare, write_svg), prep/{walk.rs (visible geometry, paint intent), findings.rs, stroke.rs (tiny-skia stroker wrapper), run.rs (the pipeline), report.rs (PrepReport), write.rs}}
 crates/dc-job/src/{prep_report.rs (render the report; 3.4), picture.rs (PictureSize, bitmap, picture_into, picture_rows; #645), project_from.rs (+ picture, photo_v_bit, default_photo_v_carve; #645), preview.rs (+ <image>, the male board, the boundary)}
 crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (+ Image), export.rs (+ dispatch of the three kinds, tool runs, the summaries, programs by board and `--board`), prep.rs (image-prep; 3.4)}
-tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, README.md}, prep-fixture.ts (the 3.4 drawings), photo-fixtures.ts (gradient.png and the colour JPEGs; #645)}
+tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, test_capture.py, photo-raster-*.notes.md, README.md}, prep-fixture.ts (the 3.4 drawings), photo-fixtures.ts (gradient.png and the colour JPEGs, #645; ramp.png and radial.png, #647)}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
 tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png, colour.jpg, colour-progressive.jpg}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, compass-regions.svg, speckled-dc.svg, jagged-dc.svg}}
 crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv
@@ -3355,7 +3381,7 @@ for V operations.
 **dc-cam — photo**
 - `photo::move_budget_refuses_a_microscopic_sample_step` (L3), `photo::link_height_clears_the_stock_top_when_the_start_plane_is_only_vouched_for` (L1), `photo::uncleared_start_depth_is_refused` (M2).
 - Added in #646: `photo::settings_are_checked_again`, `photo::undecodable_picture_is_a_typed_error`, `photo::layout_counts_the_grooves`; `safety::hand_written_grooves_pass_s19`, `safety::photo_shank_is_held_to_the_cone`; `build::tests::photo_v_carve_generates_one_run` (dc-job); `cli::photo_v_carve_loads_and_exports` (was `…_is_not_cut_yet`), `cli::check_prints_the_photo_summary` (the Photo's `check`/`export` line). The photo tests build acceptance 59's picture in code (`dc_project::test_support::gradient_bytes`), the same pixels as #645's `gradient.png`.
-- `photo::grooves_are_spaced_by_the_fraction_of_the_full_depth_width` (acceptance 59: 1.179 ± 0.001 at 30°, 2 mm, 1.1), `photo::grooves_run_at_the_line_angle_and_alternate`, `photo::one_groove_passes_through_the_top_left_corner`, `photo::zero_angle_grooves_are_parallel_to_x`, `photo::every_cut_is_inside_the_footprint`, `photo::black_is_max_depth_white_is_the_surface_and_grey_is_between` (`gradient.png` with its blocks: −2.000, 0.000 ± 0.01; 50 % ± 0.02), `photo::invert_swaps_black_and_white`, `photo::hatch_adds_a_second_family_at_ninety_degrees`, `photo::between_grooves_the_bit_rises_to_the_retract_and_feeds_across`, `photo::spacing_below_one_warns`, `photo::collinear_samples_merge_into_one_move`, `photo::sample_is_bilinear_and_clamped_at_the_edges`, `photo::top_row_is_at_the_highest_y`, `photo::max_depth_beyond_the_cone_is_an_error`, `photo::start_depth_lowers_the_grooves`, `photo::unknown_bitmap_is_an_error`, `photo::same_input_twice_is_identical`.
+- `photo::grooves_are_spaced_by_the_fraction_of_the_full_depth_width` (acceptance 59: 1.179 ± 0.001 at 30°, 2 mm, 1.1), `photo::grooves_run_at_the_line_angle_and_alternate`, `photo::samples_run_every_step_from_each_grooves_start` (#647), `photo::one_groove_passes_through_the_top_left_corner`, `photo::zero_angle_grooves_are_parallel_to_x`, `photo::every_cut_is_inside_the_footprint`, `photo::black_is_max_depth_white_is_the_surface_and_grey_is_between` (`gradient.png` with its blocks: −2.000, 0.000 ± 0.01; 50 % ± 0.02), `photo::invert_swaps_black_and_white`, `photo::hatch_adds_a_second_family_at_ninety_degrees`, `photo::between_grooves_the_bit_rises_to_the_retract_and_feeds_across`, `photo::spacing_below_one_warns`, `photo::collinear_samples_merge_into_one_move`, `photo::sample_is_bilinear_and_clamped_at_the_edges`, `photo::top_row_is_at_the_highest_y`, `photo::max_depth_beyond_the_cone_is_an_error`, `photo::start_depth_lowers_the_grooves`, `photo::unknown_bitmap_is_an_error`, `photo::same_input_twice_is_identical`.
 
 **dc-gcode — safety**
 - `safety::cone_through_a_wall_fails_s17` (a hand-built toolpath whose disc crosses the outline), `safety::tip_below_the_flat_depth_fails_s17`, `safety::tip_below_the_cone_height_fails_s17`, `safety::generated_v_carves_pass_s17` (every vcarve fixture), `safety::generated_inlays_pass_s17`, `safety::male_surround_is_derived_from_the_mirrored_targets`, `safety::cut_out_off_the_floor_ring_fails`, `safety::generated_cut_outs_pass`, `safety::cut_out_plunge_into_a_tab_fails`, `safety::cut_out_is_held_to_its_own_allowance` (#443), `safety::male_band_rounding_is_derived_from_the_project`, `safety::v_bit_across_the_open_edge_fails_s17`, `safety::cut_out_off_the_open_edge_ring_fails`, and the generated tests with open, rounded males (#448).
@@ -3372,7 +3398,7 @@ for V operations.
 
 **dc-gcode (integration, `tests/golden.rs`)**
 - `golden::vcarve_medial_rect`, `golden::vcarve_medial_square`, `golden::vcarve_medial_circle`, `golden::vcarve_medial_ring`, `golden::vcarve_medial_l`, `golden::vcarve_medial_text_rag`, `golden::vcarve_medial_triangle` (in order per region, chains as sets, 0.02 mm), `golden::vcarve_offset_square` (rings as sets per level, 0.02 mm).
-- `golden::photo_raster_inch`, `golden::photo_raster_metric` (groove for groove, 0.01 mm XY, 0.05 mm Z, after the frame map and, for the inch case, × 25.4).
+- `golden::photo_raster_inch`, `golden::photo_raster_metric` (groove for groove, 0.01 mm XY, 0.05 mm Z, after the frame map and, for the inch case, × 25.4; each case's RasterCarve `Difference`, "Golden corpus"). `tools/parity/photo/test_capture.py` (Python, run by hand): `--case ../x` and other names off `^[a-z0-9-]+$` or off the case list are refused before any path is built (#647).
 - `golden::phase_1_and_2_cases_are_unchanged` (every earlier golden still passes: the `sequence` change for Photo links and the 3D block Z reading touch shared code).
 
 **Sub-phase 3.4: image prep and the drawn boundary.** Fixtures are the

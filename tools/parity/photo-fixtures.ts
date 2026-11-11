@@ -14,6 +14,9 @@
  *   half and one pure black 8 × 8 block in the light half, so neither
  *   block's depth is the gradient's. `tests/fixtures/README.md` gives their
  *   pixel positions.
+ * - `ramp.png` (64 × 32, black left to white right) and `radial.png`
+ *   (64 × 64, white centre to black edge): the RasterCarve golden cases'
+ *   pictures (#647), smooth so the two programs' resampling agrees.
  * - `colour.jpg`: a 16 × 16 colour JPEG, baseline, 4:4:4, of four flat
  *   8 × 8 blocks (a red, a green, a blue and a gray), for `image add`'s
  *   `image_colour_converted` and the decoder's tests.

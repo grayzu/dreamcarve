@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 Captured from RasterCarve 1.0.8, commit `b3b844e7dbc6e560e361dbff7937b6e5ed81746b`, with
 `tools/parity/photo/capture.py --case photo-raster-metric`
 (the checkout's `rastercarve/` package, the command-line program, clean at
-that commit).
+that commit), run by Python 3.14.3, OpenCV 5.0.0, NumPy 2.5.4.
 
 - Picture: `tests/fixtures/photo/radial.png` (synthetic; see
   `tests/fixtures/README.md`).
@@ -60,6 +60,36 @@ the picture's bottom-left corner at (`x_mm`, `y_mm`) (ADR-0001), so, with
 - `y_dc = y_mm + height_mm + k · y_rc`
 - `z_dc = thickness_mm + k · z_rc`
 
-The design spec's `y_dc = y_mm + height_mm − y_rc` read RasterCarve's Y as
-growing down the picture; the captured program's Y is negative down the
-picture, so the sign is `+` (#647).
+RasterCarve's Y is negative down the picture, so the sign is `+`; the
+design spec's draft had `− y_rc`, corrected from the captured program
+(#647).
+
+## Comparison
+
+`crates/dc-gcode/tests/golden.rs` (`photo_raster_metric`, the harness in
+`crates/dc-gcode/tests/golden/photo.rs`) maps the program as above and
+compares the grooves in order. Rapids, the lifts between grooves
+(RasterCarve's to its 5 mm safe Z, DreamCarve's to its link height) and
+the final traverse to `--end-z` are not compared.
+
+- DreamCarve project: the picture 100 × 100 mm at (10, 10) on 120 × 120
+  × 6 mm stock (`init`'s 10 mm margin, for S7), a 30° V-bit at 1000
+  mm/min and 300 mm/min plunge, `max_depth_mm` 2, lines at 22.5°,
+  `line_spacing_fraction` 1.1, `sample_mm` 0.25.
+- XY: every sample within 0.01 mm of the other program's groove, the
+  grooves' ends within 0.01 mm, and each point DreamCarve keeps after
+  merging on one of RasterCarve's samples.
+- Z: within 0.05 mm. RasterCarve enlarges the picture here ("Scaled
+  image by f=12.50": 64 pixels into 800), so its resampling and
+  DreamCarve's bilinear sampling agree within 0.021 mm, most of it
+  RasterCarve's 256-level depth quantisation (0.008 mm a level).
+- Grooves (`Difference::LastLineUncut`): RasterCarve's statistics count
+  111 lines, but its program cuts 110: it stops one line short of the
+  picture's bottom-right corner, leaving a triangle about 2.2 mm deep
+  uncut. DreamCarve cuts every line that meets the footprint (design
+  spec, "Photo V-Carve", step 2), so its 111th groove, 2.7 mm long across
+  that corner, is its own: the harness checks only that it lies one
+  spacing (1.179 mm) past the 110th and inside the picture. Run with
+  other widths, RasterCarve's command line does the same at some
+  (100 and 20 mm on `radial.png`, 20 mm on `ramp.png`) and not at others
+  (50, 30 and 77 mm), so this is RasterCarve's, not the case's.

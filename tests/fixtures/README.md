@@ -121,7 +121,7 @@ hand. The pockets reach 32.5 mm from the centre, so the oval is 9.5 mm
 from them at its nearest (top and bottom) and the cut-out runs 1.5875 mm
 inside the oval.
 
-## `photo/gradient.png`, `photo/colour.jpg`, `photo/colour-progressive.jpg`
+## `photo/gradient.png`, `photo/ramp.png`, `photo/radial.png`, `photo/colour.jpg`, `photo/colour-progressive.jpg`
 
 The Photo V-Carve test pictures (sub-phase 3.5, #645), written by
 `tools/parity/photo-fixtures.ts`. Do not edit them by hand; re-run the
@@ -144,6 +144,16 @@ neither block's depth is the gradient's round it. Columns 31 and 32
 straddle the middle: they hold 125 and 130, the 50 % gray between them at
 X 50 mm of the footprint (60 mm with the margin). A pixel is 1.5625 mm
 square at 100 mm wide.
+
+`ramp.png` and `radial.png` are the RasterCarve golden cases' pictures
+(#647; `tools/parity/photo/README.md`), 8-bit grayscale, no interlace,
+smooth so that RasterCarve's resampling and DreamCarve's bilinear
+sampling agree:
+
+| Picture | Size, px | Pixel `(i, j)` (row 0 at the top) | Case |
+| --- | --- | --- | --- |
+| `ramp.png` | 64 × 32 | `round(255 · i / 63)`: black at the left edge to white at the right | `photo-raster-inch` |
+| `radial.png` | 64 × 64 | `round(255 · (1 + cos(π · min(r / 32, 1))) / 2)`, `r` the distance in pixels from the pixel's centre to the picture's, (32, 32): white at the centre to black at the edges' midpoints and beyond (the corners) | `photo-raster-metric` |
 
 `colour.jpg` (baseline) and `colour-progressive.jpg` (progressive, one DC
 scan) are a 16 × 16 picture of four flat 8 × 8 blocks, 4:4:4 YCbCr with a

@@ -124,9 +124,10 @@ built from them is the test's (`cli::compass_inlay_exports_both_boards`).
 
 `photo-fixtures.ts` writes the Photo V-Carve test pictures (#645):
 `tests/fixtures/photo/gradient.png`, acceptance 58 and 59's 64 × 32
-gradient with a white and a black block, and `colour.jpg` and
-`colour-progressive.jpg`, a 16 × 16 picture of four flat colour blocks as
-a baseline and a progressive JPEG. It encodes both formats itself (the
+gradient with a white and a black block; `ramp.png` and `radial.png`,
+the RasterCarve golden cases' smooth pictures (#647); and `colour.jpg`
+and `colour-progressive.jpg`, a 16 × 16 picture of four flat colour
+blocks as a baseline and a progressive JPEG. It encodes both formats itself (the
 PNG with Node's `zlib`, the JPEG as flat 8 × 8 blocks of DC coefficients
 alone), so it needs nothing installed:
 
@@ -138,3 +139,10 @@ node photo-fixtures.ts
 The output is byte-identical run to run (Node 23.6 or newer, or
 `npx tsx photo-fixtures.ts`). The pictures are synthetic: no photograph
 is ever committed. `tests/fixtures/README.md` gives their pixel values.
+
+## The RasterCarve cases
+
+`photo/capture.py` captures RasterCarve's programs for the Photo V-Carve
+golden cases (#647). RasterCarve is GPLv2+: the script runs its command
+line as an external program and records only its output.
+`photo/README.md` has the licence rules, usage and what is compared.
