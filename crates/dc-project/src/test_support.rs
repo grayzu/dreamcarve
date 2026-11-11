@@ -340,9 +340,9 @@ pub fn sample_bitmap() -> Bitmap {
 
 /// Acceptance 59's picture (#646), 64 × 32 pixels top row first: black
 /// at its left edge to white at its right, column `c` at
-/// `round(255 · c / 63)`, with a pure black 8 × 8 block at columns 8 to
-/// 15, rows 12 to 19, and a pure white one at columns 48 to 55, rows 12
-/// to 19. The same picture as `tests/fixtures/photo/gradient.png` (#645),
+/// `round(255 · c / 63)`, with a pure white 8 × 8 block at columns 8 to
+/// 15, rows 12 to 19, and a pure black one at columns 48 to 55, rows 12
+/// to 19, so neither block's depth is the gradient's. The same picture as `tests/fixtures/photo/gradient.png` (#645),
 /// built in code so the generator's tests need no file.
 #[must_use]
 pub fn gradient_bytes() -> Vec<u8> {
@@ -352,9 +352,9 @@ pub fn gradient_bytes() -> Vec<u8> {
             let in_rows = (12..20).contains(&row);
             let ramp = (col * 255 * 2 + 63) / 126;
             let g = if in_rows && (8..16).contains(&col) {
-                0
-            } else if in_rows && (48..56).contains(&col) {
                 255
+            } else if in_rows && (48..56).contains(&col) {
+                0
             } else {
                 ramp
             };
