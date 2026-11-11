@@ -21,7 +21,7 @@ use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 use dreamcarve_shell::ShellError;
 
 use crate::output::{self, errln, outln};
-use crate::{check, config, export, init, prep, tabs, tools};
+use crate::{check, config, export, image, init, prep, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -35,8 +35,12 @@ pub struct Cli {
 /// The subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Create a project (.dcv) from an SVG or DXF drawing.
+    /// Create a project (.dcv) from an SVG or DXF drawing, or from a PNG
+    /// or JPEG picture to Photo V-Carve.
     Init(InitArgs),
+    /// Add a PNG or JPEG picture to a project, and list a project's
+    /// pictures.
+    Image(ImageArgs),
     /// Prepare an SVG for inlay: turn strokes into areas, resolve fills,
     /// drop specks, and write a clean SVG of filled shapes.
     ImagePrep(ImagePrepArgs),
@@ -145,6 +149,61 @@ impl From<TabShapeArg> for dc_project::TabShape {
     }
 }
 
+/// Arguments of `image`.
+#[derive(Debug, clap::Args)]
+pub struct ImageArgs {
+    /// What to do.
+    #[command(subcommand)]
+    pub command: ImageCommand,
+}
+
+/// The `image` subcommands (format 27, #645).
+#[derive(Debug, Subcommand)]
+pub enum ImageCommand {
+    /// Add a picture to a project as a bitmap a Photo V-Carve can carve,
+    /// converted to grayscale, and save the project.
+    Add(ImageAddArgs),
+    /// List the project's pictures and the Photo V-Carves that carve each.
+    List {
+        /// The project.
+        dcv: PathBuf,
+    },
+}
+
+/// Arguments of `image add`: exactly one of `--width` and `--height`.
+#[derive(Debug, clap::Args)]
+#[command(group(clap::ArgGroup::new("size").required(true).args(["width", "height"])))]
+pub struct ImageAddArgs {
+    /// The project to add the picture to.
+    pub dcv: PathBuf,
+    /// The picture: a PNG (.png) or JPEG (.jpg, .jpeg), by extension.
+    pub picture: PathBuf,
+    /// The picture's width on the stock, mm; its height follows the
+    /// picture's proportions.
+    #[arg(long, value_name = "MM", allow_negative_numbers = true)]
+    pub width: Option<f64>,
+    /// The picture's height on the stock, mm; its width follows the
+    /// picture's proportions.
+    #[arg(long, value_name = "MM", allow_negative_numbers = true)]
+    pub height: Option<f64>,
+    /// Where the picture's bottom-left corner goes, in mm from the stock's
+    /// bottom-left corner: `--at 20,30` [default: 0,0].
+    #[arg(long, value_name = "X,Y", value_parser = parse_at, allow_hyphen_values = true)]
+    pub at: Option<(f64, f64)>,
+    /// The picture's name in the project [default: the file's name
+    /// without its extension].
+    #[arg(long)]
+    pub name: Option<String>,
+}
+
+/// `--at x,y`: two numbers, mm.
+fn parse_at(text: &str) -> Result<(f64, f64), String> {
+    let usage = || format!("`{text}` is not a position: give `x,y` in mm, such as `20,30`");
+    let (x, y) = text.split_once(',').ok_or_else(usage)?;
+    let number = |v: &str| v.trim().parse::<f64>().ok().filter(|v| v.is_finite());
+    Ok((number(x).ok_or_else(usage)?, number(y).ok_or_else(usage)?))
+}
+
 /// Arguments of `tools`.
 #[derive(Debug, clap::Args)]
 pub struct ToolsArgs {
@@ -211,7 +270,8 @@ pub enum ConfigCommand {
 /// Arguments of `init`.
 #[derive(Debug, clap::Args)]
 pub struct InitArgs {
-    /// The drawing to import: an SVG (.svg) or a DXF (.dxf), by extension.
+    /// The drawing to import: an SVG (.svg) or a DXF (.dxf); or a picture
+    /// to Photo V-Carve: a PNG (.png) or JPEG (.jpg, .jpeg). By extension.
     pub drawing: PathBuf,
     /// Where to write the project [default: the drawing's name with .dcv].
     #[arg(short, long, value_name = "DCV")]
@@ -231,6 +291,14 @@ pub struct InitArgs {
     /// DXF only: import only this layer; repeat for several layers.
     #[arg(long = "layer", value_name = "NAME")]
     pub layers: Vec<String>,
+    /// Picture only, and it or --height is required: the picture's width
+    /// on the stock, mm; its height follows the picture's proportions.
+    #[arg(long, value_name = "MM", allow_negative_numbers = true)]
+    pub width: Option<f64>,
+    /// Picture only, and it or --width is required: the picture's height
+    /// on the stock, mm; its width follows the picture's proportions.
+    #[arg(long, value_name = "MM", allow_negative_numbers = true)]
+    pub height: Option<f64>,
 }
 
 /// Arguments of `image-prep`. It takes no tool, stock, depth, feed or size
@@ -419,6 +487,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     };
     let result = match cli.command {
         Command::Init(args) => init::run(&args),
+        Command::Image(args) => image::run(&args.command),
         Command::ImagePrep(args) => prep::run(&args),
         Command::Export(args) => export::run(&args),
         Command::Check(args) => check::run(&args),
