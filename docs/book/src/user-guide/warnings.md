@@ -28,7 +28,7 @@ say when that order is likely a mistake.
 | `cut_inside_freed_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts free of the stock first, so this cut would run in a loose part" | An earlier Profile cuts through the stock around (or inside) an outline, with no tabs, and this operation then cuts a shape inside it: the cut runs in a part or slug that is no longer held. An open path an Engrave or an `on_line` Profile cuts counts when all of it lies inside the outline. Move this operation before the one named. Giving that Profile tabs keeps the piece from coming loose, but the cut then runs in a part held only by them, which warns `cut_inside_tab_held_part`. |
 | `cut_inside_tab_held_part` | "`<shape>` lies inside `<outline>`, which operation `<id>` cuts through the stock first, leaving it held only by its tabs, so this cut would run in a part that can flex, chatter or break a tab" | An earlier Profile cuts through the stock round an outline with [tabs](tabs.md), and this operation then cuts a shape inside it deeper than half the stock thickness (its `depth_mm`; a cut through the stock always counts), such as a hole or a deep pocket: the piece is held only by a few small bridges, so it is less rigid than uncut stock. A lighter cut, such as a shallow engraving after the cut-out, is normal practice and does not warn. An open path an Engrave or an `on_line` Profile cuts counts as for `cut_inside_freed_part`. The message names the innermost such outline. Move this operation before the one named. For a hole, cut it in the same operation as its part, which cuts holes first ([Tabs: parts with holes](tabs.md#parts-with-holes)). A shape inside an outline that Profile cuts free with no tab warns `cut_inside_freed_part` instead. |
 | `tool_change_avoidable` | "tool `<id>` (`<name>`) is used by operations `<a>`, `<b>`, which do not run one after another, so it is fitted more than once" | Operations using one tool are separated by an operation using another, so the tool is fitted twice. Put them next to each other if the order allows; DreamCarve never moves them for you. |
-| `start_depth_mismatch` | "it starts … mm below the stock top, but operation `<id>`, the Pocket before it whose area contains its targets, is … mm deep, so the start plane is not that Pocket's floor" | A V-Carve or a countersink is measured from its start plane, `start_depth_mm` below the stock top. An enabled Pocket earlier in the list clears the area its shapes lie in, but to another depth, so the carve's outline will not meet that Pocket's floor where it is drawn. Set `start_depth_mm` to the Pocket's depth (0 to carve from the stock top outside any Pocket). An earlier V-Carve's flat floor counts as a Pocket does: the message then names the V-Carve, "the V-Carve before it whose flat floor contains its targets", and the floor's depth, its start depth plus its flat depth. Until they match, the bit's flank is counted from the stock top when checking it against the bit's cone. With no such Pocket and a start depth above 0, `check` and `export` stop with the error `start_depth_uncleared` instead, unless the operation sets `start_plane_cleared_externally: true` because another program cleared the start plane. |
+| `start_depth_mismatch` | "it starts … mm below the stock top, but operation `<id>`, the Pocket before it whose area contains its targets, is … mm deep, so the start plane is not that Pocket's floor"; for a countersink "… contains the whole of its V-bit at each hole …", for a Photo V-Carve "… contains its picture's footprint …" | A V-Carve, a countersink or a Photo V-Carve is measured from its start plane, `start_depth_mm` below the stock top. An enabled Pocket earlier in the list clears the area its shapes (a countersink's bit at each hole, a Photo V-Carve's picture) lie in, but to another depth, so the carve's outline will not meet that Pocket's floor where it is drawn. Set `start_depth_mm` to the Pocket's depth (0 to carve from the stock top outside any Pocket). An earlier V-Carve's flat floor counts as a Pocket does: the message then names the V-Carve, "the V-Carve before it whose flat floor contains its targets", and the floor's depth, its start depth plus its flat depth. Until they match, the bit's flank is counted from the stock top when checking it against the bit's cone. With no such Pocket and a start depth above 0, `check` and `export` stop with the error `start_depth_uncleared` instead, unless the operation sets `start_plane_cleared_externally: true` because another program cleared the start plane. |
 
 ## Toolpath generation
 
@@ -127,7 +127,7 @@ gives each message and what to do.
 | --- | --- |
 | `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is not a V-bit. |
 | `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
-| `v_bit_cone_exceeded` | A carve, an Inlay or a countersink would engage the V-bit deeper than its cone is tall: the flat depth, the Inlay's depth from each board's top or the countersink's depth, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
+| `v_bit_cone_exceeded` | A carve, an Inlay, a countersink or a Photo V-Carve would engage the V-bit deeper than its cone is tall: the flat depth, the Inlay's depth from each board's top, the countersink's depth or the Photo V-Carve's `max_depth_mm`, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
 | `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
@@ -222,14 +222,116 @@ shank with the V-Carve shank error above. See [Safety](safety.md), rule
 
 ## Photo V-Carve
 
+A [Photo V-Carve](photo-v-carve.md) carves a picture, a bitmap, which
+`init` or `dreamcarve image add` puts in the project ([Images](images.md)).
+
+### Warnings
+
 | Code | Message says | What to do |
 | --- | --- | --- |
-| `photo_lines_overlap` | "… has line_spacing_fraction …, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them" | A Photo V-Carve's grooves are spaced `line_spacing_fraction` times their full-depth width apart. Below 1 the darkest grooves run into each other and the picture loses contrast there. Use 1 or more (1.1 is the default) unless you want that. Validation reports it once; export does not repeat it. |
+| `photo_lines_overlap` | "… has line_spacing_fraction …, less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them" | A Photo V-Carve's grooves are spaced `line_spacing_fraction` times their full-depth width apart. Below 1 the darkest grooves run into each other and the picture loses contrast there. Use 1 or more (1.1 is the default) unless you want that. Validation reports it once; export does not repeat it. At `line_spacing_fraction`. |
 
-Export stops when a Photo V-Carve's grooves would need more than
-2 000 000 moves: "operation … would carve its picture in about … moves
-with sample_mm …, more than the 2000000 a Photo V-Carve may make". Raise
-`sample_mm` or `line_spacing_fraction`, or make the picture smaller.
+A Photo V-Carve also gives `start_depth_mismatch` (above, "Operation
+order"), "… the Pocket before it whose area contains its picture's
+footprint …": an earlier Pocket or V-Carve floor holds the whole picture,
+but at another depth than `start_depth_mm`. Set `start_depth_mm` to the
+floor's depth ([Photo V-Carve: start depth](photo-v-carve.md#start-depth)).
+
+### Errors
+
+Not warnings, but listed here so every Photo V-Carve code is in one
+place. These stop `check` and `export`, and each is at the field it
+names.
+
+| Code | When |
+| --- | --- |
+| `photo_unknown_bitmap` | `image` names no bitmap of the project: "operation … carves bitmap …, which does not exist". At `image`. |
+| `photo_line_angle_range` | `line_angle_deg` is not at least 0 and less than 180. |
+| `photo_line_spacing_positive` | `line_spacing_fraction` is not above 0. |
+| `photo_sample_positive` | `sample_mm` is not above 0. |
+| `photo_retract_positive` | `stepover_retract_mm` is not above 0. |
+
+The Photo V-Carve shares these with the V-Carve ([V-Carve
+errors](#v-carve-errors)):
+
+- `v_carve_needs_v_bit` and `v_bit_angle_range`: its tool is not a
+  V-bit, or its angle is not above 0 and below 180.
+- `v_bit_cone_exceeded`, at `max_depth_mm`: the depth, plus a start
+  depth no Pocket or V-Carve floor clears ("from the stock top (its start
+  depth, which no Pocket or V-Carve floor of the project clears, plus its
+  max_depth_mm)"), is deeper than the bit's cone is tall.
+- `start_depth_negative` and `start_depth_uncleared`, at
+  `start_depth_mm`: a start depth below 0, or above 0 with no enabled
+  Pocket or V-Carve floor before it that contains its picture's
+  footprint and `start_plane_cleared_externally` `false` ("… before it
+  contains its picture's footprint; …").
+
+An unset `max_depth_mm` is `operation_value_unset`. Export also stops,
+with no code, when the grooves would need more than 2 000 000 moves:
+"operation … would carve its picture in about … moves with sample_mm …,
+more than the 2000000 a Photo V-Carve may make". Raise `sample_mm` or
+`line_spacing_fraction`, or make the picture smaller. And it stops when a
+groove, widened to its width at the stock top, runs off the stock
+("operation … cuts off the stock: … mm past the … edge"): move the
+picture in or make the stock bigger ([Photo V-Carve: the picture's edge
+and the stock](photo-v-carve.md#the-pictures-edge-and-the-stock)).
+
+The safety pass adds two errors of its own for a Photo V-Carve's
+program, S19: "emitted line … takes operation …'s V-bit to (…, …) mm,
+outside its picture or deeper than its max_depth_mm; …" and "emitted line
+… moves operation …'s V-bit between two grooves as a rapid or away from
+its link height; …". DreamCarve's own programs never fail them; a
+failure is a bug to report. See [Safety](safety.md), rule 16.
+
+### Bitmaps
+
+Errors in a project's `bitmaps` ([The project
+file](project-file.md#bitmaps)), each but `duplicate_bitmap_id` at the
+field it names. They stop
+`check` and `export`. A bitmap written by `init` or `image add` has none
+of them; they come from a hand edit, or a file damaged in transit.
+
+| Code | When | What to do |
+| --- | --- | --- |
+| `duplicate_bitmap_id` | Two bitmaps have the same `id`: "bitmap id … is used twice". | Give each its own id, and point each Photo V-Carve's `image` at the one it carves. |
+| `bitmap_footprint_positive` | `width_mm` or `height_mm` is not above 0. | Set the picture's size on the stock. |
+| `bitmap_footprint_aspect` | `width_mm` and `height_mm` are not the picture's proportions: "bitmap … is … × … mm, which is not the shape of its … × … px picture; set height_mm to … mm, or width_mm to … mm, so the picture is not stretched". At `height_mm`. | Set the size the message gives. |
+| `bitmap_empty` | `width_px` or `height_px` is 0. | Add the picture again with `image add`. |
+| `bitmap_too_large` | `width_px` or `height_px` is above 8192. | Scale the picture down and add it again. |
+| `bitmap_pixels_mismatch` | `width_px` and `height_px` are not the size of the PNG in `png_base64`. At `width_px`. | Set them to the size the message gives, or add the picture again. |
+| `bitmap_not_grayscale_8` | The PNG in `png_base64` is not 8-bit grayscale: "the PNG of bitmap … is …-bit …, not 8-bit grayscale; import the picture again so that DreamCarve converts it". At `png_base64`. | Add the picture with `image add`, which converts it. |
+| `bitmap_unreadable` | `png_base64` is not base64, or not a PNG DreamCarve can read: "the picture of bitmap … cannot be read: …". At `png_base64`. | Add the picture again. |
+
+A picture whose header reads well but whose pixels are damaged loads,
+and stops export when the Photo V-Carve reads it: "bitmap … cannot be
+read: …". Add the picture again.
+
+### Pictures
+
+`init` on a picture and `dreamcarve image add` print what they had to do
+to the picture, as `warning: <code>: <message>`, before they write the
+project. A warning never stops them ([Images: how a picture is
+read](images.md#how-a-picture-is-read)).
+
+| Code | Message says | What to do |
+| --- | --- | --- |
+| `image_colour_converted` | "the picture is in colour; it was converted to grayscale by luminance (0.299 R + 0.587 G + 0.114 B)" | Nothing, if the grays look right. For control over which colours carve dark, make the picture grayscale in an image editor first. |
+| `image_alpha_flattened` | "the picture has transparent pixels; they were laid on white, so they carve as white" | Nothing, if a transparent background should be uncut. To carve it, fill it in an image editor first. |
+| `image_16_bit` | "the picture has 16 bits per sample; each was rounded down to 8 bits (its high byte)" | Nothing: a carve cannot show the difference. |
+
+These stop `init` and `image add`, which then write nothing. They have
+no code; they print as `error: cannot import <file>: <message>`.
+
+| Message says | What to do |
+| --- | --- |
+| "the file is named as a PNG picture but holds a JPEG; rename it to match" (or the other way round) | Rename the file with its real format's extension. |
+| "the picture could not be read: …" | The file is damaged, cut short, or not a PNG or JPEG. Save it again from the image editor. |
+| "the picture is … × … px, and a side is at most 8192 px; scale it down first" | Scale it down; 4 to 8 pixels per millimetre of footprint is plenty. |
+
+Giving both `--width` and `--height`, or neither, is a usage error
+(exit status 2):
+"a picture needs exactly one of --width and --height, in mm; the other
+side follows the picture's proportions".
 
 ## Import
 

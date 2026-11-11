@@ -238,6 +238,39 @@ fn grooves_run_at_the_line_angle_and_alternate() {
     }
 }
 
+/// Design spec, "Photo V-Carve", step 3: a groove's samples run every
+/// `sample_mm` from the point it is cut from, whichever way it runs, and
+/// only the last gap, to its end, is shorter, as RasterCarve samples
+/// (#647: its golden programs showed DreamCarve's odd grooves sampled from
+/// their far end, the first gap the short one).
+#[test]
+fn samples_run_every_step_from_each_grooves_start() {
+    let footprint = Rect {
+        min: Point::new(X0, Y0),
+        max: Point::new(X0 + W, Y0 + H),
+    };
+    let sample_mm = 0.25;
+    let family = grooves(&OperationId::new("o8"), footprint, 22.5, 1.179, sample_mm)
+        .expect("the family lays out");
+    let mut odd_seen = false;
+    for (index, line) in family.lines.iter().enumerate() {
+        if line.len() < 3 {
+            continue;
+        }
+        odd_seen |= index % 2 == 1;
+        let gaps: Vec<f64> = line.windows(2).map(|p| p[0].distance_to(p[1])).collect();
+        let (last, regular) = gaps.split_last().expect("gaps");
+        for gap in regular {
+            assert!(
+                (gap - sample_mm).abs() <= 1e-9,
+                "groove {index}: a {gap} mm gap before its last: {gaps:?}"
+            );
+        }
+        assert!(*last <= sample_mm + 1e-9, "groove {index}: last gap {last}");
+    }
+    assert!(odd_seen, "an odd groove of three samples or more");
+}
+
 /// Acceptance 59 (changed in the design spec): the family passes through
 /// the picture's top-left corner, and the first groove is that one.
 #[test]

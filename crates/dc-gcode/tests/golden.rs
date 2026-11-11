@@ -18,6 +18,10 @@
 //! are compared in it. What the harness checks is in [`harness::check`];
 //! each case's README lists the differences.
 //!
+//! The Photo V-Carve cases (`photo-raster-*`, #647) are RasterCarve's
+//! programs instead, captured by `tools/parity/photo/capture.py` and
+//! compared groove for groove by [`photo::check`].
+//!
 //! Every phase 2 case uses 150 × 100 × 12 mm stock and a 6.35 mm end mill
 //! at feed 1500, plunge 500 and 18000 RPM unless its comment says
 //! otherwise, with climb milling and safe Z 5 mm above the stock top.
@@ -32,6 +36,8 @@
 
 #[path = "golden/harness.rs"]
 mod harness;
+#[path = "golden/photo.rs"]
+mod photo;
 
 use std::f64::consts::FRAC_PI_4;
 
@@ -576,6 +582,42 @@ fn vcarve_offset_square() {
     ));
 }
 
+/// Photo V-Carve of `tests/fixtures/photo/ramp.png` (64 × 32, black left
+/// to white right) against RasterCarve's defaults at `--width 0.1`
+/// (inches): 2.54 × 1.27 mm at (10, 10) on 6 mm stock, a 30° V-bit,
+/// `max_depth_mm` 2.032, lines at 22.5° and 1.1 groove widths apart,
+/// sampled every 0.254 mm. Two grooves: the one-point groove through the
+/// top-left corner, then one across the picture. The golden is scaled by
+/// 25.4 ([`photo::check`]; `tests/golden/photo-raster-inch/README.md`).
+#[test]
+fn photo_raster_inch() {
+    photo::check(
+        "photo-raster-inch",
+        25.4,
+        &[photo::Difference::Resampled {
+            pixel_mm: 25.4 / 200.0,
+        }],
+    );
+}
+
+/// Photo V-Carve of `tests/fixtures/photo/radial.png` (64 × 64, white
+/// centre to black edge) against RasterCarve's `--metric --width 100 -t 30
+/// -d 2 -a 22.5 -s 110 -r 0.25`: 100 mm square at (10, 10) on 6 mm stock,
+/// `max_depth_mm` 2, sampled every 0.25 mm; 111 grooves
+/// ([`photo::check`]; `tests/golden/photo-raster-metric/README.md`).
+#[test]
+fn photo_raster_metric() {
+    photo::check(
+        "photo-raster-metric",
+        1.0,
+        &[photo::Difference::LastLineUncut],
+    );
+}
+
+/// The RasterCarve cases (phase 3, slice 25, #647), which their own tests
+/// compare.
+const PHOTO_CASES: [&str; 2] = ["photo-raster-inch", "photo-raster-metric"];
+
 /// The V-Carve cases (phase 3, slice 10, #410), which their own tests
 /// compare.
 const VCARVE_CASES: [&str; 8] = [
@@ -617,7 +659,8 @@ const CASES: [(&str, fn()); 18] = [
 /// phase 1 and 2 case in `tests/golden/` is compared here, all 18 of them,
 /// except `smoke` (a capture check only, its README says) and the
 /// `post-<id>-coaster` cases, which `dreamcarve`'s CLI tests compare byte
-/// for byte. The [`VCARVE_CASES`] have their own tests. A case added
+/// for byte. The [`VCARVE_CASES`] and [`PHOTO_CASES`] have their own
+/// tests. A case added
 /// without a test fails this.
 #[test]
 fn phase_1_and_2_cases_are_unchanged() {
@@ -634,6 +677,7 @@ fn phase_1_and_2_cases_are_unchanged() {
         .iter()
         .map(|(name, _)| *name)
         .chain(VCARVE_CASES)
+        .chain(PHOTO_CASES)
         .map(str::to_owned)
         .collect();
     assert_eq!(compared, on_disk, "every golden case has a test");

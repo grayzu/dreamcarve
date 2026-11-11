@@ -394,7 +394,7 @@ pub fn check(case: &Case) {
     }
 }
 
-fn golden_dir(name: &str) -> PathBuf {
+pub fn golden_dir(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/golden")
         .join(name)

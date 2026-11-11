@@ -14,6 +14,9 @@
  *   half and one pure black 8 × 8 block in the light half, so neither
  *   block's depth is the gradient's. `tests/fixtures/README.md` gives their
  *   pixel positions.
+ * - `ramp.png` (64 × 32, black left to white right) and `radial.png`
+ *   (64 × 64, white centre to black edge): the RasterCarve golden cases'
+ *   pictures (#647), smooth so the two programs' resampling agrees.
  * - `colour.jpg`: a 16 × 16 colour JPEG, baseline, 4:4:4, of four flat
  *   8 × 8 blocks (a red, a green, a blue and a gray), for `image add`'s
  *   `image_colour_converted` and the decoder's tests.
@@ -87,6 +90,29 @@ const gradient = grayPng(GRADIENT_WIDTH, GRADIENT_HEIGHT, (i, j) => {
   return Math.round((255 * i) / (GRADIENT_WIDTH - 1))
 })
 writeFileSync(join(outDir, 'gradient.png'), gradient)
+
+// The RasterCarve golden pictures (#647). Smooth, so RasterCarve's
+// resampling and DreamCarve's bilinear sampling agree closely.
+
+/** `ramp.png`: 64 × 32, column `i` holds `round(255 · i / 63)`. */
+const ramp = grayPng(64, 32, (i) => Math.round((255 * i) / 63))
+writeFileSync(join(outDir, 'ramp.png'), ramp)
+
+/**
+ * `radial.png`: 64 × 64, white at the centre to black at the edge. A pixel
+ * whose centre is `r` pixels from the picture's centre holds
+ * `round(255 · (1 + cos(π · min(r / 32, 1))) / 2)`: flat at the centre and
+ * at the edge's midpoints, black past them (the corners), so the profile
+ * has no kink for the two programs' resampling to round differently.
+ */
+const RADIAL_SIDE = 64
+const RADIAL_RADIUS = 32
+const radial = grayPng(RADIAL_SIDE, RADIAL_SIDE, (i, j) => {
+  const r = Math.hypot(i + 0.5 - RADIAL_SIDE / 2, j + 0.5 - RADIAL_SIDE / 2)
+  const t = Math.min(r / RADIAL_RADIUS, 1)
+  return Math.round((255 * (1 + Math.cos(Math.PI * t))) / 2)
+})
+writeFileSync(join(outDir, 'radial.png'), radial)
 
 // --------------------------------------------------------------- JPEG
 

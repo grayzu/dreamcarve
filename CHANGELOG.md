@@ -9,6 +9,41 @@ phases bump the patch number.
 
 ### Added
 
+- **Photo V-Carve docs (#648).** User guide chapters "Photo V-Carve
+  operation" (every setting with its VCarve and RasterCarve name, depth
+  from brightness and `invert` for a dark wood, picking a bit and a depth
+  against its cone, how the settings trade detail against time, what
+  `check` prints, and each refusal with its fix) and "Images" (choosing
+  and preparing a picture, `init` on a picture, `image add`, `image
+  list`, how a picture is read and stored); a quick start, "Carving a
+  photo", on the synthetic `tests/fixtures/photo/gradient.png`; The
+  project file at format 27 (`bitmaps`, `"photo_v_carve"`); Warnings
+  with every code sub-phase 3.5 added (`photo_*`, `bitmap_*`,
+  `duplicate_bitmap_id`, `image_colour_converted`,
+  `image_alpha_flattened`, `image_16_bit`) and the picture importer's
+  errors; Safety with rule 16 (S19) and a Photo's reading of rules 9 and
+  14; Golden corpus with the RasterCarve cases and the GPL boundary. Every
+  command in the three chapters runs in the test suite.
+- **A Photo V-Carve's messages name its picture (#648).**
+  `start_depth_mismatch` now says what the earlier floor holds: "its
+  targets", "the whole of its V-bit at each hole" for a countersink, "its
+  picture's footprint" for a Photo V-Carve (it said "its targets" for
+  all three). A Photo V-Carve's `v_bit_cone_exceeded` from the stock top
+  names its `max_depth_mm`, not a flat depth it does not have, and
+  `export`'s line for it names its picture instead of "0 target(s)".
+- **Pictures in a project: `init` on a PNG or JPEG, `image add`, `image
+  list` (#645).** `dreamcarve init photo.jpg --width 100` (or
+  `--height`) writes a project holding the picture as a bitmap, the
+  stock round it with a 10 mm margin, a 60° V-bit and one Photo V-Carve.
+  `dreamcarve image add <dcv> <picture> --width|--height <mm> [--at x,y]
+  [--name <name>]` adds a picture to any project, and `image list` shows
+  each bitmap and the Photo V-Carves that carve it. PNG (every colour
+  type and bit depth) and JPEG (baseline and progressive) are read and
+  stored as 8-bit grayscale: colour by luminance
+  (`image_colour_converted`), transparency laid on white
+  (`image_alpha_flattened`), 16-bit samples by their high byte
+  (`image_16_bit`). A picture is at most 8192 pixels on a side. The
+  preview draws each picture under the toolpaths.
 - **Photo V-Carve cuts (#646).** A Photo V-Carve now carves its picture
   as parallel V-bit grooves, deeper where the picture is dark (lighter
   with `invert`), up to `max_depth_mm`: spaced `line_spacing_fraction`
