@@ -173,6 +173,10 @@ pub fn prefs_from_file(file: &GuiPrefs) -> Prefs {
                 gui_prefs::TabShape::Smooth => dc_project::TabShape::Smooth,
             },
         },
+        library_units: file.library_units.map(|units| match units {
+            gui_prefs::LibraryUnits::Mm => dc_project::Units::Mm,
+            gui_prefs::LibraryUnits::In => dc_project::Units::Inch,
+        }),
     }
 }
 
@@ -229,6 +233,10 @@ pub fn prefs_to_file(prefs: &Prefs) -> GuiPrefs {
                 dc_project::TabShape::Smooth => gui_prefs::TabShape::Smooth,
             },
         },
+        library_units: prefs.library_units.map(|units| match units {
+            dc_project::Units::Mm => gui_prefs::LibraryUnits::Mm,
+            dc_project::Units::Inch => gui_prefs::LibraryUnits::In,
+        }),
     }
 }
 
@@ -256,6 +264,7 @@ mod tests {
         prefs.visibility.arrows = true;
         prefs.tab.width_mm = 12.0;
         prefs.tab.shape = dc_project::TabShape::Smooth;
+        prefs.library_units = Some(dc_project::Units::Inch);
         prefs.sections.insert("project.stock".to_owned(), false);
         prefs.recent = vec![PathBuf::from("/a.dcv"), PathBuf::from("/b.dcv")];
         prefs

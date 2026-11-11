@@ -444,3 +444,278 @@ fn fusion_import_report_equals_tools_import() {
     let broken = dc_app::library::import(&lib, b"PK\x03\x04not really a zip", false);
     assert!(broken.unwrap_err().to_string().contains("archive"));
 }
+
+// Slice 30 (#622; functional 64 and 64a; acceptance 101, first half):
+// vendor groups, editing a library tool, *Revert changes*, *New tool* and
+// *Duplicate* in the library.
+
+/// The fixture library: `tools import` of `fixtures/fusion/sample.tools`
+/// then of `fixtures/fusion/vendors.json`, as the CLI would write it.
+fn fixture_library() -> Library {
+    let mut lib = Library::default();
+    for name in ["fusion/sample.tools", "fusion/vendors.json"] {
+        lib = dc_app::library::import(&lib, &read(&fixture(name)), false)
+            .unwrap()
+            .library;
+    }
+    lib
+}
+
+/// The library tool named `name`.
+fn named<'a>(lib: &'a Library, name: &str) -> &'a LibraryTool {
+    lib.tools
+        .iter()
+        .find(|t| t.tool.name == name)
+        .unwrap_or_else(|| panic!("the library has no `{name}`"))
+}
+
+/// Capability 64: one group per vendor, sorted by name, *No vendor* (no
+/// vendor, or an empty one) last; each group's rows in library order; a
+/// search hides the groups with no match, and reads the product id too.
+#[test]
+fn groups_by_vendor_with_no_vendor_last() {
+    use dc_app::library::groups;
+    use dc_app::tools::ToolField;
+
+    let lib = fixture_library();
+    // One of the sample's tools is an Amana bit, typed in the library.
+    let id = named(&lib, "5 mm Drill").id.clone();
+    let lib = dc_app::library::edit(&lib, &id, ToolField::Vendor, "Amana", Units::Mm).unwrap();
+    let states = annotate(&lib, &[]);
+
+    let all = groups(&states, &Filter::default(), Units::Mm);
+    let vendors: Vec<Option<&str>> = all.iter().map(|g| g.vendor).collect();
+    assert_eq!(
+        vendors,
+        [
+            Some("Acme Router Bits"),
+            Some("Amana"),
+            Some("Birch Tooling"),
+            Some("DreamCarve fixtures"),
+            None
+        ]
+    );
+    // Every tool once, in its vendor's group, in library order.
+    let total: usize = all.iter().map(|g| g.rows.len()).sum();
+    assert_eq!(total, lib.tools.len());
+    let position = |state: &dc_app::library::EntryState<'_>| {
+        lib.tools
+            .iter()
+            .position(|t| t.id == state.entry.id)
+            .unwrap()
+    };
+    for group in &all {
+        for row in &group.rows {
+            let vendor = row
+                .entry
+                .tool
+                .vendor
+                .as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty());
+            assert_eq!(vendor, group.vendor, "{}", row.entry.tool.name);
+        }
+        let order: Vec<usize> = group.rows.iter().map(|r| position(r)).collect();
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(order, sorted, "library order within {:?}", group.vendor);
+    }
+    // vendors.json's tool with an empty vendor is under *No vendor*.
+    let none = all.last().unwrap();
+    assert!(
+        none.rows.iter().any(|r| r.entry.tool.name == "3 mm Upcut"),
+        "an empty vendor is no vendor"
+    );
+
+    // A search for `amana` leaves one group, with the one tool.
+    let found = groups(&states, &search("amana"), Units::Mm);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].vendor, Some("Amana"));
+    let names: Vec<&str> = found[0]
+        .rows
+        .iter()
+        .map(|r| r.entry.tool.name.as_str())
+        .collect();
+    assert_eq!(names, ["5 mm Drill"]);
+    // The product id is searched too (capability 64).
+    let by_product = groups(&states, &search("bt-dr5"), Units::Mm);
+    assert_eq!(by_product.len(), 1);
+    assert_eq!(by_product[0].vendor, Some("Birch Tooling"));
+    // Nothing found is no group at all.
+    assert!(groups(&states, &search("nonexistent"), Units::Mm).is_empty());
+}
+
+/// Capability 64a: *Revert changes* puts the selected tool back as it was
+/// when the sheet opened, in place, and leaves every other edit alone. A
+/// tool made since the sheet opened has nothing to go back to.
+#[test]
+fn revert_restores_the_tool_as_opened() {
+    use dc_app::library::{LibraryEdit, edit};
+    use dc_app::tools::ToolField;
+
+    let opened = fixture_library();
+    let session = LibraryEdit::open(&opened);
+    let drill = named(&opened, "5 mm Drill").id.clone();
+    let ball = named(&opened, "3 mm Ball End Mill").id.clone();
+
+    let lib = edit(&opened, &drill, ToolField::Feed, "250", Units::Mm).unwrap();
+    let lib = edit(&lib, &drill, ToolField::Name, "Club drill", Units::Mm).unwrap();
+    let lib = edit(&lib, &ball, ToolField::Rpm, "16000", Units::Mm).unwrap();
+    assert!(session.changed(&lib, &drill));
+    assert!(session.changed(&lib, &ball));
+    let edited = dc_library::find(&lib, drill.as_str()).unwrap();
+    assert_eq!(edited.tool.feed_mm_min, Some(250.0));
+    assert_eq!(edited.tool.name, "Club drill");
+    assert_eq!(
+        edited.source,
+        dc_library::find(&opened, drill.as_str()).unwrap().source,
+        "an edit keeps the tool's source"
+    );
+
+    let reverted = session.revert(&lib, &drill).unwrap();
+    assert_eq!(
+        dc_library::find(&reverted, drill.as_str()).unwrap(),
+        dc_library::find(&opened, drill.as_str()).unwrap(),
+        "the drill as opened"
+    );
+    let at = |l: &Library, id: &LibraryToolId| l.tools.iter().position(|t| t.id == *id);
+    assert_eq!(at(&reverted, &drill), at(&opened, &drill), "in its place");
+    assert!(!session.changed(&reverted, &drill));
+    assert_eq!(
+        dc_library::find(&reverted, ball.as_str()).unwrap().tool.rpm,
+        Some(16000),
+        "the other edit stays"
+    );
+
+    // A tool made after the sheet opened has nothing to revert to.
+    let (with_new, new_id) = dc_app::library::new_tool(&reverted);
+    assert!(!session.changed(&with_new, &new_id));
+    assert!(session.revert(&with_new, &new_id).is_err());
+}
+
+/// Capability 64a: *New tool* in the library is the Tools tab's `tool<n>`
+/// placeholder (63), numbered within the library, under the next library
+/// id; *Duplicate* copies a tool below itself as `<name> (2)` with a new
+/// id and no `source`, every value kept.
+#[test]
+fn new_and_duplicate() {
+    use dc_app::library::{duplicate, edit, new_tool};
+    use dc_app::tools::ToolField;
+
+    let lib = fixture_library();
+    let count = lib.tools.len();
+    let (next, id) = new_tool(&lib);
+    assert_eq!(next.tools.len(), count + 1);
+    assert_eq!(id.as_str(), format!("lt{}", count + 1));
+    let made = dc_library::find(&next, id.as_str()).unwrap();
+    assert_eq!(made.tool.name, format!("tool{}", count + 1));
+    assert_eq!(made.source, None);
+    assert_eq!(made.tool.cutter, ToolKind::EndMill);
+    assert!((made.tool.diameter_mm - 6.35).abs() < 1e-12);
+    assert_eq!(made.tool.flutes, 2);
+    assert_eq!(
+        (
+            made.tool.feed_mm_min,
+            made.tool.plunge_mm_min,
+            made.tool.rpm,
+            made.tool.step_down_mm,
+            made.tool.step_over_fraction
+        ),
+        (None, None, None, None, None),
+        "no rate is invented"
+    );
+    // A second is the next number.
+    let (again, second) = new_tool(&next);
+    assert_eq!(
+        dc_library::find(&again, second.as_str()).unwrap().tool.name,
+        format!("tool{}", count + 2)
+    );
+    // When its number's name is taken, the next free one.
+    let first = lib.tools[0].id.clone();
+    let taken = edit(
+        &lib,
+        &first,
+        ToolField::Name,
+        &format!("tool{}", count + 1),
+        Units::Mm,
+    )
+    .unwrap();
+    let (named_on, id) = new_tool(&taken);
+    assert_eq!(
+        dc_library::find(&named_on, id.as_str()).unwrap().tool.name,
+        format!("tool{}", count + 2)
+    );
+
+    // Duplicate an imported tool: below itself, new id, no source.
+    let original = named(&lib, "5 mm Drill").clone();
+    assert!(original.source.is_some(), "an imported tool has a source");
+    let (copied, copy_id) = duplicate(&lib, &original.id).unwrap();
+    assert_ne!(copy_id, original.id);
+    assert_eq!(copy_id.as_str(), format!("lt{}", count + 1));
+    let copy = dc_library::find(&copied, copy_id.as_str()).unwrap();
+    assert_eq!(copy.tool.name, "5 mm Drill (2)");
+    assert_eq!(copy.source, None, "Replace never overwrites a copy");
+    assert_eq!(
+        Tool {
+            id: original.tool.id.clone(),
+            name: original.tool.name.clone(),
+            ..copy.tool.clone()
+        },
+        original.tool,
+        "every value kept"
+    );
+    let at = |l: &Library, id: &LibraryToolId| l.tools.iter().position(|t| t.id == *id);
+    assert_eq!(
+        at(&copied, &copy_id),
+        at(&copied, &original.id).map(|i| i + 1),
+        "below the original"
+    );
+    // Duplicating again is ` (3)`.
+    let (twice, third) = duplicate(&copied, &original.id).unwrap();
+    assert_eq!(
+        dc_library::find(&twice, third.as_str()).unwrap().tool.name,
+        "5 mm Drill (3)"
+    );
+    // The library still saves and loads as it is.
+    let saved = dc_library::save(&twice).unwrap();
+    assert_eq!(dc_library::load(saved.as_bytes()).unwrap(), twice);
+    // An unknown id is an error, not a panic.
+    assert!(duplicate(&lib, &LibraryToolId::new("lt999")).is_err());
+}
+
+/// Capability 64a: a library edit is checked as the file is
+/// (`dc_library::validate_tool`), and a name stays unique, so `tools add
+/// <name>` is never ambiguous; a refused edit leaves the library as it
+/// was.
+#[test]
+fn edits_are_validated_as_the_file_is() {
+    use dc_app::library::edit;
+    use dc_app::tools::ToolField;
+
+    let lib = fixture_library();
+    let drill = named(&lib, "5 mm Drill").id.clone();
+    assert!(edit(&lib, &drill, ToolField::Diameter, "0", Units::Mm).is_err());
+    assert!(edit(&lib, &drill, ToolField::Feed, "-5", Units::Mm).is_err());
+    assert!(edit(&lib, &drill, ToolField::Feed, "fast", Units::Mm).is_err());
+    let taken = edit(&lib, &drill, ToolField::Name, "6 mm Reamer", Units::Mm)
+        .unwrap_err()
+        .to_string();
+    assert!(taken.contains("6 mm Reamer"), "{taken}");
+    // A typed inch value is stored in millimetres.
+    let inch = edit(&lib, &drill, ToolField::Feed, "10", Units::Inch).unwrap();
+    let feed = dc_library::find(&inch, drill.as_str())
+        .unwrap()
+        .tool
+        .feed_mm_min
+        .unwrap();
+    assert!((feed - 254.0).abs() < 1e-9, "{feed}");
+    // Clearing a rate is allowed, and never filled in.
+    let cleared = edit(&inch, &drill, ToolField::Feed, "", Units::Mm).unwrap();
+    assert_eq!(
+        dc_library::find(&cleared, drill.as_str())
+            .unwrap()
+            .tool
+            .feed_mm_min,
+        None
+    );
+}

@@ -163,7 +163,22 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "02-import-sheet");
     drop(h);
 
-    // The plaque, in place and never saved.
+    // The plaque, in place and never saved, with a library to show (#549:
+    // "Should show this with data, not empty"): the Fusion fixtures as
+    // `tools import` writes them.
+    let mut library = dc_library::Library::default();
+    for name in ["fusion/sample.tools", "fusion/vendors.json"] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        library = dc_app::library::import(&library, &bytes, false)
+            .unwrap()
+            .library;
+    }
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    std::fs::write(
+        dir.join("config/tools.json"),
+        dc_library::save(&library).unwrap(),
+    )
+    .unwrap();
     let plaque = fixture("plaque.dcv");
     let mut h = window(dir, Some(plaque.clone()), 1280.0, 800.0).unwrap();
     shoot(&mut h, "03-workspace-project-panel");
@@ -254,6 +269,35 @@ fn scenes(dir: &Path) -> bool {
     click(&mut h, "Project");
     click(&mut h, "Tool Library…");
     shoot(&mut h, "14-tool-library-sheet");
+    // Two rows ticked, the drill selected for editing, in inches.
+    for name in ["1/4 in Flat End Mill", "5 mm Drill"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::CheckBox, name)
+            .scroll_to_me();
+        h.run();
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::CheckBox, name)
+            .click();
+        h.run();
+    }
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "5 mm Drill")
+        .scroll_to_me();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "5 mm Drill")
+        .click();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "in")
+        .click();
+    h.run();
+    shoot(&mut h, "14b-tool-library-editing");
+    h.get_by_role(Role::Dialog).get_by_label("Delete").click();
+    h.run();
+    shoot(&mut h, "14c-tool-library-delete");
+    h.key_press(egui::Key::Escape);
+    h.run();
     h.key_press(egui::Key::Escape);
     h.run();
     for _ in 0..3 {

@@ -12,8 +12,8 @@
 //! fresh project id, and a later library edit never changes the project.
 //!
 //! The crate takes bytes and returns values: [`load`] parses the library
-//! file, [`save`] writes it, [`add`], [`find`] and [`remove`] edit a
-//! library in memory. The shells own the file at `<config dir>/tools.json`
+//! file, [`save`] writes it, [`add`], [`update`], [`find`] and [`remove`]
+//! edit a library in memory. The shells own the file at `<config dir>/tools.json`
 //! (`dreamcarve-shell` reads and writes it for the CLI and the app).
 //! Fusion 360 import is [`fusion`]; [`import`] reads either kind of file
 //! into the library with the per-tool report both shells show, and
@@ -26,6 +26,6 @@ pub mod library;
 
 pub use error::LibraryError;
 pub use library::{
-    AddOutcome, LIBRARY_VERSION, Library, LibraryTool, LibraryToolId, add, find, load,
-    next_project_tool_id, project_copy, remove, replace, save, validate_tool,
+    AddOutcome, LIBRARY_VERSION, Library, LibraryTool, LibraryToolId, add, find, load, next_id,
+    next_project_tool_id, project_copy, remove, replace, save, update, validate_tool,
 };
