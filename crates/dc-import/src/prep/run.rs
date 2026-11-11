@@ -5,11 +5,24 @@
 //! "Image prep"): [`prepare`] turns the bytes of an SVG into pieces and a
 //! [`PrepReport`]. A pure function; writing the SVG is slice 21g's.
 
-use super::report::PrepReport;
-use super::{DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT};
-use crate::svg::MAX_IMPORT_VERTICES;
-use crate::{ImportError, ImportWarning};
-use dc_geometry::Region;
+use super::findings::{
+    Shape, bounds as findings_bounds, hidden, painted_height_mm, separate_holes, stroke_only,
+};
+use super::report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
+use super::stroke::{self, Budget, Stroked};
+use super::walk::{HiddenReason, PaintedPath, Walk, walk};
+use super::{
+    BACKGROUND_COVER_FRACTION, DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT, FLATTEN_FRACTION,
+    GAP_REACH_FRACTION, MAX_THRESHOLD_PCT, MIN_FLATTEN_TOLERANCE_MM, REGIONS_SUGGESTED_BELOW_PCT,
+};
+use crate::svg::{self, MAX_IMPORT_VERTICES, MmPath};
+use crate::{ImportError, ImportWarning, NotConvertible};
+use dc_geometry::width::{hole_is_narrower_than, is_narrower_than, local_widths, narrowest_gap};
+use dc_geometry::{
+    Contour, MAX_COORDINATE_MM, Region, ink_without_spaces, merge_fills, nest, resolve_fill,
+    simplify::simplify_regions, spaces_between, union,
+};
+use kurbo::Shape as _;
 
 /// What the inlay is made of (49c step 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,26 +74,474 @@ pub struct Prepared {
     pub report: PrepReport,
 }
 
-/// The flatten tolerance for a design `height_mm` tall.
+/// The flatten tolerance for a design `height_mm` tall: [`FLATTEN_FRACTION`]
+/// of it, never finer than [`MIN_FLATTEN_TOLERANCE_MM`]. Relative to the
+/// design because the user scales the result afterwards.
 #[must_use]
 pub fn flatten_tolerance_mm(height_mm: f64) -> f64 {
-    let _ = height_mm;
-    0.0
+    (FLATTEN_FRACTION * height_mm).max(MIN_FLATTEN_TOLERANCE_MM)
 }
 
-/// Prepares the SVG in `bytes`.
+/// Prepares the SVG in `bytes`: steps 1 to 7 of the design's "Image prep",
+/// the walk, strokes to areas, fills resolved into the ink, the mode,
+/// clean-up (holes, then pieces, then smoothing, then a last union) and
+/// the report, with the pieces in canonical order, so the result does not
+/// depend on the order the paths had in the file. Every threshold is a
+/// share of the design's height.
+///
+/// Warnings come in a fixed order: the checks `image-prep` shares with
+/// `init` (`svg_hole_as_separate_path`, `svg_stroke_only_path`,
+/// `svg_hidden_object`, `svg_object_not_convertible`), then
+/// `prep_stroke_failed`, `prep_background_shape`, the mode's
+/// (`prep_regions_open_ink` or `prep_regions_suggested`),
+/// `prep_smooth_exceeds_detail`, `prep_hole_filled`, `prep_speck_dropped`
+/// and `prep_smooth_skipped`.
 ///
 /// # Errors
 ///
-/// [`ImportError`].
+/// - [`ImportError::PrepThresholdRange`] for a threshold outside `0` to
+///   [`MAX_THRESHOLD_PCT`], before anything is read;
+/// - [`ImportError::PrepNothingLeft`] when nothing visible has a height or
+///   nothing survives the clean-up;
+/// - [`ImportError::PrepOutputUnreadable`] when the pieces do not nest, a
+///   defect;
+/// - [`ImportError::TooManyVertices`], and the errors of the walk and of
+///   the importer's coordinate checks.
 pub fn prepare(
     bytes: &[u8],
     options: &PrepOptions,
 ) -> Result<(Prepared, Vec<ImportWarning>), ImportError> {
-    let _ = (bytes, options);
-    Err(ImportError::PrepOutputUnreadable {
-        reason: "not implemented".to_owned(),
-    })
+    check_threshold("--min-detail", options.min_detail_pct)?;
+    check_threshold("--smooth", options.smooth_pct)?;
+    let walked = walk(bytes)?;
+
+    // Step 1: the design's height, exact from the curves, then the
+    // tolerance that follows from it.
+    for path in &walked.painted {
+        let elements = path.geometry.bez.elements();
+        if !elements.iter().all(svg::element_is_finite) {
+            return Err(ImportError::NonFinite {
+                path: path.name.clone(),
+            });
+        }
+        if !elements.iter().all(svg::element_is_within_limit) {
+            return Err(ImportError::CoordinateOutOfRange {
+                path: path.name.clone(),
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+    }
+    // The outlines are built before the height is known, charged at the
+    // tolerance a bound of it gives (the box of the paths grown by half
+    // each stroke's width).
+    let bound_mm = painted_height_mm(&walked.painted);
+    if !(bound_mm.is_finite() && bound_mm > 0.0) {
+        return Err(ImportError::PrepNothingLeft);
+    }
+    let provisional_mm = flatten_tolerance_mm(bound_mm);
+    let mut budget = Budget::new(0, options.max_vertices);
+    let mut extent: Option<kurbo::Rect> = None;
+    let mut grow = |rect: kurbo::Rect| {
+        extent = Some(extent.map_or(rect, |e| e.union(rect)));
+    };
+    let mut outlines: Vec<Option<MmPath>> = Vec::with_capacity(walked.painted.len());
+    let mut warnings = Vec::new();
+    let mut failed = Vec::new();
+    for path in &walked.painted {
+        if path.fill.is_some() {
+            budget.spend(svg::estimated_vertices(&path.geometry.bez, provisional_mm))?;
+            if !path.geometry.bez.elements().is_empty() {
+                grow(path.geometry.bez.bounding_box());
+            }
+        }
+        // Step 2: the stroke's outline, guarded.
+        outlines.push(
+            match stroke::outline_mm(path, provisional_mm, &mut budget)? {
+                Stroked::Nothing => None,
+                Stroked::Failed(warning) => {
+                    failed.push(warning);
+                    None
+                }
+                Stroked::Outline(mm) => {
+                    if !mm.bez.elements().iter().all(svg::element_is_finite) {
+                        return Err(ImportError::NonFinite {
+                            path: path.name.clone(),
+                        });
+                    }
+                    if !mm.bez.elements().is_empty() {
+                        grow(mm.bez.bounding_box());
+                    }
+                    Some(mm)
+                }
+            },
+        );
+    }
+    let height_mm = extent.map_or(0.0, |e| e.height());
+    if !(height_mm.is_finite() && height_mm > 0.0) {
+        return Err(ImportError::PrepNothingLeft);
+    }
+    let tolerance_mm = flatten_tolerance_mm(height_mm);
+
+    // Step 3: each path's areas.
+    let mut shapes: Vec<Shape> = Vec::with_capacity(walked.painted.len());
+    let mut strokes = StrokeReport::default();
+    for (path, outline) in walked.painted.iter().zip(&outlines) {
+        let filled = path.fill.map_or_else(Vec::new, |fill| {
+            let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
+            resolve_fill(&profiles, fill.rule, tolerance_mm)
+        });
+        let stroked = match outline {
+            Some(mm) => {
+                let width_mm = path.stroke.as_ref().map_or(0.0, |s| s.width_mm);
+                strokes.count += 1;
+                strokes.least_width_mm =
+                    Some(strokes.least_width_mm.map_or(width_mm, |w| w.min(width_mm)));
+                strokes.greatest_width_mm = Some(
+                    strokes
+                        .greatest_width_mm
+                        .map_or(width_mm, |w| w.max(width_mm)),
+                );
+                stroke::area(mm, tolerance_mm, &mut budget)?
+            }
+            None => Vec::new(),
+        };
+        shapes.push(Shape {
+            name: path.name.clone(),
+            filled,
+            stroked,
+        });
+    }
+    // The checks `init` also makes.
+    warnings.extend(separate_holes(&shapes, tolerance_mm));
+    warnings.extend(stroke_only(&walked.painted, &shapes));
+    warnings.extend(hidden(&walked.hidden));
+    warnings.extend(walked.not_convertible.iter().map(|u| {
+        ImportWarning::SvgObjectNotConvertible {
+            kind: u.kind,
+            count: u.count,
+            group: u.group.clone(),
+        }
+    }));
+    warnings.extend(failed);
+
+    // The filled areas nest as `init` reads them; the strokes are united
+    // with them and with each other, never nested (#597).
+    let nested = merge_fills(
+        shapes.iter().map(|s| s.filled.clone()).collect(),
+        tolerance_mm,
+    )
+    .map_err(unreadable)?;
+    let stroke_areas: Vec<Region> = shapes
+        .iter()
+        .flat_map(|s| s.stroked.iter().cloned())
+        .collect();
+    let ink = union(&nested, &stroke_areas, tolerance_mm);
+    if ink.is_empty() {
+        return Err(ImportError::PrepNothingLeft);
+    }
+    warnings.extend(background_shapes(&walked.painted, &shapes, &nested, &ink));
+
+    // Step 4: the mode.
+    let ink_median_width_mm = median_width_mm(&ink, tolerance_mm);
+    let mut pieces = match options.mode {
+        PrepMode::Shapes => {
+            if let Some(median_width_mm) = ink_median_width_mm
+                && median_width_mm < REGIONS_SUGGESTED_BELOW_PCT / 100.0 * height_mm
+            {
+                warnings.push(ImportWarning::PrepRegionsSuggested {
+                    median_width_mm,
+                    height_mm,
+                });
+            }
+            ink
+        }
+        PrepMode::Regions => {
+            let open = ink_without_spaces(&ink);
+            if open > 0 {
+                warnings.push(ImportWarning::PrepRegionsOpenInk { count: open });
+            }
+            let spaces = spaces_between(&ink, tolerance_mm);
+            if spaces.is_empty() {
+                return Err(ImportError::PrepNothingLeft);
+            }
+            spaces
+        }
+    };
+
+    // Step 5: clean-up, holes, then pieces, then smoothing.
+    let min_detail_mm = options.min_detail_pct / 100.0 * height_mm;
+    let smooth_mm = options.smooth_pct / 100.0 * height_mm;
+    if options.min_detail_pct > 0.0 && options.smooth_pct > options.min_detail_pct / 2.0 {
+        warnings.push(ImportWarning::PrepSmoothExceedsDetail {
+            smooth_pct: options.smooth_pct,
+            min_detail_pct: options.min_detail_pct,
+        });
+    }
+    let (mut filled_holes, mut largest_hole_mm) = (0, 0.0_f64);
+    let (mut dropped_pieces, mut largest_piece_mm) = (0, 0.0_f64);
+    if min_detail_mm > 0.0 {
+        let mut kept: Vec<Region> = Vec::with_capacity(pieces.len());
+        for region in pieces {
+            let narrow: Vec<&Contour> = region
+                .holes()
+                .iter()
+                .filter(|hole| hole_is_narrower_than(hole, min_detail_mm, tolerance_mm))
+                .collect();
+            if narrow.is_empty() {
+                kept.push(region);
+                continue;
+            }
+            for hole in &narrow {
+                filled_holes += 1;
+                largest_hole_mm = largest_hole_mm.max(widest_mm(min_detail_mm, |w| {
+                    hole_is_narrower_than(hole, w, tolerance_mm)
+                }));
+            }
+            let contours: Vec<Contour> = std::iter::once(region.outer())
+                .chain(region.holes().iter().filter(|h| !narrow.contains(h)))
+                .cloned()
+                .collect();
+            let (rebuilt, _) = nest(contours).map_err(unreadable)?;
+            kept.extend(rebuilt);
+        }
+        pieces = Vec::with_capacity(kept.len());
+        for region in kept {
+            if is_narrower_than(&region, min_detail_mm, tolerance_mm) {
+                dropped_pieces += 1;
+                largest_piece_mm = largest_piece_mm.max(widest_mm(min_detail_mm, |w| {
+                    is_narrower_than(&region, w, tolerance_mm)
+                }));
+            } else {
+                pieces.push(region);
+            }
+        }
+        if pieces.is_empty() {
+            return Err(ImportError::PrepNothingLeft);
+        }
+    }
+    let mut smoothed_vertices = 0;
+    let mut skipped = 0;
+    if smooth_mm > 0.0 {
+        let before = vertex_count(&pieces);
+        let (simplified, put_back) = simplify_regions(&pieces, smooth_mm);
+        smoothed_vertices = before.saturating_sub(vertex_count(&simplified));
+        skipped = put_back.len();
+        pieces = simplified;
+    }
+    if filled_holes > 0 {
+        warnings.push(ImportWarning::PrepHoleFilled {
+            count: filled_holes,
+            largest_mm: largest_hole_mm,
+        });
+    }
+    if dropped_pieces > 0 {
+        warnings.push(ImportWarning::PrepSpeckDropped {
+            count: dropped_pieces,
+            largest_mm: largest_piece_mm,
+            threshold_mm: min_detail_mm,
+        });
+    }
+    if skipped > 0 {
+        warnings.push(ImportWarning::PrepSmoothSkipped { count: skipped });
+    }
+
+    // Step 5d and step 7: united once to shed slivers, which also puts the
+    // pieces in canonical order; they must still nest.
+    let pieces = union(&pieces, &[], tolerance_mm);
+    if pieces.is_empty() {
+        return Err(ImportError::PrepNothingLeft);
+    }
+    let contours: Vec<Contour> = pieces
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()).cloned())
+        .collect();
+    let (renested, _) = nest(contours).map_err(unreadable)?;
+    if renested.len() != pieces.len() {
+        return Err(ImportError::PrepOutputUnreadable {
+            reason: format!(
+                "{} pieces nest as {} after the clean-up",
+                pieces.len(),
+                renested.len()
+            ),
+        });
+    }
+    // The output is bounded by the cap too.
+    if vertex_count(&pieces) > options.max_vertices {
+        return Err(ImportError::TooManyVertices {
+            limit: options.max_vertices,
+        });
+    }
+
+    // Step 6: the report, on the final pieces.
+    let thinnest_mm = pieces
+        .iter()
+        .filter_map(|r| local_widths(r, tolerance_mm))
+        .map(|profile| profile.median_mm())
+        .reduce(f64::min);
+    let gap = narrowest_gap(&pieces, GAP_REACH_FRACTION * height_mm, tolerance_mm);
+    let report = PrepReport {
+        mode: options.mode,
+        read: read_report(&walked),
+        strokes,
+        design_height_mm: height_mm,
+        pieces: pieces.len(),
+        holes: pieces.iter().map(|r| r.holes().len()).sum(),
+        dropped_pieces,
+        filled_holes,
+        min_detail_mm,
+        smoothed_vertices,
+        smooth_mm,
+        ink_median_width_mm,
+        thinnest_piece: thinnest_mm.and_then(|w| WidthFigure::new(w, height_mm)),
+        narrowest_gap: gap.and_then(|g| WidthFigure::new(g.width_mm, height_mm)),
+    };
+    Ok((
+        Prepared {
+            pieces,
+            page_width_mm: walked.page_width_mm,
+            page_height_mm: walked.page_height_mm,
+            report,
+        },
+        warnings,
+    ))
+}
+
+/// `value_pct` is a threshold the command takes: `0` to
+/// [`MAX_THRESHOLD_PCT`].
+fn check_threshold(flag: &'static str, value_pct: f64) -> Result<(), ImportError> {
+    if (0.0..=MAX_THRESHOLD_PCT).contains(&value_pct) {
+        Ok(())
+    } else {
+        Err(ImportError::PrepThresholdRange { flag, value_pct })
+    }
+}
+
+/// A geometry failure that the pipeline's own steps should have made
+/// impossible.
+fn unreadable(error: dc_geometry::GeometryError) -> ImportError {
+    ImportError::PrepOutputUnreadable {
+        reason: error.to_string(),
+    }
+}
+
+/// The vertices of every contour of `regions`.
+fn vertex_count(regions: &[Region]) -> usize {
+    regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(|c| c.polyline().vertices().len())
+        .sum()
+}
+
+/// The widest point of something `is_narrower(w)` says is under `w`,
+/// found by bisection below `limit_mm`, mm.
+fn widest_mm(limit_mm: f64, is_narrower: impl Fn(f64) -> bool) -> f64 {
+    let (mut low, mut high) = (0.0, limit_mm);
+    for _ in 0..14 {
+        let mid = f64::midpoint(low, high);
+        if is_narrower(mid) {
+            high = mid;
+        } else {
+            low = mid;
+        }
+    }
+    f64::midpoint(low, high)
+}
+
+/// The length-weighted median of `local_widths` over every region of
+/// `ink`, mm; `None` when no region could be measured.
+fn median_width_mm(ink: &[Region], tolerance_mm: f64) -> Option<f64> {
+    let mut samples: Vec<(f64, f64)> = ink
+        .iter()
+        .filter_map(|r| local_widths(r, tolerance_mm))
+        .flat_map(|profile| profile.samples().to_vec())
+        .collect();
+    samples.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let total_mm: f64 = samples.iter().map(|s| s.1).sum();
+    let mut below_mm = 0.0;
+    for &(width_mm, length_mm) in &samples {
+        below_mm += length_mm;
+        if below_mm >= total_mm / 2.0 {
+            return Some(width_mm);
+        }
+    }
+    None
+}
+
+/// `prep_background_shape` for every painted path with a filled region
+/// whose box covers [`BACKGROUND_COVER_FRACTION`] of the ink's box and that
+/// has holes (its own, or after nesting) or sits behind the paths drawn
+/// after it.
+fn background_shapes(
+    painted: &[PaintedPath],
+    shapes: &[Shape],
+    nested: &[Region],
+    ink: &[Region],
+) -> Vec<ImportWarning> {
+    let Some(ink_box) = ink
+        .iter()
+        .filter_map(findings_bounds)
+        .reduce(|a, b| a.including(b.min).including(b.max))
+    else {
+        return Vec::new();
+    };
+    let ink_area_mm2 = (ink_box.max.x - ink_box.min.x) * (ink_box.max.y - ink_box.min.y);
+    if !(ink_area_mm2.is_finite() && ink_area_mm2 > 0.0) {
+        return Vec::new();
+    }
+    let covers = |region: &Region| {
+        findings_bounds(region).map_or(0.0, |b| {
+            (b.max.x - b.min.x) * (b.max.y - b.min.y) / ink_area_mm2
+        })
+    };
+    let nested_hole = nested
+        .iter()
+        .any(|r| covers(r) >= BACKGROUND_COVER_FRACTION && !r.holes().is_empty());
+    let mut out = Vec::new();
+    for (i, (path, shape)) in painted.iter().zip(shapes).enumerate() {
+        let behind = i + 1 < painted.len();
+        let found = shape.filled.iter().map(|r| (covers(r), r)).find(|&(c, r)| {
+            c >= BACKGROUND_COVER_FRACTION && (behind || nested_hole || !r.holes().is_empty())
+        });
+        if let Some((covers, _)) = found {
+            out.push(ImportWarning::PrepBackgroundShape {
+                path: path.name.clone(),
+                covers: covers.min(1.0),
+            });
+        }
+    }
+    out
+}
+
+/// What the walk read and skipped, as counts.
+fn read_report(walked: &Walk) -> ReadReport {
+    let count = |reason: HiddenReason| {
+        walked
+            .hidden
+            .iter()
+            .filter(|o| o.reason == reason)
+            .map(|o| o.shapes)
+            .sum()
+    };
+    let not_convertible = |kind: NotConvertible| {
+        walked
+            .not_convertible
+            .iter()
+            .filter(|u| u.kind == kind)
+            .map(|u| u.count)
+            .sum()
+    };
+    ReadReport {
+        paths: walked.painted.len() + walked.hidden.iter().map(|o| o.shapes).sum::<usize>(),
+        hidden: count(HiddenReason::Hidden),
+        unpainted: count(HiddenReason::Unpainted),
+        zero_opacity: count(HiddenReason::ZeroOpacity),
+        display_none: count(HiddenReason::DisplayNone),
+        text: not_convertible(NotConvertible::Text),
+        images: not_convertible(NotConvertible::Image),
+        clip_paths: not_convertible(NotConvertible::ClipPath),
+        masks: not_convertible(NotConvertible::Mask),
+    }
 }
 
 #[cfg(test)]
@@ -498,8 +959,15 @@ mod tests {
         };
         assert!(has(0.0, 0.0), "the 90 degree corner stays");
         assert!(has(40.0, 0.0));
-        assert!(has(40.0, 31.6));
         assert!(has(0.0, 30.0));
+        // The staircase's own first step is a spike of 0.02 mm on the top
+        // corner, which is within the threshold and goes with the rest.
+        assert!(
+            vertices
+                .iter()
+                .any(|v| near(v.x, 40.0, 0.001) && near(v.y, 31.6, 0.05)),
+            "{vertices:?}"
+        );
         assert!(p.report.smoothed_vertices > 100);
     }
 
@@ -597,7 +1065,8 @@ mod tests {
             smooth_pct: 0.0,
             ..PrepOptions::default()
         };
-        assert!(prepare(RING_CROSS, &edge).is_ok());
+        let block = svg(100.0, 100.0, &rect("block", 0.0, 0.0, 100.0, 100.0));
+        assert!(prepare(&block, &edge).is_ok());
     }
 
     #[test]
@@ -757,12 +1226,13 @@ mod tests {
         let art = svg(
             100.0,
             100.0,
-            r#"<path d="M0,0 L50000,0" fill="none" stroke="black" stroke-width="50" stroke-dasharray="0.001"/>"#,
+            r#"<path d="M0,0 L5000,0" fill="none" stroke="black" stroke-width="50" stroke-dasharray="0.001"/>"#,
         );
-        assert!(matches!(
-            prepare(&art, &PrepOptions::default()),
-            Err(ImportError::TooManyVertices { .. })
-        ));
+        let result = prepare(&art, &PrepOptions::default());
+        assert!(
+            matches!(result, Err(ImportError::TooManyVertices { .. })),
+            "{result:?}"
+        );
     }
 
     // 61i: determinism.
@@ -784,6 +1254,16 @@ mod tests {
         let (b, _) = run(&backward);
         assert_eq!(a.pieces, b.pieces);
         assert_eq!(a.report, b.report);
+        // Line art, in both modes.
+        let lines = [
+            r##"<circle cx="30" cy="30" r="29" fill="none" stroke="#000" stroke-width="2"/>"##,
+            r##"<line x1="1" y1="30" x2="59" y2="30" stroke="#000" stroke-width="2"/>"##,
+            r##"<line x1="30" y1="1" x2="30" y2="59" stroke="#000" stroke-width="2"/>"##,
+        ];
+        let forward = svg(60.0, 60.0, &lines.concat());
+        let mut reversed = lines.to_vec();
+        reversed.reverse();
+        let backward = svg(60.0, 60.0, &reversed.concat());
         for mode in [PrepMode::Shapes, PrepMode::Regions] {
             let options = PrepOptions {
                 mode,
@@ -812,6 +1292,24 @@ mod tests {
         let crlf = text.replace('\n', "\r\n");
         assert_ne!(crlf.as_bytes(), RING_CROSS);
         assert_eq!(run(RING_CROSS).0, run(crlf.as_bytes()).0);
+    }
+
+    /// The sign's stroked outlines union into numerical slivers (#611):
+    /// they are measured without a panic and never reach the pieces.
+    #[test]
+    fn the_sign_prepares_without_a_panic() {
+        let sign = include_bytes!("../../../../tests/fixtures/sign.svg");
+        for mode in [PrepMode::Shapes, PrepMode::Regions] {
+            let options = PrepOptions {
+                mode,
+                ..PrepOptions::default()
+            };
+            match prepare(sign, &options) {
+                Ok((p, _)) => assert!(!p.pieces.is_empty()),
+                Err(ImportError::PrepNothingLeft) => {}
+                Err(other) => panic!("{other:?}"),
+            }
+        }
     }
 
     // 61b: visible geometry only.

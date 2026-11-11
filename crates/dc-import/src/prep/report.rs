@@ -62,13 +62,16 @@ impl WidthFigure {
     /// either is not a positive finite number.
     #[must_use]
     pub fn new(width_mm: f64, height_mm: f64) -> Option<Self> {
-        let _ = (
+        let positive = |v: f64| v.is_finite() && v > 0.0;
+        if !(positive(width_mm) && positive(height_mm)) {
+            return None;
+        }
+        let share = width_mm / height_mm;
+        Some(Self {
             width_mm,
-            height_mm,
-            REPORT_HEIGHTS_MM,
-            REPORT_MIN_FEATURE_MM,
-        );
-        None
+            at_heights_mm: REPORT_HEIGHTS_MM.map(|h| share * h),
+            reaches_guide_at_mm: REPORT_MIN_FEATURE_MM / share,
+        })
     }
 }
 
