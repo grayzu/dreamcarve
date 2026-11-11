@@ -291,7 +291,39 @@ struct Outline<'r> {
 /// back ([`folds_back`]) where its region's closing, within `fine_mm`,
 /// bridges two stretches of it ([`merged`]).
 fn near_parts(regions: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<NearParts> {
-    let outlines: Vec<Outline<'_>> = regions
+    let mut near = outline_pairs(regions, distance_mm);
+    let outlines = outlines_of(regions);
+    // #515: an outline that comes near itself across the outside, where
+    // closing the gap would bridge two separate stretches of it.
+    for o in &outlines {
+        let Some(region) = regions.get(o.region) else {
+            continue;
+        };
+        let outside = |at: Point| !region.contains_point(at);
+        let Some((p, q)) = folds_back(o.contour, distance_mm, &outside, false) else {
+            continue;
+        };
+        let at = Point::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0);
+        if merged(std::slice::from_ref(region), distance_mm, fine_mm).as_slice()
+            == std::slice::from_ref(region)
+        {
+            continue;
+        }
+        near.push(NearParts {
+            first: o.index,
+            second: o.index,
+            at,
+            gap_mm: p.distance_to(q),
+        });
+    }
+    near.sort_by_key(|n| (n.first, n.second));
+    near
+}
+
+/// Every outline of `regions`, outer first, then its holes, with the
+/// region it bounds.
+fn outlines_of(regions: &[Region]) -> Vec<Outline<'_>> {
+    regions
         .iter()
         .enumerate()
         .flat_map(|(region, r)| {
@@ -310,7 +342,15 @@ fn near_parts(regions: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<NearPar
                     bounds: contour.polyline().bounds(),
                 })
         })
-        .collect();
+        .collect()
+}
+
+/// The pairs of outlines of different regions that come closer than
+/// `distance_mm`, and further than [`EPS_MM`], across a gap outside the
+/// design ([`near_parts`]), in outline order. [`crate::width::narrowest_gap`]
+/// reads the same search at a longer reach.
+pub(crate) fn outline_pairs(regions: &[Region], distance_mm: f64) -> Vec<NearParts> {
+    let outlines = outlines_of(regions);
     // The hole each region lies directly in, as (region, hole position),
     // or `None` for a part inside nothing.
     let container: Vec<Option<(usize, usize)>> = regions
@@ -364,30 +404,6 @@ fn near_parts(regions: &[Region], distance_mm: f64, fine_mm: f64) -> Vec<NearPar
             }
         }
     }
-    // #515: an outline that comes near itself across the outside, where
-    // closing the gap would bridge two separate stretches of it.
-    for o in &outlines {
-        let Some(region) = regions.get(o.region) else {
-            continue;
-        };
-        let outside = |at: Point| !region.contains_point(at);
-        let Some((p, q)) = folds_back(o.contour, distance_mm, &outside) else {
-            continue;
-        };
-        let at = Point::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0);
-        if merged(std::slice::from_ref(region), distance_mm, fine_mm).as_slice()
-            == std::slice::from_ref(region)
-        {
-            continue;
-        }
-        near.push(NearParts {
-            first: o.index,
-            second: o.index,
-            at,
-            gap_mm: p.distance_to(q),
-        });
-    }
-    near.sort_by_key(|n| (n.first, n.second));
     near
 }
 
@@ -404,10 +420,15 @@ const FOLD_STEPS: f64 = 8.0;
 /// outline folds back on itself there (#515), across a gap or up a narrow
 /// notch, which [`merged`] tells apart. A fold across the design itself, a
 /// thin web of it, is never one. `None` when it nowhere does.
-fn folds_back(
+///
+/// With `per_gap`, two stretches must lie [`FOLD_STEPS`] times *their own
+/// gap* apart rather than times `distance_mm`, which is how
+/// [`crate::width::narrowest_gap`] reads "more than 8 gaps apart".
+pub(crate) fn folds_back(
     contour: &Contour,
     distance_mm: f64,
     outside: &dyn Fn(Point) -> bool,
+    per_gap: bool,
 ) -> Option<(Point, Point)> {
     let segments: Vec<Segment> = contour.polyline().segments().collect();
     let length_of = |t: &Segment| {
@@ -422,7 +443,7 @@ fn folds_back(
         total_mm += length_of(t);
     }
     let apart_mm = FOLD_STEPS * distance_mm;
-    if total_mm < 2.0 * apart_mm {
+    if !per_gap && total_mm < 2.0 * apart_mm {
         return None;
     }
     let mut order: Vec<(usize, Rect)> = segments
@@ -444,13 +465,17 @@ fn folds_back(
                 continue;
             };
             let gap_along = (ai - aj).abs();
-            if gap_along.min(total_mm - gap_along) < apart_mm {
+            let along_mm = gap_along.min(total_mm - gap_along);
+            if !per_gap && along_mm < apart_mm {
                 continue;
             }
             let (Some(&s), Some(&t)) = (segments.get(i), segments.get(j)) else {
                 continue;
             };
             let gap_mm = segment_distance_mm(s, t);
+            if per_gap && along_mm < FOLD_STEPS * gap_mm {
+                continue;
+            }
             if gap_mm > EPS_MM && gap_mm < distance_mm && best.is_none_or(|(b, ..)| gap_mm < b) {
                 let (p, q) = closest_points(s, t);
                 if outside(Point::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)) {

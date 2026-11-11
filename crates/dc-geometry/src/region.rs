@@ -76,6 +76,23 @@ impl Region {
         }
     }
 
+    /// The region with its contours replaced by `contours` (the outer,
+    /// then one for each hole, in [`Region::holes`] order), the input
+    /// positions and depth kept. `None` when the count differs. The caller
+    /// keeps the outer counter-clockwise and the holes clockwise.
+    pub(crate) fn with_contours(&self, contours: Vec<Contour>) -> Option<Self> {
+        let mut contours = contours.into_iter();
+        let outer = contours.next()?;
+        let holes: Vec<Contour> = contours.collect();
+        (holes.len() == self.holes.len()).then(|| Self {
+            outer,
+            outer_index: self.outer_index,
+            holes,
+            hole_indices: self.hole_indices.clone(),
+            depth: self.depth,
+        })
+    }
+
     /// How many input contours enclose [`Region::outer`]: 0 for a part
     /// inside nothing, 2 for an island in a hole of a depth-0 part, and so
     /// on (always even). A region that encloses another has a smaller depth.
