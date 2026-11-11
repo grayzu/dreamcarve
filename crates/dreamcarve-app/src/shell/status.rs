@@ -175,6 +175,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .inner_margin(egui::Margin::symmetric(12, 0)),
         )
         .show(ui, |ui| {
+            if state.inert() {
+                ui.disable();
+            }
             let full = ui.max_rect();
             ui.painter().hline(
                 full.x_range(),

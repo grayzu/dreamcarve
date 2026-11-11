@@ -384,6 +384,22 @@ pub(crate) enum Action {
     /// operation in the editor, the CAM panel on Operations, its row
     /// scrolled into view. The shape selection stays.
     ShowOperation(dc_project::OperationId),
+    /// The Targets row's *Edit*: target editing on this operation (#619;
+    /// capability 67).
+    EditTargets(dc_project::OperationId),
+    /// A click on a shape or its Design Tree row in target editing: in
+    /// the draft or out of it.
+    ToggleTarget(dc_project::InstanceId),
+    /// A marquee in target editing: these shapes added to the draft, or
+    /// with Alt held taken out of it.
+    BoxTargets {
+        ids: Vec<dc_project::InstanceId>,
+        remove: bool,
+    },
+    /// The target-editing bar's *Done* (Enter): the draft as one step.
+    CommitTargets,
+    /// The target-editing bar's *Cancel* (Escape).
+    CancelTargets,
     /// Open the export sheet (File ▸ Export G-code…, the toolbar, ⌘E;
     /// #547).
     OpenExport,
@@ -401,6 +417,25 @@ impl Action {
     /// [`Action::Run`] of `command`.
     pub(crate) fn run(command: Command) -> Self {
         Self::Run(Box::new(command))
+    }
+
+    /// Whether the action still runs in target editing (capability 67:
+    /// "nothing else can be selected or moved"): the mode's own, the
+    /// camera's, and what shows or hides a panel. Every other is dropped,
+    /// whatever raised it.
+    const fn in_target_editing(&self) -> bool {
+        matches!(
+            self,
+            Self::ToggleTarget(_)
+                | Self::BoxTargets { .. }
+                | Self::CommitTargets
+                | Self::CancelTargets
+                | Self::SetCamera(_)
+                | Self::FitView
+                | Self::ShowLeft
+                | Self::ShowRight
+                | Self::Refused(_)
+        )
     }
 }
 
@@ -980,6 +1015,12 @@ impl Shell {
     /// What the window's close button, dropped files and the keyboard ask
     /// for, before the frame is drawn.
     fn read_input(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        // The window's close button and a dropped file open a sheet, and
+        // a sheet's buttons do not run under target editing: either one
+        // is Cancel first (capability 67).
+        if ctx.input(|i| i.viewport().close_requested() || !i.raw.dropped_files.is_empty()) {
+            self.app.cancel_targets();
+        }
         if ctx.input(|i| i.viewport().close_requested()) && !self.close_allowed {
             if self.app.is_dirty() {
                 ctx.send_viewport_cmd(ViewportCommand::CancelClose);
@@ -1014,7 +1055,23 @@ impl Shell {
             || self.import.is_some()
             || self.export.is_some();
         focus::begin(ctx, sheet_open);
-        if !sheet_open {
+        if self.app.target_editing().is_some() {
+            // Target editing has two keys, Enter for Done and Escape for
+            // Cancel; no other shortcut runs under it (capability 67).
+            if !sheet_open {
+                let (done, cancel) = ctx.input_mut(|input| {
+                    (
+                        input.consume_key(Modifiers::NONE, Key::Enter),
+                        input.consume_key(Modifiers::NONE, Key::Escape),
+                    )
+                });
+                if cancel {
+                    actions.push(Action::CancelTargets);
+                } else if done {
+                    actions.push(Action::CommitTargets);
+                }
+            }
+        } else if !sheet_open {
             actions.extend(shortcuts(ctx, &self.app));
             actions.extend(viewport::keys(ctx, &self.app));
         }
@@ -1212,6 +1269,27 @@ impl Shell {
                 self.app.edit(Some(op.clone()));
                 panels::operations::reveal(ctx, op);
                 self.show_operations();
+            }
+            Action::EditTargets(op) => {
+                // The mode is on the drawing: no pick stays armed under it.
+                viewport::tab_tool::arm(ctx, false);
+                panels::project::arm_park_pick(ctx, false);
+                panels::editor::arm_point_pick(ctx, None);
+                self.app.edit_targets(&op);
+                self.viewport.reset_clicks();
+                ctx.request_repaint();
+            }
+            Action::ToggleTarget(id) => self.app.toggle_target(&id),
+            Action::BoxTargets { ids, remove } => self.app.box_targets(&ids, remove),
+            Action::CommitTargets => {
+                if let Err(e) = self.app.commit_targets() {
+                    self.message = Some(e.to_string());
+                }
+                ctx.request_repaint();
+            }
+            Action::CancelTargets => {
+                self.app.cancel_targets();
+                ctx.request_repaint();
             }
             Action::OpenExport => {
                 self.export = Some(panels::export::Sheet::open(
@@ -1550,6 +1628,15 @@ pub(crate) struct FrameState<'a> {
     pub settings_forced: bool,
 }
 
+impl FrameState<'_> {
+    /// Whether target editing is on (capability 67; `experience.md`,
+    /// section 8, "Target editing"): every part of the window but the
+    /// Viewport and the Design Tree draws dimmed and takes no clicks.
+    pub(crate) fn inert(&self) -> bool {
+        self.app.target_editing().is_some()
+    }
+}
+
 impl eframe::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -1694,8 +1781,19 @@ impl eframe::App for Shell {
             window: size,
         };
 
+        // In target editing only the mode's own actions run, whatever a
+        // panel or a key raised (capability 67).
+        let editing_targets = self.app.target_editing().is_some();
         for action in actions {
-            self.run(&ctx, action);
+            if !editing_targets || action.in_target_editing() {
+                self.run(&ctx, action);
+            }
+        }
+        // The operation row under the pointer previews its targets.
+        let hovered = panels::operations::take_hovered(&ctx);
+        if self.app.previewed() != hovered.as_ref() {
+            self.app.preview_targets(hovered);
+            ctx.request_repaint();
         }
         // Post the next work once the frame's edits have settled; look
         // again soon while any is out or waiting.

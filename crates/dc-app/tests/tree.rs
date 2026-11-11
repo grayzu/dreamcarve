@@ -361,3 +361,78 @@ fn rename_is_one_step() {
     harness.app.undo();
     assert_eq!(harness.app.project(), &project, "undo restores the name");
 }
+
+/// Slice 27 (#619; capabilities 57 and 67): while an operation is selected
+/// its targets' rows are marked, in its colour. Selecting the plaque's
+/// Panel marks `pocket` and `island` and no other row; with no operation
+/// selected no row is marked. The context menu then offers *Add to
+/// "Panel"* for rows that are not its targets and *Remove from "Panel"*
+/// for rows that are, each one undo step.
+#[test]
+fn target_rows_marked_for_selected_operation() {
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    let marked = |harness: &Harness| -> Vec<(String, usize)> {
+        Tree::build(harness.app.project())
+            .with_targets(harness.app.scene().targets())
+            .shapes
+            .iter()
+            .filter_map(|r| Some((r.name.clone(), r.target?)))
+            .collect()
+    };
+    assert!(marked(&harness).is_empty(), "no operation is selected");
+
+    harness.app.edit(Some(OperationId::new("op1")));
+    assert_eq!(
+        marked(&harness),
+        [("pocket".to_owned(), 2), ("island".to_owned(), 2)]
+    );
+
+    // The menu on the square: Add to; on the island: Remove from; on
+    // both: both; with no operation selected: neither.
+    let panel = |harness: &Harness| {
+        harness
+            .app
+            .project()
+            .operations
+            .iter()
+            .find(|o| o.id().as_str() == "op1")
+            .cloned()
+            .expect("the Panel")
+    };
+    let items = |harness: &Harness, ids: &[InstanceId]| {
+        dc_app::tree::menu(harness.app.project(), ids, Some(&panel(harness)))
+    };
+    let square = items(&harness, &[id("i4")]);
+    assert!(square.contains(&MenuItem::AddTo) && !square.contains(&MenuItem::RemoveFrom));
+    let island = items(&harness, &[id("i3")]);
+    assert!(island.contains(&MenuItem::RemoveFrom) && !island.contains(&MenuItem::AddTo));
+    let both = items(&harness, &[id("i3"), id("i4")]);
+    assert!(both.contains(&MenuItem::AddTo) && both.contains(&MenuItem::RemoveFrom));
+    let none = dc_app::tree::menu(harness.app.project(), &[id("i4")], None);
+    assert!(!none.contains(&MenuItem::AddTo) && !none.contains(&MenuItem::RemoveFrom));
+
+    let add = dc_app::tree::target_command(&panel(&harness), MenuItem::AddTo, &[id("i4")])
+        .expect("the file takes it")
+        .expect("a change");
+    assert_eq!(harness.run(add).expect("adds"), "Set targets of “Panel”");
+    assert_eq!(
+        marked(&harness),
+        [
+            ("pocket".to_owned(), 2),
+            ("island".to_owned(), 2),
+            ("square".to_owned(), 2)
+        ]
+    );
+    let remove = dc_app::tree::target_command(&panel(&harness), MenuItem::RemoveFrom, &[id("i3")])
+        .expect("the file takes it")
+        .expect("a change");
+    harness.run(remove).expect("removes");
+    assert_eq!(
+        marked(&harness),
+        [("pocket".to_owned(), 2), ("square".to_owned(), 2)]
+    );
+    assert_eq!(harness.app.history().undo_labels().count(), 2);
+
+    harness.app.edit(None);
+    assert!(marked(&harness).is_empty());
+}

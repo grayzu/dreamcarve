@@ -18,6 +18,7 @@
 
 mod common;
 
+use dc_app::scene::ShapeStyle;
 use dc_app::test_support::Harness;
 use dc_app::viewport::camera::Pos;
 use dc_app::{Command, Selection};
@@ -488,4 +489,94 @@ fn male_board_sits_beside_the_stock_in_display_only() {
             .male_board()
             .is_none()
     );
+}
+
+/// Slice 27 (#619; capability 67, acceptance 98): while an operation is
+/// selected its targets are marked where the shapes are. Selecting the
+/// plaque's Panel, the third operation of the list, gives `pocket` and
+/// `island` the style `Target` in the palette's third colour (index 2,
+/// the colour of its row and of its toolpath) and every other shape
+/// `Faded`; clearing the operation selection returns all to `Normal`.
+/// Marking is view state: the Scene is not rebuilt, and only its target
+/// revision moves, so the Viewport redraws the shapes and nothing else.
+#[test]
+fn selected_operation_targets_are_marked() {
+    let mut harness = Harness::from_project(plaque());
+    let panel = dc_project::OperationId::new("op1");
+    let names: Vec<(dc_project::InstanceId, String)> = harness
+        .app
+        .project()
+        .instances
+        .iter()
+        .map(|i| (i.id.clone(), i.name.clone()))
+        .collect();
+    let built = harness.app.scene().revision();
+    let unmarked = harness.app.scene().targets_revision();
+    for (id, name) in &names {
+        assert_eq!(harness.app.scene().style(id), ShapeStyle::Normal, "{name}");
+    }
+
+    harness.app.edit(Some(panel.clone()));
+    let scene = harness.app.scene();
+    for (id, name) in &names {
+        let want = if name == "pocket" || name == "island" {
+            ShapeStyle::Target { colour: 2 }
+        } else {
+            ShapeStyle::Faded
+        };
+        assert_eq!(scene.style(id), want, "{name}");
+    }
+    assert_eq!(scene.revision(), built, "marking rebuilds nothing");
+    assert_ne!(scene.targets_revision(), unmarked);
+    let marked = scene.targets_revision();
+
+    // Once generated the colour is still the toolpath's: the Panel's run
+    // is the third of the preview.
+    harness.generate();
+    let scene = harness.app.scene();
+    assert_eq!(scene.operation(&panel).expect("enabled").colour, 2);
+    assert_eq!(
+        scene.style(&names[1].0),
+        ShapeStyle::Target { colour: 2 },
+        "the pocket"
+    );
+    assert_eq!(scene.targets_revision(), marked, "nothing changed");
+
+    // Hovering another operation's row previews its targets, until the
+    // pointer leaves.
+    harness
+        .app
+        .preview_targets(Some(dc_project::OperationId::new("op2")));
+    for (id, name) in &names {
+        let want = if name == "square" {
+            ShapeStyle::Target { colour: 3 }
+        } else {
+            ShapeStyle::Faded
+        };
+        assert_eq!(harness.app.scene().style(id), want, "{name} previewed");
+    }
+    harness.app.preview_targets(None);
+    assert_eq!(
+        harness.app.scene().style(&names[1].0),
+        ShapeStyle::Target { colour: 2 }
+    );
+
+    // An edit keeps the marks, on the new snapshot's targets.
+    harness
+        .run(Command::DeleteInstances(vec![names[2].0.clone()]))
+        .expect("deletes the island");
+    assert_eq!(
+        harness.app.scene().style(&names[1].0),
+        ShapeStyle::Target { colour: 2 }
+    );
+    assert_eq!(
+        harness.app.scene().style(&names[2].0),
+        ShapeStyle::Faded,
+        "a shape that is gone is no target"
+    );
+
+    harness.app.edit(None);
+    for (id, name) in &names {
+        assert_eq!(harness.app.scene().style(id), ShapeStyle::Normal, "{name}");
+    }
 }

@@ -17,7 +17,8 @@
 // row, a toolpath's operation colour, its depth step and its stale flag:
 // the colour is the operation's, or with `by_depth` set and a depth step
 // present, the ramp texture's texel at that step; a stale segment draws
-// at 35 % alpha.
+// at 35 % alpha. A shape behind the marked operation's targets sets the
+// faded bit and draws at 40 % alpha.
 //
 // Project space is Y-up and so is clip space: the transform below scales
 // about the camera's centre and never flips. The one Y flip of the app is
@@ -68,6 +69,7 @@ const DASHED: u32 = 1u;
 const FADES: u32 = 2u;
 const RING: u32 = 4u;
 const STALE_ALPHA: f32 = 0.35;
+const FADED_ALPHA: f32 = 0.4;
 // The first operation colour row; renderer.rs writes the style count here.
 const OP_BASE: u32 = 0u;
 
@@ -161,6 +163,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     if (((word >> 17u) & 1u) == 1u) {
         colour = colour * STALE_ALPHA;
+    }
+    if (((word >> 22u) & 1u) == 1u) {
+        colour = colour * FADED_ALPHA;
     }
     return colour * coverage;
 }

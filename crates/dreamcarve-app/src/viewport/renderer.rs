@@ -59,6 +59,8 @@ pub enum Layer {
     Arrows,
     /// The program extents boxes.
     Extents,
+    /// The marked operation's targets, over the toolpaths (capability 67).
+    Targets,
     /// The shape under the pointer.
     Hover,
     /// The selected shapes.
@@ -67,12 +69,13 @@ pub enum Layer {
 
 impl Layer {
     /// Every layer, back to front.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Grid,
         Self::Stock,
         Self::Shapes,
         Self::Arrows,
         Self::Extents,
+        Self::Targets,
         Self::Hover,
         Self::Selection,
     ];
@@ -133,19 +136,31 @@ pub enum StyleId {
     MaleBoard,
     /// A shape mirrored on the male inlay board, 1.25 px solid.
     MaleShape,
+    /// A closed target of the marked operation: 2 px solid, in the
+    /// operation's colour (capability 67; slice 27, #619).
+    Target,
+    /// An open target: 2 px, dashed 4/3.
+    TargetOpen,
+    /// A closed target that is also selected: 4 px in the operation's
+    /// colour, a halo under the 2-px selection stroke.
+    TargetHalo,
+    /// An open target that is also selected.
+    TargetHaloOpen,
 }
 
 /// The style table's rows, in [`StyleId`] order. The operation colours
 /// follow them in the buffer, eight rows from here (`shader.wgsl`'s
 /// `OP_BASE`).
-pub const STYLE_COUNT: usize = 22;
+pub const STYLE_COUNT: usize = 26;
 /// The operation colour rows after the styles.
 pub const OPERATION_COLOURS: usize = 8;
 
 /// A segment's style word: its [`StyleId`] in bits 0–7; for a toolpath,
 /// its depth step in bits 8–15 with bit 16 set when it cuts (so *By
 /// depth* colours it), bit 17 when it is stale, and its operation's
-/// colour as index + 1 in bits 18–21 (0: the row's own colour).
+/// colour as index + 1 in bits 18–21 (0: the row's own colour). A shape
+/// sets bit 22 when it fades behind the marked operation's targets, and
+/// a target carries that operation's colour in bits 18–21.
 /// `shader.wgsl` decodes the same bits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StyleWord(u32);
@@ -170,10 +185,37 @@ impl StyleWord {
         Self(word)
     }
 
+    /// A shape's outline of row `style` behind the marked operation's
+    /// targets: drawn at 40 % (capability 67).
+    #[must_use]
+    pub const fn faded(style: StyleId) -> Self {
+        Self(style as u32 | (1 << 22))
+    }
+
+    /// A target's outline of row `style` in operation colour `colour`.
+    #[must_use]
+    pub fn target(style: StyleId, colour: usize) -> Self {
+        Self::toolpath(style, Some(colour), None, false)
+    }
+
     /// The word as the shader reads it.
     #[must_use]
     pub const fn bits(self) -> u32 {
         self.0
+    }
+
+    /// Whether it fades behind the marked targets.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn is_faded(self) -> bool {
+        self.0 & (1 << 22) != 0
+    }
+
+    /// Its operation colour's slot, 0 for the row's own colour.
+    #[cfg(test)]
+    #[must_use]
+    pub const fn colour_slot(self) -> u32 {
+        (self.0 >> 18) & 0xF
     }
 
     /// The row it names.
@@ -233,6 +275,11 @@ pub struct StyleTable {
 const MARK_MIN_RADIUS_PT: f32 = 4.0;
 /// A plunge mark's radius, logical pixels: a 6-px circle.
 const PLUNGE_RADIUS_PT: f32 = 3.0;
+/// A target's outline, logical pixels (`experience.md`, section 9).
+const TARGET_PT: f32 = 2.0;
+/// A selected target's halo, logical pixels: a pixel shows each side of
+/// the 2-px selection stroke drawn over it.
+const TARGET_HALO_PT: f32 = 4.0;
 
 /// The style table of `palette`, in [`StyleId`] order.
 #[must_use]
@@ -282,6 +329,10 @@ pub fn styles(palette: &crate::theme::Palette) -> StyleTable {
             dashed(palette.viewport_extents_edge, 1.0, 6.0, 4.0),
             dashed(palette.viewport_male_board, 1.25, 6.0, 4.0),
             solid(palette.viewport_male_board, 1.25),
+            solid(per_op, TARGET_PT),
+            dashed(per_op, TARGET_PT, 4.0, 3.0),
+            solid(per_op, TARGET_HALO_PT),
+            dashed(per_op, TARGET_HALO_PT, 4.0, 3.0),
         ],
         operations: std::array::from_fn(|k| palette.operation(k)),
         ramp: palette.depth_ramp,
@@ -849,7 +900,7 @@ mod tests {
     fn shader_reads_the_operation_colours_after_the_styles() {
         let source = include_str!("shader.wgsl");
         assert!(source.contains("const OP_BASE: u32 = 0u;"));
-        assert_eq!(StyleId::MaleShape as usize + 1, STYLE_COUNT);
+        assert_eq!(StyleId::TargetHaloOpen as usize + 1, STYLE_COUNT);
     }
 
     /// A style word keeps its parts apart: the row, the depth step, the
@@ -865,5 +916,15 @@ mod tests {
         let plain = StyleWord::from(StyleId::Shape);
         assert_eq!(plain.bits(), StyleId::Shape as u32);
         assert!(!plain.stale());
+        // A faded shape keeps its row; a target carries its operation's
+        // colour and neither fades nor is stale.
+        let faded = StyleWord::faded(StyleId::ShapeOpen);
+        assert_eq!(faded.row(), StyleId::ShapeOpen as u32);
+        assert!(faded.is_faded() && !faded.stale());
+        assert_eq!(faded.colour_slot(), 0);
+        let target = StyleWord::target(StyleId::Target, 2);
+        assert_eq!(target.row(), StyleId::Target as u32);
+        assert_eq!(target.colour_slot(), 3);
+        assert!(!target.is_faded() && !target.stale());
     }
 }
