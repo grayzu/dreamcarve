@@ -6,7 +6,7 @@
 //! 13, #542): the list at a [`FieldKind::ClearingList`] row's key path, a
 //! V-Carve's or an Inlay's `clearing`, as one block. *Add pass* appends a
 //! pass of the next smaller end mill ([`next_smaller_end_mill`]), with an
-//! offset clearance and `init`'s direction and entry; *Remove* drops one;
+//! offset clearance and `init`'s direction and entry; *Delete* drops one;
 //! a drag is [`reorder`], one step. Each edit is the whole list written
 //! back as one `UpdateOperation`, so each is one undo step. Each pass's
 //! own fields are [`PASS`]'s rows at the pass's key path
@@ -134,7 +134,7 @@ fn no_pass(list: &Row, index: usize, count: usize) -> CommandError {
     }
 }
 
-/// *Remove* on pass `index`, from 0.
+/// *Delete* on pass `index`, from 0.
 ///
 /// # Errors
 ///

@@ -172,7 +172,7 @@ fn default_project(
             })
             .map(|i| i.id.clone())
             .collect();
-        let tool = placeholder_tool();
+        let tool = placeholder_tool(ToolId::new(TOOL_ID), TOOL_NAME);
         let profile = default_profile(targets, tool.id.clone());
         (vec![tool], vec![Operation::Profile(profile)])
     } else {
@@ -206,12 +206,16 @@ fn default_project(
     }
 }
 
-/// The placeholder tool `t1`, "Set me": a 1/4" two-flute end mill with no
-/// feeds, speed or step-down.
-fn placeholder_tool() -> Tool {
+/// `init`'s placeholder tool, under `id` and `name`: a 1/4" two-flute end
+/// mill (the file needs a diameter) with no feed, plunge rate, speed,
+/// step-down or stepover, which are never invented (S20). `init` writes it
+/// as `t1`, "Set me"; the app's *New tool* (functional spec, phase 4,
+/// capability 63) starts from it too.
+#[must_use]
+pub fn placeholder_tool(id: ToolId, name: impl Into<String>) -> Tool {
     Tool {
-        id: ToolId::new(TOOL_ID),
-        name: TOOL_NAME.into(),
+        id,
+        name: name.into(),
         vendor: None,
         product_id: None,
         number: None,

@@ -61,10 +61,13 @@ pub enum Command {
     SetPostSettings(PostProcessorRef),
     /// Add tools under ids the project does not have.
     AddTools(Vec<Tool>),
+    /// *New tool* (capability 63): add a tool made from scratch, under an
+    /// id the project does not have; labelled *New tool “tool4”*.
+    NewTool(Tool),
     /// Replace the tool with the same id.
     UpdateTool(Tool),
-    /// Remove a tool no operation uses.
-    RemoveTool(ToolId),
+    /// Delete a tool no operation uses.
+    DeleteTool(ToolId),
     /// Append a drawing's shapes, placed as drawn (capability 55). `name`
     /// is the file's, for the label.
     ImportDrawing {
@@ -219,16 +222,10 @@ impl Command {
                     return Err(CommandError::NothingToDo);
                 }
                 for tool in tools {
-                    if next.tools.iter().any(|t| t.id == tool.id) {
-                        return Err(CommandError::DuplicateId {
-                            kind: "a tool",
-                            id: tool.id.as_str().to_owned(),
-                        });
-                    }
-                    check_tool(tool)?;
-                    next.tools.push(tool.clone());
+                    add_tool(&mut next, tool)?;
                 }
             }
+            Self::NewTool(tool) => add_tool(&mut next, tool)?,
             Self::UpdateTool(tool) => {
                 check_tool(tool)?;
                 let slot = next
@@ -240,7 +237,7 @@ impl Command {
                     })?;
                 *slot = tool.clone();
             }
-            Self::RemoveTool(id) => operations::remove_tool(&mut next, id)?,
+            Self::DeleteTool(id) => operations::delete_tool(&mut next, id)?,
             Self::ImportDrawing { drawing, .. } => {
                 next = dc_job::drawing_into(project, drawing.clone()).0;
             }
@@ -378,16 +375,19 @@ impl Command {
                     &[("count", &tools.len().to_string())],
                 ),
             },
+            Self::NewTool(tool) => {
+                with_subject(StrKey::CommandLabelNewTool, &one(strings, &tool.name))
+            }
             Self::UpdateTool(tool) => {
                 with_subject(StrKey::CommandLabelUpdateTool, &one(strings, &tool.name))
             }
-            Self::RemoveTool(id) => {
+            Self::DeleteTool(id) => {
                 let name = before
                     .tools
                     .iter()
                     .find(|t| t.id == *id)
                     .map_or_else(|| id.as_str().to_owned(), |t| t.name.clone());
-                with_subject(StrKey::CommandLabelRemoveTool, &one(strings, &name))
+                with_subject(StrKey::CommandLabelDeleteTool, &one(strings, &name))
             }
             Self::ImportDrawing { name, .. } => {
                 strings.fmt(StrKey::CommandLabelImport, &[("name", name)])
@@ -517,6 +517,20 @@ fn finite(field: &'static str, value: f64) -> Result<(), CommandError> {
 /// [`finite`] for an optional value.
 fn finite_opt(field: &'static str, value: Option<f64>) -> Result<(), CommandError> {
     value.map_or(Ok(()), |v| finite(field, v))
+}
+
+/// Appends `tool` to `project`, refused when its id is taken or a number
+/// cannot be stored.
+fn add_tool(project: &mut Project, tool: &Tool) -> Result<(), CommandError> {
+    if project.tools.iter().any(|t| t.id == tool.id) {
+        return Err(CommandError::DuplicateId {
+            kind: "a tool",
+            id: tool.id.as_str().to_owned(),
+        });
+    }
+    check_tool(tool)?;
+    project.tools.push(tool.clone());
+    Ok(())
 }
 
 /// A tool's numbers can be stored.

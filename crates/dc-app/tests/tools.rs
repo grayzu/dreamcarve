@@ -647,7 +647,8 @@ fn new_tool_never_fills_a_rate() {
 
 /// Slice 29 (#621; acceptance 100): a new tool given to an operation
 /// blocks export with the CLI's refusal for the saved file, naming each
-/// unset rate; typing the three rates in lifts it.
+/// unset rate; typing the rates in (and the step-down the Panel takes
+/// from its tool) lifts it.
 #[test]
 fn export_refuses_a_new_tool_until_its_rates_are_set() {
     let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
@@ -662,7 +663,10 @@ fn export_refuses_a_new_tool_until_its_rates_are_set() {
         .find(|op| op.name() == "Panel")
         .unwrap()
         .clone();
-    let row = dc_app::editor::fields::row_for(&panel, "tool").expect("Panel has a tool row");
+    let row = dc_app::editor::fields::rows(&panel)
+        .into_iter()
+        .find(|r| r.key == "tool")
+        .expect("Panel has a tool row");
     let command = dc_app::editor::set_tool(&panel, row, &new.id)
         .unwrap()
         .expect("the tool changes");
@@ -696,6 +700,8 @@ fn export_refuses_a_new_tool_until_its_rates_are_set() {
         (ToolField::Feed, "1000"),
         (ToolField::Plunge, "300"),
         (ToolField::Rpm, "18000"),
+        // The Panel takes its step-down from the tool, so it needs one too.
+        (ToolField::StepDown, "3"),
     ] {
         set = tools::set_field(&set, field, text, Units::Mm).unwrap();
     }

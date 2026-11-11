@@ -90,9 +90,9 @@ pub(super) fn duplicate(project: &Project, id: &OperationId) -> Result<Project, 
     Ok(next)
 }
 
-/// `RemoveTool`: refused, naming the operations, while any uses the tool
+/// `DeleteTool`: refused, naming the operations, while any uses the tool
 /// in a run (its own, a clearing pass's, a cut-out's).
-pub(super) fn remove_tool(project: &mut Project, id: &ToolId) -> Result<(), CommandError> {
+pub(super) fn delete_tool(project: &mut Project, id: &ToolId) -> Result<(), CommandError> {
     let Some(at) = project.tools.iter().position(|t| t.id == *id) else {
         return Err(CommandError::UnknownTool { id: id.clone() });
     };
