@@ -37,7 +37,7 @@ const DATE: &str = "2026-10-30";
 /// A `width` × `height` × 12 mm project with one instance `i1` of
 /// `profiles`, the 90° V-bit `t2`, a 60° one `t5` and a 3.175 mm end mill
 /// `t3`, and no operations.
-fn drawn(profiles: Vec<Polyline>, width_mm: f64, height_mm: f64) -> Project {
+pub(super) fn drawn(profiles: Vec<Polyline>, width_mm: f64, height_mm: f64) -> Project {
     let mut p = sample_project();
     p.stock = Stock {
         width_mm,
@@ -81,7 +81,7 @@ fn drawn(profiles: Vec<Polyline>, width_mm: f64, height_mm: f64) -> Project {
 }
 
 /// The rectangle and the square of the hand-written programs.
-fn two_shapes() -> Project {
+pub(super) fn two_shapes() -> Project {
     drawn(
         vec![
             Polyline::rect(Point::new(10.0, 20.0), 30.0, 10.0),
@@ -140,7 +140,7 @@ pub(super) fn board_of(op: &InlayOp) -> Board {
 
 /// S9 and S17 alone on hand-written `text`, as the V-bit's run of `op` in
 /// `project` (which gains `op`).
-fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<(), ExportError> {
+pub(super) fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<(), ExportError> {
     let board = board_of(op);
     let mut project = project.clone();
     project.operations = vec![Operation::Inlay(op.clone())];
@@ -174,12 +174,12 @@ fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<(), ExportE
 
 /// A program that rapids to (`x`, `y`) at Z 5, down to Z 1 (the stock
 /// top plus the entry clearance), runs `cuts` and lifts.
-fn program_at(x: f64, y: f64, cuts: &str) -> String {
+pub(super) fn program_at(x: f64, y: f64, cuts: &str) -> String {
     format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG0 Z1\n{cuts}G0 Z5\n")
 }
 
 #[track_caller]
-fn assert_cone_off(result: Result<(), ExportError>, line: usize) {
+pub(super) fn assert_cone_off(result: Result<(), ExportError>, line: usize) {
     assert!(
         matches!(result, Err(ExportError::ConeOffMaterial { line: l, .. }) if l == line),
         "expected ConeOffMaterial at line {line}: {result:?}"
@@ -188,7 +188,7 @@ fn assert_cone_off(result: Result<(), ExportError>, line: usize) {
 
 /// Generates `op` in `project` (which gains it) and emits every run of
 /// it, one program per tool, through the whole safety pass.
-fn export_inlay(project: &Project, op: &InlayOp) -> Result<Vec<String>, ExportError> {
+pub(super) fn export_inlay(project: &Project, op: &InlayOp) -> Result<Vec<String>, ExportError> {
     let mut project = project.clone();
     project.operations = vec![Operation::Inlay(op.clone())];
     let (runs, _) = dc_cam::generate_inlay_board(&project, op, board_of(op))
@@ -398,7 +398,7 @@ fn generated_rounded_male_passes_the_safety_pass() {
 /// A clearing pass with the 3.175 mm end mill `t3`, which fits the two
 /// shapes' 6 mm band on the 90° bit (`M − P·s` = 5 mm), so the band's
 /// edge is open.
-fn edge_pass() -> ClearingPass {
+pub(super) fn edge_pass() -> ClearingPass {
     ClearingPass {
         tool: ToolId::new("t3"),
         strategy: ClearanceStrategy::Offset,
@@ -558,7 +558,7 @@ fn male_cut_inside_the_plug_fails_s17() {
 
 /// A cut-out with the 3.175 mm end mill `t3` and `tabs`, 0.2 mm
 /// through.
-fn cut_out(tabs: Option<dc_project::TabSpec>) -> dc_project::InlayCutOut {
+pub(super) fn cut_out(tabs: Option<dc_project::TabSpec>) -> dc_project::InlayCutOut {
     dc_project::InlayCutOut {
         tool: ToolId::new("t3"),
         tabs,
@@ -567,7 +567,7 @@ fn cut_out(tabs: Option<dc_project::TabSpec>) -> dc_project::InlayCutOut {
 }
 
 /// Four rect tabs 4 mm wide and 2 mm tall.
-fn four_tabs() -> dc_project::TabSpec {
+pub(super) fn four_tabs() -> dc_project::TabSpec {
     dc_project::TabSpec {
         placement: dc_project::TabPlacement::Count { count: 4 },
         width_mm: 4.0,
@@ -580,7 +580,7 @@ fn four_tabs() -> dc_project::TabSpec {
 
 /// S9 alone on hand-written `text`, as run `label` of `op` cut with
 /// `tool` in `project` (which gains `op`).
-fn check_run(
+pub(super) fn check_run(
     text: &str,
     project: &Project,
     op: &InlayOp,
@@ -619,7 +619,7 @@ fn check_run(
 }
 
 #[track_caller]
-fn assert_off(result: Result<(), ExportError>, line: usize) {
+pub(super) fn assert_off(result: Result<(), ExportError>, line: usize) {
     assert!(
         matches!(result, Err(ExportError::OffMaterial { line: l, .. }) if l == line),
         "expected OffMaterial at line {line}: {result:?}"
