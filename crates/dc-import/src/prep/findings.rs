@@ -385,6 +385,14 @@ fn painted_height_mm(painted: &[PaintedPath]) -> f64 {
     high - low
 }
 
+/// True for a region or hole too thin to be a feature at all: an average
+/// width under ten times [`EPS_MM`], the slivers a union leaves where two
+/// outlines nearly coincide. They are numerical noise, not detail, and
+/// the width tests are not meant for them.
+fn is_noise(area_mm2: f64, perimeter_mm: f64) -> bool {
+    area_mm2 < 10.0 * EPS_MM * perimeter_mm
+}
+
 /// `feature_below_size`: pieces and holes of `ink` whose widest point is
 /// under [`DEFAULT_MIN_DETAIL_PCT`] of `height_mm`.
 fn below_size(ink: &[Region], height_mm: f64, tolerance_mm: f64) -> Option<ImportWarning> {
@@ -415,8 +423,15 @@ fn below_size(ink: &[Region], height_mm: f64, tolerance_mm: f64) -> Option<Impor
         }
     };
     for region in ink {
+        if is_noise(region.area_mm2(), perimeter_mm(region)) {
+            continue;
+        }
         narrower(&|w| is_narrower_than(region, w, tolerance_mm));
         for hole in region.holes() {
+            let outline = hole.polyline();
+            if is_noise(hole.signed_area_mm2().abs(), outline.length_mm()) {
+                continue;
+            }
             narrower(&|w| hole_is_narrower_than(hole, w, tolerance_mm));
         }
     }
@@ -622,6 +637,16 @@ mod tests {
             matches!(result, Err(ImportError::TooManyVertices { .. })),
             "{result:?}"
         );
+    }
+
+    /// The sign's stroked outlines union into slivers a few nanometres
+    /// wide; the width tests must not be given them.
+    #[test]
+    fn numerical_slivers_are_not_measured() {
+        let sign = include_bytes!("../../../../tests/fixtures/sign.svg");
+        let found = check(sign);
+        assert!(!codes(&found).contains(&"feature_below_size"), "{found:?}");
+        check(include_bytes!("../../../../tests/fixtures/dc-inlay.svg"));
     }
 
     #[test]
