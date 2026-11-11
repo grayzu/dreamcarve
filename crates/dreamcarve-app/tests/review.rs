@@ -209,6 +209,31 @@ fn scenes(dir: &Path) -> bool {
         open_operation(&mut h, name);
         shoot(&mut h, scene);
     }
+    // Targets on the drawing (#619): the Panel's targets marked with a
+    // target selected too, the row's menu, then target editing with the
+    // square added to the draft.
+    open_operation(&mut h, "Panel");
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new("i3"),
+        ]));
+    h.run();
+    shoot(&mut h, "10b-targets-marked-island-selected");
+    click(&mut h, "Target actions");
+    shoot(&mut h, "10c-targets-row-menu");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    click(&mut h, "Edit targets");
+    h.state_mut()
+        .app_mut()
+        .toggle_target(&dc_project::InstanceId::new("i4"));
+    h.run();
+    shoot(&mut h, "10d-target-editing-square-added");
+    h.key_press(egui::Key::Escape);
+    h.run();
     click(&mut h, "Warnings");
     shoot(&mut h, "11-warnings-drawer");
     h.get_by_label("Close the Warnings drawer").click();
