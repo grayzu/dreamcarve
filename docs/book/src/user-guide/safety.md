@@ -124,7 +124,11 @@ never cuts on both boards.
    ``operation `op1` cuts off the stock: 71.350 mm past the +X (right)
    edge``. A cut that runs exactly along an edge is allowed. Toolpath
    generation checks this first, and the read-back program is checked
-   again.
+   again. A [Photo V-Carve](photo-v-carve.md)'s grooves are widened by
+   the width the V-bit cuts at the stock top, `(stock top − Z) ×
+   tan(α / 2)` either side, at most its radius, rather than by the whole
+   radius: a groove at the picture's edge runs half its width past the
+   picture, and this rule keeps that on the stock.
 
 10. **Canned cycles mean what the plain moves mean.** When a Drill is
     written as [canned cycles](drill.md#canned-cycles) (`G81`, `G82`,
@@ -230,6 +234,8 @@ never cuts on both boards.
       edge inset by the end mill's radius, or by the V wall's foot plus
       the radius. Its tabs are held as a Profile's: no plunge below a
       tab's top on the tab.
+    - a [Photo V-Carve](photo-v-carve.md): its grooves, by rule 16, in its
+      picture's footprint.
 
     A move may miss by as much as the program may already differ from the
     toolpath: one unit in the last decimal place written, plus
@@ -320,6 +326,14 @@ never cuts on both boards.
     failure is a bug to report.
     DreamCarve also checks each carve's toolpath the same way before it
     writes a program.
+
+    A [Photo V-Carve](photo-v-carve.md) is held by this rule's shank
+    check: its flank, engaged from the start plane when an earlier
+    Pocket or V-Carve floor at that depth holds the whole picture and from
+    the stock top otherwise, never reaches past the cone. Its picture's
+    edge is not a wall, so its grooves are held to the picture by rule 16
+    instead, and the cone may reach past the edge, which rule 9 keeps on
+    the stock.
 15. **A countersink goes exactly as deep as its mouth needs.** A
     [countersink](drill.md#countersink)'s depth is never set, only
     derived, so the check derives it again from the project, never from
@@ -364,6 +378,39 @@ never cuts on both boards.
     line is at the right depth but off the hole's centre, slanted, an arc
     or a cycle, or it is a rapid below the retract height. DreamCarve's
     own countersinks never fail it; a failure is a bug to report.
+16. **A photo's grooves stay in its picture, and the moves between them
+    are fed (S19).** A [Photo V-Carve](photo-v-carve.md)'s limits are
+    worked out again from the project, never from the toolpath: the
+    picture's footprint, the start plane `start_depth_mm` below the stock
+    top, `max_depth_mm` below that, and the **link height**, the height
+    the bit crosses between grooves at: `stepover_retract_mm` above the
+    start plane, or, when no Pocket or V-Carve floor of the project clears
+    the start plane at its depth (one you vouch for with
+    `start_plane_cleared_externally`, or a floor at another depth), no
+    lower than 1 mm above the stock top, so that it never crosses through
+    wood the project cannot see. Then every line of the operation:
+
+    - **a groove stays in the picture:** a `G1` that ends at or below the
+      start plane is a cut; its end is inside the footprint and between
+      the start plane and `max_depth_mm` below it, and its flank is
+      engaged no deeper than the cone (rule 14);
+    - **a move between grooves is fed at the link height:** a `G1` that
+      moves across above the start plane starts and ends at the link
+      height, over the picture. A rapid that moves across below safe Z is
+      refused, and so is a move that dives across from above the start
+      plane into a groove;
+    - **no arcs:** a groove is straight moves, and the emitter never
+      fits arcs to one.
+
+    A rise or a descent straight up or down above the start plane runs
+    through air and passes. A start plane that nothing clears and you do
+    not vouch for fails every cut. The slack is one unit in the last
+    decimal place written. A failure stops the export with ``emitted line
+    … takes operation `op1`'s V-bit to (…, …) mm, outside its picture or
+    deeper than its max_depth_mm; …`` or ``emitted line … moves operation
+    `op1`'s V-bit between two grooves as a rapid or away from its link
+    height; …``. DreamCarve's own Photo V-Carves never fail it; a failure
+    is a bug to report.
 
 It also checks that:
 
