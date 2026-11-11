@@ -9,10 +9,10 @@
 //! The picture is built in code, not read from `tests/fixtures/photo/
 //! gradient.png` (#645 commits that file): `gradient_bytes` is the same
 //! 64 × 32 picture, black at its left edge to white at its right, with a
-//! pure black 8 × 8 block at columns 8 to 15, rows 12 to 19, and a pure
-//! white one at columns 48 to 55, rows 12 to 19. Placed 100 mm wide at
+//! pure white 8 × 8 block at columns 8 to 15, rows 12 to 19, and a pure
+//! black one at columns 48 to 55, rows 12 to 19. Placed 100 mm wide at
 //! (5, 5) on 110 × 60 × 6 mm stock, a pixel is 1.5625 mm square, the
-//! black block covers X 17.5 to 30, the white one X 80 to 92.5, both Y
+//! white block covers X 17.5 to 30, the black one X 80 to 92.5, both Y
 //! 23.75 to 36.25, and 50 % grey (127.5) is at X 55.
 
 use super::*;
@@ -314,8 +314,8 @@ fn black_is_max_depth_white_is_the_surface_and_grey_is_between() {
     let (toolpath, _) = generate(&gradient_project(acceptance_op()));
     let grooves = grooves_of(&toolpath, TOP);
     let rows = (23.75 + PX, 36.25 - PX);
-    let black = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
-    let white = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let black = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let white = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
     let grey = z_in(&grooves, (54.95, 55.05), (Y0, Y0 + H));
     for (name, zs, expected, within) in [
         ("black", &black, TOP - 2.0, 0.01),
@@ -342,8 +342,8 @@ fn invert_swaps_black_and_white() {
     let (toolpath, _) = generate(&gradient_project(op));
     let grooves = grooves_of(&toolpath, TOP);
     let rows = (23.75 + PX, 36.25 - PX);
-    let black = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
-    let white = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let black = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let white = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
     assert!(black.len() > 10 && white.len() > 10);
     assert!(black.iter().all(|z| (z - TOP).abs() <= 0.01), "{black:?}");
     assert!(
@@ -578,8 +578,8 @@ fn start_depth_lowers_the_grooves() {
     let plane = TOP - 1.0;
     let grooves = grooves_of(&toolpath, plane);
     let rows = (23.75 + PX, 36.25 - PX);
-    let black = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
-    let white = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let black = z_in(&grooves, (80.0 + PX, 92.5 - PX), rows);
+    let white = z_in(&grooves, (17.5 + PX, 30.0 - PX), rows);
     assert!(
         black.iter().all(|z| (z - (plane - 2.0)).abs() <= 0.01),
         "{black:?}"

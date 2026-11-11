@@ -351,8 +351,9 @@ pub fn validate_tool(id: &LibraryToolId, tool: &Tool) -> Result<(), LibraryError
 const ID_PREFIX: &str = "lt";
 
 /// The id after the highest `lt<n>` in the library: `lt1` for an empty
-/// one. Gaps left by [`remove`] are not refilled.
-fn next_id(lib: &Library) -> LibraryToolId {
+/// one. Gaps left by [`remove`] are not refilled. The id [`add`] gives.
+#[must_use]
+pub fn next_id(lib: &Library) -> LibraryToolId {
     let highest = lib
         .tools
         .iter()
@@ -483,6 +484,48 @@ pub fn replace(
         };
     }
     Ok(AddOutcome::Replaced { id })
+}
+
+/// Sets library tool `id` to `tool` in place, keeping its id, its place
+/// and its `source` (an edited tool still came from its file, so a later
+/// import sees it as changed): what editing a library tool writes
+/// (phase 4, capability 64a). The tool's own `id` is set to the library
+/// id. Names stay unique, so a name another tool has is refused rather
+/// than suffixed: the user typed it.
+///
+/// # Errors
+///
+/// [`LibraryError::NotFound`] when no tool has `id`; the errors of
+/// [`validate_tool`]; and [`LibraryError::InvalidTool`] on `name` when
+/// another tool has that name. The library is unchanged on error.
+pub fn update(lib: &mut Library, id: &LibraryToolId, tool: Tool) -> Result<(), LibraryError> {
+    let index =
+        lib.tools
+            .iter()
+            .position(|t| t.id == *id)
+            .ok_or_else(|| LibraryError::NotFound {
+                key: id.to_string(),
+            })?;
+    validate_tool(id, &tool)?;
+    if let Some(other) = lib
+        .tools
+        .iter()
+        .find(|t| t.id != *id && t.tool.name == tool.name)
+    {
+        return Err(LibraryError::InvalidTool {
+            id: id.clone(),
+            name: tool.name.clone(),
+            field: "name".into(),
+            message: format!("is already the name of `{}`", other.id),
+        });
+    }
+    if let Some(slot) = lib.tools.get_mut(index) {
+        slot.tool = Tool {
+            id: ToolId::new(id.as_str()),
+            ..tool
+        };
+    }
+    Ok(())
 }
 
 /// The tool whose id is `key`, else the one tool whose name is `key`. A
@@ -1127,5 +1170,41 @@ mod tests {
         assert_ne!(inner, text, "the inner id was edited");
         let lib = load(inner.as_bytes()).unwrap();
         assert_eq!(lib.tools[2].tool.id, ToolId::new("lt3"));
+    }
+
+    /// `update` edits a tool in place, keeping its id, place and source;
+    /// it refuses an unknown id, an invalid tool and a taken name, leaving
+    /// the library as it was. `next_id` is the id `add` gives.
+    #[test]
+    fn update_keeps_id_place_and_source() {
+        let mut lib = sample_library();
+        let before = lib.clone();
+        let id = LibraryToolId::new("lt2");
+        let mut tool = lib.tools[1].tool.clone();
+        tool.id = ToolId::new("t9");
+        tool.feed_mm_min = Some(900.0);
+        update(&mut lib, &id, tool).unwrap();
+        assert_eq!(lib.tools[1].id, id);
+        assert_eq!(lib.tools[1].tool.id, ToolId::new("lt2"));
+        assert_eq!(lib.tools[1].tool.feed_mm_min, Some(900.0));
+        assert_eq!(lib.tools[1].source, before.tools[1].source);
+
+        let edited = lib.clone();
+        let unknown = update(&mut lib, &LibraryToolId::new("lt9"), tool_6_35_upcut());
+        assert!(matches!(unknown, Err(LibraryError::NotFound { .. })));
+        let mut bad = lib.tools[1].tool.clone();
+        bad.diameter_mm = 0.0;
+        assert!(update(&mut lib, &id, bad).is_err());
+        let mut taken = lib.tools[1].tool.clone();
+        taken.name.clone_from(&lib.tools[0].tool.name);
+        let err = update(&mut lib, &id, taken).unwrap_err();
+        assert!(
+            err.to_string().contains("already the name of `lt1`"),
+            "{err}"
+        );
+        assert_eq!(lib, edited, "a refused update changes nothing");
+
+        assert_eq!(next_id(&lib), LibraryToolId::new("lt4"));
+        assert_eq!(next_id(&Library::default()), LibraryToolId::new("lt1"));
     }
 }

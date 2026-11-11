@@ -128,7 +128,22 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
 
     // The frame is painted under the text, into a slot taken before it.
     let background = ui.painter().add(egui::Shape::Noop);
-    let unit_px = if spec.unit.is_empty() { 0.0 } else { UNIT_PX };
+    // The unit's share: 32 px, or the unit's own width when wider
+    // (`mm/min`, `in/min`), so nothing before it overlaps it.
+    let unit_px = if spec.unit.is_empty() {
+        0.0
+    } else {
+        let width = ui
+            .painter()
+            .layout_no_wrap(
+                spec.unit.to_owned(),
+                TextStyle::Body.resolve(ui.style()),
+                palette.text_secondary,
+            )
+            .size()
+            .x;
+        UNIT_PX.max(width + 4.0)
+    };
     let reset_px = if spec.reset.is_some() { RESET_PX } else { 0.0 };
     // The required look's glyph, before the unit (section 7).
     let glyph_px = if spec.required.is_some() {

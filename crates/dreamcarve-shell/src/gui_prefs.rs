@@ -4,8 +4,8 @@
 //! The app's preferences file, `<config dir>/gui.toml`
 //! (`docs/specs/phase-4/design.md`, "Preferences"; functional spec, open
 //! question 11): the window and panel layout, the toolpath display
-//! settings, the recent files, where each project last exported, and the
-//! theme. View state, never project state: nothing here changes a program
+//! settings, the recent files, where each project last exported, the
+//! theme and the Tool Library's display units. View state, never project state: nothing here changes a program
 //! or reaches the `.dcv`.
 //!
 //! Read at start and written on change and on exit. A missing file is the
@@ -48,6 +48,19 @@ pub struct GuiPrefs {
     pub export_dirs: BTreeMap<String, PathBuf>,
     /// The last-used tab size, which the Tab tool adds tabs with.
     pub tab: TabSize,
+    /// The Tool Library's display units, once chosen; the library file
+    /// itself is always millimetres.
+    pub library_units: Option<LibraryUnits>,
+}
+
+/// The Tool Library's display units (phase 4, capability 64).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LibraryUnits {
+    /// Millimetres.
+    Mm,
+    /// Inches.
+    In,
 }
 
 /// A placed tab's width, height and shape, as the Tab tool adds it.
@@ -294,6 +307,7 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
         "recent",
         "export_dirs",
         "tab",
+        "library_units",
     ];
     const WINDOW: &[&str] = &["x", "y", "width", "height", "maximized"];
     const PANELS: &[&str] = &[
@@ -446,6 +460,7 @@ mod tests {
                 height_mm: 2.5,
                 shape: TabShape::Smooth,
             },
+            library_units: Some(LibraryUnits::In),
         };
         save(&paths, &prefs).unwrap();
         let loaded = load(&paths);
