@@ -308,7 +308,7 @@ use dc_project::{
     Board, ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
     FeatureInstance, INLAY_MERGE_MM, InlayOp, InstanceId, MaleBand, Operation, PostProcessor,
     ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
-    cleared_start_plane, male_band,
+    band_edge_of, cleared_start_plane, male_band,
 };
 
 use crate::ExportError;
@@ -1024,6 +1024,9 @@ struct MaleGeometry {
     band: MaleBand,
     /// The mirrored design, nested ([`male_design`]).
     design: Vec<Region>,
+    /// The male's mirror ([`male_design`]), which a drawn boundary is
+    /// mirrored by too ([`dc_project::band_edge`], #603).
+    mirror: Option<Transform>,
     /// The carved regions: the band less the design ([`surround_within`]).
     surround: Vec<Region>,
     /// The band `B` ([`rounded_band`]) when its edge is open; empty with
@@ -1038,7 +1041,7 @@ impl MaleGeometry {
     /// surround is the clipped band less the design.
     fn of(project: &Project, inlay: &InlayOp) -> Option<Self> {
         let band = male_band(project, inlay)?;
-        let design = male_design(project, inlay)?;
+        let (design, mirror) = male_design(project, inlay)?;
         let tolerance_mm = project.flatten_tolerance_mm;
         // #478: the plug's outline within the V-bit's wall tolerance, as
         // the generator draws it.
@@ -1046,8 +1049,9 @@ impl MaleGeometry {
             .map_or(tolerance_mm, |(slope, _)| {
                 wall_tolerance_mm(tolerance_mm, slope)
             });
-        let (edge, clipped) = male_band_on_board(project, &band, &design);
-        let surround = if clipped {
+        let (edge, clipped) = male_band_on_board(project, inlay, &band, mirror, &design);
+        let drawn = matches!(band.source, dc_project::BandSource::Drawn { .. });
+        let surround = if clipped || drawn {
             difference_within(&edge, &design, tolerance_mm, plug_tolerance_mm)
         } else {
             surround_within(
@@ -1062,6 +1066,7 @@ impl MaleGeometry {
         Some(Self {
             band,
             design,
+            mirror,
             surround,
             edge,
         })
@@ -1155,17 +1160,23 @@ fn inlay_cone(
     Some((cone, male))
 }
 
-/// The band `B` of male `design` ([`rounded_band`], with `band`'s margin
-/// and edge rounding) on the board (#495): clipped to [`MaleBand::board`]
+/// The band `B` of male `design` ([`dc_project::band_edge_of`]: the
+/// design grown by `band`'s margin and closed by its edge rounding, or the
+/// drawn boundary mirrored, #603) on the board (#495): clipped to [`MaleBand::board`]
 /// of the project's stock ([`band_on_board`]) when it runs past it, and
 /// whether it was; as it is when it stays on the board.
 fn male_band_on_board(
     project: &Project,
+    inlay: &InlayOp,
     band: &MaleBand,
+    mirror: Option<Transform>,
     design: &[Region],
 ) -> (Vec<Region>, bool) {
     let tolerance_mm = project.flatten_tolerance_mm;
-    let edge = rounded_band(design, band.margin_mm, band.edge_rounding_mm, tolerance_mm);
+    // #603: `dc_project::band_edge`, as the generator derives it.
+    let edge = band_edge_of(project, inlay, band, mirror, design).unwrap_or_else(|| {
+        rounded_band(design, band.margin_mm, band.edge_rounding_mm, tolerance_mm)
+    });
     match band_on_board(&edge, band.board(&project.stock), tolerance_mm) {
         Some(clipped) => (clipped, true),
         None => (edge, false),
@@ -1177,7 +1188,7 @@ fn male_band_on_board(
 /// included, [`Transform::mirror_x_about`]), nested, its near parts merged
 /// ([`merged_design`]). `None` when a target does not resolve or
 /// outlines cross.
-fn male_design(project: &Project, inlay: &InlayOp) -> Option<Vec<Region>> {
+fn male_design(project: &Project, inlay: &InlayOp) -> Option<(Vec<Region>, Option<Transform>)> {
     let closed: Vec<Polyline> = placed(project, &inlay.targets)?
         .into_iter()
         .filter(Polyline::is_closed)
@@ -1189,23 +1200,21 @@ fn male_design(project: &Project, inlay: &InlayOp) -> Option<Vec<Region>> {
             None => b,
         });
     }
-    let contours: Vec<Contour> = match bounds {
-        Some(b) => {
-            let mirror = Transform::mirror_x_about((b.min.x + b.max.x) / 2.0);
-            closed
-                .iter()
-                .map(|p| {
-                    mirror
-                        .apply_polyline(p)
-                        .ok()
-                        .and_then(|m| Contour::new(m).ok())
-                })
-                .collect::<Option<_>>()?
-        }
+    let mirror = bounds.map(|b| Transform::mirror_x_about((b.min.x + b.max.x) / 2.0));
+    let contours: Vec<Contour> = match mirror {
+        Some(mirror) => closed
+            .iter()
+            .map(|p| {
+                mirror
+                    .apply_polyline(p)
+                    .ok()
+                    .and_then(|m| Contour::new(m).ok())
+            })
+            .collect::<Option<_>>()?,
         None => Vec::new(),
     };
     let (design, _) = nest(contours).ok()?;
-    Some(merged_design(project, inlay, design))
+    Some((merged_design(project, inlay, design), mirror))
 }
 
 /// Inlay `inlay`'s `design` (nested) with the parts that come closer
@@ -1271,7 +1280,7 @@ fn cut_out_geometry(
         .filter(|f| !is_design_hole(f, &male.design))
         .collect();
     let inset_mm = male.band.cut_out_inset_mm(tool.diameter_mm);
-    let (edge, clipped) = male_band_on_board(project, &male.band, &male.design);
+    let (edge, clipped) = male_band_on_board(project, inlay, &male.band, male.mirror, &male.design);
     let outlines = inset_outers(&edge, inset_mm, tolerance_mm);
     let paths = if clipped && male.band.is_open() {
         // #495: the board's edge frees the plug where the band is clipped

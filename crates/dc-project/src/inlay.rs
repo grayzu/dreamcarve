@@ -26,8 +26,9 @@ use crate::model::{InlayOp, Operation, Project, Stock, ToolKind};
 use crate::project::closed_outlines;
 use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
 use dc_geometry::{
-    BandClearance, Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Rect, Region, area_mm2,
-    band_clearance, drawn_band, intersection, merge_near_parts, nest, wall_tolerance_mm,
+    BandClearance, Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Rect, Region, Transform,
+    area_mm2, band_clearance, closed_band, drawn_band, intersection, merge_near_parts, nest,
+    rounded_band, wall_tolerance_mm,
 };
 
 impl Project {
@@ -378,6 +379,83 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         v_bit_radius_mm,
         flank_mm,
     })
+}
+
+/// The male Inlay `op`'s band edge `B` before it is clipped to the board,
+/// in project space (`docs/specs/phase-3/design.md`, "Drawn boundary",
+/// "The band's source"; #449, #603): the one function the generator's
+/// step 4 and the safety pass both derive the band by, in place of their
+/// two direct [`rounded_band`] calls. `None` when the band is unusable
+/// ([`male_band`]).
+///
+/// `mirror` is the male's mirror ([`Transform::mirror_x_about`] the
+/// targets' joint bounding-box centre; `None` for none), and `design` the
+/// male's mirrored design, nested, its near parts merged, which each
+/// caller already holds.
+///
+/// - **Computed:** [`rounded_band`] of `design`, `M` out and closed by the
+///   edge rounding `R'`: exactly what the two callers computed before,
+///   so a project with no boundary is unchanged.
+/// - **Drawn:** the boundary's drawn band ([`drawn_boundary`]) mirrored
+///   with the design, closed by `R'` ([`closed_band`]): `R'` is the edge
+///   pass's radius with an open edge (a notch narrower than the end mill
+///   fills) and 0 with a V wall (the edge exactly as drawn);
+///   `margin_mm` and `outline_rounding_mm` are not read, and `design` is
+///   not read.
+#[must_use]
+pub fn band_edge(
+    project: &Project,
+    op: &InlayOp,
+    mirror: Option<Transform>,
+    design: &[Region],
+) -> Option<Vec<Region>> {
+    let band = male_band(project, op)?;
+    band_edge_of(project, op, &band, mirror, design)
+}
+
+/// [`band_edge`] for the Inlay's band `band` ([`male_band`]), which the
+/// caller already holds.
+#[must_use]
+pub fn band_edge_of(
+    project: &Project,
+    op: &InlayOp,
+    band: &MaleBand,
+    mirror: Option<Transform>,
+    design: &[Region],
+) -> Option<Vec<Region>> {
+    let tolerance_mm = project.flatten_tolerance_mm;
+    match band.source {
+        BandSource::Computed { .. } => Some(rounded_band(
+            design,
+            band.margin_mm,
+            band.edge_rounding_mm,
+            tolerance_mm,
+        )),
+        BandSource::Drawn { .. } => {
+            let drawn = drawn_boundary(project, op).ok()??;
+            let mirrored = mirrored(&drawn.band, mirror)?;
+            Some(closed_band(&mirrored, band.edge_rounding_mm, tolerance_mm))
+        }
+    }
+}
+
+/// `regions` moved by `mirror`, nested again (a reflection reverses their
+/// winding); `None` when it cannot be placed.
+fn mirrored(regions: &[Region], mirror: Option<Transform>) -> Option<Vec<Region>> {
+    let Some(mirror) = mirror else {
+        return Some(regions.to_vec());
+    };
+    let contours: Vec<Contour> = regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(|c| {
+            mirror
+                .apply_polyline(c.polyline())
+                .ok()
+                .and_then(|p| Contour::new(p).ok())
+        })
+        .collect::<Option<_>>()?;
+    nest(contours).ok().map(|(regions, _)| regions)
 }
 
 /// What is wrong with one of an Inlay's boundary instances (#449; design

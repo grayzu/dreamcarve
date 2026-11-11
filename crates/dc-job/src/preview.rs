@@ -186,6 +186,7 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
     write_shapes(&mut svg, project, &frame);
     if let Some((_, board)) = &male {
         write_male_shapes(&mut svg, project, &male_frame);
+        write_male_boundaries(&mut svg, project, &male_frame);
         write_origin(&mut svg, project, &project.stock, &frame);
         write_origin(&mut svg, project, board, &male_frame);
     }
@@ -204,7 +205,8 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
         );
         write_operation(&mut svg, on, run, colour, &drawn);
     }
-    write_legend(&mut svg, width, height, ops);
+    let boundary = male.is_some() && !male_boundaries(project).is_empty();
+    write_legend(&mut svg, width, height, ops, boundary);
     svg.push_str("</svg>\n");
     svg
 }
@@ -318,6 +320,74 @@ pub fn male_shapes(project: &Project) -> Vec<MaleShapes> {
         });
     }
     out
+}
+
+/// One enabled Inlay's drawn boundary as its male cuts it (#603).
+#[derive(Debug, Clone, PartialEq)]
+pub struct MaleBoundary {
+    /// The Inlay.
+    pub op: OperationId,
+    /// The outlines of its boundary instances (`boundary`),
+    /// placed and mirrored with the design about the targets' centre line
+    /// ([`dc_cam::inlay::male_mirror`]), in the male board's project
+    /// space, mm, Y-up; every outline, a hole's included, since the
+    /// picture shows what was drawn.
+    pub outlines: Vec<Polyline>,
+}
+
+/// Every enabled Inlay's drawn boundary as its male cuts it (#603), in
+/// list order: what [`render`] draws on the male board. An Inlay with no
+/// boundary, or whose male is not cut, has none; an instance that does
+/// not resolve (validation reports it) is left out.
+#[must_use]
+pub fn male_boundaries(project: &Project) -> Vec<MaleBoundary> {
+    let mut out = Vec::new();
+    for op in &project.operations {
+        let Operation::Inlay(inlay) = op else {
+            continue;
+        };
+        if !(inlay.enabled && inlay.cuts_male() && inlay.has_boundary()) {
+            continue;
+        }
+        let Ok(mirror) = dc_cam::inlay::male_mirror(project, &inlay.targets) else {
+            continue;
+        };
+        let mut outlines = Vec::new();
+        for id in &inlay.boundary {
+            let Ok(instance) = dc_project::boundary_instance(project, inlay, id) else {
+                continue;
+            };
+            for region in &instance.regions {
+                for contour in std::iter::once(region.outer()).chain(region.holes()) {
+                    if let Ok(placed) = mirror.apply_polyline(contour.polyline()) {
+                        outlines.push(placed);
+                    }
+                }
+            }
+        }
+        out.push(MaleBoundary {
+            op: inlay.id.clone(),
+            outlines,
+        });
+    }
+    out
+}
+
+/// Every enabled male Inlay's drawn boundary ([`male_boundaries`]),
+/// dashed grey as the board's outline is, on the male board, under the
+/// male's runs.
+fn write_male_boundaries(svg: &mut String, project: &Project, frame: &Frame) {
+    for boundary in male_boundaries(project) {
+        for placed in &boundary.outlines {
+            if let Some(d) = polyline_path(placed, frame) {
+                let _ = writeln!(
+                    svg,
+                    r#"<path class="male-boundary" d="{d}" fill="none" stroke="{STOCK_COLOUR}" stroke-width="{}" stroke-dasharray="{STOCK_DASH}"/>"#,
+                    fmt(STOCK_STROKE_MM)
+                );
+            }
+        }
+    }
 }
 
 /// Every enabled Inlay's design as its male cuts it ([`male_shapes`]),
@@ -865,14 +935,14 @@ fn write_operation(svg: &mut String, frame: &Frame, run: &Run<'_>, colour: &str,
 /// The legend in the stock's top-left corner: a swatch of each run's
 /// colour, its operation's id and name; a carve's clearing run as
 /// `o6 (clearing t1) Name` (#406).
-fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>]) {
+fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>], boundary: bool) {
     if ops.is_empty() {
         return;
     }
     // Lettering scaled to the stock, so it reads at any size.
     let font = (width_mm.min(height_mm) / 40.0).clamp(2.0, 10.0);
     let line = font * 1.5;
-    let labels: Vec<String> = ops
+    let mut labels: Vec<String> = ops
         .iter()
         .map(|run| {
             format!(
@@ -886,6 +956,10 @@ fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>]
             )
         })
         .collect();
+    // #603: the drawn boundary's dashed outline, in the board's grey.
+    if boundary {
+        labels.push("boundary (male board)".to_owned());
+    }
     let longest = labels.iter().map(|l| l.chars().count()).max().unwrap_or(0);
     #[allow(
         clippy::cast_precision_loss,
@@ -915,7 +989,11 @@ fn write_legend(svg: &mut String, width_mm: f64, height_mm: f64, ops: &[Run<'_>]
             r#"<rect class="legend-swatch" x="{}" y="{}" width="{s}" height="{s}" fill="{}"/>"#,
             fmt(font),
             fmt(baseline - swatch),
-            colour(k),
+            if k < ops.len() {
+                colour(k)
+            } else {
+                STOCK_COLOUR
+            },
             s = fmt(swatch),
         );
         let _ = writeln!(

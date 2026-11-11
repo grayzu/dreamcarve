@@ -870,24 +870,14 @@ pub enum CamError {
         z_mm: f64,
     },
     /// A male Inlay's drawn boundary has a problem (format 26, #449;
-    /// validation's `inlay_boundary_*`). Validation reports this first.
+    /// validation's `inlay_boundary_*`), found again by the generator as
+    /// every generator re-checks validation. Validation reports this first.
     #[error("operation `{op}`'s drawn boundary cannot be used: {problem:?}")]
     InlayBoundary {
         /// The Inlay.
         op: OperationId,
         /// What is wrong with it.
         problem: dc_project::BoundaryProblem,
-    },
-    /// A male Inlay lists a drawn boundary (format 26, #449), which this
-    /// build does not cut yet (sub-phase 3.4, slice 21j): export refuses
-    /// it rather than cut the band `margin_mm` makes. Empty `boundary`
-    /// to cut the margin's band.
-    #[error(
-        "operation `{op}` lists a boundary, which export cannot cut yet; empty its boundary list to cut the band margin_mm makes"
-    )]
-    InlayBoundaryNotCut {
-        /// The Inlay.
-        op: OperationId,
     },
     /// One of an Inlay's values is unset (format 22, capability 45;
     /// validation's `operation_value_unset`): `depth_mm`, `glue_gap_mm` or

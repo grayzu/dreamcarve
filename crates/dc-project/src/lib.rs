@@ -29,8 +29,8 @@ pub use history::{History, MAX_UNDO_STEPS};
 pub use ids::{DefinitionId, InstanceId, OperationId, TabId, ToolId};
 pub use inlay::{
     BandEdge, BandSource, BoundaryInstance, BoundaryProblem, DrawnBoundary, EdgePass,
-    INLAY_MERGE_MM, MaleBand, boundary_instance, boundary_regions, drawn_boundary, edge_pass,
-    male_band,
+    INLAY_MERGE_MM, MaleBand, band_edge, band_edge_of, boundary_instance, boundary_regions,
+    drawn_boundary, edge_pass, male_band,
 };
 pub use locate::{PathSegment, SourceMap, TextPosition};
 pub use migrate::{CURRENT_VERSION, MigrationNote, migrate, migrate_with_notes};

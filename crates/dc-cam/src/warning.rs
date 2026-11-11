@@ -8,7 +8,7 @@
 use std::fmt;
 
 use dc_geometry::EPS_MM;
-use dc_project::{CornerRelief, OperationId, TabId, ToolId};
+use dc_project::{CornerRelief, InstanceId, OperationId, TabId, ToolId};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -228,6 +228,16 @@ pub enum WarningCode {
     /// and only its female's programs are written (#498). Located at the
     /// male board's thickness, the value to measure ([`Warning::field`]).
     InlayMaleBoardUnset,
+    /// A male Inlay with a drawn boundary has `margin_mm` or
+    /// `outline_rounding_mm` set (format 26, #449): the boundary replaces
+    /// both. Validation reports it too.
+    InlayMarginIgnored,
+    /// An Inlay's boundary instance holds no part of its design (format
+    /// 26, #449); it still widens the band. Validation reports it too.
+    InlayBoundaryEmpty,
+    /// An Inlay's boundary shape has a hole (format 26, #449), which the
+    /// band ignores. Validation reports it too.
+    InlayBoundaryHoleIgnored,
 }
 
 impl WarningCode {
@@ -288,6 +298,9 @@ impl WarningCode {
             Self::InlayPartsMerged => "inlay_parts_merged",
             Self::InlayHoleFilled => "inlay_hole_filled",
             Self::InlayMaleBoardUnset => "inlay_male_board_unset",
+            Self::InlayMarginIgnored => "inlay_margin_ignored",
+            Self::InlayBoundaryEmpty => "inlay_boundary_empty",
+            Self::InlayBoundaryHoleIgnored => "inlay_boundary_hole_ignored",
         }
     }
 }
@@ -989,6 +1002,37 @@ pub enum Warning {
         /// The Inlay.
         op: OperationId,
     },
+    /// [`WarningCode::InlayMarginIgnored`].
+    InlayMarginIgnored {
+        /// The Inlay.
+        op: OperationId,
+        /// `margin_mm` or `outline_rounding_mm`.
+        field: &'static str,
+    },
+    /// [`WarningCode::InlayBoundaryEmpty`].
+    InlayBoundaryEmpty {
+        /// The Inlay.
+        op: OperationId,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+        /// The instance's display name.
+        instance_name: String,
+    },
+    /// [`WarningCode::InlayBoundaryHoleIgnored`].
+    InlayBoundaryHoleIgnored {
+        /// The Inlay.
+        op: OperationId,
+        /// The entry's place in `boundary`.
+        index: usize,
+        /// The instance.
+        instance: InstanceId,
+        /// The instance's display name.
+        instance_name: String,
+        /// The hole's profile, its place in the instance's definition.
+        profile: usize,
+    },
 }
 
 impl Warning {
@@ -1000,6 +1044,11 @@ impl Warning {
         match self {
             Self::InlayMaleBoardUnset { op } => {
                 Some(format!("operations[{op}].male_board.thickness_mm"))
+            }
+            Self::InlayMarginIgnored { op, field } => Some(format!("operations[{op}].{field}")),
+            Self::InlayBoundaryEmpty { op, index, .. }
+            | Self::InlayBoundaryHoleIgnored { op, index, .. } => {
+                Some(format!("operations[{op}].boundary[{index}]"))
             }
             _ => None,
         }
@@ -1063,6 +1112,9 @@ impl Warning {
             Self::InlayPartsMerged { .. } => WarningCode::InlayPartsMerged,
             Self::InlayHoleFilled { .. } => WarningCode::InlayHoleFilled,
             Self::InlayMaleBoardUnset { .. } => WarningCode::InlayMaleBoardUnset,
+            Self::InlayMarginIgnored { .. } => WarningCode::InlayMarginIgnored,
+            Self::InlayBoundaryEmpty { .. } => WarningCode::InlayBoundaryEmpty,
+            Self::InlayBoundaryHoleIgnored { .. } => WarningCode::InlayBoundaryHoleIgnored,
         }
     }
 
@@ -1114,6 +1166,9 @@ impl Warning {
             | Self::InlayBandClipped { op, .. }
             | Self::InlayPartsMerged { op, .. }
             | Self::InlayHoleFilled { op, .. }
+            | Self::InlayMarginIgnored { op, .. }
+            | Self::InlayBoundaryEmpty { op, .. }
+            | Self::InlayBoundaryHoleIgnored { op, .. }
             | Self::InlayMaleBoardUnset { op } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1183,6 +1238,9 @@ impl Warning {
             | Self::InlayBandClipped { .. }
             | Self::InlayPartsMerged { .. }
             | Self::InlayHoleFilled { .. }
+            | Self::InlayMarginIgnored { .. }
+            | Self::InlayBoundaryEmpty { .. }
+            | Self::InlayBoundaryHoleIgnored { .. }
             | Self::InlayMaleBoardUnset { .. } => None,
         }
     }
@@ -1956,6 +2014,29 @@ impl fmt::Display for Warning {
             ),
             Self::InlayMaleBoardUnset { .. } => f.write_str(
                 "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
+            ),
+            Self::InlayMarginIgnored { field, .. } => write!(
+                f,
+                "it draws its male's edge with a boundary, so {field} does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set {field} to null, or empty the boundary list to use it"
+            ),
+            Self::InlayBoundaryEmpty {
+                index,
+                instance,
+                instance_name,
+                ..
+            } => write!(
+                f,
+                "it lists boundary[{index}] `{instance}` (`{instance_name}`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that"
+            ),
+            Self::InlayBoundaryHoleIgnored {
+                index,
+                instance,
+                instance_name,
+                profile,
+                ..
+            } => write!(
+                f,
+                "it lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
             ),
         }
     }
@@ -2745,6 +2826,32 @@ mod tests {
                 "`Shape` (instance `i1`, profile 2) is a hole about 0.004 mm wide at (50, 55) mm, narrower everywhere than the 0.05 mm an inlay keeps between two parts, so both sides cut it as part of the shape round it, with no wall there; draw it at least 0.05 mm wide to keep it",
             ),
             (
+                Warning::InlayMarginIgnored {
+                    op: op(),
+                    field: "margin_mm",
+                },
+                "it draws its male's edge with a boundary, so margin_mm does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set margin_mm to null, or empty the boundary list to use it",
+            ),
+            (
+                Warning::InlayBoundaryEmpty {
+                    op: op(),
+                    index: 1,
+                    instance: "b2".into(),
+                    instance_name: "Oval".to_owned(),
+                },
+                "it lists boundary[1] `b2` (`Oval`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that",
+            ),
+            (
+                Warning::InlayBoundaryHoleIgnored {
+                    op: op(),
+                    index: 0,
+                    instance: "b1".into(),
+                    instance_name: "Frame".to_owned(),
+                    profile: 2,
+                },
+                "it lists boundary[0] `b1` (`Frame`), whose profile 2 is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too",
+            ),
+            (
                 Warning::InlayMaleBoardUnset { op: op() },
                 "its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too",
             ),
@@ -2815,7 +2922,10 @@ mod tests {
             C::InlayBandClipped => C::InlayPartsMerged,
             C::InlayPartsMerged => C::InlayHoleFilled,
             C::InlayHoleFilled => C::InlayMaleBoardUnset,
-            C::InlayMaleBoardUnset => return None,
+            C::InlayMaleBoardUnset => C::InlayMarginIgnored,
+            C::InlayMarginIgnored => C::InlayBoundaryEmpty,
+            C::InlayBoundaryEmpty => C::InlayBoundaryHoleIgnored,
+            C::InlayBoundaryHoleIgnored => return None,
         })
     }
 
@@ -2852,7 +2962,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 53);
+        assert_eq!(count, 56);
     }
 
     #[test]

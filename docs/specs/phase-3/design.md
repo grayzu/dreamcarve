@@ -715,11 +715,14 @@ cannot name `CamError`: it reports the boundary under the codes above as
 `InlayBoundaryIsTarget`, `InlayBoundaryCrossesDesign`, `InlayBoundaryEmpty`,
 `InlayBoundaryHoleIgnored`, `InlayMarginIgnored`), and `BoundaryProblem`
 lives in `dc-project`. `CamError::InlayBoundary` is the generator's form
-(re-checked, as every generator re-checks validation). The generator's
-warnings (`InlayMarginIgnored`, `InlayBoundaryEmpty`,
-`InlayBoundaryHoleIgnored` in `dc-cam`) wait for slice 21j, which cuts the
-band: until then a male that lists a boundary is refused with
-`CamError::InlayBoundaryNotCut`, so no file exports a band that ignores it.
+(re-checked, as every generator re-checks validation). The generator
+raises the warnings too (`InlayMarginIgnored`, `InlayBoundaryEmpty`,
+`InlayBoundaryHoleIgnored` in `dc-cam`, from the same `drawn_boundary`
+check, #603), and `dc-job` leaves them out of the findings because
+validation has already reported them, as it does `InlayPlugBaseThin`: one
+line each in `check`, whichever crate raised it. Until 21j a male that
+listed a boundary was refused (`CamError::InlayBoundaryNotCut`); the
+variant is gone.
 
 ### dc-gcode
 
@@ -2585,8 +2588,13 @@ nothing downstream of `B`; every rule of "Inlay" steps 4 and 6 and of the
 safety pass that reads `B` reads the same `B`.
 
 **The band's source.** One function, `dc_project::inlay::band_edge(project,
-op, mirror) -> Option<Vec<Region>>`, returns `B`, before clipping to the
-board, for the male in project space; the generator's step 4 and the
+op, mirror, design) -> Option<Vec<Region>>`, returns `B`, before clipping to
+the board, for the male in project space (`mirror` is the male's
+`Option<Transform>`, `design` the mirrored, merged design the caller
+already holds: a computed band reads it, a drawn one does not, so the
+generator's and the safety pass's own derivations of the design stay what
+they were, and a project with no boundary is byte for byte unchanged;
+`band_edge_of` is the same for a `MaleBand` the caller already holds); the generator's step 4 and the
 safety pass both call it in place of their two direct calls of
 `rounded_band`, and with no boundary it returns exactly what they computed
 (`inlay::no_boundary_is_byte_for_byte_unchanged`, the golden `dc.dcv`
@@ -2639,6 +2647,12 @@ names `P·s + 2r` or `2·P·s + 2r` from `MaleBand::cut_out_margin_needed_mm`
 and is located at `boundary`. `male_band` reads the project's geometry
 now (it read values only), which dc-project can do: it already depends on
 `dc-geometry`, and `cleared_start_plane` reads geometry there.
+
+**Which side the boundary lands on.** The drawn band is mirrored with the
+design, so a boundary drawn past the stock's right edge runs past the male
+board's left one: `inlay_band_clipped` names the male board's edge
+(acceptance 61p's "6 mm past the male board's left edge" is drawn 6 mm past
+the right).
 
 **The generator** (step 4's bullets are otherwise unchanged): the
 surround is `B` clipped to the male board (#495, unchanged: the

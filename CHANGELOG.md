@@ -13,8 +13,12 @@ phases bump the patch number.
   #602).** An Inlay can list `boundary`, instances whose closed outlines
   are the band's outer edge in place of `margin_mm` and
   `outline_rounding_mm`. `check` validates it (unknown, open, target,
-  crossing or touching the design, empty, holes ignored, margin ignored);
-  a male that lists one is not exported yet. Older files upgrade with
+  crossing or touching the design, empty, holes ignored, margin ignored),
+  and the male is cut inside it, mirrored with the design (#603): the
+  edge pass, the V wall, the cut-out and the board's clipping read the
+  narrowest band the drawn edge leaves; `check` and `export` print
+  `band: drawn boundary …` and `--preview` draws the boundary on the male
+  board. Older files upgrade with
   `"boundary": []` and export the same programs. Photo V-Carve moves to
   format 27.
 - **V-Carve in the project file; format version 20.** A project can hold a
