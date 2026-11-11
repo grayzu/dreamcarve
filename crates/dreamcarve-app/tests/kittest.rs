@@ -3929,3 +3929,199 @@ fn units_is_the_first_row_of_project_settings() {
     assert_eq!(same, before, "no stored length changes");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// The eight toggles of the toolpath view (capability 73).
+const TOOLPATH_TOGGLES: [&str; 8] = [
+    "Cuts",
+    "Rapids",
+    "Plunges",
+    "Direction arrows",
+    "Start points",
+    "Tab marks",
+    "Only the selected operation",
+    "Program extents",
+];
+
+/// The plaque, generated, in a 1280 × 800 window; the project is a copy
+/// in `dir` when `copy`, else the fixture opened in place.
+fn generated_plaque(dir: &std::path::Path, copy: bool) -> Harness<'static, dreamcarve_app::Shell> {
+    let plaque = if copy {
+        copy_fixture("plaque.dcv", dir)
+    } else {
+        common::fixture("plaque.dcv")
+    };
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    h
+}
+
+/// Capability 73, acceptance 94 (#549, row 03): the toolpath view is a
+/// popover from the status bar's *Toolpaths* button, not a card on the
+/// Viewport. The button is absent while the project has no toolpath (the
+/// plaque's shapes with no operation) and present on the generated
+/// plaque; a click shows the popover, titled *Toolpaths*, with the eight
+/// toggles, above the status bar; Escape closes it. Neither state has a
+/// card on the Viewport.
+#[test]
+fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
+    let dir = scratch("toolpaths-popover");
+    let bytes = std::fs::read(common::fixture("plaque.dcv")).unwrap();
+    let mut shapes_only = dc_project::load(&bytes).unwrap().project;
+    shapes_only.operations.clear();
+    let path = dir.join("shapes.dcv");
+    std::fs::write(&path, dc_project::save(&shapes_only).unwrap()).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(path), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    assert!(
+        h.query_by_label("Toolpaths").is_none(),
+        "no Toolpaths button without a toolpath"
+    );
+    assert!(h.query_by_label("Cuts").is_none(), "and no card");
+
+    let mut h = generated_plaque(&dir.join("plaque"), false);
+    let button = h.get_by_role_and_label(Role::Button, "Toolpaths").rect();
+    assert!(button.min.y > 800.0 - 30.0, "in the status bar: {button:?}");
+    assert_eq!(
+        h.query_all_by_label("Toolpaths").count(),
+        1,
+        "the button only"
+    );
+    for toggle in TOOLPATH_TOGGLES {
+        assert!(h.query_by_label(toggle).is_none(), "no card: {toggle}");
+    }
+
+    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.run();
+    let titled: Vec<_> = h
+        .query_all_by_label("Toolpaths")
+        .filter(|n| n.accesskit_node().role() != Role::Button)
+        .map(|n| n.rect())
+        .collect();
+    assert_eq!(titled.len(), 1, "the popover's title");
+    for toggle in TOOLPATH_TOGGLES {
+        let rect = h.get_by_label(toggle).rect();
+        assert!(
+            rect.max.y <= button.min.y,
+            "{toggle} is in the popover above the button: {rect:?}"
+        );
+    }
+
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.query_all_by_label("Toolpaths").count(), 1, "closed");
+    for toggle in TOOLPATH_TOGGLES {
+        assert!(h.query_by_label(toggle).is_none(), "closed: {toggle}");
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 71, acceptance 94 (#549, row 11): *Regenerate all* is in
+/// neither the View menu nor the Warnings drawer. After Stop the status
+/// bar offers it, once; clicking it makes every enabled operation
+/// pending again.
+#[test]
+fn regenerate_all_only_after_stop() {
+    let dir = scratch("regenerate-after-stop");
+    let mut h = generated_plaque(&dir, true);
+    h.get_by_label("View").click();
+    h.run();
+    assert!(
+        h.query_by_label("Warnings").is_some(),
+        "the View menu is open"
+    );
+    assert!(
+        h.query_by_label("Regenerate all").is_none(),
+        "not in the View menu"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.get_by_role_and_label(Role::Button, "Warnings").click();
+    h.run();
+    assert!(h.state().warnings_open(), "the drawer is open");
+    assert!(h.query_by_label("Copy").is_some(), "the drawer is drawn");
+    assert!(
+        h.query_by_label("Regenerate all").is_none(),
+        "not in the drawer"
+    );
+
+    // A thicker stock makes every operation stale; Stop before the change
+    // settles.
+    let mut stock = h.state().app().project().stock.clone();
+    stock.thickness_mm = Some(12.0);
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetStock(stock))
+        .unwrap();
+    h.step();
+    h.get_by_label("Stop").click();
+    h.step();
+    assert!(h.query_by_label("Stopped").is_some(), "stopped");
+    let offered: Vec<egui::Rect> = h
+        .query_all_by_label("Regenerate all")
+        .map(|n| n.rect())
+        .collect();
+    assert_eq!(offered.len(), 1, "one Regenerate all");
+    assert!(offered[0].min.y > 800.0 - 30.0, "in the status bar");
+
+    h.get_by_label("Regenerate all").click();
+    h.step();
+    let pending: Vec<String> = h
+        .state()
+        .app()
+        .pending()
+        .iter()
+        .map(|j| j.op.to_string())
+        .collect();
+    let enabled: Vec<String> = h
+        .state()
+        .app()
+        .project()
+        .operations
+        .iter()
+        .filter(|o| o.enabled())
+        .map(|o| o.id().to_string())
+        .collect();
+    let (mut pending, mut enabled) = (pending, enabled);
+    pending.sort();
+    enabled.sort();
+    assert_eq!(pending, enabled, "every enabled operation is pending");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 50b, acceptance 94: the status bar's units button opens a
+/// two-row menu; choosing inches is one undo step, labelled as Project
+/// Settings' switch labels it, and the button then reads `in`.
+#[test]
+fn units_menu_switches_display_units() {
+    let dir = scratch("status-units");
+    let mut h = generated_plaque(&dir, true);
+    let steps = undo_steps(&h);
+    let button = h.get_by_role_and_label(Role::Button, "mm").rect();
+    assert!(button.min.y > 800.0 - 30.0, "in the status bar: {button:?}");
+    h.get_by_role_and_label(Role::Button, "mm").click();
+    h.run();
+    h.get_by_label("Inches (in)").click();
+    h.run();
+    assert_eq!(
+        h.state().app().project().display_units,
+        dc_project::Units::Inch
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("Set display units"));
+    assert!(
+        h.query_by_role_and_label(Role::Button, "in").is_some(),
+        "the button reads in"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
