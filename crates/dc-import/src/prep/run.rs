@@ -1,9 +1,11 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The image-prep pipeline (steps 1 to 7 of `docs/specs/phase-3/design.md`,
+//! The image-prep pipeline (steps 1 to 8 of `docs/specs/phase-3/design.md`,
 //! "Image prep"): [`prepare`] turns the bytes of an SVG into pieces and a
-//! [`PrepReport`]. A pure function; writing the SVG is slice 21g's.
+//! [`PrepReport`], and reads the SVG it would write back before returning
+//! (the check lives here, not in `write_svg`, so no caller can skip it). A
+//! pure function.
 
 use super::findings::{
     Shape, bounds as findings_bounds, hidden, painted_height_mm, separate_holes, stroke_only,
@@ -11,6 +13,7 @@ use super::findings::{
 use super::report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
 use super::stroke::{self, Budget, Stroked};
 use super::walk::{HiddenReason, PaintedPath, Walk, walk};
+use super::write;
 use super::{
     BACKGROUND_COVER_FRACTION, DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT, FLATTEN_FRACTION,
     GAP_REACH_FRACTION, MAX_THRESHOLD_PCT, MIN_FLATTEN_TOLERANCE_MM, REGIONS_SUGGESTED_BELOW_PCT,
@@ -103,8 +106,9 @@ pub fn flatten_tolerance_mm(height_mm: f64) -> f64 {
 ///   [`MAX_THRESHOLD_PCT`], before anything is read;
 /// - [`ImportError::PrepNothingLeft`] when nothing visible has a height or
 ///   nothing survives the clean-up;
-/// - [`ImportError::PrepOutputUnreadable`] when the pieces do not nest, a
-///   defect;
+/// - [`ImportError::PrepOutputUnreadable`] when the pieces do not nest, or
+///   the SVG [`write_svg`](super::write_svg) writes for them does not read
+///   back through the importer as the same pieces and holes: a defect;
 /// - [`ImportError::TooManyVertices`], and the errors of the walk and of
 ///   the importer's coordinate checks.
 pub fn prepare(
@@ -407,15 +411,15 @@ pub fn prepare(
         thinnest_piece: thinnest_mm.and_then(|w| WidthFigure::new(w, height_mm)),
         narrowest_gap: gap.and_then(|g| WidthFigure::new(g.width_mm, height_mm)),
     };
-    Ok((
-        Prepared {
-            pieces,
-            page_width_mm: walked.page_width_mm,
-            page_height_mm: walked.page_height_mm,
-            report,
-        },
-        warnings,
-    ))
+    let prepared = Prepared {
+        pieces,
+        page_width_mm: walked.page_width_mm,
+        page_height_mm: walked.page_height_mm,
+        report,
+    };
+    // Step 8: the output is read back before anything is returned.
+    write::verify(&prepared, options.max_vertices)?;
+    Ok((prepared, warnings))
 }
 
 /// `value_pct` is a threshold the command takes: `0` to

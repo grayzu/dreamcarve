@@ -21,7 +21,7 @@ use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
 use dreamcarve_shell::ShellError;
 
 use crate::output::{self, errln, outln};
-use crate::{check, config, export, init, tabs, tools};
+use crate::{check, config, export, init, prep, tabs, tools};
 
 /// DreamCarve: open source CAD/CAM for CNC hobbyists.
 #[derive(Debug, Parser)]
@@ -37,6 +37,9 @@ pub struct Cli {
 pub enum Command {
     /// Create a project (.dcv) from an SVG or DXF drawing.
     Init(InitArgs),
+    /// Prepare an SVG for inlay: turn strokes into areas, resolve fills,
+    /// drop specks, and write a clean SVG of filled shapes.
+    ImagePrep(ImagePrepArgs),
     /// Write G-code for a project.
     Export(ExportArgs),
     /// Report the problems export would find, without writing G-code.
@@ -230,6 +233,33 @@ pub struct InitArgs {
     pub layers: Vec<String>,
 }
 
+/// Arguments of `image-prep`. It takes no tool, stock, depth, feed or size
+/// option, by construction (functional 49b): every threshold is a share of
+/// the design's height.
+#[derive(Debug, clap::Args)]
+pub struct ImagePrepArgs {
+    /// The drawing to prepare: an SVG. A PNG or JPEG is refused; trace it
+    /// in Inkscape (Path > Trace Bitmap) first.
+    pub svg: PathBuf,
+    /// Where to write the result [default: the drawing's name with
+    /// -inlay added, beside it]. An existing file is never overwritten.
+    #[arg(short, long, value_name = "SVG")]
+    pub output: Option<PathBuf>,
+    /// Make the enclosed spaces between the lines the inlay, not the ink
+    /// itself: for line art.
+    #[arg(long)]
+    pub regions: bool,
+    /// Drop pieces, and fill holes, whose widest point is under this
+    /// percentage of the design's height, 0 to 5; 0 turns it off
+    /// [default: 0.2].
+    #[arg(long, value_name = "PCT", allow_negative_numbers = true)]
+    pub min_detail: Option<f64>,
+    /// Straighten runs of tiny segments within this percentage of the
+    /// design's height, 0 to 5; 0 turns it off [default: 0.05].
+    #[arg(long, value_name = "PCT", allow_negative_numbers = true)]
+    pub smooth: Option<f64>,
+}
+
 /// Arguments of `export`.
 #[derive(Debug, clap::Args)]
 pub struct ExportArgs {
@@ -389,6 +419,7 @@ pub fn run(args: impl IntoIterator<Item = OsString>) -> ExitCode {
     };
     let result = match cli.command {
         Command::Init(args) => init::run(&args),
+        Command::ImagePrep(args) => prep::run(&args),
         Command::Export(args) => export::run(&args),
         Command::Check(args) => check::run(&args),
         Command::Posts => posts(),
