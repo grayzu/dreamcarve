@@ -14,6 +14,7 @@ pub mod history;
 pub mod import;
 pub mod library;
 pub mod mixed;
+pub mod onboarding;
 pub mod operations;
 pub mod prefs;
 pub mod project;
