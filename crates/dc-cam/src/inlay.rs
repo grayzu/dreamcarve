@@ -67,10 +67,10 @@ use dc_geometry::{
     wall_tolerance_mm, without_rect_sides,
 };
 use dc_project::{
-    BandEdge, Board, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
-    FeatureInstance, INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut, InlayOp, InstanceId,
-    MaleBand, Operation, OperationId, ProfileOp, Project, Side as ProfileSide, StartAt,
-    VCarveStrategy, male_band,
+    BandEdge, BandSource, Board, CornerRelief, CutDirection, DefinitionId, Entry,
+    FeatureDefinition, FeatureInstance, INLAY_MERGE_MM, INLAY_MIN_PLUG_BASE_MM, InlayCutOut,
+    InlayOp, InstanceId, MaleBand, Operation, OperationId, ProfileOp, Project, Side as ProfileSide,
+    StartAt, VCarveStrategy, band_edge_of, male_band,
 };
 
 /// Both sides carve along the medial lines; an Inlay has no strategy of
@@ -143,10 +143,22 @@ struct Values {
     margin_mm: Option<f64>,
 }
 
+/// `margin_mm`, which must be a positive finite number.
+fn positive_margin(op: &InlayOp, margin_mm: f64) -> Result<f64, CamError> {
+    if margin_mm.is_finite() && margin_mm > 0.0 {
+        Ok(margin_mm)
+    } else {
+        Err(CamError::InlayMargin {
+            op: op.id.clone(),
+            margin_mm,
+        })
+    }
+}
+
 impl Values {
     /// The values of `op` for `board`, as validation checks them: the
     /// margin only for the male.
-    fn of(op: &InlayOp, board: Board) -> Result<Self, CamError> {
+    fn of(project: &Project, op: &InlayOp, board: Board) -> Result<Self, CamError> {
         let unset = |field| CamError::InlayValueUnset {
             op: op.id.clone(),
             field,
@@ -177,15 +189,20 @@ impl Values {
         }
         let margin_mm = match board {
             Board::Female => None,
+            // #449: the drawn boundary replaces `margin_mm`; the narrowest
+            // band it leaves takes its place in every rule.
+            Board::Male if op.has_boundary() => {
+                let drawn = dc_project::drawn_boundary(project, op)
+                    .map_err(|problem| CamError::InlayBoundary {
+                        op: op.id.clone(),
+                        problem,
+                    })?
+                    .ok_or_else(|| unset("margin_mm"))?;
+                Some(positive_margin(op, drawn.narrowest_mm)?)
+            }
             Board::Male => {
                 let margin_mm = op.margin_mm.ok_or_else(|| unset("margin_mm"))?;
-                if !(margin_mm.is_finite() && margin_mm > 0.0) {
-                    return Err(CamError::InlayMargin {
-                        op: op.id.clone(),
-                        margin_mm,
-                    });
-                }
-                Some(margin_mm)
+                Some(positive_margin(op, margin_mm)?)
             }
         };
         // #448: as validation's `inlay_outline_rounding`, on either side.
@@ -248,6 +265,10 @@ pub(crate) struct Side {
     /// The male's band (#448): its edge and roundings, from
     /// [`dc_project::male_band`]; `None` for the female.
     pub band: Option<MaleBand>,
+    /// The male's band edge `B` before it is clipped to the board
+    /// ([`dc_project::band_edge`], #603), the cut-out's paths' source;
+    /// empty for the female.
+    pub band_edge: Vec<Region>,
     /// The male's band edge when a clearing pass cuts it upright (#448).
     pub open_edge: Option<OpenEdge>,
     /// Where the board's edge clips the male's band (#495); `None` when
@@ -361,25 +382,64 @@ fn on_board<'p>(project: &'p Project, op: &InlayOp, board: Board) -> Cow<'p, Pro
 /// ([`on_board`]). Warnings of the design's outlines (an open path, a
 /// duplicate, near parts merged) go to `warnings`.
 ///
+/// The male's drawn boundary (format 26, #449), as every generator
+/// re-checks validation: the boundary's own problems are
+/// [`CamError::InlayBoundary`]; on the male, what validation warns of it
+/// ([`Warning::InlayMarginIgnored`], [`Warning::InlayBoundaryHoleIgnored`],
+/// [`Warning::InlayBoundaryEmpty`]) is returned, from the same check
+/// ([`dc_project::drawn_boundary`]).
+///
 /// # Errors
 ///
-/// A male cut with a drawn boundary (format 26, #449) is refused until
-/// the generator cuts the band from it (sub-phase 3.4, slice 21j): the
-/// boundary's own problems as [`CamError::InlayBoundary`], as every
-/// generator re-checks validation, else
-/// [`CamError::InlayBoundaryNotCut`], so a file that lists one never
-/// exports a band that ignores it.
-fn refuse_drawn_boundary(project: &Project, op: &InlayOp, board: Board) -> Result<(), CamError> {
+/// [`CamError::InlayBoundary`].
+fn check_boundary(project: &Project, op: &InlayOp, board: Board) -> Result<Vec<Warning>, CamError> {
     if board != Board::Male || !op.has_boundary() {
-        return Ok(());
+        return Ok(Vec::new());
     }
-    match dc_project::drawn_boundary(project, op) {
-        Err(problem) => Err(CamError::InlayBoundary {
-            op: op.id.clone(),
-            problem,
-        }),
-        Ok(_) => Err(CamError::InlayBoundaryNotCut { op: op.id.clone() }),
+    let drawn = match dc_project::drawn_boundary(project, op) {
+        Err(problem) => {
+            return Err(CamError::InlayBoundary {
+                op: op.id.clone(),
+                problem,
+            });
+        }
+        Ok(None) => return Ok(Vec::new()),
+        Ok(Some(drawn)) => drawn,
+    };
+    let mut warnings = Vec::new();
+    for (field, set) in [
+        ("margin_mm", op.margin_mm.is_some()),
+        ("outline_rounding_mm", op.outline_rounding_mm.is_some()),
+    ] {
+        if set {
+            warnings.push(Warning::InlayMarginIgnored {
+                op: op.id.clone(),
+                field,
+            });
+        }
     }
+    for (index, instance) in drawn.instances.iter().enumerate() {
+        for &profile in &instance.holes {
+            warnings.push(Warning::InlayBoundaryHoleIgnored {
+                op: op.id.clone(),
+                index,
+                instance: instance.instance.clone(),
+                instance_name: instance.name.clone(),
+                profile,
+            });
+        }
+    }
+    for &index in &drawn.empty {
+        if let Some(instance) = drawn.instances.get(index) {
+            warnings.push(Warning::InlayBoundaryEmpty {
+                op: op.id.clone(),
+                index,
+                instance: instance.instance.clone(),
+                instance_name: instance.name.clone(),
+            });
+        }
+    }
+    Ok(warnings)
 }
 
 /// As [`Values`] (an unset or out-of-range value, `InlayGlueGap`,
@@ -391,8 +451,8 @@ pub(crate) fn side(
     board: Board,
     warnings: &mut Vec<Warning>,
 ) -> Result<Side, CamError> {
-    refuse_drawn_boundary(project, op, board)?;
-    let values = Values::of(op, board)?;
+    check_boundary(project, op, board)?;
+    let values = Values::of(project, op, board)?;
     side_of(&on_board(project, op, board), op, values, warnings)
 }
 
@@ -417,6 +477,7 @@ fn side_of(
             mirror_x_mm: None,
             design: Vec::new(),
             band: None,
+            band_edge: Vec::new(),
             open_edge: None,
             clipped: None,
         });
@@ -432,7 +493,13 @@ fn side_of(
     // #478: the plug's outline within the V-bit's wall tolerance; the
     // band's edge within the project's.
     let plug_tolerance_mm = plug_tolerance_mm(project, op);
-    let edge = rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm);
+    // #603: the one function the safety pass derives the band by too.
+    let edge = band
+        .as_ref()
+        .and_then(|b| band_edge_of(project, op, b, mirror, &design.regions))
+        .unwrap_or_else(|| {
+            rounded_band(&design.regions, margin_mm, edge_rounding_mm, tolerance_mm)
+        });
     // #495: a band that runs past the board's edge is clipped to it.
     let on_board = band.as_ref().and_then(|b| {
         let board = b.board(&project.stock);
@@ -447,7 +514,18 @@ fn side_of(
         )?;
         Some((clipped, at))
     });
-    let (regions, edge, clipped) = match on_board {
+    let drawn = matches!(
+        band.as_ref().map(|b| &b.source),
+        Some(BandSource::Drawn { .. })
+    );
+    let (regions, clipped_edge, clipped) = match on_board {
+        // A computed band is the design's surround; a drawn one is its
+        // edge less the design (#603).
+        None if drawn => (
+            difference_within(&edge, &design.regions, tolerance_mm, plug_tolerance_mm),
+            edge.clone(),
+            None,
+        ),
         None => (
             surround_within(
                 &design.regions,
@@ -456,7 +534,7 @@ fn side_of(
                 tolerance_mm,
                 plug_tolerance_mm,
             ),
-            edge,
+            edge.clone(),
             None,
         ),
         Some((band, at)) => (
@@ -466,7 +544,7 @@ fn side_of(
         ),
     };
     let open_edge = band.as_ref().filter(|b| b.is_open()).map(|_| OpenEdge {
-        band: edge,
+        band: clipped_edge,
         design: design.regions.clone(),
         top_z_mm: thickness_mm,
     });
@@ -489,6 +567,7 @@ fn side_of(
         mirror_x_mm,
         design: design.regions,
         band,
+        band_edge: edge,
         open_edge,
         clipped,
     })
@@ -775,12 +854,11 @@ fn generate_on(
             safe_z_mm: op.safe_z_mm,
         });
     }
-    refuse_drawn_boundary(project, op, board)?;
-    let values = Values::of(op, board)?;
+    let mut warnings = check_boundary(project, op, board)?;
+    let values = Values::of(project, op, board)?;
     let cut_out = checked_cut_out(project, op, values)?;
     let passes = clearing::Passes::of_inlay(op, values.start_depth_mm());
     let clearing_tools = clearing::checked_tools(project, &passes, true)?;
-    let mut warnings = Vec::new();
     let side = side_of(project, op, values, &mut warnings)?;
     // Step 1: the flank is engaged from the stock top, so the plug above
     // the male's start plane counts (security review H4).
@@ -847,6 +925,7 @@ fn generate_on(
         engaged_from_z_mm,
         flat_depth_mm,
         design,
+        band_edge,
         open_edge,
         ..
     } = side;
@@ -897,7 +976,7 @@ fn generate_on(
         (cut_out, project.stock.thickness_mm)
     {
         let paths = cut_out_paths(
-            &design,
+            &band_edge,
             &band,
             diameter_mm,
             band.board(&project.stock),
@@ -985,11 +1064,12 @@ fn checked_cut_out<'o>(
 }
 
 /// A male Inlay's cut-out paths for an end mill `diameter_mm` wide (#443,
-/// #448, #461, #495; design "Inlay", step 6): the outer outlines of the
-/// band's edge `B` round its mirrored `design`
-/// ([`dc_geometry::rounded_band`], closed by the edge's rounding, and
-/// clipped to `board`, [`MaleBand::board`], where it runs past it) inset
-/// by [`MaleBand::cut_out_inset_mm`] ([`dc_geometry::inset_outers`]), so
+/// #448, #461, #495, #603; design "Inlay", step 6): the outer outlines of
+/// the band's edge `edge`, `B` before it is clipped
+/// ([`dc_project::band_edge`]: the design grown by the margin and closed
+/// by the edge's rounding, or the drawn boundary mirrored), clipped to
+/// `board`, [`MaleBand::board`], where it runs past it, inset by
+/// [`MaleBand::cut_out_inset_mm`] ([`dc_geometry::inset_outers`]), so
 /// the tool's edge runs along the outer edge of the band's flat floor: on
 /// `B` when the edge is open, `P·tan(α/2)` inside it, at the V wall's
 /// foot, otherwise. Above the floor it cuts only what the carve removed.
@@ -1002,19 +1082,18 @@ fn checked_cut_out<'o>(
 /// radius inside it. Every other path is closed.
 #[must_use]
 pub fn cut_out_paths(
-    design: &[Region],
+    edge: &[Region],
     band: &MaleBand,
     diameter_mm: f64,
     board: Rect,
     tolerance_mm: f64,
 ) -> Vec<Polyline> {
-    let edge = rounded_band(design, band.margin_mm, band.edge_rounding_mm, tolerance_mm);
     let inset_mm = band.cut_out_inset_mm(diameter_mm);
     let closed = |outlines: Vec<Contour>| -> Vec<Polyline> {
         outlines.into_iter().map(Contour::into_polyline).collect()
     };
-    let Some(clipped) = band_on_board(&edge, board, tolerance_mm) else {
-        return closed(inset_outers(&edge, inset_mm, tolerance_mm));
+    let Some(clipped) = band_on_board(edge, board, tolerance_mm) else {
+        return closed(inset_outers(edge, inset_mm, tolerance_mm));
     };
     let outlines = inset_outers(&clipped, inset_mm, tolerance_mm);
     if !band.is_open() {

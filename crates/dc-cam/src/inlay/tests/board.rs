@@ -210,7 +210,7 @@ fn cut_out_runs_edge_to_edge_when_clipped() {
     assert!(band.is_open());
     let side = side(&project, &op, board_of(&op), &mut Vec::new()).expect("the side resolves");
     let paths = cut_out_paths(
-        &side.design,
+        &side.band_edge,
         &band,
         SMALL_END_MILL_MM,
         band.board(&project.stock),

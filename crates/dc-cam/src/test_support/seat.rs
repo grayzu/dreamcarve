@@ -253,7 +253,7 @@ pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> F
         .collect();
     let (female_project, female, female_runs) = (project, op, female_runs.as_slice());
     let male_project = &project.on_male_board(op);
-    let (male, male_runs) = (op, male_runs.as_slice());
+    let male_runs = male_runs.as_slice();
     let resolve = |board: Board| {
         crate::inlay::side(project, op, board, &mut Vec::new()).expect("the board resolves")
     };
@@ -266,7 +266,9 @@ pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> F
         let b = outline.bounds().expect("an outline has a box");
         bounds = Some(bounds.map_or(b, |all| all.including(b.min).including(b.max)));
     }
-    let grow_mm = male.margin_mm.expect("a male has a margin") + 2.0;
+    // The narrowest band (#603: a drawn boundary has no margin of its own).
+    let band = male_side.band.as_ref().expect("a male has a band");
+    let grow_mm = band.margin_mm + 2.0;
     let b = bounds.expect("the design has an outline");
     let bounds = Rect {
         min: Point::new(b.min.x - grow_mm, b.min.y - grow_mm),

@@ -362,6 +362,21 @@ fn describe_inlay(
     let band = (board == Board::Male)
         .then(|| dc_project::male_band(project, inlay))
         .flatten();
+    // #603: where the band's edge comes from, when it is drawn.
+    if let Some(band) = band.as_ref()
+        && matches!(band.source, dc_project::BandSource::Drawn { .. })
+    {
+        let ids: Vec<&str> = inlay.boundary.iter().map(|id| id.as_str()).collect();
+        let edge = match band.edge_pass() {
+            Some(pass) => format!("open edge, edge pass {}", pass.tool),
+            None => "V wall".to_owned(),
+        };
+        floor.push_str(&format!(
+            "; band: drawn boundary {}, narrowest band {} ({edge})",
+            ids.join(", "),
+            describe_length(project, band.margin_mm)
+        ));
+    }
     // #448: the end mill's upright edge, and its rounding.
     if let Some(pass) = band.as_ref().and_then(|b| b.edge_pass()) {
         let rounding = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);

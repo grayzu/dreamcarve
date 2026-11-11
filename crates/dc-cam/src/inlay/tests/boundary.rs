@@ -414,14 +414,15 @@ fn boundary_cut_out_no_room_names_5_484() {
 
 /// Acceptance 61p: a boundary 6 mm past the male board's left edge is
 /// clipped to it, warns `inlay_band_clipped`, and nothing is cut past the
-/// board.
+/// board. The boundary is mirrored with the design, so to run past the
+/// male board's left edge it is drawn 6 mm past the stock's right one.
 #[test]
 fn boundary_clipped_to_the_board_warns_and_stays_on_it() {
     let op = InlayOp {
         clearing: vec![clearing_pass()],
         ..inlay(Board::Male)
     };
-    let wide = Polyline::rect(Point::new(-6.0, 10.0), 96.0, 80.0);
+    let wide = Polyline::rect(Point::new(10.0, 10.0), 96.0, 80.0);
     let (project, op) = with_boundary(&star_project(THICKNESS_MM), &op, vec![wide]);
     let (runs, warnings) = inlay_runs(&project, &op);
     let clipped: Vec<_> = warnings

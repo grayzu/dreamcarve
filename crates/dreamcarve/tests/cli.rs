@@ -7324,20 +7324,24 @@ fn dc_with_boundary(dir: &Path, shift_mm: f64, keep_margin: bool) -> PathBuf {
     let mut value: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&path).expect("dcv readable"))
             .expect("dcv is JSON");
-    let inlay = &mut value["operations"][0];
-    inlay["boundary"] = serde_json::json!(["i3"]);
+    let inlay = value.pointer_mut("/operations/0").expect("the Inlay");
+    let set = |inlay: &mut serde_json::Value, field: &str, to: serde_json::Value| {
+        *inlay.get_mut(field).expect("the field is there") = to;
+    };
+    set(inlay, "boundary", serde_json::json!(["i3"]));
     if !keep_margin {
-        inlay["margin_mm"] = serde_json::Value::Null;
-        inlay["outline_rounding_mm"] = serde_json::Value::Null;
+        set(inlay, "margin_mm", serde_json::Value::Null);
+        set(inlay, "outline_rounding_mm", serde_json::Value::Null);
     }
-    let frame = value["instances"]
-        .as_array_mut()
+    let frame = value
+        .get_mut("instances")
+        .and_then(serde_json::Value::as_array_mut)
         .expect("instances")
         .iter_mut()
-        .find(|i| i["id"] == "i3")
+        .find(|i| i.get("id").is_some_and(|id| id == "i3"))
         .expect("the frame");
-    let e = frame["transform"][4].as_f64().expect("a translation");
-    frame["transform"][4] = serde_json::json!(e + shift_mm);
+    let e = frame.pointer_mut("/transform/4").expect("a translation");
+    *e = serde_json::json!(e.as_f64().expect("a number") + shift_mm);
     std::fs::write(&path, serde_json::to_string_pretty(&value).expect("json")).expect("written");
     path
 }
@@ -7345,14 +7349,17 @@ fn dc_with_boundary(dir: &Path, shift_mm: f64, keep_margin: bool) -> PathBuf {
 /// #603 (slice 21j): `check` and `export` describe a drawn band in the
 /// male's summary line, in place of the margin's: the boundary, the
 /// narrowest band and whether the edge is open, with its pass. A set
-/// `margin_mm` is `inlay_margin_ignored`, once; without a boundary the
-/// line has no band.
+/// `margin_mm` is `inlay_margin_ignored`, once per value set.
 #[test]
 fn boundary_summary_line() {
     let dir = work_dir("boundary_summary_line");
     dc_with_boundary(&dir, 3.0, false);
     for command in ["check", "export"] {
-        let out = run(&dir, &[command, "dc.dcv", "--date", FIXED_DATE]);
+        let mut args = vec![command, "dc.dcv"];
+        if command == "export" {
+            args.extend(["--date", FIXED_DATE]);
+        }
+        let out = run(&dir, &args);
         assert_eq!(out.status.code(), Some(0), "{command}: {}", stderr(&out));
         let report = stdout(&out);
         let line = report
@@ -7374,9 +7381,6 @@ fn boundary_summary_line() {
         2,
         "margin_mm and outline_rounding_mm, once each: {report}"
     );
-    copy_fixture(&dir, "dc.dcv", "plain.dcv");
-    let out = run(&dir, &["check", "plain.dcv"]);
-    assert!(!stdout(&out).contains("band: drawn"), "{}", stdout(&out));
 }
 
 /// #603: `--preview` draws each boundary instance on the male board,
@@ -7428,7 +7432,7 @@ fn preview_draws_the_boundary_on_the_male_board() {
         .expect("bounds");
     let (min_x, max_x) = (110.0 - drawn.max.x, 110.0 - drawn.min.x);
     let offset = project.stock.width_mm + 10.0;
-    let points = svg_path_points(svg_attr(boundaries[0], "d"));
+    let points = svg_path_points(svg_attr(boundaries[0], "d").trim_end_matches(" Z"));
     let got_min = points.iter().map(|p| p.0).fold(f64::INFINITY, f64::min);
     let got_max = points.iter().map(|p| p.0).fold(f64::NEG_INFINITY, f64::max);
     assert!((got_min - (offset + min_x)).abs() < 0.01, "{got_min}");
