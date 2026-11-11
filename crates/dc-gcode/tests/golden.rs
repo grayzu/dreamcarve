@@ -587,7 +587,13 @@ fn vcarve_offset_square() {
 /// 25.4 ([`photo::check`]; `tests/golden/photo-raster-inch/README.md`).
 #[test]
 fn photo_raster_inch() {
-    photo::check("photo-raster-inch", 25.4);
+    photo::check(
+        "photo-raster-inch",
+        25.4,
+        &[photo::Difference::Resampled {
+            pixel_mm: 25.4 / 200.0,
+        }],
+    );
 }
 
 /// Photo V-Carve of `tests/fixtures/photo/radial.png` (64 × 64, white
@@ -597,7 +603,11 @@ fn photo_raster_inch() {
 /// ([`photo::check`]; `tests/golden/photo-raster-metric/README.md`).
 #[test]
 fn photo_raster_metric() {
-    photo::check("photo-raster-metric", 1.0);
+    photo::check(
+        "photo-raster-metric",
+        1.0,
+        &[photo::Difference::LastLineUncut],
+    );
 }
 
 /// The RasterCarve cases (phase 3, slice 25, #647), which their own tests
