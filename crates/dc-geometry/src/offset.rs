@@ -89,7 +89,15 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
         .map(|&eps| (source.clone(), both(eps)))
         .collect();
     retries.push((source.clone(), fine.clone()));
-    if let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps) {
+    // #611: `remove_redundant` indexes the second vertex of what is left
+    // when it has dropped every vertex of a closed polyline as collinear
+    // (a cross product under its tolerance, so any contour whose area is
+    // under the tolerance, however long) and panics. Such a sliver has no
+    // redundant vertices to remove, only nothing to offset, and the other
+    // retries are left to say so.
+    if contour.signed_area_mm2().abs() > defaults.pos_equal_eps
+        && let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps)
+    {
         retries.push((from_cavalier(&p), PlineOffsetOptions::default()));
     }
     let decimations =
@@ -771,6 +779,40 @@ mod tests {
     fn attempt(contour: &Contour, delta_mm: f64) -> Offset {
         let defaults = PlineOffsetOptions::default();
         offset_with(contour.polyline(), contour.is_ccw(), delta_mm, &defaults)
+    }
+
+    /// #611: a 6 µm by 4 nm sliver (area near 3e-11 mm²) is offset without
+    /// a panic, and an inset of it is empty.
+    #[test]
+    fn near_zero_area_contour_returns_empty() {
+        let sliver = Contour::new(Polyline::rect(Point::new(10.0, 20.0), 0.006, 0.000_004))
+            .expect("a sliver");
+        for delta_mm in [-0.05_f64, -1e-3, -1e-6] {
+            assert!(offset(&sliver, delta_mm).is_empty());
+        }
+        let _ = offset(&sliver, 0.05);
+        assert!(inset_is_empty(&sliver, 0.05));
+    }
+
+    /// #611: the triangle of the sign fixture's stroke union, 6 µm long and
+    /// a few nm wide. All its vertices are within `cavalier_contours`'
+    /// default position tolerance of the chord, and `remove_redundant`
+    /// indexes an empty polyline on it.
+    #[test]
+    fn sliver_triangle_of_the_sign_is_offset_without_a_panic() {
+        let triangle = Contour::oriented(Polyline::new(
+            vec![
+                Vertex::line(68.469_385_257_611_78, 33.602_204_291_770_875),
+                Vertex::line(68.469_446_292_768_03, 33.602_208_106_468_14),
+                Vertex::line(68.469_416_490_445_64, 33.602_207_152_793_824),
+            ],
+            true,
+        ))
+        .expect("a triangle");
+        for delta_mm in [-0.08_f64, -5.7e-5, -1e-6] {
+            assert!(offset(&triangle, delta_mm).is_empty());
+        }
+        let _ = offset(&triangle, 0.08);
     }
 
     /// An offset of no pieces.
