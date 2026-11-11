@@ -12,7 +12,10 @@
 //! A file is a DreamCarve library or a Fusion 360 library, told apart by
 //! content ([`crate::fusion::is_fusion_library`]), not by extension.
 //! [`read`] parses it; [`merge`] adds each tool as [`crate::add`] (or
-//! [`crate::replace`] for *Replace existing*, `--replace`) decides.
+//! [`crate::replace`] for `--replace`) decides. [`review`] is the app's
+//! import review (phase 4, capability 64b): both merges, computed without
+//! writing, with each item's [`Status`], so the user chooses *Keep mine*
+//! or *Replace with imported* before anything is written.
 
 use std::fmt;
 
@@ -259,6 +262,129 @@ pub fn merge(lib: &Library, incoming: Incoming, replace: bool) -> Result<Merged,
     })
 }
 
+/// What an item of an imported file is beside the library, whichever way
+/// the import goes (phase 4, capability 64b).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Status {
+    /// Not in the library: it is added.
+    New,
+    /// The same tool is already in the library: nothing changes.
+    Present,
+    /// A library tool came from the same source and the file's entry now
+    /// differs: kept beside it, or written over it with *Replace*.
+    Changed,
+    /// A Fusion item DreamCarve has no cutter for.
+    Skipped,
+}
+
+/// One item of the review: what the file holds, its status, and what each
+/// way of importing does with it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewItem {
+    /// The tool's name in the file, or a skipped item's description.
+    pub name: String,
+    /// The tool as the file describes it; `None` for a skipped item.
+    pub tool: Option<Tool>,
+    /// What it is beside the library.
+    pub status: Status,
+    /// Its outcome when the import keeps yours (`tools import`).
+    pub keep: Outcome,
+    /// Its outcome when the import replaces (`tools import --replace`).
+    pub replace: Outcome,
+    /// The notes on its report line (`feed unset`).
+    pub notes: Vec<String>,
+}
+
+/// The import review (capability 64b): both imports `tools import` can
+/// make of a file, computed without writing, and each item's status.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Review {
+    /// One item per tool, in file order, then each skipped item: the
+    /// report's order.
+    pub items: Vec<ReviewItem>,
+    /// What `tools import` makes: a changed tool added beside yours.
+    pub keep: Merged,
+    /// What `tools import --replace` makes: a changed tool written over
+    /// yours, keeping its id.
+    pub replace: Merged,
+}
+
+impl Review {
+    /// How many items have `status`.
+    #[must_use]
+    pub fn count(&self, status: Status) -> usize {
+        self.items.iter().filter(|i| i.status == status).count()
+    }
+
+    /// Whether any item is [`Status::Changed`]: only then do the two ways
+    /// of importing differ, and only then is the choice offered.
+    #[must_use]
+    pub fn has_changed(&self) -> bool {
+        self.items.iter().any(|i| i.status == Status::Changed)
+    }
+
+    /// The import `replace` chooses: [`Self::replace`] or [`Self::keep`].
+    #[must_use]
+    pub const fn merged(&self, replace: bool) -> &Merged {
+        if replace { &self.replace } else { &self.keep }
+    }
+
+    /// How many tools the import `replace` chooses writes: added plus
+    /// replaced.
+    #[must_use]
+    pub fn writes(&self, replace: bool) -> usize {
+        let report = &self.merged(replace).report;
+        report.imported.saturating_add(report.replaced)
+    }
+}
+
+/// The review of importing `incoming` into `lib`: [`merge`] both ways,
+/// with each item's [`Status`]. `lib` is not changed and nothing is
+/// written; the caller writes [`Review::merged`]'s library once the user
+/// chooses.
+///
+/// An item is [`Status::Changed`] when the replacing import overwrites a
+/// tool with its source, [`Status::Present`] when it is already there,
+/// [`Status::Skipped`] when the file's item has no cutter, and
+/// [`Status::New`] otherwise.
+///
+/// # Errors
+///
+/// [`LibraryError`] when a tool breaks a validation rule, as [`merge`].
+pub fn review(lib: &Library, incoming: Incoming) -> Result<Review, LibraryError> {
+    let tools: Vec<Tool> = incoming.tools.iter().map(|t| t.tool.clone()).collect();
+    let keep = merge(lib, incoming.clone(), false)?;
+    let replace = merge(lib, incoming, true)?;
+    let items = keep
+        .report
+        .entries
+        .iter()
+        .zip(&replace.report.entries)
+        .enumerate()
+        .map(|(n, (kept, replaced))| {
+            let status = match (&kept.outcome, &replaced.outcome) {
+                (Outcome::Skipped { .. }, _) => Status::Skipped,
+                (_, Outcome::Replaced { .. }) => Status::Changed,
+                (Outcome::AlreadyPresent { .. }, Outcome::AlreadyPresent { .. }) => Status::Present,
+                _ => Status::New,
+            };
+            ReviewItem {
+                name: kept.name.clone(),
+                tool: tools.get(n).cloned(),
+                status,
+                keep: kept.outcome.clone(),
+                replace: replaced.outcome.clone(),
+                notes: kept.notes.clone(),
+            }
+        })
+        .collect();
+    Ok(Review {
+        items,
+        keep,
+        replace,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,5 +459,56 @@ mod tests {
         let again = merge(&merged.library, incoming, false).unwrap();
         assert_eq!(again.library, merged.library);
         assert_eq!(again.report.present, 1);
+    }
+
+    /// The review is both merges: a tool whose source is in the library
+    /// with other values is Changed, added beside yours when kept and
+    /// written over yours when replaced; one already there is Present; the
+    /// input library is not changed.
+    #[test]
+    fn review_is_both_merges() {
+        let mut file = Library::default();
+        let source = Some("file:a".to_owned());
+        library::add(&mut file, tool_6_35_upcut(), source.clone()).unwrap();
+        let mut other = tool_6_35_upcut();
+        other.name = "Other".into();
+        other.diameter_mm = 3.175;
+        library::add(&mut file, other, Some("file:b".into())).unwrap();
+        let incoming = read(library::save(&file).unwrap().as_bytes()).unwrap();
+
+        let fresh = review(&Library::default(), incoming.clone()).unwrap();
+        assert_eq!(fresh.count(Status::New), 2);
+        assert!(!fresh.has_changed());
+        assert_eq!(fresh.keep, fresh.replace, "nothing changed: one import");
+        assert_eq!(fresh.writes(false), 2);
+
+        // Yours: the first tool edited, so the file's entry now differs.
+        let mut mine = file.clone();
+        let first = mine.tools[0].id.clone();
+        let mut edited = mine.tools[0].tool.clone();
+        edited.feed_mm_min = Some(250.0);
+        library::update(&mut mine, &first, edited).unwrap();
+        let before = mine.clone();
+        let changed = review(&mine, incoming.clone()).unwrap();
+        assert_eq!(mine, before, "the library is not changed");
+        let statuses: Vec<Status> = changed.items.iter().map(|i| i.status).collect();
+        assert_eq!(statuses, [Status::Changed, Status::Present]);
+        assert!(changed.has_changed());
+        assert_eq!(changed.keep, merge(&mine, incoming.clone(), false).unwrap());
+        assert_eq!(changed.replace, merge(&mine, incoming, true).unwrap());
+        assert!(matches!(
+            &changed.items[0].keep,
+            Outcome::Imported { stored_name, .. } if stored_name.ends_with(" (2)")
+        ));
+        assert_eq!(
+            changed.items[0].replace,
+            Outcome::Replaced { id: first.clone() }
+        );
+        assert_eq!(changed.replace.library, file, "replaced in place, id kept");
+        assert_eq!((changed.writes(false), changed.writes(true)), (1, 1));
+        assert_eq!(
+            changed.items[0].tool.as_ref().map(|t| t.feed_mm_min),
+            Some(file.tools[0].tool.feed_mm_min)
+        );
     }
 }

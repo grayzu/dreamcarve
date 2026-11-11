@@ -444,9 +444,9 @@ fn theme_follows_system_and_both_palettes_apply() {
 
 /// Capability 64 and acceptance 71 in the window (slice 8, #537):
 /// Project ▸ Tool Library… opens the sheet over the library in the config
-/// directory; *Import…* reads `tests/fixtures/fusion/sample.tools` in
-/// place, writes the library the CLI writes, and shows the report
-/// `tools import` prints in place of the table, with *Back*; ticking two
+/// directory; *Import…* reads `tests/fixtures/fusion/sample.tools` and
+/// shows its review in place of the table (slice 31, #623), whose
+/// *Import* writes the library the CLI writes; ticking two
 /// rows and *Add 2 tools to project* copies them into the project under
 /// new ids as one undo step, as `tools add` does, and marks them "in
 /// project"; the search narrows the table without losing the ticks.
@@ -482,7 +482,9 @@ fn library_window_adds_ticked_rows() {
     assert!(sheet.query_by_label("New tool").is_some());
     assert_eq!(sheet.query_all_by_label("Import…").count(), 2);
 
-    // Import… the Fusion sample: the report replaces the table.
+    // Import… the Fusion sample: the review replaces the table (slice 31,
+    // #623), with the counts `tools import` reports, and nothing is
+    // written until *Import*.
     let sample = common::fixture("fusion/sample.tools");
     dialogs.answer(&sample);
     h.get_by_role(Role::Dialog)
@@ -495,17 +497,20 @@ fn library_window_adds_ticked_rows() {
     let bytes = std::fs::read(&sample).unwrap();
     let merged = dc_app::library::import(&dc_library::Library::default(), &bytes, false).unwrap();
     let sheet = h.get_by_role(Role::Dialog);
-    for line in merged.report.lines() {
+    for count in [
+        "13 New",
+        "0 Already in your library",
+        "0 Changed",
+        "10 Skipped",
+    ] {
         assert!(
-            sheet.query_by_label(&line).is_some(),
-            "the report shows `{line}`"
+            sheet.query_by_label(count).is_some(),
+            "the review counts {count}"
         );
     }
     assert!(
-        sheet
-            .query_by_label_contains("13 imported, 0 already present, 0 replaced, 10 skipped")
-            .is_some(),
-        "and the counts"
+        sheet.query_by_label("5 mm Drill · New").is_some(),
+        "and lists the file's tools"
     );
     assert!(
         sheet
@@ -513,14 +518,26 @@ fn library_window_adds_ticked_rows() {
             .is_none(),
         "in place of the table"
     );
+    assert!(
+        !config.join("tools.json").exists(),
+        "nothing is written before Import"
+    );
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Import 13 tools")
+        .click();
+    h.run();
     let written = std::fs::read_to_string(config.join("tools.json")).expect("library written");
     assert_eq!(
         written,
         dc_library::save(&merged.library).unwrap(),
         "the library file is the CLI's"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Back").click();
-    h.run();
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label("Imported 13 tools from sample.tools. 10 skipped.")
+            .is_some(),
+        "back on the table with the banner"
+    );
 
     // Tick two rows; the primary action counts them.
     for name in ["1/4 in Flat End Mill", "5 mm Drill"] {

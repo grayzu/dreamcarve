@@ -96,12 +96,22 @@ fn shoot(h: &mut H, scene: &str) {
 /// A window on `open` (if any), `width` x `height` points at the current
 /// pass's scale, settled; `None` with no wgpu adapter.
 fn window(test_dir: &Path, open: Option<PathBuf>, width: f32, height: f32) -> Option<H> {
+    window_with(test_dir, open, width, height, &QueuedDialogs::default())
+}
+
+/// [`window`], its file dialogs answered from `dialogs`.
+fn window_with(
+    test_dir: &Path,
+    open: Option<PathBuf>,
+    width: f32,
+    height: f32,
+    dialogs: &QueuedDialogs,
+) -> Option<H> {
     if !common::wgpu_adapter_available() {
         println!("review_screenshots: no wgpu adapter on this machine, so nothing is rendered");
         return None;
     }
-    let dialogs = QueuedDialogs::default();
-    let options = options(&test_dir.join("config"), open, &dialogs);
+    let options = options(&test_dir.join("config"), open, dialogs);
     let mut h = Harness::builder()
         .with_size(egui::vec2(width, height))
         .with_pixels_per_point(SCALE.get())
@@ -173,6 +183,23 @@ fn scenes(dir: &Path) -> bool {
             .unwrap()
             .library;
     }
+    // One sample tool edited since, so importing the sample again shows a
+    // Changed tool and the review's choice (#623, scene 14d).
+    let ball = library
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "3 mm Ball End Mill")
+        .unwrap()
+        .id
+        .clone();
+    let library = dc_app::library::edit(
+        &library,
+        &ball,
+        dc_app::tools::ToolField::Rpm,
+        "16000",
+        dc_project::Units::Mm,
+    )
+    .unwrap();
     std::fs::create_dir_all(dir.join("config")).unwrap();
     std::fs::write(
         dir.join("config/tools.json"),
@@ -180,7 +207,8 @@ fn scenes(dir: &Path) -> bool {
     )
     .unwrap();
     let plaque = fixture("plaque.dcv");
-    let mut h = window(dir, Some(plaque.clone()), 1280.0, 800.0).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = window_with(dir, Some(plaque.clone()), 1280.0, 800.0, &dialogs).unwrap();
     shoot(&mut h, "03-workspace-project-panel");
     click(&mut h, "File");
     shoot(&mut h, "04-file-menu");
@@ -298,6 +326,13 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "14c-tool-library-delete");
     h.key_press(egui::Key::Escape);
     h.run();
+    // The import review in place of the panes, one tool changed (#623).
+    dialogs.answer(&fixture("fusion/sample.tools"));
+    h.get_by_role(Role::Dialog).get_by_label("Import…").click();
+    h.run();
+    shoot(&mut h, "14d-tool-library-import-review");
+    click(&mut h, "Import 1 tool");
+    shoot(&mut h, "14e-tool-library-imported");
     h.key_press(egui::Key::Escape);
     h.run();
     for _ in 0..3 {
