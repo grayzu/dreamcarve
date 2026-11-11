@@ -1,498 +1,465 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" font-family="Helvetica, Arial, sans-serif">
-<title>DreamCarve phase 4 wireframe: workspace</title>
-<rect width="1280" height="800" fill="#ffffff"/>
-<rect x="0" y="0" width="1280" height="22" rx="0" fill="#fff8e1" stroke="none" stroke-width="1"/>
-<text x="8" y="15" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">01 · The workspace (capability 50). Plaque project; the panel is selected; the Pocket is being edited. Y up, origin bottom-left.</text>
-<rect x="0" y="22" width="1280" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="10" y="38" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="start">File</text>
-<text x="56" y="38" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="start">Edit</text>
-<text x="102" y="38" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="start">View</text>
-<text x="148" y="38" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="start">Project</text>
-<text x="215" y="38" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="start">Help</text>
-<rect x="0" y="46" width="1280" height="32" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="8" y="50" width="44" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="30.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Open</text>
-<rect x="58" y="50" width="44" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="80.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Save</text>
-<line x1="111" y1="52" x2="111" y2="72" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="120" y="50" width="44" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="142.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Undo</text>
-<rect x="170" y="50" width="44" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="192.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Redo</text>
-<line x1="223" y1="52" x2="223" y2="72" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="232" y="50" width="54" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="259.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Import</text>
-<rect x="292" y="50" width="54" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="319.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Picture</text>
-<line x1="355" y1="52" x2="355" y2="72" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="364" y="50" width="36" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="382.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Fit</text>
-<rect x="406" y="50" width="60" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="436.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Tab tool</text>
-<line x1="475" y1="52" x2="475" y2="72" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="484" y="50" width="56" height="24" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="512.0" y="66.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Export</text>
-<text x="1270" y="66" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">plaque.dcv •</text>
-<rect x="0" y="78" width="250" height="300" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="0" y="78" width="250" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="8" y="94" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Design Tree</text>
-<rect x="1" y="106" width="248" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="8" y="119" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Shapes</text>
-<ellipse cx="214" cy="115" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="214" cy="115" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="230" y="114" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M231.5 114 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<ellipse cx="14" cy="135" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="135" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="134" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 134 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="139" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline</text>
-<text x="238" y="139" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">2</text>
-<rect x="1" y="146" width="248" height="18" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
-<ellipse cx="14" cy="155" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="155" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="154" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 154 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="159" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">panel</text>
-<text x="238" y="159" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="175" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="175" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="174" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 174 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="179" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">island</text>
-<text x="238" y="179" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="195" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="195" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="194" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 194 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="199" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">hole-1</text>
-<text x="238" y="199" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="215" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="215" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="214" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 214 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="219" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">hole-2</text>
-<text x="238" y="219" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="235" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="235" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="234" width="8" height="6" rx="1" fill="#ffffff" stroke="#2b2b2b" stroke-width="1"/>
-<path d="M27.5 234 v-2 a2.5 2.5 0 0 1 5 0 v2" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<text x="44" y="239" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">hole-3</text>
-<text x="238" y="239" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="255" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="255" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="254" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 254 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="259" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">hole-4</text>
-<text x="238" y="259" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<ellipse cx="14" cy="275" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="275" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="274" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 274 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="279" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">flourish</text>
-<rect x="100" y="268" width="30" height="13" rx="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="115" y="278" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="middle">open</text>
-<text x="238" y="279" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">1</text>
-<rect x="1" y="286" width="248" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="8" y="299" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Tabs</text>
-<ellipse cx="214" cy="295" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="214" cy="295" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="230" y="294" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M231.5 294 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<ellipse cx="14" cy="315" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="14" cy="315" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="26" y="314" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M27.5 314 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="44" y="319" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">outline · 4 tabs</text>
-<rect x="1" y="326" width="248" height="18" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="8" y="339" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Pictures</text>
-<ellipse cx="214" cy="335" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="214" cy="335" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="230" y="334" width="8" height="6" rx="1" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M231.5 334 v-2 a2.5 2.5 0 0 1 5 0 v0.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="24" y="359" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">(none)</text>
-<rect x="0" y="378" width="250" height="398" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="0" y="378" width="250" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="8" y="394" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Properties · panel</text>
-<text x="8" y="424" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">X</text>
-<circle cx="64" cy="420" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="64" y="423" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="78" y="410" width="164" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="84" y="424" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">30</text>
-<text x="236" y="424" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="8" y="450" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Y</text>
-<circle cx="64" cy="446" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="64" y="449" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="78" y="436" width="164" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="84" y="450" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">30</text>
-<text x="236" y="450" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="8" y="476" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">W</text>
-<circle cx="64" cy="472" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="64" y="475" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="78" y="462" width="164" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="84" y="476" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">70</text>
-<text x="236" y="476" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<rect x="48" y="483" width="8" height="6" rx="1" fill="#ffffff" stroke="#2b2b2b" stroke-width="1"/>
-<path d="M49.5 483 v-2 a2.5 2.5 0 0 1 5 0 v2" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<text x="8" y="502" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">H</text>
-<circle cx="64" cy="498" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="64" y="501" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="78" y="488" width="164" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="84" y="502" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">50</text>
-<text x="236" y="502" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="8" y="528" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rotation</text>
-<circle cx="64" cy="524" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="64" y="527" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="78" y="514" width="164" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="84" y="528" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0</text>
-<text x="236" y="528" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">°</text>
-<text x="8" y="554" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Mirror</text>
-<rect x="78" y="540" width="52" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="104.0" y="554.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">↔</text>
-<rect x="136" y="540" width="52" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="162.0" y="554.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">↕</text>
-<rect x="8" y="572" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M10 578 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="26" y="583" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Visible</text>
-<rect x="8" y="594" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="26" y="605" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Locked</text>
-<text x="8" y="626" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Targeted by: Pocket 1</text>
-<rect x="250" y="78" width="710" height="698" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<line x1="310.0" y1="396.0" x2="310.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="342.0" y1="396.0" x2="342.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="374.0" y1="396.0" x2="374.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="406.0" y1="396.0" x2="406.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="438.0" y1="396.0" x2="438.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="470.0" y1="396.0" x2="470.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="502.0" y1="396.0" x2="502.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="534.0" y1="396.0" x2="534.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="566.0" y1="396.0" x2="566.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="598.0" y1="396.0" x2="598.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="630.0" y1="396.0" x2="630.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="662.0" y1="396.0" x2="662.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="694.0" y1="396.0" x2="694.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="726.0" y1="396.0" x2="726.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="758.0" y1="396.0" x2="758.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="790.0" y1="396.0" x2="790.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="822.0" y1="396.0" x2="822.0" y2="716" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="716.0" x2="822.0" y2="716.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="684.0" x2="822.0" y2="684.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="652.0" x2="822.0" y2="652.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="620.0" x2="822.0" y2="620.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="588.0" x2="822.0" y2="588.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="556.0" x2="822.0" y2="556.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="524.0" x2="822.0" y2="524.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="492.0" x2="822.0" y2="492.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="460.0" x2="822.0" y2="460.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="428.0" x2="822.0" y2="428.0" stroke="#eeeeee" stroke-width="1"/>
-<line x1="310" y1="396.0" x2="822.0" y2="396.0" stroke="#eeeeee" stroke-width="1"/>
-<rect x="310" y="396.0" width="512.0" height="320.0" rx="0" fill="none" stroke="#7f7f7f" stroke-width="1.2" stroke-dasharray="6 4"/>
-<line x1="300" y1="716" x2="320" y2="716" stroke="#2b2b2b" stroke-width="1.2"/>
-<line x1="310" y1="706" x2="310" y2="726" stroke="#2b2b2b" stroke-width="1.2"/>
-<text x="296" y="730" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">0,0</text>
-<path d="M785.0 412.0 h10 M790.0 407.0 v10" fill="none" stroke="#7a7a7a" stroke-width="1"/>
-<circle cx="790.0" cy="412.0" r="5" fill="none" stroke="#7a7a7a" stroke-width="1"/>
-<rect x="342.0" y="428.0" width="448.0" height="256.0" rx="19.200000000000003" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<rect x="406.0" y="460.0" width="224.0" height="160.0" rx="0" fill="none" stroke="#2f6fdb" stroke-width="1.4"/>
-<rect x="403.0" y="617.0" width="6" height="6" rx="0" fill="#ffffff" stroke="#2f6fdb" stroke-width="1"/>
-<rect x="627.0" y="617.0" width="6" height="6" rx="0" fill="#ffffff" stroke="#2f6fdb" stroke-width="1"/>
-<rect x="403.0" y="457.0" width="6" height="6" rx="0" fill="#ffffff" stroke="#2f6fdb" stroke-width="1"/>
-<rect x="627.0" y="457.0" width="6" height="6" rx="0" fill="#ffffff" stroke="#2f6fdb" stroke-width="1"/>
-<circle cx="518.0" cy="446.0" r="4" fill="#ffffff" stroke="#2f6fdb" stroke-width="1"/>
-<line x1="518.0" y1="460.0" x2="518.0" y2="450.0" stroke="#2f6fdb" stroke-width="1"/>
-<circle cx="518.0" cy="540.0" r="32.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="374.0" cy="652.0" r="8.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="758.0" cy="652.0" r="8.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="374.0" cy="460.0" r="8.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="758.0" cy="460.0" r="8.0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<path d="M662.0 588.0 q48.0 -128.0 96.0 -96.0" fill="none" stroke="#2b2b2b" stroke-width="1" stroke-dasharray="3 2"/>
-<rect x="331.84" y="417.84" width="468.32" height="276.32" rx="29.360000000000003" fill="none" stroke="#1f77b4" stroke-width="1.6"/>
-<line x1="553.2" y1="694.16" x2="578.8" y2="694.16" stroke="#1f77b4" stroke-width="5"/>
-<line x1="553.2" y1="417.84" x2="578.8" y2="417.84" stroke="#1f77b4" stroke-width="5"/>
-<line x1="331.84" y1="543.2" x2="331.84" y2="568.8" stroke="#1f77b4" stroke-width="5"/>
-<line x1="800.16" y1="543.2" x2="800.16" y2="568.8" stroke="#1f77b4" stroke-width="5"/>
-<circle cx="331.84" cy="556.0" r="10.16" fill="none" stroke="#1f77b4" stroke-width="1"/>
-<line x1="331.84" y1="556.0" x2="331.84" y2="535.68" stroke="#1f77b4" stroke-width="1"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="820" viewBox="0 0 1280 820" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<title>DreamCarve phase 4 mock-up: workspace</title>
+<defs><filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.14"/></filter><pattern id="hatch" width="4" height="4" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="4" height="4" fill="#8A929E" opacity="0.35"/><line x1="0" y1="0" x2="0" y2="4" stroke="#8A929E" stroke-width="1.2"/></pattern></defs>
+<rect width="1280" height="820" fill="#ECEEF1"/>
+<rect x="0.0" y="0.0" width="1280.0" height="24.0" rx="0" fill="#FFF8E1" stroke="none" stroke-width="1"/>
+<text x="10.0" y="16.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start" font-style="italic">01 · The workspace after the review (50, 50b, 57, 58, 58a, 66, 67). The panel shape is selected; Panel pocket is the selected operation, its targets marked.</text>
+<rect x="0.0" y="24.0" width="1280.0" height="28.0" rx="0" fill="#E3E5E9" stroke="none" stroke-width="1"/>
+<circle cx="14.0" cy="38.0" r="6.0" fill="#FF5F57" stroke="none" stroke-width="1"/>
+<circle cx="34.0" cy="38.0" r="6.0" fill="#FEBC2E" stroke="none" stroke-width="1"/>
+<circle cx="54.0" cy="38.0" r="6.0" fill="#28C840" stroke="none" stroke-width="1"/>
+<text x="640.0" y="42.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1C2128" text-anchor="middle">plaque — DreamCarve</text>
+<rect x="0.0" y="52.0" width="1280.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="12.0" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">File</text>
+<text x="61.1" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Edit</text>
+<text x="110.2" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Arrange</text>
+<text x="181.2" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">View</text>
+<text x="230.3" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Project</text>
+<text x="301.3" y="71.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Help</text>
+<line x1="0.0" y1="80.0" x2="1280.0" y2="80.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="0.0" y="80.0" width="1280.0" height="40.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="8.0" y="86.0" width="75.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 18.5,105.0 L 18.5,95.0 L 23.0,95.0 L 24.5,97.0 L 30.0,97.0 L 30.0,99.0 M 18.5,105.0 L 21.0,99.5 L 32.0,99.5 L 29.5,105.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="39.0" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Open</text>
+<rect x="85.1" y="86.0" width="75.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 96.1,94.0 L 105.6,94.0 L 108.1,96.5 L 108.1,106.0 L 96.1,106.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 99.1,94.0 L 99.1,98.0 L 104.1,98.0 L 104.1,94.0 M 98.6,106.0 L 98.6,101.5 L 105.6,101.5 L 105.6,106.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="116.1" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Save</text>
+<line x1="169.2" y1="92.0" x2="169.2" y2="108.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="178.2" y="86.0" width="75.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 192.2,95.0 L 189.2,98.0 L 192.2,101.0 M 189.2,98.0 L 197.2,98.0 Q 201.2,98.0 201.2,102.0 Q 201.2,106.0 197.2,106.0 L 194.2,106.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="209.2" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Undo</text>
+<rect x="255.4" y="86.0" width="75.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 275.4,95.0 L 278.4,98.0 L 275.4,101.0 M 278.4,98.0 L 270.4,98.0 Q 266.4,98.0 266.4,102.0 Q 266.4,106.0 270.4,106.0 L 273.4,106.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="286.4" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Redo</text>
+<line x1="339.5" y1="92.0" x2="339.5" y2="108.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="348.5" y="86.0" width="126.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 361.5,101.0 L 361.5,106.0 L 371.5,106.0 L 371.5,97.0 L 367.5,93.5 L 361.5,93.5 L 361.5,96.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 358.5,99.5 L 365.5,99.5 M 363.5,97.5 L 365.5,99.5 L 363.5,101.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="379.5" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Add drawing</text>
+<rect x="476.6" y="86.0" width="126.1" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<rect x="487.1" y="95.0" width="11.0" height="10.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 487.1,103.0 L 490.6,99.5 L 494.6,103.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 498.6,93.0 L 498.6,98.0 M 496.1,95.5 L 501.1,95.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="507.6" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Add picture</text>
+<line x1="611.6" y1="92.0" x2="611.6" y2="108.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="620.6" y="86.0" width="46.0" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<rect x="630.6" y="98.0" width="8.0" height="8.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 629.6,97.0 Q 631.6,93.5 635.6,94.0 L 638.6,94.0 M 636.6,92.5 L 638.6,94.0 L 636.6,95.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="648.6" y1="91.0" x2="648.6" y2="109.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<path d="M 654.1,97.2 L 657.6,100.8 L 661.1,97.2" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 684.6,93.5 L 684.6,106.5" fill="none" stroke="#5B6472" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 682.6,96.0 L 678.6,104.0 L 682.6,104.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 686.6,96.0 L 690.6,104.0 L 686.6,104.0 Z" fill="#5B6472" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 708.1,100.0 L 721.1,100.0" fill="none" stroke="#5B6472" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 710.6,98.0 L 718.6,94.0 L 718.6,98.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 710.6,102.0 L 718.6,106.0 L 718.6,102.0 Z" fill="#5B6472" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="737.6" y1="92.0" x2="737.6" y2="108.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="746.6" y="86.0" width="67.8" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 757.1,97.5 L 757.1,93.5 L 761.1,93.5 M 766.1,93.5 L 770.1,93.5 L 770.1,97.5 M 770.1,102.5 L 770.1,106.5 L 766.1,106.5 M 761.1,106.5 L 757.1,106.5 L 757.1,102.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="777.6" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Fit</text>
+<rect x="816.5" y="86.0" width="104.2" height="28.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 829.0,93.5 L 838.0,93.5 L 838.0,106.5 L 833.5,103.0 L 829.0,106.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 833.5,96.5 L 833.5,100.5 M 831.5,98.5 L 835.5,98.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="847.5" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Tab tool</text>
+<rect x="1172.0" y="87.0" width="96.0" height="26.0" rx="4" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 1189.0,93.5 L 1189.0,102.0 M 1185.5,98.5 L 1189.0,102.0 L 1192.5,98.5 M 1183.0,103.0 L 1183.0,106.0 L 1195.0,106.0 L 1195.0,103.0" fill="none" stroke="#FFFFFF" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1203.0" y="104.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#FFFFFF" text-anchor="start">Export</text>
+<line x1="0.0" y1="120.0" x2="1280.0" y2="120.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="0.0" y="120.0" width="280.0" height="676.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="0.0" y="120.0" width="280.0" height="340.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="0.0" y="120.0" width="280.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="12.0" y="141.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Design Tree</text>
+<line x1="0.0" y1="152.0" x2="280.0" y2="152.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="0.0" y="153.0" width="280.0" height="26.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="12.0" y="170.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Shapes</text>
+<path d="M 229.5,166.0 Q 236.0,159.5 242.5,166.0 Q 236.0,172.5 229.5,166.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="236.0" cy="166.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="255.0" y="165.0" width="10.0" height="7.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 257.0,165.0 L 257.0,163.0 Q 257.0,160.0 260.0,160.0 Q 263.0,160.0 263.0,162.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 11.5,192.0 Q 18.0,185.5 24.5,192.0 Q 18.0,198.5 11.5,192.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="192.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="54.5" y="186.5" width="11.0" height="11.0" rx="2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="196.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">outline</text>
+<text x="266.0" y="196.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">2</text>
+<rect x="0.0" y="205.0" width="280.0" height="26.0" rx="0" fill="#E3ECFA" stroke="none" stroke-width="1"/>
+<rect x="0.0" y="205.0" width="2.0" height="26.0" rx="0" fill="#2563D0" stroke="none" stroke-width="1"/>
+<path d="M 11.5,218.0 Q 18.0,211.5 24.5,218.0 Q 18.0,224.5 11.5,218.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="218.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="0.0" y="207.0" width="3.0" height="22.0" rx="0" fill="#D62728" stroke="none" stroke-width="1"/>
+<rect x="54.5" y="212.5" width="11.0" height="11.0" rx="2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="222.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1C2128" text-anchor="start">panel</text>
+<circle cx="247.0" cy="217.0" r="5.2" fill="none" stroke="#D62728" stroke-width="1.3"/>
+<circle cx="247.0" cy="217.0" r="2.9" fill="none" stroke="#D62728" stroke-width="1.3"/>
+<circle cx="247.0" cy="217.0" r="0.8" fill="#D62728" stroke="none" stroke-width="1"/>
+<text x="266.0" y="222.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,244.0 Q 18.0,237.5 24.5,244.0 Q 18.0,250.5 11.5,244.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="244.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="0.0" y="233.0" width="3.0" height="22.0" rx="0" fill="#D62728" stroke="none" stroke-width="1"/>
+<circle cx="60.0" cy="244.0" r="5.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="248.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">island</text>
+<circle cx="247.0" cy="243.0" r="5.2" fill="none" stroke="#D62728" stroke-width="1.3"/>
+<circle cx="247.0" cy="243.0" r="2.9" fill="none" stroke="#D62728" stroke-width="1.3"/>
+<circle cx="247.0" cy="243.0" r="0.8" fill="#D62728" stroke="none" stroke-width="1"/>
+<text x="266.0" y="248.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,270.0 Q 18.0,263.5 24.5,270.0 Q 18.0,276.5 11.5,270.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="270.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="60.0" cy="270.0" r="5.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="274.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">hole-1</text>
+<text x="266.0" y="274.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,296.0 Q 18.0,289.5 24.5,296.0 Q 18.0,302.5 11.5,296.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="296.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="60.0" cy="296.0" r="5.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="300.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">hole-2</text>
+<text x="266.0" y="300.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,322.0 Q 18.0,315.5 24.5,322.0 Q 18.0,328.5 11.5,322.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="322.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="33.0" y="321.0" width="10.0" height="7.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 35.0,321.0 L 35.0,319.0 Q 35.0,316.0 38.0,316.0 Q 41.0,316.0 41.0,319.0 L 41.0,321.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="60.0" cy="322.0" r="5.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="326.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">hole-3</text>
+<text x="266.0" y="326.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,348.0 Q 18.0,341.5 24.5,348.0 Q 18.0,354.5 11.5,348.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="348.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="60.0" cy="348.0" r="5.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<text x="74.0" y="352.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">hole-4</text>
+<text x="266.0" y="352.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<path d="M 11.5,374.0 Q 18.0,367.5 24.5,374.0 Q 18.0,380.5 11.5,374.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="18.0" cy="374.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="55.0" cy="379.0" r="1.6" fill="none" stroke="#5B6472" stroke-width="1.2"/>
+<circle cx="65.0" cy="369.0" r="1.6" fill="none" stroke="#5B6472" stroke-width="1.2"/>
+<path d="M 56.2,377.8 Q 57.0,370.0 60.0,374.0 Q 63.0,378.0 63.8,370.2" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="74.0" y="378.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">flourish</text>
+<text x="266.0" y="378.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">1</text>
+<text x="12.0" y="404.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Tabs</text>
+<path d="M 229.5,400.0 Q 236.0,393.5 242.5,400.0 Q 236.0,406.5 229.5,400.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="236.0" cy="400.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="255.0" y="399.0" width="10.0" height="7.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 257.0,399.0 L 257.0,397.0 Q 257.0,394.0 260.0,394.0 Q 263.0,394.0 263.0,396.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 55.5,419.5 L 64.5,419.5 L 64.5,432.5 L 60.0,429.0 L 55.5,432.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 60.0,422.5 L 60.0,426.5 M 58.0,424.5 L 62.0,424.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="74.0" y="430.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">outline · 4 tabs</text>
+<text x="12.0" y="456.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Pictures</text>
+<path d="M 229.5,452.0 Q 236.0,445.5 242.5,452.0 Q 236.0,458.5 229.5,452.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="236.0" cy="452.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="255.0" y="451.0" width="10.0" height="7.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 257.0,451.0 L 257.0,449.0 Q 257.0,446.0 260.0,446.0 Q 263.0,446.0 263.0,448.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="0.0" y1="464.0" x2="280.0" y2="464.0" stroke="#D7DBE2" stroke-width="4" stroke-linecap="round"/>
+<rect x="0.0" y="466.0" width="280.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 14.0,478.0 L 18.0,482.0 L 14.0,486.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="28.0" y="487.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Project Settings</text>
+<line x1="0.0" y1="498.0" x2="280.0" y2="498.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="0.0" y="499.0" width="280.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 12.0,513.0 L 16.0,517.0 L 20.0,513.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="28.0" y="520.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Properties · panel</text>
+<line x1="0.0" y1="531.0" x2="280.0" y2="531.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="12.0" y="555.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">X</text>
+<rect x="124.0" y="538.0" width="114.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="230.0" y="555.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="132.0" y="555.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">30</text>
+<text x="12.0" y="585.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Y</text>
+<rect x="124.0" y="568.0" width="114.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="230.0" y="585.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="132.0" y="585.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">30</text>
+<text x="12.0" y="615.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">W</text>
+<rect x="124.0" y="598.0" width="114.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="230.0" y="615.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="132.0" y="615.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">70</text>
+<text x="12.0" y="645.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">H</text>
+<rect x="124.0" y="628.0" width="114.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="230.0" y="645.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="132.0" y="645.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">50</text>
+<path d="M246 611 h6 v30 h-6" fill="none" stroke="#B9C0CA" stroke-width="1" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="248.0" y="615.0" width="22.0" height="22.0" rx="4" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 257.5,627.5 L 260.5,624.5" fill="none" stroke="#1C2128" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 258.0,622.5 L 259.5,621.0 Q 262.0,618.5 264.0,621.0 Q 266.5,623.0 264.0,625.5 L 262.5,627.0" fill="none" stroke="#1C2128" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 260.0,629.5 L 258.5,631.0 Q 256.0,633.5 254.0,631.0 Q 251.5,629.0 254.0,626.5 L 255.5,625.0" fill="none" stroke="#1C2128" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="280.0" y="120.0" width="4.0" height="676.0" rx="0" fill="#ECEEF1" stroke="none" stroke-width="1"/>
+<rect x="284.0" y="120.0" width="652.0" height="676.0" rx="0" fill="#FAFAF8" stroke="none" stroke-width="1"/>
+<rect x="344.0" y="376.0" width="576.0" height="360.0" rx="0" fill="#FFFFFF" stroke="none" stroke-width="1"/>
+<line x1="344.0" y1="376.0" x2="344.0" y2="736.0" stroke="#D9DCE2" stroke-width="1" stroke-linecap="round"/>
+<line x1="380.0" y1="376.0" x2="380.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="416.0" y1="376.0" x2="416.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="452.0" y1="376.0" x2="452.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="488.0" y1="376.0" x2="488.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="524.0" y1="376.0" x2="524.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="560.0" y1="376.0" x2="560.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="596.0" y1="376.0" x2="596.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="632.0" y1="376.0" x2="632.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="668.0" y1="376.0" x2="668.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="704.0" y1="376.0" x2="704.0" y2="736.0" stroke="#D9DCE2" stroke-width="1" stroke-linecap="round"/>
+<line x1="740.0" y1="376.0" x2="740.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="776.0" y1="376.0" x2="776.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="812.0" y1="376.0" x2="812.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="848.0" y1="376.0" x2="848.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="884.0" y1="376.0" x2="884.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="920.0" y1="376.0" x2="920.0" y2="736.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="736.0" x2="920.0" y2="736.0" stroke="#D9DCE2" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="700.0" x2="920.0" y2="700.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="664.0" x2="920.0" y2="664.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="628.0" x2="920.0" y2="628.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="592.0" x2="920.0" y2="592.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="556.0" x2="920.0" y2="556.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="520.0" x2="920.0" y2="520.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="484.0" x2="920.0" y2="484.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="448.0" x2="920.0" y2="448.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="412.0" x2="920.0" y2="412.0" stroke="#ECEEF1" stroke-width="1" stroke-linecap="round"/>
+<line x1="344.0" y1="376.0" x2="920.0" y2="376.0" stroke="#D9DCE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="344.0" y="376.0" width="576.0" height="360.0" rx="0" fill="none" stroke="#6B7380" stroke-width="1.5" stroke-dasharray="6 4"/>
+<line x1="332.0" y1="736.0" x2="342.0" y2="736.0" stroke="#6B7380" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="346.0" y1="736.0" x2="356.0" y2="736.0" stroke="#6B7380" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="344.0" y1="724.0" x2="344.0" y2="734.0" stroke="#6B7380" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="344.0" y1="738.0" x2="344.0" y2="748.0" stroke="#6B7380" stroke-width="1.2" stroke-linecap="round"/>
+<text x="338.0" y="754.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">0,0</text>
+<rect x="380.0" y="412.0" width="504.0" height="288.0" rx="21.6" fill="none" stroke="#23272E" stroke-width="1.25" opacity="0.4"/>
+<rect x="452.0" y="448.0" width="252.0" height="180.0" rx="0" fill="none" stroke="#D62728" stroke-width="2.2" opacity="1.0"/>
+<circle cx="578.0" cy="538.0" r="36.0" fill="none" stroke="#D62728" stroke-width="2.2" opacity="1.0"/>
+<circle cx="416.0" cy="664.0" r="9.0" fill="none" stroke="#23272E" stroke-width="1.25" opacity="0.4"/>
+<circle cx="848.0" cy="664.0" r="9.0" fill="none" stroke="#23272E" stroke-width="1.25" opacity="0.4"/>
+<circle cx="416.0" cy="448.0" r="9.0" fill="none" stroke="#23272E" stroke-width="1.25" opacity="0.4"/>
+<circle cx="848.0" cy="448.0" r="9.0" fill="none" stroke="#23272E" stroke-width="1.25" opacity="0.4"/>
+<path d="M740.0 592.0 q54.0 -144.0 108.0 -108.0" fill="none" stroke="#23272E" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="4 3" opacity="0.4"/>
 <g opacity="1.0">
-<line x1="416.24" y1="606.6666666666666" x2="619.76" y2="606.6666666666666" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="593.3333333333333" x2="619.76" y2="593.3333333333333" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="580.0" x2="504.42732156131297" y2="580.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="531.572678438687" y1="580.0" x2="619.76" y2="580.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="566.6666666666666" x2="485.24169587892425" y2="566.6666666666666" stroke="#d62728" stroke-width="1.2"/>
-<line x1="550.7583041210758" y1="566.6666666666666" x2="619.76" y2="566.6666666666666" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="553.3333333333334" x2="477.9195830582787" y2="553.3333333333334" stroke="#d62728" stroke-width="1.2"/>
-<line x1="558.0804169417213" y1="553.3333333333334" x2="619.76" y2="553.3333333333334" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="540.0" x2="475.76" y2="540.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="560.24" y1="540.0" x2="619.76" y2="540.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="526.6666666666666" x2="477.9195830582787" y2="526.6666666666666" stroke="#d62728" stroke-width="1.2"/>
-<line x1="558.0804169417213" y1="526.6666666666666" x2="619.76" y2="526.6666666666666" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="513.3333333333333" x2="485.24169587892425" y2="513.3333333333333" stroke="#d62728" stroke-width="1.2"/>
-<line x1="550.7583041210758" y1="513.3333333333333" x2="619.76" y2="513.3333333333333" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="500.0" x2="504.42732156131297" y2="500.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="531.572678438687" y1="500.0" x2="619.76" y2="500.0" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="486.6666666666667" x2="619.76" y2="486.6666666666667" stroke="#d62728" stroke-width="1.2"/>
-<line x1="416.24" y1="473.33333333333326" x2="619.76" y2="473.33333333333326" stroke="#d62728" stroke-width="1.2"/>
-<rect x="416.24" y="470.24" width="203.51999999999998" height="139.51999999999998" rx="0" fill="none" stroke="#d62728" stroke-width="1.4"/>
-<circle cx="518.0" cy="540.0" r="42.24" fill="none" stroke="#d62728" stroke-width="1.4"/>
+<rect x="368.6" y="400.6" width="526.9" height="310.9" rx="33.03" fill="none" stroke="#1F77B4" stroke-width="1.5"/>
+<line x1="617.6" y1="711.4" x2="646.4" y2="711.4" stroke="#1C2128" stroke-width="4" stroke-linecap="round"/>
+<line x1="617.6" y1="400.6" x2="646.4" y2="400.6" stroke="#1C2128" stroke-width="4" stroke-linecap="round"/>
+<line x1="368.6" y1="541.6" x2="368.6" y2="570.4" stroke="#1C2128" stroke-width="4" stroke-linecap="round"/>
+<line x1="895.4" y1="541.6" x2="895.4" y2="570.4" stroke="#1C2128" stroke-width="4" stroke-linecap="round"/>
+<circle cx="368.6" cy="556.0" r="11.4" fill="none" stroke="#1F77B4" stroke-width="1.2"/>
+<line x1="368.6" y1="556.0" x2="368.6" y2="533.1" stroke="#1F77B4" stroke-width="1.2" stroke-linecap="round"/>
 </g>
-<circle cx="374.0" cy="652.0" r="8.0" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
-<circle cx="758.0" cy="652.0" r="8.0" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
-<circle cx="374.0" cy="460.0" r="8.0" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
-<circle cx="758.0" cy="460.0" r="8.0" fill="none" stroke="#2ca02c" stroke-width="1.4"/>
-<path d="M662.0 588.0 q48.0 -128.0 96.0 -96.0" fill="none" stroke="#9467bd" stroke-width="1.6"/>
-<line x1="374.0" y1="460.0" x2="758.0" y2="460.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
-<line x1="758.0" y1="460.0" x2="758.0" y2="652.0" stroke="#808080" stroke-width="1" stroke-dasharray="4 3"/>
-<rect x="762" y="86" width="190" height="236" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="762" y="86" width="190" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="770" y="102" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Toolpaths</text>
-<circle cx="778" cy="126" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<circle cx="778" cy="126" r="3" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<text x="790" y="131" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">By operation</text>
-<circle cx="778" cy="146" r="6" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="790" y="151" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">By depth</text>
-<rect x="772" y="164" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M774 170 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="790" y="175" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Cuts</text>
-<rect x="772" y="186" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M774 192 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="790" y="197" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rapids</text>
-<rect x="772" y="208" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M774 214 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="790" y="219" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Plunges</text>
-<rect x="772" y="230" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="790" y="241" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Direction arrows</text>
-<rect x="772" y="252" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M774 258 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="790" y="263" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Start points</text>
-<rect x="772" y="274" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M774 280 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="790" y="285" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tab marks</text>
-<rect x="772" y="296" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="790" y="307" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Only the selected operation</text>
-<rect x="772" y="318" width="80" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="812.0" y="332.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Show all</text>
-<rect x="860" y="318" width="80" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="900.0" y="332.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Hide all</text>
-<text x="258" y="768" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="start">Pan: middle drag or Space-drag · Zoom: wheel · F fits · click a toolpath to select its operation</text>
-<rect x="960" y="78" width="320" height="698" rx="0" fill="#f4f4f4" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="960.0" y="78" width="160.0" height="24" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1040.0" y="94" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="middle">Operations</text>
-<rect x="1120.0" y="78" width="160.0" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1200.0" y="94" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Tools</text>
-<rect x="960" y="102" width="320" height="212" rx="0" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<rect x="966" y="108" width="56" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="994.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Add ▾</text>
-<rect x="1026" y="108" width="72" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1062.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Duplicate</text>
-<rect x="1102" y="108" width="56" height="20" rx="3" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1130.0" y="122.0" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="middle">Delete</text>
-<ellipse cx="1238" cy="118" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1238" cy="118" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<ellipse cx="1260" cy="118" rx="6" ry="3.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<line x1="1254" y1="122" x2="1266" y2="114" stroke="#9a9a9a" stroke-width="1"/>
-<circle cx="968" cy="147" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="147" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="151" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="151" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="155" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="155" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<rect x="980" y="144" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M982 150 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="998" y="155" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
-<rect x="1003" y="146" width="10" height="10" rx="0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<text x="1022" y="149" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Outside cut</text>
-<text x="1022" y="161" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Profile · 6.35 mm end mill</text>
-<ellipse cx="1238" cy="151" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1238" cy="151" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<rect x="961" y="168" width="318" height="30" rx="0" fill="#e3ecfb" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="179" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="179" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="183" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="183" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="187" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="187" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<rect x="980" y="176" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M982 182 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="998" y="187" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
-<rect x="1003" y="178" width="10" height="10" rx="0" fill="#9a9a9a" stroke="#2b2b2b" stroke-width="1"/>
-<text x="1022" y="181" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Panel pocket</text>
-<text x="1022" y="193" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Pocket · 6.35 mm end mill</text>
-<ellipse cx="1238" cy="183" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1238" cy="183" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<path d="M1258 175 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="1268" y="185" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">1</text>
-<circle cx="968" cy="211" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="211" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="215" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="215" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="219" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="219" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<rect x="980" y="208" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M982 214 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="998" y="219" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
-<circle cx="1008" cy="215" r="4.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1008" cy="215" r="1.2" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<text x="1022" y="213" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Screw holes</text>
-<text x="1022" y="225" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Drill · 3.175 mm end mill</text>
-<ellipse cx="1238" cy="215" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1238" cy="215" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="243" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="243" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="247" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="247" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="251" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="251" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<rect x="980" y="240" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="998" y="251" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
-<path d="M1003 250 q5 -12 10 0" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<text x="1022" y="245" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Flourish</text>
-<text x="1022" y="257" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">Engrave · 3.175 mm end mill</text>
-<ellipse cx="1238" cy="247" rx="6" ry="3.5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<line x1="1232" y1="251" x2="1244" y2="243" stroke="#9a9a9a" stroke-width="1"/>
-<circle cx="968" cy="275" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="275" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="279" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="279" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="968" cy="283" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<circle cx="972" cy="283" r="0.9" fill="#9a9a9a" stroke="none" stroke-width="1"/>
-<rect x="980" y="272" width="12" height="12" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<path d="M982 278 l3 3 l5 -6" fill="none" stroke="#2b2b2b" stroke-width="1.5"/>
-<text x="998" y="283" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start"></text>
-<path d="M1003 275 l5 8 l5 -8" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<text x="1022" y="277" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">Lettering</text>
-<text x="1022" y="289" font-family="Helvetica, Arial, sans-serif" font-size="9" font-weight="normal" fill="#7a7a7a" text-anchor="start">V-Carve · 90° V-bit</text>
-<ellipse cx="1238" cy="279" rx="6" ry="3.5" fill="none" stroke="#2b2b2b" stroke-width="1"/>
-<circle cx="1238" cy="279" r="1.6" fill="#2b2b2b" stroke="none" stroke-width="1"/>
-<circle cx="1262" cy="279" r="4" fill="#c62828" stroke="none" stroke-width="1"/>
-<text x="1272" y="310" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">5 operations · est. 14 min</text>
-<rect x="960" y="320" width="320" height="22" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="968" y="335" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="bold" fill="#2b2b2b" text-anchor="start">Panel pocket · Pocket</text>
-<path d="M1220 326 l6 11 h-12 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="1230" y="336" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">1</text>
-<text x="1272" y="335" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="end">⤢</text>
-<rect x="960" y="348" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="362" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▸  Identity</text>
-<rect x="960" y="372" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="386" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▸  Targets</text>
-<rect x="960" y="396" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="410" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Tool</text>
-<text x="968" y="434" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Tool</text>
-<circle cx="1092" cy="430" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="433" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="420" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="434" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">6.35 mm end mill (T1)</text>
-<text x="1264" y="434" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<rect x="960" y="446" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="460" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Depth</text>
-<text x="968" y="484" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Depth</text>
-<circle cx="1092" cy="480" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="483" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="470" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="484" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">6</text>
-<text x="1266" y="484" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="968" y="510" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Step-down</text>
-<circle cx="1092" cy="506" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="509" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="496" width="148" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="510" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">tool's: 3 mm</text>
-<text x="1248" y="510" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="1258" y="511" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="start">⟲</text>
-<text x="968" y="536" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stock to leave</text>
-<circle cx="1092" cy="532" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="535" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="522" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="536" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0</text>
-<text x="1266" y="536" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<text x="968" y="562" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Through-cut allowance</text>
-<circle cx="1092" cy="558" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="561" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="548" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="562" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0</text>
-<text x="1266" y="562" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">mm</text>
-<rect x="960" y="574" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="588" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Strategy</text>
-<text x="968" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Clearance</text>
-<circle cx="1092" cy="608" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="611" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="598" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="612" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Raster</text>
-<text x="1264" y="612" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<text x="968" y="638" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Raster angle</text>
-<circle cx="1092" cy="634" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="637" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="624" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="638" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">0</text>
-<text x="1266" y="638" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">°</text>
-<text x="968" y="664" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Wall pass</text>
-<circle cx="1092" cy="660" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="663" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="650" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="664" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Last</text>
-<text x="1264" y="664" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<text x="968" y="690" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stepover</text>
-<circle cx="1092" cy="686" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="689" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="676" width="148" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="690" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#7a7a7a" text-anchor="start" font-style="italic">tool's: 40 %</text>
-<text x="1248" y="690" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">%</text>
-<text x="1258" y="691" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="normal" fill="#7a7a7a" text-anchor="start">⟲</text>
-<text x="968" y="716" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Direction</text>
-<circle cx="1092" cy="712" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="715" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="702" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="716" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Climb</text>
-<text x="1264" y="716" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<text x="968" y="742" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Rest of</text>
-<circle cx="1092" cy="738" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="741" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="728" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="742" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">None</text>
-<text x="1264" y="742" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<rect x="960" y="754" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="768" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Entry</text>
-<text x="968" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Entry</text>
-<circle cx="1092" cy="788" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="791" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="778" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Helix</text>
-<text x="1264" y="792" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<text x="968" y="818" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Helix diameter</text>
-<circle cx="1092" cy="814" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="817" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="804" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="818" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">80</text>
-<text x="1266" y="818" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">% of bit</text>
-<text x="968" y="844" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Helix angle</text>
-<circle cx="1092" cy="840" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="843" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="830" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="844" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">15</text>
-<text x="1266" y="844" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">°</text>
-<rect x="960" y="856" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="870" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▾  Corners</text>
-<text x="968" y="894" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Corner relief</text>
-<circle cx="1092" cy="890" r="5" fill="none" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1092" y="893" font-family="Helvetica, Arial, sans-serif" font-size="8" font-weight="normal" fill="#7a7a7a" text-anchor="middle">?</text>
-<rect x="1106" y="880" width="166" height="20" rx="2" fill="#ffffff" stroke="#9a9a9a" stroke-width="1"/>
-<text x="1112" y="894" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Dogbone</text>
-<text x="1264" y="894" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#7a7a7a" text-anchor="end">▾</text>
-<path d="M972 910 l5 9 h-10 z" fill="#b26a00" stroke="none" stroke-width="1"/>
-<text x="984" y="919" font-family="Helvetica, Arial, sans-serif" font-size="10" font-weight="normal" fill="#b26a00" text-anchor="start">relief_corner_too_tight: 2 corners of panel skipped</text>
-<rect x="960" y="926" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="940" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▸  Order</text>
-<rect x="960" y="950" width="320" height="20" rx="0" fill="#e6e6e6" stroke="none" stroke-width="1"/>
-<text x="966" y="964" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="bold" fill="#2b2b2b" text-anchor="start">▸  Heights</text>
-<rect x="0" y="776" width="1280" height="24" rx="0" fill="#e6e6e6" stroke="#9a9a9a" stroke-width="1"/>
-<text x="10" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">mm</text>
-<line x1="34.4" y1="781" x2="34.4" y2="795" stroke="#9a9a9a" stroke-width="1"/>
-<text x="46.4" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Stock 160 × 100 × 12 mm</text>
-<line x1="201.0" y1="781" x2="201.0" y2="795" stroke="#9a9a9a" stroke-width="1"/>
-<text x="213.0" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">X 64.2  Y 51.8</text>
-<line x1="311.8" y1="781" x2="311.8" y2="795" stroke="#9a9a9a" stroke-width="1"/>
-<text x="323.8" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Idle</text>
-<line x1="360.6" y1="781" x2="360.6" y2="795" stroke="#9a9a9a" stroke-width="1"/>
-<text x="372.6" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">⚠ 1 warning · ● 1 error</text>
-<line x1="527.2" y1="781" x2="527.2" y2="795" stroke="#9a9a9a" stroke-width="1"/>
-<text x="539.2" y="792" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="normal" fill="#2b2b2b" text-anchor="start">Est. 14 min</text>
-<line x1="619.4000000000001" y1="781" x2="619.4000000000001" y2="795" stroke="#9a9a9a" stroke-width="1"/>
+<g opacity="1.0">
+<line x1="463.5" y1="613.0" x2="692.5" y2="613.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="598.0" x2="692.5" y2="598.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="583.0" x2="562.7" y2="583.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="593.3" y1="583.0" x2="692.5" y2="583.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="568.0" x2="541.1" y2="568.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="614.9" y1="568.0" x2="692.5" y2="568.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="553.0" x2="532.9" y2="553.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="623.1" y1="553.0" x2="692.5" y2="553.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="538.0" x2="530.5" y2="538.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="625.5" y1="538.0" x2="692.5" y2="538.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="523.0" x2="532.9" y2="523.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="623.1" y1="523.0" x2="692.5" y2="523.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="508.0" x2="541.1" y2="508.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="614.9" y1="508.0" x2="692.5" y2="508.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="493.0" x2="562.7" y2="493.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="593.3" y1="493.0" x2="692.5" y2="493.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="478.0" x2="692.5" y2="478.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<line x1="463.5" y1="463.0" x2="692.5" y2="463.0" stroke="#D62728" stroke-width="1.2" stroke-linecap="round"/>
+<rect x="463.5" y="459.5" width="229.0" height="157.0" rx="0" fill="none" stroke="#D62728" stroke-width="1.4"/>
+<circle cx="578.0" cy="538.0" r="47.5" fill="none" stroke="#D62728" stroke-width="1.4"/>
+</g>
+<g opacity="1.0">
+<circle cx="416.0" cy="664.0" r="9.0" fill="none" stroke="#2A8F2A" stroke-width="1.5"/>
+<circle cx="848.0" cy="664.0" r="9.0" fill="none" stroke="#2A8F2A" stroke-width="1.5"/>
+<circle cx="416.0" cy="448.0" r="9.0" fill="none" stroke="#2A8F2A" stroke-width="1.5"/>
+<circle cx="848.0" cy="448.0" r="9.0" fill="none" stroke="#2A8F2A" stroke-width="1.5"/>
+</g>
+<g opacity="1.0">
+<path d="M740.0 592.0 q54.0 -144.0 108.0 -108.0" fill="none" stroke="#8E5FB8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</g>
+<line x1="416.0" y1="448.0" x2="848.0" y2="448.0" stroke="#8A929E" stroke-width="1" stroke-linecap="round" stroke-dasharray="4 3"/>
+<line x1="848.0" y1="448.0" x2="848.0" y2="664.0" stroke="#8A929E" stroke-width="1" stroke-linecap="round" stroke-dasharray="4 3"/>
+<rect x="452.0" y="448.0" width="252.0" height="180.0" rx="0" fill="none" stroke="#2563D0" stroke-width="1"/>
+<rect x="448.0" y="624.0" width="8.0" height="8.0" rx="0" fill="#FFFFFF" stroke="#2563D0" stroke-width="1.2"/>
+<rect x="700.0" y="624.0" width="8.0" height="8.0" rx="0" fill="#FFFFFF" stroke="#2563D0" stroke-width="1.2"/>
+<rect x="448.0" y="444.0" width="8.0" height="8.0" rx="0" fill="#FFFFFF" stroke="#2563D0" stroke-width="1.2"/>
+<rect x="700.0" y="444.0" width="8.0" height="8.0" rx="0" fill="#FFFFFF" stroke="#2563D0" stroke-width="1.2"/>
+<line x1="578.0" y1="448.0" x2="578.0" y2="428.0" stroke="#2563D0" stroke-width="1" stroke-linecap="round"/>
+<circle cx="578.0" cy="424.0" r="4.0" fill="#FFFFFF" stroke="#2563D0" stroke-width="1.2"/>
+<rect x="936.0" y="120.0" width="4.0" height="676.0" rx="0" fill="#ECEEF1" stroke="none" stroke-width="1"/>
+<rect x="940.0" y="120.0" width="340.0" height="676.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="940.0" y="120.0" width="340.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="952.0" y="141.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">CAM</text>
+<line x1="940.0" y1="152.0" x2="1280.0" y2="152.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="940.0" y="153.0" width="340.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="1025.0" y="174.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="middle">Tools · 3</text>
+<text x="1195.0" y="174.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="middle">Operations · 5</text>
+<rect x="1122.0" y="183.0" width="146.0" height="2.0" rx="0" fill="#2563D0" stroke="none" stroke-width="1"/>
+<line x1="940.0" y1="185.0" x2="1280.0" y2="185.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="940.0" y="186.0" width="340.0" height="240.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="952.0" y="194.0" width="67.8" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 969.0,202.0 L 969.0,212.0 M 964.0,207.0 L 974.0,207.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="983.0" y="211.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Add</text>
+<rect x="1025.8" y="194.0" width="111.5" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<rect x="1039.8" y="204.0" width="9.0" height="9.0" rx="1.5" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 1037.8,210.0 L 1036.8,210.0 L 1036.8,201.0 L 1045.8,201.0 L 1045.8,202.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1056.8" y="211.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Duplicate</text>
+<rect x="1143.4" y="194.0" width="89.7" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 1154.9,203.0 L 1165.9,203.0 M 1158.4,203.0 L 1158.4,201.5 L 1162.4,201.5 L 1162.4,203.0 M 1156.4,203.0 L 1157.2,213.0 L 1163.6,213.0 L 1164.4,203.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1174.4" y="211.5" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Delete</text>
+<circle cx="952.0" cy="244.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="244.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="248.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="248.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="252.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="252.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<rect x="966.0" y="240.0" width="16.0" height="16.0" rx="3" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 969.0,248.5 L 972.5,252.0 L 979.0,244.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="990.0" y="253.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<rect x="994.0" y="242.0" width="9.0" height="9.0" rx="2" fill="none" stroke="#1F77B4" stroke-width="1.4"/>
+<path d="M 1005.5,245.0 L 1005.5,253.5 L 997.0,253.5" fill="none" stroke="#1F77B4" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1016.0" y="245.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Outside cut</text>
+<text x="1016.0" y="261.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Profile · 6.35 mm end mill</text>
+<path d="M 1225.5,248.0 Q 1232.0,241.5 1238.5,248.0 Q 1232.0,254.5 1225.5,248.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1232.0" cy="248.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<rect x="940.0" y="268.0" width="340.0" height="40.0" rx="0" fill="#E3ECFA" stroke="none" stroke-width="1"/>
+<rect x="940.0" y="268.0" width="2.0" height="40.0" rx="0" fill="#2563D0" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="284.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="284.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="288.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="288.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="292.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="292.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<rect x="966.0" y="280.0" width="16.0" height="16.0" rx="3" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 969.0,288.5 L 972.5,292.0 L 979.0,284.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="990.0" y="293.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<rect x="994.0" y="282.0" width="12.0" height="12.0" rx="2" fill="none" stroke="#D62728" stroke-width="1.4"/>
+<path d="M 996.5,285.5 L 1003.5,285.5 M 996.5,288.0 L 1003.5,288.0 M 996.5,290.5 L 1003.5,290.5" fill="none" stroke="#D62728" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1016.0" y="285.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1C2128" text-anchor="start">Panel pocket</text>
+<text x="1016.0" y="301.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Pocket · 6.35 mm end mill</text>
+<path d="M 1225.5,288.0 Q 1232.0,281.5 1238.5,288.0 Q 1232.0,294.5 1225.5,288.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1232.0" cy="288.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<path d="M 1256.0,281.8 L 1263.0,294.0 L 1249.0,294.0 Z" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1256.0,286.0 L 1256.0,289.5" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1256.0" cy="291.8" r="0.8" fill="#D98A1E" stroke="none" stroke-width="1"/>
+<text x="1268.0" y="293.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#A3580A" text-anchor="end">1</text>
+<circle cx="952.0" cy="324.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="324.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="328.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="328.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="332.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="332.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<rect x="966.0" y="320.0" width="16.0" height="16.0" rx="3" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 969.0,328.5 L 972.5,332.0 L 979.0,324.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="990.0" y="333.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<circle cx="1000.0" cy="328.0" r="6.0" fill="none" stroke="#2A8F2A" stroke-width="1.4"/>
+<circle cx="1000.0" cy="328.0" r="1.4" fill="#2A8F2A" stroke="none" stroke-width="1"/>
+<text x="1016.0" y="325.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Screw holes</text>
+<text x="1016.0" y="341.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Drill · 3.175 mm end mill</text>
+<path d="M 1225.5,328.0 Q 1232.0,321.5 1238.5,328.0 Q 1232.0,334.5 1225.5,328.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1232.0" cy="328.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="952.0" cy="364.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="364.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="368.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="368.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="372.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="372.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<rect x="966.0" y="360.0" width="16.0" height="16.0" rx="3" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="990.0" y="373.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<path d="M 993.5,370.0 Q 996.5,363.0 1000.0,368.0 Q 1003.5,373.0 1006.5,366.0" fill="none" stroke="#8E5FB8" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1016.0" y="365.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Flourish</text>
+<text x="1016.0" y="381.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Engrave · 3.175 mm end mill</text>
+<path d="M 1225.5,368.0 Q 1232.0,361.5 1238.5,368.0 Q 1232.0,374.5 1225.5,368.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1226.0,362.0 L 1238.0,374.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="952.0" cy="404.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="404.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="408.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="408.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="952.0" cy="412.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<circle cx="956.0" cy="412.0" r="0.9" fill="#9AA3AF" stroke="none" stroke-width="1"/>
+<rect x="966.0" y="400.0" width="16.0" height="16.0" rx="3" fill="#2563D0" stroke="#2563D0" stroke-width="1"/>
+<path d="M 969.0,408.5 L 972.5,412.0 L 979.0,404.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="990.0" y="413.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start"></text>
+<path d="M 995.0,403.0 L 1000.0,411.5 L 1005.0,403.0 M 995.0,414.0 L 1005.0,414.0" fill="none" stroke="#D96A00" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1016.0" y="405.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">Lettering</text>
+<text x="1016.0" y="421.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">V-Carve · 90° V-bit</text>
+<path d="M 1225.5,408.0 Q 1232.0,401.5 1238.5,408.0 Q 1232.0,414.5 1225.5,408.0 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1232.0" cy="408.0" r="2.2" fill="none" stroke="#5B6472" stroke-width="1.4"/>
+<circle cx="1256.0" cy="408.0" r="6.5" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M1253.5 405.5 L1258.5 410.5 M1258.5 405.5 L1253.5 410.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="940.0" y1="428.0" x2="1280.0" y2="428.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="940.0" y="432.0" width="340.0" height="32.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<rect x="954.0" y="442.0" width="12.0" height="12.0" rx="2" fill="none" stroke="#D62728" stroke-width="1.4"/>
+<path d="M 956.5,445.5 L 963.5,445.5 M 956.5,448.0 L 963.5,448.0 M 956.5,450.5 L 963.5,450.5" fill="none" stroke="#D62728" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="976.0" y="453.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Panel pocket</text>
+<text x="1069.4" y="453.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">· Pocket</text>
+<path d="M 1260.0,441.8 L 1267.0,454.0 L 1253.0,454.0 Z" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1260.0,446.0 L 1260.0,449.5" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1260.0" cy="451.8" r="0.8" fill="#D98A1E" stroke="none" stroke-width="1"/>
+<line x1="940.0" y1="464.0" x2="1280.0" y2="464.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<rect x="940.0" y="465.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<text x="952.0" y="483.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Setup</text>
+<text x="952.0" y="514.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Targets</text>
+<circle cx="1072.0" cy="510.0" r="6.0" fill="none" stroke="#5B6472" stroke-width="1.3"/>
+<circle cx="1072.0" cy="510.0" r="3.3" fill="none" stroke="#5B6472" stroke-width="1.3"/>
+<circle cx="1072.0" cy="510.0" r="0.9" fill="#5B6472" stroke="none" stroke-width="1"/>
+<text x="1086.0" y="514.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">2 shapes · panel…</text>
+<rect x="1212.0" y="497.0" width="26.0" height="26.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<path d="M 1220.0,515.0 L 1220.5,512.5 L 1228.0,505.0 L 1230.0,507.0 L 1222.5,514.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="1240.0" y="497.0" width="26.0" height="26.0" rx="4" fill="none" stroke="none" stroke-width="1"/>
+<circle cx="1248.5" cy="510.0" r="1.1" fill="#5B6472" stroke="none" stroke-width="1"/>
+<circle cx="1253.0" cy="510.0" r="1.1" fill="#5B6472" stroke="none" stroke-width="1"/>
+<circle cx="1257.5" cy="510.0" r="1.1" fill="#5B6472" stroke="none" stroke-width="1"/>
+<text x="952.0" y="544.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Tool</text>
+<rect x="1064.0" y="527.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<path d="M 1073.5,535.5 L 1073.5,544.5 Q 1078.0,547.5 1082.5,544.5 L 1082.5,535.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1073.5,535.5 Q 1078.0,532.5 1082.5,535.5 Q 1078.0,538.5 1073.5,535.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="1092.0" y="544.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">6.35 mm end mill (T1)</text>
+<path d="M 1250.0,538.0 L 1254.0,542.0 L 1258.0,538.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="952.0" y="574.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Depth</text>
+<rect x="1064.0" y="557.0" width="204.0" height="26.0" rx="4" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="1260.0" y="574.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="end">mm</text>
+<text x="1072.0" y="574.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#1C2128" text-anchor="start">6</text>
+<text x="952.0" y="604.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="start">Clearance</text>
+<rect x="1064.0" y="587.0" width="204.0" height="26.0" rx="4" fill="#F2F3F6" stroke="#B9C0CA" stroke-width="1"/>
+<text x="1115.0" y="604.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="400" fill="#5B6472" text-anchor="middle">Offset</text>
+<rect x="1168.0" y="589.0" width="98.0" height="22.0" rx="3" fill="#FFFFFF" stroke="#B9C0CA" stroke-width="1"/>
+<text x="1217.0" y="604.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="500" fill="#1C2128" text-anchor="middle">Raster</text>
+<rect x="940.0" y="619.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,629.0 L 958.0,633.0 L 954.0,637.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="637.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Depth</text>
+<text x="1014.4" y="637.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">step-down tool's 3 mm, leave 0, allow…</text>
+<rect x="940.0" y="647.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,657.0 L 958.0,661.0 L 954.0,665.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="665.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Strategy</text>
+<text x="1036.2" y="665.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Raster 0°, climb, wall last</text>
+<rect x="940.0" y="675.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,685.0 L 958.0,689.0 L 954.0,693.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="693.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Entry</text>
+<text x="1014.4" y="693.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Helix 80 %, 15°</text>
+<rect x="940.0" y="703.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,713.0 L 958.0,717.0 L 954.0,721.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="721.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Corners</text>
+<text x="1029.0" y="721.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Dogbone</text>
+<path d="M 1248.0,710.8 L 1255.0,723.0 L 1241.0,723.0 Z" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 1248.0,715.0 L 1248.0,718.5" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="1248.0" cy="720.8" r="0.8" fill="#D98A1E" stroke="none" stroke-width="1"/>
+<text x="1260.0" y="721.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#A3580A" text-anchor="start">1</text>
+<rect x="940.0" y="731.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,741.0 L 958.0,745.0 L 954.0,749.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="749.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Order</text>
+<text x="1014.4" y="749.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Full depth first</text>
+<rect x="940.0" y="759.0" width="340.0" height="28.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<path d="M 954.0,769.0 L 958.0,773.0 L 954.0,777.0" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="968.0" y="777.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="13" font-weight="600" fill="#1C2128" text-anchor="start">Heights</text>
+<text x="1029.0" y="777.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Safe Z 5 mm</text>
+<rect x="0.0" y="796.0" width="1280.0" height="24.0" rx="0" fill="#F7F8FA" stroke="none" stroke-width="1"/>
+<line x1="0.0" y1="796.0" x2="1280.0" y2="796.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="12.0" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">mm</text>
+<path d="M 32.9,806.2 L 36.4,809.8 L 39.9,806.2" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<line x1="59.4" y1="801.0" x2="59.4" y2="815.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="71.4" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">X 64.2  Y 51.8</text>
+<line x1="203.4" y1="801.0" x2="203.4" y2="815.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<path d="M 223.4,802.0 L 229.9,805.5 L 223.4,809.0 L 216.9,805.5 Z" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 216.9,808.5 L 223.4,812.0 L 229.9,808.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 216.9,811.5 L 223.4,815.0 L 229.9,811.5" fill="none" stroke="#5B6472" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="235.4" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#1C2128" text-anchor="start">Toolpaths</text>
+<line x1="309.9" y1="801.0" x2="309.9" y2="815.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<circle cx="329.4" cy="807.5" r="6.1" fill="#C62E27" stroke="none" stroke-width="1"/>
+<path d="M327.1 805.2 L331.8 809.8 M331.8 805.2 L327.1 809.8" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+<text x="340.9" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#C62E27" text-anchor="start">1</text>
+<path d="M 365.1,801.7 L 371.7,813.1 L 358.6,813.1 Z" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 365.1,805.6 L 365.1,808.9" fill="none" stroke="#D98A1E" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="365.1" cy="811.1" r="0.8" fill="#D98A1E" stroke="none" stroke-width="1"/>
+<text x="376.6" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#A3580A" text-anchor="start">1</text>
+<circle cx="400.9" cy="807.5" r="6.1" fill="none" stroke="#2A6CC4" stroke-width="1.4"/>
+<path d="M 400.9,807.0 L 400.9,810.8" fill="none" stroke="#2A6CC4" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="400.9" cy="804.7" r="0.8" fill="#2A6CC4" stroke="none" stroke-width="1"/>
+<text x="412.4" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#2A6CC4" text-anchor="start">1</text>
+<line x1="441.1" y1="801.0" x2="441.1" y2="815.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="453.1" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Est. 14 min</text>
+<line x1="543.0" y1="801.0" x2="543.0" y2="815.0" stroke="#D7DBE2" stroke-width="1" stroke-linecap="round"/>
+<text x="555.0" y="812.0" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="400" fill="#5B6472" text-anchor="start">Panel pocket · flat floor at 6 mm, 2 islands kept</text>
 </svg>
