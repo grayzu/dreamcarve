@@ -1424,3 +1424,68 @@ fn line_art_chapter_runs() {
         "and to Preparing artwork"
     );
 }
+
+/// The "Preparing artwork" chapter of the user guide (sub-phase 3.4).
+const PREPARING_ARTWORK: &str = "docs/book/src/user-guide/preparing-artwork.md";
+
+/// #601: the "Preparing artwork" chapter's commands, run as written on the
+/// messy drawing (`tests/fixtures/prep/messy.svg`): `init` with its checks,
+/// `image-prep`, `init` of the result, the refusal to overwrite (exit 1),
+/// regions mode, and a threshold out of range (exit 2). The chapter shows
+/// the output; the test reads only the exit codes and what is written. The
+/// chapter names every code of capability 49g that `init`, `check` and
+/// `image-prep` print, so the Warnings chapter and this one cannot drift.
+#[test]
+fn preparing_artwork_chapter_runs() {
+    let run = Run {
+        chapter: PREPARING_ARTWORK,
+        drawing: ("tests/fixtures/prep/messy.svg", "messy.svg"),
+        swap: None,
+    };
+    let text =
+        std::fs::read_to_string(repo_root().join(PREPARING_ARTWORK)).expect("chapter readable");
+    for code in [
+        "shapes_overlap",
+        "svg_hole_as_separate_path",
+        "svg_stroke_only_path",
+        "svg_hidden_object",
+        "svg_object_not_convertible",
+        "feature_below_size",
+        "prep_regions_suggested",
+        "prep_regions_open_ink",
+        "prep_background_shape",
+        "prep_smooth_skipped",
+        "prep_smooth_exceeds_detail",
+        "prep_speck_dropped",
+        "prep_hole_filled",
+        "prep_threshold_range",
+        "prep_nothing_left",
+        "prep_not_svg",
+        "prep_output_unreadable",
+    ] {
+        assert!(text.contains(code), "{PREPARING_ARTWORK} names `{code}`");
+    }
+    for (needle, what) in [
+        ("Trace Bitmap", "says how to trace a picture"),
+        ("--regions", "teaches regions mode"),
+        ("1.5 mm", "gives the 1.5 mm guide"),
+        ("not a limit", "says the guide is not a limit"),
+        ("polygons", "says circles come back as polygons"),
+        (
+            "close the line",
+            "says to close gaps in the drawing program",
+        ),
+        ("hairline", "says why the boundary is drawn afterwards"),
+    ] {
+        assert!(text.contains(needle), "{PREPARING_ARTWORK} {what}");
+    }
+    let dir = run_chapter("preparing_artwork_chapter_runs", &run);
+    for written in [
+        "messy.dcv",
+        "messy-inlay.svg",
+        "clean.dcv",
+        "messy-regions.svg",
+    ] {
+        assert!(dir.join(written).exists(), "the chapter writes {written}");
+    }
+}

@@ -151,3 +151,27 @@ such as the Japanese, Chinese or Korean ones (`ANSI_932`, `ANSI_936`,
 `ANSI_949`, `ANSI_950`), is read as Windows-1252 and its layer names may
 show wrong characters; a warning names the code page. The geometry is not
 affected; save the file as a 2007 or later DXF to fix the names.
+
+## SVG drawings
+
+This chapter is about DXF, but `init` reads SVG with the same rules and the
+same project at the end, and it checks every SVG it reads. It prints a
+warning for each of these that it finds, and writes the same project with
+or without them:
+
+- outlines of different paths that cross (`shapes_overlap`);
+- a filled path wholly inside another, a hole drawn as a separate path
+  (`svg_hole_as_separate_path`);
+- a stroke with no fill, imported as a bare centre line
+  (`svg_stroke_only_path`);
+- objects that are not drawn, which would be cut anyway
+  (`svg_hidden_object`);
+- text, images, clip paths and masks (`svg_object_not_convertible`);
+- specks and hairlines too small to carve (`feature_below_size`).
+
+A DXF has no paint, hidden layers or clips, so only `shapes_overlap` and
+`feature_below_size` apply to it, and they are not printed by `init` for a
+DXF; `check` reports them from the project's shapes. [Preparing
+artwork](preparing-artwork.md) explains each check and `dreamcarve
+image-prep`, which fixes them in an SVG: a drawing, or a picture traced
+in Inkscape.

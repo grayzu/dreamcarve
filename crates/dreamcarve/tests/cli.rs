@@ -7651,6 +7651,10 @@ fn line_art_to_inlay_end_to_end() {
 
 /// The bounding box `[min_x, min_y, max_x, max_y]` of each shape `init`
 /// makes of `svg` in `dir`, except the oval, sorted.
+#[allow(
+    clippy::indexing_slicing,
+    reason = "a project file read as JSON, whose shape the test knows"
+)]
 fn pocket_extents(dir: &Path, svg: &str) -> Vec<[f64; 4]> {
     let out = run(dir, &["init", svg, "-o", "extents.dcv"]);
     assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
@@ -7681,6 +7685,10 @@ fn pocket_extents(dir: &Path, svg: &str) -> Vec<[f64; 4]> {
 /// in `dir` from the compass (the eight pockets and the oval, the ninth
 /// shape): the test part's boards, the lettered pair's tools and Inlay with
 /// the oval as `boundary`, both boards exported and checked (#605, #601).
+#[allow(
+    clippy::indexing_slicing,
+    reason = "a project file read as JSON, whose shape the test knows"
+)]
 fn finish_compass_inlay(dir: &Path) {
     // The test part's boards and the lettered pair's tools and Inlay.
     let path = dir.join("compass.dcv");
@@ -7737,10 +7745,10 @@ fn finish_compass_inlay(dir: &Path) {
     assert_eq!(project.on_male_board(inlay).stock.width_mm, width_mm);
     assert_eq!(project.on_male_board(inlay).stock.height_mm, height_mm);
 
-    let out = run(&dir, &["export", "compass.dcv", "--date", FIXED_DATE]);
+    let out = run(dir, &["export", "compass.dcv", "--date", FIXED_DATE]);
     let report = format!("{}{}", stdout(&out), stderr(&out));
     assert_eq!(out.status.code(), Some(0), "{report}");
-    let written = programs_in(&dir);
+    let written = programs_in(dir);
     assert_eq!(
         written,
         [

@@ -1080,13 +1080,23 @@ artwork of the maintainer's is committed):
 61j. **No machining inputs.** `image-prep --help` lists no tool, stock,
  depth, feed or size option, and the output of 61g is the same whatever
  the project it is later used in.
-61k. **Line art to inlay, end to end.** `ring-cross.svg` prepared with
- `--regions`, `init`, an Inlay (60° 6.35 mm V-bit, a 3.175 mm end mill as
- clearing pass, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`) with
- a circular boundary 8 mm beyond the pockets: `init` prints no 49a
- warning, both boards export with every program passing S1–S19, and the
- pair seats within 0.05 mm as in 57. The male is one board carrying four
- plugs, and the female four pockets.
+61k. **Line art to inlay, end to end.** The compass without its oval
+ (`tests/fixtures/prep/compass-art.svg`) prepared with `--regions` (eight
+ pieces, a narrowest gap of 2.5 mm, the same pockets as
+ `compass-regions.svg` within 0.05 mm), then the oval drawn into the
+ prepared file (the test appends it, as a drawing editor does: a stroke
+ that thin is a hairline and would be dropped if it were prepared), `init`,
+ an Inlay (60° 6.35 mm V-bit, a 3.175 mm end mill as clearing pass,
+ `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`) with the oval as its
+ `boundary`: `init` on the prepared file prints no 49a warning, and with
+ the oval it prints one, `svg_stroke_only_path` naming the oval, which is
+ expected (a drawn boundary is a bare outline, and an outline is all the
+ Inlay reads); both boards export with every program passing S1–S19, and
+ the pair seats within 0.05 mm as in 57. The male is one board carrying
+ eight plugs, and the female eight pockets. (Decided in #601: the first
+ text, `ring-cross.svg` with a circular boundary 8 mm beyond the pockets
+ and no 49a warning at all, could not hold: any drawn boundary is
+ stroke-only, filled, or unpainted, and each of those is a 49a warning.)
 61l. **Boundary replaces the margin.** The star fixture (60 mm tip to
  tip), the Inlay of 57 (`depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm:
  2`, the 60° 6.35 mm V-bit) and a boundary of one 80 mm square centred on
@@ -1145,7 +1155,7 @@ artwork of the maintainer's is committed):
  program exported after the move passes. The check never calls a
  generator (S17's rule, unchanged).
 61s. **Bench stand-in.** The line-art inlay's synthetic fixture
- (`tests/fixtures/prep/compass.svg`, see Test parts), prepared with
+ (`tests/fixtures/prep/compass-art.svg`, see Test parts), prepared with
  `--regions`, then an Inlay with a drawn oval boundary, exports both
  boards with every program passing S1–S19, seats within 0.05 mm, and
  every cut lies inside its 130 × 100 mm board (the test part's stock and
@@ -1346,7 +1356,9 @@ their height.
 
 **Compass.** The sub-phase 3.4 bench check: line art prepared by
 `image-prep --regions` and inlaid inside a drawn oval. The drawing is
-`tests/fixtures/prep/compass.svg` (drawn by a script, like the others): a
+`tests/fixtures/prep/compass-art.svg` (drawn by a script, like the others,
+with `compass.svg`, the same with the oval, and `compass-regions.svg`, the
+expected preparation): a
 70 mm tall compass in line work, an outer ring, a cross of four straight
 lines and four diagonals to the ring, every stroke 2.5 mm wide (3.6 % of
 its height), so the board ridges between the pockets are 2.5 mm. It stands
@@ -1362,7 +1374,7 @@ the Inlay names as its `boundary`.
 | Male board | a contrasting dark hardwood (walnut), nominal 12 mm, 130 × 100 mm |
 | T1 | 60° V-bit, 6.35 mm diameter, as the lettered pair's |
 | T2 | 3.175 mm two-flute upcut end mill, as the lettered pair's |
-| Preparation | `image-prep compass.svg --regions`, then `init`; the report's narrowest gap, 2.5 mm, is the ridge the cut should show |
+| Preparation | `image-prep compass-art.svg --regions`, the oval drawn into the result, then `init`; the report's narrowest gap, 2.5 mm, is the ridge the cut should show |
 | Inlay | `op1`, targets the prepared pockets, `depth_mm: 4`, `glue_gap_mm: 1`, `plug_depth_mm: 2`, `boundary` the oval, `margin_mm` and `outline_rounding_mm` `null`, `step_over_fraction: 0.1`; clearing pass t2 `offset`, climb, ramp 15°; `cut_out` by t2 with four tabs |
 | Safe Z | 10 mm |
 | Controller | grblHAL, one program per tool run |
@@ -1416,7 +1428,7 @@ several, clipping, replacing margin and rounding); Importing and Shapes,
 holes and islands updated (the checks); Warnings updated with every code
 in capability 49g; The project file updated (format 26, `boundary`).
 Quick start: the inlay pair's "Preparing your own design" points to the
-chapter, and a new section "From line art" runs `compass.svg` end to end.
+chapter, and a new section "From line art" runs `compass-art.svg` end to end.
 - User Guide: V-Carve operation (medial lines, flat depth, clearing
 passes, start depth, one pass, the offset strategy, choosing a bit angle);
 Inlay (the method, the four values and what each changes, the two

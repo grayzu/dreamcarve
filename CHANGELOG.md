@@ -9,6 +9,27 @@ phases bump the patch number.
 
 ### Added
 
+- **`dreamcarve image-prep` and the import checks (#462, #598, #600, #601).**
+  `init` now checks an SVG and prints a warning for each kind of problem
+  it finds, changing nothing: overlapping outlines (`shapes_overlap`), a
+  hole drawn as a separate path (`svg_hole_as_separate_path`), strokes with
+  no fill (`svg_stroke_only_path`), hidden objects (`svg_hidden_object`),
+  text, images, clip paths and masks (`svg_object_not_convertible`) and
+  specks (`feature_below_size`); `check` repeats the two that a project's
+  shapes show. Every import warning has a stable code. `image-prep` reads
+  one SVG and writes a clean one of filled shapes (strokes become areas,
+  fills are resolved, specks and hairlines dropped, edges smoothed), and
+  with `--regions` makes the spaces between the lines the shapes to inlay,
+  which is how line art is inlaid. It prints a report of the design's
+  height, the thinnest piece and the narrowest gap, and what they become at
+  100, 200 and 300 mm tall. It never overwrites a file, takes no machining
+  options, and refuses a PNG or JPEG (trace it in Inkscape first). User
+  guide chapter "Preparing artwork", updates to Importing, Shapes, holes
+  and islands and Warnings (every new code), and a quick start, "From line
+  art", on the new `tests/fixtures/prep/compass-art.svg` (the compass
+  without its oval; the oval is drawn into the prepared drawing, because a
+  line that thin is dropped as a hairline).
+
 - **A drawn boundary for the male Inlay's band; format version 26 (#449,
   #602).** An Inlay can list `boundary`, instances whose closed outlines
   are the band's outer edge in place of `margin_mm` and
