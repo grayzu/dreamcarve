@@ -12247,3 +12247,240 @@ fn dxf_init_is_unchanged() {
         ]
     );
 }
+
+// Slice 3.4-7 (#600): `dreamcarve image-prep`, capabilities 49b and 49e,
+// acceptance 61g, 61h (the text), 61i, 61j.
+
+/// The leading bytes of a PNG file.
+const PNG_SIGNATURE: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+
+/// The names of the files in `dir`.
+fn file_names(dir: &Path) -> Vec<std::ffi::OsString> {
+    let mut names: Vec<_> = std::fs::read_dir(dir)
+        .expect("dir")
+        .map(|e| e.expect("entry").file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn image_prep_writes_the_default_name_beside_the_input() {
+    let dir = work_dir("image_prep_writes_the_default_name_beside_the_input");
+    copy_fixture(&dir, "prep/ring-cross.svg", "ring-cross.svg");
+    let out = run(&dir, &["image-prep", "ring-cross.svg"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let written = std::fs::read_to_string(dir.join("ring-cross-inlay.svg")).expect("written");
+    assert!(written.contains(r#"width="60mm""#), "{written}");
+    let text = stdout(&out);
+    assert!(
+        text.starts_with("Prepared ring-cross.svg → ring-cross-inlay.svg (shapes)\n"),
+        "{text}"
+    );
+    assert_eq!(
+        text.lines().last(),
+        Some("Wrote ring-cross-inlay.svg"),
+        "{text}"
+    );
+    // `-o` names the output.
+    let out = run(&dir, &["image-prep", "ring-cross.svg", "-o", "other.svg"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read(dir.join("other.svg")).expect("written"),
+        written.as_bytes()
+    );
+}
+
+#[test]
+fn image_prep_refuses_to_overwrite() {
+    let dir = work_dir("image_prep_refuses_to_overwrite");
+    copy_fixture(&dir, "prep/ring-cross.svg", "ring-cross.svg");
+    std::fs::write(dir.join("ring-cross-inlay.svg"), "mine").expect("written");
+    let out = run(&dir, &["image-prep", "ring-cross.svg"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(
+        stderr(&out).contains("ring-cross-inlay.svg"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(stderr(&out).contains("already exists"), "{}", stderr(&out));
+    assert_eq!(
+        std::fs::read_to_string(dir.join("ring-cross-inlay.svg")).expect("kept"),
+        "mine"
+    );
+    assert_eq!(stdout(&out), "");
+}
+
+#[test]
+fn image_prep_refuses_a_picture_and_names_inkscape() {
+    let dir = work_dir("image_prep_refuses_a_picture_and_names_inkscape");
+    std::fs::write(dir.join("pic.png"), PNG_SIGNATURE).expect("written");
+    std::fs::write(dir.join("pic.jpg"), [0xFF, 0xD8, 0xFF, 0xE0]).expect("written");
+    // A picture whatever it is called.
+    std::fs::write(dir.join("disguised.svg"), PNG_SIGNATURE).expect("written");
+    for name in ["pic.png", "pic.jpg", "disguised.svg"] {
+        let out = run(&dir, &["image-prep", name]);
+        assert_eq!(out.status.code(), Some(2), "{name}: {}", stderr(&out));
+        let message = stderr(&out);
+        assert!(message.contains("prep_not_svg"), "{name}: {message}");
+        assert!(message.contains("Trace Bitmap"), "{name}: {message}");
+        assert!(message.contains("Inkscape"), "{name}: {message}");
+    }
+    assert_eq!(
+        file_names(&dir).len(),
+        3,
+        "nothing written: {:?}",
+        file_names(&dir)
+    );
+}
+
+#[test]
+fn image_prep_malformed_svg_writes_nothing() {
+    let dir = work_dir("image_prep_malformed_svg_writes_nothing");
+    std::fs::write(
+        dir.join("bad.svg"),
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"",
+    )
+    .expect("written");
+    let out = run(&dir, &["image-prep", "bad.svg"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stdout(&out));
+    assert!(stderr(&out).contains("bad.svg"), "{}", stderr(&out));
+    assert_eq!(
+        file_names(&dir).len(),
+        1,
+        "nothing written: {:?}",
+        file_names(&dir)
+    );
+    // A missing input is an error too.
+    let out = run(&dir, &["image-prep", "missing.svg"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+}
+
+/// 61j.
+#[test]
+fn image_prep_help_has_no_machining_options() {
+    let dir = work_dir("image_prep_help_has_no_machining_options");
+    let out = run(&dir, &["image-prep", "--help"]);
+    assert_eq!(out.status.code(), Some(0));
+    let help = stdout(&out);
+    let mut flags: Vec<&str> = help
+        .split_whitespace()
+        .filter_map(|w| w.strip_prefix("--"))
+        .map(|w| w.trim_end_matches([',', '>', ']']))
+        .filter(|w| !w.is_empty() && w.chars().all(|c| c.is_ascii_lowercase() || c == '-'))
+        .collect();
+    flags.sort_unstable();
+    flags.dedup();
+    assert_eq!(
+        flags,
+        ["help", "min-detail", "output", "regions", "smooth"],
+        "{help}"
+    );
+    for word in ["tool", "stock", "depth", "feed", "size", "width"] {
+        for flag in &flags {
+            assert!(!flag.contains(word), "--{flag}: {help}");
+        }
+    }
+}
+
+#[test]
+fn image_prep_prints_warnings_then_the_report() {
+    let dir = work_dir("image_prep_prints_warnings_then_the_report");
+    copy_fixture(&dir, "prep/messy.svg", "messy.svg");
+    let out = run(&dir, &["image-prep", "messy.svg"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let errors = stderr(&out);
+    let warnings = warning_lines(&errors);
+    assert!(!warnings.is_empty(), "{errors}");
+    for line in &warnings {
+        assert!(warning_code(line).is_some(), "{line}");
+        assert!(!line.contains("image-prep"), "already run: {line}");
+    }
+    assert_eq!(warnings.len(), errors.lines().count(), "{errors}");
+    let report = stdout(&out);
+    assert!(report.starts_with("Prepared messy.svg"), "{report}");
+    assert!(report.contains("\n  Design height: "), "{report}");
+    assert!(report.ends_with("Wrote messy-inlay.svg\n"), "{report}");
+    // The same run again gives the same warnings, in the same order.
+    let again = run(&dir, &["image-prep", "messy.svg", "-o", "again.svg"]);
+    assert_eq!(warning_lines(&stderr(&again)), warnings);
+}
+
+#[test]
+fn image_prep_prints_the_report_of_the_ring_and_cross() {
+    let dir = work_dir("image_prep_prints_the_report_of_the_ring_and_cross");
+    copy_fixture(&dir, "prep/ring-cross.svg", "ring-cross.svg");
+    let out = run(&dir, &["image-prep", "ring-cross.svg", "--regions"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    for line in [
+        "Prepared ring-cross.svg → ring-cross-inlay.svg (regions)",
+        "  Design height: 60.00 mm",
+        "  Narrowest gap, the board ridge between pockets: 2.00 mm (3.33 %)",
+        "  The narrowest gap reaches 1.5 mm at 45 mm tall.",
+    ] {
+        assert!(report.lines().any(|l| l == line), "{line}: {report}");
+    }
+}
+
+/// 61g.
+#[test]
+fn image_prep_then_init_has_no_warnings() {
+    for (fixture, regions) in [
+        ("ring-cross.svg", true),
+        ("ring-cross.svg", false),
+        ("messy.svg", false),
+        ("clean.svg", false),
+    ] {
+        let dir = work_dir(&format!(
+            "image_prep_then_init_has_no_warnings_{}_{regions}",
+            fixture.trim_end_matches(".svg"),
+        ));
+        copy_fixture(&dir, &format!("prep/{fixture}"), "art.svg");
+        let mut args = vec!["image-prep", "art.svg"];
+        if regions {
+            args.push("--regions");
+        }
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(0), "{fixture}: {}", stderr(&out));
+        let out = run(&dir, &["init", "art-inlay.svg"]);
+        assert_eq!(out.status.code(), Some(0), "{fixture}: {}", stderr(&out));
+        assert_eq!(stderr(&out), "", "{fixture}");
+    }
+}
+
+#[test]
+fn image_prep_threshold_range_exits_2() {
+    let dir = work_dir("image_prep_threshold_range_exits_2");
+    copy_fixture(&dir, "prep/ring-cross.svg", "ring-cross.svg");
+    for args in [
+        ["--min-detail", "6"],
+        ["--smooth", "-1"],
+        ["--smooth", "5.5"],
+    ] {
+        let mut full = vec!["image-prep", "ring-cross.svg"];
+        full.extend(args);
+        let out = run(&dir, &full);
+        assert_eq!(out.status.code(), Some(2), "{args:?}: {}", stderr(&out));
+        assert!(
+            stderr(&out).contains("prep_threshold_range"),
+            "{}",
+            stderr(&out)
+        );
+        assert!(stderr(&out).contains(args[0]), "{}", stderr(&out));
+        assert!(!dir.join("ring-cross-inlay.svg").exists());
+    }
+    // 0 turns a step off and 5 is the largest; neither is an error.
+    let out = run(
+        &dir,
+        &[
+            "image-prep",
+            "ring-cross.svg",
+            "--min-detail",
+            "0",
+            "--smooth",
+            "0",
+        ],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+}

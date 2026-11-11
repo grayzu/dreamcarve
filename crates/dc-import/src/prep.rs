@@ -11,11 +11,13 @@ mod report;
 mod run;
 pub(crate) mod stroke;
 pub mod walk;
+mod write;
 
 pub use crate::svg::MIN_FLATTEN_TOLERANCE_MM;
 pub use findings::{design_findings, design_findings_named, findings};
 pub use report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
 pub use run::{PrepMode, PrepOptions, Prepared, flatten_tolerance_mm, prepare};
+pub use write::write_svg;
 
 /// The default minimum detail, percent of the design's height (functional
 /// 49d). A proposal: slice 21f calibrates it (open question 16). Pieces
