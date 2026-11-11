@@ -95,7 +95,9 @@ pub fn offset(contour: &Contour, delta_mm: f64) -> Vec<Contour> {
     // under the tolerance, however long) and panics. Such a sliver has no
     // redundant vertices to remove, only nothing to offset, and the other
     // retries are left to say so.
-    if let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps) {
+    if contour.signed_area_mm2().abs() > defaults.pos_equal_eps
+        && let Some(p) = to_cavalier(source).remove_redundant(defaults.pos_equal_eps)
+    {
         retries.push((from_cavalier(&p), PlineOffsetOptions::default()));
     }
     let decimations =

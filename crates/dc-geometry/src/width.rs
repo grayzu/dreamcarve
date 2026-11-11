@@ -18,13 +18,34 @@ use crate::carve::{floor_regions, single_region};
 use crate::contour::Contour;
 use crate::medial::{medial_axis, neck_step_mm, refined_step_mm, resolution};
 use crate::merge::{folds_back, outline_pairs};
-use crate::point::Point;
+use crate::point::{EPS_MM, Point};
 use crate::region::Region;
 
 /// How far short of half the width the erosion stops, mm, so a region
 /// exactly as wide as the threshold keeps a sliver the offset does not
 /// round away: 0.2 µm on the width, far under any design tolerance.
 const ERODE_SLACK_MM: f64 = 1e-4;
+
+/// Whether a closed outline of `perimeter_mm` enclosing `area_mm2` is a
+/// numerical sliver: its average width, twice the area over the length, is
+/// under twenty times [`EPS_MM`]. A union of strokes leaves such pieces
+/// where two outlines nearly coincide (#611: 6 µm by 4 nm). They are not
+/// designs, an offset of them is not reliable, and every function here
+/// gives them a defined answer without trying: narrower than any width, no
+/// medial axis, no gap.
+fn is_sliver(area_mm2: f64, perimeter_mm: f64) -> bool {
+    area_mm2 < 10.0 * EPS_MM * perimeter_mm
+}
+
+/// [`is_sliver`] for the whole of `region`: its area over its outer's and
+/// holes' lengths.
+fn region_is_sliver(region: &Region) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    is_sliver(region.area_mm2(), perimeter_mm)
+}
 
 /// The narrowest gap found by [`narrowest_gap`].
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -87,11 +108,16 @@ impl WidthProfile {
 /// offset. A region exactly `width_mm` wide is not narrower (the erosion is
 /// taken 0.1 µm short of the radius, so rounding cannot empty
 /// it).
-/// False when `width_mm` is not a positive finite number.
+/// False when `width_mm` is not a positive finite number. True for a
+/// numerical sliver (average width under 20 nm), which
+/// is narrower than any width and is not offset (#611).
 #[must_use]
 pub fn is_narrower_than(region: &Region, width_mm: f64, tolerance_mm: f64) -> bool {
     if !(width_mm.is_finite() && width_mm > 0.0) {
         return false;
+    }
+    if region_is_sliver(region) {
+        return true;
     }
     let radius_mm = (width_mm / 2.0 - ERODE_SLACK_MM).max(0.0);
     floor_regions(std::slice::from_ref(region), radius_mm, tolerance_mm).is_empty()
@@ -99,9 +125,16 @@ pub fn is_narrower_than(region: &Region, width_mm: f64, tolerance_mm: f64) -> bo
 
 /// Whether `hole`'s widest point is under `width_mm`: the same test on the
 /// hole as a region of its own, the largest circle that fits in the hole.
-/// False when `width_mm` is not a positive finite number.
+/// False when `width_mm` is not a positive finite number. True for a
+/// sliver hole, as for a sliver region (#611).
 #[must_use]
 pub fn hole_is_narrower_than(hole: &Contour, width_mm: f64, tolerance_mm: f64) -> bool {
+    if !(width_mm.is_finite() && width_mm > 0.0) {
+        return false;
+    }
+    if is_sliver(hole.signed_area_mm2().abs(), hole.polyline().length_mm()) {
+        return true;
+    }
     // A hole is clockwise inside its region; as a region of its own it is
     // the area it encloses.
     let area = if hole.is_ccw() {
@@ -130,6 +163,9 @@ pub fn hole_is_narrower_than(hole: &Contour, width_mm: f64, tolerance_mm: f64) -
 /// do not move.
 #[must_use]
 pub fn local_widths(region: &Region, tolerance_mm: f64) -> Option<WidthProfile> {
+    if region_is_sliver(region) {
+        return None;
+    }
     let resolved = resolution(region)?;
     let mut graph = medial_axis(region, resolved.step_mm, tolerance_mm);
     if graph.nodes.is_empty() {
@@ -182,12 +218,24 @@ pub fn local_widths(region: &Region, tolerance_mm: f64) -> Option<WidthProfile> 
 /// close. A gap lies outside the design: touching outlines (within
 /// [`crate::EPS_MM`]) and a web of material between two holes are not gaps.
 /// `None` when nothing lies within the reach, or the reach is not a
-/// positive finite number.
+/// positive finite number. A numerical sliver region is not part of the
+/// design and is left out (#611).
 #[must_use]
 pub fn narrowest_gap(regions: &[Region], reach_mm: f64, _tolerance_mm: f64) -> Option<Gap> {
     if !(reach_mm.is_finite() && reach_mm > 0.0) {
         return None;
     }
+    let solid: Vec<Region>;
+    let regions = if regions.iter().any(region_is_sliver) {
+        solid = regions
+            .iter()
+            .filter(|r| !region_is_sliver(r))
+            .cloned()
+            .collect();
+        &solid[..]
+    } else {
+        regions
+    };
     let mut best: Option<Gap> = None;
     let mut consider = |gap_mm: f64, at: Point| {
         if best.is_none_or(|b| gap_mm < b.width_mm) {
