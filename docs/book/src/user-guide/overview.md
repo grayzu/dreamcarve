@@ -7,8 +7,13 @@ material inside a closed outline to a depth ([Pocket](pocket.md));
 **Engrave** follows lines, open or closed, with the bit's centre on the
 line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles,
 or countersinks them with a V-bit ([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
-spiralling down inside them ([Bore](bore.md)). A project holds any number
-of them, cut in the order listed.
+spiralling down inside them ([Bore](bore.md)). **V-Carve** carves
+lettering and signs with a V-bit ([V-Carve](v-carve.md)), **Inlay** cuts
+a design into one board and its mirrored plug from another
+([Inlay](inlay.md)), and **Photo V-Carve** carves a picture as V-bit
+grooves whose depth follows its shades ([Photo
+V-Carve](photo-v-carve.md)). A project holds any number of them, cut in
+the order listed.
 
 ## The workflow
 
@@ -23,6 +28,10 @@ of them, cut in the order listed.
 4. `dreamcarve check part.dcv` reports problems without writing anything.
 5. `dreamcarve export part.dcv` writes the G-code program, `part.nc`.
 6. Air cut, then cut.
+
+To carve a picture, start from the picture instead: `dreamcarve init
+photo.jpg --width 100` writes a project with the picture on the stock and
+one Photo V-Carve of it ([Images](images.md)).
 
 [Your first cut from an SVG](../quick-start/first-cut.md) walks through this
 once, end to end, for one Profile. [A pocketed plaque from
@@ -54,6 +63,13 @@ extension. Each path (SVG) or shape (DXF) in the drawing becomes a shape;
 closed shapes are targeted by one Profile operation. The defaults are
 listed in the [quick start](../quick-start/first-cut.md#2-create-the-project).
 DXF has a chapter of its own: [Importing DXF](importing-dxf.md).
+
+On a PNG or JPEG picture (`.png`, `.jpg`, `.jpeg`), `init` writes a
+project to carve it with a [Photo V-Carve](photo-v-carve.md): the
+picture, stored in the project as a bitmap, 10 mm in from the stock's
+edge, a 60° V-bit and one Photo V-Carve. Give the picture's size on the
+stock with exactly one of `--width <MM>` or `--height <MM>`; the other
+side follows its proportions. See [Images](images.md).
 
 | Option | Meaning |
 | --- | --- |
@@ -207,6 +223,15 @@ Manages your [tool library](tool-library.md): `tools list`, `tools import
 library), `tools export <file>`, `tools add <project.dcv> <tool>` to copy
 a library tool into a project, and `tools remove <tool>`.
 
+### `dreamcarve image`
+
+Adds pictures to a project and lists them ([Images](images.md)): `image
+add <dcv> <picture> --width <MM>` (or `--height <MM>`, with `--at <X,Y>`
+for its bottom-left corner and `--name <NAME>`) stores a PNG or JPEG in
+the project as a bitmap a Photo V-Carve can carve, and `image list <dcv>`
+shows each bitmap's id, name, size in pixels and on the stock, position,
+and the Photo V-Carves that carve it. `add` saves the project.
+
 ### `dreamcarve tabs`
 
 Places, lists and removes the project's [tabs](tabs.md): `tabs place
@@ -259,6 +284,10 @@ output: …`.
   flat depths, clearing passes, and choosing a bit angle.
 - [Inlay operation](inlay.md): a design in one wood set into another,
   from a female pocket and a mirrored male plug cut with one V-bit.
+- [Images](images.md): choosing and preparing a picture, `init` on a
+  picture, `dreamcarve image`, and pictures in the project file.
+- [Photo V-Carve operation](photo-v-carve.md): a picture carved as
+  V-bit grooves, its settings, and choosing a bit and a depth.
 - [Machining order and operation order](machining-order.md): the order
   shapes and operations are cut in.
 - [Post-processors](post-processors.md): the six controllers, more than
