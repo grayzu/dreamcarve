@@ -156,7 +156,9 @@ pub fn prepare(
         }
         // Step 2: the stroke's outline, guarded.
         outlines.push(
-            match stroke::outline_mm(path, provisional_mm, &mut budget)? {
+            // Estimated at the finest tolerance, an upper bound whatever
+            // the height turns out to be.
+            match stroke::outline_mm(path, MIN_FLATTEN_TOLERANCE_MM, &mut budget)? {
                 Stroked::Nothing => None,
                 Stroked::Failed(warning) => {
                     failed.push(warning);
@@ -186,10 +188,20 @@ pub fn prepare(
     let mut shapes: Vec<Shape> = Vec::with_capacity(walked.painted.len());
     let mut strokes = StrokeReport::default();
     for (path, outline) in walked.painted.iter().zip(&outlines) {
-        let filled = path.fill.map_or_else(Vec::new, |fill| {
-            let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
-            resolve_fill(&profiles, fill.rule, tolerance_mm)
-        });
+        let filled = match path.fill {
+            Some(fill) => {
+                // Refuse at the tolerance the flattening really uses
+                // (finer than the provisional one when the design is
+                // shorter than the painted bound), then charge what it
+                // made.
+                let mut trial = budget;
+                trial.spend(svg::estimated_vertices(&path.geometry.bez, tolerance_mm))?;
+                let profiles = svg::build_profiles(&path.geometry, tolerance_mm);
+                budget.spend(profiles.iter().map(|p| p.vertices().len()).sum())?;
+                resolve_fill(&profiles, fill.rule, tolerance_mm)
+            }
+            None => Vec::new(),
+        };
         let stroked = match outline {
             Some(mm) => {
                 let width_mm = path.stroke.as_ref().map_or(0.0, |s| s.width_mm);
@@ -1209,6 +1221,38 @@ mod tests {
         let (small, big) = (count(50.0), count(500.0));
         assert!(small > 100, "{small}");
         assert!(small.abs_diff(big) <= 4, "{small} against {big}");
+    }
+
+    #[test]
+    fn a_coarse_bound_does_not_undercharge_a_fill() {
+        // The zero-length stroke draws nothing but inflates the painted
+        // bound to 5000 mm, a coarse provisional tolerance; the design is
+        // 10 mm tall, so the curves flatten far finer than that.
+        let mut d = String::from("M0,0");
+        for k in 0..300 {
+            let x = f64::from(k % 2) * 10.0;
+            d.push_str(&format!(
+                " C{x},3 {},7 {x},{}",
+                10.0 - x,
+                10.0 * f64::from(k + 1) / 300.0
+            ));
+        }
+        let art = svg(
+            10.0,
+            10.0,
+            &format!(
+                r#"<path d="{d} Z"/><path d="M5,5 L5,5" stroke="black" stroke-width="5000"/>"#
+            ),
+        );
+        let options = PrepOptions {
+            max_vertices: 3000,
+            ..PrepOptions::default()
+        };
+        let result = prepare(&art, &options);
+        assert!(
+            matches!(result, Err(ImportError::TooManyVertices { .. })),
+            "{result:?}"
+        );
     }
 
     #[test]
