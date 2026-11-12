@@ -144,7 +144,7 @@ Apache-2.0, so the boundary is strict:
 - **What is not.** Nothing else of RasterCarve's: no source, no test, no
   picture, no part of its engine. `tools/parity/photo/capture.py` runs
   RasterCarve's command line from its own environment in a fresh folder,
-  without importing it or adding it to its path. A hatch case is not
+  without importing it or adding it to its own path. A hatch case is not
   captured, because the only way would be to drive RasterCarve's engine
   from a script, which would make a combined work; hatch is covered by
   DreamCarve's unit tests alone.
@@ -158,13 +158,28 @@ Apache-2.0, so the boundary is strict:
 | `photo-raster-inch` | `ramp.png`, 64 × 32, black left to white right | RasterCarve's defaults, 0.1 in wide, in inches; the harness scales the golden by 25.4. |
 | `photo-raster-metric` | `radial.png`, 64 × 64, white centre to black edge | Metric settings: 100 mm wide, 30°, 2 mm deep, 22.5°, 110 %, 0.25 mm samples. |
 
-RasterCarve's X is DreamCarve's; its Y grows down the picture from the
-top-left corner, so the harness maps `y = y_mm + height_mm − y_rc` before
-it compares. The grooves are compared groove for groove, in order, each
-sample within 0.01 mm in XY and 0.05 mm in Z (acceptance 60). Rapids,
-the lifts between grooves, and RasterCarve's final move are not compared:
-its lift is a different setting. `tools/parity/photo/README.md` is the
-record of how to capture a case and what each one's differences are.
+RasterCarve's origin is the picture's top-left corner with Y up, so the
+picture lies at negative Y. The harness scales its program by 25.4 (it
+writes inches) and maps `y = y_mm + height_mm + y_rc` before it compares;
+the case READMEs give the full mapping. The grooves are compared groove
+for groove, in order, each sample within 0.01 mm in XY and 0.05 mm in Z
+(acceptance 60). Rapids, the lifts between grooves, and RasterCarve's
+final move are not compared: its lift is a different setting.
+
+Two differences are RasterCarve's own and are allowed in their case only,
+never globally:
+
+- **`photo-raster-inch`, resampling.** RasterCarve shrinks the picture to
+  200 pixels per inch before it reads depths, so its depth lags the ramp
+  by up to 0.107 mm. A depth past 0.05 mm passes if it is within 0.05 mm
+  of the picture's depth within one shrunk pixel.
+- **`photo-raster-metric`, the far corner.** RasterCarve leaves the groove
+  through the picture's far corner uncut at some widths. DreamCarve cuts
+  it; the harness checks it lies one spacing past the last shared groove
+  and inside the picture.
+
+`tools/parity/photo/README.md` is the record of how to capture a case and
+what each one's differences are.
 
 ## Comparing order
 
