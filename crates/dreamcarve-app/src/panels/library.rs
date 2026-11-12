@@ -22,9 +22,14 @@
 //! *Delete* asks first, naming the ticked tools (the selected one when
 //! none is ticked), in place of the panes (#581). *Import…* reads a
 //! Fusion `.tools` or `.json` or a DreamCarve library and shows the
-//! per-tool report `tools import` prints in place of the panes, with
-//! *Back* (never a sheet above a sheet); *Replace existing* is `--replace`
-//! until the import review (#623) takes it.
+//! import review in place of the panes (slice 31, #623; capability 64b;
+//! never a sheet above a sheet): the counts `tools import` reports, *Keep
+//! mine* / *Replace with imported* (`--replace`) only when a tool is
+//! *Changed*, and the file's tools with their status. Nothing is written
+//! until *Import*, which merges into the library as it is on disk then,
+//! writes it through the staged write and returns to the table with a
+//! banner whose *Details* reopens the review read-only. *Back* (or
+//! Escape) leaves the table as it was.
 //!
 //! The model is `dc_app::library`; the sheet keeps the search, the ticks,
 //! the selection and the session between frames. A library change never
@@ -37,7 +42,7 @@ use std::collections::BTreeSet;
 use dc_app::library::{self as model, Filter, KindFilter, LibraryEdit};
 use dc_app::tools::{self, KindChoice, ToolField};
 use dc_app::{App, Command, StrKey, Strings};
-use dc_library::import::{ImportReport, Outcome};
+use dc_library::import::{Incoming, Outcome, Review, ReviewItem, Status};
 use dc_library::{Library, LibraryToolId};
 use dc_project::{Tool, ToolId, ToolKind, Units};
 use dreamcarve_shell::Paths;
@@ -48,7 +53,7 @@ use crate::shell::files;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Dialogs};
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
-use crate::widgets::checkbox::{checkbox, paint_box};
+use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented;
 
@@ -87,9 +92,12 @@ pub(crate) struct Sheet {
     selected: Option<LibraryToolId>,
     /// The vendor groups closed, by vendor (`None` is *No vendor*).
     collapsed: BTreeSet<Option<String>>,
-    replace: bool,
-    /// The last import's file name and report, shown in place of the panes.
-    report: Option<(String, ImportReport)>,
+    /// The import being reviewed, or the last one made (its *Details*).
+    review: Option<ImportReview>,
+    /// Whether the review shows in place of the panes.
+    reviewing: bool,
+    /// The banner after an import: *Imported 13 tools from sample.tools.*
+    banner: Option<String>,
     /// Whether *Delete* is asking first, in place of the panes (#581).
     confirm_remove: bool,
     /// The tool whose switch to V-bit waits for its angle (#581).
@@ -103,10 +111,29 @@ pub(crate) struct Sheet {
     message: Option<(String, bool)>,
 }
 
+/// An import's review (capability 64b): the file, its tools, both
+/// imports and the user's choice between them.
+#[derive(Debug, Clone, PartialEq)]
+struct ImportReview {
+    /// The file's name, as the title shows it.
+    name: String,
+    /// The file's tools, merged again into the library on disk at
+    /// *Import*.
+    incoming: Incoming,
+    review: Review,
+    /// *Replace with imported*; *Keep mine*, the default, is `false`.
+    replace: bool,
+    /// Imported: the review is read-only, what *Details* shows.
+    done: bool,
+}
+
 /// What the sheet asks the shell to do.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Request {
+    /// *Import…*: choose a file and review it.
     Import,
+    /// The review's *Import*: write the chosen import.
+    ImportReviewed,
     Export,
     Remove,
     Add,
@@ -145,8 +172,9 @@ impl Sheet {
             ticked: BTreeSet::new(),
             selected: None,
             collapsed: BTreeSet::new(),
-            replace: false,
-            report: None,
+            review: None,
+            reviewing: false,
+            banner: None,
             confirm_remove: false,
             held: None,
             focus_name: None,
@@ -190,6 +218,15 @@ impl Sheet {
             self.selected = None;
         }
         self.library = Ok(library);
+    }
+
+    /// *Back* from the review (or Escape): the table as it was. A review
+    /// not imported is dropped; a finished one stays for *Details*.
+    fn leave_review(&mut self) {
+        self.reviewing = false;
+        if self.review.as_ref().is_some_and(|r| !r.done) {
+            self.review = None;
+        }
     }
 }
 
@@ -265,6 +302,9 @@ pub(crate) fn show(
         if sheet.confirm_remove {
             // Escape, or a click on the scrim, answers the question first.
             sheet.confirm_remove = false;
+        } else if sheet.reviewing {
+            // And leaves the review, as *Back* does.
+            sheet.leave_review();
         } else {
             out.push(Action::Library(Request::Close));
         }
@@ -284,16 +324,23 @@ fn body(
     let top = ui.cursor().top();
     header(ui, app, sheet, out);
     ui.add_space(12.0);
+    if !sheet.reviewing && !sheet.confirm_remove && sheet.banner.is_some() {
+        banner(ui, strings, sheet);
+        ui.add_space(8.0);
+    }
     let footer_h = FOOTER_PX + 24.0;
     // The panes take what the header and footer leave; an `Area`'s
     // available height is the screen's, so it is worked out.
     let used = ui.cursor().top() - top;
     let panes_h = (height - used - footer_h).max(ROW_PX * 4.0);
+    let units = library_units(app);
     ui.allocate_ui(egui::vec2(ui.available_width(), panes_h), |ui| {
         ui.set_min_height(panes_h);
         ui.set_max_height(panes_h);
-        if let Some((name, report)) = &sheet.report {
-            report_view(ui, strings, name, report, &sheet.path);
+        if sheet.reviewing
+            && let Some(review) = &mut sheet.review
+        {
+            review_view(ui, strings, units, review);
         } else if sheet.confirm_remove {
             remove_question(ui, strings, &sheet.delete_names());
         } else if let Err(message) = &sheet.library {
@@ -322,7 +369,7 @@ fn header(ui: &mut Ui, app: &App, sheet: &Sheet, out: &mut Vec<Action>) {
     let strings = app.strings();
     let palette = Palette::current(ui);
     let readable = sheet.library.is_ok();
-    let in_place = sheet.report.is_some() || sheet.confirm_remove;
+    let in_place = sheet.reviewing || sheet.confirm_remove;
     ui.allocate_ui_with_layout(
         egui::vec2(ui.available_width(), HEADER_PX),
         Layout::right_to_left(Align::Center),
@@ -487,7 +534,8 @@ fn new_tool_button(ui: &mut Ui, strings: &Strings, out: &mut Vec<Action>) {
 }
 
 /// The search field and the type filter, then *New tool*, *Duplicate*
-/// and *Delete* over the list (and *Replace existing* for *Import…*).
+/// and *Delete* over the list. *Replace* is the import review's choice
+/// (64b), not a switch here.
 fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Action>) {
     ui.horizontal(|ui| {
         let search_w = (ui.available_width() - 160.0).clamp(160.0, 320.0);
@@ -525,15 +573,6 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
             // The library is outside project history: ask first.
             sheet.confirm_remove = true;
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            checkbox(
-                ui,
-                "library.replace",
-                &mut sheet.replace,
-                strings.get(StrKey::AppLibraryReplace),
-            )
-            .on_hover_text(strings.get(StrKey::AppLibraryReplaceTooltip));
-        });
     });
 }
 
@@ -742,7 +781,7 @@ fn group_header(
     } else {
         palette.surface_panel
     };
-    ui.painter().rect_filled(rect, 0.0, fill);
+    paint_group_band(ui, rect, fill, vendor, group.rows.len(), TICK_PX);
     let chevron = if open {
         Icon::ChevronDown
     } else {
@@ -757,13 +796,29 @@ fn group_header(
         glyph,
         palette.text_secondary,
     );
+    response.clicked()
+}
+
+/// A vendor group's band (section 7, "Vendor group header"): `fill`, then
+/// the vendor in 13-px SemiBold and ` · count` in text.secondary, from
+/// `indent` px.
+fn paint_group_band(
+    ui: &Ui,
+    rect: Rect,
+    fill: egui::Color32,
+    vendor: &str,
+    count: usize,
+    indent: f32,
+) {
+    let palette = Palette::current(ui);
+    ui.painter().rect_filled(rect, 0.0, fill);
     let name = ui.painter().layout_no_wrap(
         vendor.to_owned(),
         TextStyle::Name(theme::TITLE.into()).resolve(ui.style()),
         palette.text_primary,
     );
     let name_w = name.size().x;
-    let x = rect.left() + TICK_PX;
+    let x = rect.left() + indent;
     ui.painter().galley(
         egui::pos2(x, rect.center().y - name.size().y / 2.0),
         name,
@@ -779,7 +834,6 @@ fn group_header(
         tail,
         palette.text_secondary,
     );
-    response.clicked()
 }
 
 /// One row: its tick (for *Add to project* and *Delete*) and the row
@@ -1086,50 +1140,380 @@ fn remove_question(ui: &mut Ui, strings: &Strings, names: &[&str]) {
     sentence(ui, &question, palette.text_primary);
 }
 
-/// The import report in place of the panes: a line per tool as `tools
-/// import` prints it, skipped items in the warning colour, tools left
-/// with an unset value in the error colour, then the counts.
-fn report_view(ui: &mut Ui, strings: &Strings, name: &str, report: &ImportReport, path: &str) {
+/// The banner after an import (64b): `circle-check`, *Imported 13 tools
+/// from sample.tools. 10 skipped.*, and *Details*, which reopens the
+/// review read-only.
+fn banner(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet) {
+    let Some(message) = sheet.banner.clone() else {
+        return;
+    };
     let palette = Palette::current(ui);
-    text(
-        ui,
-        &strings.fmt(StrKey::AppLibraryReportTitle, &[("name", name)]),
-        TextStyle::Name(theme::TITLE.into()),
-        palette.text_primary,
-    );
-    ui.add_space(8.0);
-    egui::ScrollArea::vertical()
-        .auto_shrink(false)
+    egui::Frame::new()
+        .fill(palette.surface_stripe)
+        .corner_radius(6)
+        .inner_margin(egui::Margin::symmetric(12, 4))
         .show(ui, |ui| {
-            for entry in &report.entries {
-                let colour = match entry.outcome {
-                    Outcome::Skipped { .. } => palette.status_warning.text,
-                    _ if !entry.notes.is_empty() => palette.status_error.text,
-                    _ => palette.text_primary,
-                };
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(entry.to_string())
-                            .text_style(TextStyle::Monospace)
-                            .color(colour),
-                    )
-                    .selectable(true),
-                );
-            }
-            ui.add_space(8.0);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(report.summary(path))
-                        .text_style(TextStyle::Monospace)
-                        .color(palette.text_secondary),
-                )
-                .wrap(),
-            );
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.set_min_height(FOOTER_PX);
+                let glyph =
+                    Icon::CircleCheck.galley(ui, theme::ICON_SMALL_PX, palette.status_success.text);
+                let (rect, _) = ui.allocate_exact_size(glyph.size(), Sense::hover());
+                ui.painter()
+                    .galley(rect.min, glyph, palette.status_success.text);
+                ui.add_space(4.0);
+                text(ui, &message, TextStyle::Body, palette.text_primary);
+                let details = sheet.review.as_ref().is_some_and(|r| r.done);
+                if details {
+                    let spec = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppLibraryDetails))
+                        .tooltip(strings.get(StrKey::AppLibraryDetailsTooltip));
+                    if button(ui, spec).clicked() {
+                        sheet.reviewing = true;
+                    }
+                }
+            });
         });
 }
 
+/// The review's columns: label, width (0 is the rest) and whether numbers
+/// right-align.
+const REVIEW_COLUMNS: [(StrKey, f32, bool); 5] = [
+    (StrKey::AppLibraryColumnName, 0.0, false),
+    (StrKey::AppLibraryColumnKind, 90.0, false),
+    (StrKey::AppLibraryColumnDiameter, 64.0, true),
+    (StrKey::AppLibraryColumnFeed, 64.0, true),
+    (StrKey::AppLibraryColumnStatus, 320.0, false),
+];
+
+/// Each review column's rect across `row`.
+fn review_rects(row: Rect) -> Vec<Rect> {
+    let fixed: f32 = REVIEW_COLUMNS.iter().map(|(_, w, _)| w).sum();
+    let rest = (row.width() - 8.0 - fixed).max(120.0);
+    let mut x = row.left() + 8.0;
+    REVIEW_COLUMNS
+        .iter()
+        .map(|(_, w, _)| {
+            let width = if *w > 0.0 { *w } else { rest };
+            let rect =
+                Rect::from_min_size(egui::pos2(x, row.top()), egui::vec2(width, row.height()));
+            x += width;
+            rect
+        })
+        .collect()
+}
+
+/// An item's status as its row shows it under the choice `replace`: a
+/// changed tool kept is added under its stored name; replaced, it
+/// overwrites yours.
+fn status_text(strings: &Strings, item: &ReviewItem, replace: bool) -> String {
+    match item.status {
+        Status::New => strings.get(StrKey::AppLibraryReviewNew).to_owned(),
+        Status::Present => strings.get(StrKey::AppLibraryStatusSame).to_owned(),
+        Status::Changed => match (&item.keep, replace) {
+            (Outcome::Imported { stored_name, .. }, false) => {
+                strings.fmt(StrKey::AppLibraryStatusKept, &[("name", stored_name)])
+            }
+            _ => strings.get(StrKey::AppLibraryStatusReplaced).to_owned(),
+        },
+        Status::Skipped => {
+            let reason = match &item.keep {
+                Outcome::Skipped { reason } => reason.as_str(),
+                _ => "",
+            };
+            strings.fmt(StrKey::AppLibraryStatusSkipped, &[("reason", reason)])
+        }
+    }
+}
+
+/// The import review in place of the panes (capability 64b; mock-up 04,
+/// below): the file's name, the counts, the choice when a tool changed,
+/// then the file's items grouped by vendor with their status.
+fn review_view(ui: &mut Ui, strings: &Strings, units: Units, pending: &mut ImportReview) {
+    let palette = Palette::current(ui);
+    text(
+        ui,
+        &strings.fmt(StrKey::AppLibraryReviewTitle, &[("name", &pending.name)]),
+        TextStyle::Name(theme::TITLE.into()),
+        palette.text_primary,
+    );
+    ui.add_space(12.0);
+    let review = &pending.review;
+    let mut counts = vec![
+        (StrKey::AppLibraryReviewNew, review.count(Status::New)),
+        (
+            StrKey::AppLibraryReviewPresent,
+            review.count(Status::Present),
+        ),
+        (
+            StrKey::AppLibraryReviewChanged,
+            review.count(Status::Changed),
+        ),
+    ];
+    // A DreamCarve library has nothing to skip, and `tools import`
+    // prints no skipped count for it.
+    if review.keep.report.skipped.is_some() {
+        counts.push((
+            StrKey::AppLibraryReviewSkipped,
+            review.count(Status::Skipped),
+        ));
+    }
+    ui.horizontal(|ui| {
+        for (key, count) in counts {
+            count_tile(ui, strings, key, count);
+            ui.add_space(8.0);
+        }
+    });
+    ui.add_space(12.0);
+    let changed = review.count(Status::Changed);
+    let choosing = changed > 0 && !pending.done;
+    if choosing {
+        ui.horizontal(|ui| {
+            let question = if changed == 1 {
+                strings.get(StrKey::AppLibraryReviewChangedOne).to_owned()
+            } else {
+                strings.fmt(
+                    StrKey::AppLibraryReviewChangedMany,
+                    &[("count", &changed.to_string())],
+                )
+            };
+            text(ui, &question, TextStyle::Body, palette.text_primary);
+            ui.add_space(8.0);
+            let labels = [
+                strings.get(StrKey::AppLibraryKeepMine),
+                strings.get(StrKey::AppLibraryReplaceImported),
+            ];
+            let picked = segmented(
+                ui,
+                Id::unique("library.review.choice"),
+                &labels,
+                usize::from(pending.replace),
+                320.0,
+            );
+            if let Some(n) = picked {
+                pending.replace = n == 1;
+            }
+        });
+        ui.add_space(12.0);
+    }
+    let note_h = if choosing { 28.0 } else { 0.0 };
+    let table_h = (ui.available_height() - note_h).max(ROW_PX * 3.0);
+    ui.allocate_ui(egui::vec2(ui.available_width(), table_h), |ui| {
+        ui.set_min_height(table_h);
+        ui.set_max_height(table_h);
+        review_table(ui, strings, units, pending);
+    });
+    if choosing {
+        let kept: Vec<&str> = pending
+            .review
+            .items
+            .iter()
+            .filter(|i| i.status == Status::Changed)
+            .filter_map(|i| match &i.keep {
+                Outcome::Imported { stored_name, .. } => Some(stored_name.as_str()),
+                _ => None,
+            })
+            .collect();
+        let note = match kept.as_slice() {
+            [one] => strings.fmt(StrKey::AppLibraryChoiceNoteOne, &[("name", one)]),
+            _ => strings.get(StrKey::AppLibraryChoiceNoteMany).to_owned(),
+        };
+        ui.add_space(8.0);
+        text(ui, &note, TextStyle::Small, palette.text_secondary);
+    }
+}
+
+/// One count of the review: the number large, its label under it, named
+/// `13 New` for screen readers.
+fn count_tile(ui: &mut Ui, strings: &Strings, key: StrKey, count: usize) {
+    let palette = Palette::current(ui);
+    let label = strings.get(key);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(150.0, 56.0), Sense::hover());
+    ui.painter().rect_filled(rect, 6.0, palette.surface_stripe);
+    let number = ui.painter().layout_no_wrap(
+        count.to_string(),
+        TextStyle::Name(theme::DISPLAY.into()).resolve(ui.style()),
+        palette.text_primary,
+    );
+    ui.painter().galley(
+        rect.min + egui::vec2(12.0, 8.0),
+        number,
+        palette.text_primary,
+    );
+    let caption = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        TextStyle::Small.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 12.0, rect.bottom() - 8.0 - caption.size().y),
+        caption,
+        palette.text_secondary,
+    );
+    let name = strings.fmt(
+        StrKey::AppLibraryReviewCount,
+        &[("count", &count.to_string()), ("label", label)],
+    );
+    let response = ui.interact(
+        rect,
+        Id::unique(("library.review.count", label)),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &name));
+}
+
+/// The review's table: a header row, then each vendor's band and its
+/// items, striped within the group.
+fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportReview) {
+    let palette = Palette::current(ui);
+    let (head, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
+    for ((key, _, right), rect) in REVIEW_COLUMNS.iter().zip(review_rects(head)) {
+        cell(
+            ui,
+            rect,
+            strings.get(*key),
+            *right,
+            palette.text_secondary,
+            &TextStyle::Small,
+        );
+    }
+    ui.painter().hline(
+        head.x_range(),
+        head.bottom() - 0.5,
+        Stroke::new(1.0, palette.border_default),
+    );
+    egui::ScrollArea::vertical()
+        .id_salt("library_review_table")
+        .auto_shrink(false)
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for group in model::review_groups(&pending.review) {
+                let vendor = group
+                    .vendor
+                    .unwrap_or_else(|| strings.get(StrKey::AppLibraryNoVendor));
+                let (band, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), GROUP_PX),
+                    Sense::hover(),
+                );
+                paint_group_band(
+                    ui,
+                    band,
+                    palette.surface_panel,
+                    vendor,
+                    group.items.len(),
+                    8.0,
+                );
+                for (n, (index, item)) in group.items.iter().enumerate() {
+                    review_row(ui, strings, units, (n, *index), item, pending.replace);
+                }
+            }
+        });
+}
+
+/// One item of the review, `index` in the file, row `n` of its group:
+/// name, type, diameter, feed and status. Its tooltip is what the file
+/// leaves unset.
+fn review_row(
+    ui: &mut Ui,
+    strings: &Strings,
+    units: Units,
+    (n, index): (usize, usize),
+    item: &ReviewItem,
+    replace: bool,
+) {
+    let palette = Palette::current(ui);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
+    let status = status_text(strings, item, replace);
+    let label = strings.fmt(
+        StrKey::AppLibraryReviewRow,
+        &[("name", &item.name), ("status", &status)],
+    );
+    // The id is the item's place in the file: its identity there,
+    // whatever group or row it is drawn in.
+    let response = ui.interact(
+        rect,
+        Id::unique(("library.review.row", index)),
+        Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Row, true, &label));
+    if n % 2 == 1 {
+        ui.painter().rect_filled(rect, 0.0, palette.surface_stripe);
+    }
+    let colour = match item.status {
+        Status::Present | Status::Skipped => palette.text_secondary,
+        Status::New | Status::Changed => palette.text_primary,
+    };
+    let status_colour = match item.status {
+        Status::New => palette.status_success.text,
+        Status::Changed => palette.status_warning.text,
+        Status::Present | Status::Skipped => palette.text_secondary,
+    };
+    let unset = palette.status_error.text;
+    let (kind, diameter, feed) = item.tool.as_ref().map_or_else(
+        || {
+            (
+                "—".to_owned(),
+                (String::new(), colour),
+                (String::new(), colour),
+            )
+        },
+        |tool| {
+            (
+                kind_label(strings, KindChoice::of(&tool.cutter)).to_owned(),
+                (model::diameter_text(tool.diameter_mm, units), colour),
+                tool.feed_mm_min.map_or_else(
+                    || ("—".to_owned(), unset),
+                    |v| (model::rate_text(v, units), colour),
+                ),
+            )
+        },
+    );
+    let cells = [
+        (item.name.clone(), colour),
+        (kind, colour),
+        diameter,
+        feed,
+        (status, status_colour),
+    ];
+    for (((value, value_colour), (_, _, right)), r) in cells
+        .iter()
+        .zip(REVIEW_COLUMNS.iter())
+        .zip(review_rects(rect))
+    {
+        cell(ui, r, value, *right, *value_colour, &TextStyle::Body);
+    }
+    if response.hovered() {
+        let mut lines = vec![item.name.clone()];
+        lines.extend(item.notes.iter().cloned());
+        response.on_hover_text(lines.join("\n"));
+    }
+}
+
+/// The review's primary action: *Import 5 tools*, its count following
+/// the choice; *Nothing to import* (disabled) when it would change
+/// nothing.
+fn import_button(ui: &mut Ui, strings: &Strings, pending: &ImportReview, out: &mut Vec<Action>) {
+    let writes = pending.review.writes(pending.replace);
+    let label = match writes {
+        0 => strings.get(StrKey::AppLibraryImportNothing).to_owned(),
+        1 => strings.get(StrKey::AppLibraryImportOne).to_owned(),
+        n => strings.fmt(StrKey::AppLibraryImportMany, &[("count", &n.to_string())]),
+    };
+    let mut spec = ButtonSpec::new(Kind::Primary, &label)
+        .height(FOOTER_PX)
+        .enabled(writes > 0);
+    if writes == 0 {
+        spec = spec.tooltip(strings.get(StrKey::AppLibraryImportNothingTooltip));
+    }
+    if button(ui, spec).clicked() {
+        out.push(Action::Library(Request::ImportReviewed));
+    }
+}
+
 /// The footer: the counts on the left and *Add to project* on the right;
-/// *Back* on the left while the report shows; *Cancel* and *Delete* while
+/// *Back* on the left and *Import* on the right while the review shows
+/// (*Back* alone when it is read-only); *Cancel* and *Delete* while
 /// *Delete* asks.
 fn footer(ui: &mut Ui, app: &App, project_name: &str, sheet: &mut Sheet, out: &mut Vec<Action>) {
     let strings = app.strings();
@@ -1138,12 +1522,18 @@ fn footer(ui: &mut Ui, app: &App, project_name: &str, sheet: &mut Sheet, out: &m
         egui::vec2(ui.available_width(), FOOTER_PX),
         Layout::left_to_right(Align::Center),
         |ui| {
-            if sheet.report.is_some() {
+            if sheet.reviewing {
                 let back = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppLibraryBack))
                     .icon(Icon::ArrowLeft, theme::ICON_SMALL_PX)
                     .height(FOOTER_PX);
                 if button(ui, back).clicked() {
-                    sheet.report = None;
+                    sheet.leave_review();
+                    return;
+                }
+                if let Some(pending) = sheet.review.as_ref().filter(|r| !r.done) {
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        import_button(ui, strings, pending, out);
+                    });
                 }
                 return;
             }
@@ -1221,6 +1611,7 @@ pub(crate) fn perform(
             return None;
         }
         Request::Import => import(sheet, app.strings(), config, dialogs),
+        Request::ImportReviewed => import_reviewed(sheet, app.strings(), config),
         Request::Export => export(sheet, app.strings(), dialogs),
         Request::Remove => remove(sheet, app.strings(), config),
         Request::Add => add(sheet, app),
@@ -1381,9 +1772,8 @@ fn revert(sheet: &mut Sheet, strings: &Strings, config: Option<&Paths>) -> Optio
     })
 }
 
-/// *Import…*: asks for the file, merges it into the library as it is on
-/// disk now (as `tools import` reads it), writes the library when it
-/// changed, and shows the report.
+/// *Import…*: asks for the file, reads it and the library as it is on
+/// disk now, and shows the review (capability 64b). Nothing is written.
 fn import(
     sheet: &mut Sheet,
     strings: &Strings,
@@ -1410,17 +1800,75 @@ fn import(
         Ok(library) => library,
         Err(reason) => return failed(reason),
     };
-    let merged = match model::import(&current, &bytes, sheet.replace) {
-        Ok(merged) => merged,
+    let (incoming, review) = match model::review(&current, &bytes) {
+        Ok(read) => read,
         Err(e) => return failed(e.to_string()),
     };
-    if merged.library != current
-        && let Err(e) = dreamcarve_shell::library::write(paths, &merged.library)
-    {
-        return Some((write_failed(strings, &e.to_string()), true));
+    sheet.set_library(current);
+    sheet.review = Some(ImportReview {
+        name,
+        incoming,
+        review,
+        replace: false,
+        done: false,
+    });
+    sheet.reviewing = true;
+    sheet.banner = None;
+    sheet.message = None;
+    None
+}
+
+/// The review's *Import*: the file merged as chosen into the library as
+/// it is on disk now (as `tools import` would read it then; the review is
+/// made again should the file have changed since), written through the
+/// staged write. Back on the table with the banner; the review stays for
+/// *Details*. A failure keeps the review open, with its reason.
+fn import_reviewed(
+    sheet: &mut Sheet,
+    strings: &Strings,
+    config: Option<&Paths>,
+) -> Option<(String, bool)> {
+    let pending = sheet.review.clone().filter(|r| !r.done)?;
+    let replace = pending.replace;
+    let incoming = pending.incoming.clone();
+    let made = change_library(sheet, strings, config, |current| {
+        let review = dc_library::import::review(current, incoming).map_err(|e| e.to_string())?;
+        Ok((review.merged(replace).library.clone(), review))
+    });
+    let review = match made {
+        Ok(review) => review,
+        Err(reason) => {
+            return Some((
+                strings.fmt(
+                    StrKey::AppLibraryImportFailed,
+                    &[("name", &pending.name), ("reason", &reason)],
+                ),
+                true,
+            ));
+        }
+    };
+    let writes = review.writes(replace);
+    let mut banner = match writes {
+        1 => strings.fmt(StrKey::AppLibraryImportedOne, &[("name", &pending.name)]),
+        n => strings.fmt(
+            StrKey::AppLibraryImportedMany,
+            &[("count", &n.to_string()), ("name", &pending.name)],
+        ),
+    };
+    if let Some(skipped) = review.merged(replace).report.skipped.filter(|n| *n > 0) {
+        banner.push(' ');
+        banner.push_str(&strings.fmt(
+            StrKey::AppLibraryImportedSkipped,
+            &[("count", &skipped.to_string())],
+        ));
     }
-    sheet.set_library(merged.library);
-    sheet.report = Some((name, merged.report));
+    sheet.review = Some(ImportReview {
+        review,
+        done: true,
+        ..pending
+    });
+    sheet.reviewing = false;
+    sheet.banner = Some(banner);
     None
 }
 

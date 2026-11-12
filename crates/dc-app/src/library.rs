@@ -25,7 +25,9 @@
 //! a field ([`edit`]), *New tool* ([`new_tool`]), *Duplicate*
 //! ([`duplicate`]) and *Revert changes* ([`LibraryEdit`]). Each returns
 //! the whole library, which the shell writes at once; none touches a
-//! project (ADR-0002).
+//! project (ADR-0002). Slice 31 (#623; capability 64b): the import
+//! review ([`review`], [`review_groups`]), both imports computed before
+//! anything is written.
 //! - *Add to project* copies every ticked row, in-project ones included,
 //!   under new project ids as `tools add` does (ADR-0002; mock-up 04's
 //!   "Add 2 tools to project" with an in-project row ticked). Upstream
@@ -38,7 +40,7 @@
 
 use std::collections::BTreeSet;
 
-use dc_library::import::Merged;
+use dc_library::import::{Incoming, Merged, Review, ReviewItem};
 use dc_library::{Library, LibraryError, LibraryTool, LibraryToolId};
 use dc_project::{Tool, ToolId, ToolKind, Units};
 
@@ -249,10 +251,9 @@ pub fn build_add(
     added
 }
 
-/// *Import…*: the tools of a Fusion `.tools` or `.json` library or a
-/// DreamCarve library in `bytes` merged into `lib`, with the per-tool
-/// report `tools import` prints (`dc_library::import`). `replace` is
-/// *Replace existing* (`--replace`).
+/// The tools of a Fusion `.tools` or `.json` library or a DreamCarve
+/// library in `bytes` merged into `lib`, with the per-tool report `tools
+/// import` prints (`dc_library::import`). `replace` is `--replace`.
 ///
 /// # Errors
 ///
@@ -261,6 +262,65 @@ pub fn build_add(
 pub fn import(lib: &Library, bytes: &[u8], replace: bool) -> Result<Merged, LibraryError> {
     let incoming = dc_library::import::read(bytes)?;
     dc_library::import::merge(lib, incoming, replace)
+}
+
+/// *Import…* (capability 64b): the file in `bytes` read, and its review
+/// against `lib`, both merges computed without writing
+/// (`dc_library::import::review`). The file's tools come back too, so the
+/// import can be merged again into the library as it is on disk when the
+/// user chooses *Import*.
+///
+/// # Errors
+///
+/// [`LibraryError`] when the file does not load or one of its tools is
+/// not valid.
+pub fn review(lib: &Library, bytes: &[u8]) -> Result<(Incoming, Review), LibraryError> {
+    let incoming = dc_library::import::read(bytes)?;
+    let review = dc_library::import::review(lib, incoming.clone())?;
+    Ok((incoming, review))
+}
+
+/// One vendor's items in the import review's table: the vendor (`None`
+/// is *No vendor*, where skipped items go too) and its items in file
+/// order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReviewGroup<'a> {
+    /// The vendor, trimmed.
+    pub vendor: Option<&'a str>,
+    /// Its items, in file order, each with its place in the file (the
+    /// review's index), which identifies it.
+    pub items: Vec<(usize, &'a ReviewItem)>,
+}
+
+/// The review's items grouped by vendor as the library table groups its
+/// rows ([`groups`]): sorted by vendor, *No vendor* last.
+#[must_use]
+pub fn review_groups(review: &Review) -> Vec<ReviewGroup<'_>> {
+    let mut groups: Vec<ReviewGroup<'_>> = Vec::new();
+    for (index, item) in review.items.iter().enumerate() {
+        let vendor = item.tool.as_ref().and_then(vendor_of);
+        if let Some(group) = groups.iter_mut().find(|g| g.vendor == vendor) {
+            group.items.push((index, item));
+        } else {
+            groups.push(ReviewGroup {
+                vendor,
+                items: vec![(index, item)],
+            });
+        }
+    }
+    groups.sort_by(|a, b| vendor_order(a.vendor, b.vendor));
+    groups
+}
+
+/// Vendor groups' order: by name ignoring case, then exactly; *No vendor*
+/// last.
+fn vendor_order(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+    match (a, b) {
+        (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    }
 }
 
 /// One vendor's rows in the library table (capability 64): the group
@@ -304,12 +364,7 @@ pub fn groups<'s, 'a>(
             });
         }
     }
-    groups.sort_by(|a, b| match (a.vendor, b.vendor) {
-        (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()).then(a.cmp(b)),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
+    groups.sort_by(|a, b| vendor_order(a.vendor, b.vendor));
     groups
 }
 

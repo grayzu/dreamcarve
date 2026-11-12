@@ -57,10 +57,22 @@ The app and the `dreamcarve tools` commands read and write the same file.
 - **Add to project.** Tick rows and press *Add N tools to project*. The
   project gets copies under new ids, as `tools add` makes them, and you
   can undo that in one step.
-- **Import… and Export library….** *Import…* works like `tools import`
-  and shows its report. *Export library…* writes the whole library to one
-  file. Use it to keep a backup or to take your tools to another
-  computer.
+- **Import… and Export library….** *Import…* reads a Fusion `.tools` or
+  `.json` library or a DreamCarve library, then shows a review in the
+  sheet before anything is written. The review counts the file's tools as
+  `tools import` would: **New**, **Already in your library**, **Changed**
+  and **Skipped** (with the reason each is skipped). It also lists every
+  tool with its status. A tool is *Changed* when it came from this file
+  before and the file's version now differs from yours, for example
+  because you edited it. Only then does the review offer a choice. **Keep
+  mine** (the default) adds the file's version beside yours under a new
+  name, as `tools import` does. **Replace with imported** overwrites yours
+  and keeps its id, as `tools import --replace` does. *Import N tools*
+  writes the library and returns to the list with a line saying what was
+  imported. That line's *Details* shows the review again. *Back* (or
+  Escape) leaves the library as it was. *Export library…* writes the
+  whole library to one file. Use it to keep a backup or to take your
+  tools to another computer.
 
 ## Commands
 
