@@ -1,0 +1,1 @@
+Photo V-Carve op1 `Photo V-Carve`: picture `radial` (b1), 100.000 mm by 100.000 mm at (10.000 mm, 10.000 mm), 111 grooves 1.072 mm wide at the full depth of 2.000 mm.
