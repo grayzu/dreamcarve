@@ -1,0 +1,1 @@
+Photo V-Carve op1 `Photo V-Carve`: picture `ramp` (b1), 0.1000 in by 0.0500 in at (0.3937 in, 0.3937 in), 2 grooves 0.0429 in wide at the full depth of 0.0800 in.
