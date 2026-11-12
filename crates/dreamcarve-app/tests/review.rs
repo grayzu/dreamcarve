@@ -410,6 +410,18 @@ fn scenes(dir: &Path) -> bool {
     h.get_by_role_and_label(Role::Button, "Warnings").click();
     h.run();
     shoot(&mut h, "11b-warnings-drawer-inlay");
+    // The status bar's message cell opens the drawer at the Inlay's note,
+    // its facts under the two boards' headings (#620).
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    h.get_by_role_and_label(
+        Role::Button,
+        "DC · deepest cut 4.000 mm, flat floor at 4.000 mm",
+    )
+    .click();
+    h.run();
+    h.run();
+    shoot(&mut h, "11d-warnings-drawer-inlay-note");
     drop(h);
 
     // Export and its result, beside a copy (export writes there).
