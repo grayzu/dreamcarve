@@ -1,0 +1,1 @@
+Photo V-Carve op1 `Photo V-Carve`: picture `ramp` (b1), 2.540 mm by 1.270 mm at (10.000 mm, 10.000 mm), 2 grooves 1.089 mm wide at the full depth of 2.032 mm.
