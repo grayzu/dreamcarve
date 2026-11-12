@@ -172,15 +172,15 @@ fn proportion_link(ui: &mut Ui, state: &FrameState<'_>, (w_y, h_y): (f32, f32), 
         .width(LINK_TOGGLE_PX)
         .tooltip(strings.get(StrKey::PlacementKeepProportions))
         .enabled(enabled);
-    let clicked = ui
-        .scope_builder(UiBuilder::new().max_rect(toggle), |ui| {
-            let response = button(ui, spec);
-            let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
-            ui.painter()
-                .galley(toggle.center() - glyph.size() / 2.0, glyph, colour);
-            response.clicked()
-        })
-        .inner;
+    // A child, not a scope: a scope would allocate the toggle's rect in
+    // the panel, moving its cursor back up to the middle of W and H, and
+    // the lines below would be drawn over H (#628).
+    let mut child = ui.new_child(UiBuilder::new().max_rect(toggle));
+    let clicked = button(&mut child, spec).clicked();
+    let glyph = icon.galley(&child, theme::ICON_SMALL_PX, colour);
+    child
+        .painter()
+        .galley(toggle.center() - glyph.size() / 2.0, glyph, colour);
     if clicked {
         ui.data_mut(|d| d.insert_temp(link_id(), !free));
     }
