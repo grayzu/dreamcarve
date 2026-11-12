@@ -139,8 +139,19 @@ fn toolpath_view(h: &mut H, labels: &[&str]) {
     h.run();
 }
 
+/// Opens `name` in the editor and lets the project-level check finish, so
+/// the status bar shows the settled state.
 fn open_operation(h: &mut H, name: &str) {
     h.get_by_role_and_label(Role::ListItem, name).click();
+    h.run();
+    settle(h);
+}
+
+/// Opens the menu bar's `title` menu, shoots it as `scene`, and closes it.
+fn menu(h: &mut H, title: &str, scene: &str) {
+    click(h, title);
+    shoot(h, scene);
+    h.key_press(egui::Key::Escape);
     h.run();
 }
 
@@ -171,6 +182,13 @@ fn scenes(dir: &Path) -> bool {
         .push(std::sync::Arc::new(Dropped(fixture("sign.svg"))));
     h.run();
     shoot(&mut h, "02-import-sheet");
+    // The sheet closed, a new tool on the empty project: the rates
+    // required (#621).
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.get_by_role_and_label(Role::Button, "New tool").click();
+    h.run();
+    shoot(&mut h, "12b-new-tool-required");
     drop(h);
 
     // The plaque, in place and never saved, with a library to show (#549:
@@ -210,12 +228,17 @@ fn scenes(dir: &Path) -> bool {
     let dialogs = QueuedDialogs::default();
     let mut h = window_with(dir, Some(plaque.clone()), 1280.0, 800.0, &dialogs).unwrap();
     shoot(&mut h, "03-workspace-project-panel");
-    click(&mut h, "File");
-    shoot(&mut h, "04-file-menu");
+    menu(&mut h, "File", "04-file-menu");
+    menu(&mut h, "Edit", "04b-edit-menu");
+    menu(&mut h, "Project", "04c-project-menu");
+    menu(&mut h, "View", "05-view-menu");
+    // View ▸ Appearance: System, Light and Dark (#627).
+    click(&mut h, "View");
+    h.get_by_label("Appearance").hover();
+    h.run();
+    shoot(&mut h, "05b-appearance-submenu");
     h.key_press(egui::Key::Escape);
     h.run();
-    click(&mut h, "View");
-    shoot(&mut h, "05-view-menu");
     h.key_press(egui::Key::Escape);
     h.run();
     h.state_mut()
@@ -225,6 +248,19 @@ fn scenes(dir: &Path) -> bool {
         ]));
     h.run();
     shoot(&mut h, "06-shape-selected");
+    // The Arrange menu and the Rotate popover, with the square selected
+    // (#617).
+    menu(&mut h, "Arrange", "06d-arrange-menu");
+    click(&mut h, "Rotate by an angle");
+    shoot(&mut h, "06e-rotate-popover");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    // The Design Tree's context menu: Rename and the target actions.
+    h.get_by_label("square").click_secondary();
+    h.run();
+    shoot(&mut h, "06f-tree-context-menu");
+    h.key_press(egui::Key::Escape);
+    h.run();
     // The Add menu: every operation kind's glyph.
     click(&mut h, "Add");
     shoot(&mut h, "06b-add-menu");
@@ -360,17 +396,38 @@ fn scenes(dir: &Path) -> bool {
         open_operation(&mut h, name);
         shoot(&mut h, scene);
     }
+    // The drawer with the Lettering's carve note (#620).
+    h.get_by_role_and_label(Role::Button, "Warnings").click();
+    h.run();
+    shoot(&mut h, "11c-warnings-drawer-carve-notes");
     drop(h);
 
     // The inlay pair: the Inlay editor and the male board.
     let mut h = window(dir, Some(fixture("dc.dcv")), 1280.0, 800.0).unwrap();
     open_operation(&mut h, "DC");
     shoot(&mut h, "19-editor-inlay");
+    // Its drawer: warnings, then the note with the two boards.
+    h.get_by_role_and_label(Role::Button, "Warnings").click();
+    h.run();
+    shoot(&mut h, "11b-warnings-drawer-inlay");
+    // The status bar's message cell opens the drawer at the Inlay's note,
+    // its facts under the two boards' headings (#620).
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    h.get_by_role_and_label(
+        Role::Button,
+        "DC · deepest cut 4.000 mm, flat floor at 4.000 mm",
+    )
+    .click();
+    h.run();
+    h.run();
+    shoot(&mut h, "11d-warnings-drawer-inlay-note");
     drop(h);
 
     // Export and its result, beside a copy (export writes there).
     let copy = copy_fixture("plaque.dcv", dir);
-    let mut h = window(dir, Some(copy), 1280.0, 800.0).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = window_with(dir, Some(copy), 1280.0, 800.0, &dialogs).unwrap();
     command_key(&h, egui::Key::E);
     h.run();
     settle(&mut h);
@@ -390,16 +447,28 @@ fn scenes(dir: &Path) -> bool {
         .click();
     h.run();
     shoot(&mut h, "21-export-result-instructions");
+    // The setup sheet (#625), written beside the pictures; the review
+    // renders it to `23-setup-sheet.png` in a browser.
+    dialogs.answer(&out_dir().join("23-setup-sheet.html"));
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Save setup sheet…")
+        .click();
+    h.run();
     h.get_by_role(Role::Dialog).get_by_label("Close").click();
     h.run();
-    // The unsaved-changes sheet.
+    // A change, generation stopped: Regenerate all in the status bar
+    // (#616); then the unsaved-changes sheet.
     let mut stock = h.state().app().project().stock.clone();
     stock.width_mm += 10.0;
     h.state_mut()
         .app_mut()
         .run(dc_app::Command::SetStock(stock))
         .unwrap();
-    h.run();
+    h.step();
+    h.get_by_label("Stop").click();
+    h.step();
+    h.step();
+    shoot(&mut h, "13b-stopped-regenerate-all");
     common::press_close(&mut h);
     h.step();
     h.run();

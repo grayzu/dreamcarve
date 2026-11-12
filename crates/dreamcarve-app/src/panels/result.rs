@@ -217,16 +217,10 @@ fn cell(ui: &mut Ui, text: &str, style: TextStyle, colour: egui::Color32, width:
 fn run_instructions(ui: &mut Ui, result: &ExportResult) {
     let palette = Palette::current(ui);
     let instructions = &result.instructions;
-    for (k, step) in instructions.steps.iter().enumerate() {
-        ui.horizontal_top(|ui| {
-            text(
-                ui,
-                &format!("{}.", k + 1),
-                TextStyle::Body,
-                palette.text_secondary,
-            );
-            wrapped(ui, &step.before, TextStyle::Body, palette.text_primary);
-        });
+    // The CLI's step lines carry their own numbers (`1. plaque-1-T2.nc …`),
+    // so the sheet adds none (#628: they read `1. 1.`).
+    for step in &instructions.steps {
+        wrapped(ui, &step.before, TextStyle::Body, palette.text_primary);
     }
     for note in &instructions.notes {
         ui.add_space(4.0);

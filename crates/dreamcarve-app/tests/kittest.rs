@@ -1899,6 +1899,14 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     for note in &result.instructions.notes {
         assert!(sheet.query_by_label(note).is_some(), "the note {note}");
     }
+    // The CLI's step lines carry their numbers (`1. plaque-1-T2.nc …`), so
+    // the sheet adds none of its own (second visual review, #628: `1. 1.`).
+    for k in 1..=result.instructions.steps.len() {
+        assert!(
+            sheet.query_by_label(&format!("{k}.")).is_none(),
+            "step {k} is numbered once"
+        );
+    }
 
     // Save setup sheet…: the dialog suggests the page beside the programs.
     let page = dir.join("plaque-setup.html");
@@ -5744,4 +5752,111 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
         }
     }
     std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Slice 36 (#628), second visual review: the lines under the placement
+/// fields sit below them. *Targeted by* and the locked note were drawn
+/// over the H field, because the proportion link's toggle moved the
+/// panel's cursor back up to the middle of W and H.
+#[test]
+fn properties_lines_sit_below_the_fields() {
+    let dir = scratch("properties-lines");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.run();
+    select_only(&mut h, "i4");
+    let h_field = h.get_by_role_and_label(Role::TextInput, "H").rect();
+    let targeted = h.get_by_label("Targeted by: Square recess").rect();
+    assert!(
+        targeted.top() >= h_field.bottom(),
+        "Targeted by {targeted:?} is below the H field {h_field:?}"
+    );
+
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetInstanceFlags {
+            ids: vec![dc_project::InstanceId::new("i4")],
+            visible: None,
+            locked: Some(true),
+        })
+        .unwrap();
+    h.run();
+    let h_field = h.get_by_role_and_label(Role::TextInput, "H").rect();
+    let note = h
+        .get_by_label_contains("Locked: cannot be moved or resized.")
+        .rect();
+    assert!(
+        note.top() >= h_field.bottom(),
+        "the locked note {note:?} is below the H field {h_field:?}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 36 (#628), second visual review: a carve note's long value wraps
+/// inside the drawer. The sign's *Floor ridges* ran past the drawer's
+/// right edge and was cut off mid-word.
+#[test]
+fn carve_note_values_wrap_inside_the_drawer() {
+    let dir = scratch("note-wrap");
+    let sign = copy_fixture("sign.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(sign), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    h.get_by_role_and_label(Role::Button, "Warnings").click();
+    h.run();
+    let edge = h.get_by_label("CAM").rect().left();
+    let values = text_rects(&h, "along the rings");
+    assert!(!values.is_empty(), "the Floor ridges fact is drawn");
+    for value in values {
+        assert!(
+            value.right() <= edge,
+            "the value {value:?} ends inside the drawer, left of {edge}"
+        );
+    }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Slice 36 (#628), second visual review: a tool picker's text is cut
+/// before its chevron. The sign's V-bit, `1/4 90 degree V-bit (T3)`, ran
+/// under the chevron and out of the field.
+#[test]
+fn tool_picker_text_stays_inside_the_field() {
+    let dir = scratch("tool-picker-text");
+    let sign = copy_fixture("sign.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(sign), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.run();
+    h.get_by_role_and_label(Role::ListItem, "Lettering").click();
+    h.run();
+    let picker = h.get_by_role_and_label(Role::ComboBox, "Tool").rect();
+    let inside: Vec<egui::Rect> = text_rects(&h, "1/4 90")
+        .into_iter()
+        .filter(|r| picker.contains(r.center()))
+        .collect();
+    assert_eq!(
+        inside.len(),
+        1,
+        "the picker shows the tool once: {inside:?}"
+    );
+    // 8-px padding, the 16-px chevron, and a gap before it.
+    let room = picker.right() - 8.0 - theme::ICON_SMALL_PX - 4.0;
+    assert!(
+        inside[0].right() <= room,
+        "the text {:?} ends before the chevron at {room}",
+        inside[0]
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
 }

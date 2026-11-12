@@ -1074,22 +1074,33 @@ fn tool_picker(
         );
         x += theme::ICON_SMALL_PX + 6.0;
     }
-    ui.painter().text(
-        egui::pos2(x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        &text,
+    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    let chevron_left = rect.right() - 8.0 - chevron.size().x;
+    // The name is cut before the chevron, with the whole name on hover
+    // (#628: a long V-bit name ran under the chevron and out of the field).
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        text.clone(),
         TextStyle::Body.resolve(ui.style()),
         palette.text_primary,
     );
-    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((chevron_left - 4.0 - x).max(0.0));
+    let galley = ui.painter().layout_job(job);
+    let cut = galley.elided;
     ui.painter().galley(
-        egui::pos2(
-            rect.right() - 8.0 - chevron.size().x,
-            rect.center().y - chevron.size().y / 2.0,
-        ),
+        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
+        galley,
+        palette.text_primary,
+    );
+    ui.painter().galley(
+        egui::pos2(chevron_left, rect.center().y - chevron.size().y / 2.0),
         chevron,
         palette.text_secondary,
     );
+    let response = if cut {
+        response.on_hover_text(&text)
+    } else {
+        response
+    };
     let refused_id = id.with("refused");
     egui::Popup::menu(&response).show(|ui| {
         ui.set_min_width(rect.width());

@@ -2761,6 +2761,33 @@ mod summary {
         assert_eq!(summary::group(&project, &strings, &panel, Group::Setup), "");
     }
 
+    /// Experience checklist 31 (second visual review, #628): a closed
+    /// group whose only rows are boxes left unticked still says what it
+    /// holds. The plaque's Engrave's Strategy has one box, *Alternate
+    /// direction*, off; its header was bare.
+    #[test]
+    fn closed_group_of_unticked_boxes_says_off() {
+        let strings = Strings::english();
+        let project = common::plaque();
+        let engrave = project
+            .operations
+            .iter()
+            .find(|o| o.name() == "Border and squiggle")
+            .expect("the plaque's Engrave");
+        assert!(matches!(engrave, Operation::Engrave(_)));
+        assert_eq!(
+            summary::group(&project, &strings, engrave, Group::Strategy),
+            "Alternate direction off"
+        );
+        // A ticked box still reads as its label alone.
+        let ticked =
+            fields::set(engrave, "alternate_direction", serde_json::json!(true)).expect("tick it");
+        assert_eq!(
+            summary::group(&project, &strings, &ticked, Group::Strategy),
+            "Alternate direction"
+        );
+    }
+
     /// Functional 66: every group but Setup starts closed; a group holding
     /// a located warning opens by itself, and only it: the Pocket's
     /// `relief_corner_too_tight` is Corners and tabs'.
