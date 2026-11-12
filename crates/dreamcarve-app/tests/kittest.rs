@@ -2149,17 +2149,17 @@ fn window_answers_input_while_generating() {
     assert_eq!(h.state().app().project().instances.len(), 500);
     let mut frames = FrameTimes::default();
 
-    // The change settles and the worker takes the first job.
+    // The change settles and the worker takes the first job. The frame
+    // that posts it does so at its end, after drawing, and a result is
+    // accepted only at the start of a later frame, so in this frame both
+    // operations still wait, whatever the worker's speed (#593): o1 in
+    // flight, o2 pending.
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while !h.state().worker_busy() {
         assert!(
             std::time::Instant::now() < deadline,
             "the worker never started"
         );
-        frames.step(&mut h);
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    for _ in 0..2 {
         frames.step(&mut h);
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
