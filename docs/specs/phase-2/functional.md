@@ -287,8 +287,16 @@ Layer names become shape names; `--layer` restricts the import to
 named layers. Open segments whose ends meet within `--join-tolerance`
 (default 0.01 mm) are joined, and a chain that closes becomes a closed
 shape. Entities DreamCarve does not read (TEXT, MTEXT, DIMENSION,
-HATCH, 3D meshes) are listed in a warning with their counts, never
-dropped silently.
+3D meshes) are listed in a warning with their counts, never
+dropped silently. A HATCH imports as one shape from its boundary loops,
+by even-odd, so a pocket with an island is a shape with a hole; the fill
+is ignored. A hatch loop that repeats a closed shape drawn on its own
+(an associative hatch's boundary polyline) is left out with
+`dxf_hatch_boundary_duplicate`, and a hatch whose boundary is open,
+crosses itself or holds an unknown edge type is skipped with
+`dxf_hatch_unreadable`. (changed: maintainer decision 2026-11-13, #668.
+Phase 2 skipped HATCH; the maintainer's tool organiser draws every
+pocket as one.)
 20a. **Exact imported coordinates.** SVG and DXF import round every
     coordinate to 6 decimal places of a millimetre, as 22b rounds
     lengths, so a corner drawn at 10 mm is `10`, not `10.00000027815501`.

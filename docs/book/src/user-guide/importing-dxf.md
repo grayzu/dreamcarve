@@ -26,9 +26,10 @@ space layout is left out.
 | `LWPOLYLINE`, `POLYLINE` | A shape with the polyline's vertices and bulges (arc segments). The polyline's closed flag closes the shape. Polygon and polyface meshes are skipped. A polyline smoothed with "spline fit" imports as the smoothed curve, not the frame it was fitted to; one smoothed with "curve fit" keeps its fitted arcs. |
 | `SPLINE` | Short straight lines within the project's tolerance (0.01 mm) of the curve. Rational splines and fit-point-only splines are read. |
 | `ELLIPSE` | Short straight lines within the tolerance of the ellipse or elliptical arc. |
+| `HATCH` | One shape from the hatch's boundary, its fill ignored: see [Hatches](#hatches). |
 | `INSERT` | The block's contents, moved, rotated and scaled as the insert says, up to 12 blocks deep. A mirrored insert mirrors its arcs; an insert scaled differently in X and Y turns arcs into short lines. An array insert (`MINSERT`, rows and columns of one block) places the block in every cell. |
 
-Everything else, `TEXT`, `MTEXT`, `DIMENSION`, `HATCH`, block attributes
+Everything else, `TEXT`, `MTEXT`, `DIMENSION`, block attributes
 (`ATTRIB`), 3D solids and meshes, images, points, is **skipped and
 counted**. The count is printed as one warning, so nothing disappears
 silently:
@@ -57,6 +58,57 @@ plane ("flatten"), before importing.
 
 To cut text, explode it to outlines in the CAD program first (most call
 this "explode text" or "convert to polyline").
+
+### Hatches
+
+Many drawings show a pocket as a filled area, a `HATCH`, rather than as
+an outline. DreamCarve reads the hatch's **boundary**, the loops that
+enclose the fill, and makes one shape of them; the fill itself (solid or
+patterned, its angle and scale) is ignored, since only the outline is
+cut.
+
+- A boundary can be a polyline, with arcs, or a chain of lines, arcs,
+  elliptic arcs and splines, in either direction. Arcs stay arcs;
+  elliptic arcs and splines become short lines within the tolerance, as
+  the `ELLIPSE` and `SPLINE` entities do.
+- A hatch with several loops is one shape whose loops alternate filled
+  and empty from the outside in, so a pocket with an island imports as
+  one shape with a hole, and a Pocket of it leaves the island standing.
+- A hatch faces a direction as other entities do: one facing down is
+  mirrored, and one tilted out of the drawing's plane is skipped and
+  counted as `HATCH (not in the XY plane)`.
+- A loop that encloses nothing, a speck a CAD program can leave where a
+  curve meets itself, is left out. A curve that overshoots its closing
+  point and curls back by less than the join tolerance is closed at that
+  point.
+
+An *associative* hatch keeps its boundary drawn as a separate polyline
+too. A hatch loop that repeats a closed shape drawn on its own, the same
+corners within the join tolerance from any starting corner in either
+direction, is left out, so the pocket imports once, as the drawn shape:
+
+```text
+warning: 1 HATCH boundary loop(s) repeat a shape drawn on its own and were imported once, as that shape
+```
+
+This compares the hatch with the shapes on the layers imported: with
+`--layer` naming only the hatch's layer, the hatch is the shape. When only
+the outer loop of a hatch with an island is drawn, the island imports as
+a shape of its own, which nests as a hole of the drawn pocket when both
+are cut together.
+
+A hatch whose boundary DreamCarve cannot read is skipped, with a warning
+that names it by its handle and says which boundary is wrong:
+
+```text
+warning: HATCH `2F` on layer `pockets` was skipped: boundary 1 crosses itself near (40.00, 25.00) mm; redraw its boundary as closed polylines in the CAD program
+```
+
+A boundary is unreadable when its edges do not join into a closed loop,
+when it crosses itself or another of the hatch's boundaries, or when it
+holds an edge type the DXF format does not define. Fix it in the CAD
+program, or regenerate the hatch's boundary as a polyline (most programs
+call this "generate boundary" or "recreate boundary") and import that.
 
 Coordinates are used as they are: DXF and DreamCarve both have X to the
 right and Y away from you, so the drawing's origin is the project's origin
@@ -135,7 +187,9 @@ levels are read and a warning names the block). An insert of a block the
 file does not define is skipped with a warning. Inserts and arrays may
 place at most 500 000 block entities in all; a drawing of arrays nested
 in arrays that places more is refused (explode the arrays in the CAD
-program, or simplify them). A file that is cut off or
+program, or simplify them). A hatch may have at most 10 000 boundary
+loops and 100 000 edges and vertices; a file whose hatch says it has more
+is refused before any of them is read. A file that is cut off or
 garbled, so that its codes and values no longer pair up, is refused with
 the line (or, in a binary DXF, the byte) where it goes wrong.
 

@@ -361,7 +361,12 @@ pub fn import_dxf(
 
     // No Y flip: DXF is Y-up (ADR-0001). The scale is the whole transform.
     let scale = Transform::scale(mm_per_unit, mm_per_unit);
-    let mut walker = Walker::new(&document.blocks, tolerance_mm, options.max_vertices);
+    let mut walker = Walker::new(
+        &document.blocks,
+        tolerance_mm,
+        join_mm,
+        options.max_vertices,
+    );
     for entity in &document.entities {
         if entity.in_paper_space() {
             continue;
@@ -380,6 +385,13 @@ pub fn import_dxf(
     for block in unique(walker.missing) {
         warnings.push(ImportWarning::DxfBlockMissing { block });
     }
+    for hatch in walker.unreadable {
+        warnings.push(ImportWarning::DxfHatchUnreadable {
+            hatch: hatch.handle,
+            layer: hatch.layer,
+            problem: hatch.problem,
+        });
+    }
 
     // Every layer is stitched, so the layer list counts what each would
     // import; the filter applies after. Dedupe and stitching never cross
@@ -395,22 +407,40 @@ pub fn import_dxf(
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
     // can leave a shape too few points.
+    let rounded_or_none = |p: &dc_geometry::Polyline| {
+        round::round_polyline(p)
+            .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM))
+    };
     let shapes: Vec<Shape> = shapes
         .into_iter()
         .filter_map(|s| {
-            let rounded = round::round_polyline(&s.polyline)
-                .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM));
+            let rounded = rounded_or_none(&s.polyline);
             if rounded.is_none() && s.polyline.is_closed() && kept(&s.layer) {
                 warnings.push(ImportWarning::ZeroAreaDropped {
                     path: s.layer.clone(),
                     subpath: 0,
                 });
             }
-            rounded.map(|polyline| Shape { polyline, ..s })
+            let inner = s.inner.iter().filter_map(rounded_or_none).collect();
+            rounded.map(|polyline| Shape {
+                polyline,
+                inner,
+                ..s
+            })
         })
         .collect();
+    // A HATCH loop that repeats a shape drawn on its own gives way to it:
+    // first on its own layer, so the layer list counts what each layer
+    // imports alone, then across the layers kept.
+    let duplicate_mm = join_mm.max(EPS_MM);
+    let (shapes, removed) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, true);
     let layers = layer_list(&shapes, skipped_per_layer);
     let shapes: Vec<Shape> = shapes.into_iter().filter(|s| kept(&s.layer)).collect();
+    let (shapes, removed_across) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, false);
+    let duplicates = removed.iter().filter(|layer| kept(layer)).count() + removed_across.len();
+    if duplicates > 0 {
+        warnings.push(ImportWarning::DxfHatchBoundaryDuplicate { count: duplicates });
+    }
 
     // Names: the layer, numbered when the layer holds several shapes.
     let mut per_layer: BTreeMap<&str, usize> = BTreeMap::new();
@@ -429,7 +459,7 @@ pub fn import_dxf(
         } else {
             shape.layer.clone()
         };
-        if let Some(b) = shape.polyline.bounds() {
+        for b in shape.loops().filter_map(dc_geometry::Polyline::bounds) {
             bounds = Some(match bounds {
                 Some(acc) => acc.including(b.min).including(b.max),
                 None => b,
@@ -450,7 +480,7 @@ pub fn import_dxf(
         definitions.push(FeatureDefinition {
             id: definition,
             name,
-            profiles: vec![shape.polyline.clone()],
+            profiles: shape.loops().cloned().collect(),
         });
     }
 

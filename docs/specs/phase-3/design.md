@@ -3675,6 +3675,12 @@ and 21i start at once.
     recorded; the maintainer's own line art prepared and cut beside it if
     they choose. Exit: acceptance 61a to 61s green, the defaults
     confirmed.
+21n. **DXF from the maintainer's own drawing** (added 2026-11-13 from the
+    maintainer's manual testing, #667, #668). The DXF reader splits lines
+    at CR LF, LF or a lone CR (#667), and reads HATCH boundaries as shapes
+    (#668), which amends phase 2's capability 20 and its design's "DXF
+    import" (HATCH was skipped there). Tests: those the phase 2 design's
+    test plan lists for #667 and #668. [none]
 
 ### 3.5 Photo V-Carve (format v27)
 
