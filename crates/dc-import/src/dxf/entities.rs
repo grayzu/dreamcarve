@@ -274,7 +274,7 @@ impl<'a> Walker<'a> {
                 let knots = entity.reals(40);
                 let weights = entity.reals(41);
                 let points = match BSpline::new(degree, &knots, &control, &weights) {
-                    Some(curve) => curve.sample(self.tolerance_mm),
+                    Some(curve) => self.sample(&curve)?,
                     // Upstream's fallback: the fit points, else the control
                     // polygon.
                     None if fit.len() >= 2 => fit,
@@ -373,6 +373,10 @@ impl<'a> Walker<'a> {
                 path: layer.to_owned(),
             });
         }
+        // The ratio is minor to major: past (0, 1] the file is wrong.
+        if !(ratio > 0.0 && ratio <= 1.0) {
+            return self.skip("ELLIPSE (malformed)", layer);
+        }
         let a = major.length();
         let b = a * ratio;
         if a <= EPS_MM || b <= EPS_MM {
@@ -381,6 +385,7 @@ impl<'a> Walker<'a> {
         let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
         let full = sweep <= 1e-12;
         let sweep = if full { std::f64::consts::TAU } else { sweep };
+        self.charge_ellipse(centre, major, ratio, sweep, transform, layer)?;
         // Under a mirrored OCS the minor axis is mirrored too: the point at
         // parameter t is the +Z ellipse's point at −t.
         let direction = if ocs == Transform::IDENTITY {
@@ -664,6 +669,7 @@ impl<'a> Walker<'a> {
                     return Ok(Polyline::new(Vec::new(), false));
                 }
                 let (start, sweep) = ellipse_edge_params(*ratio, *start_deg, *end_deg, *ccw);
+                self.charge_ellipse(*centre, *major, *ratio, sweep, place, layer)?;
                 let arc = kurbo::Arc::new(
                     (centre.x, centre.y),
                     (a, b),
@@ -690,7 +696,7 @@ impl<'a> Walker<'a> {
                 let control: Vec<Point> = control.iter().map(|p| place.apply(*p)).collect();
                 let fit: Vec<Point> = fit.iter().map(|p| place.apply(*p)).collect();
                 let points = match BSpline::new(*degree, knots, &control, weights) {
-                    Some(curve) => curve.sample(self.tolerance_mm),
+                    Some(curve) => self.sample(&curve)?,
                     None if fit.len() >= 2 => fit,
                     None => control,
                 };
@@ -871,6 +877,63 @@ impl<'a> Walker<'a> {
             self.add_mm_polyline(polyline, layer, "flattened")?;
         }
         Ok(())
+    }
+
+    /// `curve` sampled within the tolerance, stopping as soon as it would
+    /// pass what is left of the vertex limit.
+    fn sample(&self, curve: &BSpline) -> Result<Vec<Point>, ImportError> {
+        let left = self.max_vertices.saturating_sub(self.vertex_count);
+        curve
+            .sample(self.tolerance_mm, left)
+            .ok_or(ImportError::TooManyVertices {
+                limit: self.max_vertices,
+            })
+    }
+
+    /// Checks an elliptic arc before its curve is built (#668 security
+    /// review): its centre and both axes, placed by `transform`, must lie
+    /// within [`MAX_COORDINATE_MM`], and the vertices flattening its
+    /// `sweep` (radians) could make, a circle of its larger placed radius
+    /// cut into chords within the tolerance, are charged to the vertex
+    /// limit. kurbo's Bézier fit of an arc grows with its radius, so an
+    /// axis of 1e300 would otherwise build an unbounded path. `ratio` is
+    /// already in (0, 1].
+    fn charge_ellipse(
+        &mut self,
+        centre: Point,
+        major: Vec2,
+        ratio: f64,
+        sweep: f64,
+        transform: Transform,
+        layer: &str,
+    ) -> Result<(), ImportError> {
+        let [a, b, c, d, e, f] = transform.coeffs();
+        let linear = |v: Vec2| Vec2::new(a * v.x + c * v.y, b * v.x + d * v.y);
+        let placed_major = linear(major);
+        let placed_minor = linear(Vec2::new(-major.y * ratio, major.x * ratio));
+        let x = a * centre.x + c * centre.y + e;
+        let y = b * centre.x + d * centre.y + f;
+        let reach_x = x.abs() + placed_major.x.abs() + placed_minor.x.abs();
+        let reach_y = y.abs() + placed_major.y.abs() + placed_minor.y.abs();
+        // Not finite here means past any limit: an axis of 1e300 squared.
+        if !(reach_x <= MAX_COORDINATE_MM && reach_y <= MAX_COORDINATE_MM) {
+            return Err(ImportError::CoordinateOutOfRange {
+                path: layer.to_owned(),
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        let radius = placed_major.length().max(placed_minor.length());
+        // A chord of angle θ on radius r strays r·θ²/8 from the arc, so
+        // θ = √(8·tolerance / r) keeps it within the tolerance; with the
+        // radius and the tolerance bounded this is at most a few thousand.
+        let chords = sweep.abs() * (radius / (8.0 * self.tolerance_mm)).sqrt();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a bounded, non-negative count"
+        )]
+        let chords = chords.ceil() as usize;
+        self.count_vertices(chords.saturating_add(1))
     }
 
     fn count_vertices(&mut self, added: usize) -> Result<(), ImportError> {

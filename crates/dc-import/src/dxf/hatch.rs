@@ -22,6 +22,7 @@ use dc_geometry::{Point, Vec2, Vertex};
 
 use super::HatchProblem;
 use super::groups::Group;
+use super::spline::MAX_SPLINE_DEGREE;
 use crate::ImportError;
 
 /// Most boundary paths (loops) one HATCH may declare; more is
@@ -307,10 +308,16 @@ impl<'a> Reader<'a> {
                 3 => {
                     let centre = self.point(10)?;
                     let major = self.point(11)?;
+                    // Minor to major: past (0, 1] the file is wrong, and
+                    // a huge ratio would make a huge curve.
+                    let ratio = self.real(40)?;
+                    if !(ratio > 0.0 && ratio <= 1.0) {
+                        return Err(self.malformed(40));
+                    }
                     Edge::Ellipse {
                         centre,
                         major: Vec2::new(major.x, major.y),
-                        ratio: self.real(40)?,
+                        ratio,
                         start_deg: self.real(50)?,
                         end_deg: self.real(51)?,
                         ccw: self.counter_clockwise(),
@@ -341,7 +348,10 @@ impl<'a> Reader<'a> {
     /// A spline edge, after its 72.
     fn spline(&mut self, budget: &mut EdgeBudget<'_, '_>) -> Result<Edge, Failure> {
         let degree = self.int(94)?;
-        let degree = usize::try_from(degree).map_err(|_| self.malformed(94))?;
+        let degree = usize::try_from(degree)
+            .ok()
+            .filter(|d| (1..=MAX_SPLINE_DEGREE).contains(d))
+            .ok_or_else(|| self.malformed(94))?;
         self.optional(73);
         self.optional(74);
         let knot_count = self.charged_count(95, budget)?;
