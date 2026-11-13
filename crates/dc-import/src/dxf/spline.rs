@@ -25,6 +25,11 @@ use dc_geometry::Point;
 /// coordinate limit and the minimum tolerance, no span needs more.
 const MAX_SUBDIVISION_DEPTH: u32 = 12;
 
+/// Highest degree a spline is evaluated at. AutoCAD draws splines of
+/// degree 1 to 11; de Boor's work per point grows with the square of the
+/// degree, so a file's degree is never trusted past this.
+pub(super) const MAX_SPLINE_DEGREE: usize = 11;
+
 /// Spans narrower than this in parameter space are empty (repeated knots).
 const KNOT_EPS: f64 = 1e-12;
 

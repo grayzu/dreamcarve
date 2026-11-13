@@ -2600,4 +2600,191 @@ mod tests {
             assert_eq!(import(&to_binary(dxf.as_bytes(), two_byte_codes)), expected);
         }
     }
+
+    // ── curve caps (#668 security review) ────────────────────────────────
+
+    /// Runs an import that must fail fast, returning its error.
+    fn refused(entities: &str, options: &DxfImportOptions) -> ImportError {
+        let start = std::time::Instant::now();
+        let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
+        assert!(
+            start.elapsed().as_secs_f64() < 1.0,
+            "took {:?}",
+            start.elapsed()
+        );
+        err
+    }
+
+    /// The problem of the one unreadable hatch in `warnings`.
+    fn hatch_problem(warnings: &[ImportWarning]) -> &HatchProblem {
+        let problems: Vec<&HatchProblem> = warnings
+            .iter()
+            .filter_map(|w| match w {
+                ImportWarning::DxfHatchUnreadable { problem, .. } => Some(problem),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(problems.len(), 1, "{warnings:?}");
+        problems[0]
+    }
+
+    /// A Bézier of `degree`: its knots and a zigzag of `degree + 1` control
+    /// points 1 mm apart and 10 mm high.
+    fn bezier(degree: usize) -> (Vec<f64>, Vec<(f64, f64)>) {
+        let knots = (0..2 * degree + 2)
+            .map(|k| if k <= degree { 0.0 } else { 1.0 })
+            .collect();
+        let control = (0..=degree)
+            .map(|k| {
+                let x = f64::from(u32::try_from(k).unwrap());
+                (x, if k % 2 == 0 { 0.0 } else { 10.0 })
+            })
+            .collect();
+        (knots, control)
+    }
+
+    /// A SPLINE entity on `layer` of `degree`, `knots` and `control`.
+    fn spline_entity(layer: &str, degree: usize, knots: &[f64], control: &[(f64, f64)]) -> String {
+        let mut e = format!(
+            "0\nSPLINE\n8\n{layer}\n70\n8\n71\n{degree}\n72\n{}\n73\n{}\n",
+            knots.len(),
+            control.len()
+        );
+        for k in knots {
+            e.push_str(&format!("40\n{k:?}\n"));
+        }
+        for (x, y) in control {
+            e.push_str(&format!("10\n{x:?}\n20\n{y:?}\n"));
+        }
+        e
+    }
+
+    /// A spline's degree above `MAX_SPLINE_DEGREE` is malformed in a hatch
+    /// edge: de Boor's work grows with the square of the degree. A SPLINE
+    /// entity of such a degree is read as its control polygon, as one
+    /// whose knots do not describe a curve is.
+    #[test]
+    fn hatch_spline_edge_degree_is_capped() {
+        let degree = spline::MAX_SPLINE_DEGREE + 1;
+        let (knots, control) = bezier(degree);
+        let last = *control.last().unwrap();
+        let edges = [
+            spline_edge(degree, &knots, &control),
+            line_edge(last, (0.0, 0.0)),
+        ];
+        let (_, warnings) = hatch_import(&hatch("G1", "0", UP, &[edge_path(&edges)]));
+        assert_eq!(
+            hatch_problem(&warnings),
+            &HatchProblem::Malformed {
+                boundary: 1,
+                code: 94
+            }
+        );
+        let (result, _) = hatch_import(&spline_entity("high", degree, &knots, &control));
+        assert_eq!(
+            only(&result, "high").vertices().len(),
+            degree + 1,
+            "the control polygon"
+        );
+        // At the cap the curve is sampled.
+        let (knots, control) = bezier(spline::MAX_SPLINE_DEGREE);
+        let (result, _) = hatch_import(&spline_entity(
+            "top",
+            spline::MAX_SPLINE_DEGREE,
+            &knots,
+            &control,
+        ));
+        assert!(only(&result, "top").vertices().len() > control.len());
+    }
+
+    /// Sampling a spline stops as soon as it would pass the vertex limit,
+    /// for a hatch's spline edge and a SPLINE entity alike: a zigzag of 40
+    /// control points 100 mm high samples to far more than 300 points,
+    /// though its declared counts are well within them.
+    #[test]
+    fn hatch_spline_sampling_is_charged_before_it_runs() {
+        let control: Vec<(f64, f64)> = (0..40)
+            .map(|k| (f64::from(k) * 5.0, if k % 2 == 0 { 0.0 } else { 100.0 }))
+            .collect();
+        let degree = 3;
+        let n = control.len();
+        let knots: Vec<f64> = (0..n + degree + 1)
+            .map(|k| f64::from(u32::try_from(k.saturating_sub(degree).min(n - degree)).unwrap()))
+            .collect();
+        let small = DxfImportOptions {
+            max_vertices: 300,
+            ..DxfImportOptions::new()
+        };
+        let last = control[n - 1];
+        let edges = [
+            spline_edge(degree, &knots, &control),
+            line_edge(last, (0.0, 0.0)),
+        ];
+        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small);
+        assert!(
+            matches!(err, ImportError::TooManyVertices { limit: 300 }),
+            "{err:?}"
+        );
+        let entity = spline_entity("zigzag", degree, &knots, &control);
+        let err = refused(&entity, &small);
+        assert!(
+            matches!(err, ImportError::TooManyVertices { limit: 300 }),
+            "{err:?}"
+        );
+        // Within the default limit the same spline imports.
+        let (result, _) = hatch_import(&entity);
+        assert!(only(&result, "zigzag").vertices().len() > 300);
+    }
+
+    /// An elliptic arc whose centre and axes reach past the coordinate
+    /// limit is refused before its curve is built, as a hatch edge and as
+    /// an ELLIPSE entity: an axis of 1e300 would otherwise make a path of
+    /// unbounded size.
+    #[test]
+    fn ellipse_axes_past_the_coordinate_limit_are_refused() {
+        let defaults = DxfImportOptions::new();
+        for (major, centre) in [((1e300, 0.0), (0.0, 0.0)), ((4000.0, 0.0), (3000.0, 0.0))] {
+            let edges = [ellipse_edge(centre, major, 0.5, 0.0, 360.0)];
+            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults);
+            assert!(
+                matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
+                "{err:?}"
+            );
+            let entity = format!(
+                "0\nELLIPSE\n8\nbig\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n40\n0.5\n41\n0.0\n42\n6.283185307179586\n",
+                centre.0, centre.1, major.0, major.1
+            );
+            let err = refused(&entity, &defaults);
+            assert!(
+                matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// The minor-to-major ratio (40) is in (0, 1]: a hatch's elliptic edge
+    /// outside it is malformed, and an ELLIPSE entity outside it is
+    /// skipped and counted.
+    #[test]
+    fn ellipse_ratio_out_of_range_is_malformed() {
+        for ratio in [2.0, 1e300, -0.5] {
+            let edges = [ellipse_edge((0.0, 0.0), (10.0, 0.0), ratio, 0.0, 360.0)];
+            let (_, warnings) = hatch_import(&hatch("H2", "0", UP, &[edge_path(&edges)]));
+            assert_eq!(
+                hatch_problem(&warnings),
+                &HatchProblem::Malformed {
+                    boundary: 1,
+                    code: 40
+                },
+                "ratio {ratio}"
+            );
+            let entity = format!(
+                "0\nELLIPSE\n8\nodd\n10\n0.0\n20\n0.0\n11\n10.0\n21\n0.0\n40\n{ratio:?}\n41\n0.0\n42\n6.283185307179586\n"
+            );
+            let (result, warnings) = hatch_import(&entity);
+            assert!(result.definitions.is_empty(), "ratio {ratio}");
+            let counts = skipped(&warnings).expect("counted");
+            assert_eq!(counts.get("ELLIPSE (malformed)"), Some(&1), "{counts:?}");
+        }
+    }
 }
