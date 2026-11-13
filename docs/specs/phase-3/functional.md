@@ -594,10 +594,10 @@ designed here.
  still apply to a project, `shapes_overlap` and `feature_below_size`,
  read from the project's shapes; the others need the drawing's paint and
  paths and are `init`'s alone. A clean drawing prints none of them.
-49b. **`image-prep`** (`dreamcarve image-prep design.svg [-o
+49b. **`image-prep`** (`dreamcarve image-prep <design.svg|design.dxf> [-o
  design-inlay.svg] [--regions] [--min-detail <pct>] [--smooth <pct>]`;
- #462). Reads one SVG and writes one SVG that is easy to inlay, and
- prints a report (49e). The decisions that shape it, agreed with the
+ #462, #669). Reads one SVG or DXF and writes one SVG that is easy to
+ inlay, and prints a report (49e). The decisions that shape it, agreed with the
  maintainer on 2026-11-01:
     - **Opt-in.** Nothing requires it: `init` takes any SVG, and a clean
     CAD drawing needs none of it. Cleanup changes the art (it merges
@@ -610,8 +610,17 @@ designed here.
     geometry's bounding box, strokes included; the report prints that
     height. The user scales the result, in a drawing program or with the
     `init` margin they already use, and runs `init` as today.
-    - **SVG in, SVG out.** PNG and JPEG are refused with a message that
-    says to trace in Inkscape ("Trace Bitmap") first. Tracing a picture is
+    - **SVG or DXF in, SVG out.** A DXF (changed: maintainer decision
+    2026-11-13, #669) is read by the DXF importer, in the units its
+    `$INSUNITS` declares (one that declares none is refused: the command
+    takes no units), with its warnings and HATCH boundaries; its closed
+    shapes are the filled paths the steps of 49c prepare, each filled by
+    even-odd, and its open paths, which have no width, are left out with
+    `dxf_open_path_not_convertible`. The format is the extension, checked
+    against the contents (`prep_format_mismatch` when they disagree), and
+    the report says which it read and the DXF's unit. PNG and JPEG are
+    refused with a message that says they are not an SVG or DXF drawing
+    and to trace in Inkscape ("Trace Bitmap") first. Tracing a picture is
     deferred, and any future tracer must be permissively licensed (Potrace
     is GPL).
     - **Where the output goes.** `-o` names it; by default the file is
@@ -776,8 +785,10 @@ designed here.
  `prep_smooth_skipped`, `prep_smooth_exceeds_detail`,
  `prep_stroke_failed` (a stroke the stroker could not turn into an area,
  skipped), `prep_speck_dropped`, `prep_hole_filled` (`image-prep`);
- errors `prep_threshold_range`, `prep_nothing_left` (nothing visible, or
+ `dxf_open_path_not_convertible` (`image-prep` of a DXF); errors
+ `prep_threshold_range`, `prep_nothing_left` (nothing visible, or
  everything dropped), `prep_not_svg` (a picture was given),
+ `prep_format_mismatch` (a `.dxf` that is not a DXF, or a `.svg` that is),
  `prep_output_unreadable` (the written SVG did not read back, which would
  be a defect, so nothing is written); `inlay_boundary_unknown`,
  `inlay_boundary_open`, `inlay_boundary_is_target`,

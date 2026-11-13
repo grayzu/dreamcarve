@@ -9,6 +9,19 @@ phases bump the patch number.
 
 ### Added
 
+- **`image-prep` reads DXF (#669).** `dreamcarve image-prep <svg|dxf>`
+  now takes a DXF too, so a drawing from a CAD program can be cleaned
+  before `init`: it is read in the units its `$INSUNITS` declares, with
+  the importer's warnings and its hatches, and its closed shapes go
+  through the same steps as an SVG's filled paths (shapes that cross
+  merged, a shape inside another made its hole, specks dropped,
+  smoothing, `--regions`). The result is an SVG in millimetres that `init`
+  imports with no warnings, and the report's `Read:` line names the DXF
+  and its unit. Open paths have no width to outline and are left out with
+  `dxf_open_path_not_convertible`. The format is the extension, checked
+  against the contents (`prep_format_mismatch`, exit 2, when they
+  disagree), and a PNG or JPEG is still `prep_not_svg`, now saying it is
+  not an SVG or DXF drawing.
 - **DXF hatches import as shapes (#668).** A `HATCH` was skipped and
   counted in `dxf_entities_skipped`; drawings that show each pocket as a
   filled area imported without their pockets. `init` now reads a hatch's

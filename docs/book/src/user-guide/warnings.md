@@ -373,16 +373,22 @@ Printed by `image-prep` before its report. A warning never stops it.
 | `prep_hole_filled` | Holes under `--min-detail` were filled; the count and the widest are given. | As above. |
 | `prep_smooth_skipped` | Smoothing would have made a piece's outline cross itself or another piece; those pieces were left as they were. | None needed; lower `--smooth` if the edges look rough. |
 | `prep_smooth_exceeds_detail` | `--smooth` is above half of a non-zero `--min-detail`: smoothing that large could remove what the other step keeps. | Lower `--smooth`, or raise `--min-detail`. |
+| `dxf_open_path_not_convertible` | A DXF given to `image-prep` holds open paths (lines, arcs, open polylines or splines); a DXF line has no width, so there is no area to make of it, and they were left out. The count and the first are given. | Close the shape in the CAD program, or draw the line's outline ([A DXF drawing](preparing-artwork.md#a-dxf-drawing)). |
+
+A DXF's own import warnings (`dxf_*`, see [below](#other-import-messages))
+are printed too, before these, with their codes.
 
 ### `image-prep` errors
 
-An error stops `image-prep` and writes nothing. `prep_not_svg` and
-`prep_threshold_range` are usage errors (exit status 2); the others exit 1.
+An error stops `image-prep` and writes nothing. `prep_not_svg`,
+`prep_format_mismatch` and `prep_threshold_range` are usage errors (exit
+status 2); the others exit 1.
 They print as `error: <code>: <message>`.
 
 | Code | Cause | What to do |
 | --- | --- | --- |
-| `prep_not_svg` | A PNG or JPEG was given. | Trace it in Inkscape (Path → Trace Bitmap), save as SVG and prepare that ([Tracing a picture](preparing-artwork.md#tracing-a-picture-in-inkscape)). |
+| `prep_not_svg` | A PNG or JPEG was given, not an SVG or DXF drawing. | Trace it in Inkscape (Path → Trace Bitmap), save as SVG and prepare that ([Tracing a picture](preparing-artwork.md#tracing-a-picture-in-inkscape)). |
+| `prep_format_mismatch` | The file's name and its contents disagree: a `.dxf` that is not a DXF, or a `.svg` that is one. | Rename the file to match what it holds. |
 | `prep_threshold_range` | `--min-detail` or `--smooth` is outside 0 to 5 percent of the design's height. | Give a value from 0 to 5. |
 | `prep_nothing_left` | No visible shape of any size remains: the drawing is empty or hidden, or everything fell below `--min-detail`. | Check the drawing's layers; lower `--min-detail`. |
 | `prep_output_unreadable` | The prepared shapes would not read back as the shapes they were made as. That is a defect in DreamCarve, and nothing is written. | Report it. |

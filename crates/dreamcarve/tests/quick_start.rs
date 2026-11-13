@@ -1475,6 +1475,8 @@ fn preparing_artwork_chapter_runs() {
         "prep_threshold_range",
         "prep_nothing_left",
         "prep_not_svg",
+        "prep_format_mismatch",
+        "dxf_open_path_not_convertible",
         "prep_output_unreadable",
     ] {
         assert!(text.contains(code), "{PREPARING_ARTWORK} names `{code}`");
