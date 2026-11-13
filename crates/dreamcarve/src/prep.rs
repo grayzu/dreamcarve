@@ -1,9 +1,10 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! `dreamcarve image-prep <svg>`: reads one SVG and writes one SVG that is
-//! easy to inlay, then prints what it did (functional 49b to 49e;
-//! `docs/specs/phase-3/design.md`, "CLI → Image prep and the checks").
+//! `dreamcarve image-prep <svg|dxf>`: reads one SVG or DXF and writes one
+//! SVG that is easy to inlay, then prints what it did (functional 49b to
+//! 49e; `docs/specs/phase-3/design.md`, "CLI → Image prep and the checks";
+//! DXF input, #669).
 //!
 //! Everything is decided by `dc_import::prep` (the pipeline, the writer
 //! and its read-back check) and `dc_job::prep_report` (the lines, shared
@@ -15,7 +16,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use dc_import::prep::{
-    DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT, PrepMode, PrepOptions, prepare, write_svg,
+    DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT, PrepMode, PrepOptions, prepare, prepare_dxf,
+    write_svg,
 };
 use dc_import::{ImportError, MAX_IMPORT_VERTICES};
 use dc_job::prep_report;
@@ -40,26 +42,34 @@ impl Picture {
     }
 }
 
+/// The drawing formats `image-prep` reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Drawing {
+    Svg,
+    Dxf,
+}
+
 /// Runs `image-prep`.
 pub fn run(args: &ImagePrepArgs) -> Result<ExitCode, Failure> {
     // Step 1: a picture is refused whatever it is called, with the way
     // forward (tracing is deferred; any future tracer must be permissively
-    // licensed).
-    let bytes = read_file(&args.svg)?;
-    if let Some(picture) = picture_of(&args.svg, &bytes) {
+    // licensed). A drawing is an SVG or a DXF, by its extension checked
+    // against its contents.
+    let input = &args.drawing;
+    let bytes = read_file(input)?;
+    if let Some(picture) = picture_of(input, &bytes) {
         return Err(Failure::usage(format!(
-            "prep_not_svg: {} is a {} picture, not an SVG; trace it to shapes first, in Inkscape \
-             (Path > Trace Bitmap), save the result as SVG and run image-prep on that",
-            args.svg.display(),
+            "prep_not_svg: {} is a {} picture, not an SVG or DXF drawing; trace it to shapes \
+             first, in Inkscape (Path > Trace Bitmap), save the result as SVG and run image-prep \
+             on that",
+            input.display(),
             picture.name()
         )));
     }
+    let drawing = drawing_of(input, &bytes)?;
 
     // Step 2: where it goes, and never over a file that exists.
-    let output = args
-        .output
-        .clone()
-        .unwrap_or_else(|| default_output(&args.svg));
+    let output = args.output.clone().unwrap_or_else(|| default_output(input));
     if output.exists() {
         return Err(Failure::error(format!(
             "{} already exists; remove it or choose another file with -o",
@@ -79,8 +89,11 @@ pub fn run(args: &ImagePrepArgs) -> Result<ExitCode, Failure> {
         smooth_pct: args.smooth.unwrap_or(DEFAULT_SMOOTH_PCT),
         max_vertices: MAX_IMPORT_VERTICES,
     };
-    let (prepared, warnings) =
-        prepare(&bytes, &options).map_err(|e| prepare_failure(&e, &args.svg))?;
+    let prepared = match drawing {
+        Drawing::Svg => prepare(&bytes, &options),
+        Drawing::Dxf => prepare_dxf(&bytes, &options),
+    };
+    let (prepared, warnings) = prepared.map_err(|e| prepare_failure(&e, input))?;
     let text = write_svg(&prepared);
     StagedFile::write(&output, text.as_bytes())?.commit()?;
 
@@ -90,7 +103,7 @@ pub fn run(args: &ImagePrepArgs) -> Result<ExitCode, Failure> {
     }
     let report = prep_report::render(
         &prepared.report,
-        &args.svg.display().to_string(),
+        &input.display().to_string(),
         &output.display().to_string(),
     );
     outln!("{report}")?;
@@ -129,6 +142,44 @@ fn picture_of(path: &Path, bytes: &[u8]) -> Option<Picture> {
     }
 }
 
+/// Whether `bytes` read as a DXF: the binary sentinel, or (after an
+/// optional byte-order mark) a first line holding the group code `0` or
+/// `999`, as every ASCII DXF begins with `0 SECTION` or a comment.
+fn looks_like_dxf(bytes: &[u8]) -> bool {
+    if bytes.starts_with(b"AutoCAD Binary DXF") {
+        return true;
+    }
+    let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    let first = bytes
+        .split(|&b| b == b'\n' || b == b'\r')
+        .find(|line| !line.trim_ascii().is_empty())
+        .map(<[u8]>::trim_ascii);
+    matches!(first, Some(b"0" | b"999"))
+}
+
+/// The drawing `path` holds: a `.dxf` must read as a DXF and a `.svg` must
+/// not; any other name goes by the contents. A name and contents that
+/// disagree are a usage error, so a misnamed file is never read as the
+/// wrong format.
+fn drawing_of(path: &Path, bytes: &[u8]) -> Result<Drawing, Failure> {
+    let extension = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase());
+    let dxf = looks_like_dxf(bytes);
+    let mismatch = |named: &str, holds: &str| {
+        Failure::usage(format!(
+            "prep_format_mismatch: {} is named as {named} but holds {holds}; rename it to match",
+            path.display()
+        ))
+    };
+    match (extension.as_deref(), dxf) {
+        (Some("svg"), true) => Err(mismatch("an SVG", "a DXF")),
+        (Some("dxf"), false) => Err(mismatch("a DXF", "something else")),
+        (_, true) => Ok(Drawing::Dxf),
+        (_, false) => Ok(Drawing::Svg),
+    }
+}
+
 /// A threshold outside its range is a usage error (exit 2); every other
 /// failure of the pipeline is an error (exit 1) that names the file and,
 /// for the image-prep ones, its code.
@@ -139,6 +190,11 @@ fn prepare_failure(error: &ImportError, input: &Path) -> Failure {
         }
         (_, Some(code)) => Failure::error(format!(
             "cannot prepare {}: {code}: {error}",
+            input.display()
+        )),
+        (ImportError::UnitsUnknown { .. }, None) => Failure::error(format!(
+            "cannot import {}: {error}; set the drawing's units in the CAD program and save it \
+             again",
             input.display()
         )),
         (_, None) => Failure::error(format!("cannot import {}: {error}", input.display())),

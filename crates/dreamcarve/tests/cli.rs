@@ -12956,6 +12956,84 @@ fn image_prep_then_init_has_no_warnings() {
     }
 }
 
+/// #669: `image-prep` reads a DXF. It writes the default name beside the
+/// input, its report says it read a DXF in inches, and `init` reads the
+/// result with no warning.
+#[test]
+fn image_prep_reads_a_dxf() {
+    let dir = work_dir("image_prep_reads_a_dxf");
+    copy_fixture(&dir, "prep/tool-tray.dxf", "tray.dxf");
+    let out = run(&dir, &["image-prep", "tray.dxf"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let report = stdout(&out);
+    assert!(
+        report.starts_with("Prepared tray.dxf → tray-inlay.svg (shapes)\n"),
+        "{report}"
+    );
+    assert!(
+        report.contains(
+            "\n  Read: DXF, units inch (from $INSUNITS), 1 drawing unit = 25.4000 mm; \
+             6 closed shapes, 0 open paths left out\n"
+        ),
+        "{report}"
+    );
+    assert!(
+        report.contains("\n  Result: 3 pieces, 2 holes\n"),
+        "{report}"
+    );
+    assert!(report.ends_with("Wrote tray-inlay.svg\n"), "{report}");
+    let written = std::fs::read_to_string(dir.join("tray-inlay.svg")).expect("written");
+    assert!(written.contains(r#"height="38.1mm""#), "{written}");
+    let out = run(&dir, &["init", "tray-inlay.svg"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert_eq!(stderr(&out), "");
+
+    // Open paths are reported, by their code.
+    copy_fixture(&dir, "prep/open-paths.dxf", "open.dxf");
+    let out = run(&dir, &["image-prep", "open.dxf"]);
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("warning: dxf_open_path_not_convertible: 2 open path(s)"),
+        "{}",
+        stderr(&out)
+    );
+
+    // A name that disagrees with the contents is refused, writing nothing.
+    copy_fixture(&dir, "prep/tool-tray.dxf", "named.svg");
+    let out = run(&dir, &["image-prep", "named.svg"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(
+        stderr(&out).contains("prep_format_mismatch"),
+        "{}",
+        stderr(&out)
+    );
+    assert!(!dir.join("named-inlay.svg").exists());
+
+    // A DXF without units is refused: image-prep takes no units.
+    std::fs::write(
+        dir.join("unitless.dxf"),
+        "0\nSECTION\n2\nENTITIES\n0\nCIRCLE\n8\n0\n10\n0.0\n20\n0.0\n40\n5.0\n0\nENDSEC\n0\nEOF\n",
+    )
+    .expect("written");
+    let out = run(&dir, &["image-prep", "unitless.dxf"]);
+    assert_eq!(out.status.code(), Some(1), "{}", stderr(&out));
+    assert!(stderr(&out).contains("$INSUNITS"), "{}", stderr(&out));
+    assert!(!dir.join("unitless-inlay.svg").exists());
+}
+
+/// #669: a PNG is refused with exit 2, and the message names both
+/// drawings `image-prep` reads.
+#[test]
+fn image_prep_refuses_a_png_naming_svg_and_dxf() {
+    let dir = work_dir("image_prep_refuses_a_png_naming_svg_and_dxf");
+    std::fs::write(dir.join("pic.png"), PNG_SIGNATURE).expect("written");
+    let out = run(&dir, &["image-prep", "pic.png"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    let message = stderr(&out);
+    assert!(message.contains("prep_not_svg"), "{message}");
+    assert!(message.contains("not an SVG or DXF drawing"), "{message}");
+}
+
 #[test]
 fn image_prep_threshold_range_exits_2() {
     let dir = work_dir("image_prep_threshold_range_exits_2");

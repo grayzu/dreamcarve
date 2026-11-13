@@ -7,7 +7,7 @@
 //! shell prints them; nothing here does I/O.
 
 use dc_import::ImportWarning;
-use dc_import::prep::{PrepMode, PrepReport, REPORT_MIN_FEATURE_MM, WidthFigure};
+use dc_import::prep::{PrepMode, PrepReport, PrepSource, REPORT_MIN_FEATURE_MM, WidthFigure};
 
 /// The report's lines for a run that read `input` and wrote `output` (the
 /// names as the shell shows them), in order: the header, then, indented, a
@@ -138,8 +138,22 @@ pub fn warning_line(warning: &ImportWarning) -> String {
     format!("warning: {}: {message}", warning.code())
 }
 
-/// `Read:`, always: the paths, what was skipped, what cannot be converted.
+/// `Read:`, always: the paths, what was skipped, what cannot be converted;
+/// for a DXF, its units, its closed shapes and the open paths left out.
 fn read_line(report: &PrepReport) -> String {
+    if let PrepSource::Dxf {
+        units,
+        mm_per_unit,
+        closed_shapes,
+        open_paths,
+    } = report.source
+    {
+        return format!(
+            "Read: DXF, units {units} (from $INSUNITS), 1 drawing unit = {mm_per_unit:.4} mm; {}, {} left out",
+            count(closed_shapes, "closed shape", "closed shapes"),
+            count(open_paths, "open path", "open paths"),
+        );
+    }
     let read = &report.read;
     let skipped: Vec<String> = [
         (read.hidden, "hidden"),
@@ -270,6 +284,7 @@ mod tests {
     /// The report of functional 49e's example.
     fn eagle() -> PrepReport {
         PrepReport {
+            source: PrepSource::Svg,
             mode: PrepMode::Regions,
             read: ReadReport {
                 paths: 214,
