@@ -342,6 +342,19 @@ material, optionally with its vendor and the vendor's product id. A project
 embeds copies of the tools it uses.
 _Avoid_: Bit, cutter, end mill (that is one tool type)
 
+**Tapered Ball Nose**:
+A tool type (format 28): a cone of `taper_angle_deg` **per side** capped
+by a ball tangent to it, whose `diameter_mm` is the ball's (twice the tip
+radius), with a `flute_length_mm` that limits how deep its flank may be
+engaged. No cut diameter is stored; its width at any height is derived.
+V-Carve and Inlay accept it in place of a V-bit. Above its **tangent
+height**, `tip radius × (1 − sin taper)`, it cuts as a V-bit of twice
+its taper whose point lies below the real tip; below, the ball cuts.
+_Avoid_: TBN in user-facing text, tapered mill (Fusion's name, which
+includes flat and bull tips), included angle (a V-bit's convention)
+_Fusion_: tapered mill with a ball tip (`RE = DC/2`); _Vectric_: Tapered
+Ball Nose
+
 **Tool Library**:
 The user's app-level collection of tools, kept outside any project, from which
 tools are picked and copied into a project. Can be populated by importing a

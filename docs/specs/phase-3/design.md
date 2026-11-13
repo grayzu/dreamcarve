@@ -16,14 +16,14 @@ a picture and an `image` command. Sub-phase 3.4 (inserted 2026-11-10) adds
 the opt-in `image-prep` command and the always-on import checks, both in
 `dc-import::prep` on new `dc-geometry` measures, and a user-drawn
 boundary for the male Inlay's band. The format moves through versions 20
-to 27, one per sub-phase that changes the file and three more for the
+to 28, one per sub-phase that changes the file and three more for the
 Inlay's cut-out, band rounding and one-file form ("Sub-phases"); phase 2's
 last changes took 16 to 19 (changed in spec sync 1).
 
 ```
 SVG ─dc-import::prep (opt-in, 3.4)─▶ clean SVG ─┐
 SVG / DXF ──dc-import──▶ FeatureDefinitions ─┤  (init: dc-import::prep::findings, always)
-PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v27, dc-project)
+PNG / JPEG ─dc-import::bitmap─▶ Bitmap ───────┼─▶ Project (.dcv v20–v28, dc-project)
 user edits .dcv ─────────────────────────────┘        │
                                                       ▼
    dc-cam::{profile, pocket, drill (+ countersink), engrave,
@@ -43,7 +43,7 @@ change hands is stated where it happens: the offset strategy's ring
 direction (as Pocket's), a picture's row order (its top row is at the
 highest Y), and the male Inlay's mirror (about X, in place, on its male board).
 
-Five things in this phase are **not** ports:
+Six things in this phase are **not** ports:
 
 - **Clearing passes and the V-bit floor** (functional 39, 40) follow
   VCarve's "Use Clearance Tools" and Corbin's pocket setup; PureCutCNC
@@ -65,6 +65,10 @@ Five things in this phase are **not** ports:
 - **The drawn boundary** (49f) follows the public documentation of
   VCarve's and Corbin's inlay workflows, as the rest of Inlay does,
   and is composed from the same band functions #448 and #495 built.
+- **The tapered ball nose** (functional 49h to 49l, sub-phase 3.6):
+  PureCutCNC has no such bit. Its parameters follow Fusion's tool
+  library, its behaviour VCarve's and Corbin's public documentation, and
+  its geometry is derived here, with analytic tests in place of goldens.
 
 ## PureCutCNC sources
 
@@ -78,6 +82,7 @@ Five things in this phase are **not** ports:
 | `tests/golden/vcarve-*` | captured via `tools/parity/` from `v_carve_medial` and `v_carve` operations | See "Golden corpus". |
 | `dc-import::prep::walk` (the visible-geometry walk, the import checks) | `src/import/svg.ts` (`hasVisiblePaint`, the cumulative opacity and fill/stroke presentation tracking, `inspectSvgContent`'s text, clip-path, mask, filter and pattern warnings), `src/import/classifier.ts` (the touching, intersecting and duplicate ambiguity rules; alternating nesting; smallest container) | The importer (`svg.rs`) is already a port of `svg.ts`; the walk reuses its paint-intent rule, so `init`, the checks and `image-prep` decide "painted" in one function. Upstream's classifier assigns line, add and subtract roles for the GUI; DreamCarve's `init` reads geometry whatever the paint (phase 1), so only its ambiguity detection is reused, as findings: crossing outlines are an overlap, a filled path inside a filled path a separate-path hole. The nesting itself stays `dc_geometry::nest`'s. Positions in findings are Y-up millimetres. |
 | `dc-import::prep::stroke`, `dc-geometry::{fill, width, simplify}` | none | PureCutCNC follows lines and does not turn a stroke into an area, resolves fills with Clipper's rule only, and has no speck filter or smoothing. Designed here from the libraries "Image prep" names. |
+| `dc-geometry::profile`, the TBN in `dc-cam::{vcarve, inlay}` and `dc-gcode::material` (3.6) | none | PureCutCNC models a V-bit only. Designed here ("Algorithms → Tapered ball nose"); the V-bit's closed forms move into `profile` unchanged. |
 
 Files in the first column that port logic carry the upstream attribution
 header. `dc-cam::inlay`, `dc-cam::photo`, `dc-import::bitmap`,
@@ -86,7 +91,7 @@ carry the DreamCarve header.
 
 ## Data model
 
-### dc-project (format versions 20 to 27)
+### dc-project (format versions 20 to 28)
 
 One version per sub-phase ("Sub-phases"): 20 adds the V-Carve kind with
 its clearing list, 21 the countersink cycle, 22 the Inlay kind, 23 the
@@ -96,7 +101,9 @@ one-file Inlay, whose `side` gives way to a `male_board` (added in 3.3
 on 2026-11-02, #498), 26 the Inlay's drawn `boundary` (added in 3.4 on
 2026-11-10, #449), 27 `bitmaps` and the Photo V-Carve kind (24 until
 #448, 25 until #498, 26 until the boundary: sub-phase 3.4 ships before
-Photo V-Carve, so the boundary took the next number and Photo moved up).
+Photo V-Carve, so the boundary took the next number and Photo moved up),
+28 the tapered ball nose cutter (3.6, #445; "Tapered ball nose (sub-phase
+3.6, format 28)" below).
 Every step but 25 is additive, and a file from an earlier version exports
 the same bytes. Step 25 replaces a field: a
 female file exports the same programs, and a male file the same male
@@ -104,7 +111,7 @@ programs, both under the board's program names, but a male file now
 also cuts the female ("Migrations").
 
 ```rust
-pub const CURRENT_VERSION: u32 = 27;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443), 24 (rounding, #448) and 25 (one-file Inlay, #498) in 3.3, 26 (drawn boundary, #449) in 3.4, 27 (bitmaps, Photo V-Carve) in 3.5
+pub const CURRENT_VERSION: u32 = 28;   // 20 in sub-phase 3.1, 21 in 3.2, 22, 23 (cut-out, #443), 24 (rounding, #448) and 25 (one-file Inlay, #498) in 3.3, 26 (drawn boundary, #449) in 3.4, 27 (bitmaps, Photo V-Carve) in 3.5, 28 (tapered ball nose, #445) in 3.6
                                        // (phase 2 ended at 19: tool vendor, Drill hole width, Bore, stock to leave)
 
 pub struct Project {
@@ -372,7 +379,7 @@ operations[op1] `DC` was the male of a two-file inlay pair (format 24);
 for the pair from the design and set its male_board``.
 
 Fixtures
-`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv`,
+`crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27,v28}/sample.dcv`,
 each holding the kinds its version has; `v26` is the previous version's
 and `v27` the current one's (sub-phase 3.5, #644), with its neighbour
 `v27/photo.dcv`, the sample with a bitmap `b1` and a Photo V-Carve of it
@@ -1210,6 +1217,240 @@ pass t2)` in place of `band: margin 8.000 mm, rounding 10.000 mm`.
 the design, as a dashed outline of class `male-boundary`, under the male's
 runs; its legend entry is "boundary (male board)". A preview of a project
 with no boundary is unchanged.
+
+### Tapered ball nose (sub-phase 3.6, format 28)
+
+Added with the 3.6 spec (#445, 2026-11-13). V-Carve and Inlay, with
+their flat floor, V-bit floor, clearing passes and offset strategy, accept
+a **tapered ball nose** (TBN) as well as a V-bit: a cone of half-angle
+`β` capped by a ball of radius `ρ` tangent to it. Nothing else changes
+cutter: a Photo V-Carve and a countersink still need a V-bit (functional
+49h; "Algorithms → Tapered ball nose", "Not in 3.6"). PureCutCNC has no
+such bit, so the design is new; it follows Fusion's tool-library
+convention for the parameters and VCarve's public documentation for the
+behaviour ("Ball Nose tools can also be used to V-Carve designs", VCarve
+Toolpath Creator), and Corbin's Workshop for inlays
+([https://docs.corbinsworkshop.com/vbit_selection.md](https://docs.corbinsworkshop.com/vbit_selection.md)).
+
+**The bit.** Three numbers, none of them a cut diameter (maintainer,
+#445, 2026-11-10: a 1/4 in TBN's flutes only reach 6.35 mm about 20 mm up,
+so a stored 6.35 mm would be wrong at every depth the bit cuts):
+
+```rust
+// dc-project, model.rs
+pub enum ToolKind {
+    EndMill, BallNose, VBit { included_angle_deg: f64 }, Engraver, Drill,
+    /// A cone of half-angle `taper_angle_deg` capped by a ball whose
+    /// diameter is the tool's `diameter_mm` (format 28, #445). Saved as
+    /// `{ "tapered_ball_nose": { "taper_angle_deg": 6.7, "flute_length_mm": 19.05 } }`.
+    TaperedBallNose {
+        /// The taper **per side**, degrees from the axis: half the included
+        /// angle, as Fusion's `TA` for a tapered mill, Vectric's "side
+        /// angle" and the vendors' catalogues (Amana "3.6° tapered angle",
+        /// Freud 72-400 "5.4°") write it. In (0, 45].
+        taper_angle_deg: f64,
+        /// The fluted length from the tip, mm: the deepest the flank may
+        /// be engaged (the TBN's cutting height). Above `tip radius`'s
+        /// tangent height, and finite.
+        flute_length_mm: f64,
+    },
+}
+```
+
+- **`diameter_mm` is the ball's diameter**, `2ρ`: Fusion's `DC` for a
+  tapered mill with `RE = DC/2`, Corbin's "enter the ball diameter (2 ×
+  radius), not the advertised radius", and the phase 4 mock-up's
+  `Tapered ball nose 0.015` row (Ø 0.762, 6.7°). The tip radius is
+  `Tool::tip_radius_mm()`, `diameter_mm / 2`, not stored twice. Every
+  other kind's `diameter_mm` is unchanged.
+- **The angle is the half angle** for a TBN, though a V-bit stores its
+  included angle. Both follow the convention their bit is sold and stored
+  by: a V-bit is a "90° V-bit" everywhere, and Fusion's chamfer `TA` 45
+  becomes `included_angle_deg` 90 on import; a TBN is a "6.7° per side"
+  taper everywhere, Fusion's tapered `TA` is per side, and Corbin warns
+  that confusing the two doubles the angle. Storing the number the user
+  reads off the packet is the fewer-mistakes choice; the field's name and
+  every message say "per side" (functional 49h).
+- **Derived, never stored:** with `t = tan β`,
+  - the **tangent height** `h_t = ρ (1 − sin β)`, where the ball meets the
+    cone, and the **tangent half-width** `w_t = ρ cos β`;
+  - the **apex offset** `δ = ρ (1/sin β − 1)`: the cone, continued down,
+    comes to a point `δ` below the tip. Above `h_t` the TBN *is* a V-bit
+    of included angle `2β` whose point is `δ` below the real tip;
+  - the **half-width at height `d` above the tip**, `w(d) = √(2ρd − d²)`
+    for `d ≤ h_t` (the ball), `(d + δ) · t` above it (the cone). `w` is
+    continuous, has a continuous first derivative at `h_t` (both sides
+    `t`), is increasing and concave, and `w′ ≥ t` everywhere;
+  - its inverse, the **height at half-width `r`**, `w⁻¹(r) = ρ − √(ρ² −
+    r²)` for `r ≤ w_t`, `r/t − δ` above. Convex and increasing, so the
+    surface the bit leaves rises no faster than `1/t` per mm sideways;
+  - the **cut radius**, the widest the bit ever cuts, `w(flute_length_mm)`,
+    `Tool::cut_radius_mm()` (a V-bit's and every other kind's is
+    `diameter_mm / 2`, as before).
+
+**The bench's bits** (maintainer's measurements, #445, 2026-11-10; IDC
+Woodcraft 1/4 in shank set, two flutes): taper measured by plunge holes
+at 2, 6 and 12 mm, **6.7° per side ±0.5°** for both (13.4° included;
+supersedes the angle gauge's 5° and the page's "taper 10"); tip radii as
+documented; flute length the documented 0.75 in, 19.05 mm (measured
+about 21 mm; the documented value is the conservative limit).
+
+| | Fine Detail | Ultra-High Detail |
+| --- | --- | --- |
+| `diameter_mm` (ball, 2ρ) | 2.286 (tip radius 0.045 in, 1.143 mm) | 0.762 (tip radius 0.015 in, 0.381 mm) |
+| `taper_angle_deg` | 6.7 | 6.7 |
+| `flute_length_mm` | 19.05 | 19.05 |
+| tangent height `h_t` | 1.010 mm | 0.337 mm |
+| tangent half-width `w_t` | 1.135 mm | 0.378 mm |
+| apex offset `δ` | 8.654 mm | 2.885 mm |
+| width at the flute top, `2 w(19.05)` | 6.51 mm | 5.15 mm |
+| sideways error to height, `1/t` | 8.5× | 8.5× |
+
+The model and the plunge holes do not agree closely. The holes'
+diameters, measured by eye in particleboard (±0.1 mm), against the
+model's `2 w(d)`: Fine 2.28, 3.05, 4.46 mm against 2.50, 3.44, 4.85;
+Ultra 1.26, 2.57, 4.00 against 1.15, 2.09, 3.50. The slope between 6 and
+12 mm fits 6.7° on both, but the Fine bit's cone line runs about 0.2 mm
+inside the model's and the Ultra's about 0.25 mm outside it, which is
+what the maintainer's flute-top widths (6.1 and 5.7 mm, extrapolated
+from the holes) show too. A TBN whose cone is not quite tangent to a
+ball of its catalogue radius, runout, and tear-out all move that line;
+the model cannot tell them apart from two numbers. What it costs an
+inlay, and why a test fit is the calibration, is "Inlay fit" below (open
+question 27).
+
+**Format 28.** `CURRENT_VERSION` becomes 28. `v27_to_v28` changes no
+field: it adds a cutter variant a file from before cannot contain, so it
+bumps the version only (as `v19_to_v20` did for the V-Carve kind), and
+refuses a file that says 27 and already holds a `tapered_ball_nose`
+cutter. A file from any earlier version exports the same bytes. Fixtures
+`crates/dc-project/tests/fixtures/dcv/v28/sample.dcv` (the saved
+`sample_project()`) and its neighbour `v28/tapered.dcv`, the sample with
+the Ultra-High Detail bit and a V-Carve of `i1` using it
+(`migrate::version_28_fixtures_load`). Inch input: `flute_length_mm`
+reads through `units_input::mm` as every length does.
+
+**The library** (`dc-library`). `LIBRARY_VERSION` becomes 3: a library
+holding a TBN cannot be read by a build that does not know the cutter,
+and the library format refuses a newer version as the project format
+does. `v2_to_v3` changes nothing. `validate_tool` adds the TBN's ranges
+(below) and `non_finite_field` its two numbers.
+
+**Validation** (`validate.rs`; errors unless marked):
+
+- `tapered_ball_nose_range` (on every tool, used or not, as the library
+  checks it on import): `taper_angle_deg` not in (0, 45], or
+  `flute_length_mm` not finite or not above the tangent height `h_t`
+  (a flute that ends inside the ball is not a TBN); located at
+  `tools[i].cutter.tapered_ball_nose.taper_angle_deg` or
+  `.flute_length_mm`, reported instead of the general
+  `tool_out_of_range` for those fields, as `v_bit_angle_range` is. 45° is
+  not a physical limit but a sanity one: the steepest catalogue TBN is
+  about 15° per side, and a 45° "TBN" is a 90° V-bit with a round tip,
+  which the user should enter as one if the tip does not matter.
+- `v_carve_needs_v_bit` accepts a TBN on a V-Carve and an Inlay (the
+  message: "needs a V-bit or a tapered ball nose"). A Photo V-Carve with a
+  TBN stays `v_carve_needs_v_bit` ("a Photo V-Carve needs a V-bit; a
+  tapered ball nose is not supported there"), and a countersink with one
+  `countersink_needs_v_bit`.
+- `v_bit_cone_exceeded` keeps its code (codes are stable, and scripts
+  match them); for a TBN its limit is the **cutting height**,
+  `flute_length_mm`, in place of the cone height, and its message names
+  it ("engaged 21.200 mm, past the bit's 19.050 mm flutes"). Everything
+  else about the check is unchanged: the engagement sum from the stock
+  top (security review H4), the male's `D − G + P`, the locations.
+- Inlay with a TBN (warnings; "Algorithms → Tapered ball nose", "Inlay
+  fit"): `inlay_glue_gap_below_ball` (`glue_gap_mm < h_t`; at
+  `glue_gap_mm`) and `inlay_plug_depth_below_ball` (`plug_depth_mm <
+  h_t`; at `plug_depth_mm`), each naming `h_t` and what the shortfall
+  costs. The design's own corners are checked by the generator, not by
+  validation (they need the design's geometry after the near parts are
+  merged).
+- `clearing_*`, `start_depth_*`, the boundary and the cut-out rules are
+  unchanged; where they compute a V-bit's width they read the bit's
+  profile (below).
+
+**The profile** (`dc-geometry::profile`, pure, no tool knowledge, so
+`dc-project`, `dc-cam` and `dc-gcode` share one implementation):
+
+```rust
+/// A carving bit's cross-section: the half-width it cuts at each height
+/// above its tip. Every V rule of phase 3 reads it.
+pub enum BitProfile {
+    /// A V-bit: `w(d) = d · slope`.
+    VBit { slope: f64 },
+    /// A tapered ball nose: ball of `tip_radius_mm`, cone of `slope`
+    /// (`tan β`) tangent to it.
+    TaperedBall { tip_radius_mm: f64, slope: f64 },
+}
+impl BitProfile {
+    pub fn half_width_mm(&self, height_mm: f64) -> f64;      // w(d); 0 at and below the tip
+    pub fn height_mm(&self, half_width_mm: f64) -> f64;      // w⁻¹(r)
+    pub fn slope(&self) -> f64;                              // tan(α/2) or tan β: the flank's
+    pub fn tangent_height_mm(&self) -> f64;                  // h_t; 0 for a V-bit
+    pub fn tangent_half_width_mm(&self) -> f64;              // w_t; 0 for a V-bit
+    pub fn apex_offset_mm(&self) -> f64;                     // δ; 0 for a V-bit
+}
+// dc-project
+impl Tool {
+    /// The bit's profile when it is a V-bit or a TBN with usable numbers.
+    pub fn carve_profile(&self) -> Option<BitProfile>;
+    /// The deepest the flank may be engaged: a V-bit's cone height
+    /// (`diameter / (2 · tan(α/2))`), a TBN's flute length.
+    pub fn cutting_height_mm(&self) -> Option<f64>;
+    /// The widest the bit cuts (S7, the preview, `swept_bounds`):
+    /// `diameter_mm / 2`, or a TBN's `w(flute_length_mm)`.
+    pub fn cut_radius_mm(&self) -> f64;
+    pub fn tip_radius_mm(&self) -> Option<f64>;              // a TBN's diameter / 2
+}
+```
+
+Every place that today matches `ToolKind::VBit` to get `(slope,
+radius)` for a carve (`dc-cam::vcarve::v_bit`/`checked_v_bit`,
+`dc-project::inlay::v_bit_of`, `dc-project::project`'s floor for
+`cleared_start_plane`, `dc-gcode::material::v_bit_of`, the Photo's
+`groove_radius_mm`, the validation rules) goes through
+`Tool::carve_profile` (the Photo's and the countersink's through it with
+a V-bit required), and every reader of `diameter_mm / 2.0` as the swept
+radius of a cut (S7's `check_on_stock`, `swept_bounds` in the
+generators, the preview's run widths, `dc-job`'s summaries) through
+`Tool::cut_radius_mm`. For a V-bit both return what they return today, so
+no V-bit program changes (`golden::vcarve_*` and every CLI program test
+unchanged).
+
+**`dc-cam` additions.** `vcarve::cone_height_mm(tool)` becomes
+`vcarve::cutting_height_mm(tool)` (the same number for a V-bit);
+`vcarve::Carve` gains nothing (the tool comes with `blocks`);
+`cone_in_material` takes a `&BitProfile` in place of `slope` and `cone_mm`
+becomes the cutting height. New `WarningCode`s: `TaperedCornersSoftened
+(op, count, x_mm, y_mm, change_mm, radius_mm)` (a V-Carve's convex
+corners tighter than the bit's `w_t`, `radius_mm`; the count, and the
+one whose outline lies farthest, `change_mm`, from the carve's opening by
+`w_t`: functional 49j),
+`InlayGlueGapBelowBall (op, glue_gap_mm, tangent_height_mm, lift_mm,
+wall_gap_mm)` and `InlayPlugDepthBelowBall (op, plug_depth_mm,
+tangent_height_mm, wall_gap_mm)` (generator-time too, as
+`InlayPlugBaseThin`, and dropped from the findings since validation says
+them), `InlayRoundedForBit (op, kind: CornerKind, x_mm, y_mm,
+change_mm, radius_mm)` (`CornerKind` is `Point`, the design's convex
+corners and narrow parts, or `Notch`, its inward corners and narrow gaps;
+one per kind, at the largest change, the point as drawn, the male's
+mirrored back). New `CamError::InlayTooNarrowForBit { op, kind:
+CornerKind, x_mm, y_mm, width_mm, needed_mm }` (a part or gap the
+rounding would remove, split or join). `ConeOffMaterial` and
+`VBitConeExceeded` keep their shapes.
+
+**`dc-gcode`.** No new error: a TBN's S17 failures are
+`ConeOffMaterial` and `ConeHeightExceeded` (`cone_mm` is the cutting
+height), with the same worst point and overlap. `material::Cone` holds a
+`BitProfile` in place of `slope`.
+
+**CLI.** `tools list` and `check`'s tool line print a TBN as `t3 IDC
+Ultra-High Detail: tapered ball nose, tip 0.381 mm (0.762 mm ball),
+6.7° per side, 19.050 mm flutes`. `check`'s V-bit floor line reads
+`floor ridges …` with the TBN's heights; an Inlay with a TBN adds the
+seat line of "Inlay fit": `seat: moves 0.40 mm per 0.5° of taper, 0.76 mm
+per 0.05 mm of tip radius; test-fit before gluing`.
 
 ## Algorithms
 
@@ -2975,6 +3216,292 @@ port.
    about 110 grooves of up to 115 mm, 460 samples each: 50 000 moves
    before merging. Fine.
 
+### Tapered ball nose (dc-geometry::profile, dc-cam::vcarve, dc-cam::inlay; sub-phase 3.6)
+
+Designed here (#445): PureCutCNC has no TBN, VCarve documents that a
+ball nose can V-carve but not how, and Corbin's add-in approximates a
+TBN as a chamfer mill with a flat tip the ball's width ("Compatibility",
+`vbit_selection.md`). Notation as "Data model → Tapered ball nose": `ρ`,
+`β`, `t = tan β`, `h_t`, `w_t`, `δ`, `w`, `w⁻¹`, `L` the flute length.
+The tests are analytic (no reference program exists); "Test plan", the
+3.6 group.
+
+**One rule replaces the V-bit's.** A V-bit cuts a half-width `d · s` at
+height `d` above its tip; a TBN cuts `w(d)`. Every phase 3 formula that
+reads the first as "the cut's half-width at depth `d`" reads the second,
+and every rule that reads `s` as "the steepest the carved surface rises"
+reads `t`, which bounds the TBN's surface everywhere (`w′ ≥ t`, so
+`(w⁻¹)′ ≤ 1/t`). The V-bit is the profile `VBit`, for which both read
+exactly what they read today. Above `h_t` the TBN cuts exactly what a
+`2β` V-bit whose point is `δ` below the TBN's tip cuts (the **virtual
+V-bit**); everything below is the ball's. Each rule below says which of
+the two it needs.
+
+1. **Medial depth** (V-Carve generator, step 5). A node of clearance `c`
+   is cut at `d = min(w⁻¹(c), F)`: the deepest the bit can go with its
+   cross-section at the start plane inside the walls, so its disc there
+   is `w(d)`, `c` itself until the floor clamps it. In the ball zone
+   (`c < w_t`) that is `ρ − √(ρ² − c²)`; above it `c/t − δ`, the virtual
+   V-bit's depth less `δ`. A 1.5 mm stroke (`c` 0.75) with the
+   Ultra-High Detail bit is carved 3.500 mm deep; a 0.6 mm stroke (`c`
+   0.3, in the ball) 0.146 mm deep; the 60° V-bit carves the 1.5 mm
+   stroke 1.299 mm deep. A TBN goes deep: a 5 mm stroke would need
+   18.40 mm, inside the 19.05 mm flutes, and a 6 mm one 22.65 mm, which
+   the cutting-height check refuses (step 5).
+   - **Pruning, simplify, fit, links.** The edge allowance and the wall
+     tolerance scale with `t` as with `tan(α/2)` (#478, #506:
+     `min(1, t / tan 30°)`, 0.2 at 6.7°). Where simplify and fit convert
+     a depth shortfall `Δ` at a node into a shortfall of the carved edge
+     (`slope · (low − z)` today), they read the profile's,
+     `w(d) − w(d − Δ)`, which is at least `t · Δ` (exact on the cone,
+     stricter in the ball). `low`, the lowest a straight stretch reaches
+     over a point `q`, is the least of `z(τ) + w⁻¹(|q − p(τ)|)` over the
+     stretch: a convex function of `τ` (`w⁻¹` is convex and increasing,
+     the distance convex), so its least value is found on each zone's
+     part in closed form and the lower kept, as the heightfield's (step
+     8). A stay-down link passes the cone test at its own depth by the
+     exact room test of step 7 with `EPS_MM` to spare, as today.
+   - **Corner reach** (`CornerReach::Every`, #456) and the tip margin and
+     written grid (#463, #469, #499) are geometry of the tip path and
+     unchanged; the written-grid corner limit `N` (#559) reads `t` and
+     never binds an Inlay with a TBN, whose design is rounded ("Inlay
+     fit").
+2. **Flat floor** (step 6). The floor regions are the carve's regions
+   inset by `w(F)` (`floor_regions(regions, w(F))`), traced with the tip
+   at `F`: the flank meets the outline at the start plane, and the wall is
+   the cone from the outline down to `F − h_t` and then the ball's arc,
+   radius `ρ`, into the floor (a **fillet** every flat floor cut by a
+   TBN has, as a ball nose's; the chapter says so). `cleared_start_plane`
+   reads the same `w(F)` for a V-Carve floor (#426), so a countersink on
+   a TBN-carved floor is checked against that floor.
+3. **V-bit floor** (step 6). Step-over `s = step_over_fraction · 2 w(F)`,
+   the cut's width at the floor, as for a V-bit. Two grooves `s` apart
+   leave a ridge `w⁻¹(s/2)` high: the ball's scallop `ρ − √(ρ² − s²/4)`
+   while `s/2 ≤ w_t`, which it is at every recommended step-over (0.1 of
+   the Fine bit's 2.50 mm at `F` 2 is 0.25 mm, ridge 0.007 mm; the 60°
+   V-bit's ridge at the same fraction and floor is 0.2 mm). The corner
+   ridge is `w⁻¹(min(s / (2 sin(θmin/2)), s))` (#522). `floor_ridges`
+   and `check` print both with the profile; the rings, residual centre
+   rings and chain dropping are unchanged.
+4. **Clearing passes.** Unchanged but for the inset: a pass's floor
+   regions are the carve's at `w(F)` (Corbin's radial stock to leave is
+   then the TBN's half-width at the floor, as it is `tan(α/2) · depth`
+   for a V-bit), and the V-bit floor is what the passes leave, as today.
+5. **Cutting height.** `e = engaged_from − deepest_z ≤ L + EPS_MM`, else
+   `VBitConeExceeded` with the flute length as `cone_mm` (V-Carve step 3;
+   with no flat depth the deepest is `w⁻¹(c_max)`). Above the flutes the
+   shank would rub; below them nothing limits the bit, since its width is
+   derived at every height.
+6. **Offset strategy** (step 8). Ring `k` is inset `i_k = k · step_over_mm`
+   at depth `w⁻¹(i_k)`, until the inset reaches `w(F)`. A link between two
+   rings stays down only when it is held to the surface the rings cut
+   (#407), which is now read with the profile: along a corner's bisector
+   that surface is linear in the cone zone, where links stay down as
+   today, and convex in the ball zone, where a straight link would run
+   below it and retracts.
+7. **S17, exact, no sampling** (security review M1). A cut is safe when
+   its cross-section at the start plane stays inside the walls at every
+   point of it: the TBN's cross-sections are nested discs about its axis,
+   widening with height, so the part of the bit below the start plane is
+   inside the walls' prism exactly when the disc at the start plane is.
+   Its **room** at a point is `dist(tip, wall) − w(d)`. For a cut at
+   constant Z it is today's segment-against-segment distance less
+   `w(d)`. For a straight cut whose Z varies, split it where `d(τ)`
+   crosses `h_t` (`d` is linear in `τ`):
+   - **On the cone stretch** the room is the virtual V-bit's: `r(τ) =
+     (d(τ) + δ) · t`, linear in `τ`, so today's closed forms run as they
+     are, with the start plane lowered by `δ`.
+   - **On the ball stretch** `r(τ) = √(2ρ d(τ) − d(τ)²)`, which is not
+     linear. Per wall piece (the line where the tip is abreast, each end,
+     the circle where the tip is within the sweep, outside or inside it,
+     split as today), `g(τ) = D(τ) − r(τ)` is continuously differentiable
+     on the piece's stretch, so its least value is at an end of the
+     stretch or where `g′ = 0`. Squaring `D′ = r′` (with `r′ = d′ (ρ −
+     d) / r`) gives a polynomial in `τ`: of degree 2 against a line
+     (`D` linear), 4 against a point or a circle (`D = √Q`, `D = |q| ∓
+     R`). Its real roots in the stretch are found in closed form
+     (quadratic formula; Ferrari's quartic with Cardano's resolvent, each
+     root polished by two Newton steps on the polynomial), and `g` is
+     evaluated at them and at the ends. Squaring may add roots that are
+     not stationary points; evaluating `g` there can only find a lower
+     value that is a real value of `g`, never miss the least, so no
+     filtering is needed. A polynomial that vanishes identically means
+     `g′ ≡ 0`, and the ends decide. `d = 0` (where `r′` is infinite) is
+     only ever an end of a cut, since cuts run at or below the start
+     plane.
+
+   The shared function is `dc_geometry::profile::least_room(from: Point3,
+   to: Point3, wall: WallPiece, profile: &BitProfile, start_plane_z_mm)
+   -> (f64, f64)` (the least room and where), which the generator's
+   `Walls::least_room`, its `cone_in_material` and the safety pass's
+   `Cone::check` all call; the V-bit's closed forms move into it
+   unchanged (`golden::vcarve_*` and every safety test stay as they are).
+   The shank rule is the cutting height (step 5); the open band edge's
+   test (#448) and the drawn boundary's run the same function with the
+   stock top as the plane. An arc move whose Z varies, which no carve
+   writes, is held to its deeper end's radius all along, as today.
+8. **Heightfield** (test support, `dc-cam::heightfield`, #452). A new
+   `Cutter::TaperedBall { tip_radius_mm, slope }`: a cell keeps the least
+   of `z(τ) + w⁻¹(|q − p(τ)|)`, convex in `τ`, on each zone's part of the
+   move in closed form: on the cone today's cone formula with the virtual
+   apex, in the ball the lowest point where the vertical through `q`
+   meets the capsule the ball sweeps (a quadratic). So the seat check
+   (`test_support::seat`) runs unchanged on TBN programs.
+9. **Corners in a V-Carve: what the ball cannot reach.** At the start
+   plane every corner is reached: the medial chain into a convex corner
+   runs to the tip at depth 0, its disc shrinking to nothing, so the
+   outline is cut as drawn. Below it, the cavity at depth `h` is the
+   union of the discs `w(d(c) − h)` of the nodes deeper than `h`. Along
+   the bisector of a sharp corner of angle `θ`, with `S = sin(θ/2)`, the
+   node that reaches farthest into the corner at depth `h` is the one
+   whose ball meets the flank at `tan φ = S/t`, `u = ρ (1 − cos φ)` above
+   the tip, so the cavity's corner stands back from the ideal (the outline
+   inset by `h · t`, a V-bit's) by
+   `Δx = (u + δ) · t / S − ρ sin φ` along the bisector, `Δx · S` from
+   each wall, at every depth from just below the start plane down to
+   `F − u` (with a floor) or the corner's own groove bottom. `Δx` is 0 at
+   `θ` 180° and grows as the corner sharpens: Fine 0.47, 1.13, 3.19 mm at
+   90°, 60°, 30°; Ultra 0.16, 0.38, 1.06 mm. **What the user sees:** the
+   outline is crisp at the surface, and the corner's two walls meet in a
+   valley as round as the bit's tip instead of a crease: the soft look a
+   TBN gives a V-carve. A corner rounded by at least `w_t` (Corbin: "round
+   over all the corners … by at least the radius of the bit"; `w_t =
+   ρ cos β` is 0.99 `ρ` at 6.7°) has its medial axis end at the arc's
+   centre in the cone zone, so it is cut exactly as the virtual V-bit cuts
+   it down to that groove's own round bottom. The generator warns
+   `tapered_corners_softened` once per operation when the carve's regions
+   differ from their opening by `w_t` (`(X ⊖ w_t) ⊕ w_t`, round joins) by
+   more than the flatten tolerance, with the count of pieces, the worst
+   one's position and its distance (functional 49j). It is a warning,
+   not an error: a plain carve fits nothing, and the soft corner is what
+   the user chose the bit for.
+10. **Not in 3.6.** A **Photo V-Carve** with a TBN (recommended out; open
+    question 26): RasterCarve, the behaviour and golden reference, models
+    a V-bit, whose groove is as wide as it is deep times `2 tan(α/2)`, so
+    tone is depth. A TBN's groove widens as `√d` in the ball, so its tones
+    would need a width law of their own (darkness to width, then `w⁻¹` to
+    depth) with nothing to compare it against; and the TBN's narrow taper
+    makes grooves about a millimetre wide at 1.5 mm, where a 30° V-bit's
+    are 0.8 mm, so it buys little. S19 is unchanged: a Photo's tool is a
+    V-bit. A **countersink** (functional 44) with a TBN (out, as #445
+    recommends): the seat is conical by purpose, the screw head's angle,
+    which a 13.4° TBN is not. A **tapered mill with a flat or bull tip**
+    (Fusion `RE < DC/2`): a V-bit with a tip flat, which phase 3 does
+    not model (functional, "Out of scope"); Fusion import skips it. **3D
+    finishing** with a TBN is phase 7's.
+
+**Inlay fit** (`dc-cam::inlay`, `dc_project::inlay`). Both boards are cut
+with the one bit, so the female's walls and the plug's are the same
+cone wherever both are cut by the cone, exactly as with a V-bit; the
+ball changes three things, each with a rule.
+
+- **The walls mate on the cone.** With a flat floor, the female's wall
+  at depth `h` is the outline inset by `w(D) − w(D − h)`; the plug's, at
+  height `h` above its start plane, by `w(P + h) − w(P)`. Both are `h · t`
+  while `D − h ≥ h_t` and `P ≥ h_t`, so for `h` in `[0, D − G]` the fit
+  property of acceptance 57 holds exactly when **`G ≥ h_t`** (the
+  plug's top stays above the pocket's floor fillet) and **`P ≥ h_t`**
+  (the plug's wall near the visible surface is cone, not ball). Below
+  them, two warnings, not errors, say what the shortfall costs:
+  `inlay_glue_gap_below_ball` (the plug's top edge rides on the fillet:
+  it stands `e` proud, `w_ball(G + e) = (G + δ) · t`, and its walls open
+  by `e · t` at the surface: Fine with `G` 0.25 stands 0.43 mm proud with
+  a 0.05 mm gap; Ultra's `h_t` is 0.337 mm, so 0.25 costs 0.03 mm and
+  0.004 mm) and `inlay_plug_depth_below_ball` (the plug's wall near the
+  surface is the ball's, narrower than the pocket by up to `(P + δ) t −
+  w(P)` just below it: 0.13 mm for Fine at `P` 0.5). The narrow parts the
+  floor does not reach are the next rule's.
+- **The design is rounded for the bit.** Where the female carves no
+  floor, its cavity at depth `h` near a node of clearance `c` is exact
+  only down to `w⁻¹(c) − h_t`; below, the ball leaves wood the plug's
+  cone-cut point or fin would hit. The plug reaches `D − G`, so every
+  point of the female's design needs `c ≥ R_min = (D − G) · t + w_t`
+  (that is `w(D − G + h_t)`): the design must be **open** by `R_min`, a
+  union of discs of that radius. Unrounded, a sharp point holds the plug
+  up by `Δx · S / t` (step 9: 2.82 mm for a 90° point with the Fine bit,
+  0.94 mm with the Ultra; walls open by the lift times `t`), and a fin
+  narrower than `2 R_min` by up to `δ` (2.9 and 8.7 mm). On the male,
+  the surround's chain into an inward corner of the design (a notch, the
+  inside of a curve) or along a gap or hole narrower than `2 w_t` runs
+  in the ball zone, and the bit's body above the start plane reaches up
+  to `δ · t = ρ (1 − sin β) / cos β` (0.34 and 1.02 mm) past the plug's
+  wall: a gap just under the surface. So the design must also be
+  **closed** by `w_t`. A V-bit (`ρ` 0) needs neither: its point meets the
+  pocket's point, and V-bit inlays are unchanged.
+  The Inlay rounds the design itself, on both boards (recommended; open
+  question 25), as #479 merges near parts on both: after the near parts
+  are merged, `X′ = ((((X ⊖ R_min) ⊕ R_min) ⊕ w_t) ⊖ w_t)`, round joins,
+  flattened within the bit's wall tolerance (`dc_project::inlay::
+  rounded_for_bit`, which validation, the generator and the safety pass
+  call, as `male_band`). Where `X′` differs from `X` by more than the
+  flatten tolerance it warns `inlay_rounded_for_bit`, once for points and
+  once for notches, at the largest change, the place as drawn. Where the
+  rounding would change the design's topology, a part or hole removed, a
+  part split or two joined, it refuses: `InlayTooNarrowForBit` names the
+  place, the width there (twice the largest clearance of the lost piece)
+  and the width needed (`2 R_min` or `2 w_t`), so the user widens it,
+  lowers `D − G`, or picks a finer tip. Rounding a corner moves the
+  outline by at most `R_min (1/S − 1)` along its bisector, the visible
+  change the warning names; joining two letters is not rounding. With
+  the Ultra-High Detail bit and `D − G` 3 mm, `R_min` is 0.731 mm and
+  `w_t` 0.378 mm; with the Fine Detail bit 1.488 and 1.135 mm (the
+  chapter's table gives `D − G` 1.5, 2, 3).
+- **The band.** Every band formula of "Inlay" step 4 and 6 and of
+  "Drawn boundary" that is a V-bit's width reads the profile:
+  `P·s` → `w(P)` (the plug's foot), `(D − G + P)·s` → `w(D − G + P)` (the
+  flank at the stock top), `(D − G + 2P)·s` → `w(P) + w(D − G + P)` (the
+  open edge), so the edge pass fits when `M − w(P) ≥ 2r`, the edge is open
+  when also `M ≥ w(P) + w(D − G + P)`, `InlayBandEdgeVWall` names
+  `max(w(P) + 2 r_min, w(P) + w(D − G + P))`, the cut-out room is `M −
+  w(P) ≥ 2r` (open) or `M − 2 w(P) ≥ 2r` (V wall), its path `B ⊖ (w(P) + r)`
+  with a V wall, and the board room uses `w(P) + R_v` with `R_v` the cut
+  radius `w(L)`. `MaleBand` and `cut_out_margin_needed_mm` take the
+  profile. The cutting-height check is on the male's `D − G + P` against
+  `L`.
+
+**The taper's ±0.5°, and calibration.** An error in the bit's numbers
+moves the line its cone cuts. Both boards move together, so the walls
+still mate, but the plug **seats at another height**: with `Δw(d)` the
+error in the half-width at depth `d`, the plug sinks by `(Δw(P) +
+Δw(D)) / t` (rises when negative). On the cone, `Δw(d) = ((d + δ)/cos² β
+− ρ / sin β) · Δβ` for an angle error and `t · Δδ` for an apex offset
+error, so:
+
+| Error | Ultra-High Detail | Fine Detail | 15° V-bit | 60° V-bit |
+| --- | --- | --- | --- | --- |
+| taper ±0.5° (`D` 4, `G` 1, `P` 2) | ±0.40 mm | ±0.30 mm | ±0.41 mm | ±0.12 mm |
+| taper ±0.5° (`D` 2.5, `G` 0.25, `P` 1.5) | ±0.25 mm | ±0.15 mm | | |
+| tip radius ±0.05 mm (`Δδ = 7.57 Δρ`) | ±0.76 mm | ±0.76 mm | | |
+| cone line 0.02 mm wide (runout, wear) | 0.34 mm | 0.34 mm | 0.30 mm | 0.07 mm |
+
+The 1/t amplification (8.5×, 9.2× at 6.2°, 7.9× at 7.2°) is the V-bit
+inlay's at 15°, and the angle term is about the 15° V-bit's; what is new
+is the tip radius and the cone's offset, which a V-bit does not have:
+the plunge holes above put the bench's cone lines 0.2 to 0.25 mm off the
+model's, which alone would move a seat by 3.4 to 4.3 mm. The shift is the
+same everywhere in the design while every contact is on the cone, so it
+is exactly what Corbin's fit adjustment absorbs: the glue gap. Hence:
+
+- No new tool field in 3.6. The bit is entered as sold (tip radius) and
+  measured (taper); the chapter shows the two-depth plunge-hole
+  measurement of the taper, as the maintainer made it.
+- **A test fit is the calibration.** The chapter and the bench part make
+  a **coupon pair** first, a 20 mm rounded square at the job's `D`, `G`,
+  `P`, and adjust `glue_gap_mm` until it seats flush, before the real
+  inlay; the coupon's adjusted gap carries over to any design with the
+  same bit, depths and wood.
+- `G` should start at `h_t` plus the expected shift, so a sinking plug
+  stays clear of the fillet: the chapter recommends `G = h_t + 0.5 mm` for
+  the first coupon (0.84 mm Ultra, 1.51 mm Fine), not Corbin's 0 to 0.25
+  for a V-bit.
+- `check` prints the seat line for an Inlay with a TBN (CLI, above),
+  with the job's own `D` and `P`: the sensitivity is information for the
+  fit, not a fault, so it is not a warning.
+
+A measured calibration, an "effective tip radius" fitted to two plunge
+holes, would remove most of the shift before the first cut; it waits for
+the bench part to show whether the coupon is enough (open question 27).
+
 ### Safety pass (dc-gcode::material, S17–S19)
 
 `material.rs` re-derives each operation's material from the project, as
@@ -3154,6 +3681,19 @@ against the male board.
 S6 reads a groove's merged samples as the straight cuts they are: the
 toolpath holds the merged moves, so reproduction is move for move.
 
+**A tapered ball nose (3.6, #445).** S17 for a V-Carve or an Inlay cut
+with a TBN is the same rule on the bit's profile ("Algorithms → Tapered
+ball nose", step 7): the room is `dist − w(d)`, exact on the cone stretch
+by today's closed forms with the virtual apex and on the ball stretch by
+the stationary points of a polynomial of degree at most four, no
+sampling; the shank's limit is the flute length; an Inlay's regions are
+the design after `rounded_for_bit`, re-derived from the project with the
+same pure function, never a generator; the band's floor ring and the
+cut-out's path read `w(P)` and `w(D − G + P)`. S7 holds every cut of a
+TBN to its cut radius `w(L)`, the width at the top of its flutes, since
+`diameter_mm` is only its ball. A Photo's or a countersink's TBN never
+reaches the pass (validation refuses it), and S18 and S19 are unchanged.
+
 ### Golden corpus
 
 **PureCutCNC cases** (`tools/parity/cases/*.camj`, captured as phase 2's):
@@ -3275,9 +3815,13 @@ crates/dreamcarve/src/{init.rs (+ pictures), image.rs (image add/list), cli.rs (
 tools/parity/{cases/vcarve-*.camj, cases/vcarve-*.notes.md, photo/{capture.py, test_capture.py, photo-raster-*.notes.md, README.md}, prep-fixture.ts (the 3.4 drawings), photo-fixtures.ts (gradient.png and the colour JPEGs, #645; ramp.png and radial.png, #647)}
 tests/golden/{vcarve-medial-rect, vcarve-medial-square, vcarve-medial-circle, vcarve-medial-ring, vcarve-medial-l, vcarve-medial-text-rag, vcarve-medial-triangle, vcarve-offset-square, photo-raster-inch, photo-raster-metric}/
 tests/fixtures/{sign.svg, dc-inlay.svg, dc.dcv, photo/{ramp.png, radial.png, gradient.png, colour.jpg, colour-progressive.jpg}, vcarve/{README.md (font notice), rag.json, g.json, ga-small.json, ga-large.json}, prep/{README.md (the calibration sweep), messy.svg, clean.svg, ring-cross.svg, compass.svg, compass-regions.svg, speckled-dc.svg, jagged-dc.svg}}
-crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27}/sample.dcv
+crates/dc-project/tests/fixtures/dcv/{v19,v20,v21,v22,v23,v24,v25,v26,v27,v28}/sample.dcv
 crates/dreamcarve/tests/{fixtures,expected}/inlay-migration/ (the two-file pairs of formats 23 and 24 and their programs, #498)
+3.6 (#445): crates/dc-geometry/src/profile.rs (BitProfile, least_room, the ball's polynomial roots), crates/dc-project/src/{model.rs (+ ToolKind::TaperedBallNose, Tool::{tip_radius_mm, cut_radius_mm, cutting_height_mm, carve_profile}), migrate.rs (+ v27_to_v28), inlay.rs (+ rounded_for_bit; MaleBand on the profile)}, crates/dc-library/src/{library.rs (version 3), fusion.rs (+ tapered mill)}, crates/dc-cam/src/{vcarve.rs, vcarve/{medial.rs, floor.rs, offset.rs, clearing.rs, cone.rs} (on the profile), inlay.rs, heightfield.rs (+ TaperedBall)}, crates/dc-gcode/src/material/cone.rs (on the profile), crates/dc-project/tests/fixtures/dcv/v28/{sample.dcv, tapered.dcv}, tests/fixtures/{dc-tbn.dcv, tbn-coupon.svg}
 ```
+
+Sub-phase 3.6 adds no dependency: the quartic is solved in closed form
+in `dc-geometry::profile`, not by a polynomial crate.
 
 New dependencies, all `[workspace.dependencies]` with
 `default-features = false`:
@@ -3437,6 +3981,69 @@ and committed as SVG; the numbers in the assertions are acceptance 61a to
 - `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`.
 - `cli::line_art_to_inlay_end_to_end` (61k: `compass-art.svg` → `--regions` → the oval appended → `init` → Inlay with the oval as boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `cli::dc_boundary_fixture_is_the_frame_as_boundary`, `quick_start::inlay_boundary_chapter_runs`, `quick_start::line_art_chapter_runs` (the chapter's commands).
 
+
+**Sub-phase 3.6: the tapered ball nose.** No reference program exists,
+so every test is analytic: a number derived in "Algorithms → Tapered ball
+nose" and asserted to the stated tolerance, or a property against a
+dense brute-force evaluation that the exact answer must never exceed.
+The bench bits are the fixtures' (Fine `ρ` 1.143, Ultra `ρ` 0.381, both
+6.7°, `L` 19.05); the numbers are acceptance 61t to 61z's.
+
+*dc-geometry — profile (slice 27b)*
+- `profile::v_bit_half_width_is_depth_times_slope` (and `height_mm` its inverse; every V-bit value bit-for-bit what `d · tan(α/2)` gives, so V-bit programs cannot move).
+- `profile::bench_bits_derived_values` (`h_t` 1.0096 / 0.3365, `w_t` 1.1352 / 0.3784, `δ` 8.6538 / 2.8846, `w(19.05)` 3.2544 / 2.5767, within 1e-4).
+- `profile::tapered_half_width_is_ball_then_cone` (Ultra: `w(0.1)` = √(0.0762 − 0.01) = 0.2573, `w(2)` = 0.5738, within 1e-4), `profile::tapered_half_width_is_c1_at_the_tangent` (both one-sided derivatives `t` within 1e-9 at `h_t`), `profile::height_inverts_half_width` (property, `proptest`: `w⁻¹(w(d)) = d` within 1e-9 on `[0, 40]`), `profile::surface_rises_no_faster_than_the_flank` (property: `(w⁻¹)′ ≤ 1/t`).
+- `profile::least_room_on_the_cone_is_the_virtual_v_bit` (a move with `d ≥ h_t` throughout: the room equals today's V-bit room with the start plane lowered by `δ`, within 1e-12).
+- `profile::least_room_parallel_to_a_wall_is_distance_less_width` (constant `d` in the ball: `dist − w(d)` exactly).
+- `profile::least_room_against_a_line_is_the_quadratic_root` (a descent across the ball zone toward a straight wall whose least room is interior: the closed form within 1e-12 of the analytic stationary point).
+- `profile::least_room_against_a_point_and_an_arc` (the quartic cases: a wall end, an arc seen from outside and from inside, each with an interior minimum; the result matches a 10⁶-sample brute force to 1e-9 and is never above it).
+- `profile::least_room_is_never_above_a_dense_sampling` (property, the M1 guarantee: random moves through the ball and cone zones, random segment and arc walls; the exact least room ≤ the least of 10⁴ samples + 1e-12, and ≥ it − 1e-6 from the sampling's own error).
+- `profile::least_room_splits_at_the_tangent_height`, `profile::least_room_at_the_start_plane_end_is_the_distance` (`d` 0 at an end: `r′` infinite there, the end decides).
+
+*dc-project and dc-library — the tool and format 28 (slice 27a)*
+- `serialize::tapered_ball_nose_round_trips`, `serialize::tapered_ball_nose_is_an_object_with_taper_and_flute_length`, `serialize::tapered_ball_nose_is_format_28`, `serialize::flute_length_reads_inches`.
+- `migrate::v27_to_v28_bumps_the_version_only`, `migrate::v27_file_with_a_tapered_ball_nose_fails`, `migrate::version_27_fixture_loads`, `migrate::version_28_fixtures_load`, `migrate::a_v27_project_exports_the_same_programs`.
+- `validate::tapered_ball_nose_taper_out_of_range_is_error` (0, −1, 45.1, NaN; 45 passes; located at the field, not `tool_out_of_range`), `validate::tapered_ball_nose_flute_must_pass_the_ball` (`L` ≤ `h_t` is an error), `validate::tapered_ball_nose_on_photo_is_v_carve_needs_v_bit`, `validate::tapered_ball_nose_countersink_is_error`, `validate::tapered_ball_nose_v_carve_is_refused_until_built` (slice 27a only; 27c turns it into `…_is_accepted`).
+- `tool::tip_radius_is_half_the_ball_diameter`, `tool::cut_radius_is_the_width_at_the_flute_top` (Fine 3.254, Ultra 2.577), `tool::v_bit_cut_radius_is_half_its_diameter` (unchanged), `tool::cutting_height_is_the_flute_length_or_the_cone`, `tool::describe_names_a_tapered_ball_nose`.
+- `library::version_2_library_loads_as_version_3`, `library::version_3_is_written`, `library::tapered_ball_nose_is_validated_on_add`.
+- `cli::tools_list_shows_a_tapered_ball_nose` (the line of "CLI").
+
+*dc-cam — carving with a TBN (slice 27c)*
+- `vcarve::tapered_bar_centreline_is_the_inverse_width` (a 20 × 1.5 mm bar with the Ultra bit: centreline Z −3.500 ± 0.01; every cutting point's depth `w⁻¹(wall distance)` ± 0.02), `vcarve::tapered_hairline_is_cut_by_the_ball` (a 20 × 0.6 mm bar: Z −0.146 ± 0.005).
+- `vcarve::tapered_corners_are_reached_at_the_surface` (each corner of the 1.5 mm bar reached at Z ≥ −0.01), `vcarve::tapered_cuts_pass_the_exact_cone_test` (`assert_safe` on the sign's lettering, the "DC" letters and the star, with both bits).
+- `vcarve::tapered_flute_length_bounds_the_engagement` (20 × 5 mm bar with the Ultra bit: 18.40 mm exports; 20 × 6 mm: `VBitConeExceeded` naming 22.65 and 19.05).
+- `vcarve::tapered_floor_inset_is_the_width_at_the_flat_depth` (30 × 10 mm, Fine, `F` 2: the trace is the 27.497 × 7.497 mm rectangle at Z −2 within 0.01), `vcarve::tapered_floor_has_the_ball_fillet` (heightfield: the wall is the cone down to Z −0.990 and the ball's arc below it, within 0.02), `vcarve::tapered_floor_ridge_is_the_ball_scallop` (`step_over_fraction` 0.4: ridge 0.116 ± 0.005; the reported value is the same), `vcarve::tapered_floor_covers_the_floor_region`.
+- `vcarve::tapered_clearing_pass_takes_the_floor_inset` (the 3.175 mm end mill's footprint inside the 27.497 × 7.497 floor), `project::tapered_v_carve_floor_clears_its_start_plane` (`cleared_start_plane` with `w(F)`).
+- `vcarve::tapered_offset_rings_follow_the_profile` (6 mm square, 0.2 mm step, Ultra: ring `k` at Z `−w⁻¹(0.2k)` ± 0.01), `vcarve::tapered_offset_links_in_the_ball_retract`.
+- `vcarve::tapered_corners_softened_warns_once` (the 20 × 20 square: count 4, change at a corner, `radius_mm` 0.378 for the Ultra; a square with 0.5 mm corner radii: no warning), `vcarve::tapered_corner_setback_matches_the_formula` (heightfield of a 90° wedge: the cavity's corner at Z −2 stands 0.156 ± 0.01 mm (Ultra) and 0.469 ± 0.01 mm (Fine) back along the bisector).
+- `vcarve::v_bit_programs_are_unchanged` (`golden::vcarve_*`, `golden::phase_1_and_2_cases_are_unchanged`, `cli::sign_exports_four_programs_in_tool_run_order` byte for byte).
+- `heightfield::tapered_tool_drops_as_ball_then_cone` (a plunge: the cell at radius 0.2 mm is `w⁻¹(0.2)` above the tip; at 1 mm, the cone's), `heightfield::tapered_descending_move_is_exact` (against a 10⁵-sample brute force, never above it).
+- `validate::tapered_ball_nose_is_accepted_by_v_carve_and_inlay`.
+
+*dc-gcode — S17 with a TBN (slice 27d)*
+- `safety::tapered_cut_touching_a_wall_passes`, `safety::tapered_ball_zone_overlap_between_samples_is_refused` (the M1 case: a hand-written descent in the ball zone whose overlap peaks between the old 1 mm sample points is `ConeOffMaterial` with the worst point within 1e-6 of the analytic one), `safety::tapered_arc_wall_overlap_is_refused_exactly` (inside and outside an arc), `safety::tapered_virtual_v_bit_overlap_on_the_cone_is_refused`.
+- `safety::tapered_shank_is_the_flute_length` (`ConeHeightExceeded` naming 19.05), `safety::tapered_stock_edge_reads_the_width_at_the_flute_top` (S7 with `w(L)`, not the ball's radius).
+- `safety::generated_tapered_carves_pass_s17` (the 27c fixtures exported with both bits), `safety::s17_uses_no_generator` unchanged.
+
+*dc-cam and dc-gcode — Inlay with a TBN (slice 27e)*
+- `inlay::tapered_female_equals_a_flat_depth_v_carve` (move for move).
+- `inlay::tapered_walls_mate` (the fit property: for `h` in `[0, D − G]`, the female's inset `w(D) − w(D − h)` and the plug's `w(P + h) − w(P)` read from the toolpaths agree within 0.02 mm, on a rounded star with both bits, `D` 4, `G` 1.5, `P` 2).
+- `inlay::tapered_plug_seats_flush` (heightfield seat within 0.05 mm: the rounded star and the "DC" letters after `rounded_for_bit`, both bits, with and without a clearing pass and a cut-out).
+- `inlay::glue_gap_below_the_ball_warns` (Fine, `G` 0.25: `inlay_glue_gap_below_ball` naming 1.010, lift 0.432, wall gap 0.051; the seat check measures the lift within 0.05), `inlay::plug_depth_below_the_ball_warns` (Fine, `P` 0.5: 0.130).
+- `inlay::sharp_point_is_rounded_on_both_boards` (the star: both boards' designs are the same rounded outline, the male's mirrored; `inlay_rounded_for_bit` names a tip and `R_min (1/S − 1)`), `inlay::narrow_notch_is_closed_on_both_boards`, `inlay::rounded_design_is_open_and_closed` (property: the result's opening by `R_min` and closing by `w_t` move it by no more than the flatten tolerance).
+- `inlay::part_too_narrow_for_the_bit_is_an_error` (a 1 mm stroke, Ultra, `D − G` 3: `InlayTooNarrowForBit` naming 1.000 and 1.462), `inlay::gap_too_narrow_for_the_bit_is_an_error` (two parts 0.5 mm apart: 0.757 needed), `inlay::v_bit_inlay_is_not_rounded` (`cli::lettered_inlay_female_and_male_export` byte for byte).
+- `inlay::tapered_band_reads_the_profile` (open edge exactly when `M − w(P) ≥ 2r` and `M ≥ w(P) + w(D − G + P)`; `InlayBandEdgeVWall`'s margin; the cut-out's room and path), `inlay::tapered_male_engagement_is_held_to_the_flute_length`, `validate::tapered_inlay_engagement_beyond_the_flute_is_error`.
+- `inlay::seat_line_reports_the_sensitivity` (`D` 4, `G` 1, `P` 2: Ultra 0.40 and 0.76, Fine 0.30 and 0.76), `inlay::seat_shift_matches_the_formula` (heightfield: a model 0.5° off the cutting bit's moves the coupon's seat by the table's value within 0.03).
+- `safety::tapered_male_open_edge_is_held_at_the_stock_top`, `safety::tapered_inlay_regions_are_the_rounded_design` (a program exported for the unrounded design fails S17), `safety::generated_tapered_inlays_pass_s17_and_s9`.
+- `stress::tapered_inlays_seat` (the #464 sweep with both bits on designs it rounds; a seed whose design is refused as too narrow counts as a pass of the refusal, not as a seat).
+
+*Fusion import (slice 27f)*
+- `fusion::tapered_ball_mill_imports_as_tapered_ball_nose` (`DC` 0.03 in, `RE` 0.015 in, `TA` 6.7, `LCF` 0.75 in → `diameter_mm` 0.762, `taper_angle_deg` 6.7, `flute_length_mm` 19.05), `fusion::tapered_ball_mill_in_millimetres`.
+- `fusion::tapered_mill_with_a_flat_or_bull_tip_is_skipped` (`RE` 0, or `RE < DC/2` beyond 1e-6: `SkipReason::TaperedTipNotBall`), `fusion::tapered_mill_without_a_flute_length_is_skipped` (`SkipReason::NoFluteLength`), `fusion::tapered_mill_without_a_taper_is_skipped` (`NoTaperAngle`), `fusion::tapered_mill_out_of_range_is_invalid` (`TA` 50: `SkipReason::Invalid`).
+- `fusion::unsupported_types_are_skipped` updated: `tapered mill` is no longer in the list.
+
+*dreamcarve (integration, slice 27g)*
+- `cli::tapered_carve_exports` (`tests/fixtures/dc-tbn.dcv`'s carve), `cli::tapered_inlay_exports_both_boards` (its inlay pair, every program passing S1 to S19, the seat line printed), `cli::tapered_coupon_exports`, `cli::photo_with_a_tapered_ball_nose_is_refused`, `quick_start::tapered_ball_nose_chapter_runs`.
 
 ## Sub-phases
 
@@ -3716,17 +4323,98 @@ Goal: a photograph carved.
 27. **3.5 bench check.** Test part 4 cut and recorded. Exit: acceptance
     58 to 60 green.
 
-### 3.6 Tapered Ball Nose
+### 3.6 Tapered Ball Nose (format v28)
 
-Specified separately (#445), with its own spec and slices; its format
-number, if it needs one, follows Photo V-Carve's. Nothing in 3.4 or 3.5
-depends on it.
+Specified in #445 (spec 2026-11-13; "Data model → Tapered ball nose",
+"Algorithms → Tapered ball nose", functional 49h to 49l). Slice numbers
+continue from 27 with letters, as 3.4's did from 21, so the Release
+slices keep 28 and 29.
+
+Goal: a small carve and an inlay pair cut with the bench's tapered ball
+nose bits, after a coupon fit. Slices 27a and 27b have no dependency on
+each other and start at once; 27f needs only 27a.
+
+27a. **Format v28 and the tool.** `ToolKind::TaperedBallNose`, its
+    serialisation and inch input, `v27_to_v28`, `CURRENT_VERSION` 28,
+    the `v28` fixtures, `tapered_ball_nose_range`, `Tool::tip_radius_mm`,
+    `cut_radius_mm` and `cutting_height_mm`, `ToolKind::describe`, the
+    library's version 3 and `validate_tool`, `tools list`. Every
+    `diameter_mm / 2.0` that is a cut's swept radius goes through
+    `cut_radius_mm` (no V-bit or end-mill program changes). Until 27c,
+    validation keeps a TBN off V-Carve and Inlay
+    (`v_carve_needs_v_bit`), so `check` and `export` refuse it there
+    with a typed error and no half-built motion. Tests: the dc-project and
+    dc-library group of the 3.6 test plan. [3.5]
+27b. **The profile and the exact room.** `dc-geometry::profile`:
+    `BitProfile` and `least_room` (the V-bit's closed forms moved in
+    unchanged, the virtual apex for the cone, the ball's polynomial
+    stationary points). Pure; no caller changes yet. Tests: the
+    dc-geometry profile group. [none]
+27c. **Carving with a TBN.** `Tool::carve_profile` at every V site of
+    `dc-cam` and `dc-project` (`checked_v_bit`, `inlay::v_bit_of`,
+    `cleared_start_plane`'s floor); the medial depth law, simplify and
+    fit on the profile, the stay-down link test through `least_room`;
+    the floor inset, fillet, V-bit floor step-over and ridges
+    (`floor_ridges`), clearing reach; the offset rings and their links;
+    the cutting height; `cone_in_material` on the profile;
+    `tapered_corners_softened`; the heightfield's `TaperedBall`; validation
+    accepting a TBN on V-Carve (and Inlay, whose generator is 27e's: until
+    then an Inlay with a TBN is refused by the generator with
+    `VCarveNeedsVBit`). Tests: the dc-cam carving group. [27a, 27b]
+27d. **S17 for a TBN.** `material::Cone` on the profile through
+    `least_room`, the shank on the cutting height, S7 on the cut radius.
+    Tests: the dc-gcode S17 group. [27b, 27c]
+27e. **Inlay with a TBN.** `dc_project::inlay::rounded_for_bit` (after
+    `merge_near_parts`), `InlayTooNarrowForBit`, `inlay_rounded_for_bit`,
+    `inlay_glue_gap_below_ball` and `inlay_plug_depth_below_ball`
+    (validation and generator), `MaleBand` and the cut-out on the profile,
+    the seat line in `check`, the safety pass's Inlay regions through
+    `rounded_for_bit`, the stress harness's TBN cases. Tests: the Inlay
+    group of the 3.6 test plan. [27c, 27d]
+27f. **Fusion import of tapered mills.** `tapered mill` with `RE = DC/2`
+    → `TaperedBallNose` (`TA` per side as written, `LCF` the flute
+    length, in the file's unit), others skipped with
+    `TaperedTipNotBall`, `NoFluteLength`; the module docs' mapping and
+    the tool-library chapter's table. The `TA` reading is checked against
+    the published schema and, where the maintainer has one, IDC
+    Woodcraft's own Fusion library entry for these bits, as the chamfer
+    mill's `TA` was (phase 2 open question 10). Tests: the Fusion group.
+    [27a]
+27g. **TBN docs and fixtures.** Tool library (the TBN, per side, the
+    ball's diameter, flute length, measuring the taper with two plunge
+    holes, Fusion), V-Carve (carving with a TBN: depth law, fillet,
+    soft corners), Inlay (a TBN pair: the corner rule and the rounding,
+    `G` and `P` against `h_t`, the coupon and the seat line), Warnings
+    (49l), Safety (S17 with a TBN), The project file (v28); the
+    fixtures `tests/fixtures/dc-tbn.dcv` and
+    `tests/fixtures/tbn-coupon.svg`; the quick start's section "Carving
+    and inlaying with a tapered ball nose", generic (no bench values in
+    it). Tests: the integration group of the 3.6 test plan. [27c, 27e,
+    27f]
+27h. **3.6 bench check.** Test part 5 (functional, "Tapered ball nose
+    carve and inlay"): the coupon fitted first and its gap recorded, then
+    the carve and the pair, cut and recorded; the seat measured against
+    the seat line's prediction, which settles open question 27. Exit:
+    acceptance 61t to 61z green.
+
+Phase 4 follows the model (its specs are drafts, and these are listed
+for its next review rather than edited here): capability 63's type list
+gains "tapered ball nose (taper per side, flute length; diameter is the
+ball's)" with its own fields; the tools and library tables' Angle column
+labels the TBN's angle per side ("6.7°/side") beside a V-bit's included
+one, since one column holding 90° and 6.7° is the mix-up Corbin warns
+of; `docs/specs/phase-4/mockups/render.py`'s library row "Tapered ball
+nose 0.015" changes its type from "Ball nose" to "Tapered ball nose"
+(its Ø 0.762 and 6.7° already match this model) and the SVG is
+re-rendered; the V-Carve and Inlay panels' tool pickers offer TBNs and
+show the seat line; the Photo V-Carve's does not.
 
 ### 3.7 Release
 
 28. **Docs sweep.** `CONTEXT.md` terms (Flat Depth, Start Depth, Clearing,
     Inlay, Glue Gap, Plug Depth, Photo V-Carve, Bitmap, Countersink; Image
-    Prep, Ink, Piece, Speck and Boundary came with the 3.4 spec), the
+    Prep, Ink, Piece, Speck and Boundary came with the 3.4 spec, Tapered
+    Ball Nose with 3.6's), the
     Porting and Golden-corpus contributing chapters, Crate map, Tool
     library (V-bit angles, cone height). [all]
 29. **Exit-criteria audit and tag.** The audit as phase 2's (#255), the
@@ -3789,6 +4477,27 @@ maintainer may want a say in:
 - **`design_findings` on every instance** for `check`, including ones no
   operation targets. Recommended; a project's shapes are the user's design
   whether or not an operation uses them yet.
+
+**Sub-phase 3.6 (2026-11-13).** The maintainer's questions are in the
+functional spec's table "Sub-phase 3.6: open for the maintainer's
+review" (25 to 31: rounding the design for the bit, Photo V-Carve,
+calibration, the angle convention, `diameter_mm` as the ball's, the
+45° bound, glue gap and plug depth below the ball as warnings). The design
+adds these, which the implementer can settle in the slice:
+
+- **Ferrari against a root isolator** for the ball's quartic (step 7).
+  Closed form is recommended, with two Newton steps on the polynomial and
+  the property test against dense sampling as the guard; a Sturm-sequence
+  isolator with bisection is the fallback if the closed form proves
+  unstable on near-double roots, and is equally exact (it counts roots, it
+  does not sample `g`).
+- **One shared `least_room`** in `dc-geometry` for the generator and the
+  safety pass, as `segment_distance_mm` is shared today. The safety pass
+  re-derives the material, not the arithmetic; two copies of a quartic
+  solver would be two places for the same bug.
+- **The V-Carve's corner warning threshold**, `w_t`, rather than the
+  Inlay's `R_min`: a plain carve has no plug, and `w_t` is the radius
+  below which the tip, not the flank, shapes the corner.
 
 **Decided earlier.** Two points the design decided and the
 functional spec records (both edited in the same PR):
