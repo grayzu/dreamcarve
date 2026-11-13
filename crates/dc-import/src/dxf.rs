@@ -1712,6 +1712,52 @@ mod tests {
         }
     }
 
+    /// A square LWPOLYLINE and a CIRCLE in an R2018 (`AC1032`) file, one
+    /// group code or value per line, LF line endings.
+    const SQUARE_AND_CIRCLE_DXF: &str = "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n\
+        9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+        0\nLWPOLYLINE\n8\nsquare\n90\n4\n70\n1\n10\n0.0\n20\n0.0\n10\n20.0\n20\n0.0\n\
+        10\n20.0\n20\n20.0\n10\n0.0\n20\n20.0\n\
+        0\nCIRCLE\n8\ncircle\n10\n40.0\n20\n10.0\n30\n0.0\n40\n5.0\n\
+        0\nENDSEC\n0\nEOF\n";
+
+    /// `text` with every line ending replaced by the one `ending` returns
+    /// for line `n` (counting from 0).
+    fn with_line_endings(text: &str, ending: impl Fn(usize) -> &'static str) -> Vec<u8> {
+        text.lines()
+            .enumerate()
+            .flat_map(|(n, line)| [line, ending(n)])
+            .collect::<String>()
+            .into_bytes()
+    }
+
+    /// Issue #667: DXF lines end at `\r\n`, `\n` or a lone `\r` (old Mac
+    /// style), mixed within one file. The same drawing written with each
+    /// imports to the same shapes, and no `\r` reaches a value.
+    #[test]
+    fn reads_lf_crlf_and_cr_line_endings() {
+        let lf = SQUARE_AND_CIRCLE_DXF.as_bytes();
+        let expected = import(lf);
+        assert_eq!(names(&expected.0), ["square", "circle"]);
+        assert!(expected.1.is_empty(), "{:?}", expected.1);
+        let variants: [(&str, Vec<u8>); 3] = [
+            ("CRLF", with_line_endings(SQUARE_AND_CIRCLE_DXF, |_| "\r\n")),
+            ("CR", with_line_endings(SQUARE_AND_CIRCLE_DXF, |_| "\r")),
+            (
+                "mixed",
+                with_line_endings(SQUARE_AND_CIRCLE_DXF, |n| ["\r", "\r\n", "\n"][n % 3]),
+            ),
+        ];
+        for (what, bytes) in variants {
+            assert!(!bytes.contains(&b'\n') || what != "CR", "{what}");
+            assert_eq!(import(&bytes), expected, "{what} line endings");
+        }
+        // A file that ends without a line ending, after a lone CR line.
+        let unterminated = with_line_endings(SQUARE_AND_CIRCLE_DXF.trim_end(), |_| "\r");
+        let unterminated = &unterminated[..unterminated.len() - 1];
+        assert_eq!(import(unterminated), expected, "no final line ending");
+    }
+
     #[test]
     fn parser_rejects_odd_line_count_and_bad_codes() {
         let reject = |bytes: &[u8], what: &str| {

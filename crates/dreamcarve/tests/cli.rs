@@ -5702,6 +5702,93 @@ fn has_at_most_six_decimals(written: &str) -> bool {
         .is_none_or(|(_, decimals)| decimals.len() <= 6)
 }
 
+/// A square LWPOLYLINE and a CIRCLE in an R2018 (`AC1032`) file, as the
+/// lines of an ASCII DXF, for writing with any line ending.
+const SQUARE_AND_CIRCLE_DXF_LINES: &[&str] = &[
+    "0",
+    "SECTION",
+    "2",
+    "HEADER",
+    "9",
+    "$ACADVER",
+    "1",
+    "AC1032",
+    "9",
+    "$INSUNITS",
+    "70",
+    "4",
+    "0",
+    "ENDSEC",
+    "0",
+    "SECTION",
+    "2",
+    "ENTITIES",
+    "0",
+    "LWPOLYLINE",
+    "8",
+    "square",
+    "90",
+    "4",
+    "70",
+    "1",
+    "10",
+    "0.0",
+    "20",
+    "0.0",
+    "10",
+    "20.0",
+    "20",
+    "0.0",
+    "10",
+    "20.0",
+    "20",
+    "20.0",
+    "10",
+    "0.0",
+    "20",
+    "20.0",
+    "0",
+    "CIRCLE",
+    "8",
+    "circle",
+    "10",
+    "40.0",
+    "20",
+    "10.0",
+    "30",
+    "0.0",
+    "40",
+    "5.0",
+    "0",
+    "ENDSEC",
+    "0",
+    "EOF",
+];
+
+/// Issue #667: `init` on a DXF whose lines end in a lone carriage return
+/// (old Mac style) exits 0 and writes the same project, byte for byte, as
+/// on the same drawing with LF line endings.
+#[test]
+fn init_reads_a_cr_only_dxf() {
+    let dir = work_dir("init_reads_a_cr_only_dxf");
+    let mut projects = Vec::new();
+    for (name, ending) in [("lf", "\n"), ("cr", "\r")] {
+        let sub = dir.join(name);
+        std::fs::create_dir_all(&sub).expect("dir created");
+        let text: String = SQUARE_AND_CIRCLE_DXF_LINES
+            .iter()
+            .flat_map(|line| [*line, ending])
+            .collect();
+        std::fs::write(sub.join("part.dxf"), text).expect("dxf written");
+        let out = run(&sub, &["init", "part.dxf"]);
+        assert_eq!(out.status.code(), Some(0), "init {name}: {}", stderr(&out));
+        projects.push(std::fs::read(sub.join("part.dcv")).expect("project written"));
+    }
+    assert_eq!(projects[0], projects[1], "CR and LF give the same project");
+    let project = load_file(&dir.join("cr/part.dcv")).project;
+    assert_eq!(definition_names(&project), ["square", "circle"]);
+}
+
 /// #389: `init` writes the SVG's shapes with every coordinate rounded to
 /// 6 decimals of a millimetre; before the fix the plaque had 88 such as
 /// `10.00000027815501`.
