@@ -3264,7 +3264,8 @@ the two it needs.
    - **Corner reach** (`CornerReach::Every`, #456) and the tip margin and
      written grid (#463, #469, #499) are geometry of the tip path and
      unchanged; the written-grid corner limit `N` (#559) reads `t` and
-     never binds an Inlay with a TBN, whose design is rounded (step 6).
+     never binds an Inlay with a TBN, whose design is rounded ("Inlay
+     fit").
 2. **Flat floor** (step 6). The floor regions are the carve's regions
    inset by `w(F)` (`floor_regions(regions, w(F))`), traced with the tip
    at `F`: the flank meets the outline at the start plane, and the wall is

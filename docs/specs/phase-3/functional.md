@@ -827,7 +827,7 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  outside (0°, 45°] or a flute length not past the ball. A TBN is accepted
  by V-Carve and Inlay; a Photo V-Carve refuses it with
  `v_carve_needs_v_bit` and a countersink with `countersink_needs_v_bit`
- (49i). Format 28 adds the cutter and changes nothing else: an earlier
+ (see Out of scope). Format 28 adds the cutter and changes nothing else: an earlier
  file loads and exports the same bytes. The tool library's file format
  becomes version 3 for the same reason. `tools list` prints `tapered ball
  nose, tip 0.381 mm (0.762 mm ball), 6.7° per side, 19.050 mm flutes`.
