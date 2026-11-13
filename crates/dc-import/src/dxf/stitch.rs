@@ -46,6 +46,34 @@ pub(super) fn dedupe(shapes: Vec<Shape>) -> Vec<Shape> {
     kept
 }
 
+/// Most vertex comparisons the HATCH duplicate rule makes in one import.
+/// Past it every remaining loop is taken as distinct: the import never
+/// fails for it, it only may keep a duplicate that nesting then drops.
+pub(super) const MAX_DUPLICATE_COMPARISONS: usize = 20_000_000;
+
+/// The work [`drop_hatch_duplicates`] has done in one import, against
+/// [`MAX_DUPLICATE_COMPARISONS`].
+#[derive(Debug, Default)]
+pub(super) struct MatchBudget {
+    comparisons: usize,
+}
+
+impl MatchBudget {
+    pub(super) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Comparisons made so far.
+    pub(super) fn comparisons(&self) -> usize {
+        self.comparisons
+    }
+
+    /// Whether the budget is used up.
+    pub(super) fn exhausted(&self) -> bool {
+        self.comparisons >= MAX_DUPLICATE_COMPARISONS
+    }
+}
+
 /// Removes from each HATCH every boundary loop that repeats a closed shape
 /// drawn by another entity (#668): an associative hatch's boundary is
 /// often also drawn as its own LWPOLYLINE, and the drawn shape is kept. A
@@ -60,7 +88,9 @@ pub(super) fn drop_hatch_duplicates(
     shapes: Vec<Shape>,
     tolerance_mm: f64,
     same_layer: bool,
+    budget: &mut MatchBudget,
 ) -> (Vec<Shape>, Vec<String>) {
+    let _ = budget;
     // The drawn closed shapes, by vertex count and the grid cell of their
     // bounds' lower corner, so a hatch is compared with the few that could
     // match rather than with every shape.

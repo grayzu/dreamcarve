@@ -433,10 +433,12 @@ pub fn import_dxf(
     // first on its own layer, so the layer list counts what each layer
     // imports alone, then across the layers kept.
     let duplicate_mm = join_mm.max(EPS_MM);
-    let (shapes, removed) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, true);
+    let mut budget = stitch::MatchBudget::new();
+    let (shapes, removed) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, true, &mut budget);
     let layers = layer_list(&shapes, skipped_per_layer);
     let shapes: Vec<Shape> = shapes.into_iter().filter(|s| kept(&s.layer)).collect();
-    let (shapes, removed_across) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, false);
+    let (shapes, removed_across) =
+        stitch::drop_hatch_duplicates(shapes, duplicate_mm, false, &mut budget);
     let duplicates = removed.iter().filter(|layer| kept(layer)).count() + removed_across.len();
     if duplicates > 0 {
         warnings.push(ImportWarning::DxfHatchBoundaryDuplicate { count: duplicates });
@@ -2760,6 +2762,67 @@ mod tests {
                 "{err:?}"
             );
         }
+    }
+
+    /// The duplicate rule's work is bounded (#668 security review): 300
+    /// drawn circles of 2000 vertices and 300 hatch loops that match each
+    /// of them in all but one vertex would cost about 700 million vertex
+    /// comparisons; the rule stops at its budget, counted, and then treats
+    /// the loops as distinct, never failing the import. A real duplicate
+    /// is still found while the budget lasts.
+    #[test]
+    fn duplicate_matching_is_bounded_on_many_large_loops() {
+        let n: u32 = 2000;
+        let circle = |nudge: f64| {
+            let vertices = (0..n)
+                .map(|k| {
+                    let t = TAU * f64::from(k) / f64::from(n);
+                    let r = if k == n - 1 { 100.0 + nudge } else { 100.0 };
+                    dc_geometry::Vertex::line(r * t.cos(), r * t.sin())
+                })
+                .collect();
+            Polyline::new(vertices, true)
+        };
+        let drawn = circle(0.0);
+        let near_miss = circle(0.03);
+        let mut shapes: Vec<entities::Shape> = (0..300)
+            .map(|_| entities::Shape::plain("0".into(), drawn.clone()))
+            .collect();
+        shapes.extend((0..300).map(|_| entities::Shape {
+            layer: "0".into(),
+            polyline: near_miss.clone(),
+            inner: Vec::new(),
+            hatch: true,
+        }));
+        let mut budget = stitch::MatchBudget::new();
+        let (kept, removed) = stitch::drop_hatch_duplicates(shapes, 0.01, true, &mut budget);
+        assert!(removed.is_empty(), "no loop matches");
+        assert_eq!(kept.len(), 600);
+        assert!(
+            budget.comparisons() <= stitch::MAX_DUPLICATE_COMPARISONS + 4 * n as usize,
+            "{} comparisons",
+            budget.comparisons()
+        );
+        assert!(budget.exhausted(), "the crafted case runs the budget out");
+
+        // With budget left, a true duplicate is found.
+        let shapes = vec![
+            entities::Shape::plain("0".into(), drawn.clone()),
+            entities::Shape {
+                layer: "0".into(),
+                polyline: drawn.reversed(),
+                inner: Vec::new(),
+                hatch: true,
+            },
+        ];
+        let mut budget = stitch::MatchBudget::new();
+        let (kept, removed) = stitch::drop_hatch_duplicates(shapes, 0.01, true, &mut budget);
+        assert_eq!((kept.len(), removed.len()), (1, 1));
+        assert!(
+            budget.comparisons() <= 4 * n as usize,
+            "{}",
+            budget.comparisons()
+        );
     }
 
     /// The minor-to-major ratio (40) is in (0, 1]: a hatch's elliptic edge
