@@ -2587,7 +2587,8 @@ Parsing by `dc-import`'s own group-code reader, ported from upstream's
 `parsePairs`/`extractEntities`/`extractBlocks` (#124 replaced the `dxf`
 crate, which pulled in about 50 crates): ASCII and binary DXF (R12
 one-byte and R13+ two-byte codes) to (code, value) pairs typed by the DXF
-Reference's "Group Code Value Types", then the `$INSUNITS` header
+Reference's "Group Code Value Types" (an ASCII line ends at `\r\n`, `\n`
+or a lone `\r`, mixed within one file, split in one place; #667), then the `$INSUNITS` header
 variable, the blocks, and every entity of the ENTITIES section with a
 POLYLINE's VERTEX rows attached. A malformed pair is
 `ImportError::Dxf(DxfReadError)`. `import_dxf(bytes, options) ->
@@ -3105,6 +3106,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::plaque_dxf_matches_plaque_svg_within_0_01` (acceptance 34), `dxf::coordinate_limit_applies`.
 - `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
+- `dxf::reads_lf_crlf_and_cr_line_endings`, `cli::init_reads_a_cr_only_dxf` (#667).
 - `dxf::cp1251_layer_names_decode`, `dxf::unknown_code_page_warns_and_falls_back`, `dxf::utf8_file_is_unchanged` (#209).
 
 **dc-library**

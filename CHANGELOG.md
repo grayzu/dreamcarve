@@ -325,6 +325,12 @@ phases bump the patch number.
 
 ### Fixed
 
+- **DXF import reads carriage-return line endings (#667).** An ASCII DXF
+  whose lines end in a lone carriage return (old Mac style; some
+  programs still save AutoCAD 2018 files that way) failed `init` with
+  "line 1: … is not a group code", since only LF and CR LF ended a
+  line. A line now ends at CR LF, LF or a lone CR, mixed within one
+  file.
 - A V-Carve or Inlay of line art no longer stops at "would cut 0.0000 mm
   past a wall". Where a drawn line ends inside a region, a thin wedge of
   material narrower than the medial axis's sampling step, a straight cut

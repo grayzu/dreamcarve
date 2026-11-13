@@ -139,7 +139,9 @@ program, or simplify them). A file that is cut off or
 garbled, so that its codes and values no longer pair up, is refused with
 the line (or, in a binary DXF, the byte) where it goes wrong.
 
-ASCII and binary DXF are both read, from every AutoCAD version. Files
+ASCII and binary DXF are both read, from every AutoCAD version, whatever
+the line endings of an ASCII file: Windows (CR LF), Unix (LF) or old
+Mac (CR alone), even mixed in one file. Files
 from AutoCAD 2007 on are UTF-8. Earlier files are written in the code
 page their header names (`$DWGCODEPAGE`), and their layer names are read
 in it: Windows-1250 to 1258 (Central European, Cyrillic, Western, Greek,

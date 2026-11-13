@@ -158,14 +158,13 @@ pub(super) fn read(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadE
 }
 
 /// ASCII DXF: a code line and a value line per group, both trimmed. Blank
-/// lines after the last group are allowed.
+/// lines after the last group are allowed. Lines end at `\r\n`, `\n` or
+/// a lone `\r`, mixed within one file ([`lines`]).
 fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError> {
     let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
     let mut not_utf8 = false;
     let text = decode(bytes, code_page, &mut not_utf8);
-    let mut lines = text
-        .split('\n')
-        .map(|l| l.strip_suffix('\r').unwrap_or(l).trim());
+    let mut lines = lines(&text).map(str::trim);
     let mut groups = Vec::new();
     let mut line = 0;
     while let Some(code_text) = lines.next() {
@@ -205,6 +204,31 @@ fn read_ascii(bytes: &[u8], code_page: CodePage) -> Result<Groups, DxfReadError>
         }
     }
     Ok(Groups { groups, not_utf8 })
+}
+
+/// The lines of `text`, each without its line ending: `\r\n`, `\n`, or a
+/// lone `\r` as old Mac programs write (#667), in any mix. Text after the
+/// last line ending is a last line; an ending at the very end adds none.
+fn lines(text: &str) -> impl Iterator<Item = &str> + Clone {
+    let mut rest = Some(text);
+    std::iter::from_fn(move || {
+        let current = rest?;
+        match current.find(['\r', '\n']) {
+            Some(at) => {
+                let (line, tail) = current.split_at(at);
+                let tail = tail
+                    .strip_prefix("\r\n")
+                    .or_else(|| tail.get(1..))
+                    .unwrap_or_default();
+                rest = (!tail.is_empty()).then_some(tail);
+                Some(line)
+            }
+            None => {
+                rest = None;
+                Some(current)
+            }
+        }
+    })
 }
 
 /// Binary DXF after the sentinel. The first group is `0 SECTION` (or a
@@ -415,6 +439,38 @@ mod tests {
         let groups = read(b"0\nSECTION\n\n\n").unwrap();
         assert_eq!(groups, [text(0, "SECTION")]);
         assert!(read(b"").unwrap().is_empty());
+    }
+
+    #[test]
+    fn lines_end_at_lf_crlf_or_lone_cr() {
+        fn split(text: &str) -> Vec<&str> {
+            lines(text).collect()
+        }
+        assert_eq!(split("a\nb\r\nc\rd"), ["a", "b", "c", "d"]);
+        assert_eq!(split("a\r\r\nb\r"), ["a", "", "b"]);
+        assert_eq!(split("a\n"), ["a"]);
+        assert_eq!(split(""), [""]);
+        assert_eq!(
+            read(b"0\rLINE\r8\rwalls\r\n10\r1.5\n").unwrap(),
+            [
+                text(0, "LINE"),
+                text(8, "walls"),
+                Group {
+                    code: 10,
+                    value: Value::Real(1.5)
+                }
+            ]
+        );
+        // Line numbers count lone CRs too.
+        assert_eq!(
+            read(b"0\rLINE\r10\rabc\r").unwrap_err(),
+            DxfReadError::BadValue {
+                line: 4,
+                code: 10,
+                expected: "number",
+                text: "abc".into()
+            }
+        );
     }
 
     #[test]
