@@ -204,6 +204,7 @@ draw the line's outline, if it was meant to be cut. `image-prep` takes no
 units of its own, so a DXF that declares none is refused: set its units in
 the CAD program and save it again.
 
+<!-- doc-test: run -->
 ```sh
 dreamcarve image-prep tool-tray.dxf
 ```
