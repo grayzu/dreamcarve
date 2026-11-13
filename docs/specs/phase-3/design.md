@@ -4412,7 +4412,8 @@ show the seat line; the Photo V-Carve's does not.
 
 28. **Docs sweep.** `CONTEXT.md` terms (Flat Depth, Start Depth, Clearing,
     Inlay, Glue Gap, Plug Depth, Photo V-Carve, Bitmap, Countersink; Image
-    Prep, Ink, Piece, Speck and Boundary came with the 3.4 spec), the
+    Prep, Ink, Piece, Speck and Boundary came with the 3.4 spec, Tapered
+    Ball Nose with 3.6's), the
     Porting and Golden-corpus contributing chapters, Crate map, Tool
     library (V-bit angles, cone height). [all]
 29. **Exit-criteria audit and tag.** The audit as phase 2's (#255), the

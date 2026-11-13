@@ -206,7 +206,8 @@ version: 3.1 V-Carve (v20), 3.2
 Countersink (v21; the sign, test part 1), 3.3 Inlay (v22, v23 for the male's cut-out, v24 for its rounded band and v25 for one file cutting both boards; the lettered inlay pair,
 test part 2), 3.4 Image Prep (v26 for the drawn boundary; the line-art
 inlay, test part 3), 3.5 Photo V-Carve (v27; the photo, test part 4),
-3.6 Tapered Ball Nose (specified separately, #445), 3.7 Release
+3.6 Tapered Ball Nose (v28; V-Carve and Inlay with a tapered ball nose,
+#445; the TBN carve and inlay, test part 5), 3.7 Release
 (`v0.3.0`). No tag between them; the slice list is in the phase 3 design
 spec, "Sub-phases". (3.4 was inserted on 2026-11-10 because preparing
 artwork is the hardest part of making an inlay; it renumbered the later
