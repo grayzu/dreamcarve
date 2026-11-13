@@ -41,8 +41,8 @@ pub enum Command {
     /// Add a PNG or JPEG picture to a project, and list a project's
     /// pictures.
     Image(ImageArgs),
-    /// Prepare an SVG for inlay: turn strokes into areas, resolve fills,
-    /// drop specks, and write a clean SVG of filled shapes.
+    /// Prepare an SVG or DXF for inlay: turn strokes into areas, resolve
+    /// fills, drop specks, and write a clean SVG of filled shapes.
     ImagePrep(ImagePrepArgs),
     /// Write G-code for a project.
     Export(ExportArgs),
@@ -306,9 +306,11 @@ pub struct InitArgs {
 /// the design's height.
 #[derive(Debug, clap::Args)]
 pub struct ImagePrepArgs {
-    /// The drawing to prepare: an SVG. A PNG or JPEG is refused; trace it
-    /// in Inkscape (Path > Trace Bitmap) first.
-    pub svg: PathBuf,
+    /// The drawing to prepare: an SVG, or a DXF (its closed shapes and
+    /// hatches, in the units its $INSUNITS declares). A PNG or JPEG is
+    /// refused; trace it in Inkscape (Path > Trace Bitmap) first.
+    #[arg(value_name = "SVG|DXF")]
+    pub drawing: PathBuf,
     /// Where to write the result [default: the drawing's name with
     /// -inlay added, beside it]. An existing file is never overwritten.
     #[arg(short, long, value_name = "SVG")]

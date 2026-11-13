@@ -1180,8 +1180,20 @@ this order, and writes nothing until the last step:
 
 1. Checks the input's extension and first bytes: `.png`, `.jpg`, `.jpeg`
    or a PNG or JPEG signature is a usage failure (exit 2) naming Inkscape's
-   Trace Bitmap, `prep_not_svg`; any other extension is read as SVG and a
-   parse failure is an error (exit 1) from `ImportError`.
+   Trace Bitmap, `prep_not_svg`. A DXF (#669) is one whose bytes start with
+   the binary sentinel or whose first non-blank line is the group code `0`
+   or `999`; a `.dxf` that is not one, or a `.svg` that is, is a usage
+   failure, `prep_format_mismatch`; any other name goes by the bytes. A
+   DXF is prepared by `dc_import::prep::prepare_dxf`: `import_dxf` (units
+   from `$INSUNITS`, `UnitsUnknown` otherwise, with a hint to set them in
+   the CAD program), then an SVG in mm of its closed shapes, one
+   `fill-rule="evenodd"` path per definition with arcs as SVG arcs (Y
+   flipped, the page the shapes' box), through `prepare`; open profiles
+   are counted in `DxfOpenPathNotConvertible { count, first }`; no closed
+   shape is `PrepNothingLeft`. `PrepReport::source` is `PrepSource::Dxf {
+   units, mm_per_unit, closed_shapes, open_paths }`, and the report's
+   `Read:` line names the DXF and its unit. Otherwise the input is read as
+   SVG and a parse failure is an error (exit 1) from `ImportError`.
 2. Works out the output path: `-o`, or the input's stem plus `-inlay.svg`
    beside it. An existing file is an error, as `init`'s is; the SVG is
    written through `dreamcarve-shell`'s `StagedFile`, so an interrupted run
@@ -2686,6 +2698,8 @@ checks that `init` words as advice to run `image-prep`
 | `prep_nothing_left` | error | | `image-prep` |
 | `prep_output_unreadable` | error | reason | `image-prep` |
 | `prep_not_svg` | error (usage) | extension | `image-prep`, the CLI |
+| `prep_format_mismatch` | error (usage) | extension, contents | `image-prep`, the CLI (#669) |
+| `dxf_open_path_not_convertible` | warning | count, first | `image-prep` of a DXF (#669) |
 
 `prep_speck_dropped` and `prep_hole_filled` are warnings, not report lines
 only, because dropping a piece is a change to the art the user should see
@@ -3434,7 +3448,7 @@ and committed as SVG; the numbers in the assertions are acceptance 61a to
 
 *dreamcarve (integration)*
 - `cli::init_prints_the_import_checks` (61a), `cli::init_project_is_unchanged_by_the_checks` (byte for byte against the project the previous build wrote), `cli::check_repeats_overlap_and_size_findings`, `cli::a_clean_drawing_prints_no_checks`, `cli::dxf_init_is_unchanged`.
-- `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`.
+- `cli::image_prep_writes_the_default_name_beside_the_input`, `cli::image_prep_refuses_to_overwrite`, `cli::image_prep_refuses_a_picture_and_names_inkscape` (exit 2, `prep_not_svg`), `cli::image_prep_malformed_svg_writes_nothing`, `cli::image_prep_help_has_no_machining_options` (61j), `cli::image_prep_prints_warnings_then_the_report`, `cli::image_prep_then_init_has_no_warnings` (61g), `cli::image_prep_threshold_range_exits_2`; for DXF input (#669) `prep::dxf_input_writes_an_svg_init_reads_cleanly`, `prep::dxf_units_are_honoured`, `prep::dxf_open_paths_are_reported_not_outlined`, `prep::dxf::arcs_keep_their_side_through_the_flip`, `cli::image_prep_reads_a_dxf`, `cli::image_prep_refuses_a_png_naming_svg_and_dxf`, on `tests/fixtures/prep/{tool-tray,tool-tray-mm,open-paths}.dxf` from `tools/parity/prep-dxf-fixture.ts`.
 - `cli::line_art_to_inlay_end_to_end` (61k: `compass-art.svg` → `--regions` → the oval appended → `init` → Inlay with the oval as boundary → both boards, S1 to S19, seated within 0.05 mm), `cli::boundary_summary_line`, `cli::preview_draws_the_boundary_on_the_male_board`, `cli::v25_project_exports_the_same_programs`, `cli::compass_inlay_exports_both_boards` (61s), `cli::dc_boundary_fixture_is_the_frame_as_boundary`, `quick_start::inlay_boundary_chapter_runs`, `quick_start::line_art_chapter_runs` (the chapter's commands).
 
 
@@ -3681,6 +3695,10 @@ and 21i start at once.
     (#668), which amends phase 2's capability 20 and its design's "DXF
     import" (HATCH was skipped there). Tests: those the phase 2 design's
     test plan lists for #667 and #668. [none]
+21o. **`image-prep` of a DXF** (#669, maintainer decision 2026-11-13).
+    49b's DXF input, `prep_format_mismatch`,
+    `dxf_open_path_not_convertible`, the report's source line. Tests: the
+    DXF group of the image-prep test plan. [21n]
 
 ### 3.5 Photo V-Carve (format v27)
 

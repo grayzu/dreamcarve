@@ -301,6 +301,15 @@ pub enum ImportWarning {
         /// How many loops were left out.
         count: usize,
     },
+    /// Open DXF paths (lines, arcs, open polylines and splines) that
+    /// `image-prep` left out: a DXF line has no width, so there is no area
+    /// to outline (#669, `dxf_open_path_not_convertible`).
+    DxfOpenPathNotConvertible {
+        /// How many open paths.
+        count: usize,
+        /// The name of the first, as `init` would name it.
+        first: String,
+    },
     /// Outlines of different paths cross (3.4, `shapes_overlap`): `count`
     /// pairs, the first named, and where its two shapes meet.
     ShapesOverlap {
@@ -490,6 +499,7 @@ impl ImportWarning {
             Self::DxfCodePageUnsupported { .. } => "dxf_code_page_unsupported",
             Self::DxfHatchUnreadable { .. } => "dxf_hatch_unreadable",
             Self::DxfHatchBoundaryDuplicate { .. } => "dxf_hatch_boundary_duplicate",
+            Self::DxfOpenPathNotConvertible { .. } => "dxf_open_path_not_convertible",
             Self::ShapesOverlap { .. } => "shapes_overlap",
             Self::SvgHoleAsSeparatePath { .. } => "svg_hole_as_separate_path",
             Self::SvgStrokeOnlyPath { .. } => "svg_stroke_only_path",
@@ -596,6 +606,10 @@ impl std::fmt::Display for ImportWarning {
             } => write!(
                 f,
                 "HATCH `{hatch}` on layer `{layer}` was skipped: {problem}; redraw its boundary as closed polylines in the CAD program"
+            ),
+            Self::DxfOpenPathNotConvertible { count, first } => write!(
+                f,
+                "{count} open path(s) were left out, the first `{first}`: a DXF line has no width to make an area of; close the shape in the CAD program, or draw the line's outline"
             ),
             Self::DxfHatchBoundaryDuplicate { count } => write!(
                 f,
@@ -803,6 +817,13 @@ mod warning {
             (
                 ImportWarning::DxfHatchBoundaryDuplicate { count: 1 },
                 "dxf_hatch_boundary_duplicate",
+            ),
+            (
+                ImportWarning::DxfOpenPathNotConvertible {
+                    count: 1,
+                    first: "cut".into(),
+                },
+                "dxf_open_path_not_convertible",
             ),
             (
                 ImportWarning::PrepStrokeFailed { path: "p".into() },

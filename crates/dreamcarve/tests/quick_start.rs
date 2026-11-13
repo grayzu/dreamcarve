@@ -1445,7 +1445,8 @@ const PREPARING_ARTWORK: &str = "docs/book/src/user-guide/preparing-artwork.md";
 /// #601: the "Preparing artwork" chapter's commands, run as written on the
 /// messy drawing (`tests/fixtures/prep/messy.svg`): `init` with its checks,
 /// `image-prep`, `init` of the result, the refusal to overwrite (exit 1),
-/// regions mode, and a threshold out of range (exit 2). The chapter shows
+/// regions mode, a threshold out of range (exit 2), and `image-prep` of the
+/// tray DXF (`tests/fixtures/prep/tool-tray.dxf`, #669). The chapter shows
 /// the output; the test reads only the exit codes and what is written. The
 /// chapter names every code of capability 49g that `init`, `check` and
 /// `image-prep` print, so the Warnings chapter and this one cannot drift.
@@ -1475,6 +1476,8 @@ fn preparing_artwork_chapter_runs() {
         "prep_threshold_range",
         "prep_nothing_left",
         "prep_not_svg",
+        "prep_format_mismatch",
+        "dxf_open_path_not_convertible",
         "prep_output_unreadable",
     ] {
         assert!(text.contains(code), "{PREPARING_ARTWORK} names `{code}`");
@@ -1493,12 +1496,18 @@ fn preparing_artwork_chapter_runs() {
     ] {
         assert!(text.contains(needle), "{PREPARING_ARTWORK} {what}");
     }
-    let dir = run_chapter("preparing_artwork_chapter_runs", &run);
+    // The DXF section prepares the tray (#669).
+    let dir = run_chapter_with(
+        "preparing_artwork_chapter_runs",
+        &run,
+        &[("tests/fixtures/prep/tool-tray.dxf", "tool-tray.dxf")],
+    );
     for written in [
         "messy.dcv",
         "messy-inlay.svg",
         "clean.dcv",
         "messy-regions.svg",
+        "tool-tray-inlay.svg",
     ] {
         assert!(dir.join(written).exists(), "the chapter writes {written}");
     }

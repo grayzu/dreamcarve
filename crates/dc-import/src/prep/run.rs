@@ -10,7 +10,7 @@
 use super::findings::{
     Shape, bounds as findings_bounds, hidden, painted_height_mm, separate_holes, stroke_only,
 };
-use super::report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
+use super::report::{PrepReport, PrepSource, ReadReport, StrokeReport, WidthFigure};
 use super::stroke::{self, Budget, Stroked};
 use super::walk::{HiddenReason, PaintedPath, Walk, walk};
 use super::write;
@@ -396,6 +396,7 @@ pub fn prepare(
         .reduce(f64::min);
     let gap = narrowest_gap(&pieces, GAP_REACH_FRACTION * height_mm, tolerance_mm);
     let report = PrepReport {
+        source: PrepSource::Svg,
         mode: options.mode,
         read: read_report(&walked),
         strokes,
@@ -424,7 +425,7 @@ pub fn prepare(
 
 /// `value_pct` is a threshold the command takes: `0` to
 /// [`MAX_THRESHOLD_PCT`].
-fn check_threshold(flag: &'static str, value_pct: f64) -> Result<(), ImportError> {
+pub(super) fn check_threshold(flag: &'static str, value_pct: f64) -> Result<(), ImportError> {
     if (0.0..=MAX_THRESHOLD_PCT).contains(&value_pct) {
         Ok(())
     } else {

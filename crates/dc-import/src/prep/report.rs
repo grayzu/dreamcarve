@@ -6,6 +6,27 @@
 //! text is `dc-job`'s (`docs/specs/phase-3/design.md`, "Image prep").
 
 use super::{PrepMode, REPORT_HEIGHTS_MM, REPORT_MIN_FEATURE_MM};
+use crate::DxfUnits;
+
+/// The format of the drawing a run read (#669).
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum PrepSource {
+    /// An SVG.
+    #[default]
+    Svg,
+    /// A DXF, imported by the DXF reader and prepared as its closed
+    /// shapes.
+    Dxf {
+        /// The units `$INSUNITS` declares.
+        units: DxfUnits,
+        /// Millimetres per drawing unit, as applied.
+        mm_per_unit: f64,
+        /// Closed shapes read, each a filled path.
+        closed_shapes: usize,
+        /// Open paths left out: a DXF line has no width to outline.
+        open_paths: usize,
+    },
+}
 
 /// What the walk read and skipped (49c step 1), counts of objects.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -79,6 +100,8 @@ impl WidthFigure {
 /// enforced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PrepReport {
+    /// The format the run read.
+    pub source: PrepSource,
     /// The mode the run was in.
     pub mode: PrepMode,
     /// What was read and skipped.

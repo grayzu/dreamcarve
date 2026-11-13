@@ -8,6 +8,7 @@
 
 #[cfg(test)]
 mod defaults;
+mod dxf;
 mod findings;
 mod report;
 mod run;
@@ -16,8 +17,9 @@ pub mod walk;
 mod write;
 
 pub use crate::svg::MIN_FLATTEN_TOLERANCE_MM;
+pub use dxf::prepare_dxf;
 pub use findings::{design_findings, design_findings_named, findings};
-pub use report::{PrepReport, ReadReport, StrokeReport, WidthFigure};
+pub use report::{PrepReport, PrepSource, ReadReport, StrokeReport, WidthFigure};
 pub use run::{PrepMode, PrepOptions, Prepared, flatten_tolerance_mm, prepare};
 pub use write::write_svg;
 
@@ -117,5 +119,116 @@ mod tests {
             elapsed < Duration::from_secs(60),
             "100 000 vertices took {elapsed:?}"
         );
+    }
+
+    // ── DXF input (#669) ─────────────────────────────────────────────────
+
+    use super::{PrepSource, prepare_dxf, write_svg};
+    use crate::{DxfUnits, ImportWarning, SvgImportOptions, import_svg};
+
+    macro_rules! prep_fixture {
+        ($name:literal) => {
+            include_bytes!(concat!("../../../tests/fixtures/prep/", $name))
+        };
+    }
+
+    /// The tray (`tools/parity/prep-dxf-fixture.ts`): overlapping pockets
+    /// merge into one piece, the speck is dropped, the circle drawn inside
+    /// the outline becomes its hole, and the hatched pocket keeps its
+    /// island. The SVG written imports with no warning from `init`'s
+    /// importer or its checks, as three shapes, two with a hole.
+    #[test]
+    fn dxf_input_writes_an_svg_init_reads_cleanly() {
+        let (prepared, warnings) =
+            prepare_dxf(prep_fixture!("tool-tray.dxf"), &PrepOptions::default()).unwrap();
+        let codes: Vec<&str> = warnings.iter().map(ImportWarning::code).collect();
+        assert!(codes.contains(&"svg_hole_as_separate_path"), "{codes:?}");
+        assert!(codes.contains(&"prep_speck_dropped"), "{codes:?}");
+        let report = &prepared.report;
+        assert_eq!((report.pieces, report.holes), (3, 2), "{report:?}");
+        assert_eq!(report.dropped_pieces, 1);
+        assert!((report.design_height_mm - 38.1).abs() < 1e-6, "{report:?}");
+
+        let svg = write_svg(&prepared);
+        let (imported, import_warnings) =
+            import_svg(svg.as_bytes(), &SvgImportOptions::new()).unwrap();
+        assert!(import_warnings.is_empty(), "{import_warnings:?}");
+        let checks = super::findings(svg.as_bytes(), &SvgImportOptions::new()).unwrap();
+        assert!(checks.is_empty(), "{checks:?}");
+        let mut profiles: Vec<usize> = imported
+            .definitions
+            .iter()
+            .map(|d| d.profiles.len())
+            .collect();
+        profiles.sort_unstable();
+        assert_eq!(profiles, [1, 2, 2]);
+    }
+
+    /// The tray in inches and its millimetre twin prepare to the same SVG,
+    /// and the report says which units each declared.
+    #[test]
+    fn dxf_units_are_honoured() {
+        let options = PrepOptions::default();
+        let (inch, _) = prepare_dxf(prep_fixture!("tool-tray.dxf"), &options).unwrap();
+        let (mm, _) = prepare_dxf(prep_fixture!("tool-tray-mm.dxf"), &options).unwrap();
+        assert_eq!(write_svg(&inch), write_svg(&mm));
+        assert!(
+            matches!(
+                inch.report.source,
+                PrepSource::Dxf { units: DxfUnits::Inches, mm_per_unit, closed_shapes: 6, open_paths: 0 }
+                    if (mm_per_unit - 25.4).abs() < 1e-12
+            ),
+            "{:?}",
+            inch.report.source
+        );
+        assert!(matches!(
+            mm.report.source,
+            PrepSource::Dxf {
+                units: DxfUnits::Millimetres,
+                ..
+            }
+        ));
+        assert!(
+            (inch.page_width_mm - 6.75 * 25.4).abs() < 1e-6,
+            "{}",
+            inch.page_width_mm
+        );
+    }
+
+    /// A DXF line has no width, so open paths are reported, not outlined:
+    /// only the closed square is prepared.
+    #[test]
+    fn dxf_open_paths_are_reported_not_outlined() {
+        let (prepared, warnings) =
+            prepare_dxf(prep_fixture!("open-paths.dxf"), &PrepOptions::default()).unwrap();
+        assert_eq!(
+            warnings.first(),
+            Some(&ImportWarning::DxfOpenPathNotConvertible {
+                count: 2,
+                first: "cut".into()
+            }),
+            "{warnings:?}"
+        );
+        assert_eq!(prepared.report.pieces, 1);
+        // usvg reads the page size as f32.
+        assert!(
+            (prepared.page_width_mm - 20.0).abs() < 1e-4,
+            "{}",
+            prepared.page_width_mm
+        );
+        assert!(matches!(
+            prepared.report.source,
+            PrepSource::Dxf {
+                closed_shapes: 1,
+                open_paths: 2,
+                ..
+            }
+        ));
+        // A drawing of open paths only has nothing to prepare.
+        let only_open = b"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n10.0\n21\n10.0\n0\nENDSEC\n0\nEOF\n";
+        assert!(matches!(
+            prepare_dxf(only_open, &PrepOptions::default()),
+            Err(crate::ImportError::PrepNothingLeft)
+        ));
     }
 }

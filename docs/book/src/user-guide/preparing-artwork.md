@@ -87,11 +87,11 @@ The same codes are listed, with every other warning, in
 ## `image-prep`
 
 ```text
-dreamcarve image-prep design.svg [-o design-inlay.svg] [--regions]
+dreamcarve image-prep <design.svg|design.dxf> [-o design-inlay.svg] [--regions]
                       [--min-detail <pct>] [--smooth <pct>]
 ```
 
-`image-prep` reads one SVG and writes one SVG that is easy to inlay, and
+`image-prep` reads one SVG or DXF and writes one SVG that is easy to inlay, and
 prints a report. It makes a clean drawing and nothing else: it has no tool,
 stock, depth, feed or size option, and what it writes is the same whatever
 project you use it in later. Scale the result in a drawing program, or with
@@ -179,6 +179,55 @@ dreamcarve image-prep messy.svg
 ```text
 error: messy-inlay.svg already exists; remove it or choose another file with -o
 ```
+
+### A DXF drawing
+
+`image-prep` also reads a DXF, so a drawing from a CAD program can be
+checked and cleaned before `init` too. It tells the two apart by the file's
+extension, and checks it against what the file holds: a `.dxf` that is not
+a DXF, or a `.svg` that is one, is refused with `prep_format_mismatch`
+(exit 2); rename it to match.
+
+The DXF is read as `init` reads it ([Importing DXF](importing-dxf.md)): in
+the units its `$INSUNITS` declares, hatches as the shapes of their
+boundaries, with the importer's own warnings. Its closed shapes then go
+through the same steps as an SVG's filled paths: shapes that cross are
+merged, a shape wholly inside another is a hole of it, specks are dropped
+and edges smoothed, and `--regions` works the same. The result is an SVG in
+millimetres, at the drawing's own size and place, which `init` imports with
+no warnings.
+
+A DXF has no strokes: a line or an open polyline has no width, so there is
+no area to make of it. Open paths are left out and counted in
+`dxf_open_path_not_convertible`; close the shape in the CAD program, or
+draw the line's outline, if it was meant to be cut. `image-prep` takes no
+units of its own, so a DXF that declares none is refused: set its units in
+the CAD program and save it again.
+
+<!-- doc-test: run -->
+```sh
+dreamcarve image-prep tool-tray.dxf
+```
+
+```text
+warning: svg_hole_as_separate_path: 1 filled path(s) lie wholly inside another filled path; the first is `tray-2` inside `tray-1`. Each is a hole of the path that contains it, as `init` reads nested paths
+warning: prep_speck_dropped: 1 piece(s) narrower than 0.076 mm were dropped, the widest 0.048 mm; lower `--min-detail` to keep them
+Prepared tool-tray.dxf → tool-tray-inlay.svg (shapes)
+  Read: DXF, units inch (from $INSUNITS), 1 drawing unit = 25.4000 mm; 6 closed shapes, 0 open paths left out
+  Design height: 38.10 mm
+  Result: 3 pieces, 2 holes
+  Dropped: 1 piece below 0.20 % of the height (0.076 mm); smoothed within 0.05 % (0.019 mm)
+  Thinnest piece: 10.10 mm (26.51 % of the height)
+  At 100 / 200 / 300 mm tall: thinnest piece 26.51 / 53.01 / 79.52 mm
+  The thinnest piece reaches 1.5 mm at 6 mm tall.
+Wrote tool-tray-inlay.svg
+```
+
+(The drawing is `tests/fixtures/prep/tool-tray.dxf`, in inches: a tray
+outline with a circle drawn inside it, two pockets that overlap, a speck,
+and a hatched pocket with an island. The circle becomes the tray's hole,
+the pockets one piece, and the hatch a piece with its hole. The shapes are
+named as `init` names them, after their layers.)
 
 ### Circles come back as polygons
 
@@ -321,7 +370,8 @@ any size you draw it, and the report tells you what they come to.
 it is enforced.
 
 - **Read** says what was in the file and what was left out: hidden objects,
-  and the counts of text, images, clip paths and masks.
+  and the counts of text, images, clip paths and masks. For a DXF it says
+  so, with its units, its closed shapes and the open paths left out.
 - **Strokes made into areas** counts them and gives the range of their
   widths.
 - **Design height** is the height all percentages are of.
@@ -360,9 +410,10 @@ feature is narrower than you probably want. Use it like this:
 
 ## Tracing a picture in Inkscape
 
-`image-prep` reads SVG only. A PNG or JPEG, known by its extension or by
-the first bytes of the file, is refused with the exit status 2 and the
-code `prep_not_svg`, and the message says to trace it first. Tracing is the
+`image-prep` reads drawings, SVG or DXF. A PNG or JPEG, known by its
+extension or by the first bytes of the file, is refused with the exit
+status 2 and the code `prep_not_svg`, and the message says it is not an SVG
+or DXF drawing and to trace it first. Tracing is the
 conversion of a picture to outlines, and DreamCarve does not do it yet.
 (To carve the picture itself, its shades as V-bit grooves rather than its
 outlines as shapes, do not trace it: `dreamcarve init` takes a PNG or
@@ -385,7 +436,8 @@ A trace of line art is usually a set of closed outlines of the ink, so
 
 | Code | Meaning | What to do |
 | --- | --- | --- |
-| `prep_not_svg` | A PNG or JPEG was given (usage error, exit 2). | Trace it in Inkscape first. |
+| `prep_not_svg` | A PNG or JPEG was given, not an SVG or DXF drawing (usage error, exit 2). | Trace it in Inkscape first. |
+| `prep_format_mismatch` | The file's extension and contents disagree: a `.dxf` that is not a DXF, or a `.svg` that is one (usage error, exit 2). | Rename it to match what it holds. |
 | `prep_threshold_range` | `--min-detail` or `--smooth` is outside 0 to 5 (usage error, exit 2). | Give a value from 0 to 5. |
 | `prep_nothing_left` | Nothing visible is left to prepare: the drawing is empty, hidden, or every piece fell below `--min-detail`. | Check the drawing's layers; lower `--min-detail`. |
 | `prep_output_unreadable` | The prepared shapes would not read back as the shapes they were made as. This is a defect in DreamCarve, not in your drawing, and nothing is written. | Report it, with the drawing if you can share it. |
