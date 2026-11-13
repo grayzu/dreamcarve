@@ -25,6 +25,11 @@ use dc_geometry::Point;
 /// coordinate limit and the minimum tolerance, no span needs more.
 const MAX_SUBDIVISION_DEPTH: u32 = 12;
 
+/// Highest degree a spline is evaluated at. AutoCAD draws splines of
+/// degree 1 to 11; de Boor's work per point grows with the square of the
+/// degree, so a file's degree is never trusted past this.
+pub(super) const MAX_SPLINE_DEGREE: usize = 11;
+
 /// Spans narrower than this in parameter space are empty (repeated knots).
 const KNOT_EPS: f64 = 1e-12;
 
@@ -39,16 +44,21 @@ pub(super) struct BSpline {
 
 impl BSpline {
     /// A spline of `degree` over `knots` through the weighted `points`.
-    /// `None` when the data cannot describe one: degree below 1, fewer
-    /// control points than the degree needs, too few knots, a weight that
-    /// is not positive, or an empty domain. Missing weights are 1.
+    /// `None` when the data cannot describe one: degree below 1 or above
+    /// [`MAX_SPLINE_DEGREE`], fewer control points than the degree needs,
+    /// too few knots, a weight that is not positive, or an empty domain.
+    /// Missing weights are 1.
     pub(super) fn new(
         degree: usize,
         knots: &[f64],
         points: &[Point],
         weights: &[f64],
     ) -> Option<Self> {
-        if degree == 0 || points.len() <= degree || knots.len() < points.len() + degree + 1 {
+        if degree == 0
+            || degree > MAX_SPLINE_DEGREE
+            || points.len() <= degree
+            || knots.len() < points.len() + degree + 1
+        {
             return None;
         }
         if knots.iter().any(|k| !k.is_finite()) || knots.windows(2).any(|w| w[1] < w[0]) {
@@ -143,8 +153,12 @@ impl BSpline {
     /// Points along the curve, from its start to its end, such that no
     /// chord between neighbours strays more than `tolerance_mm` from the
     /// curve (checked at the quarter points of each chord, which the
-    /// bisection makes a safe test for a curve this smooth).
-    pub(super) fn sample(&self, tolerance_mm: f64) -> Vec<Point> {
+    /// bisection makes a safe test for a curve this smooth). `None` as
+    /// soon as more than `limit` points would be needed: sampling stops
+    /// there, so its work and memory are bounded by `limit`, not by the
+    /// file (every bisection either ends in a point or splits in two, so
+    /// the evaluations are at most a few per point and per knot span).
+    pub(super) fn sample(&self, tolerance_mm: f64, limit: usize) -> Option<Vec<Point>> {
         let (start, end) = self.domain();
         let mut points = vec![self.point_at(start)];
         let n = self.control.len() - 1;
@@ -156,13 +170,19 @@ impl BSpline {
             let (u0, u1) = (u0.max(start), u1.min(end));
             let p0 = self.point_at(u0);
             let p1 = self.point_at(u1);
-            self.subdivide(u0, u1, p0, p1, tolerance_mm, 0, &mut points);
+            let mut out = Output {
+                points: &mut points,
+                limit,
+            };
+            if !self.subdivide(u0, u1, p0, p1, tolerance_mm, 0, &mut out) {
+                return None;
+            }
         }
-        points
+        Some(points)
     }
 
     /// Appends the points after `p0` up to and including `p1` so the chords
-    /// stay within `tolerance_mm`.
+    /// stay within `tolerance_mm`; `false` once `out` is full.
     #[allow(
         clippy::too_many_arguments,
         reason = "a recursion carrying its interval, ends and output"
@@ -175,8 +195,8 @@ impl BSpline {
         p1: Point,
         tolerance_mm: f64,
         depth: u32,
-        out: &mut Vec<Point>,
-    ) {
+        out: &mut Output<'_>,
+    ) -> bool {
         let um = 0.5 * (u0 + u1);
         let pm = self.point_at(um);
         let flat = depth >= MAX_SUBDIVISION_DEPTH
@@ -190,12 +210,22 @@ impl BSpline {
                     chord_distance(p, p0, p1) <= tolerance_mm
                 }));
         if flat {
-            out.push(p1);
+            if out.points.len() >= out.limit {
+                return false;
+            }
+            out.points.push(p1);
+            true
         } else {
-            self.subdivide(u0, um, p0, pm, tolerance_mm, depth + 1, out);
-            self.subdivide(um, u1, pm, p1, tolerance_mm, depth + 1, out);
+            self.subdivide(u0, um, p0, pm, tolerance_mm, depth + 1, out)
+                && self.subdivide(um, u1, pm, p1, tolerance_mm, depth + 1, out)
         }
     }
+}
+
+/// The points sampled so far and how many there may be.
+struct Output<'a> {
+    points: &'a mut Vec<Point>,
+    limit: usize,
 }
 
 /// Distance from `p` to the segment `a`–`b`, mm.
@@ -227,8 +257,9 @@ mod tests {
             Point::new(10.0, 10.0),
         ];
         let spline = BSpline::new(1, &[0.0, 0.0, 1.0, 2.0, 2.0], &points, &[]).unwrap();
-        let sampled = spline.sample(0.01);
+        let sampled = spline.sample(0.01, usize::MAX).unwrap();
         assert_eq!(sampled.len(), 5, "{sampled:?}");
+        assert_eq!(spline.sample(0.01, 4), None, "stops past the limit");
         for (got, want) in [sampled[0], sampled[2], sampled[4]].iter().zip(points) {
             assert_approx_eq!(got.x, want.x, 1e-12);
             assert_approx_eq!(got.y, want.y, 1e-12);

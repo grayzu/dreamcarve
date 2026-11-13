@@ -23,13 +23,15 @@
 use std::collections::BTreeMap;
 
 use dc_geometry::{
-    EPS_MM, GeometryError, MAX_COORDINATE_MM, Point, Polyline, Transform, Vec2, Vertex, flatten,
+    Contour, EPS_MM, GeometryError, GeometryWarning, MAX_COORDINATE_MM, Point, Polyline, Transform,
+    Vec2, Vertex, flatten, nest,
 };
 use kurbo::{BezPath, PathEl, Shape as _};
 
-use super::MAX_INSERT_DEPTH;
 use super::document::{Block, Entity};
+use super::hatch::{self, Boundary, Edge, Failure};
 use super::spline::BSpline;
+use super::{HatchProblem, MAX_INSERT_DEPTH};
 use crate::ImportError;
 use crate::svg::{element_is_finite, element_is_within_limit, estimated_vertices};
 
@@ -40,6 +42,39 @@ pub(super) struct Shape {
     /// geometry on layer `0`.
     pub layer: String,
     pub polyline: Polyline,
+    /// A HATCH's other boundary loops, which with `polyline` make one
+    /// region by even-odd (islands, and holes in them); empty for every
+    /// other entity.
+    pub inner: Vec<Polyline>,
+    /// Whether the shape is a HATCH's boundary, which gives way to a
+    /// closed shape drawn on its own (`dxf_hatch_boundary_duplicate`).
+    pub hatch: bool,
+}
+
+impl Shape {
+    /// A shape of one polyline, from any entity but a HATCH.
+    pub(super) fn plain(layer: String, polyline: Polyline) -> Self {
+        Self {
+            layer,
+            polyline,
+            inner: Vec::new(),
+            hatch: false,
+        }
+    }
+
+    /// Every loop: `polyline`, then `inner`.
+    pub(super) fn loops(&self) -> impl Iterator<Item = &Polyline> {
+        std::iter::once(&self.polyline).chain(&self.inner)
+    }
+}
+
+/// A HATCH skipped because a boundary could not be read.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct UnreadableHatch {
+    /// Its handle (group 5); empty when it has none.
+    pub handle: String,
+    pub layer: String,
+    pub problem: HatchProblem,
 }
 
 /// Inserts on these layers are the shading and hatch helpers of old
@@ -49,7 +84,7 @@ const IGNORED_INSERT_LAYERS: [&str; 2] = ["ASHADE", "HATCH"];
 const IGNORED_INSERT_BLOCKS: [&str; 3] = ["AME_NIL", "AME_SOL", "AVE_RENDER"];
 /// The entity types `walk` reads. A block holding none of them is not
 /// expanded. `3DLINE` is the R12 name of a LINE with Z.
-const READ_TYPES: [&str; 9] = [
+const READ_TYPES: [&str; 10] = [
     "LINE",
     "3DLINE",
     "ARC",
@@ -58,6 +93,7 @@ const READ_TYPES: [&str; 9] = [
     "POLYLINE",
     "SPLINE",
     "ELLIPSE",
+    "HATCH",
     "INSERT",
 ];
 
@@ -88,6 +124,8 @@ const MAX_VERTICES_PER_PLACEMENT: usize = 10;
 pub(super) struct Walker<'a> {
     blocks: BTreeMap<&'a str, &'a Block>,
     tolerance_mm: f64,
+    /// Ends of a HATCH's edges closer than this, mm, meet.
+    join_mm: f64,
     max_vertices: usize,
     vertex_count: usize,
     /// Block entities placed so far by INSERT and MINSERT expansion, once
@@ -109,13 +147,21 @@ pub(super) struct Walker<'a> {
     pub too_deep: Vec<String>,
     /// Blocks an INSERT named that the file does not define, in order.
     pub missing: Vec<String>,
+    /// HATCHes skipped because a boundary could not be read, in order.
+    pub unreadable: Vec<UnreadableHatch>,
 }
 
 impl<'a> Walker<'a> {
-    pub(super) fn new(blocks: &'a [Block], tolerance_mm: f64, max_vertices: usize) -> Self {
+    pub(super) fn new(
+        blocks: &'a [Block],
+        tolerance_mm: f64,
+        join_mm: f64,
+        max_vertices: usize,
+    ) -> Self {
         Self {
             blocks: blocks.iter().map(|b| (b.name.as_str(), b)).collect(),
             tolerance_mm,
+            join_mm,
             max_vertices,
             vertex_count: 0,
             visits: 0,
@@ -125,6 +171,7 @@ impl<'a> Walker<'a> {
             skipped_per_layer: BTreeMap::new(),
             too_deep: Vec::new(),
             missing: Vec::new(),
+            unreadable: Vec::new(),
         }
     }
 
@@ -227,7 +274,7 @@ impl<'a> Walker<'a> {
                 let knots = entity.reals(40);
                 let weights = entity.reals(41);
                 let points = match BSpline::new(degree, &knots, &control, &weights) {
-                    Some(curve) => curve.sample(self.tolerance_mm),
+                    Some(curve) => self.sample(&curve)?,
                     // Upstream's fallback: the fit points, else the control
                     // polygon.
                     None if fit.len() >= 2 => fit,
@@ -238,6 +285,7 @@ impl<'a> Walker<'a> {
                 self.add_mm_polyline(polyline, &layer, "SPLINE")
             }
             "ELLIPSE" => self.add_ellipse(entity, transform, &layer),
+            "HATCH" => self.add_hatch(entity, transform, &layer),
             "INSERT" => self.expand_insert(entity, transform, &layer, depth),
             // Structural: VERTEX rows belong to their POLYLINE and SEQEND
             // ends an INSERT's attributes or a POLYLINE.
@@ -325,6 +373,10 @@ impl<'a> Walker<'a> {
                 path: layer.to_owned(),
             });
         }
+        // The ratio is minor to major: past (0, 1] the file is wrong.
+        if !(ratio > 0.0 && ratio <= 1.0) {
+            return self.skip("ELLIPSE (malformed)", layer);
+        }
         let a = major.length();
         let b = a * ratio;
         if a <= EPS_MM || b <= EPS_MM {
@@ -333,6 +385,7 @@ impl<'a> Walker<'a> {
         let sweep = (end - start).rem_euclid(std::f64::consts::TAU);
         let full = sweep <= 1e-12;
         let sweep = if full { std::f64::consts::TAU } else { sweep };
+        self.charge_ellipse(centre, major, ratio, sweep, transform, layer)?;
         // Under a mirrored OCS the minor axis is mirrored too: the point at
         // parameter t is the +Z ellipse's point at −t.
         let direction = if ocs == Transform::IDENTITY {
@@ -427,6 +480,292 @@ impl<'a> Walker<'a> {
         Ok(())
     }
 
+    /// A HATCH (#668): its boundary paths, in its OCS (210/220/230), as one
+    /// shape whose loops make one region by even-odd, so a pocket with an
+    /// island is a shape with a hole. The fill (pattern, solid flag, style)
+    /// is ignored. A boundary that is open, encloses no area, crosses
+    /// itself or another boundary, or holds an edge type DXF does not
+    /// define skips the hatch with an [`UnreadableHatch`]; a boundary that
+    /// repeats another of the same hatch is read once.
+    fn add_hatch(
+        &mut self,
+        entity: &Entity,
+        transform: Transform,
+        layer: &str,
+    ) -> Result<(), ImportError> {
+        let Some(ocs) = self.ocs(entity, "HATCH", layer) else {
+            return Ok(());
+        };
+        let handle = entity.text(5).unwrap_or_default().to_owned();
+        let parsed = {
+            let mut charge = |n: usize| self.count_vertices(n);
+            hatch::boundaries(entity.groups(), &handle, &mut charge)
+        };
+        let loops =
+            parsed.and_then(|boundaries| self.hatch_loops(&boundaries, ocs.then(transform), layer));
+        match loops {
+            Ok(mut loops) => {
+                let polyline = loops.remove(0);
+                self.shapes.push(Shape {
+                    layer: layer.to_owned(),
+                    polyline,
+                    inner: loops,
+                    hatch: true,
+                });
+                Ok(())
+            }
+            Err(Failure::Import(e)) => Err(e),
+            Err(Failure::Unreadable(problem)) => {
+                self.unreadable.push(UnreadableHatch {
+                    handle,
+                    layer: layer.to_owned(),
+                    problem,
+                });
+                Ok(())
+            }
+        }
+    }
+
+    /// The closed loops of a hatch's boundaries, in millimetres through
+    /// `place`, the largest first and the rest in file order; never empty.
+    fn hatch_loops(
+        &mut self,
+        boundaries: &[Boundary],
+        place: Transform,
+        layer: &str,
+    ) -> Result<Vec<Polyline>, Failure> {
+        let mut loops = Vec::new();
+        let mut contours = Vec::new();
+        let mut numbers = Vec::new();
+        for (index, b) in boundaries.iter().enumerate() {
+            let boundary = index + 1;
+            let polyline = match b {
+                // A polyline boundary is closed whatever its 73 flag: a
+                // hatch fills an area.
+                Boundary::Polyline(vertices) => {
+                    self.place_mm(&Polyline::new(vertices.clone(), true), place, layer)?
+                }
+                Boundary::Edges(edges) => {
+                    let mut pieces = Vec::new();
+                    for edge in edges {
+                        pieces.push(self.place_edge(edge, place, layer)?);
+                    }
+                    chain(pieces, self.join_mm.max(EPS_MM))
+                        .ok_or(HatchProblem::Open { boundary })?
+                }
+            };
+            // A boundary that encloses nothing (a speck a CAD program left
+            // where a curve met itself) has nothing to cut: it is left out.
+            let polyline = without_repeats(polyline);
+            if polyline.vertices().len() < 2 || polyline.signed_area_mm2().abs() <= EPS_MM * EPS_MM
+            {
+                continue;
+            }
+            check_reach(&polyline, layer)?;
+            let contour = match Contour::new(polyline.clone()) {
+                Ok(contour) => contour,
+                Err(GeometryError::SelfIntersecting { at }) => {
+                    return Err(HatchProblem::SelfIntersecting {
+                        boundary,
+                        x_mm: at.x,
+                        y_mm: at.y,
+                    }
+                    .into());
+                }
+                Err(_) => continue,
+            };
+            loops.push(polyline);
+            contours.push(contour);
+            numbers.push(boundary);
+        }
+        if loops.is_empty() {
+            return Err(HatchProblem::NoBoundary.into());
+        }
+        let (_, warnings) = nest(contours).map_err(|e| match e {
+            GeometryError::ContoursCross { first, second } => HatchProblem::BoundariesCross {
+                first: numbers.get(first).copied().unwrap_or(0),
+                second: numbers.get(second).copied().unwrap_or(0),
+            },
+            _ => HatchProblem::BoundariesCross {
+                first: 0,
+                second: 0,
+            },
+        })?;
+        // A boundary drawn twice in one hatch is one loop.
+        let mut keep = vec![true; loops.len()];
+        for warning in warnings {
+            let GeometryWarning::DuplicateContourDropped { index, .. } = warning;
+            if let Some(k) = keep.get_mut(index) {
+                *k = false;
+            }
+        }
+        let mut loops: Vec<Polyline> = loops
+            .into_iter()
+            .zip(keep)
+            .filter_map(|(l, k)| k.then_some(l))
+            .collect();
+        let largest = loops
+            .iter()
+            .enumerate()
+            .max_by(|(_, a), (_, b)| {
+                a.signed_area_mm2()
+                    .abs()
+                    .total_cmp(&b.signed_area_mm2().abs())
+            })
+            .map_or(0, |(i, _)| i);
+        let outer = loops.remove(largest);
+        loops.insert(0, outer);
+        self.count_vertices(loops.iter().map(|l| l.vertices().len()).sum())?;
+        Ok(loops)
+    }
+
+    /// One edge of an edge boundary as an open polyline in millimetres.
+    /// An arc or ellipse of no size is an empty polyline, which the chain
+    /// passes over.
+    fn place_edge(
+        &mut self,
+        edge: &Edge,
+        place: Transform,
+        layer: &str,
+    ) -> Result<Polyline, ImportError> {
+        match edge {
+            Edge::Line { start, end } => self.place_mm(
+                &Polyline::new(vec![line_vertex(*start), line_vertex(*end)], false),
+                place,
+                layer,
+            ),
+            Edge::Arc {
+                centre,
+                radius,
+                start_deg,
+                end_deg,
+                ccw,
+            } => {
+                if !(radius.is_finite() && *radius > EPS_MM) {
+                    return Ok(Polyline::new(Vec::new(), false));
+                }
+                let arc = arc_edge_polyline(*centre, *radius, *start_deg, *end_deg, *ccw);
+                self.place_mm(&arc, place, layer)
+            }
+            Edge::Ellipse {
+                centre,
+                major,
+                ratio,
+                start_deg,
+                end_deg,
+                ccw,
+            } => {
+                let values = [
+                    centre.x, centre.y, major.x, major.y, *ratio, *start_deg, *end_deg,
+                ];
+                if values.iter().any(|v| !v.is_finite()) {
+                    return Err(ImportError::NonFinite {
+                        path: layer.to_owned(),
+                    });
+                }
+                let a = major.length();
+                let b = a * ratio;
+                if a <= EPS_MM || b <= EPS_MM {
+                    return Ok(Polyline::new(Vec::new(), false));
+                }
+                let (start, sweep) = ellipse_edge_params(*ratio, *start_deg, *end_deg, *ccw);
+                self.charge_ellipse(*centre, *major, *ratio, sweep, place, layer)?;
+                let arc = kurbo::Arc::new(
+                    (centre.x, centre.y),
+                    (a, b),
+                    start,
+                    sweep,
+                    major.y.atan2(major.x),
+                );
+                let path = (kurbo::Affine::new(place.coeffs()) * arc).to_path(self.tolerance_mm);
+                self.flatten_one(&path, layer)
+            }
+            Edge::Spline {
+                degree,
+                knots,
+                control,
+                weights,
+                fit,
+            } => {
+                if control.iter().chain(fit).any(|p| !is_finite(*p)) {
+                    return Err(ImportError::NonFinite {
+                        path: layer.to_owned(),
+                    });
+                }
+                // Sampled in millimetres, as a SPLINE entity is.
+                let control: Vec<Point> = control.iter().map(|p| place.apply(*p)).collect();
+                let fit: Vec<Point> = fit.iter().map(|p| place.apply(*p)).collect();
+                let points = match BSpline::new(*degree, knots, &control, weights) {
+                    Some(curve) => self.sample(&curve)?,
+                    None if fit.len() >= 2 => fit,
+                    None => control,
+                };
+                self.count_vertices(points.len())?;
+                let vertices = points.into_iter().map(|p| Vertex::line(p.x, p.y)).collect();
+                Ok(Polyline::new(vertices, false))
+            }
+        }
+    }
+
+    /// `polyline` (entity coordinates) through `place` into millimetres:
+    /// arcs kept under a transform that keeps them, else flattened within
+    /// the tolerance. A transform that collapses it gives an empty
+    /// polyline.
+    fn place_mm(
+        &mut self,
+        polyline: &Polyline,
+        place: Transform,
+        layer: &str,
+    ) -> Result<Polyline, ImportError> {
+        if polyline
+            .vertices()
+            .iter()
+            .any(|v| !(is_finite(v.point()) && v.bulge.is_finite()))
+        {
+            return Err(ImportError::NonFinite {
+                path: layer.to_owned(),
+            });
+        }
+        let polyline = without_repeats(polyline.clone());
+        match place.apply_polyline(&polyline) {
+            Ok(placed) => Ok(placed),
+            Err(GeometryError::ArcUnderNonUniformTransform) => {
+                let path =
+                    kurbo::Affine::new(place.coeffs()) * to_bez_path(&polyline, self.tolerance_mm);
+                self.flatten_one(&path, layer)
+            }
+            Err(GeometryError::CoordinateOutOfRange { limit_mm, .. }) => {
+                Err(ImportError::CoordinateOutOfRange {
+                    path: layer.to_owned(),
+                    limit_mm,
+                })
+            }
+            Err(_) => Ok(Polyline::new(Vec::new(), polyline.is_closed())),
+        }
+    }
+
+    /// The one subpath of `path`, in millimetres, flattened within the
+    /// tolerance; refused before flattening when it would pass the vertex
+    /// limit.
+    fn flatten_one(&mut self, path: &BezPath, layer: &str) -> Result<Polyline, ImportError> {
+        if !path.elements().iter().all(element_is_finite) {
+            return Err(ImportError::NonFinite {
+                path: layer.to_owned(),
+            });
+        }
+        if !path.elements().iter().all(element_is_within_limit) {
+            return Err(ImportError::CoordinateOutOfRange {
+                path: layer.to_owned(),
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        self.count_vertices(estimated_vertices(path, self.tolerance_mm))?;
+        Ok(flatten(path, self.tolerance_mm)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| Polyline::new(Vec::new(), false)))
+    }
+
     /// Counts a skipped entity on `layer`; `Ok` so a `walk` arm can
     /// return it.
     fn skip(&mut self, kind: &str, layer: &str) -> Result<(), ImportError> {
@@ -515,10 +854,7 @@ impl<'a> Walker<'a> {
             return self.skip(&format!("{kind} (degenerate)"), layer);
         }
         self.count_vertices(polyline.vertices().len())?;
-        self.shapes.push(Shape {
-            layer: layer.to_owned(),
-            polyline,
-        });
+        self.shapes.push(Shape::plain(layer.to_owned(), polyline));
         Ok(())
     }
 
@@ -541,6 +877,63 @@ impl<'a> Walker<'a> {
             self.add_mm_polyline(polyline, layer, "flattened")?;
         }
         Ok(())
+    }
+
+    /// `curve` sampled within the tolerance, stopping as soon as it would
+    /// pass what is left of the vertex limit.
+    fn sample(&self, curve: &BSpline) -> Result<Vec<Point>, ImportError> {
+        let left = self.max_vertices.saturating_sub(self.vertex_count);
+        curve
+            .sample(self.tolerance_mm, left)
+            .ok_or(ImportError::TooManyVertices {
+                limit: self.max_vertices,
+            })
+    }
+
+    /// Checks an elliptic arc before its curve is built (#668 security
+    /// review): its centre and both axes, placed by `transform`, must lie
+    /// within [`MAX_COORDINATE_MM`], and the vertices flattening its
+    /// `sweep` (radians) could make, a circle of its larger placed radius
+    /// cut into chords within the tolerance, are charged to the vertex
+    /// limit. kurbo's Bézier fit of an arc grows with its radius, so an
+    /// axis of 1e300 would otherwise build an unbounded path. `ratio` is
+    /// already in (0, 1].
+    fn charge_ellipse(
+        &mut self,
+        centre: Point,
+        major: Vec2,
+        ratio: f64,
+        sweep: f64,
+        transform: Transform,
+        layer: &str,
+    ) -> Result<(), ImportError> {
+        let [a, b, c, d, e, f] = transform.coeffs();
+        let linear = |v: Vec2| Vec2::new(a * v.x + c * v.y, b * v.x + d * v.y);
+        let placed_major = linear(major);
+        let placed_minor = linear(Vec2::new(-major.y * ratio, major.x * ratio));
+        let x = a * centre.x + c * centre.y + e;
+        let y = b * centre.x + d * centre.y + f;
+        let reach_x = x.abs() + placed_major.x.abs() + placed_minor.x.abs();
+        let reach_y = y.abs() + placed_major.y.abs() + placed_minor.y.abs();
+        // Not finite here means past any limit: an axis of 1e300 squared.
+        if !(reach_x <= MAX_COORDINATE_MM && reach_y <= MAX_COORDINATE_MM) {
+            return Err(ImportError::CoordinateOutOfRange {
+                path: layer.to_owned(),
+                limit_mm: MAX_COORDINATE_MM,
+            });
+        }
+        let radius = placed_major.length().max(placed_minor.length());
+        // A chord of angle θ on radius r strays r·θ²/8 from the arc, so
+        // θ = √(8·tolerance / r) keeps it within the tolerance; with the
+        // radius and the tolerance bounded this is at most a few thousand.
+        let chords = sweep.abs() * (radius / (8.0 * self.tolerance_mm)).sqrt();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a bounded, non-negative count"
+        )]
+        let chords = chords.ceil() as usize;
+        self.count_vertices(chords.saturating_add(1))
     }
 
     fn count_vertices(&mut self, added: usize) -> Result<(), ImportError> {
@@ -648,6 +1041,153 @@ fn arc_polyline(centre: Point, radius_mm: f64, start_rad: f64, end_rad: f64) -> 
         vec![at(start_rad, (sweep / 4.0).tan()), at(end_rad, 0.0)],
         false,
     )
+}
+
+/// A HATCH arc edge as an open bulge polyline from its start to its end.
+/// A counter-clockwise edge runs from `start_deg` to `end_deg`. A
+/// clockwise one (73 = 0) is stored with complementary angles (360° −
+/// angle; see the `hatch` module), so it runs clockwise from −`start_deg`
+/// to −`end_deg`: the counter-clockwise arc mirrored across the
+/// horizontal through its centre. Equal angles, or a full turn, are a
+/// circle, as two half arcs.
+fn arc_edge_polyline(
+    centre: Point,
+    radius_mm: f64,
+    start_deg: f64,
+    end_deg: f64,
+    ccw: bool,
+) -> Polyline {
+    let tau = std::f64::consts::TAU;
+    let direction = if ccw { 1.0 } else { -1.0 };
+    let at = |angle: f64, bulge: f64| {
+        Vertex::new(
+            centre.x + radius_mm * angle.cos(),
+            centre.y + radius_mm * angle.sin(),
+            bulge,
+        )
+    };
+    let start = direction * start_deg.to_radians();
+    let sweep = (end_deg - start_deg).to_radians().rem_euclid(tau);
+    if sweep <= 1e-12 || tau - sweep <= 1e-12 {
+        return Polyline::new(
+            vec![
+                at(start, direction),
+                at(start + direction * tau / 2.0, direction),
+                at(start, 0.0),
+            ],
+            false,
+        );
+    }
+    Polyline::new(
+        vec![
+            at(start, direction * (sweep / 4.0).tan()),
+            at(start + direction * sweep, 0.0),
+        ],
+        false,
+    )
+}
+
+/// The start parameter and the signed parameter sweep of a HATCH
+/// elliptic-arc edge whose minor-to-major `ratio` and angles from the
+/// major axis are given. An angle θ is the parameter atan2(sin θ, ratio ·
+/// cos θ). Counter-clockwise runs from `start_deg` to `end_deg`;
+/// clockwise, with complementary angles as for an arc, from −`start_deg`
+/// to −`end_deg`, mirrored across the major axis. Equal angles, or a full
+/// turn, are the whole ellipse.
+fn ellipse_edge_params(ratio: f64, start_deg: f64, end_deg: f64, ccw: bool) -> (f64, f64) {
+    let tau = std::f64::consts::TAU;
+    let param = |deg: f64| {
+        let angle = deg.to_radians();
+        angle.sin().atan2(ratio * angle.cos())
+    };
+    let angular = (end_deg - start_deg).to_radians().rem_euclid(tau);
+    let start = param(start_deg);
+    let sweep = if angular <= 1e-12 || tau - angular <= 1e-12 {
+        tau
+    } else {
+        (param(end_deg) - start).rem_euclid(tau)
+    };
+    if ccw {
+        (start, sweep)
+    } else {
+        (-start, -sweep)
+    }
+}
+
+/// The edges of a boundary, open polylines in order, joined end to end
+/// into one closed polyline: each edge must start where the one before
+/// ends, within `tolerance_mm`, or end there (it is then reversed), and the
+/// last must end where the first starts. Edges of fewer than two vertices
+/// are passed over. `None` when the edges do not close.
+fn chain(pieces: Vec<Polyline>, tolerance_mm: f64) -> Option<Polyline> {
+    let near = |a: &Vertex, b: &Vertex| a.point().distance_to(b.point()) <= tolerance_mm;
+    let mut pieces = pieces.into_iter().filter(|p| p.vertices().len() >= 2);
+    let mut vertices: Vec<Vertex> = pieces.next()?.vertices().to_vec();
+    for (k, piece) in pieces.enumerate() {
+        let (first, last) = (*piece.vertices().first()?, *piece.vertices().last()?);
+        let end = *vertices.last()?;
+        // The first edge may itself run backwards.
+        if k == 0 && !near(&end, &first) && !near(&end, &last) {
+            let start = *vertices.first()?;
+            if near(&start, &first) || near(&start, &last) {
+                vertices = Polyline::new(vertices, false)
+                    .reversed()
+                    .vertices()
+                    .to_vec();
+            }
+        }
+        let end = *vertices.last()?;
+        let piece = if near(&end, &first) {
+            piece
+        } else if near(&end, &last) {
+            piece.reversed()
+        } else {
+            return None;
+        };
+        vertices.pop();
+        vertices.extend_from_slice(piece.vertices());
+    }
+    let (first, last) = (*vertices.first()?, *vertices.last()?);
+    if !near(&first, &last) || vertices.len() < 3 {
+        return None;
+    }
+    vertices.pop();
+    // Vertices within the tolerance of the closing point are that point: a
+    // curve drawn to close can overshoot it and curl back by a few
+    // micrometres, a loop no cutter resolves that would read as the
+    // boundary crossing itself.
+    while vertices.len() > 3
+        && vertices
+            .last()
+            .is_some_and(|v| near(v, &first) && v.bulge == 0.0)
+    {
+        vertices.pop();
+    }
+    while vertices.len() > 3 && vertices.get(1).is_some_and(|v| near(v, &first)) {
+        if let Some(v) = vertices.get_mut(1) {
+            v.x = first.x;
+            v.y = first.y;
+        }
+        vertices.remove(0);
+    }
+    Some(Polyline::new(vertices, true))
+}
+
+/// Refuses a polyline that reaches past [`MAX_COORDINATE_MM`].
+fn check_reach(polyline: &Polyline, layer: &str) -> Result<(), ImportError> {
+    let reach_mm = polyline.reach_mm();
+    if !reach_mm.is_finite() {
+        return Err(ImportError::NonFinite {
+            path: layer.to_owned(),
+        });
+    }
+    if reach_mm > MAX_COORDINATE_MM {
+        return Err(ImportError::CoordinateOutOfRange {
+            path: layer.to_owned(),
+            limit_mm: MAX_COORDINATE_MM,
+        });
+    }
+    Ok(())
 }
 
 /// Drops vertices that repeat their predecessor, and the last vertex of a

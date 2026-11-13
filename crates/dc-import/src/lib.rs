@@ -19,8 +19,8 @@ pub mod svg;
 
 pub use bitmap::{BITMAP_PNG_COMPRESSION, ImageFormat};
 pub use dxf::{
-    DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, JOIN_TOLERANCE_DEFAULT_MM,
-    MAX_INSERT_DEPTH, import_dxf,
+    DxfImport, DxfImportOptions, DxfLayer, DxfReadError, DxfUnits, HatchProblem,
+    JOIN_TOLERANCE_DEFAULT_MM, MAX_HATCH_BOUNDARIES, MAX_HATCH_EDGES, MAX_INSERT_DEPTH, import_dxf,
 };
 pub use prep::walk::HiddenReason;
 pub use svg::{
@@ -87,6 +87,24 @@ pub enum ImportError {
     )]
     TooMuchWork {
         /// The entity-visit cap that was exceeded.
+        limit: usize,
+    },
+    /// A DXF HATCH declares more boundary paths than
+    /// [`dxf::MAX_HATCH_BOUNDARIES`], or more edges, polyline vertices and
+    /// spline knots and control points than [`dxf::MAX_HATCH_EDGES`];
+    /// refused before any of them is read (#668).
+    #[error(
+        "DXF HATCH `{hatch}` declares {declared} {what}, more than the {limit} one hatch may have; simplify or explode it in the CAD program"
+    )]
+    DxfHatchTooLarge {
+        /// The hatch's handle (group 5); empty when it has none.
+        hatch: String,
+        /// What was counted: `boundary paths` or `edges and vertices`.
+        what: &'static str,
+        /// The count the file declares, or the running total that passed
+        /// the cap.
+        declared: i64,
+        /// The cap.
         limit: usize,
     },
     /// The page size is NaN, infinite, not positive, or larger than
@@ -237,7 +255,7 @@ pub enum ImportWarning {
         units: RootUnits,
     },
     /// DXF entities DreamCarve does not read were skipped: how many of each
-    /// type, keyed by the DXF type name (`TEXT`, `DIMENSION`, `HATCH`, ...).
+    /// type, keyed by the DXF type name (`TEXT`, `DIMENSION`, `MTEXT`, ...).
     /// `POLYLINE (mesh)` counts polygon and polyface meshes; `<TYPE>
     /// (degenerate)` counts entities with no length, too few vertices, an
     /// INSERT scale of 0, or a zero extrusion direction; `<TYPE> (not in
@@ -265,6 +283,23 @@ pub enum ImportWarning {
     DxfCodePageUnsupported {
         /// The `$DWGCODEPAGE` value, as the file writes it.
         code_page: String,
+    },
+    /// A DXF HATCH's boundary could not be read, so the hatch was skipped
+    /// (#668, `dxf_hatch_unreadable`).
+    DxfHatchUnreadable {
+        /// The hatch's handle (group 5); empty when it has none.
+        hatch: String,
+        /// Its layer.
+        layer: String,
+        /// What is wrong with its boundary.
+        problem: HatchProblem,
+    },
+    /// HATCH boundary loops that repeat a closed shape drawn on its own,
+    /// such as an associative hatch's boundary polyline, were left out so
+    /// the shape is imported once (#668, `dxf_hatch_boundary_duplicate`).
+    DxfHatchBoundaryDuplicate {
+        /// How many loops were left out.
+        count: usize,
     },
     /// Outlines of different paths cross (3.4, `shapes_overlap`): `count`
     /// pairs, the first named, and where its two shapes meet.
@@ -453,6 +488,8 @@ impl ImportWarning {
             Self::DxfInsertTooDeep { .. } => "dxf_insert_too_deep",
             Self::DxfBlockMissing { .. } => "dxf_block_missing",
             Self::DxfCodePageUnsupported { .. } => "dxf_code_page_unsupported",
+            Self::DxfHatchUnreadable { .. } => "dxf_hatch_unreadable",
+            Self::DxfHatchBoundaryDuplicate { .. } => "dxf_hatch_boundary_duplicate",
             Self::ShapesOverlap { .. } => "shapes_overlap",
             Self::SvgHoleAsSeparatePath { .. } => "svg_hole_as_separate_path",
             Self::SvgStrokeOnlyPath { .. } => "svg_stroke_only_path",
@@ -551,6 +588,18 @@ impl std::fmt::Display for ImportWarning {
             Self::DxfCodePageUnsupported { code_page } => write!(
                 f,
                 "the drawing's text is in code page `{code_page}`, which DreamCarve cannot read; layer names were read as Windows-1252 and may show wrong characters"
+            ),
+            Self::DxfHatchUnreadable {
+                hatch,
+                layer,
+                problem,
+            } => write!(
+                f,
+                "HATCH `{hatch}` on layer `{layer}` was skipped: {problem}; redraw its boundary as closed polylines in the CAD program"
+            ),
+            Self::DxfHatchBoundaryDuplicate { count } => write!(
+                f,
+                "{count} HATCH boundary loop(s) repeat a shape drawn on its own and were imported once, as that shape"
             ),
             Self::ShapesOverlap {
                 count,
@@ -742,6 +791,18 @@ mod warning {
                     code_page: "ANSI_932".into(),
                 },
                 "dxf_code_page_unsupported",
+            ),
+            (
+                ImportWarning::DxfHatchUnreadable {
+                    hatch: "2F".into(),
+                    layer: "0".into(),
+                    problem: HatchProblem::Open { boundary: 1 },
+                },
+                "dxf_hatch_unreadable",
+            ),
+            (
+                ImportWarning::DxfHatchBoundaryDuplicate { count: 1 },
+                "dxf_hatch_boundary_duplicate",
             ),
             (
                 ImportWarning::PrepStrokeFailed { path: "p".into() },

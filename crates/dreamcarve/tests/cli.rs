@@ -5789,6 +5789,117 @@ fn init_reads_a_cr_only_dxf() {
     assert_eq!(definition_names(&project), ["square", "circle"]);
 }
 
+/// A closed LWPOLYLINE on layer `0` through `(x, y)`, as DXF group text.
+fn organiser_lwpolyline(points: &[(f64, f64)]) -> String {
+    let mut e = format!("0\nLWPOLYLINE\n8\n0\n90\n{}\n70\n1\n", points.len());
+    for (x, y) in points {
+        e.push_str(&format!("10\n{x:?}\n20\n{y:?}\n"));
+    }
+    e
+}
+
+/// A solid HATCH on layer `0` whose boundary paths are `paths` (each from
+/// its 92), as DXF group text.
+fn organiser_hatch(handle: &str, paths: &[String]) -> String {
+    format!(
+        "0\nHATCH\n5\n{handle}\n100\nAcDbEntity\n8\n0\n100\nAcDbHatch\n10\n0.0\n20\n0.0\n30\n0.0\n\
+         210\n0.0\n220\n0.0\n230\n1.0\n2\nSOLID\n70\n1\n71\n1\n91\n{}\n{}75\n1\n76\n1\n98\n0\n",
+        paths.len(),
+        paths.concat()
+    )
+}
+
+/// A polyline boundary path through `(x, y)`.
+fn organiser_polyline_path(points: &[(f64, f64)]) -> String {
+    let mut path = format!("92\n3\n72\n0\n73\n1\n93\n{}\n", points.len());
+    for (x, y) in points {
+        path.push_str(&format!("10\n{x:?}\n20\n{y:?}\n"));
+    }
+    path.push_str("97\n0\n");
+    path
+}
+
+/// A circle as an edge boundary path: one full counter-clockwise arc.
+fn organiser_circle_path(cx: f64, cy: f64, r: f64) -> String {
+    format!(
+        "92\n1\n93\n1\n72\n2\n10\n{cx:?}\n20\n{cy:?}\n40\n{r:?}\n50\n0.0\n51\n360.0\n73\n1\n97\n0\n"
+    )
+}
+
+fn rect(x: f64, y: f64, w: f64, h: f64) -> Vec<(f64, f64)> {
+    vec![(x, y), (x + w, y), (x + w, y + h), (x, y + h)]
+}
+
+/// Issue #668: a synthetic tool organiser, an outline LWPOLYLINE with
+/// every pocket drawn as a HATCH, as the maintainer's own design is:
+/// a rectangle, a round bit hole, a pocket with an island, and a pocket
+/// whose boundary is also drawn as an LWPOLYLINE (an associative hatch).
+/// `init` imports every pocket once, the island as a hole of its pocket,
+/// and skips nothing.
+#[test]
+fn init_imports_hatched_pockets() {
+    let dir = work_dir("init_imports_hatched_pockets");
+    let mut entities = organiser_lwpolyline(&rect(0.0, 0.0, 200.0, 100.0));
+    entities += &organiser_hatch(
+        "A1",
+        &[organiser_polyline_path(&rect(10.0, 10.0, 60.0, 20.0))],
+    );
+    entities += &organiser_hatch("A2", &[organiser_circle_path(100.0, 50.0, 6.35)]);
+    entities += &organiser_hatch(
+        "A3",
+        &[
+            organiser_polyline_path(&rect(130.0, 10.0, 50.0, 50.0)),
+            organiser_circle_path(155.0, 35.0, 10.0),
+        ],
+    );
+    entities += &organiser_lwpolyline(&rect(10.0, 60.0, 40.0, 30.0));
+    entities += &organiser_hatch(
+        "A4",
+        &[organiser_polyline_path(&rect(10.0, 60.0, 40.0, 30.0))],
+    );
+    let dxf = format!(
+        "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
+         0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n"
+    );
+    std::fs::write(dir.join("organiser.dxf"), dxf).expect("dxf written");
+
+    let out = run(&dir, &["init", "organiser.dxf"]);
+    assert_eq!(out.status.code(), Some(0), "init: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(!err.contains("dxf_entities_skipped"), "{err}");
+    assert!(
+        err.contains("warning: 1 HATCH boundary loop(s) repeat a shape drawn on its own"),
+        "{err}"
+    );
+    assert!(
+        stdout(&out).contains("Imported 5 shape(s)"),
+        "{}",
+        stdout(&out)
+    );
+    let project = load_file(&dir.join("organiser.dcv")).project;
+    assert_eq!(
+        definition_names(&project),
+        ["0-1", "0-2", "0-3", "0-4", "0-5"]
+    );
+    let profiles: Vec<usize> = project
+        .instances
+        .iter()
+        .map(|i| project.definitions[&i.definition].profiles.len())
+        .collect();
+    assert_eq!(profiles, [1, 1, 1, 2, 1], "the island pocket has a hole");
+    let island = &definition_named(&project, "0-4").profiles;
+    assert_eq!(
+        island[1],
+        Polyline::circle(Point::new(155.0, 35.0), 10.0),
+        "the island stays a circle"
+    );
+    // The round hole keeps its arcs: a 1/4 in bit's circle.
+    let hole = &definition_named(&project, "0-3").profiles[0];
+    assert_eq!(hole, &Polyline::circle(Point::new(100.0, 50.0), 6.35));
+    // Every shape is closed, so the Profile targets all five.
+    assert_eq!(project.operations[0].targets().len(), 5);
+}
+
 /// #389: `init` writes the SVG's shapes with every coordinate rounded to
 /// 6 decimals of a millimetre; before the fix the plaque had 88 such as
 /// `10.00000027815501`.

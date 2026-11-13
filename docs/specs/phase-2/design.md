@@ -67,7 +67,7 @@ tabs needed two operations in the right order.)
 | `dc-gcode::arcfit` | `src/engine/gcode/arcFitting.ts` (`fitArcsInMachineMoves`, `splitArc`, `resolveEmittedArc`, `runSurvivesFormatting`, `applyEmittedArcFallback`), `arcReconstruction.ts` (`findArcRunsInPoints`, Kasa fit, endpoint projection, gates), `arcFitting.test.ts` | Runs in project space before the machine transform (no mirror, so handedness is preserved). Tolerance from the project. S12 gates added to the safety pass. |
 | `dc-gcode::emit` canned cycles | `src/engine/gcode/postprocessor.ts` lines 301–430 | One cycle word per Drill operation; mixed cycles expand. `G4` dwell on expansion. Safety pass expands cycles (S11). |
 | `dc-project/src/definitions/{linuxcnc,mach3,uccnc,generic}/v1.json` | `src/engine/gcode/definitions/*.json` | Data start point only. Every line re-verified against the controller's documentation or source; `G43 H` and `M6` lines removed; `G40 G49 G80` kept where the controller documents them; see "Post-processor definitions". |
-| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsed by DreamCarve's own group-code reader (ASCII and binary; #124 replaced the `dxf` crate). No Y flip (DXF is Y-up). `ELLIPSE` added. Join tolerance 0.01 mm. Entity skips are warned with counts. |
+| `dc-import::dxf` | `src/import/dxf.ts` (entity set, `$INSUNITS` table, bulge-to-arc, INSERT transform and skip rules, stitching and closing, dedupe) | Parsed by DreamCarve's own group-code reader (ASCII and binary; #124 replaced the `dxf` crate). No Y flip (DXF is Y-up). `ELLIPSE` added; `HATCH` boundaries read (#668; upstream skips HATCH). Join tolerance 0.01 mm. Entity skips are warned with counts. |
 | `dc-library::fusion` | none (PureCutCNC has no Fusion tool import; `src/toolLibrary.ts` is a bundled list) | New. Written against Autodesk's statements and vendor-published `.tools` files; see "Fusion import". |
 | `dc-library::library` | `src/toolLibrary.ts` (`parseToolLibraryFile` validation rules) | Validation rules ported (positive diameter, flutes ≥ 1, stepover in (0, 1], V-bit angle in (0, 180)). Persistence is DreamCarve's. |
 | `tests/golden/{pocket-*, drill-*, engrave-*, profile-{ramp,lead,dogbone}, order-*}` | captured via `tools/parity/` | See Test plan. Raster angle and helix sense are mirrored in the `.camj`; each case's notes say how. |
@@ -2626,9 +2626,73 @@ Option<Vec<String>> }`.
    ELLIPSE keeps its world centre and axis and runs clockwise under −Z;
    any other normal counts as `<TYPE> (not in the XY plane)`. A spline-fit
    POLYLINE (flag 4) drops its frame vertices (VERTEX flag 16); a
-   curve-fit one (flag 2) keeps every vertex. Everything else, ATTRIB
+   curve-fit one (flag 2) keeps every vertex. `HATCH` → one shape of its
+   boundary loops (below). Everything else, ATTRIB
    included, counts in `DxfEntitiesSkipped { counts: BTreeMap<String,
    usize> }`, in ASCII and binary files alike.
+   **HATCH (#668, maintainer decision 2026-11-13; phase 2 skipped it).**
+   `dxf::hatch` reads the boundary paths from group 91 on, positionally,
+   in the hatch's OCS: a polyline path (92 bit 2: 72, 73, 93, then 10/20
+   and an optional 42 per vertex) is closed whatever its 73; an edge path
+   (93, then per edge 72 = 1 line 10/20 11/21, 2 arc 10/20 40 50 51 73, 3
+   elliptic arc 10/20 11/21 40 50 51 73, 4 spline 94 73 74 95 96 40… 10/20
+   [42]… then, from R2010, 97 fit count, 11/21…, optional 12/22 13/23);
+   each path ends in 97 and its 330 handles. A spline's 97 is its fit
+   count when the next group is 11, 12, 13, 72 or 97, else the path's
+   source count. A clockwise arc or elliptic arc (73 = 0) stores its
+   angles as complements (360° − angle), so it runs clockwise from
+   −start to −end; an elliptic arc's angles are angles from the major
+   axis, turned into parameters by atan2(sin θ, ratio · cos θ). These two
+   follow the MIT-licensed ezdxf's reading of AutoCAD's files, where the
+   reference is silent. Edges are placed in mm one by one (arcs stay
+   bulges under a transform that keeps them, ellipses and splines are
+   flattened in mm as the ELLIPSE and SPLINE entities are), then chained
+   end to end within the join tolerance (an edge may run backwards), and
+   the chain must close. Vertices within the join tolerance of the
+   closing point are that point (a curve that overshoots and curls back
+   by micrometres). A loop of no area is left out. A loop that crosses
+   itself (`Contour::new`), loops that cross each other (`nest`), an
+   unknown edge type, an open chain or cut-short data skip the hatch with
+   `DxfHatchUnreadable { hatch: handle, layer, problem: HatchProblem }`;
+   a loop repeated within the hatch is read once. The loops are one
+   `Shape { polyline, inner, hatch: true }`, the largest first; the
+   definition's profiles are all of them, and nesting reads them by
+   even-odd. The fill (2, 70, 75 onward) is ignored. **Caps:** a hatch
+   declaring more than `MAX_HATCH_BOUNDARIES` (10 000) paths, or more than
+   `MAX_HATCH_EDGES` (100 000) edges, polyline vertices, spline knots and
+   control points in all, is `ImportError::DxfHatchTooLarge { hatch,
+   what, declared, limit }`; every declared count is also charged to the
+   vertex limit (`TooManyVertices`), all before anything it counts is
+   read, and no buffer is sized from a declared count.
+   **Duplicates:** after rounding, a hatch loop that matches a closed
+   shape from another entity (same vertex count, every vertex within the
+   join tolerance from some starting vertex in either direction, bulges
+   whose arc middles differ by no more than it) is removed; a hatch left
+   with no loop is dropped, one with loops left keeps them. Matching runs
+   first on the hatch's own layer, before the layer list (so each layer
+   counts what it imports alone), then across the layers `options.layers`
+   keeps; `DxfHatchBoundaryDuplicate { count }` counts the loops removed
+   on kept layers. The same-layer dedupe of identical shapes compares a
+   hatch only with hatches, so the drawn shape is the one kept whichever
+   comes first in the file. The match is bounded: shapes are indexed by
+   vertex count and the grid cell of their bounds' corner, a candidate
+   whose length or area differs by more than the tolerance allows is
+   rejected unwalked, only the vertices near the loop's first are tried
+   as a start (at most 4 a direction), and every candidate and vertex
+   looked at is charged to `MAX_DUPLICATE_COMPARISONS` (20 million) per
+   import; past it, loops are distinct (never an error).
+   **Curve caps (#668 security review), for HATCH edges and the SPLINE
+   and ELLIPSE entities alike:** a spline's degree is at most
+   `MAX_SPLINE_DEGREE` (11; a hatch edge past it is malformed, a SPLINE
+   entity falls back to its control polygon), and sampling stops as soon
+   as it would pass what is left of the vertex limit
+   (`TooManyVertices`), so its work is bounded before it runs. An
+   ellipse's ratio must be in (0, 1] (a hatch edge outside it is
+   malformed, an ELLIPSE entity is counted as `ELLIPSE (malformed)`); its
+   centre and axes, placed, must lie within the coordinate limit
+   (`CoordinateOutOfRange`), and its flattening, a circle of its larger
+   placed radius cut into chords within the tolerance, is charged to the
+   vertex limit, all before kurbo builds its path.
 3. **No Y flip.** Coordinates are already Y-up; `y' = y × scale`.
 4. **Layers:** the entity's layer, inheriting the INSERT's for layer `0`
    inside a block; `options.layers` filters by name (layer `0` shapes
@@ -3107,6 +3171,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
 - `dxf::reads_lf_crlf_and_cr_line_endings`, `cli::init_reads_a_cr_only_dxf` (#667).
+- `dxf::hatch_polyline_boundary_imports_as_a_shape`, `dxf::hatch_edge_boundary_lines_arcs_ellipses_splines`, `dxf::hatch_with_island_is_a_shape_with_a_hole`, `dxf::hatch_in_a_rotated_ocs_is_placed_in_world_coordinates`, `dxf::associative_hatch_does_not_duplicate_its_boundary`, `dxf::unreadable_hatch_is_skipped_with_a_warning`, `dxf::hatch_loop_and_edge_caps_are_enforced`, `dxf::hatch_reads_alike_in_binary_dxf`, `hatch::spline_fit_count_is_told_from_the_source_count`, `cli::init_imports_hatched_pockets`, `dxf::hatch_spline_edge_degree_is_capped`, `dxf::hatch_spline_sampling_is_charged_before_it_runs`, `dxf::ellipse_axes_past_the_coordinate_limit_are_refused`, `dxf::ellipse_ratio_out_of_range_is_malformed`, `dxf::duplicate_matching_is_bounded_on_many_large_loops` (#668).
 - `dxf::cp1251_layer_names_decode`, `dxf::unknown_code_page_warns_and_falls_back`, `dxf::utf8_file_is_unchanged` (#209).
 
 **dc-library**

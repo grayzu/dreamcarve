@@ -396,7 +396,9 @@ code's wording.
 
 | Code | Cause | What to do |
 | --- | --- | --- |
-| `dxf_entities_skipped` | A DXF holds text, dimensions, hatches, meshes or other entities DreamCarve does not read; the message counts them by type. | Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
+| `dxf_entities_skipped` | A DXF holds text, dimensions, meshes or other entities DreamCarve does not read, or entities tilted out of the drawing's plane; the message counts them by type. | Explode text to outlines in the CAD program if you want to cut it ([Importing DXF](importing-dxf.md#what-is-read)). |
+| `dxf_hatch_unreadable` | A DXF hatch's boundary does not close, crosses itself or another of its boundaries, or holds an edge type DXF does not define; the hatch was skipped. The message names it by its handle and layer, and says which boundary is wrong. | Fix the boundary in the CAD program, or regenerate it as a polyline ([Hatches](importing-dxf.md#hatches)). |
+| `dxf_hatch_boundary_duplicate` | Loops of DXF hatches repeat closed shapes drawn on their own, such as an associative hatch's boundary polyline; they were left out, so each pocket imports once, as the drawn shape. | Nothing. |
 | `dxf_insert_too_deep` | A DXF block inserts itself, or nests more than 12 levels deep; the deeper levels were skipped. | Fix the block in the CAD program. |
 | `dxf_block_missing` | The DXF places a block it does not define; the insert was skipped. | Re-export the drawing. |
 | `dxf_code_page_unsupported` | A DXF from before AutoCAD 2007 is saved in a code page DreamCarve has no table for, such as a Japanese, Chinese or Korean one. Layer names were read as Windows-1252 and may show wrong characters; the shapes are right. | Save the drawing as a 2007 or later DXF to fix the names ([Importing DXF](importing-dxf.md#limits)). |

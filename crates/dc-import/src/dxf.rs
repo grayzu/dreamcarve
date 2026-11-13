@@ -26,8 +26,11 @@ mod code_page;
 mod document;
 mod entities;
 mod groups;
+mod hatch;
 mod spline;
 mod stitch;
+
+pub use hatch::{MAX_HATCH_BOUNDARIES, MAX_HATCH_EDGES};
 
 use std::collections::BTreeMap;
 
@@ -88,6 +91,87 @@ pub enum DxfReadError {
         /// Where the code starts.
         offset: usize,
     },
+}
+
+/// Why a HATCH's boundary could not be read, so the hatch was skipped
+/// ([`ImportWarning::DxfHatchUnreadable`]). Boundaries count from 1, in
+/// the order the hatch lists them.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HatchProblem {
+    /// The hatch has no boundary path that encloses an area.
+    NoBoundary,
+    /// Boundary data is cut short or out of order: the group `code` was
+    /// expected and is missing or not a number. Boundary 0 is the hatch's
+    /// boundary count.
+    Malformed {
+        /// The boundary being read.
+        boundary: usize,
+        /// The group code expected.
+        code: i32,
+    },
+    /// An edge's type (group 72) is not 1 to 4 (line, circular arc,
+    /// elliptic arc, spline).
+    UnknownEdge {
+        /// The boundary.
+        boundary: usize,
+        /// The type the file gives.
+        edge_type: i64,
+    },
+    /// The boundary's edges do not meet end to end in a closed loop.
+    Open {
+        /// The boundary.
+        boundary: usize,
+    },
+    /// The boundary crosses itself.
+    SelfIntersecting {
+        /// The boundary.
+        boundary: usize,
+        /// X of the first crossing, mm, Y-up.
+        x_mm: f64,
+        /// Y of the first crossing, mm, Y-up.
+        y_mm: f64,
+    },
+    /// Two boundaries cross, so they make no region by even-odd.
+    BoundariesCross {
+        /// The earlier boundary.
+        first: usize,
+        /// The later boundary.
+        second: usize,
+    },
+}
+
+impl std::fmt::Display for HatchProblem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoBoundary => f.write_str("it has no boundary that encloses an area"),
+            Self::Malformed { boundary: 0, code } => {
+                write!(f, "its boundary count (group {code}) is missing or wrong")
+            }
+            Self::Malformed { boundary, code } => write!(
+                f,
+                "boundary {boundary} is cut short: group code {code} is missing or wrong"
+            ),
+            Self::UnknownEdge {
+                boundary,
+                edge_type,
+            } => write!(
+                f,
+                "boundary {boundary} has an edge of type {edge_type}, which DXF does not define"
+            ),
+            Self::Open { boundary } => write!(f, "boundary {boundary} is not closed"),
+            Self::SelfIntersecting {
+                boundary,
+                x_mm,
+                y_mm,
+            } => write!(
+                f,
+                "boundary {boundary} crosses itself near ({x_mm:.2}, {y_mm:.2}) mm"
+            ),
+            Self::BoundariesCross { first, second } => {
+                write!(f, "boundaries {first} and {second} cross")
+            }
+        }
+    }
 }
 
 /// Default distance within which the ends of two open segments on one
@@ -277,7 +361,12 @@ pub fn import_dxf(
 
     // No Y flip: DXF is Y-up (ADR-0001). The scale is the whole transform.
     let scale = Transform::scale(mm_per_unit, mm_per_unit);
-    let mut walker = Walker::new(&document.blocks, tolerance_mm, options.max_vertices);
+    let mut walker = Walker::new(
+        &document.blocks,
+        tolerance_mm,
+        join_mm,
+        options.max_vertices,
+    );
     for entity in &document.entities {
         if entity.in_paper_space() {
             continue;
@@ -296,6 +385,13 @@ pub fn import_dxf(
     for block in unique(walker.missing) {
         warnings.push(ImportWarning::DxfBlockMissing { block });
     }
+    for hatch in walker.unreadable {
+        warnings.push(ImportWarning::DxfHatchUnreadable {
+            hatch: hatch.handle,
+            layer: hatch.layer,
+            problem: hatch.problem,
+        });
+    }
 
     // Every layer is stitched, so the layer list counts what each would
     // import; the filter applies after. Dedupe and stitching never cross
@@ -311,22 +407,42 @@ pub fn import_dxf(
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
     // can leave a shape too few points.
+    let rounded_or_none = |p: &dc_geometry::Polyline| {
+        round::round_polyline(p)
+            .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM))
+    };
     let shapes: Vec<Shape> = shapes
         .into_iter()
         .filter_map(|s| {
-            let rounded = round::round_polyline(&s.polyline)
-                .filter(|p| !(p.is_closed() && p.signed_area_mm2().abs() <= EPS_MM * EPS_MM));
+            let rounded = rounded_or_none(&s.polyline);
             if rounded.is_none() && s.polyline.is_closed() && kept(&s.layer) {
                 warnings.push(ImportWarning::ZeroAreaDropped {
                     path: s.layer.clone(),
                     subpath: 0,
                 });
             }
-            rounded.map(|polyline| Shape { polyline, ..s })
+            let inner = s.inner.iter().filter_map(rounded_or_none).collect();
+            rounded.map(|polyline| Shape {
+                polyline,
+                inner,
+                ..s
+            })
         })
         .collect();
+    // A HATCH loop that repeats a shape drawn on its own gives way to it:
+    // first on its own layer, so the layer list counts what each layer
+    // imports alone, then across the layers kept.
+    let duplicate_mm = join_mm.max(EPS_MM);
+    let mut budget = stitch::MatchBudget::new();
+    let (shapes, removed) = stitch::drop_hatch_duplicates(shapes, duplicate_mm, true, &mut budget);
     let layers = layer_list(&shapes, skipped_per_layer);
     let shapes: Vec<Shape> = shapes.into_iter().filter(|s| kept(&s.layer)).collect();
+    let (shapes, removed_across) =
+        stitch::drop_hatch_duplicates(shapes, duplicate_mm, false, &mut budget);
+    let duplicates = removed.iter().filter(|layer| kept(layer)).count() + removed_across.len();
+    if duplicates > 0 {
+        warnings.push(ImportWarning::DxfHatchBoundaryDuplicate { count: duplicates });
+    }
 
     // Names: the layer, numbered when the layer holds several shapes.
     let mut per_layer: BTreeMap<&str, usize> = BTreeMap::new();
@@ -345,7 +461,7 @@ pub fn import_dxf(
         } else {
             shape.layer.clone()
         };
-        if let Some(b) = shape.polyline.bounds() {
+        for b in shape.loops().filter_map(dc_geometry::Polyline::bounds) {
             bounds = Some(match bounds {
                 Some(acc) => acc.including(b.min).including(b.max),
                 None => b,
@@ -366,7 +482,7 @@ pub fn import_dxf(
         definitions.push(FeatureDefinition {
             id: definition,
             name,
-            profiles: vec![shape.polyline.clone()],
+            profiles: shape.loops().cloned().collect(),
         });
     }
 
@@ -1668,8 +1784,9 @@ mod tests {
         out
     }
 
-    /// A LINE and a HATCH with a boundary path, an extended-data string and
-    /// a binary chunk: the HATCH is not read and must be counted.
+    /// A LINE and a HATCH with an empty boundary path, an extended-data
+    /// string and a binary chunk: the HATCH is seen, and since its boundary
+    /// encloses nothing it is skipped with a warning that names it.
     const HATCH_DXF: &str = "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
         0\nSECTION\n2\nENTITIES\n\
         0\nLINE\n8\nkept\n10\n0.0\n20\n0.0\n30\n0.0\n11\n10.0\n21\n0.0\n31\n0.0\n\
@@ -1685,9 +1802,14 @@ mod tests {
     fn swallowed_types_counted_in_binary_dxf() {
         let hatch = |result: &DxfImport, warnings: &[ImportWarning]| {
             assert_eq!(names(result), ["kept"]);
-            let counts = skipped(warnings).expect("the HATCH is counted");
-            assert_eq!(counts.get("HATCH"), Some(&1), "{counts:?}");
-            assert_eq!(counts.len(), 1, "{counts:?}");
+            assert_eq!(
+                warnings,
+                [ImportWarning::DxfHatchUnreadable {
+                    hatch: "2F".into(),
+                    layer: "fill".into(),
+                    problem: HatchProblem::NoBoundary,
+                }]
+            );
         };
         let (result, warnings) = import(HATCH_DXF.as_bytes());
         hatch(&result, &warnings);
@@ -1981,5 +2103,752 @@ mod tests {
         let (result, warnings) = import(&dxf);
         assert_eq!(names(&result), ["caf\u{e9}"]);
         assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    // ── HATCH (#668) ─────────────────────────────────────────────────────
+
+    /// A millimetre DXF whose ENTITIES section is `entities`.
+    fn dxf_entities(entities: &str) -> String {
+        format!(
+            "0\nSECTION\n2\nHEADER\n9\n$ACADVER\n1\nAC1032\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n\
+             0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n"
+        )
+    }
+
+    /// A solid HATCH with handle `handle` on `layer`, extrusion `normal`,
+    /// and `paths` (each from its 92), followed by its style, pattern type
+    /// and one seed point, whose 10/20 the boundary reader must not take.
+    fn hatch(handle: &str, layer: &str, normal: [f64; 3], paths: &[String]) -> String {
+        let [nx, ny, nz] = normal;
+        format!(
+            "0\nHATCH\n5\n{handle}\n330\n1F\n100\nAcDbEntity\n8\n{layer}\n100\nAcDbHatch\n\
+             10\n0.0\n20\n0.0\n30\n0.0\n210\n{nx}\n220\n{ny}\n230\n{nz}\n2\nSOLID\n70\n1\n71\n1\n\
+             91\n{}\n{}75\n0\n76\n1\n98\n1\n10\n999.0\n20\n999.0\n",
+            paths.len(),
+            paths.concat()
+        )
+    }
+
+    const UP: [f64; 3] = [0.0, 0.0, 1.0];
+
+    /// A polyline boundary path through `(x, y, bulge)`, closed, with one
+    /// source object.
+    fn polyline_path(vertices: &[(f64, f64, f64)]) -> String {
+        let mut path = format!("92\n7\n72\n1\n73\n1\n93\n{}\n", vertices.len());
+        for (x, y, bulge) in vertices {
+            path.push_str(&format!("10\n{x:?}\n20\n{y:?}\n42\n{bulge:?}\n"));
+        }
+        path.push_str("97\n1\n330\nAB\n");
+        path
+    }
+
+    /// An edge boundary path of `edges`, with no source object.
+    fn edge_path(edges: &[String]) -> String {
+        format!("92\n1\n93\n{}\n{}97\n0\n", edges.len(), edges.concat())
+    }
+
+    fn line_edge(a: (f64, f64), b: (f64, f64)) -> String {
+        format!(
+            "72\n1\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n",
+            a.0, a.1, b.0, b.1
+        )
+    }
+
+    /// An arc edge; for a clockwise one the angles are stored as their
+    /// complements, as AutoCAD writes them.
+    fn arc_edge(centre: (f64, f64), radius: f64, start: f64, end: f64, ccw: bool) -> String {
+        format!(
+            "72\n2\n10\n{:?}\n20\n{:?}\n40\n{radius:?}\n50\n{start:?}\n51\n{end:?}\n73\n{}\n",
+            centre.0,
+            centre.1,
+            i32::from(ccw)
+        )
+    }
+
+    fn ellipse_edge(
+        centre: (f64, f64),
+        major: (f64, f64),
+        ratio: f64,
+        start: f64,
+        end: f64,
+    ) -> String {
+        format!(
+            "72\n3\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n40\n{ratio:?}\n50\n{start:?}\n51\n{end:?}\n73\n1\n",
+            centre.0, centre.1, major.0, major.1
+        )
+    }
+
+    /// A non-rational spline edge with R2010 fit data (none).
+    fn spline_edge(degree: usize, knots: &[f64], control: &[(f64, f64)]) -> String {
+        let mut edge = format!(
+            "72\n4\n94\n{degree}\n73\n0\n74\n0\n95\n{}\n96\n{}\n",
+            knots.len(),
+            control.len()
+        );
+        for k in knots {
+            edge.push_str(&format!("40\n{k:?}\n"));
+        }
+        for (x, y) in control {
+            edge.push_str(&format!("10\n{x:?}\n20\n{y:?}\n"));
+        }
+        edge.push_str("97\n0\n");
+        edge
+    }
+
+    /// A closed LWPOLYLINE on `layer` through `(x, y, bulge)`.
+    fn lwpolyline(layer: &str, vertices: &[(f64, f64, f64)]) -> String {
+        let mut e = format!("0\nLWPOLYLINE\n8\n{layer}\n90\n{}\n70\n1\n", vertices.len());
+        for (x, y, bulge) in vertices {
+            e.push_str(&format!("10\n{x:?}\n20\n{y:?}\n42\n{bulge:?}\n"));
+        }
+        e
+    }
+
+    fn hatch_import(entities: &str) -> (DxfImport, Vec<ImportWarning>) {
+        import(dxf_entities(entities).as_bytes())
+    }
+
+    /// The bulge of a quarter arc.
+    fn quarter() -> f64 {
+        (FRAC_PI_2 / 4.0).tan()
+    }
+
+    /// A 40 × 20 rectangle at the origin with corners rounded to radius 5.
+    fn rounded_rectangle() -> Vec<(f64, f64, f64)> {
+        let b = quarter();
+        vec![
+            (5.0, 0.0, 0.0),
+            (35.0, 0.0, b),
+            (40.0, 5.0, 0.0),
+            (40.0, 15.0, b),
+            (35.0, 20.0, 0.0),
+            (5.0, 20.0, b),
+            (0.0, 15.0, 0.0),
+            (0.0, 5.0, b),
+        ]
+    }
+
+    /// A polyline boundary with bulges imports as one closed shape that
+    /// keeps its four corner arcs.
+    #[test]
+    fn hatch_polyline_boundary_imports_as_a_shape() {
+        let (result, warnings) = hatch_import(&hatch(
+            "A1",
+            "fill",
+            UP,
+            &[polyline_path(&rounded_rectangle())],
+        ));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(names(&result), ["fill"]);
+        let shape = only(&result, "fill");
+        assert!(shape.is_closed());
+        assert_eq!(shape.vertices().len(), 8);
+        let arcs: Vec<_> = shape.segments().filter_map(|s| s.arc()).collect();
+        assert_eq!(arcs.len(), 4, "four rounded corners");
+        for arc in &arcs {
+            assert_approx_eq!(arc.radius_mm, 5.0, TOL_MM);
+            assert_approx_eq!(arc.sweep_rad, FRAC_PI_2, TOL_MM);
+        }
+        assert_approx_eq!(
+            shape.signed_area_mm2(),
+            40.0 * 20.0 - (4.0 - PI) * 25.0,
+            1e-6
+        );
+        assert_rect(result.bounds.unwrap(), (0.0, 0.0), (40.0, 20.0), TOL_MM);
+    }
+
+    /// One edge boundary of every edge type: a line along the bottom, a
+    /// counter-clockwise half circle out to the right, a clockwise half
+    /// circle back along the top (stored with complementary angles, so it
+    /// dips down to (15, 5)), a half ellipse over the top left, and a
+    /// quadratic spline down the left side bowing out to x = −2.5.
+    #[test]
+    fn hatch_edge_boundary_lines_arcs_ellipses_splines() {
+        let edges = [
+            line_edge((0.0, 0.0), (20.0, 0.0)),
+            arc_edge((20.0, 5.0), 5.0, -90.0, 90.0, true),
+            arc_edge((15.0, 10.0), 5.0, 0.0, 180.0, false),
+            ellipse_edge((5.0, 10.0), (5.0, 0.0), 0.5, 0.0, 180.0),
+            spline_edge(
+                2,
+                &[0.0, 0.0, 0.0, 1.0, 1.0, 1.0],
+                &[(0.0, 10.0), (-5.0, 5.0), (0.0, 0.0)],
+            ),
+        ];
+        let (result, warnings) = hatch_import(&hatch("A2", "fill", UP, &[edge_path(&edges)]));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let shape = only(&result, "fill");
+        assert!(shape.is_closed());
+        let tolerance = DxfImportOptions::new().flatten_tolerance_mm;
+        // x from the spline's −2.5 to the right half circle's 25; y from
+        // the bottom line to the ellipse's top at 12.5.
+        assert_rect(
+            shape.bounds().unwrap(),
+            (-2.5, 0.0),
+            (25.0, 12.5),
+            tolerance,
+        );
+        let arcs: Vec<_> = shape.segments().filter_map(|s| s.arc()).collect();
+        assert_eq!(arcs.len(), 2, "the two circular arcs stay arcs: {arcs:?}");
+        let right = arcs
+            .iter()
+            .find(|a| a.centre.distance_to(Point::new(20.0, 5.0)) <= TOL_MM)
+            .expect("the counter-clockwise arc");
+        assert_approx_eq!(right.radius_mm, 5.0, TOL_MM);
+        assert_approx_eq!(right.sweep_rad, PI, TOL_MM);
+        let top = arcs
+            .iter()
+            .find(|a| a.centre.distance_to(Point::new(15.0, 10.0)) <= TOL_MM)
+            .expect("the clockwise arc");
+        assert_approx_eq!(top.sweep_rad, -PI, TOL_MM);
+        // The clockwise arc passes through (15, 5), below its chord.
+        let dip = sample(shape)
+            .into_iter()
+            .filter(|p| (p.x - 15.0).abs() <= 0.01 && p.y > 2.0 && p.y < 10.0)
+            .map(|p| p.y)
+            .fold(f64::INFINITY, f64::min);
+        assert_approx_eq!(dip, 5.0, 0.01);
+        // The ellipse and the spline are flattened within the tolerance.
+        for p in sample(shape) {
+            if p.y > 10.0 + TOL_MM {
+                let err = (((p.x - 5.0) / 5.0).powi(2) + ((p.y - 10.0) / 2.5).powi(2)).sqrt() - 1.0;
+                assert!(err.abs() * 2.5 <= tolerance + 1e-6, "{p:?} off the ellipse");
+            }
+        }
+    }
+
+    /// A polyline outer square with a circle edge boundary inside: one
+    /// shape with two profiles that nest as a part with a hole.
+    #[test]
+    fn hatch_with_island_is_a_shape_with_a_hole() {
+        let square = polyline_path(&[
+            (0.0, 0.0, 0.0),
+            (50.0, 0.0, 0.0),
+            (50.0, 50.0, 0.0),
+            (0.0, 50.0, 0.0),
+        ]);
+        let circle = edge_path(&[arc_edge((25.0, 25.0), 10.0, 0.0, 360.0, true)]);
+        // The island first: the outer loop still comes first in the shape.
+        let (result, warnings) = hatch_import(&hatch("A3", "pocket", UP, &[circle, square]));
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(names(&result), ["pocket"]);
+        let profiles = &def(&result, "pocket").profiles;
+        assert_eq!(profiles.len(), 2);
+        assert_rect(
+            profiles[0].bounds().unwrap(),
+            (0.0, 0.0),
+            (50.0, 50.0),
+            TOL_MM,
+        );
+        assert_eq!(
+            profiles[1],
+            Polyline::circle(Point::new(25.0, 25.0), 10.0),
+            "the island stays a circle of two arcs"
+        );
+        let contours = profiles
+            .iter()
+            .map(|p| dc_geometry::Contour::new(p.clone()).unwrap())
+            .collect();
+        let (regions, _) = dc_geometry::nest(contours).unwrap();
+        assert_eq!(regions.len(), 1);
+        assert_eq!(regions[0].holes().len(), 1);
+        assert_approx_eq!(regions[0].area_mm2(), 2500.0 - PI * 100.0, 1e-6);
+    }
+
+    /// Under extrusion (0, 0, −1) a hatch's OCS X is world −X, as for any
+    /// other entity: a boundary at OCS x 0..15 lands at world x −15..0, and
+    /// its counter-clockwise arc (about the normal) turns clockwise seen
+    /// from +Z. A tilted hatch is counted, not read.
+    #[test]
+    fn hatch_in_a_rotated_ocs_is_placed_in_world_coordinates() {
+        let edges = [
+            line_edge((0.0, 0.0), (10.0, 0.0)),
+            arc_edge((10.0, 5.0), 5.0, -90.0, 90.0, true),
+            line_edge((10.0, 10.0), (0.0, 10.0)),
+            line_edge((0.0, 10.0), (0.0, 0.0)),
+        ];
+        let entities = hatch("B1", "down", [0.0, 0.0, -1.0], &[edge_path(&edges)])
+            + &hatch("B2", "tilted", [0.0, 1.0, 0.0], &[edge_path(&edges)]);
+        let (result, warnings) = hatch_import(&entities);
+        assert_eq!(names(&result), ["down"]);
+        let shape = only(&result, "down");
+        assert_rect(shape.bounds().unwrap(), (-15.0, 0.0), (0.0, 10.0), TOL_MM);
+        let arc = shape.segments().find_map(|s| s.arc()).unwrap();
+        assert_approx_eq!(arc.centre.x, -10.0, TOL_MM);
+        assert_approx_eq!(arc.centre.y, 5.0, TOL_MM);
+        assert_approx_eq!(arc.sweep_rad.abs(), PI, TOL_MM);
+        // Clockwise from (−10, 0) to (−10, 10) through (−15, 5).
+        let seg = shape.segments().find(|s| s.arc().is_some()).unwrap();
+        let (middle, _) = seg.point_at(seg.length_mm() / 2.0).unwrap();
+        assert_approx_eq!(middle.x, -15.0, TOL_MM);
+        assert_approx_eq!(middle.y, 5.0, TOL_MM);
+        let counts = skipped(&warnings).expect("the tilted hatch is counted");
+        assert_eq!(counts.get("HATCH (not in the XY plane)"), Some(&1));
+        assert_eq!(counts.len(), 1, "{counts:?}");
+    }
+
+    /// An associative hatch's boundary is also drawn as an LWPOLYLINE.
+    /// The hatch comes first in the file and lists the boundary from
+    /// another vertex in the other direction; it is still the drawn
+    /// polyline that is kept, once, with a warning. Across layers the rule
+    /// applies to the layers imported: with only the hatch's layer, the
+    /// hatch is the shape. A hatch with an island whose outer loop is drawn
+    /// keeps the island as its shape.
+    #[test]
+    fn associative_hatch_does_not_duplicate_its_boundary() {
+        let rectangle = rounded_rectangle();
+        let mut reordered = rectangle.clone();
+        reordered.rotate_left(3);
+        let reversed: Vec<(f64, f64, f64)> = {
+            let p = Polyline::new(
+                reordered
+                    .iter()
+                    .map(|&(x, y, b)| dc_geometry::Vertex::new(x, y, b))
+                    .collect(),
+                true,
+            )
+            .reversed();
+            p.vertices().iter().map(|v| (v.x, v.y, v.bulge)).collect()
+        };
+        let entities =
+            hatch("C1", "0", UP, &[polyline_path(&reversed)]) + &lwpolyline("0", &rectangle);
+        let (result, warnings) = hatch_import(&entities);
+        assert_eq!(names(&result), ["0"]);
+        assert_eq!(def(&result, "0").profiles.len(), 1);
+        assert_eq!(
+            warnings,
+            [ImportWarning::DxfHatchBoundaryDuplicate { count: 1 }]
+        );
+        assert!(warnings[0].to_string().contains("1 HATCH boundary loop"));
+
+        // Hatch on `fill`, its boundary drawn on `outline`.
+        let entities = hatch("C2", "fill", UP, &[polyline_path(&rectangle)])
+            + &lwpolyline("outline", &rectangle);
+        let (both, warnings) = hatch_import(&entities);
+        assert_eq!(names(&both), ["outline"]);
+        assert_eq!(
+            warnings,
+            [ImportWarning::DxfHatchBoundaryDuplicate { count: 1 }]
+        );
+        let summary: Vec<(&str, usize)> = both
+            .layers
+            .iter()
+            .map(|l| (l.name.as_str(), l.closed))
+            .collect();
+        assert_eq!(summary, [("fill", 1), ("outline", 1)]);
+        let (fill_only, warnings) = import_with(
+            dxf_entities(&entities).as_bytes(),
+            DxfImportOptions {
+                layers: Some(vec!["fill".to_owned()]),
+                ..DxfImportOptions::new()
+            },
+        );
+        assert_eq!(names(&fill_only), ["fill"]);
+        assert!(warnings.is_empty(), "{warnings:?}");
+
+        // Outer loop drawn, island not: the island is what the hatch adds.
+        let island = edge_path(&[arc_edge((20.0, 10.0), 3.0, 0.0, 360.0, true)]);
+        let entities = lwpolyline("0", &rectangle)
+            + &hatch("C3", "0", UP, &[polyline_path(&rectangle), island]);
+        let (result, warnings) = hatch_import(&entities);
+        assert_eq!(names(&result), ["0-1", "0-2"]);
+        assert_eq!(
+            only(&result, "0-2"),
+            &Polyline::circle(Point::new(20.0, 10.0), 3.0)
+        );
+        assert_eq!(
+            warnings,
+            [ImportWarning::DxfHatchBoundaryDuplicate { count: 1 }]
+        );
+    }
+
+    /// A hatch whose boundary does not close, holds an edge type DXF does
+    /// not define, or crosses itself is skipped with a warning naming it;
+    /// the rest of the drawing imports.
+    #[test]
+    fn unreadable_hatch_is_skipped_with_a_warning() {
+        let open = edge_path(&[
+            line_edge((0.0, 0.0), (10.0, 0.0)),
+            line_edge((10.0, 0.0), (10.0, 10.0)),
+        ]);
+        let unknown = "92\n1\n93\n1\n72\n7\n10\n0.0\n20\n0.0\n97\n0\n".to_owned();
+        // Its first and third sides cross at (3.75, 3.75).
+        let bowtie = polyline_path(&[
+            (0.0, 0.0, 0.0),
+            (10.0, 10.0, 0.0),
+            (10.0, 0.0, 0.0),
+            (0.0, 6.0, 0.0),
+        ]);
+        let entities = hatch("D1", "a", UP, &[open])
+            + &hatch("D2", "b", UP, &[unknown])
+            + &hatch("D3", "c", UP, &[bowtie])
+            + "0\nCIRCLE\n8\nkept\n10\n0.0\n20\n0.0\n40\n1.0\n";
+        let (result, warnings) = hatch_import(&entities);
+        assert_eq!(names(&result), ["kept"]);
+        let problems: Vec<(&str, &HatchProblem)> = warnings
+            .iter()
+            .filter_map(|w| match w {
+                ImportWarning::DxfHatchUnreadable { hatch, problem, .. } => {
+                    Some((hatch.as_str(), problem))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(problems.len(), 3, "{warnings:?}");
+        assert_eq!(problems[0], ("D1", &HatchProblem::Open { boundary: 1 }));
+        assert_eq!(
+            problems[1],
+            (
+                "D2",
+                &HatchProblem::UnknownEdge {
+                    boundary: 1,
+                    edge_type: 7
+                }
+            )
+        );
+        assert!(
+            matches!(
+                problems[2],
+                ("D3", HatchProblem::SelfIntersecting { boundary: 1, x_mm, y_mm })
+                    if (x_mm - 3.75).abs() < 1e-6 && (y_mm - 3.75).abs() < 1e-6
+            ),
+            "{problems:?}"
+        );
+        assert_eq!(warnings.len(), 3, "no dxf_entities_skipped: {warnings:?}");
+        let text = warnings[0].to_string();
+        assert!(
+            text.contains("`D1`") && text.contains("layer `a`"),
+            "{text}"
+        );
+        assert!(text.contains("not closed"), "{text}");
+    }
+
+    /// Counts the file declares are capped before anything is read for
+    /// them: a hatch claiming two billion boundaries, or more edges than
+    /// one hatch may hold (in one path or across several), fails at once
+    /// with a typed error, though the file holds none of them. Within the
+    /// caps, every declared edge is charged to the import's vertex limit.
+    #[test]
+    fn hatch_loop_and_edge_caps_are_enforced() {
+        let fails_fast = |entities: &str, options: &DxfImportOptions| {
+            let start = std::time::Instant::now();
+            let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
+            assert!(
+                start.elapsed().as_secs_f64() < 1.0,
+                "took {:?}",
+                start.elapsed()
+            );
+            err
+        };
+        let defaults = DxfImportOptions::new();
+        let loops = "0\nHATCH\n5\nE1\n8\n0\n91\n2000000000\n92\n2\n93\n0\n";
+        match fails_fast(loops, &defaults) {
+            ImportError::DxfHatchTooLarge {
+                hatch,
+                what,
+                declared,
+                limit,
+            } => {
+                assert_eq!(hatch, "E1");
+                assert_eq!(what, "boundary paths");
+                assert_eq!(declared, 2_000_000_000);
+                assert_eq!(limit, MAX_HATCH_BOUNDARIES);
+            }
+            other => panic!("{other:?}"),
+        }
+        let edges = format!(
+            "0\nHATCH\n5\nE2\n8\n0\n91\n1\n92\n0\n93\n{}\n",
+            MAX_HATCH_EDGES + 1
+        );
+        assert!(matches!(
+            fails_fast(&edges, &defaults),
+            ImportError::DxfHatchTooLarge { limit, .. } if limit == MAX_HATCH_EDGES
+        ));
+        // Two paths of 60 000 edges: each within the cap, together past it.
+        let half = MAX_HATCH_EDGES * 3 / 5;
+        let two = format!(
+            "0\nHATCH\n5\nE3\n8\n0\n91\n2\n92\n0\n93\n{half}\n{}97\n0\n92\n0\n93\n{half}\n",
+            "72\n1\n10\n0.0\n20\n0.0\n11\n1.0\n21\n0.0\n".repeat(half)
+        );
+        assert!(matches!(
+            fails_fast(&two, &defaults),
+            ImportError::DxfHatchTooLarge { hatch, .. } if hatch == "E3"
+        ));
+        // A small vertex limit: the declared edges are charged to it.
+        let small = DxfImportOptions {
+            max_vertices: 100,
+            ..DxfImportOptions::new()
+        };
+        let charged = "0\nHATCH\n5\nE4\n8\n0\n91\n1\n92\n0\n93\n500\n";
+        assert!(matches!(
+            fails_fast(charged, &small),
+            ImportError::TooManyVertices { limit: 100 }
+        ));
+    }
+
+    /// The hatch reader stops at the last boundary: the seed point after
+    /// it is not read as a vertex, in ASCII and in binary DXF.
+    #[test]
+    fn hatch_reads_alike_in_binary_dxf() {
+        let dxf = dxf_entities(&hatch(
+            "F1",
+            "fill",
+            UP,
+            &[polyline_path(&rounded_rectangle())],
+        ));
+        let expected = import(dxf.as_bytes());
+        assert_rect(expected.0.bounds.unwrap(), (0.0, 0.0), (40.0, 20.0), TOL_MM);
+        for two_byte_codes in [true, false] {
+            assert_eq!(import(&to_binary(dxf.as_bytes(), two_byte_codes)), expected);
+        }
+    }
+
+    // ── curve caps (#668 security review) ────────────────────────────────
+
+    /// Runs an import that must fail fast, returning its error.
+    fn refused(entities: &str, options: &DxfImportOptions) -> ImportError {
+        let start = std::time::Instant::now();
+        let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
+        assert!(
+            start.elapsed().as_secs_f64() < 1.0,
+            "took {:?}",
+            start.elapsed()
+        );
+        err
+    }
+
+    /// The problem of the one unreadable hatch in `warnings`.
+    fn hatch_problem(warnings: &[ImportWarning]) -> &HatchProblem {
+        let problems: Vec<&HatchProblem> = warnings
+            .iter()
+            .filter_map(|w| match w {
+                ImportWarning::DxfHatchUnreadable { problem, .. } => Some(problem),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(problems.len(), 1, "{warnings:?}");
+        problems[0]
+    }
+
+    /// A Bézier of `degree`: its knots and a zigzag of `degree + 1` control
+    /// points 1 mm apart and 10 mm high.
+    fn bezier(degree: usize) -> (Vec<f64>, Vec<(f64, f64)>) {
+        let knots = (0..2 * degree + 2)
+            .map(|k| if k <= degree { 0.0 } else { 1.0 })
+            .collect();
+        let control = (0..=degree)
+            .map(|k| {
+                let x = f64::from(u32::try_from(k).unwrap());
+                (x, if k % 2 == 0 { 0.0 } else { 10.0 })
+            })
+            .collect();
+        (knots, control)
+    }
+
+    /// A SPLINE entity on `layer` of `degree`, `knots` and `control`.
+    fn spline_entity(layer: &str, degree: usize, knots: &[f64], control: &[(f64, f64)]) -> String {
+        let mut e = format!(
+            "0\nSPLINE\n8\n{layer}\n70\n8\n71\n{degree}\n72\n{}\n73\n{}\n",
+            knots.len(),
+            control.len()
+        );
+        for k in knots {
+            e.push_str(&format!("40\n{k:?}\n"));
+        }
+        for (x, y) in control {
+            e.push_str(&format!("10\n{x:?}\n20\n{y:?}\n"));
+        }
+        e
+    }
+
+    /// A spline's degree above `MAX_SPLINE_DEGREE` is malformed in a hatch
+    /// edge: de Boor's work grows with the square of the degree. A SPLINE
+    /// entity of such a degree is read as its control polygon, as one
+    /// whose knots do not describe a curve is.
+    #[test]
+    fn hatch_spline_edge_degree_is_capped() {
+        let degree = spline::MAX_SPLINE_DEGREE + 1;
+        let (knots, control) = bezier(degree);
+        let last = *control.last().unwrap();
+        let edges = [
+            spline_edge(degree, &knots, &control),
+            line_edge(last, (0.0, 0.0)),
+        ];
+        let (_, warnings) = hatch_import(&hatch("G1", "0", UP, &[edge_path(&edges)]));
+        assert_eq!(
+            hatch_problem(&warnings),
+            &HatchProblem::Malformed {
+                boundary: 1,
+                code: 94
+            }
+        );
+        let (result, _) = hatch_import(&spline_entity("high", degree, &knots, &control));
+        assert_eq!(
+            only(&result, "high").vertices().len(),
+            degree + 1,
+            "the control polygon"
+        );
+        // At the cap the curve is sampled.
+        let (knots, control) = bezier(spline::MAX_SPLINE_DEGREE);
+        let (result, _) = hatch_import(&spline_entity(
+            "top",
+            spline::MAX_SPLINE_DEGREE,
+            &knots,
+            &control,
+        ));
+        assert!(only(&result, "top").vertices().len() > control.len());
+    }
+
+    /// Sampling a spline stops as soon as it would pass the vertex limit,
+    /// for a hatch's spline edge and a SPLINE entity alike: a zigzag of 40
+    /// control points 100 mm high samples to far more than 300 points,
+    /// though its declared counts are well within them.
+    #[test]
+    fn hatch_spline_sampling_is_charged_before_it_runs() {
+        let control: Vec<(f64, f64)> = (0..40)
+            .map(|k| (f64::from(k) * 5.0, if k % 2 == 0 { 0.0 } else { 100.0 }))
+            .collect();
+        let degree = 3;
+        let n = control.len();
+        let knots: Vec<f64> = (0..n + degree + 1)
+            .map(|k| f64::from(u32::try_from(k.saturating_sub(degree).min(n - degree)).unwrap()))
+            .collect();
+        let small = DxfImportOptions {
+            max_vertices: 300,
+            ..DxfImportOptions::new()
+        };
+        let last = control[n - 1];
+        let edges = [
+            spline_edge(degree, &knots, &control),
+            line_edge(last, (0.0, 0.0)),
+        ];
+        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small);
+        assert!(
+            matches!(err, ImportError::TooManyVertices { limit: 300 }),
+            "{err:?}"
+        );
+        let entity = spline_entity("zigzag", degree, &knots, &control);
+        let err = refused(&entity, &small);
+        assert!(
+            matches!(err, ImportError::TooManyVertices { limit: 300 }),
+            "{err:?}"
+        );
+        // Within the default limit the same spline imports.
+        let (result, _) = hatch_import(&entity);
+        assert!(only(&result, "zigzag").vertices().len() > 300);
+    }
+
+    /// An elliptic arc whose centre and axes reach past the coordinate
+    /// limit is refused before its curve is built, as a hatch edge and as
+    /// an ELLIPSE entity: an axis of 1e300 would otherwise make a path of
+    /// unbounded size.
+    #[test]
+    fn ellipse_axes_past_the_coordinate_limit_are_refused() {
+        let defaults = DxfImportOptions::new();
+        for (major, centre) in [((1e300, 0.0), (0.0, 0.0)), ((4000.0, 0.0), (3000.0, 0.0))] {
+            let edges = [ellipse_edge(centre, major, 0.5, 0.0, 360.0)];
+            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults);
+            assert!(
+                matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
+                "{err:?}"
+            );
+            let entity = format!(
+                "0\nELLIPSE\n8\nbig\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n40\n0.5\n41\n0.0\n42\n6.283185307179586\n",
+                centre.0, centre.1, major.0, major.1
+            );
+            let err = refused(&entity, &defaults);
+            assert!(
+                matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// The duplicate rule's work is bounded (#668 security review): 300
+    /// drawn circles of 2000 vertices and 300 hatch loops that match each
+    /// of them in all but one vertex would cost about 700 million vertex
+    /// comparisons; the rule stops at its budget, counted, and then treats
+    /// the loops as distinct, never failing the import. A real duplicate
+    /// is still found while the budget lasts.
+    #[test]
+    fn duplicate_matching_is_bounded_on_many_large_loops() {
+        let n: u32 = 2000;
+        let circle = |nudge: f64| {
+            let vertices = (0..n)
+                .map(|k| {
+                    let t = TAU * f64::from(k) / f64::from(n);
+                    let r = if k == n - 1 { 100.0 + nudge } else { 100.0 };
+                    dc_geometry::Vertex::line(r * t.cos(), r * t.sin())
+                })
+                .collect();
+            Polyline::new(vertices, true)
+        };
+        let drawn = circle(0.0);
+        let near_miss = circle(0.03);
+        let mut shapes: Vec<entities::Shape> = (0..300)
+            .map(|_| entities::Shape::plain("0".into(), drawn.clone()))
+            .collect();
+        shapes.extend((0..300).map(|_| entities::Shape {
+            layer: "0".into(),
+            polyline: near_miss.clone(),
+            inner: Vec::new(),
+            hatch: true,
+        }));
+        let mut budget = stitch::MatchBudget::new();
+        let (kept, removed) = stitch::drop_hatch_duplicates(shapes, 0.01, true, &mut budget);
+        assert!(removed.is_empty(), "no loop matches");
+        assert_eq!(kept.len(), 600);
+        assert!(
+            budget.comparisons() <= stitch::MAX_DUPLICATE_COMPARISONS + 4 * n as usize,
+            "{} comparisons",
+            budget.comparisons()
+        );
+        assert!(budget.exhausted(), "the crafted case runs the budget out");
+
+        // With budget left, a true duplicate is found.
+        let shapes = vec![
+            entities::Shape::plain("0".into(), drawn.clone()),
+            entities::Shape {
+                layer: "0".into(),
+                polyline: drawn.reversed(),
+                inner: Vec::new(),
+                hatch: true,
+            },
+        ];
+        let mut budget = stitch::MatchBudget::new();
+        let (kept, removed) = stitch::drop_hatch_duplicates(shapes, 0.01, true, &mut budget);
+        assert_eq!((kept.len(), removed.len()), (1, 1));
+        // One candidate, then a scan and a walk each way.
+        assert!(
+            budget.comparisons() <= 4 * n as usize + 1,
+            "{}",
+            budget.comparisons()
+        );
+    }
+
+    /// The minor-to-major ratio (40) is in (0, 1]: a hatch's elliptic edge
+    /// outside it is malformed, and an ELLIPSE entity outside it is
+    /// skipped and counted.
+    #[test]
+    fn ellipse_ratio_out_of_range_is_malformed() {
+        for ratio in [2.0, 1e300, -0.5] {
+            let edges = [ellipse_edge((0.0, 0.0), (10.0, 0.0), ratio, 0.0, 360.0)];
+            let (_, warnings) = hatch_import(&hatch("H2", "0", UP, &[edge_path(&edges)]));
+            assert_eq!(
+                hatch_problem(&warnings),
+                &HatchProblem::Malformed {
+                    boundary: 1,
+                    code: 40
+                },
+                "ratio {ratio}"
+            );
+            let entity = format!(
+                "0\nELLIPSE\n8\nodd\n10\n0.0\n20\n0.0\n11\n10.0\n21\n0.0\n40\n{ratio:?}\n41\n0.0\n42\n6.283185307179586\n"
+            );
+            let (result, warnings) = hatch_import(&entity);
+            assert!(result.definitions.is_empty(), "ratio {ratio}");
+            let counts = skipped(&warnings).expect("counted");
+            assert_eq!(counts.get("ELLIPSE (malformed)"), Some(&1), "{counts:?}");
+        }
     }
 }
