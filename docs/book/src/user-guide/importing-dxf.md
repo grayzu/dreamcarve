@@ -189,7 +189,11 @@ place at most 500 000 block entities in all; a drawing of arrays nested
 in arrays that places more is refused (explode the arrays in the CAD
 program, or simplify them). A hatch may have at most 10 000 boundary
 loops and 100 000 edges and vertices; a file whose hatch says it has more
-is refused before any of them is read. A file that is cut off or
+is refused before any of them is read. An ellipse that reaches past the
+6 m limit is refused before it is drawn, and one whose minor axis is
+longer than its major is skipped and counted as `ELLIPSE (malformed)`. A
+spline of a degree above 11, which AutoCAD never writes, is read as its
+control points. A file that is cut off or
 garbled, so that its codes and values no longer pair up, is refused with
 the line (or, in a binary DXF, the byte) where it goes wrong.
 

@@ -2818,8 +2818,9 @@ mod tests {
         let mut budget = stitch::MatchBudget::new();
         let (kept, removed) = stitch::drop_hatch_duplicates(shapes, 0.01, true, &mut budget);
         assert_eq!((kept.len(), removed.len()), (1, 1));
+        // One candidate, then a scan and a walk each way.
         assert!(
-            budget.comparisons() <= 4 * n as usize,
+            budget.comparisons() <= 4 * n as usize + 1,
             "{}",
             budget.comparisons()
         );

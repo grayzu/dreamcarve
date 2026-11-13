@@ -2674,7 +2674,25 @@ Option<Vec<String>> }`.
    keeps; `DxfHatchBoundaryDuplicate { count }` counts the loops removed
    on kept layers. The same-layer dedupe of identical shapes compares a
    hatch only with hatches, so the drawn shape is the one kept whichever
-   comes first in the file.
+   comes first in the file. The match is bounded: shapes are indexed by
+   vertex count and the grid cell of their bounds' corner, a candidate
+   whose length or area differs by more than the tolerance allows is
+   rejected unwalked, only the vertices near the loop's first are tried
+   as a start (at most 4 a direction), and every candidate and vertex
+   looked at is charged to `MAX_DUPLICATE_COMPARISONS` (20 million) per
+   import; past it, loops are distinct (never an error).
+   **Curve caps (#668 security review), for HATCH edges and the SPLINE
+   and ELLIPSE entities alike:** a spline's degree is at most
+   `MAX_SPLINE_DEGREE` (11; a hatch edge past it is malformed, a SPLINE
+   entity falls back to its control polygon), and sampling stops as soon
+   as it would pass what is left of the vertex limit
+   (`TooManyVertices`), so its work is bounded before it runs. An
+   ellipse's ratio must be in (0, 1] (a hatch edge outside it is
+   malformed, an ELLIPSE entity is counted as `ELLIPSE (malformed)`); its
+   centre and axes, placed, must lie within the coordinate limit
+   (`CoordinateOutOfRange`), and its flattening, a circle of its larger
+   placed radius cut into chords within the tolerance, is charged to the
+   vertex limit, all before kurbo builds its path.
 3. **No Y flip.** Coordinates are already Y-up; `y' = y × scale`.
 4. **Layers:** the entity's layer, inheriting the INSERT's for layer `0`
    inside a block; `options.layers` filters by name (layer `0` shapes
@@ -3153,7 +3171,7 @@ Names are `crate::module::test`. "(port)" marks a PureCutCNC test to port;
 - `dxf::negative_extrusion_mirrors_x`, `dxf::tilted_extrusion_is_skipped_with_warning`, `dxf::minsert_places_every_cell`, `dxf::huge_minsert_of_empty_block_fails_fast`, `dxf::nested_minserts_fail_fast`, `dxf::spline_fit_polyline_drops_frame_vertices`, `dxf::curve_fit_polyline_keeps_every_vertex` (#123).
 - `dxf::swallowed_types_counted_in_binary_dxf`, `dxf::binary_dxf_imports_like_ascii`, `dxf::parser_rejects_odd_line_count_and_bad_codes`, `dxf::insert_attributes_are_counted`, `dxf::non_utf8_names_are_read_as_windows_1252` (#124).
 - `dxf::reads_lf_crlf_and_cr_line_endings`, `cli::init_reads_a_cr_only_dxf` (#667).
-- `dxf::hatch_polyline_boundary_imports_as_a_shape`, `dxf::hatch_edge_boundary_lines_arcs_ellipses_splines`, `dxf::hatch_with_island_is_a_shape_with_a_hole`, `dxf::hatch_in_a_rotated_ocs_is_placed_in_world_coordinates`, `dxf::associative_hatch_does_not_duplicate_its_boundary`, `dxf::unreadable_hatch_is_skipped_with_a_warning`, `dxf::hatch_loop_and_edge_caps_are_enforced`, `dxf::hatch_reads_alike_in_binary_dxf`, `hatch::spline_fit_count_is_told_from_the_source_count`, `cli::init_imports_hatched_pockets` (#668).
+- `dxf::hatch_polyline_boundary_imports_as_a_shape`, `dxf::hatch_edge_boundary_lines_arcs_ellipses_splines`, `dxf::hatch_with_island_is_a_shape_with_a_hole`, `dxf::hatch_in_a_rotated_ocs_is_placed_in_world_coordinates`, `dxf::associative_hatch_does_not_duplicate_its_boundary`, `dxf::unreadable_hatch_is_skipped_with_a_warning`, `dxf::hatch_loop_and_edge_caps_are_enforced`, `dxf::hatch_reads_alike_in_binary_dxf`, `hatch::spline_fit_count_is_told_from_the_source_count`, `cli::init_imports_hatched_pockets`, `dxf::hatch_spline_edge_degree_is_capped`, `dxf::hatch_spline_sampling_is_charged_before_it_runs`, `dxf::ellipse_axes_past_the_coordinate_limit_are_refused`, `dxf::ellipse_ratio_out_of_range_is_malformed`, `dxf::duplicate_matching_is_bounded_on_many_large_loops` (#668).
 - `dxf::cp1251_layer_names_decode`, `dxf::unknown_code_page_warns_and_falls_back`, `dxf::utf8_file_is_unchanged` (#209).
 
 **dc-library**

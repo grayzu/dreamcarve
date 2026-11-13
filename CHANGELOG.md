@@ -23,6 +23,12 @@ phases bump the patch number.
   `dxf_hatch_unreadable`, which names it and the boundary. A hatch
   declaring more than 10 000 loops or 100 000 edges and vertices is
   refused before any is read.
+- **DXF curves are bounded before they are built (#668).** A SPLINE's
+  sampling stops at the vertex limit instead of being counted after it,
+  and a degree above 11 reads the control points; an ELLIPSE reaching
+  past the coordinate limit is refused before its curve is made (an axis
+  of 1e300 could exhaust memory), and one whose ratio is outside (0, 1]
+  is skipped as `ELLIPSE (malformed)`.
 - **Photo V-Carve docs (#648).** User guide chapters "Photo V-Carve
   operation" (every setting with its VCarve and RasterCarve name, depth
   from brightness and `invert` for a dark wood, picking a bit and a depth

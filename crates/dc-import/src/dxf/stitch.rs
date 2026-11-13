@@ -64,6 +64,7 @@ impl MatchBudget {
     }
 
     /// Comparisons made so far.
+    #[cfg(test)]
     pub(super) fn comparisons(&self) -> usize {
         self.comparisons
     }
@@ -71,6 +72,52 @@ impl MatchBudget {
     /// Whether the budget is used up.
     pub(super) fn exhausted(&self) -> bool {
         self.comparisons >= MAX_DUPLICATE_COMPARISONS
+    }
+
+    /// Takes `n` comparisons; `false`, taking none, when they would pass
+    /// the budget.
+    fn spend(&mut self, n: usize) -> bool {
+        let after = self.comparisons.saturating_add(n);
+        if after > MAX_DUPLICATE_COMPARISONS {
+            self.comparisons = MAX_DUPLICATE_COMPARISONS;
+            return false;
+        }
+        self.comparisons = after;
+        true
+    }
+}
+
+/// Most starting vertices tried per direction when matching two loops:
+/// the vertices of one within the tolerance of the other's first vertex.
+/// More only happen when a loop crowds vertices closer than the tolerance.
+const MAX_ANCHORS: usize = 4;
+
+/// A closed shape's size, to reject a match before any vertex is walked.
+#[derive(Debug, Clone, Copy)]
+struct Measure {
+    area_mm2: f64,
+    length_mm: f64,
+}
+
+impl Measure {
+    fn of(p: &Polyline) -> Self {
+        Self {
+            area_mm2: p.signed_area_mm2().abs(),
+            length_mm: p.length_mm(),
+        }
+    }
+
+    /// Whether loops of these sizes could be the same within
+    /// `tolerance_mm` on `n` vertices: moving each vertex, and each arc's
+    /// middle, by the tolerance changes the length by at most four times
+    /// the tolerance per vertex and the area by at most twice the length
+    /// times it.
+    fn close_to(self, other: Self, n: usize, tolerance_mm: f64) -> bool {
+        #[allow(clippy::cast_precision_loss, reason = "a vertex count")]
+        let n = n as f64;
+        let length = self.length_mm.max(other.length_mm);
+        (self.length_mm - other.length_mm).abs() <= 4.0 * n * tolerance_mm + 1e-9
+            && (self.area_mm2 - other.area_mm2).abs() <= 4.0 * length * tolerance_mm + 1e-9
     }
 }
 
@@ -90,7 +137,6 @@ pub(super) fn drop_hatch_duplicates(
     same_layer: bool,
     budget: &mut MatchBudget,
 ) -> (Vec<Shape>, Vec<String>) {
-    let _ = budget;
     // The drawn closed shapes, by vertex count and the grid cell of their
     // bounds' lower corner, so a hatch is compared with the few that could
     // match rather than with every shape.
@@ -104,31 +150,49 @@ pub(super) fn drop_hatch_duplicates(
         let cell = |v: f64| (v / cell_mm).floor() as i64;
         Some((p.vertices().len(), cell(b.min.x), cell(b.min.y)))
     };
-    let mut drawn: BTreeMap<(usize, i64, i64), Vec<usize>> = BTreeMap::new();
-    for (i, shape) in shapes.iter().enumerate() {
-        if !shape.hatch
-            && shape.polyline.is_closed()
-            && let Some(k) = key(&shape.polyline)
-        {
-            drawn.entry(k).or_default().push(i);
+    let mut drawn: BTreeMap<(usize, i64, i64), Vec<(usize, Measure)>> = BTreeMap::new();
+    if shapes.iter().any(|s| s.hatch) {
+        for (i, shape) in shapes.iter().enumerate() {
+            if !shape.hatch
+                && shape.polyline.is_closed()
+                && let Some(k) = key(&shape.polyline)
+            {
+                drawn
+                    .entry(k)
+                    .or_default()
+                    .push((i, Measure::of(&shape.polyline)));
+            }
         }
     }
-    let repeats_drawn = |hatch: &Shape, l: &Polyline| {
+    // Each candidate costs a comparison of its size; a vertex walk costs
+    // one per vertex. Once the budget is gone, loops are distinct.
+    let repeats_drawn = |hatch: &Shape, l: &Polyline, budget: &mut MatchBudget| {
         let Some((n, x, y)) = key(l) else {
             return false;
         };
-        (-1..=1).any(|dx| {
-            (-1..=1).any(|dy| {
-                drawn.get(&(n, x + dx, y + dy)).is_some_and(|candidates| {
-                    candidates.iter().any(|&i| {
-                        shapes.get(i).is_some_and(|s| {
-                            (!same_layer || s.layer == hatch.layer)
-                                && same_loop(&s.polyline, l, tolerance_mm)
-                        })
-                    })
-                })
-            })
-        })
+        let measure = Measure::of(l);
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                let Some(candidates) = drawn.get(&(n, x + dx, y + dy)) else {
+                    continue;
+                };
+                for &(i, size) in candidates {
+                    if budget.exhausted() || !budget.spend(1) {
+                        return false;
+                    }
+                    let Some(s) = shapes.get(i) else {
+                        continue;
+                    };
+                    if (!same_layer || s.layer == hatch.layer)
+                        && size.close_to(measure, n, tolerance_mm)
+                        && same_loop(&s.polyline, l, tolerance_mm, budget)
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     };
     let mut removed = Vec::new();
     let mut out = Vec::with_capacity(shapes.len());
@@ -139,7 +203,7 @@ pub(super) fn drop_hatch_duplicates(
         }
         let mut left: Vec<Polyline> = Vec::new();
         for l in shape.loops() {
-            if repeats_drawn(shape, l) {
+            if repeats_drawn(shape, l, budget) {
                 removed.push(shape.layer.clone());
             } else {
                 left.push(l.clone());
@@ -171,12 +235,18 @@ pub(super) fn drop_hatch_duplicates(
 /// Whether closed polylines `a` and `b` are the same loop within
 /// `tolerance_mm`: the same vertices from some starting vertex of `b`, in
 /// either direction, and bulges whose arcs' middles lie within the
-/// tolerance (half the chord times the bulge difference).
-fn same_loop(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> bool {
+/// tolerance (half the chord times the bulge difference). Only the
+/// vertices of `b` near `a`'s first are tried as its start, at most
+/// [`MAX_ANCHORS`] per direction, and every vertex looked at is charged to
+/// `budget`; `false` once it runs out.
+fn same_loop(a: &Polyline, b: &Polyline, tolerance_mm: f64, budget: &mut MatchBudget) -> bool {
     let n = a.vertices().len();
     if !(a.is_closed() && b.is_closed()) || b.vertices().len() != n || n == 0 {
         return false;
     }
+    let Some(first) = a.vertices().first() else {
+        return false;
+    };
     let matches_from = |b: &Polyline, shift: usize| {
         (0..n).all(|i| {
             let (Some(p), Some(q)) = (a.vertices().get(i), b.vertices().get((i + shift) % n))
@@ -189,10 +259,29 @@ fn same_loop(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> bool {
                 && (p.bulge - q.bulge).abs() * chord / 2.0 <= tolerance_mm
         })
     };
-    let reversed = b.reversed();
-    [b, &reversed]
-        .into_iter()
-        .any(|b| (0..n).any(|shift| matches_from(b, shift)))
+    for reverse in [false, true] {
+        // The scan for anchors, then each walk, costs `n`.
+        if !budget.spend(n) {
+            return false;
+        }
+        let b = if reverse { b.reversed() } else { b.clone() };
+        let anchors = b
+            .vertices()
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.point().distance_to(first.point()) <= tolerance_mm)
+            .map(|(shift, _)| shift)
+            .take(MAX_ANCHORS);
+        for shift in anchors {
+            if !budget.spend(n) {
+                return false;
+            }
+            if matches_from(&b, shift) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 fn same_polyline(a: &Polyline, b: &Polyline) -> bool {
