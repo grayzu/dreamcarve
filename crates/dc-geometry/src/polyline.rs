@@ -986,6 +986,31 @@ mod tests {
         assert!(pieces[0].length_mm() < arc.length_mm() - 0.1, "{pieces:?}");
     }
 
+    /// #694: a half circle whose bulge rounding left a few ulps past 1,
+    /// as computed arcs often do (tan(π/4) is 0.999…, its inverse 1.000…),
+    /// becomes a bulge of exactly ±1, not two quarter arcs, so the path
+    /// keeps its vertices. A bulge of 1.000_001 is a real sweep past a
+    /// half turn and is split.
+    #[test]
+    fn half_circle_rounded_past_one_is_held_to_one_not_split() {
+        let noisy = Polyline::new(
+            vec![
+                Vertex::new(0.0, 0.0, 1.000_000_000_000_002),
+                Vertex::new(10.0, 0.0, -1.000_000_000_000_036),
+            ],
+            true,
+        );
+        let held = noisy.with_arcs_within_half_turns();
+        assert_eq!(held.vertices().len(), 2, "{held:?}");
+        assert_eq!(held.vertices()[0].bulge, 1.0);
+        assert_eq!(held.vertices()[1].bulge, -1.0);
+        let past = Polyline::new(
+            vec![Vertex::new(0.0, 0.0, 1.000_001), Vertex::line(10.0, 0.0)],
+            false,
+        );
+        assert_eq!(past.with_arcs_within_half_turns().vertices().len(), 3);
+    }
+
     /// #513: a spike between two lines goes, and so does a repeated vertex,
     /// the one before it taking its segment's bulge; a turn back into an
     /// arc is not a spike and stays.
