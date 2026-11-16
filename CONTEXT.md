@@ -344,9 +344,11 @@ _Avoid_: Bit, cutter, end mill (that is one tool type)
 
 **Tapered Ball Nose**:
 A tool type (format 28): a cone of `taper_angle_deg` **per side** capped
-by a ball tangent to it, whose `diameter_mm` is the ball's (twice the tip
-radius), with a `flute_length_mm` that limits how deep its flank may be
-engaged. No cut diameter is stored; its width at any height is derived.
+by a ball of `tip_diameter_mm` tangent to it, with a `flute_length_mm`
+past which the shank rubs. Its `diameter_mm` is the cutting diameter, as
+for every tool: where the cone reaches it the bit is a cylinder, so its
+flank may be engaged no deeper than the lower of the flutes and that
+height. Its width at any height is derived from the four.
 V-Carve and Inlay accept it in place of a V-bit. Above its **tangent
 height**, `tip radius × (1 − sin taper)`, it cuts as a V-bit of twice
 its taper whose point lies below the real tip; below, the ball cuts.

@@ -801,36 +801,53 @@ designs") and Corbin's, and the geometry is derived in the design spec
 Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
 
 49h. **Tapered ball nose** (`cutter: { "tapered_ball_nose": {
- "taper_angle_deg": …, "flute_length_mm": … } }`; format 28, #445). A
- cone capped by a ball tangent to it, described by three numbers:
-    - the **tip radius**, as half the tool's `diameter_mm`, which for
-     this cutter is the **ball's diameter** (Fusion's `DC` for a tapered
-     mill with a ball tip; Corbin: "enter the ball diameter (2 × radius),
-     not the advertised radius"). A 0.015 in tip radius is `diameter_mm:
-     0.762`;
+ "tip_diameter_mm": …, "taper_angle_deg": …, "flute_length_mm": … } }`;
+ format 28, #445). A cone capped by a ball tangent to it, described by
+ four numbers, each in a field named for what it is (maintainer, PR #670,
+ 2026-11-16):
+    - `tip_diameter_mm`, the **ball's diameter**, twice the tip radius
+     (Fusion's `DC` for a tapered mill with a ball tip; Corbin: "enter the
+     ball diameter (2 × radius), not the advertised radius"). A 0.015 in
+     tip radius is `tip_diameter_mm: 0.762`;
     - `taper_angle_deg`, the taper **per side**, from the axis to the
      flank: half the included angle, as Fusion's taper angle, Vectric's
      "side angle" and the vendors' catalogues give it (a V-bit's angle is
      its included angle, as V-bits are sold; the two are not
      interchangeable, and Corbin warns that mixing them up doubles the
      angle). Above 0° and at most 45°;
-    - `flute_length_mm`, the fluted length from the tip: the deepest the
-     flank may be engaged. Above the height where the ball meets the cone.
- There is no cut diameter: the bit's width at any height is derived
- from the three (maintainer's decision, #445: a 1/4 in TBN's flutes
- reach 6.35 mm only about 20 mm up, so a stored 6.35 mm would be wrong
- everywhere it cuts). The widest it cuts, at the top of its flutes, is
- what the stock-edge rule (S7) holds it to. Above the **tangent height**
- `ρ (1 − sin β)` (tip radius `ρ`, taper `β`) the bit cuts exactly as a V-bit of
- included angle `2β` whose point is `ρ (1/sin β − 1)` below the real tip;
- below it, the ball cuts. `tapered_ball_nose_range` refuses a taper
- outside (0°, 45°] or a flute length not past the ball. A TBN is accepted
+    - `flute_length_mm`, the fluted length from the tip, past which the
+     shank would rub. Above the height where the ball meets the cone;
+    - the tool's `diameter_mm`, which means for a TBN what it means for
+     every tool, the **cutting diameter**, the widest it cuts (the
+     vendor's "cut diameter": 6.35 mm for a 1/4 in TBN). It must be wider
+     than the tip. It caps the taper: where the cone reaches it the bit
+     is a cylinder of that diameter up to the top of its flutes.
+ The bit's width at any height is derived from these: the ball, then the
+ cone, then the cap. The deepest the flank may be engaged is the lower of
+ the flute length and the height where the cone reaches the cutting
+ diameter (`v_bit_cone_exceeded` names which). For the bench's 1.143 mm
+ tip the cone reaches 6.35 mm 18.37 mm up, below its 19.05 mm flutes, so
+ 18.37 mm is its limit; for the 0.381 mm tip it would be 24.14 mm, past
+ the flutes, so 19.05 mm is. The tool itself is never warned about for
+ this; only an operation that would go deeper is stopped (open question
+ 32). The widest the bit cuts, the lower of its width at the flute top
+ and the cutting diameter, is what the stock-edge rule (S7) holds it to.
+ Above the **tangent height** `ρ (1 − sin β)` (tip radius `ρ`, taper
+ `β`) the bit cuts exactly as a V-bit of included angle `2β` whose point
+ is `ρ (1/sin β − 1)` below the real tip; below it, the ball cuts.
+ `tapered_ball_nose_range` refuses a tip not above 0, a taper outside
+ (0°, 45°], a flute length not past the ball, or a cutting diameter not
+ wider than the tip. Each of the three cutter values may be unset
+ (`null`), as a tool's feeds may: a tool imported without one keeps it
+ unset for the user to fill in (49l), and `check` and `export` report it
+ as a value to set once an operation uses the tool. A TBN is accepted
  by V-Carve and Inlay; a Photo V-Carve refuses it with
  `v_carve_needs_v_bit` and a countersink with `countersink_needs_v_bit`
  (see Out of scope). Format 28 adds the cutter and changes nothing else: an earlier
  file loads and exports the same bytes. The tool library's file format
  becomes version 3 for the same reason. `tools list` prints `tapered ball
- nose, tip 0.381 mm (0.762 mm ball), 6.7° per side, 19.050 mm flutes`.
+ nose, 6.350 mm cut, tip 0.762 mm (radius 0.381 mm), 6.7° per side,
+ 19.050 mm flutes`, with `-` for an unset value.
 49i. **Carving with a tapered ball nose.** Everything capability 38 to
  43 says of a V-bit holds, with the bit's width at each depth in place of
  `2 · depth · tan(α/2)`:
@@ -1335,20 +1352,26 @@ artwork of the maintainer's is committed):
 
 Sub-phase 3.6 (the tapered ball nose; no reference program exists, so
 every number below is derived in the design spec and asserted
-analytically). The bits are the bench's: **Fine Detail**, `diameter_mm`
-2.286 (tip radius 1.143 mm), and **Ultra-High Detail**, 0.762 (0.381 mm),
-both `taper_angle_deg` 6.7 and `flute_length_mm` 19.05.
+analytically). The bits are the bench's: **Fine Detail**,
+`tip_diameter_mm` 2.286 (tip radius 1.143 mm), and **Ultra-High Detail**,
+0.762 (0.381 mm), both `diameter_mm` 6.35 (the cutting diameter),
+`taper_angle_deg` 6.7 and `flute_length_mm` 19.05.
 
 61t. **The tool and format 28.** A project with the Ultra bit saves it as
- `{ "tapered_ball_nose": { "taper_angle_deg": 6.7, "flute_length_mm":
- 19.05 } }` with `diameter_mm: 0.762` and `"version": 28`, and loads
- back equal; a format 27 project loads and exports the same bytes; a file
- that says 27 and holds the cutter is refused. Derived, within 0.0001 mm:
- tangent height 0.3365 / 1.0096 (Ultra / Fine), apex offset 2.8846 /
- 8.6538, cut radius at the flute top 2.5767 / 3.2544. `taper_angle_deg`
- 0 or 45.1 and a flute length of 0.3 mm (Ultra) are
- `tapered_ball_nose_range` at the field. A library holding the bit is
- version 3, and a version 2 library loads.
+ `{ "tapered_ball_nose": { "tip_diameter_mm": 0.762, "taper_angle_deg":
+ 6.7, "flute_length_mm": 19.05 } }` with `diameter_mm: 6.35` and
+ `"version": 28`, and loads back equal; a format 27 project loads and
+ exports the same bytes; a file that says 27 and holds the cutter is
+ refused. Derived (Ultra / Fine), within 0.001 mm: tangent height 0.337 /
+ 1.010, apex offset 2.885 / 8.654, height where the cone reaches 6.35 mm
+ 24.143 / 18.374, deepest engagement 19.050 (the flutes) / 18.374 (the
+ cutting diameter), cut radius 2.577 (the flute top) / 3.175 (the cap).
+ `taper_angle_deg` 0 or 45.1, a flute length of 0.3 mm (Ultra) and
+ `diameter_mm` 0.762 (no wider than the tip) are `tapered_ball_nose_range`
+ at the field. With `flute_length_mm: null` and the tool used by a
+ V-Carve, `check` lists `tool_value_unset` at
+ `tools[0].cutter.tapered_ball_nose.flute_length_mm` and `export` refuses.
+ A library holding the bit is version 3, and a version 2 library loads.
 61u. **Depth by the profile.** A 20 × 1.5 mm rectangle V-carved with the
  Ultra bit runs along its centreline at Z −3.500 (within 0.01 mm), every
  cutting point at the depth whose cut at the start plane is twice its
@@ -1683,11 +1706,11 @@ numbers):
 
 | Bit | IDC Woodcraft 1/4 in shank TBN set, two flutes |
 | --- | --- |
-| Fine Detail | tip radius 0.045 in (1.143 mm): `diameter_mm: 2.286` |
-| Ultra-High Detail | tip radius 0.015 in (0.381 mm): `diameter_mm: 0.762` |
+| Fine Detail | tip radius 0.045 in (1.143 mm): `tip_diameter_mm: 2.286` |
+| Ultra-High Detail | tip radius 0.015 in (0.381 mm): `tip_diameter_mm: 0.762` |
 | Taper | 6.7° per side (13.4° included) ±0.5° for both, measured 2026-11-10 by plunge holes at 2, 6 and 12 mm in particleboard (Fine 2.28, 3.05, 4.46 mm; Ultra 1.26, 2.57, 4.00 mm across, ±0.1 mm by eye); supersedes the angle gauge's 5° per side and the product page's "taper 10" |
 | Flute length | the documented 0.75 in, 19.05 mm, as the cutting limit (measured about 21 mm) |
-| Cut diameter | not stored: the width at any height follows from the three above (6.51 and 5.15 mm at the flute top by the model) |
+| Cut diameter | 0.25 in, `diameter_mm: 6.35` for both: the cap on the taper. The Fine bit's cone reaches it 18.37 mm up, below its flutes, so 18.37 mm is its deepest engagement; the Ultra's would reach it 24.14 mm up, past its flutes, so it cuts at most 5.15 mm wide and 19.05 mm deep |
 | Vendor's settings | 19 000 RPM, feed 60 in/min (1524 mm/min), plunge 25 in/min (635 mm/min), step-down 0.25 in, step-over 0.0072 in (Fine) and 0.0024 in (Ultra); the user enters feeds, DreamCarve invents none |
 
 The model and the plunge holes disagree by about 0.2 mm in radius (the
@@ -1725,8 +1748,8 @@ their height with the glue gap under the plug.
 ## Documentation deliverables
 
 - User Guide (3.6): Tool library updated (the tapered ball nose: the
-ball's diameter, the taper per side against a V-bit's included angle,
-flute length, measuring the taper with two plunge holes, Fusion's tapered
+tip diameter, the cutting diameter as the cap on the taper, the taper per
+side against a V-bit's included angle, flute length, measuring the taper with two plunge holes, Fusion's tapered
 mill); V-Carve updated (carving with a TBN: the depth law, the floor's
 fillet, the ridge, soft corners and `tapered_corners_softened`); Inlay
 updated (a TBN pair: glue gap and plug depth against the tangent height,
@@ -1846,3 +1869,4 @@ decisions are then folded into capabilities 49h to 49l.
 | 29  | `diameter_mm` of a TBN is the ball's diameter (2 × tip radius), with no tip-radius field, rather than a `tip_radius_mm` in the cutter beside a `diameter_mm` that would mean something else? | The ball's diameter: it is Fusion's `DC` for a ball-tipped tapered mill, Corbin's "ball diameter", and the phase 4 mock-up's Ø 0.762 already; one number cannot disagree with itself. Every place that reads `diameter_mm / 2` as a cut's width reads the derived cut radius instead, so nothing treats the ball as the bit's width. |
 | 30  | The taper's range, (0°, 45°]: a sanity bound, not a physical one. | Keep 45°. Catalogue TBNs run 1° to about 15° per side; a 45° "TBN" is a 90° V-bit with a rounded point, better entered as a V-bit. A lower bound of 0 excluded is required (a straight ball mill has no cone). |
 | 31  | `glue_gap_mm` or `plug_depth_mm` below the tangent height: warnings (as here) or errors? | Warnings, as `inlay_plug_base_thin` is: each names its cost (the plug's lift and the gap at the surface), which is small for the 0.381 mm tip (0.03 mm lift at a 0.25 mm gap) and large for the 1.143 mm tip (0.43 mm), so the user can judge. Validation and the generator both say it, once in `check`. |
+| 32  | Added in PR #670's review (2026-11-16). A TBN whose cone reaches its cutting diameter below the top of its flutes (the bench's 1.143 mm tip: 18.37 mm, against 19.05 mm of flute) is a cylinder above that height. Should an operation engaged past it be refused, or only warned? | Refused, as `v_bit_cone_exceeded` naming the cutting diameter, and the tool itself never warned about. Past that height the bit cuts straight walls, so a V-Carve's groove no longer follows the medial law and an Inlay's plug stops mating; refusing keeps one limit, the cutting height, in every rule (validation, generator, S17's shank). The case is rare: only a start depth or a male's engagement reaches 18 mm. If the maintainer prefers a warning for a plain V-Carve, the walls above the cap would be cut vertical and the warning would name the height. |
