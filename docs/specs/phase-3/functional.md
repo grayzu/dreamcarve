@@ -1738,16 +1738,36 @@ design spec, "Tapered ball nose"), which moves an inlay's seat by
 several millimetres; the coupon fit below is what absorbs it, and the
 seat it measures settles open question 27.
 
+**Why 6 mm deep** (maintainer, PR #670, 2026-11-16: "instead of using the
+exact same numbers as the V-bit inlay, … take advantage of the steeper
+sidewalls and go to 6 mm deep"). A TBN's 6.7° walls fit a deep pocket
+that a V-bit's cannot: the lettered pair's 60° bit, cone height 5.5 mm,
+could not engage `6 − G + P` at all, and even a 30° V-bit's 11.85 mm cone
+is wide at the surface. With the Ultra-High Detail bit at `depth_mm` 6,
+`glue_gap_mm` 0.85 and `plug_depth_mm` 2:
+
+| Value | Ultra-High Detail |
+| --- | --- |
+| Female: pocket depth, floor inset `w(6)` | 6 mm, 1.044 mm (a floor wherever the design is wider than 2.087 mm) |
+| Glue gap, against the tangent height 0.337 mm | 0.85 mm (0.337 + 0.5, the coupon's start; the coupon then sets it) |
+| Male start plane, below the male board's top | `D − G` = 5.15 mm |
+| Plug depth, against the tangent height | 2 mm |
+| Male floor and engagement `D − G + P` | 7.15 mm, against a cutting height of 19.05 mm (flutes; the cap is at 24.14 mm) |
+| Plug base on a 19 mm male board | 11.85 mm (on a 12 mm board it would be 4.85 mm, `inlay_plug_base_thin`) |
+| Rounding for the bit: points, inward corners | 0.983 mm, 0.378 mm (parts at least 1.967 mm wide, gaps 0.757 mm) |
+| Band: plug foot `w(P)`, flank at the board top `w(7.15)` | 0.574 mm, 1.179 mm: the edge is open with `margin_mm` 8 (needs 1.753 mm, and 3.749 mm for the 3.175 mm end mill's pass) |
+| Seat line | 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius |
+
 | Item | Value |
 | --- | --- |
-| Boards | a light hardwood (maple) and a contrasting dark one (walnut), nominal 12 mm, 110 × 80 mm each, measured thickness entered |
+| Boards | a light hardwood (maple), nominal 12 mm or thicker, and a contrasting dark one (walnut), nominal 19 mm, 110 × 80 mm each, measured thicknesses entered (design depths, not the maintainer's offcuts) |
 | T1 | the Fine Detail TBN (carve) |
 | T2 | the Ultra-High Detail TBN (coupon and inlay) |
-| T3 | 3.175 mm two-flute upcut end mill, as the lettered pair's (clearing and cut-out) |
-| 0. Coupon | `tests/fixtures/tbn-coupon.svg`, a 20 × 20 mm square with 3 mm corner radii; Inlay with T2, `depth_mm: 4`, `glue_gap_mm: 0.85` (the tangent height 0.337 + 0.5), `plug_depth_mm: 2`, `margin_mm: 8`, `clearing: [t3]`, `cut_out` by T3; cut both boards, test fit, adjust `glue_gap_mm` in 0.25 mm steps until flush (Corbin's procedure), record the gap that seats and the seat line's prediction |
+| T3 | 3.175 mm two-flute upcut end mill, as the lettered pair's (clearing and cut-out), with at least 13 mm of flute and 20 mm of reach for the cut-out through the 19 mm male board from its 7.15 mm floor |
+| 0. Coupon | `tests/fixtures/tbn-coupon.svg`, a 20 × 20 mm square with 3 mm corner radii; Inlay with T2, `depth_mm: 6`, `glue_gap_mm: 0.85` (the tangent height 0.337 + 0.5), `plug_depth_mm: 2`, `margin_mm: 8`, `clearing: [t3]`, `cut_out` by T3; cut both boards, test fit, adjust `glue_gap_mm` in 0.25 mm steps until flush (Corbin's procedure), record the gap that seats and the seat line's prediction |
 | 1. Carve | the "DC" letters of `dc-inlay.svg` V-carved with T1, `flat_depth_mm: 2`, `step_over_fraction: 0.1`, no clearing: floors in the stems with the ball's fillet, soft corners at the serifs (`tapered_corners_softened` expected) |
-| 2. Inlay pair | the "DC" letters as an Inlay with T2, `depth_mm: 4`, `glue_gap_mm` the coupon's, `plug_depth_mm: 2`, `margin_mm: 8`, `outline_rounding_mm: 10`, `step_over_fraction: 0.1`, `clearing: [t3]`, `cut_out` by T3 with four tabs; `inlay_rounded_for_bit` expected (serifs rounded to about 0.73 mm; if `inlay_too_narrow_for_bit` refuses a hairline of the letters, slice 27g lowers `depth_mm` to 3 and records why) |
-| Projects | `tests/fixtures/dc-tbn.dcv` (the carve and the pair, the male board the stock's size and 12 mm thick) and a coupon project from `tbn-coupon.svg` |
+| 2. Inlay pair | the "DC" letters as an Inlay with T2, `depth_mm: 6`, `glue_gap_mm` the coupon's, `plug_depth_mm: 2`, `margin_mm: 8`, `outline_rounding_mm: 10`, `step_over_fraction: 0.1`, `clearing: [t3]`, `cut_out` by T3 with four tabs; `inlay_rounded_for_bit` expected (serifs rounded to 0.983 mm; if `inlay_too_narrow_for_bit` refuses a hairline of the letters, narrower than 1.967 mm, slice 27g scales the letters up until none is, keeping 6 mm, and records the scale) |
+| Projects | `tests/fixtures/dc-tbn.dcv` (the carve on a 12 mm stock and the pair, the male board the stock's size and 19 mm thick) and a coupon project from `tbn-coupon.svg`, the same depths |
 | Safe Z | 10 mm |
 | Controller | grblHAL, one program per tool run |
 

@@ -4196,7 +4196,7 @@ tip 0.762 mm, `ρ` 0.381; both 6.7°, `L` 19.05, cutting diameter 6.35); the num
 - `fusion::unsupported_types_are_skipped` updated: `tapered mill` is no longer in the list.
 
 *dreamcarve (integration, slice 27g)*
-- `cli::tapered_carve_exports` (`tests/fixtures/dc-tbn.dcv`'s carve), `cli::tapered_inlay_exports_both_boards` (its inlay pair, every program passing S1 to S19, the seat line printed), `cli::tapered_coupon_exports`, `cli::photo_with_a_tapered_ball_nose_is_refused`, `quick_start::tapered_ball_nose_chapter_runs`.
+- `cli::tapered_carve_exports` (`tests/fixtures/dc-tbn.dcv`'s carve), `cli::tapered_inlay_exports_both_boards` (its inlay pair with the Ultra bit at `depth_mm` 6, `glue_gap_mm` 0.85, `plug_depth_mm` 2 on a 19 mm male board: the male's floor at Z −7.15 within 0.01 and nothing below it but the cut-out, engagement 7.15 mm against 19.05, no `inlay_plug_base_thin` (11.85 mm), the female's floor inset 1.044 mm, the design rounded to 0.983 mm, the band's edge open, the seat line "0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius", every program passing S1 to S19, seated within 0.05 mm by heightfield), `cli::tapered_coupon_exports`, `cli::photo_with_a_tapered_ball_nose_is_refused`, `quick_start::tapered_ball_nose_chapter_runs`.
 
 ## Sub-phases
 
@@ -4552,9 +4552,12 @@ each other and start at once; 27f needs only 27a.
     it). Tests: the integration group of the 3.6 test plan. [27c, 27e,
     27f]
 27h. **3.6 bench check.** Test part 5 (functional, "Tapered ball nose
-    carve and inlay"): the coupon fitted first and its gap recorded, then
-    the carve and the pair, cut and recorded; the seat measured against
-    the seat line's prediction, which settles open question 27. Exit:
+    carve and inlay"): the coupon fitted first at the pair's depths
+    (`depth_mm` 6, `glue_gap_mm` starting at 0.85, `plug_depth_mm` 2, the
+    Ultra-High Detail bit, a 19 mm male board) and its gap recorded, then
+    the carve and the 6 mm pair, cut and recorded; the seat measured
+    against the seat line's prediction (0.55 mm per 0.5°), which settles
+    open question 27. Exit:
     acceptance 61t to 61z green.
 
 Phase 4 follows the model (its specs are drafts, and these are listed
