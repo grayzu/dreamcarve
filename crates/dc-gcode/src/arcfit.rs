@@ -408,7 +408,7 @@ pub fn arc_chord_deviation_mm(
 }
 
 /// One arc found in a point sequence: points `start_index..=end_index`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct FoundArc {
     start_index: usize,
     end_index: usize,
@@ -423,6 +423,23 @@ struct FoundArc {
 /// taken and the walk resumes at its end; otherwise the walk advances one
 /// point. Ported from `findArcRunsInPoints` with `endpointConstrained`.
 fn find_arc_runs(points: &[Point], mids: &[Option<Point>], tolerance_mm: f64) -> Vec<FoundArc> {
+    find_arc_runs_counted(points, mids, tolerance_mm, &mut SearchWork::default())
+}
+
+/// The work [`find_arc_runs`] did, for the test that bounds it (#480).
+#[derive(Debug, Default, Clone, Copy)]
+struct SearchWork {
+    /// Windows given a circle fit and judged by the gates.
+    windows: usize,
+}
+
+/// [`find_arc_runs`], counting its work in `work`.
+fn find_arc_runs_counted(
+    points: &[Point],
+    mids: &[Option<Point>],
+    tolerance_mm: f64,
+    work: &mut SearchWork,
+) -> Vec<FoundArc> {
     let n = points.len();
     let mut found = Vec::new();
     let mut i = 0;
@@ -434,6 +451,7 @@ fn find_arc_runs(points: &[Point], mids: &[Option<Point>], tolerance_mm: f64) ->
             let Some(sub) = points.get(i..=end) else {
                 continue;
             };
+            work.windows += 1;
             let Some((centre, radius_mm)) = fit_circle_kasa(sub) else {
                 continue;
             };
@@ -2729,5 +2747,104 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// A level run like the floor rings of a V-bit's long level stretch
+    /// (#480): `rings` concentric rings, each an ellipse, walked by moves
+    /// whose lengths are drawn log-uniform from 0.002 to 0.4 mm by a
+    /// fixed generator, each ring joined to the next by a short step in.
+    /// The lengths vary as the stress case's do (#464, line art
+    /// `0x4640000`), so almost every window fails the step uniformity
+    /// gate though its points lie on a circle.
+    fn dense_level_rings(rings: usize, outer_mm: f64) -> Vec<Point> {
+        let mut state: u64 = 0x0480_0480;
+        let mut uniform = move || {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (state >> 11) as f64 / (1_u64 << 53) as f64
+        };
+        let mut points = Vec::new();
+        for ring in 0..rings {
+            let a = outer_mm - 0.3 * ring as f64;
+            let b = 0.7 * a;
+            let mut angle = 0.0;
+            while angle < TAU {
+                points.push(Point::new(a * angle.cos(), b * angle.sin()));
+                let length_mm = 0.002 * 200.0_f64.powf(uniform());
+                angle += length_mm / b;
+            }
+        }
+        points
+    }
+
+    /// The search as it was before #480: every window from each start, a
+    /// circle fit and every gate on each. The reference the pruned search
+    /// must agree with exactly.
+    fn find_arc_runs_exhaustive(
+        points: &[Point],
+        mids: &[Option<Point>],
+        tolerance_mm: f64,
+    ) -> Vec<FoundArc> {
+        let n = points.len();
+        let mut found = Vec::new();
+        let mut i = 0;
+        while i + MIN_RUN_POINTS <= n {
+            let max_end = (n - 1).min(i + MAX_CANDIDATE_POINTS - 1);
+            let mut best = None;
+            for end in (i + MIN_RUN_POINTS - 1..=max_end).rev() {
+                let sub = &points[i..=end];
+                let Some((centre, radius_mm)) = fit_circle_kasa(sub) else {
+                    continue;
+                };
+                let (centre, radius_mm) =
+                    constrain_to_endpoints(centre, radius_mm, sub[0], sub[sub.len() - 1])
+                        .unwrap_or((centre, radius_mm));
+                if gates_pass(sub, &mids[i..end], centre, radius_mm, tolerance_mm) {
+                    best = Some(FoundArc {
+                        start_index: i,
+                        end_index: end,
+                        centre,
+                        clockwise: cross_sum(sub, centre) < 0.0,
+                    });
+                    break;
+                }
+            }
+            match best {
+                Some(arc) => {
+                    i = arc.end_index;
+                    found.push(arc);
+                }
+                None => i += 1,
+            }
+        }
+        found
+    }
+
+    /// #480: a long dense level run cost about `n · 128` circle fits, each
+    /// with every gate over up to 128 points, and the stress case's V-bit
+    /// run took 77 s to fit. The search now fits a bounded number of
+    /// windows per point, and finds exactly the arcs the exhaustive search
+    /// finds.
+    #[test]
+    fn fit_of_a_long_dense_level_run_is_bounded() {
+        let points = dense_level_rings(8, 8.0);
+        assert!(points.len() > 2000, "{} points", points.len());
+        let mids = vec![None; points.len() - 1];
+        let mut work = SearchWork::default();
+        let found = find_arc_runs_counted(&points, &mids, TOL, &mut work);
+        assert!(
+            work.windows <= 4 * points.len(),
+            "{} windows fitted for {} points",
+            work.windows,
+            points.len()
+        );
+        // Every arc it found is the one the exhaustive search finds there.
+        let head = &points[..600];
+        assert_eq!(
+            find_arc_runs(head, &mids[..599], TOL),
+            find_arc_runs_exhaustive(head, &mids[..599], TOL)
+        );
+        assert!(!found.is_empty() || work.windows > 0);
     }
 }
