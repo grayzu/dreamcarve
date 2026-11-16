@@ -2307,19 +2307,9 @@ fn walk_fitted_arc(
                     }
                     break;
                 }
-                // Off this piece: past its end onto the next, if it lies
-                // on this piece's circle or on the next piece itself.
-                // #527: two runs fitted one after the other on circles
-                // whose centres are within the allowance read as one
-                // chain; on circles a few hundredths across the next run's
-                // first vertex can lie off the first circle by more than
-                // the allowance, though it is on its own piece.
                 let on_circle =
                     (p.distance_to(current.centre) - current.radius_mm).abs() <= allowed_mm;
-                let on_next = pieces
-                    .get(piece + 1)
-                    .is_some_and(|next| next.turn_to(p, allowed_mm).is_some());
-                if !(on_circle || on_next) || piece + 1 >= pieces.len() {
+                if !on_circle || piece + 1 >= pieces.len() {
                     return None;
                 }
                 piece += 1;
@@ -7468,12 +7458,12 @@ mod tests {
 
     /// #527 (found by the stress sweep): a V-bit floor ring's lap leaves
     /// for a leftover piece a few hundredths across, cuts round it and
-    /// comes back, then goes on along the ring. Arc fitting fits the lap's
-    /// return and the ring after it as two runs on circles about 0.04 mm
-    /// across whose centres lie within the allowance, so S12 reads their
-    /// arcs as one chain; the first vertex of the second run lies off the
-    /// first circle by more than the allowance, though on its own piece.
-    /// The walk moves on to the next piece there, and the program passes.
+    /// comes back, then goes on along the ring. Arc fitting fitted the
+    /// lap's return and the ring after it as two runs on circles about
+    /// 0.08 mm across whose centres lay within the allowance, which S12
+    /// read as one chain, and refused (`ArcFitViolation`). A circle under
+    /// ten tolerances in radius is no longer fitted, and the program
+    /// passes.
     #[test]
     fn fitted_runs_on_two_small_near_circles_pass_s12() {
         let (project, op, tool) = partless_fixture();

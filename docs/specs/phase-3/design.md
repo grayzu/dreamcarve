@@ -2220,9 +2220,14 @@ orientation; DreamCarve's regions are normalised anyway.
      The goldens' floors are compared by reach (`vcarve::compare`), so
      they pass unchanged; the sign's V-bit program grows from 4,164 to
      4,240 lines (+1.8 %), and on main after #474 the tutorial "DC"
-     female's from 1,197 to 1,384 (+16 %) and its male's from 479 to 649
-     (+35 %), though both lift to safe Z less often (30 → 20, 15 → 9):
-     #484's strip centres are now cut from inside the laps too.
+     female's from 1,197 to 1,384 (+16 %) and its male's from 479 to 651
+     (+36 %), though both lift to safe Z less often (30 → 20, 15 → 9):
+     #484's strip centres are now cut from inside the laps too. The
+     pieces' loops are a few hundredths across, and arc fitting fitted
+     runs round them on circles under 0.1 mm whose snapped I and J S12
+     then refused (`ArcFitViolation`, lettering `0x37`, line art `0x9b`):
+     `dc_gcode::arcfit` no longer fits a circle under ten tolerances in
+     radius (`safety::fitted_runs_on_two_small_near_circles_pass_s12`).
      Arcs of the rings are flattened to the floor's side:
      chords for a counter-clockwise arc, lines tangent to a clockwise
      one (outside its circle), so no move comes nearer a wall than its

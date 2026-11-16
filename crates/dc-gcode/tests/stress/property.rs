@@ -462,7 +462,13 @@ fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
 /// Seat failures of the CI tests' designs, each with the open issue it
 /// is filed under:
 /// family, seed, operation, issue.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 0] = [];
+const KNOWN_CASES: [(&str, u64, Kind, u32); 1] = [
+    // #695: the female's clearing ring misses its reach by 0.013 mm after
+    // #474, and the V-bit floor, told the pass reached it, leaves a sliver
+    // 0.8 mm high; shown since #527 draws the glue gap down to 1.0 times
+    // the floor's straight-run ridge.
+    ("line art", 0x94, Kind::MaleOpenEdge, 695),
+];
 
 /// The validation problems a valid design may still raise with the
 /// settings drawn: as [`explains`], each names a setting that does not
