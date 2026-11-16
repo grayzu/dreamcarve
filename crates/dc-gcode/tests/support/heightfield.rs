@@ -182,11 +182,17 @@ impl Heights {
     /// The index of every lattice point within `radius_mm` of `p`.
     pub fn disc(&self, p: Point, radius_mm: f64) -> Vec<usize> {
         let mut out = Vec::new();
+        // A disc wholly below or left of the lattice touches none of it;
+        // the `as usize` casts below would saturate to its first row or
+        // column instead.
+        let top = ((p.y + radius_mm - self.origin.y) / self.step).floor();
+        if top < 0.0 {
+            return out;
+        }
         let j0 = ((p.y - radius_mm - self.origin.y) / self.step)
             .ceil()
             .max(0.0) as usize;
-        let j1 =
-            (((p.y + radius_mm - self.origin.y) / self.step).floor() as usize).min(self.ny - 1);
+        let j1 = (top as usize).min(self.ny - 1);
         for j in j0..=j1 {
             let dy = self.origin.y + j as f64 * self.step - p.y;
             let reach = radius_mm * radius_mm - dy * dy;
@@ -194,8 +200,12 @@ impl Heights {
                 continue;
             }
             let half = reach.sqrt();
+            let right = ((p.x + half - self.origin.x) / self.step).floor();
+            if right < 0.0 {
+                continue;
+            }
             let i0 = ((p.x - half - self.origin.x) / self.step).ceil().max(0.0) as usize;
-            let i1 = (((p.x + half - self.origin.x) / self.step).floor() as usize).min(self.nx - 1);
+            let i1 = (right as usize).min(self.nx - 1);
             out.extend((i0..=i1).map(|i| j * self.nx + i));
         }
         out
@@ -254,4 +264,60 @@ pub fn deepest_plunge_mm(
         heights.sweep(cut, radius_mm);
     }
     deepest
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An 11 × 11 lattice of 1 mm steps from the origin, at Z 0.
+    fn lattice() -> Heights {
+        Heights {
+            origin: Point::new(0.0, 0.0),
+            nx: 11,
+            ny: 11,
+            step: 1.0,
+            top_mm: 0.0,
+            z: vec![0.0; 121],
+        }
+    }
+
+    /// A disc wholly left of the lattice touches none of it: no lattice
+    /// point lies within its radius, so no column, the first included, is
+    /// touched.
+    #[test]
+    fn disc_wholly_left_of_the_lattice_touches_nothing() {
+        let heights = lattice();
+        assert_eq!(
+            heights.disc(Point::new(-3.0, 5.0), 1.0),
+            Vec::<usize>::new()
+        );
+    }
+
+    /// A disc wholly below the lattice touches none of it, nor does one
+    /// wholly below and left of it.
+    #[test]
+    fn disc_wholly_below_the_lattice_touches_nothing() {
+        let heights = lattice();
+        assert_eq!(
+            heights.disc(Point::new(5.0, -3.0), 1.0),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            heights.disc(Point::new(-3.0, -3.0), 1.0),
+            Vec::<usize>::new()
+        );
+    }
+
+    /// A disc whose edge reaches the lattice's first column, or first row,
+    /// touches the one lattice point it reaches and no other: the points
+    /// beside it lie √2 mm from its centre, outside its 1 mm radius.
+    #[test]
+    fn disc_touching_the_lattice_edge_touches_one_point() {
+        let heights = lattice();
+        // (0, 5): row 5, column 0.
+        assert_eq!(heights.disc(Point::new(-1.0, 5.0), 1.0), vec![5 * 11]);
+        // (5, 0): row 0, column 5.
+        assert_eq!(heights.disc(Point::new(5.0, -1.0), 1.0), vec![5]);
+    }
 }
