@@ -145,6 +145,17 @@ pub enum ImportNote {
         /// The tool's diameter, millimetres.
         diameter_mm: f64,
     },
+    /// A tapered ball nose whose file lacks some of its cutter's values
+    /// (`TA`, `LCF`, the tip): each is imported unset, and the note names
+    /// every field to fill as [`Tool::unset_values`] names it, so the
+    /// line reads as a DreamCarve library's does: `` `IDC Ultra-High
+    /// Detail`: imported (lt1); set
+    /// cutter.tapered_ball_nose.taper_angle_deg,
+    /// cutter.tapered_ball_nose.flute_length_mm ``.
+    TaperedValueUnset {
+        /// The unset fields, in the file's order: tip, taper, flutes.
+        fields: Vec<String>,
+    },
 }
 
 impl fmt::Display for ImportNote {
@@ -162,6 +173,7 @@ impl fmt::Display for ImportNote {
                 f,
                 "stepover {step_over_mm} mm is wider than the {diameter_mm} mm tool, using 1"
             ),
+            Self::TaperedValueUnset { fields } => write!(f, "set {}", fields.join(", ")),
         }
     }
 }
@@ -193,6 +205,14 @@ pub enum SkipReason {
     NoDiameter,
     /// A chamfer mill without `geometry.TA`.
     NoTaperAngle,
+    /// A `tapered mill` whose tip is flat or a bull nose (`RE` absent, 0,
+    /// or below `DC/2`): a V-bit with a flat, which DreamCarve does not
+    /// model yet.
+    TaperedTipNotBall,
+    /// A ball-tipped `tapered mill` without a positive shaft diameter
+    /// (`geometry.SFDM`), which is a tapered ball nose's cutting
+    /// diameter. Never imported with a placeholder (phase 3, question 33).
+    NoShaftDiameter,
     /// The mapped tool breaks a library validation rule.
     Invalid {
         /// The field, such as `cutter.v_bit.included_angle_deg`.
@@ -212,6 +232,12 @@ impl fmt::Display for SkipReason {
             Self::UnknownUnit(None) => f.write_str("no unit"),
             Self::NoDiameter => f.write_str("no cutting diameter (`DC`)"),
             Self::NoTaperAngle => f.write_str("chamfer mill has no taper angle (`TA`)"),
+            Self::TaperedTipNotBall => f.write_str(
+                "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+            ),
+            Self::NoShaftDiameter => f.write_str(
+                "a tapered ball nose needs its shaft diameter (`SFDM`), the cutting diameter",
+            ),
             Self::Invalid { field, message } => write!(f, "{field} {message}"),
         }
     }
@@ -680,6 +706,7 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dc_project::{TBN_FLUTES, TBN_TAPER, TBN_TIP};
     use serde_json::json;
 
     /// `tests/fixtures/fusion/sample.json`.
@@ -1076,7 +1103,6 @@ mod tests {
             "form mill",
             "lollipop mill",
             "dovetail mill",
-            "tapered mill",
             "radius mill",
             "corner chamfer end mill",
             "circle segment barrel",
@@ -1312,9 +1338,10 @@ mod tests {
                     "12 mm 14-Degree Dovetail Mill",
                     unsupported("dovetail mill")
                 ),
+                // No `RE`: a flat tip, not a tapered ball nose (#682).
                 (
                     "3 mm Tapered Ball Mill, 2-Degree Taper",
-                    unsupported("tapered mill")
+                    SkipReason::TaperedTipNotBall.to_string()
                 ),
                 ("General Turning Tool", unsupported("turning general")),
                 ("Probe, 2 mm Stylus", unsupported("probe")),
@@ -1557,5 +1584,267 @@ mod tests {
         assert!(tool.diameter_mm == 6.000_000_1);
         assert_eq!(tool.feed_mm_min, Some(1_234.567_89));
         assert_eq!(tool.step_down_mm, Some(2.000_000_01));
+    }
+
+    // Sub-phase 3.6, slice 27f (#682): ball-tipped tapered mills.
+
+    /// The bench's IDC Woodcraft Ultra-High Detail tapered ball nose as a
+    /// Fusion inch library writes it: a 0.03 in ball (`RE` 0.015 in), 6.7°
+    /// per side, 0.75 in of flute, a 1/4 in shaft, one full preset.
+    fn ultra_tapered_mill() -> Value {
+        json!({
+            "type": "tapered mill",
+            "unit": "inches",
+            "description": "IDC Ultra-High Detail",
+            "guid": "tbn-ultra",
+            "geometry": {
+                "DC": 0.03, "RE": 0.015, "TA": 6.7, "LCF": 0.75,
+                "SFDM": 0.25, "NOF": 2, "OAL": 2.5
+            },
+            "start-values": { "presets": [ {
+                "name": "Hardwood",
+                "guid": "tbn-ultra-preset",
+                "n": 18000,
+                "v_f": 60,
+                "v_f_plunge": 20
+            } ] }
+        })
+    }
+
+    /// The tapered ball nose's three values, or a panic for any other
+    /// cutter.
+    fn tapered(tool: &Tool) -> (Option<f64>, Option<f64>, Option<f64>) {
+        match tool.cutter {
+            ToolKind::TaperedBallNose {
+                tip_diameter_mm,
+                taper_angle_deg,
+                flute_length_mm,
+            } => (tip_diameter_mm, taper_angle_deg, flute_length_mm),
+            ref other => panic!("not a tapered ball nose: {other:?}"),
+        }
+    }
+
+    /// Removes `key` from `item`'s geometry.
+    fn remove_geometry(item: &mut Value, key: &str) {
+        item["geometry"]
+            .as_object_mut()
+            .expect("geometry object")
+            .remove(key);
+    }
+
+    /// The reason `item` alone is skipped with.
+    fn skip_reason(item: Value) -> SkipReason {
+        let imported = import_items(&[item]);
+        assert_eq!(imported.tools, [], "nothing imported");
+        assert_eq!(imported.skipped.len(), 1, "{:?}", imported.skipped);
+        imported.skipped[0].reason.clone()
+    }
+
+    #[test]
+    fn tapered_ball_mill_imports_as_tapered_ball_nose() {
+        let imported = only_tool(ultra_tapered_mill());
+        assert_eq!(imported.notes, [], "every value set");
+        assert_eq!(imported.source, "fusion:tbn-ultra:tbn-ultra-preset");
+        let tool = imported.tool;
+        assert_eq!(tool.name, "IDC Ultra-High Detail");
+        let (tip, taper, flutes) = tapered(&tool);
+        assert_some_approx(tip, 0.762);
+        assert_some_approx(taper, 6.7);
+        assert_some_approx(flutes, 19.05);
+        assert!(approx(tool.diameter_mm, 6.35), "{}", tool.diameter_mm);
+        assert_eq!(tool.flutes, 2);
+        assert_eq!(tool.rpm, Some(18000));
+        assert_some_approx(tool.feed_mm_min, 1524.0);
+        assert_some_approx(tool.plunge_mm_min, 508.0);
+        crate::validate_tool(&LibraryToolId::new("lt1"), &tool).expect("valid");
+    }
+
+    #[test]
+    #[allow(
+        clippy::float_cmp,
+        reason = "a millimetre file's values are kept as written"
+    )]
+    fn tapered_ball_mill_in_millimetres() {
+        let mut item = ultra_tapered_mill();
+        set(&mut item, &["unit"], json!("millimeters"));
+        set(
+            &mut item,
+            &["geometry"],
+            json!({ "DC": 0.762, "RE": 0.381, "TA": 6.7, "LCF": 19.05, "SFDM": 6.35, "NOF": 2 }),
+        );
+        let tool = only_tool(item).tool;
+        assert_eq!(tapered(&tool), (Some(0.762), Some(6.7), Some(19.05)));
+        assert!(tool.diameter_mm == 6.35);
+    }
+
+    #[test]
+    fn tip_from_corner_radius_when_dc_is_missing() {
+        let mut item = ultra_tapered_mill();
+        remove_geometry(&mut item, "DC");
+        let imported = only_tool(item);
+        assert_eq!(imported.notes, []);
+        assert_some_approx(tapered(&imported.tool).0, 0.762);
+        // A `DC` of 0 is no tip diameter either.
+        let mut item = ultra_tapered_mill();
+        set(&mut item, &["geometry", "DC"], json!(0));
+        assert_some_approx(tapered(&only_tool(item).tool).0, 0.762);
+    }
+
+    #[test]
+    fn tapered_mill_with_missing_fields_imports_them_unset() {
+        let mut item = ultra_tapered_mill();
+        remove_geometry(&mut item, "TA");
+        remove_geometry(&mut item, "LCF");
+        let imported = only_tool(item);
+        let (tip, taper, flutes) = tapered(&imported.tool);
+        assert_some_approx(tip, 0.762);
+        assert_eq!((taper, flutes), (None, None));
+        assert!(approx(imported.tool.diameter_mm, 6.35));
+        let note = ImportNote::TaperedValueUnset {
+            fields: vec![TBN_TAPER.into(), TBN_FLUTES.into()],
+        };
+        assert_eq!(imported.notes, [note.clone()]);
+        assert_eq!(
+            note.to_string(),
+            "set cutter.tapered_ball_nose.taper_angle_deg, cutter.tapered_ball_nose.flute_length_mm"
+        );
+
+        // The report line reads as a DreamCarve library's line for the
+        // same tool does (27a, #677).
+        let fusion_lines = crate::import::merge(
+            &crate::Library::default(),
+            crate::import::read(&library(&[ultra_without(&["TA", "LCF"])])).expect("reads"),
+            false,
+        )
+        .expect("merges")
+        .report
+        .lines();
+        assert_eq!(
+            fusion_lines,
+            [
+                "`IDC Ultra-High Detail`: imported (lt1); set cutter.tapered_ball_nose.taper_angle_deg, cutter.tapered_ball_nose.flute_length_mm"
+            ]
+        );
+        let mut dc_library = crate::Library::default();
+        crate::add(&mut dc_library, imported.tool.clone(), None).expect("adds");
+        let saved = crate::save(&dc_library).expect("saves");
+        let dc_lines = crate::import::merge(
+            &crate::Library::default(),
+            crate::import::read(saved.as_bytes()).expect("reads"),
+            false,
+        )
+        .expect("merges")
+        .report
+        .lines();
+        assert_eq!(dc_lines, fusion_lines);
+
+        // `check` on a project using it names each unset value.
+        let mut project = dc_project::test_support::tapered_project();
+        let at = project
+            .tools
+            .iter()
+            .position(|t| t.id.as_str() == "t2")
+            .expect("the project's TBN");
+        project.tools[at] = Tool {
+            id: ToolId::new("t2"),
+            ..imported.tool
+        };
+        let unset: Vec<String> = dc_project::validate(&project)
+            .iter()
+            .filter(|p| p.code() == "tool_value_unset")
+            .filter_map(dc_project::Problem::field)
+            .collect();
+        assert_eq!(
+            unset,
+            [
+                "tools[t2].cutter.tapered_ball_nose.taper_angle_deg",
+                "tools[t2].cutter.tapered_ball_nose.flute_length_mm"
+            ]
+        );
+
+        // With no `DC` and no `RE` the tip is unset too, and named first.
+        let imported = only_tool(ultra_without(&["DC", "RE", "TA"]));
+        assert_eq!(tapered(&imported.tool).0, None);
+        assert_eq!(
+            imported.notes,
+            [ImportNote::TaperedValueUnset {
+                fields: vec![TBN_TIP.into(), TBN_TAPER.into()],
+            }]
+        );
+    }
+
+    /// The Ultra bit's entry without the geometry `keys`.
+    fn ultra_without(keys: &[&str]) -> Value {
+        let mut item = ultra_tapered_mill();
+        for key in keys {
+            remove_geometry(&mut item, key);
+        }
+        item
+    }
+
+    #[test]
+    fn tapered_mill_without_a_shaft_diameter_is_skipped() {
+        let mut zero = ultra_tapered_mill();
+        set(&mut zero, &["geometry", "SFDM"], json!(0));
+        for item in [
+            ultra_without(&["SFDM"]),
+            zero,
+            ultra_without(&["SFDM", "TA", "LCF"]),
+        ] {
+            let imported = import_items(&[item]);
+            assert_eq!(imported.tools, [], "not imported, not imported unset");
+            assert_eq!(
+                imported.skipped,
+                [Skipped {
+                    description: "IDC Ultra-High Detail".into(),
+                    reason: SkipReason::NoShaftDiameter,
+                }]
+            );
+        }
+        assert_eq!(
+            SkipReason::NoShaftDiameter.to_string(),
+            "a tapered ball nose needs its shaft diameter (`SFDM`), the cutting diameter"
+        );
+    }
+
+    #[test]
+    fn tapered_mill_with_a_flat_or_bull_tip_is_skipped() {
+        let mut zero = ultra_tapered_mill();
+        set(&mut zero, &["geometry", "RE"], json!(0));
+        let mut bull = ultra_tapered_mill();
+        set(&mut bull, &["geometry", "RE"], json!(0.015 - 2e-6));
+        for item in [ultra_without(&["RE"]), zero, bull] {
+            assert_eq!(skip_reason(item), SkipReason::TaperedTipNotBall);
+        }
+        let text = SkipReason::TaperedTipNotBall.to_string();
+        assert!(text.contains("flat or bull tip"), "{text}");
+        assert!(text.contains("does not model it yet"), "{text}");
+        // Within 1e-6 of `DC/2`, in the file's unit, is a ball.
+        let mut near = ultra_tapered_mill();
+        set(&mut near, &["geometry", "RE"], json!(0.015 - 5e-7));
+        assert_some_approx(tapered(&only_tool(near).tool).0, 0.762);
+    }
+
+    #[test]
+    fn tapered_mill_out_of_range_is_invalid() {
+        let invalid_at = |item: Value| match skip_reason(item) {
+            SkipReason::Invalid { field, .. } => field,
+            other => panic!("not invalid: {other:?}"),
+        };
+        let mut steep = ultra_tapered_mill();
+        set(&mut steep, &["geometry", "TA"], json!(50));
+        assert_eq!(invalid_at(steep), TBN_TAPER);
+        // `RE` above `DC/2`.
+        let mut round = ultra_tapered_mill();
+        set(&mut round, &["geometry", "RE"], json!(0.02));
+        assert_eq!(invalid_at(round), TBN_TIP);
+        // A shaft no wider than the tip.
+        let mut thin = ultra_tapered_mill();
+        set(&mut thin, &["geometry", "SFDM"], json!(0.03));
+        assert_eq!(invalid_at(thin), "diameter_mm");
+        // Flutes ending inside the ball.
+        let mut short = ultra_tapered_mill();
+        set(&mut short, &["geometry", "LCF"], json!(0));
+        assert_eq!(invalid_at(short), TBN_FLUTES);
     }
 }
