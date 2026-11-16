@@ -5533,6 +5533,75 @@ mod tests {
         );
     }
 
+    /// The sample project with a D-shaped hole in its rectangle (#686): an
+    /// arc of `radius_mm` about (35, 25), 270° round through its bottom
+    /// (bulge tan 67.5°, past 1, a half turn), closed by a chord across its
+    /// top.
+    fn sample_project_with_d_hole(radius_mm: f64) -> Project {
+        use dc_geometry::{Polyline, Vertex};
+        let mut project = sample_project();
+        let at = |deg: f64| {
+            let rad = f64::to_radians(deg);
+            (25.0 + radius_mm * rad.cos(), 15.0 + radius_mm * rad.sin())
+        };
+        let ((sx, sy), (ex, ey)) = (at(135.0), at(45.0));
+        let hole = Polyline::new(
+            vec![
+                Vertex::new(sx, sy, (f64::to_radians(270.0) / 4.0).tan()),
+                Vertex::line(ex, ey),
+            ],
+            true,
+        );
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles.push(hole);
+        }
+        project
+    }
+
+    /// #686: S17 refuses a level V-Carve cut across a wall arc that sweeps
+    /// past a half turn. With a D hole of radius 3, a cut 0.2 mm deep
+    /// along Y 24.5 from X 20 to X 40 has its ends and middle in the
+    /// material and crosses the hole through the arc twice, so it is off
+    /// its region; it used to read about 2 mm from the arc and pass. The
+    /// same cut along Y 21.5, 0.5 mm below the arc's bottom, still passes.
+    #[test]
+    fn level_v_carve_cut_across_an_arc_past_a_half_turn_fails_s17() {
+        let mut project = sample_project_with_d_hole(3.0);
+        project
+            .tools
+            .insert(0, dc_project::test_support::tool_v_bit_90());
+        let op = Operation::VCarve(dc_project::test_support::sample_v_carve());
+        let program = |y: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX20 Y{y}\nG0 Z1\nG1 Z-0.2 F300\nX40 F1000\nG0 Z5\n")
+        };
+        check_material_text(&program(21.5), &project, &op).unwrap();
+        let err = check_material_text(&program(24.5), &project, &op);
+        assert!(
+            matches!(err, Err(ExportError::ConeOffMaterial { line: 7, .. })),
+            "{err:?}"
+        );
+    }
+
+    /// #686: S9 refuses a Pocket cut across an island arc that sweeps past
+    /// a half turn. With a D island of radius 8 and the 6.35 mm tool, a
+    /// cut along Y 24.5 from X 15 to X 55 starts and ends in the pocket
+    /// and crosses the island through its arc twice; it used to read over
+    /// 6 mm from the island (the arc's ends) and pass. The same cut along
+    /// Y 13.5, 3.5 mm below the arc's bottom, still passes.
+    #[test]
+    fn pocket_cut_across_an_island_arc_past_a_half_turn_fails_s9() {
+        let project = sample_project_with_d_hole(8.0);
+        let op = Operation::Pocket(dc_project::test_support::sample_pocket());
+        let program =
+            |y: f64| format!("G21 G90\nG54\nG0 Z5\nX15 Y{y}\nG1 Z-3 F300\nX55 F1000\nG0 Z5\n");
+        check_material_text(&program(13.5), &project, &op).unwrap();
+        let err = check_material_text(&program(24.5), &project, &op);
+        assert!(
+            matches!(err, Err(ExportError::OffMaterial { line: 6, .. })),
+            "{err:?}"
+        );
+    }
+
     /// S9 on a hand-written program for the sample rectangle's Pocket
     /// (X 10 to 60, Y 10 to 40, stock-top origin): a cut past the wall
     /// fails, so does an arc whose ends are inside but whose bulge takes

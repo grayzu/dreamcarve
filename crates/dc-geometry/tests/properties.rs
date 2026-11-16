@@ -20,8 +20,8 @@
 )]
 
 use dc_geometry::{
-    Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, area_mm2, as_circle, difference,
-    flatten, nest, offset, point_segment_distance_mm,
+    Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, area_mm2, as_circle, closest_points,
+    difference, flatten, nest, offset, point_segment_distance_mm, segment_distance_mm,
 };
 use kurbo::{CubicBez, ParamCurve, ParamCurveNearest};
 use proptest::prelude::*;
@@ -412,5 +412,55 @@ proptest! {
         let (centre, found_mm) = found.expect("checked above");
         prop_assert!(centre.distance_to(Point::new(cx, cy)) <= 1e-6 * (1.0 + radius_mm));
         prop_assert!((found_mm - radius_mm).abs() <= 1e-6 * (1.0 + radius_mm));
+    }
+}
+
+/// A segment with ends in ±10 mm: a line, or an arc of either direction
+/// sweeping up to 355°, past a half turn (|bulge| > 1) as often as not.
+fn any_segment() -> impl Strategy<Value = Segment> {
+    (
+        -10.0..10.0_f64,
+        -10.0..10.0_f64,
+        -10.0..10.0_f64,
+        -10.0..10.0_f64,
+        prop_oneof![Just(0.0), -355.0..-1.0_f64, 1.0..355.0_f64],
+    )
+        .prop_map(|(sx, sy, ex, ey, sweep_deg)| Segment {
+            start: Point::new(sx, sy),
+            end: Point::new(ex, ey),
+            bulge: (sweep_deg.to_radians() / 4.0).tan(),
+        })
+}
+
+/// The least distance from points spread densely along `s` to `t`: never
+/// below the true distance, and above it by no more than the spacing.
+fn sampled_distance_mm(s: Segment, t: Segment) -> f64 {
+    const SAMPLES: u32 = 4000;
+    let length_mm = s.length_mm();
+    (0..=SAMPLES)
+        .filter_map(|k| s.point_at(length_mm * f64::from(k) / f64::from(SAMPLES)))
+        .map(|(p, _)| point_segment_distance_mm(t, p))
+        .fold(f64::INFINITY, f64::min)
+}
+
+proptest! {
+    #![proptest_config(config(1024))]
+
+    /// #686: the exact segment distance, and the closest pair's gap, are
+    /// never more than what dense sampling of either segment against the
+    /// other finds, whatever the arcs sweep. Over-reading is the unsafe
+    /// side: S9 and S17 hold cuts to it.
+    #[test]
+    fn segment_distance_is_never_above_sampling(s in any_segment(), t in any_segment()) {
+        prop_assume!(s.start.distance_to(s.end) > 1e-3 && t.start.distance_to(t.end) > 1e-3);
+        let sampled_mm = sampled_distance_mm(s, t).min(sampled_distance_mm(t, s));
+        let exact_mm = segment_distance_mm(s, t);
+        prop_assert!(exact_mm <= sampled_mm + 1e-9, "{exact_mm} > sampled {sampled_mm}");
+        let (p, q) = closest_points(s, t);
+        prop_assert!(
+            p.distance_to(q) <= sampled_mm + 1e-9,
+            "closest pair {} apart > sampled {sampled_mm}",
+            p.distance_to(q)
+        );
     }
 }

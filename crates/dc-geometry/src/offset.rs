@@ -7,12 +7,10 @@
 //! has no counterpart here.
 
 use crate::contour::Contour;
+use crate::distance::crossings;
 use crate::point::{EPS_MM, Point};
 use crate::polyline::{Polyline, Segment, Vertex, without_spikes};
-use cavalier_contours::polyline::{
-    PlineCreation, PlineOffsetOptions, PlineSegIntr, PlineSource, PlineSourceMut, PlineVertex,
-    pline_seg_intr,
-};
+use cavalier_contours::polyline::{PlineCreation, PlineOffsetOptions, PlineSource, PlineSourceMut};
 use std::f64::consts::{PI, TAU};
 
 pub(crate) type CavPolyline = cavalier_contours::polyline::Polyline<f64>;
@@ -360,35 +358,6 @@ pub fn strip_ends(path: &Polyline, left_mm: f64, lines: &[&Polyline]) -> Vec<Pol
             ))
         })
         .collect()
-}
-
-/// Where segments `s` and `t` cross or touch, within [`EPS_MM`]: both
-/// ends of a stretch where they overlap.
-fn crossings(s: Segment, t: Segment) -> Vec<Point> {
-    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
-    if s.start.distance_to(s.end) <= EPS_MM || t.start.distance_to(t.end) <= EPS_MM {
-        return Vec::new();
-    }
-    match pline_seg_intr(
-        vertex(s.start, s.bulge),
-        vertex(s.end, 0.0),
-        vertex(t.start, t.bulge),
-        vertex(t.end, 0.0),
-        EPS_MM,
-    ) {
-        PlineSegIntr::NoIntersect => Vec::new(),
-        PlineSegIntr::TangentIntersect { point: p } | PlineSegIntr::OneIntersect { point: p } => {
-            vec![Point::new(p.x, p.y)]
-        }
-        PlineSegIntr::TwoIntersects { point1, point2 }
-        | PlineSegIntr::OverlappingLines { point1, point2 }
-        | PlineSegIntr::OverlappingArcs { point1, point2 } => {
-            vec![
-                Point::new(point1.x, point1.y),
-                Point::new(point2.x, point2.y),
-            ]
-        }
-    }
 }
 
 /// Whether every point inside `contour` lies within `inset_mm` of it: the
