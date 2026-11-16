@@ -955,12 +955,15 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  library panel highlight each empty required field in place.
  Fusion's `tapered mill` imports as a
  tapered ball nose when its corner radius is half its diameter (`RE =
- DC/2`, a ball tip): `DC` is `diameter_mm`, `TA` is `taper_angle_deg`
+ DC/2`, a ball tip): `DC` is `tip_diameter_mm`, `TA` is `taper_angle_deg`
  as written (per side, as Fusion's chamfer mill's `TA` is the half
- angle, phase 2), and `LCF` the flute length, in the file's unit. A
- tapered mill with a flat or bull tip is skipped, saying why (a V-bit
- with a flat is not modelled), as is one with no flute length or taper;
- phase 2 skipped every tapered mill. New codes, listed in the Warnings
+ angle, phase 2), `LCF` the flute length and `SFDM`, the shaft
+ diameter, `diameter_mm`, in the file's unit. A value the file lacks is
+ imported unset, never guessed, and the import names the tool and the
+ fields to fill (maintainer, PR #670); a missing shaft diameter leaves
+ the cutting diameter to set too. A tapered mill with a flat or bull tip
+ is a different cutter (a V-bit with a flat) and is still skipped, the
+ message saying so and that it may come later; phase 2 skipped every tapered mill. New codes, listed in the Warnings
  chapter: `tapered_ball_nose_range`, `inlay_too_narrow_for_bit`
  (errors); `tapered_corners_softened`, `inlay_glue_gap_below_ball`,
  `inlay_plug_depth_below_ball`, `inlay_rounded_for_bit` (warnings).
@@ -1002,7 +1005,8 @@ value; and a boundary that is not an existing instance (drawing it is
 phase 5). In 3.6: a tapered ball nose in a Photo V-Carve (its groove's
 width does not follow its depth linearly, and RasterCarve, the reference,
 models a V-bit) or a countersink (a countersink's seat is conical by
-purpose); a tapered mill with a flat or bull tip; 3D finishing with a
+purpose); a tapered mill with a flat or bull tip (a candidate for
+later: a V-bit with a tip flat, which phase 3 does not model); 3D finishing with a
 tapered ball nose (phase 7); a stored calibration of the bit (an
 "effective tip radius" from plunge holes), which waits for the bench
 check (49k).
@@ -1432,10 +1436,12 @@ analytically). The bits are the bench's: **Fine Detail**,
  naming 1.000 and 1.462 mm; two parts 0.5 mm apart, 0.757 mm. The same
  Inlay with the 60° V-bit is not rounded and exports what it did.
 61z. **Fusion and the refusals.** A Fusion `tapered mill` with `DC` 0.03 in,
- `RE` 0.015 in, `TA` 6.7 and `LCF` 0.75 in imports as the Ultra bit
- (`diameter_mm` 0.762, `taper_angle_deg` 6.7, `flute_length_mm` 19.05);
- one with `RE` 0 is skipped as not a ball tip, one with no `LCF` as having
- no flute length. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
+ `RE` 0.015 in, `TA` 6.7, `LCF` 0.75 in and `SFDM` 0.25 in imports as the
+ Ultra bit (`tip_diameter_mm` 0.762, `taper_angle_deg` 6.7,
+ `flute_length_mm` 19.05, `diameter_mm` 6.35); the same with no `TA` and
+ no `LCF` imports with both unset and the report naming them, and a
+ project using it lists them as `tool_value_unset` until they are set;
+ one with `RE` 0 is skipped as not a ball tip. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
  countersink with one `countersink_needs_v_bit`. A hand-written program
  whose descent in the ball zone overlaps a wall between the old 1 mm
  sample points fails S17 with the worst point.
@@ -1884,3 +1890,4 @@ decisions are then folded into capabilities 49h to 49l.
 | 30  | The taper's range, (0°, 45°]: a sanity bound, not a physical one. | Keep 45°. Catalogue TBNs run 1° to about 15° per side; a 45° "TBN" is a 90° V-bit with a rounded point, better entered as a V-bit. A lower bound of 0 excluded is required (a straight ball mill has no cone). |
 | 31  | `glue_gap_mm` or `plug_depth_mm` below the tangent height: warnings (as here) or errors? | Warnings, as `inlay_plug_base_thin` is: each names its cost (the plug's lift and the gap at the surface), which is small for the 0.381 mm tip (0.03 mm lift at a 0.25 mm gap) and large for the 1.143 mm tip (0.43 mm), so the user can judge. Validation and the generator both say it, once in `check`. |
 | 32  | Added in PR #670's review (2026-11-16). A TBN whose cone reaches its cutting diameter below the top of its flutes (the bench's 1.143 mm tip: 18.37 mm, against 19.05 mm of flute) is a cylinder above that height. Should an operation engaged past it be refused, or only warned? | Refused, as `v_bit_cone_exceeded` naming the cutting diameter, and the tool itself never warned about. Past that height the bit cuts straight walls, so a V-Carve's groove no longer follows the medial law and an Inlay's plug stops mating; refusing keeps one limit, the cutting height, in every rule (validation, generator, S17's shank). The case is rare: only a start depth or a male's engagement reaches 18 mm. If the maintainer prefers a warning for a plain V-Carve, the walls above the cap would be cut vertical and the warning would name the height. |
+| 33  | Added in PR #670's review (2026-11-16). A Fusion tapered mill with no shaft diameter has no cutting diameter, but every tool's `diameter_mm` is required. Write it equal to the tip diameter and read that as unset (as specified), or make `diameter_mm` optional? | Equal to the tip, read as unset: a TBN can never have its cutting diameter equal to its tip, so the mark is unambiguous, `check` points at `tools[i].diameter_mm` like any unset value, and the 327 reads of `diameter_mm` keep their type. Making it optional for every tool would touch all of them for one rare import case (Fusion tools nearly always carry `SFDM`). |

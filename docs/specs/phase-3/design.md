@@ -1415,6 +1415,42 @@ goes through the library end to end in 3.6, as every other cutter does:
   phase 4 modern-UI rule: inline validation, no OK/Cancel forms); listed
   with 3.6's phase 4 changes ("Sub-phases", 3.6).
 
+**Fusion import** (`dc-library::fusion`; maintainer, PR #670: "these
+bits should be imported even if they are missing some of our required
+parameters so the user can fill them in"). Phase 2 skipped every
+`tapered mill` by name; 3.6 maps the ball-tipped ones:
+
+- **Which.** A `tapered mill` whose corner radius `RE` is half its `DC`
+  (within 1e-6 in the file's unit) has a ball tip and imports as a TBN.
+  With `DC` absent and `RE` present the tip is `2·RE`. `RE` absent or 0
+  (a flat tip) or between 0 and `DC/2` (a bull tip) is a different
+  cutter, a V-bit with a flat or a round-cornered flat, which phase 3
+  does not model: skipped with `SkipReason::TaperedTipNotBall`, whose
+  text says so and that it may be supported later ("a tapered mill with
+  a flat or bull tip is not a tapered ball nose; DreamCarve does not
+  model it yet"). `RE` above `DC/2` is `SkipReason::Invalid`.
+- **The mapping.** `DC` (or `2·RE`) → `tip_diameter_mm`; `TA` →
+  `taper_angle_deg` as written (per side, as the chamfer mill's `TA` is
+  the half angle; phase 2 open question 10); `LCF` → `flute_length_mm`;
+  `SFDM`, the shaft diameter, → `diameter_mm`, the cutting diameter (on
+  a 1/4 in TBN the shank and the flutes' top are both 6.35 mm). Lengths
+  in the file's unit, converted and rounded as phase 2's. The feeds and
+  step-down as every Fusion tool's.
+- **Missing values import unset.** A missing `TA`, `LCF` or tip leaves
+  that field `null`; the tool is imported, not skipped, with
+  `ImportNote::TaperedValueUnset { fields }` naming the tool and every
+  field to fill (`IDC Ultra-High Detail: set taper_angle_deg,
+  flute_length_mm`). A missing `SFDM` cannot leave `diameter_mm` unset,
+  since every tool has one: it is written equal to the tip diameter,
+  which no TBN can have, and validation reads a TBN whose cutting
+  diameter equals its tip as that value unset (`tool_value_unset` at
+  `tools[i].diameter_mm`, not `tapered_ball_nose_range`); the note names
+  `diameter_mm` with the others. Open question 33 asks whether
+  `diameter_mm` should become optional instead.
+- A value that is present but out of range (`TA` 50) is still
+  `SkipReason::Invalid`, as for every Fusion tool: a wrong number is not a
+  missing one.
+
 **Validation** (`validate.rs`; errors unless marked):
 
 - `tapered_ball_nose_range` (on every tool, used or not, as the library
@@ -4118,7 +4154,7 @@ tip 0.762 mm, `ρ` 0.381; both 6.7°, `L` 19.05, cutting diameter 6.35); the num
 *dc-project and dc-library — the tool and format 28 (slice 27a)*
 - `serialize::tapered_ball_nose_round_trips`, `serialize::tapered_ball_nose_is_an_object_with_tip_taper_and_flute_length`, `serialize::tapered_ball_nose_unset_fields_are_null`, `serialize::tapered_ball_nose_is_format_28`, `serialize::tip_and_flute_length_read_inches`.
 - `migrate::v27_to_v28_bumps_the_version_only`, `migrate::v27_file_with_a_tapered_ball_nose_fails`, `migrate::version_27_fixture_loads`, `migrate::version_28_fixtures_load`, `migrate::a_v27_project_exports_the_same_programs`.
-- `validate::tapered_ball_nose_taper_out_of_range_is_error` (0, −1, 45.1, NaN; 45 passes; located at the field, not `tool_out_of_range`), `validate::tapered_ball_nose_flute_must_pass_the_ball` (`L` ≤ `h_t` is an error), `validate::cut_diameter_must_exceed_the_tip` (`diameter_mm` 0.762 with `tip_diameter_mm` 0.762 is an error at `tools[i].diameter_mm`), `validate::unset_tapered_value_on_a_used_tool_is_tool_value_unset` (each of the three, located at its field; an unused tool's are not reported), `validate::tapered_ball_nose_on_photo_is_v_carve_needs_v_bit`, `validate::tapered_ball_nose_countersink_is_error`, `validate::tapered_ball_nose_v_carve_is_refused_until_built` (slice 27a only; 27c turns it into `…_is_accepted`).
+- `validate::tapered_ball_nose_taper_out_of_range_is_error` (0, −1, 45.1, NaN; 45 passes; located at the field, not `tool_out_of_range`), `validate::tapered_ball_nose_flute_must_pass_the_ball` (`L` ≤ `h_t` is an error), `validate::cut_diameter_must_exceed_the_tip` (`diameter_mm` 0.7 with `tip_diameter_mm` 0.762 is `tapered_ball_nose_range` at `tools[i].diameter_mm`; equal to the tip, it is `tool_value_unset` there, the import's mark of a missing cutting diameter), `validate::unset_tapered_value_on_a_used_tool_is_tool_value_unset` (each of the three, located at its field; an unused tool's are not reported), `validate::tapered_ball_nose_on_photo_is_v_carve_needs_v_bit`, `validate::tapered_ball_nose_countersink_is_error`, `validate::tapered_ball_nose_v_carve_is_refused_until_built` (slice 27a only; 27c turns it into `…_is_accepted`).
 - `tool::tip_radius_is_half_the_tip_diameter`, `tool::cut_radius_is_capped_by_the_cutting_diameter` (Fine 3.175, the cap; Ultra 2.577, its flute top), `tool::v_bit_cut_radius_is_half_its_diameter` (unchanged), `tool::cutting_height_is_the_lower_of_flutes_and_cap` (Fine 18.374, Ultra 19.05; a V-bit's cone height unchanged), `tool::describe_names_a_tapered_ball_nose`.
 - `library::version_2_library_loads_as_version_3`, `library::version_3_is_written`, `library::tapered_ball_nose_is_validated_on_add`, `library::unset_tapered_values_are_kept` (a TBN with no flute length is stored, saved and loaded with it `null`).
 - `tool::unset_values_lists_feeds_and_tapered_values` (with their `tools[i]…` locations).
@@ -4154,8 +4190,9 @@ tip 0.762 mm, `ρ` 0.381; both 6.7°, `L` 19.05, cutting diameter 6.35); the num
 - `stress::tapered_inlays_seat` (the #464 sweep with both bits on designs it rounds; a seed whose design is refused as too narrow counts as a pass of the refusal, not as a seat).
 
 *Fusion import (slice 27f)*
-- `fusion::tapered_ball_mill_imports_as_tapered_ball_nose` (`DC` 0.03 in, `RE` 0.015 in, `TA` 6.7, `LCF` 0.75 in → `diameter_mm` 0.762, `taper_angle_deg` 6.7, `flute_length_mm` 19.05), `fusion::tapered_ball_mill_in_millimetres`.
-- `fusion::tapered_mill_with_a_flat_or_bull_tip_is_skipped` (`RE` 0, or `RE < DC/2` beyond 1e-6: `SkipReason::TaperedTipNotBall`), `fusion::tapered_mill_without_a_flute_length_is_skipped` (`SkipReason::NoFluteLength`), `fusion::tapered_mill_without_a_taper_is_skipped` (`NoTaperAngle`), `fusion::tapered_mill_out_of_range_is_invalid` (`TA` 50: `SkipReason::Invalid`).
+- `fusion::tapered_ball_mill_imports_as_tapered_ball_nose` (`DC` 0.03 in, `RE` 0.015 in, `TA` 6.7, `LCF` 0.75 in, `SFDM` 0.25 in → `tip_diameter_mm` 0.762, `taper_angle_deg` 6.7, `flute_length_mm` 19.05, `diameter_mm` 6.35), `fusion::tapered_ball_mill_in_millimetres`, `fusion::tip_from_corner_radius_when_dc_is_missing`.
+- `fusion::tapered_mill_with_missing_fields_imports_them_unset` (no `TA`, no `LCF`: imported, both `null`, `TaperedValueUnset` naming both; no `SFDM`: `diameter_mm` equal to the tip and named; `check` on a project using it lists `tool_value_unset` at each field).
+- `fusion::tapered_mill_with_a_flat_or_bull_tip_is_skipped` (`RE` absent, 0, or `RE < DC/2` beyond 1e-6: `SkipReason::TaperedTipNotBall`, whose text says it may be supported later), `fusion::tapered_mill_out_of_range_is_invalid` (`TA` 50: `SkipReason::Invalid`).
 - `fusion::unsupported_types_are_skipped` updated: `tapered mill` is no longer in the list.
 
 *dreamcarve (integration, slice 27g)*
@@ -4493,10 +4530,11 @@ each other and start at once; 27f needs only 27a.
     `rounded_for_bit`, the stress harness's TBN cases. Tests: the Inlay
     group of the 3.6 test plan. [27c, 27d]
 27f. **Fusion import of tapered mills.** `tapered mill` with `RE = DC/2`
-    → `TaperedBallNose` (`TA` per side as written, `LCF` the flute
-    length, in the file's unit), others skipped with
-    `TaperedTipNotBall`, `NoFluteLength`; the module docs' mapping and
-    the tool-library chapter's table. The `TA` reading is checked against
+    → `TaperedBallNose` (`DC` the tip, `TA` per side as written, `LCF`
+    the flute length, `SFDM` the cutting diameter, in the file's unit);
+    missing values imported unset with `ImportNote::TaperedValueUnset`;
+    flat and bull tips skipped with `TaperedTipNotBall`; the module docs'
+    mapping and the tool-library chapter's table. The `TA` reading is checked against
     the published schema and, where the maintainer has one, IDC
     Woodcraft's own Fusion library entry for these bits, as the chamfer
     mill's `TA` was (phase 2 open question 10). Tests: the Fusion group.
