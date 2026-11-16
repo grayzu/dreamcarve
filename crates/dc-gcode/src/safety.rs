@@ -7462,7 +7462,7 @@ mod tests {
     /// lap's return and the ring after it as two runs on circles about
     /// 0.08 mm across whose centres lay within the allowance, which S12
     /// read as one chain, and refused (`ArcFitViolation`). A circle under
-    /// ten tolerances in radius is no longer fitted, and the program
+    /// six tolerances in radius is no longer fitted, and the program
     /// passes.
     #[test]
     fn fitted_runs_on_two_small_near_circles_pass_s12() {

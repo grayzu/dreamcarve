@@ -447,7 +447,7 @@ dc-male-1-T2.nc (3578 lines):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
   Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 865 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-2-T1.nc (651 lines):
+dc-male-2-T1.nc (649 lines):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
   Estimated time: 48 s (cutting 45 s, dwells 3 s); 417 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
