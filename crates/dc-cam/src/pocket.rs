@@ -4518,4 +4518,166 @@ mod tests {
             at = mv.to.xy();
         }
     }
+
+    /// #474: [`dc_project::test_support::blobs_project`]'s four blobs, each
+    /// a curved outline of 120 chords, as islands in a 70 × 62 mm
+    /// rectangle round them: the rings step round the islands, merge two
+    /// or three of them, and go through `inset_region`'s boolean fallback
+    /// many times.
+    fn blob_islands() -> Vec<Polyline> {
+        let blobs = dc_project::test_support::blobs_project();
+        let mut profiles = vec![Polyline::rect(Point::new(-10.0, -10.0), 70.0, 62.0)];
+        profiles.extend(
+            blobs
+                .definitions
+                .values()
+                .flat_map(|d| d.profiles.iter().cloned()),
+        );
+        profiles
+    }
+
+    /// The tool radius and step-over (40 %) of the #474 tests: a 1 mm end
+    /// mill, so the rings step round the islands many times.
+    const BLOB_RADIUS_MM: f64 = 0.5;
+    const BLOB_STEPOVER_MM: f64 = 0.4;
+
+    /// The ring trees of [`blob_islands`]' tool-centre regions, as the
+    /// Pocket builds them.
+    fn blob_trees() -> Vec<RingTree> {
+        let region = region_of(&blob_islands(), at_20_20());
+        inset_region(&region, BLOB_RADIUS_MM, FLAT_TOL)
+            .into_iter()
+            .map(|root| {
+                RingTree::build(root, BLOB_STEPOVER_MM, BLOB_RADIUS_MM, FLAT_TOL, MAX_RINGS)
+                    .expect("the tree builds")
+            })
+            .collect()
+    }
+
+    /// The area a closed ring sweeps with a tool of radius `radius_mm`:
+    /// the ring grown by the radius less the ring shrunk by it.
+    fn swept_area_mm2(ring: &Contour, radius_mm: f64) -> f64 {
+        let loops = |delta_mm: f64| -> f64 {
+            offset(ring, delta_mm)
+                .iter()
+                .map(|c| c.signed_area_mm2().abs())
+                .sum()
+        };
+        if ring.is_ccw() {
+            loops(radius_mm) - loops(-radius_mm)
+        } else {
+            loops(-radius_mm) - loops(radius_mm)
+        }
+    }
+
+    /// Every ring of `region`, outer and holes.
+    fn contours_of(region: &Region) -> impl Iterator<Item = &Contour> {
+        std::iter::once(region.outer()).chain(region.holes())
+    }
+
+    /// The vertices of every ring of `regions`.
+    fn vertex_count(regions: &[Region]) -> usize {
+        regions
+            .iter()
+            .flat_map(contours_of)
+            .map(|c| c.polyline().vertices().len())
+            .sum()
+    }
+
+    /// #474: rings stepping round the blob islands no longer double their
+    /// vertices at each pass through the boolean fallback. Before, one ring
+    /// had 4 931 vertices, ten times the 484 of all the outlines together;
+    /// every ring of the Pocket now has at most `K` times as many as all
+    /// its source outlines. The Pocket passes the safety pass.
+    #[test]
+    fn ring_vertex_count_stays_bounded() {
+        const K: usize = 2;
+        let mut p = project(blob_islands(), &[("i1", at_20_20())]);
+        p.tools[0].diameter_mm = 2.0 * BLOB_RADIUS_MM;
+        let op = PocketOp {
+            depth_mm: Some(1.0),
+            ..pocket_op(&p, CutDirection::Climb)
+        };
+        let (tp, _) = generate(&p, &op);
+        let source: usize = blob_islands().iter().map(|q| q.vertices().len()).sum();
+        let rings = rings(&tp);
+        assert!(rings.len() > 20, "{} rings", rings.len());
+        for ring in &rings {
+            assert!(
+                ring.moves.len() <= K * source,
+                "a ring of {} moves at Z {}, over {K} × {source}",
+                ring.moves.len(),
+                ring.z_mm
+            );
+        }
+        // The tree itself, before the walk splits rings at their starts.
+        for tree in blob_trees() {
+            for node in &tree.nodes {
+                for c in contours_of(&node.region) {
+                    let n = c.polyline().vertices().len();
+                    assert!(
+                        n <= K * source,
+                        "a ring of {n} vertices, over {K} × {source}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// #474: each step of the ring tree, computed from its parent with the
+    /// parent's polygonal rings simplified, sweeps the area the
+    /// unsimplified step does within the flatten tolerance times the
+    /// rings' length, and never more: the simplified step lies inside the
+    /// unsimplified one, so no ring comes nearer a wall or an island than
+    /// it did.
+    #[test]
+    fn simplified_rings_cut_the_same_area() {
+        let mut steps = 0;
+        let mut simplified = 0;
+        for tree in blob_trees() {
+            for node in tree.nodes.iter().filter(|n| !n.residual) {
+                let after: Vec<Region> = node
+                    .children
+                    .iter()
+                    .filter_map(|&c| tree.nodes.get(c))
+                    .filter(|c| !c.residual)
+                    .map(|c| c.region.clone())
+                    .collect();
+                let before: Vec<Region> = inset_region(&node.region, BLOB_STEPOVER_MM, FLAT_TOL)
+                    .into_iter()
+                    .filter(|r| !rings::is_noise(r, FLAT_TOL))
+                    .collect();
+                steps += 1;
+                if vertex_count(&after) < vertex_count(&before) {
+                    simplified += 1;
+                }
+                let length_mm: f64 = before
+                    .iter()
+                    .flat_map(contours_of)
+                    .map(|c| c.polyline().length_mm())
+                    .sum();
+                // One-sided: nothing of the simplified step lies outside
+                // the unsimplified one (booleans at a fine flatten).
+                let outside = area_mm2(&difference(&after, &before, 1e-4));
+                assert!(
+                    outside <= 1e-4 * length_mm,
+                    "the simplified step reaches {outside} mm² outside the unsimplified"
+                );
+                // The same swept area within the tolerance times the length.
+                let swept = |rs: &[Region]| -> f64 {
+                    rs.iter()
+                        .flat_map(contours_of)
+                        .map(|c| swept_area_mm2(c, BLOB_RADIUS_MM))
+                        .sum()
+                };
+                let (was, now) = (swept(&before), swept(&after));
+                assert!(
+                    (was - now).abs() <= FLAT_TOL * length_mm,
+                    "swept {now} mm², not {was} within {FLAT_TOL} × {length_mm}"
+                );
+            }
+        }
+        assert!(steps > 20, "{steps} steps");
+        assert!(simplified > 0, "no step was simplified");
+    }
 }

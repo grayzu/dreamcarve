@@ -18,6 +18,47 @@ use crate::polyline::{Polyline, Segment, Vertex};
 use crate::region::{Region, nest};
 use std::cmp::Ordering;
 
+/// `region` with each of its contours that has no arc simplified as
+/// [`simplify`] does within `tolerance_mm`; contours with an arc are kept
+/// as they are (#474: a Pocket ring that went through the boolean
+/// fallback is all chords, one that did not keeps its arcs). `None` when
+/// no vertex is dropped, or when the simplified contours would cross
+/// themselves or each other, or would no longer nest as one region with
+/// `region`'s holes, so the caller keeps `region`.
+///
+/// Each kept chord replaces a stretch of the contour that lies within
+/// `tolerance_mm` of it, so moving every point of the stretch straight to
+/// its nearest point on the chord carries the old contour onto the new one
+/// without moving any point more than `tolerance_mm`. A point farther than
+/// that from every contour of `region` is passed by none of them on the
+/// way, so it stays inside or outside: the result inset by `tolerance_mm`
+/// lies within `region`, and `region` inset by `tolerance_mm` within the
+/// result.
+#[must_use]
+pub fn simplify_polygonal(region: &Region, tolerance_mm: f64) -> Option<Region> {
+    let mut dropped = false;
+    let mut contours = Vec::with_capacity(region.holes().len() + 1);
+    for contour in contours_of(region) {
+        let polygonal = contour.polyline().vertices().iter().all(|v| v.bulge == 0.0);
+        let kept = if polygonal {
+            simplified(&contour, tolerance_mm)
+                .filter(|s| s.polyline().vertices().len() < contour.polyline().vertices().len())
+        } else {
+            None
+        };
+        match kept {
+            Some(s) => {
+                dropped = true;
+                contours.push(s);
+            }
+            None => contours.push(contour),
+        }
+    }
+    (dropped && is_one_region(&contours))
+        .then(|| region.with_contours(contours))
+        .flatten()
+}
+
 /// Arcs are flattened to this fraction of the simplify tolerance first, so
 /// the result stays within 1.25 tolerances of the true curve.
 const FLATTEN_FRACTION: f64 = 0.25;

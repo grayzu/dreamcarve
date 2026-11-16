@@ -33,6 +33,7 @@
 //! lap of the ring that leaves it (#267, [`Splice`]), not as a ring of its
 //! own, so the far-apart corner pieces cost no lift.
 
+use dc_geometry::simplify::simplify_polygonal;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Polyline, Region, Segment, Vertex, difference, floor_regions,
     point_segment_distance_mm, segment_distance_mm,
@@ -53,6 +54,33 @@ use crate::sequence::nearest_of;
 #[must_use]
 pub fn inset_region(region: &Region, inset_mm: f64, tolerance_mm: f64) -> Vec<Region> {
     floor_regions(std::slice::from_ref(region), inset_mm, tolerance_mm)
+}
+
+/// The next step of the ring tree inside `region`: [`inset_region`] by
+/// `stepover_mm`, from `region` with its polygonal rings simplified within
+/// half of `tolerance_mm` (#474).
+///
+/// A ring that went through `inset_region`'s boolean fallback has its
+/// arcs flattened, and the next offset puts a round join on each of its
+/// vertices, so each pass through the fallback about doubled its
+/// vertices: thousands of them round rounded inlay plugs, which made the
+/// programs large and slow to write. Simplified first, a ring keeps about
+/// the vertices its curve needs.
+///
+/// One-sided: the simplified region is inset half the tolerance further,
+/// so the step lies within the unsimplified one and no ring comes nearer
+/// a wall or an island than it would have (the simplified contours are
+/// within half the tolerance of the originals, so the simplified region
+/// inset by half the tolerance lies within `region`;
+/// [`dc_geometry::simplify::simplify_polygonal`]). It lies at most the
+/// tolerance inside it. A region with nothing to drop, a rectangle or one
+/// whose rings kept their arcs, steps exactly as before.
+fn stepped(region: &Region, stepover_mm: f64, tolerance_mm: f64) -> Vec<Region> {
+    let half_mm = tolerance_mm / 2.0;
+    match simplify_polygonal(region, half_mm) {
+        Some(simple) => inset_region(&simple, stepover_mm + half_mm, tolerance_mm),
+        None => inset_region(region, stepover_mm, tolerance_mm),
+    }
 }
 
 /// Whether `region` is noise at `tolerance_mm`, not a ring to cut: its
@@ -235,11 +263,10 @@ impl RingTree {
         while let Some(index) = pending.pop() {
             let (children, residual) = match nodes.get(index) {
                 Some(node) => {
-                    let children: Vec<Region> =
-                        inset_region(&node.region, stepover_mm, tolerance_mm)
-                            .into_iter()
-                            .filter(|r| !is_noise(r, tolerance_mm))
-                            .collect();
+                    let children: Vec<Region> = stepped(&node.region, stepover_mm, tolerance_mm)
+                        .into_iter()
+                        .filter(|r| !is_noise(r, tolerance_mm))
+                        .collect();
                     let residual: Vec<(Region, Option<Splice>)> =
                         if stepover_mm > radius_mm + tolerance_mm {
                             residual_regions(&node.region, &children, radius_mm, tolerance_mm)

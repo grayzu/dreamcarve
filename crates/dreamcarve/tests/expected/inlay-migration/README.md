@@ -36,6 +36,15 @@ Re-exported since, from the same projects with the same date:
   (`X18.319 Y20.000 Z0.000` in the "DC" female, two corners of the
   star), where it started one unit off it at `Z-0.001`. No other line
   changed, and no male program.
+- #474: the "DC" male's clearing program `dc-male-male-1-T2.nc` (8822
+  lines, now 3578), its V-bit program `dc-male-male-2-T1.nc` (680, now
+  479), and the female's V-bit program `dc-female-female-2-T1.nc` (1211,
+  now 1197). The rings of a Pocket or clearing pass are now stepped from
+  their parent ring simplified within half the flatten tolerance and
+  inset half the tolerance further, so a ring that went through the
+  boolean fallback no longer doubles its vertices. Each ring lies within
+  the one it replaces, at most the tolerance inside it. The star's
+  programs and the other "DC" ones are unchanged.
 
 They were exported on macOS, and the tests hold the programs to them byte
 for byte there. On another platform the maths library may round a number in
