@@ -199,7 +199,10 @@ fn doubled_circle(centre: (f64, f64), radius_mm: f64) -> Vec<(f64, f64)> {
         let b = TAU * (f64::from(k) + 0.5) / f64::from(n);
         let half = TAU / f64::from(n) / 2.0;
         let mid_r = radius_mm * half.cos() + 0.002;
-        points.push((centre.0 + radius_mm * a.cos(), centre.1 + radius_mm * a.sin()));
+        points.push((
+            centre.0 + radius_mm * a.cos(),
+            centre.1 + radius_mm * a.sin(),
+        ));
         points.push((centre.0 + mid_r * b.cos(), centre.1 + mid_r * b.sin()));
     }
     points

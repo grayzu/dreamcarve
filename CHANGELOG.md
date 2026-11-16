@@ -358,6 +358,18 @@ phases bump the patch number.
 
 ### Fixed
 
+- **Pocket and clearing rings no longer grow thousands of vertices
+  (#474).** Where a Pocket's or a clearing pass's rings step round
+  several islands or inlay plugs that they merge, each step flattened the
+  ring's round joins to chords and the next step put a join on every
+  chord, so a ring about doubled its points each time. Each ring is now
+  simplified within half the flatten tolerance before the next is
+  stepped from it, one-sided, so no ring comes nearer a wall or an
+  island than before and each sits at most the tolerance inside where it
+  was. The "DC" tutorial male exports in 1.1 s, not 3.4 s, and its
+  clearing program has 3578 lines, not 8822; a rounded line-art male
+  (`blobs`) exports in 0.65 s, not 10.8 s. A pocket whose rings keep
+  their arcs is cut exactly as before.
 - **DXF import reads carriage-return line endings (#667).** An ASCII DXF
   whose lines end in a lone carriage return (old Mac style; some
   programs still save AutoCAD 2018 files that way) failed `init` with

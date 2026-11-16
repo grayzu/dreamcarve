@@ -4615,7 +4615,10 @@ mod tests {
             for node in &tree.nodes {
                 for c in contours_of(&node.region) {
                     let n = c.polyline().vertices().len();
-                    assert!(n <= K * source, "a ring of {n} vertices, over {K} × {source}");
+                    assert!(
+                        n <= K * source,
+                        "a ring of {n} vertices, over {K} × {source}"
+                    );
                 }
             }
         }

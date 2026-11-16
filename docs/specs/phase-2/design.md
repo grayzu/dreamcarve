@@ -725,6 +725,18 @@ Inputs: project, op. Output: cut blocks (then `sequence`).
    noise rule) is not a node. (changed in #235: a nested circle 5.0006
    step-overs in radius kept a sixth ring 0.0002 mm in radius, three
    arcs whose ends round to one point, and S6 refused the program.)
+   A node whose arc-free rings (those the boolean difference gave) lose
+   vertices to Douglas-Peucker within half the flatten tolerance
+   (`dc_geometry::simplify::simplify_polygonal`; rings with arcs are kept
+   whole) steps from that simplified region instead, inset by
+   `s + tolerance/2`. The simplified rings are within half the tolerance
+   of the node's, so the child lies inside `inset_region(node, s)` and at
+   most the tolerance inside it: no ring comes nearer a wall or an island.
+   A node with nothing to drop steps exactly by `s`. (changed in #474:
+   each pass through the difference flattened a ring's round joins to
+   chords and the next offset put a join on every chord, so a ring round
+   merged islands about doubled its vertices at each step, to thousands;
+   the "DC" tutorial male's clearing program had 8822 lines.)
    Every node's outer and islands are rings. Emit blocks per pass,
    innermost first (PureCutCNC `inner-first`): for each root region, a
    depth-first post-order walk emits the leaf rings, then their parents,
