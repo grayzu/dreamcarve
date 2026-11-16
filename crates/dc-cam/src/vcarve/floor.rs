@@ -20,11 +20,12 @@
 //!
 //! Two additions to the Pocket rings:
 //!
-//! - **Centre rings.** The innermost ring of a branch can be up to one
-//!   step-over from the middle of what it encloses, which would leave a
-//!   ridge there twice the one between rings. Each innermost ring gets one
-//!   more ring half a step-over inside it ([`residual_regions`], upstream's
-//!   `appendResidualCoreGuides`), so the middle is no higher than the rest.
+//! - **Leftover pieces (#527).** The rings alone leave some floor more
+//!   than half a step-over from a cut: the middle of an innermost ring,
+//!   which gets one more ring inside it (its centre ring, upstream's
+//!   `appendResidualCoreGuides`), and the slivers along the rings' corner
+//!   bisectors and down narrow necks, cut from inside the rings' laps
+//!   ([`Leftovers`]). So the ridge is the straight-run one everywhere.
 //! - **Arcs are flattened to the floor's side.** The cone test takes
 //!   straight moves. A chord of an arc that turns clockwise (the round join
 //!   at a reflex corner of the outline, round an island's corner) would cut
