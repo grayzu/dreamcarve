@@ -255,9 +255,10 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
     .map_or(0.0, |r| r.corner_mm);
     let glue_gap_mm = (glue_fraction * depth_mm).max(1.2 * corner_ridge_mm);
     let plug_depth_mm = (room_mm - depth_mm + glue_gap_mm) * plug_fraction;
-    // Arc fitting at export (S12) one time in three: it is slow on the
-    // V-bit's long level runs (#480), and the generators are what is
-    // under test.
+    // Arc fitting at export (S12) one time in three. It was drawn so while
+    // the fit was slow on the V-bit's long level runs (#480); the draw
+    // stays so every seed keeps the settings it is known by, and the CI
+    // tests ([`super::run`]) fit arcs in every case.
     project.arc_fit_tolerance_mm = rng.chance(1.0 / 3.0).then_some(0.01);
 
     let pass = |rng: &mut Rng| ClearingPass {
