@@ -548,13 +548,13 @@ impl Polyline {
     }
 
     /// The same path with no arc past a half turn (#694). Each arc with
-    /// |bulge| > 1 is replaced by its two halves
-    /// ([`Segment::halves_past_half_turn`]), so the path is unchanged and
+    /// |bulge| > 1 is replaced by its two halves ([`Segment::piece`] on
+    /// either side of its middle), so the path is unchanged and
     /// gains a vertex at the middle of each such arc. A bulge past 1 on a
     /// segment too short to be an arc ([`Segment::arc`]) becomes 0, the
     /// line every other reading of it takes. So does one on an open
     /// polyline's last vertex, which starts no segment. A half circle
-    /// whose bulge rounding left within [`HALF_TURN_BULGE_NOISE`] of ±1
+    /// whose bulge rounding left within 1e-12 of ±1
     /// is held to ±1 rather than split. Other vertices are kept as they
     /// are, and a polyline with no bulge past 1 comes back equal.
     #[must_use]
