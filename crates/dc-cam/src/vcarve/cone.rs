@@ -796,3 +796,89 @@ fn count_of(v: f64) -> usize {
         v.min(MAX_CELLS) as usize
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dc_geometry::profile::{BitProfile, WallPiece, least_room};
+    use dc_geometry::{Contour, nest};
+
+    /// The shared `dc_geometry::profile::least_room` (#678) agrees with
+    /// [`Walls::least_room`] for a V-bit, cut by cut, over every wall:
+    /// never more room (this copy finds each wall's least by a
+    /// golden-section search, which can only land at or above the exact
+    /// least), and within 1e-9 of it. This copy is not a closed form, so
+    /// the two cannot agree bit for bit; slice 27c (#679) deletes it on
+    /// the strength of this.
+    #[test]
+    fn v_bit_least_room_matches_the_existing_closed_forms() {
+        let outline = Polyline::new(
+            [
+                (-2.0, -1.5),
+                (6.0, -1.5),
+                (6.0, 1.5),
+                (2.45, 1.5),
+                (2.4, 0.95),
+                (2.35, 1.5),
+                (-2.0, 1.5),
+            ]
+            .iter()
+            .map(|&(x, y)| Vertex::line(x, y))
+            .collect(),
+            true,
+        );
+        let hole = Polyline::rect(Point::new(4.0, -0.5), 1.0, 0.6);
+        let regions = nest(vec![
+            Contour::new(outline).expect("a notched bar"),
+            Contour::new(hole).expect("a hole"),
+        ])
+        .expect("one region")
+        .0;
+        let walls = Walls::new(&regions, 0.01);
+        let start_plane_z_mm = 10.0;
+        let cuts = [
+            ((-1.5, 0.0), (5.5, 0.2), 0.1, 1.2),
+            ((1.5, 0.0), (3.3, 0.0), 0.5, 0.5),
+            ((0.0, -1.0), (3.0, 1.2), 0.0, 1.4),
+            ((2.4, 0.5), (2.6, -1.0), 1.0, 0.2),
+            ((5.5, 1.0), (3.5, -1.2), 0.3, 0.9),
+            ((-1.9, 1.4), (5.9, -1.4), 0.05, 0.05),
+        ];
+        for slope in [
+            1.0,
+            15.0_f64.to_radians().tan(),
+            45.0_f64.to_radians().tan(),
+        ] {
+            for &((ax, ay), (bx, by), da, db) in &cuts {
+                let a = Point3::new(ax, ay, start_plane_z_mm - da);
+                let b = Point3::new(bx, by, start_plane_z_mm - db);
+                let (old_mm, _) = walls.least_room(a, b, start_plane_z_mm, slope);
+                // Walls beyond the cut's reach count as `2 · EPS_MM`.
+                let widest_mm = da.max(db) * slope;
+                let beyond_mm = widest_mm.max(0.0) + 2.0 * EPS_MM - widest_mm;
+                let new_mm = walls
+                    .segments
+                    .iter()
+                    .map(|&(c, d)| {
+                        least_room(
+                            a,
+                            b,
+                            WallPiece::line(c, d),
+                            &BitProfile::VBit { slope },
+                            start_plane_z_mm,
+                        )
+                        .0
+                    })
+                    .fold(beyond_mm, f64::min);
+                assert!(
+                    new_mm <= old_mm + 1e-12,
+                    "slope {slope} {a:?}–{b:?}: exact {new_mm} above the search's {old_mm}"
+                );
+                assert!(
+                    old_mm - new_mm <= 1e-9,
+                    "slope {slope} {a:?}–{b:?}: exact {new_mm} far below the search's {old_mm}"
+                );
+            }
+        }
+    }
+}

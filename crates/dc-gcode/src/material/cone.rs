@@ -552,4 +552,106 @@ mod tests {
             }
         }
     }
+
+    /// The shared `dc_geometry::profile::least_room` (#678) returns what this
+    /// copy returns for a V-bit on the cases of
+    /// `closed_form_room_matches_fine_sampling`: bit for bit for a ramp
+    /// built as [`Cone::least_room`] builds it; for a level cut, never more
+    /// room than this copy's segment distance reads and within 1e-12 of
+    /// it. Slice 27d (#680) deletes this copy on the strength of it.
+    #[test]
+    fn v_bit_least_room_matches_the_existing_closed_forms() {
+        use dc_geometry::profile::{BitProfile, WallPiece, least_room};
+        let walls = [
+            Segment {
+                start: Point::new(0.0, 0.0),
+                end: Point::new(10.0, 0.0),
+                bulge: 0.0,
+            },
+            Segment {
+                start: Point::new(5.0, -5.0),
+                end: Point::new(5.0, 5.0),
+                bulge: 0.0,
+            },
+            Segment {
+                start: Point::new(10.0, 0.0),
+                end: Point::new(0.0, 0.0),
+                bulge: 1.0,
+            },
+            Segment {
+                start: Point::new(10.0, 0.0),
+                end: Point::new(0.0, 0.0),
+                bulge: -1.0,
+            },
+            Segment {
+                start: Point::new(8.0, 3.0),
+                end: Point::new(3.0, 8.0),
+                bulge: (std::f64::consts::FRAC_PI_2 / 4.0).tan(),
+            },
+            Segment {
+                start: Point::new(4.0, 2.0),
+                end: Point::new(4.0, 2.0),
+                bulge: 0.0,
+            },
+        ];
+        let cuts = [
+            ((-3.0, 2.0), (13.0, 2.5), 0.2, 2.5),
+            ((5.0, 1.0), (5.0, 9.0), 3.0, 0.1),
+            ((-2.0, -2.0), (12.0, 7.0), 0.0, 4.0),
+            ((2.0, 1.0), (8.0, 1.5), 1.0, 1.0),
+            ((4.0, 2.0), (6.0, 3.0), 0.5, 3.5),
+            ((0.0, 9.0), (10.0, 9.0), 4.0, 0.0),
+        ];
+        let start_plane_z_mm = 10.0;
+        for slope in [
+            1.0,
+            (15.0_f64).to_radians().tan(),
+            (45.0_f64).to_radians().tan(),
+        ] {
+            let radius_mm = |z_mm: f64| (start_plane_z_mm - z_mm) * slope;
+            for wall in walls {
+                for &((ax, ay), (bx, by), da, db) in &cuts {
+                    let (from_z_mm, to_z_mm) = (start_plane_z_mm - da, start_plane_z_mm - db);
+                    let (a, b) = (Point::new(ax, ay), Point::new(bx, by));
+                    let path = Segment {
+                        start: a,
+                        end: b,
+                        bulge: 0.0,
+                    };
+                    // `Cone::least_room` for one wall: level, or a ramp.
+                    let old_mm = if (to_z_mm - from_z_mm).abs() <= EPS_MM {
+                        segment_distance_mm(path, wall) - radius_mm(from_z_mm.min(to_z_mm))
+                    } else {
+                        let ramp = Ramp {
+                            from: a,
+                            along: b - a,
+                            from_r_mm: radius_mm(from_z_mm),
+                            per_t_mm: radius_mm(to_z_mm) - radius_mm(from_z_mm),
+                        };
+                        ramp.least_room(wall).0
+                    };
+                    let (new_mm, _) = least_room(
+                        Point3::new(ax, ay, from_z_mm),
+                        Point3::new(bx, by, to_z_mm),
+                        WallPiece::from(wall),
+                        &BitProfile::VBit { slope },
+                        start_plane_z_mm,
+                    );
+                    let case = format!("slope {slope} {wall:?} {a:?}–{b:?} {da}–{db}");
+                    if (to_z_mm - from_z_mm).abs() <= EPS_MM {
+                        // A level cut also reads the closed forms at its
+                        // constant radius and keeps the lesser.
+                        assert!(new_mm <= old_mm, "{case}: {new_mm} above {old_mm}");
+                        assert!(old_mm - new_mm <= 1e-12, "{case}: {new_mm} ≪ {old_mm}");
+                    } else {
+                        assert_eq!(
+                            new_mm.to_bits(),
+                            old_mm.to_bits(),
+                            "{case}: {new_mm} vs {old_mm}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
