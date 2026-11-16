@@ -163,11 +163,9 @@ pub(crate) struct FloorCut<'a> {
     /// How near the boundary trace draws the arcs it runs along, mm
     /// ([`super::wall_tolerance_mm`]; #478): the trace is where the flank
     /// meets the walls, and the cone turns its distance off them into
-    /// height. Since #527 the rings inside it are drawn within it too: a
-    /// chord `e` off a ring leaves the floor between two rings up to `e`
-    /// further from a cut, which the cone turns into `e / tan(α/2)` above
-    /// the straight-run ridge (0.08 mm for the bench's 15° bit at 0.01 mm,
-    /// line art `0xa`'s female). The leftover pieces are found within it.
+    /// height. The rings inside it, whose grooves the trace's walls stand
+    /// beyond, keep `tolerance_mm`; the leftover pieces between them
+    /// (#527) are found within this one.
     pub wall_tolerance_mm: f64,
 }
 
@@ -379,13 +377,7 @@ fn rings_clearing(
                 let mut rings = rings_of(piece, ring.node, &mut from, |_| true);
                 nest_leftovers(piece, &mut rings, reach, NEST_DEPTH);
                 for own in rings {
-                    out.push(ring_block(
-                        own,
-                        Some(piece),
-                        floor,
-                        cut,
-                        cut.wall_tolerance_mm,
-                    ));
+                    out.push(ring_block(own, Some(piece), floor, cut, cut.tolerance_mm));
                 }
             }
         }
@@ -398,13 +390,14 @@ fn rings_clearing(
             );
         }
         let cleared = node.region.clone();
-        out.push(ring_block(
-            ring,
-            Some(&cleared),
-            floor,
-            cut,
-            cut.wall_tolerance_mm,
-        ));
+        // The root's rings run along the floor's outline (the boundary
+        // trace, with no clearing pass) or a piece's.
+        let tolerance_mm = if ring.node == 0 {
+            cut.wall_tolerance_mm
+        } else {
+            cut.tolerance_mm
+        };
+        out.push(ring_block(ring, Some(&cleared), floor, cut, tolerance_mm));
     }
     if let Some(last) = out.last() {
         *anchor = Some(last.exit);
