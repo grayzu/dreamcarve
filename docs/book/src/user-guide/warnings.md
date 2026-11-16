@@ -126,7 +126,7 @@ gives each message and what to do.
 
 | Code | When |
 | --- | --- |
-| `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is not a V-bit. |
+| `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is neither a V-bit nor a tapered ball nose, or a Photo V-Carve's is not a V-bit. |
 | `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
 | `v_bit_cone_exceeded` | A carve, an Inlay, a countersink or a Photo V-Carve would engage the V-bit deeper than its cone is tall: the flat depth, the Inlay's depth from each board's top, the countersink's depth or the Photo V-Carve's `max_depth_mm`, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
 | `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
