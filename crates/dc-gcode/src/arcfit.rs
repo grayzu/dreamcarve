@@ -51,7 +51,7 @@
 //!   much in length for any circle to pass the step uniformity gate, and
 //!   the gates run cheapest first (#480). Neither changes which arcs are
 //!   found: a V-bit run's long level stretch of moves from 0.0002 to 2 mm
-//!   took 77 s to fit, and now takes 0.3 s.
+//!   took 41 s to fit, and now takes 0.2 s.
 
 use std::cmp::Ordering;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
@@ -2989,7 +2989,7 @@ mod tests {
 
     /// #480: a long dense level run cost about `n · 128` circle fits, each
     /// judged by every gate over up to 128 points, and the stress case's
-    /// V-bit run (84 203 moves, a level stretch of 26 602) took 77 s to fit
+    /// V-bit run (49 445 moves) took 41 s to fit
     /// in a release build. The search now fits a few windows a point, and
     /// finds exactly the arcs the exhaustive search finds.
     #[test]
