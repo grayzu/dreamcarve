@@ -89,16 +89,11 @@ pub fn read(bytes: &[u8]) -> Result<Incoming, LibraryError> {
 
 /// The note on a DreamCarve library tool's report line naming its unset
 /// cutter values (a tapered ball nose's, #677), from
-/// [`Tool::unset_values`]: `set cutter.tapered_ball_nose.flute_length_mm`.
-/// Unset feeds are not noted: a library tool often has none.
+/// [`Tool::unset_values`]: `set cutter.tapered_ball_nose.flute_length_mm`,
+/// the text a Fusion import's [`fusion::ImportNote::TaperedValueUnset`]
+/// has. Unset feeds are not noted: a library tool often has none.
 fn unset_cutter_note(tool: &Tool) -> Option<String> {
-    let fields: Vec<&str> = tool
-        .unset_values()
-        .into_iter()
-        .filter(dc_project::UnsetValue::is_cutter)
-        .map(|u| u.field)
-        .collect();
-    (!fields.is_empty()).then(|| format!("set {}", fields.join(", ")))
+    fusion::ImportNote::tapered_value_unset(tool).map(|note| note.to_string())
 }
 
 /// What happened to one item of an imported file.

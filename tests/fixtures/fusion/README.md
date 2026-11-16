@@ -23,7 +23,8 @@ statement and are reference only; they are not committed
   inch tool, a tool with two presets, a drill preset without `v_f`, a tool
   with `post-process.number` 5 and tools with number 0, and one of each
   family DreamCarve skips (thread mill, tap, face, form, lollipop,
-  dovetail and tapered mills, a turning tool, a probe, a holder).
+  dovetail mills, a turning tool, a probe, a holder), and a tapered mill
+  with no `RE`, a flat tip, which is skipped as not a tapered ball nose.
 - `sample.tools` is the same document zipped as Fusion writes a `.tools`
   file: one deflated entry, `tools.json`, byte-identical to `sample.json`.
   `fusion::zip_and_plain_json_both_read` checks that the two agree.

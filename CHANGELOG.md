@@ -9,6 +9,15 @@ phases bump the patch number.
 
 ### Added
 
+- **Fusion tapered ball nose import (#682).** A Fusion library's
+  `tapered mill` with a ball tip (`RE` half of `DC`) now imports as a
+  tapered ball nose: `DC` (or twice `RE`) is the tip diameter, `TA` the
+  taper per side as written, `LCF` the flute length and the shaft
+  diameter `SFDM` the cutting diameter. A missing `TA`, `LCF` or tip
+  imports unset, and the import line names each field to set, as a
+  DreamCarve library's does. A tapered mill without `SFDM` is skipped,
+  saying its shaft diameter is missing; one with a flat or bull tip is
+  still skipped, saying DreamCarve does not model it yet.
 - **The tapered ball nose tool, format 28 (#677).** A tool may be a
   tapered ball nose, `{ "tapered_ball_nose": { "tip_diameter_mm",
   "taper_angle_deg", "flute_length_mm" } }`: the ball's diameter, the

@@ -9493,19 +9493,38 @@ const FUSION_IMPORTED: [&str; 13] = [
     "3.175 mm Flat End Mill (Acrylic)",
 ];
 
-/// The items of the sample Fusion library that are skipped, with their
-/// types.
+/// The items of the sample Fusion library that are skipped, with the
+/// reason each is.
 const FUSION_SKIPPED: [(&str, &str); 10] = [
-    ("6 mm Thread Mill, 1 mm Pitch", "thread mill"),
-    ("M6 Right-Hand Tap", "tap right hand"),
-    ("50 mm Face Mill", "face mill"),
-    ("Ogee Form Router Bit", "form mill"),
-    ("6 mm Lollipop Mill", "lollipop mill"),
-    ("12 mm 14-Degree Dovetail Mill", "dovetail mill"),
-    ("3 mm Tapered Ball Mill, 2-Degree Taper", "tapered mill"),
-    ("General Turning Tool", "turning general"),
-    ("Probe, 2 mm Stylus", "probe"),
-    ("ER20 Collet Holder", "holder"),
+    (
+        "6 mm Thread Mill, 1 mm Pitch",
+        "unsupported tool type `thread mill`",
+    ),
+    (
+        "M6 Right-Hand Tap",
+        "unsupported tool type `tap right hand`",
+    ),
+    ("50 mm Face Mill", "unsupported tool type `face mill`"),
+    ("Ogee Form Router Bit", "unsupported tool type `form mill`"),
+    (
+        "6 mm Lollipop Mill",
+        "unsupported tool type `lollipop mill`",
+    ),
+    (
+        "12 mm 14-Degree Dovetail Mill",
+        "unsupported tool type `dovetail mill`",
+    ),
+    // No `RE`: a flat tip (#682).
+    (
+        "3 mm Tapered Ball Mill, 2-Degree Taper",
+        "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+    ),
+    (
+        "General Turning Tool",
+        "unsupported tool type `turning general`",
+    ),
+    ("Probe, 2 mm Stylus", "unsupported tool type `probe`"),
+    ("ER20 Collet Holder", "unsupported tool type `holder`"),
 ];
 
 /// The library tool named `name`.
@@ -9551,8 +9570,8 @@ fn tools_import_fusion_reports_each_tool() {
             "no line `{expected}`:\n{text}"
         );
     }
-    for (description, kind) in FUSION_SKIPPED {
-        let expected = format!("`{description}`: skipped: unsupported tool type `{kind}`");
+    for (description, reason) in FUSION_SKIPPED {
+        let expected = format!("`{description}`: skipped: {reason}");
         assert!(
             lines.contains(&expected.as_str()),
             "no line {expected}:\n{text}"

@@ -262,6 +262,7 @@ new ones beside them.
 | bull nose end mill | end mill | DreamCarve has no corner radius; the name gains ` (bull nose r<RE>)` so you can tell it apart. |
 | ball end mill | ball nose | |
 | chamfer mill | V-bit | Included angle is twice Fusion's taper angle `TA`: a 90° chamfer mill has `TA` 45 in Fusion and imports as a 90° V-bit. |
+| tapered mill with a ball tip | tapered ball nose | Only when the corner radius `RE` is half of `DC`; see [Tapered mills](#tapered-mills). A flat or bull tip is skipped. |
 | drill, spot drill, center drill, counter sink, counter bore, reamer | drill | |
 
 | Fusion value | DreamCarve value |
@@ -283,8 +284,48 @@ mm/min, then rounded to 6 decimal places for a length and 3 for a feed, so
 3/16" is 4.7625 mm and 60 in/min is 1524 mm/min exactly; spindle speed has
 no unit. The stepover fraction is rounded to 6 places too. A millimetre
 library's values are kept as written. Values Fusion keeps that DreamCarve does
-not use (holder, shaft, lengths, coolant, materials, cutting speed, feed
-per tooth) are ignored.
+not use (holder, lengths, coolant, materials, cutting speed, feed
+per tooth) are ignored, and so is the shaft diameter of every tool but a
+tapered mill.
+
+### Tapered mills
+
+A Fusion `tapered mill` whose corner radius `RE` is half its diameter
+`DC` (within 0.000001 in the file's unit) has a ball tip, and imports as
+a tapered ball nose:
+
+| Fusion value | DreamCarve value |
+| --- | --- |
+| `geometry.DC` (the tip's diameter) | `tip_diameter_mm`; twice `RE` when the file has no `DC` |
+| `geometry.TA` (taper angle) | `taper_angle_deg`, as written: Fusion's taper angle is per side, half the included angle |
+| `geometry.LCF` (flute length) | `flute_length_mm` |
+| `geometry.SFDM` (shaft diameter) | `diameter_mm`, the cutting diameter, where the taper reaches the shank's width |
+
+The other values (name, flutes, number, presets and feeds) map as for
+every Fusion tool; the stepover fraction is of the shaft diameter.
+
+A value the file lacks, `TA`, `LCF` or the tip (neither `DC` nor `RE`),
+is imported unset, never guessed, and the import line names each field
+to set:
+
+```text
+`IDC Ultra-High Detail`: imported (lt3); set cutter.tapered_ball_nose.taper_angle_deg, cutter.tapered_ball_nose.flute_length_mm
+```
+
+Set them in the library or in the project before carving: `dreamcarve
+check` lists each unset value of a tool an operation uses, and `export`
+refuses until it is set.
+
+The shaft diameter is the exception. It is the cutting diameter, which
+every tool must have, so a ball-tipped tapered mill without `SFDM` is
+skipped, saying `a tapered ball nose needs its shaft diameter (SFDM), the
+cutting diameter`. Add the shaft diameter in Fusion and import again.
+
+A tapered mill with a flat tip (`RE` 0 or missing) or a bull tip (`RE`
+below half of `DC`) is a V-bit with a flat, which DreamCarve does not
+model yet; it is skipped, saying so. A value that is there but out of
+range, such as a `TA` of 50 or an `RE` above half of `DC`, skips the tool
+as invalid, naming the field.
 
 **Presets.** Each Fusion cutting preset becomes one library tool, with the
 preset's feeds, so a tool with presets for plywood and acrylic becomes two
@@ -335,8 +376,9 @@ set it in the project, or in the library before you copy the tool.
 ### What is skipped
 
 DreamCarve has no cutter for these, so they are skipped, each by its
-Fusion type: radius, lollipop, dovetail, face, form, thread, tapered,
-corner chamfer and circle segment mills; taps and boring bars; turning
+Fusion type: radius, lollipop, dovetail, face, form, thread,
+corner chamfer and circle segment mills, and tapered mills without a
+ball tip ([Tapered mills](#tapered-mills)); taps and boring bars; turning
 tools; plasma, laser and waterjet cutters; additive (depositing) tools;
 probes; and holders. A tool whose type Fusion's schema does not name is
 skipped as `unknown tool type`. A tool without a cutting diameter, or with
