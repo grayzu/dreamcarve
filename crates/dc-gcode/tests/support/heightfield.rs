@@ -255,3 +255,59 @@ pub fn deepest_plunge_mm(
     }
     deepest
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An 11 × 11 lattice of 1 mm steps from the origin, at Z 0.
+    fn lattice() -> Heights {
+        Heights {
+            origin: Point::new(0.0, 0.0),
+            nx: 11,
+            ny: 11,
+            step: 1.0,
+            top_mm: 0.0,
+            z: vec![0.0; 121],
+        }
+    }
+
+    /// A disc wholly left of the lattice touches none of it: no lattice
+    /// point lies within its radius, so no column, the first included, is
+    /// touched.
+    #[test]
+    fn disc_wholly_left_of_the_lattice_touches_nothing() {
+        let heights = lattice();
+        assert_eq!(
+            heights.disc(Point::new(-3.0, 5.0), 1.0),
+            Vec::<usize>::new()
+        );
+    }
+
+    /// A disc wholly below the lattice touches none of it, nor does one
+    /// wholly below and left of it.
+    #[test]
+    fn disc_wholly_below_the_lattice_touches_nothing() {
+        let heights = lattice();
+        assert_eq!(
+            heights.disc(Point::new(5.0, -3.0), 1.0),
+            Vec::<usize>::new()
+        );
+        assert_eq!(
+            heights.disc(Point::new(-3.0, -3.0), 1.0),
+            Vec::<usize>::new()
+        );
+    }
+
+    /// A disc whose edge reaches the lattice's first column, or first row,
+    /// touches the one lattice point it reaches and no other: the points
+    /// beside it lie √2 mm from its centre, outside its 1 mm radius.
+    #[test]
+    fn disc_touching_the_lattice_edge_touches_one_point() {
+        let heights = lattice();
+        // (0, 5): row 5, column 0.
+        assert_eq!(heights.disc(Point::new(-1.0, 5.0), 1.0), vec![5 * 11]);
+        // (5, 0): row 0, column 5.
+        assert_eq!(heights.disc(Point::new(5.0, -1.0), 1.0), vec![5]);
+    }
+}
