@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 /// of 1e-9 on a 1 m chord bows the arc by 0.5 nm.
 const BULGE_EPS: f64 = 1e-9;
 
+/// How far past 1 a bulge may be and still be a half circle with
+/// rounding in it: computed half turns come out a few ulps over (#694).
+/// Held to 1, the arc's middle moves by the chord times this over two,
+/// under a nanometre for any chord within the coordinate limit.
+const HALF_TURN_BULGE_NOISE: f64 = 1e-12;
+
 /// A polyline vertex in millimetres, Y-up. `bulge` is tan(θ/4) of the arc
 /// from this vertex to the next, where θ is the signed sweep: positive is
 /// counter-clockwise, 0 is a straight segment. Same convention as
@@ -283,6 +289,19 @@ impl Segment {
         };
         Some(Segment { start, end, bulge })
     }
+
+    /// The two halves of an arc past a half turn (|bulge| > 1): the
+    /// [`Segment::piece`]s on either side of its middle, arcs of the same
+    /// circle that each sweep less than a half turn, so the split is
+    /// exact. `None` for any other segment, including one too short to be
+    /// an arc ([`Segment::arc`]) whatever its bulge.
+    pub(crate) fn halves_past_half_turn(&self) -> Option<(Segment, Segment)> {
+        let past_half_turn = self.bulge.abs() > 1.0;
+        if !past_half_turn || self.arc().is_none() {
+            return None;
+        }
+        self.piece(0.0, 0.5).zip(self.piece(0.5, 1.0))
+    }
 }
 
 /// How many equal chords replace `arc` so none strays more than
@@ -524,6 +543,56 @@ impl Polyline {
         };
         for v in self.vertices.iter().skip(covered) {
             vertices.push(Vertex::line(v.x, v.y));
+        }
+        Polyline::new(vertices, self.closed)
+    }
+
+    /// The same path with no arc past a half turn (#694). Each arc with
+    /// |bulge| > 1 is replaced by its two halves ([`Segment::piece`] on
+    /// either side of its middle), so the path is unchanged and
+    /// gains a vertex at the middle of each such arc. A bulge past 1 on a
+    /// segment too short to be an arc ([`Segment::arc`]) becomes 0, the
+    /// line every other reading of it takes. So does one on an open
+    /// polyline's last vertex, which starts no segment. A half circle
+    /// whose bulge rounding left within 1e-12 of ±1
+    /// is held to ±1 rather than split. Other vertices are kept as they
+    /// are, and a polyline with no bulge past 1 comes back equal.
+    #[must_use]
+    pub fn with_arcs_within_half_turns(&self) -> Polyline {
+        let past = |v: &Vertex| v.bulge.abs() > 1.0;
+        if !self.vertices.iter().any(past) {
+            return self.clone();
+        }
+        let mut vertices = Vec::with_capacity(self.vertices.len() * 2);
+        for (i, v) in self.vertices.iter().enumerate() {
+            if !past(v) {
+                vertices.push(*v);
+                continue;
+            }
+            if v.bulge.abs() <= 1.0 + HALF_TURN_BULGE_NOISE {
+                vertices.push(Vertex::new(v.x, v.y, v.bulge.signum()));
+                continue;
+            }
+            let next = match self.vertices.get(i + 1) {
+                Some(next) => Some(next),
+                None if self.closed => self.vertices.first(),
+                None => None,
+            };
+            let halves = next.and_then(|end| {
+                Segment {
+                    start: v.point(),
+                    end: end.point(),
+                    bulge: v.bulge,
+                }
+                .halves_past_half_turn()
+            });
+            match halves {
+                Some((first, second)) => {
+                    vertices.push(Vertex::new(v.x, v.y, first.bulge));
+                    vertices.push(Vertex::new(second.start.x, second.start.y, second.bulge));
+                }
+                None => vertices.push(Vertex::new(v.x, v.y, 0.0)),
+            }
         }
         Polyline::new(vertices, self.closed)
     }
@@ -925,6 +994,31 @@ mod tests {
         let pieces = arc.outside_discs(&[Point::new(-1.0, -1.0)], 1.2);
         assert_eq!(pieces.len(), 1, "{pieces:?}");
         assert!(pieces[0].length_mm() < arc.length_mm() - 0.1, "{pieces:?}");
+    }
+
+    /// #694: a half circle whose bulge rounding left a few ulps past 1,
+    /// as computed arcs often do (tan(π/4) is 0.999…, its inverse 1.000…),
+    /// becomes a bulge of exactly ±1, not two quarter arcs, so the path
+    /// keeps its vertices. A bulge of 1.000_001 is a real sweep past a
+    /// half turn and is split.
+    #[test]
+    fn half_circle_rounded_past_one_is_held_to_one_not_split() {
+        let noisy = Polyline::new(
+            vec![
+                Vertex::new(0.0, 0.0, 1.000_000_000_000_002),
+                Vertex::new(10.0, 0.0, -1.000_000_000_000_036),
+            ],
+            true,
+        );
+        let held = noisy.with_arcs_within_half_turns();
+        assert_eq!(held.vertices().len(), 2, "{held:?}");
+        assert_eq!(held.vertices()[0].bulge, 1.0);
+        assert_eq!(held.vertices()[1].bulge, -1.0);
+        let past = Polyline::new(
+            vec![Vertex::new(0.0, 0.0, 1.000_001), Vertex::line(10.0, 0.0)],
+            false,
+        );
+        assert_eq!(past.with_arcs_within_half_turns().vertices().len(), 3);
     }
 
     /// #513: a spike between two lines goes, and so does a repeated vertex,

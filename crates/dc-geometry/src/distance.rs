@@ -169,10 +169,7 @@ pub(crate) fn crossings(s: Segment, t: Segment) -> impl Iterator<Item = Point> {
 /// as its two halves, arcs of the same circle meeting at its middle, each
 /// sweeping less than a half turn; anything else as it is.
 fn within_half_turns(seg: Segment) -> impl Iterator<Item = Segment> {
-    let halves = (seg.bulge.abs() > 1.0)
-        .then(|| seg.piece(0.0, 0.5).zip(seg.piece(0.5, 1.0)))
-        .flatten();
-    let pieces = match halves {
+    let pieces = match seg.halves_past_half_turn() {
         Some((first, second)) => [Some(first), Some(second)],
         None => [Some(seg), None],
     };

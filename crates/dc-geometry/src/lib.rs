@@ -7,6 +7,8 @@
 //! Polylines carry arcs as DXF-style bulges; closed outer contours are
 //! counter-clockwise and holes clockwise.
 
+#[cfg(test)]
+mod big_arcs;
 mod boolean;
 mod carve;
 mod circle;

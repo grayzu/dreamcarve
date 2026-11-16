@@ -857,4 +857,34 @@ mod tests {
             "nest took {elapsed:?}"
         );
     }
+
+    /// #694: the area a shape with an arc of 200°, 270° or 350° shares
+    /// with another, found by a cavalier_contours boolean, is the area the
+    /// same shape with that arc as two halves shares with it. That holds
+    /// for the shape itself, a bar across the arc, and the other drawing.
+    #[test]
+    fn arc_past_a_half_turn_shares_area_like_its_split_halves() {
+        for case in crate::big_arcs::cases() {
+            let whole = Contour::new(case.whole.clone()).unwrap();
+            let split = Contour::new(case.split.clone()).unwrap();
+            let bars = if case.name.starts_with("sector") {
+                [rect(-2.0, -12.0, 4.0, 24.0), rect(-12.0, -1.0, 24.0, 2.0)]
+            } else {
+                [rect(17.0, 20.0, 6.0, 20.0), rect(10.0, 33.0, 20.0, 1.0)]
+            };
+            let others = [whole.clone(), split.clone()].into_iter().chain(bars);
+            for other in others {
+                let a = shared_area_mm2(&whole, &other);
+                let b = shared_area_mm2(&split, &other);
+                assert!(
+                    (a - b).abs() <= 1e-6 * (1.0 + b),
+                    "{} with {:?}: {a} mm² against {b}",
+                    case.name,
+                    other.polyline()
+                );
+            }
+            let full_mm2 = split.signed_area_mm2().abs();
+            assert_approx_eq!(shared_area_mm2(&whole, &whole), full_mm2, 1e-6 * full_mm2);
+        }
+    }
 }

@@ -15,7 +15,9 @@
 //! transform (block inserts and the unit scale) into millimetres. Changed
 //! from upstream: no Y flip and no arc flip (DXF is Y-up, ADR-0001); arcs
 //! stay bulges instead of being sampled, and are flattened only under a
-//! transform no bulge can carry; `ELLIPSE` is read; the extrusion
+//! transform no bulge can carry; an arc past a half turn (|bulge| > 1)
+//! is stored as its two halves (#694), and the vertex that adds is
+//! charged to the vertex limit; `ELLIPSE` is read; the extrusion
 //! direction is applied (−Z mirrors) and entities out of the XY plane are
 //! counted; MINSERT arrays are expanded; a spline-fit POLYLINE drops its
 //! frame vertices; skipped entities are counted, not dropped.
@@ -728,7 +730,9 @@ impl<'a> Walker<'a> {
         }
         let polyline = without_repeats(polyline.clone());
         match place.apply_polyline(&polyline) {
-            Ok(placed) => Ok(placed),
+            // Arcs past a half turn as their halves (#694); the hatch's
+            // loops are charged once they are built.
+            Ok(placed) => Ok(placed.with_arcs_within_half_turns()),
             Err(GeometryError::ArcUnderNonUniformTransform) => {
                 let path =
                     kurbo::Affine::new(place.coeffs()) * to_bez_path(&polyline, self.tolerance_mm);
@@ -827,14 +831,15 @@ impl<'a> Walker<'a> {
         }
     }
 
-    /// Adds a polyline already in millimetres.
+    /// Adds a polyline already in millimetres, each arc past a half turn
+    /// as its two halves (#694), which are charged to the vertex limit.
     fn add_mm_polyline(
         &mut self,
         polyline: Polyline,
         layer: &str,
         kind: &str,
     ) -> Result<(), ImportError> {
-        let polyline = without_repeats(polyline);
+        let polyline = without_repeats(polyline).with_arcs_within_half_turns();
         let reach_mm = polyline.reach_mm();
         if !reach_mm.is_finite() {
             return Err(ImportError::NonFinite {
