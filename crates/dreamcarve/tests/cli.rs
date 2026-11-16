@@ -6854,7 +6854,8 @@ fn export_lettered(test: &str, stem: &str) -> (PathBuf, String, Vec<String>) {
 /// that check; every run also passes `assert_run_safe` on its board. The
 /// warnings are the expected ones and no others: `unused_tool` (`init`'s
 /// "Set me"); on the female `entry_fallback` (the C's stroke has no room
-/// for the clearing pass's ramp) and `arc_fit_fallback` (#484); on the
+/// for the clearing pass's ramp; #527 spliced the floor's strip centre
+/// rings into the rings' laps, which retired #484's `arc_fit_fallback`); on the
 /// male `inlay_male_mirrored`, once, about X = 55 mm, the board's middle,
 /// and `tool_change_avoidable` (the end mill clears first and cuts out
 /// last: the order is required).
@@ -6959,7 +6960,6 @@ fn lettered_inlay_exports_both_boards() {
     assert_eq!(
         warning_codes(&report),
         [
-            "arc_fit_fallback",
             "entry_fallback",
             "inlay_male_mirrored",
             "tool_change_avoidable",
