@@ -4,10 +4,9 @@
 //! Shortest distances between points, segments, and polylines, following
 //! arcs exactly rather than flattening them.
 
-use crate::offset::to_cavalier;
 use crate::point::{EPS_MM, Point, Vec2};
 use crate::polyline::{Arc, Polyline, Segment};
-use cavalier_contours::polyline::{PlineSegIntr, PlineSource, PlineVertex, pline_seg_intr};
+use cavalier_contours::polyline::{PlineSegIntr, PlineVertex, pline_seg_intr};
 use std::f64::consts::TAU;
 
 /// Shortest distance between `a` and `b`, mm, following arcs; 0 when they
@@ -17,11 +16,10 @@ use std::f64::consts::TAU;
 /// either has no segments.
 #[must_use]
 pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64 {
-    let (cav_a, cav_b) = (to_cavalier(a), to_cavalier(b));
     let mut best_mm = f64::INFINITY;
-    for (s, (s1, s2)) in a.segments().zip(cav_a.iter_segments()) {
-        for (t, (t1, t2)) in b.segments().zip(cav_b.iter_segments()) {
-            best_mm = best_mm.min(segments_apart_mm(s, t, [s1, s2, t1, t2]));
+    for s in a.segments() {
+        for t in b.segments() {
+            best_mm = best_mm.min(segment_distance_mm(s, t));
             if best_mm <= 0.0 {
                 return 0.0;
             }
@@ -35,17 +33,21 @@ pub fn distance_mm(a: &Polyline, b: &Polyline) -> f64 {
 /// its point.
 #[must_use]
 pub fn segment_distance_mm(s: Segment, t: Segment) -> f64 {
-    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
-    segments_apart_mm(
-        s,
-        t,
-        [
-            vertex(s.start, s.bulge),
-            vertex(s.end, 0.0),
-            vertex(t.start, t.bulge),
-            vertex(t.end, 0.0),
-        ],
-    )
+    if crossings(s, t).next().is_some() {
+        return 0.0;
+    }
+    let ends = [
+        distance_to_segment(t, s.start),
+        distance_to_segment(t, s.end),
+        distance_to_segment(s, t.start),
+        distance_to_segment(s, t.end),
+    ];
+    let interior = normal_candidates(s, t)
+        .map(|p| distance_to_segment(t, p))
+        .chain(normal_candidates(t, s).map(|p| distance_to_segment(s, p)));
+    ends.into_iter()
+        .chain(interior)
+        .fold(f64::INFINITY, f64::min)
 }
 
 /// Shortest distance from `p` to `seg`, mm, following arcs.
@@ -59,28 +61,8 @@ pub fn point_segment_distance_mm(seg: Segment, p: Point) -> f64 {
 /// twice. The candidates are those of [`segment_distance_mm`].
 #[must_use]
 pub fn closest_points(s: Segment, t: Segment) -> (Point, Point) {
-    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
-    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
-    if !degenerate(s) && !degenerate(t) {
-        let crossing = match pline_seg_intr(
-            vertex(s.start, s.bulge),
-            vertex(s.end, 0.0),
-            vertex(t.start, t.bulge),
-            vertex(t.end, 0.0),
-            EPS_MM,
-        ) {
-            PlineSegIntr::NoIntersect => None,
-            PlineSegIntr::TangentIntersect { point } | PlineSegIntr::OneIntersect { point } => {
-                Some(point)
-            }
-            PlineSegIntr::TwoIntersects { point1, .. }
-            | PlineSegIntr::OverlappingLines { point1, .. }
-            | PlineSegIntr::OverlappingArcs { point1, .. } => Some(point1),
-        };
-        if let Some(point) = crossing {
-            let p = Point::new(point.x, point.y);
-            return (p, p);
-        }
+    if let Some(p) = crossings(s, t).next() {
+        return (p, p);
     }
     let from_s = [s.start, s.end]
         .into_iter()
@@ -114,28 +96,7 @@ pub fn meeting_points(a: &Polyline, b: &Polyline, tolerance_mm: f64) -> Vec<Poin
 
 /// [`meeting_points`] for one segment of each line, added to `points`.
 pub(crate) fn segment_meetings(s: Segment, t: Segment, tolerance_mm: f64, points: &mut Vec<Point>) {
-    let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
-    let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
-    if !degenerate(s) && !degenerate(t) {
-        match pline_seg_intr(
-            vertex(s.start, s.bulge),
-            vertex(s.end, 0.0),
-            vertex(t.start, t.bulge),
-            vertex(t.end, 0.0),
-            EPS_MM,
-        ) {
-            PlineSegIntr::NoIntersect => {}
-            PlineSegIntr::TangentIntersect { point } | PlineSegIntr::OneIntersect { point } => {
-                points.push(Point::new(point.x, point.y));
-            }
-            PlineSegIntr::TwoIntersects { point1, point2 }
-            | PlineSegIntr::OverlappingLines { point1, point2 }
-            | PlineSegIntr::OverlappingArcs { point1, point2 } => {
-                points.push(Point::new(point1.x, point1.y));
-                points.push(Point::new(point2.x, point2.y));
-            }
-        }
-    }
+    points.extend(crossings(s, t));
     // Within the tolerance without touching: the closest pair has an end
     // of one segment, or a normal point of an arc.
     let near_t = [s.start, s.end].into_iter().chain(normal_candidates(s, t));
@@ -168,38 +129,54 @@ pub fn distance_away_from_mm(a: &Polyline, b: &Polyline, around: &[Point], radiu
     best_mm
 }
 
-/// Shortest distance between segments `s` and `t`, mm; `cav` is the same
-/// two segments as cavalier_contours vertices, for the crossing test.
+/// Where segments `s` and `t` cross or touch, within [`EPS_MM`]: one
+/// point for a touch, both for two crossings, both ends of a stretch where
+/// they overlap; none when either is no longer than [`EPS_MM`]. At the
+/// middle of an arc split by [`within_half_turns`], a crossing may come
+/// twice and an overlap may also give that middle.
 ///
-/// When they do not meet, the closest pair of points has an end point of
-/// one segment, or else is interior to both, where the line between them is
-/// normal to both: then a point on an arc lies along the other line's
-/// normal, or on the line through both arcs' centres. Those candidates
-/// cover every case.
-fn segments_apart_mm(s: Segment, t: Segment, cav: [PlineVertex<f64>; 4]) -> f64 {
-    let [s1, s2, t1, t2] = cav;
+/// cavalier_contours' segment intersection takes an arc of at most a half
+/// turn (`PlineVertex`'s docs): it tests whether a point is within the
+/// sweep as lying between the end radii, which past a half turn misses
+/// the stretch beyond them (#686). So each segment goes in as its
+/// [`within_half_turns`] pieces, which is exact.
+pub(crate) fn crossings(s: Segment, t: Segment) -> impl Iterator<Item = Point> {
     let degenerate = |seg: Segment| seg.start.distance_to(seg.end) <= EPS_MM;
-    if !degenerate(s)
-        && !degenerate(t)
-        && !matches!(
-            pline_seg_intr(s1, s2, t1, t2, EPS_MM),
-            PlineSegIntr::NoIntersect
-        )
-    {
-        return 0.0;
-    }
-    let ends = [
-        distance_to_segment(t, s.start),
-        distance_to_segment(t, s.end),
-        distance_to_segment(s, t.start),
-        distance_to_segment(s, t.end),
-    ];
-    let interior = normal_candidates(s, t)
-        .map(|p| distance_to_segment(t, p))
-        .chain(normal_candidates(t, s).map(|p| distance_to_segment(s, p)));
-    ends.into_iter()
-        .chain(interior)
-        .fold(f64::INFINITY, f64::min)
+    let pairs = (!degenerate(s) && !degenerate(t))
+        .then(|| within_half_turns(s).flat_map(move |a| within_half_turns(t).map(move |b| (a, b))));
+    pairs.into_iter().flatten().flat_map(|(a, b)| {
+        let vertex = |p: Point, bulge: f64| PlineVertex::new(p.x, p.y, bulge);
+        let found = match pline_seg_intr(
+            vertex(a.start, a.bulge),
+            vertex(a.end, 0.0),
+            vertex(b.start, b.bulge),
+            vertex(b.end, 0.0),
+            EPS_MM,
+        ) {
+            PlineSegIntr::NoIntersect => [None, None],
+            PlineSegIntr::TangentIntersect { point } | PlineSegIntr::OneIntersect { point } => {
+                [Some(point), None]
+            }
+            PlineSegIntr::TwoIntersects { point1, point2 }
+            | PlineSegIntr::OverlappingLines { point1, point2 }
+            | PlineSegIntr::OverlappingArcs { point1, point2 } => [Some(point1), Some(point2)],
+        };
+        found.into_iter().flatten().map(|p| Point::new(p.x, p.y))
+    })
+}
+
+/// `seg` in pieces of at most a half turn: an arc past one (|bulge| > 1)
+/// as its two halves, arcs of the same circle meeting at its middle, each
+/// sweeping less than a half turn; anything else as it is.
+fn within_half_turns(seg: Segment) -> impl Iterator<Item = Segment> {
+    let halves = (seg.bulge.abs() > 1.0)
+        .then(|| seg.piece(0.0, 0.5).zip(seg.piece(0.5, 1.0)))
+        .flatten();
+    let pieces = match halves {
+        Some((first, second)) => [Some(first), Some(second)],
+        None => [Some(seg), None],
+    };
+    pieces.into_iter().flatten()
 }
 
 /// The points of `s`, if it is an arc, where its normal is also normal to

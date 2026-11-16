@@ -533,8 +533,8 @@ fn least_room_of_a_nearly_level_cut_reads_its_deeper_end() {
 
 /// A level cut across an arc that sweeps more than a half turn crosses
 /// it: the room is the disc's radius below zero. `segment_distance_mm`
-/// reads such an arc as far away (#686), so the level case also reads the
-/// closed forms and keeps the lesser.
+/// used to read such an arc as far away (#686); the level case also reads
+/// the closed forms and keeps the lesser.
 #[test]
 fn least_room_of_a_level_cut_across_an_arc_past_a_half_turn() {
     for sweep_deg in [170.0, 200.0, 240.0, 300.0, 340.0] {
