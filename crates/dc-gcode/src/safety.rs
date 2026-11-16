@@ -7456,6 +7456,53 @@ mod tests {
         }
     }
 
+    /// #527 (found by the stress sweep): a V-bit floor ring's lap leaves
+    /// for a leftover piece a few hundredths across, cuts round it and
+    /// comes back, then goes on along the ring. Arc fitting fitted the
+    /// lap's return and the ring after it as two runs on circles about
+    /// 0.08 mm across whose centres lay within the allowance, which S12
+    /// read as one chain, and refused (`ArcFitViolation`). A circle under
+    /// six tolerances in radius is no longer fitted, and the program
+    /// passes.
+    #[test]
+    fn fitted_runs_on_two_small_near_circles_pass_s12() {
+        let (project, op, tool) = partless_fixture();
+        let points = [
+            (47.359_478_040, 37.122_857_426),
+            (47.390_692_026, 37.071_576_469),
+            (47.433_445_736, 37.097_600_041),
+            (47.443_435_102, 37.082_003_376),
+            (47.449_253_439, 37.083_092_993),
+            (47.460_127_740, 37.085_087_246),
+            (47.446_078_150, 37.086_724_570),
+            (47.433_445_736, 37.097_600_041),
+            (47.390_692_026, 37.071_576_469),
+            (47.404_748_104, 37.048_483_962),
+            (47.417_076_491, 37.024_424_700),
+            (47.437_610_822, 37.029_420_362),
+            (47.458_397_438, 37.033_232_450),
+        ];
+        let at = |(x, y): (f64, f64), z: f64| Point3::new(x - 27.4, y - 27.0, z);
+        let mut moves = vec![
+            Move::rapid(at(points[0], 11.0)),
+            Move::linear(at(points[0], 3.0), 300.0),
+        ];
+        moves.extend(
+            points[1..]
+                .iter()
+                .map(|&p| Move::linear(at(p, 3.0), 1000.0)),
+        );
+        moves.push(Move::rapid(at(points[points.len() - 1], 11.0)));
+        let mut project = project;
+        project.arc_fit_tolerance_mm = Some(0.01);
+        let result = emit(
+            &project,
+            &[(Operation::Profile(op), tool, Toolpath { moves }).into()],
+            "2026-11-16",
+        );
+        assert!(result.is_ok(), "{result:?}");
+    }
+
     /// A cut along Y 10 at Z 3 to X 20, then `steps` straight cuts at
     /// those X, then one on to X 30, and retract.
     fn sub_quantum_steps_at(steps: &[f64]) -> Toolpath {

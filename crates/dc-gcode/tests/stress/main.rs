@@ -810,20 +810,30 @@ fn lettering_male_cuts_a_neck_narrower_than_its_step() {
     }
 }
 
-/// #522 (found by the sweep): line-art seed `0xa` and lettering seed
-/// `0x3c` (15° bit, millimetres) seat within 0.05 mm. Their glue gaps,
-/// drawn at 0.12 of the depth, stood above the floor's straight-run
-/// ridge, `0.1 · D`, but not above the peaks where the V-bit's floor rings
-/// turn a corner: line art `0xa`'s plug rested on one 0.161 mm proud. The
-/// export now reports the corner ridge too, and the sweep draws the glue
-/// gap above it, as a user following the Inlay chapter would set it.
+/// #522 and #527 (found by the sweep): line-art seed `0xa` and lettering
+/// seed `0x3c` (15° bit, millimetres), each male with a V wall, seat
+/// within 0.05 mm on a glue gap of exactly the female floor's straight-run
+/// ridge, `0.1 · D` at step-over 0.1. Line art `0xa`'s plug rested 0.161
+/// mm proud on a peak where the V-bit's floor rings turn corners round a
+/// floor tip (#522); #522 reported that corner ridge and the sweep drew
+/// the gap above it. Since #527 the floor cuts every point its rings
+/// leave more than half a step-over from a cut, so the straight-run ridge
+/// holds everywhere and the gap needs no margin.
 #[test]
-fn glue_gap_stands_above_the_floor_corner_ridge() {
+fn plug_seats_on_a_glue_gap_of_the_straight_run_ridge() {
     for (family, seed, design) in [
         ("line art", 0xa, designs::line_art(0xa)),
         ("lettering", 0x3c, lettering::lettering(0x3c)),
     ] {
-        let outcome = reproduce(family, seed, design, Kind::MaleVWall);
+        let mut c = case(family, seed, design);
+        c.ops
+            .retain(|(k, _)| *k == Kind::MaleVWall || *k == Kind::Female);
+        for (_, op) in &mut c.ops {
+            if let dc_project::Operation::Inlay(inlay) = op {
+                inlay.glue_gap_mm = inlay.depth_mm.map(|d| 0.1 * d);
+            }
+        }
+        let outcome = carve(&c, Seats::All, true);
         assert!(
             outcome.failures.is_empty() && outcome.known.is_empty(),
             "{family} {seed:#x}: {:?} {:?}",

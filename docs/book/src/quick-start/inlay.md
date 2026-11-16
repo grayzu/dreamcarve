@@ -253,7 +253,7 @@ One **Inlay** operation describes both boards with the same values:
 | `outline_rounding_mm` | 10 | The male's band is rounded: its outer edge curves in no tighter than a 10 mm radius, so it runs smoothly over the dips between and round the letters instead of following every notch, and the gap between the letters is filled. |
 | `boundary` | `[]` | No drawn edge: the band is the margin and rounding above. Leave it empty. |
 | `clearing` | `t2` | The end mill clears the flat floor first, on both boards; the V-bit then cuts the walls and the corners the end mill cannot reach. On the male it also cuts the band's outer edge, upright. |
-| `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth, and a fifth at most where they turn a corner: under the glue gap. |
+| `step_over_fraction` | 0.1 | Where the V-bit clears floor itself, its rings are close enough to leave ridges only a tenth of the floor's depth, corners included: under the glue gap. |
 | `safe_z_mm` | 10 | Travel 10 mm above the board. |
 | `cut_out` | `t2`, four tabs | The male's last pass cuts the plug free of its board (below). |
 
@@ -291,8 +291,7 @@ dreamcarve check dc.dcv
 dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used by any enabled operation
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 dc.dcv:80:76: warning: inlay_male_board_unset: operation `op1` (male board): its male board has no thickness set, so only the female is cut; measure the male board and set male_board.thickness_mm to cut the male too
-warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
 Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
 Program dc-female-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
@@ -343,9 +342,8 @@ dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used 
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
-Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm along the rings and up to 0.400 mm at their corners where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
 Program dc-female-1-T2.nc (T2):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
@@ -391,8 +389,6 @@ No errors. The warnings:
   floor first and cuts the plug out last, with the V-bit between, so you
   fit it twice. That order is required: the plug must stay in its board
   until it is carved. Ignore it here.
-- `arc_fit_fallback`, on the female board: one short run of the floor's
-  centre rings is written as straight moves; it cuts the same.
 
 The Inlay lines give each board's depths:
 
@@ -420,7 +416,6 @@ dc.dcv:22:5: warning: unused_tool: tool `t1` (`Set me`) is defined but not used 
 warning: entry_fallback: operation `op1`: there is no room for a `ramp` entry in `letter-C` (instance `i2`, profile 0), so its passes start with a straight plunge at the plunge rate instead; set the operation's entry to `plunge` to stop this warning
 warning: inlay_male_mirrored: operation `op1` (male board): it is a male inlay, so its design is cut mirrored about X = 55 mm, the middle of its targets, to seat face down in the female
 warning: tool_change_avoidable: tool `t2` (`1/8 end mill`) is used by operations `op1`, which do not run one after another, so it is fitted more than once; put those operations next to each other to save a tool change (operations always run in the order listed)
-warning: arc_fit_fallback: operation `op1`: 1 run(s) of straight moves kept as written because, once rounded, the arc fitted to them would be rejected by the controller or stray from them
 Wrote 5 programs; run them in this order:
 Female board, the stock, 110.000 mm × 80.000 mm × 12.000 mm:
   1. dc-female-1-T2.nc  Before you start: fit T2 1/8 end mill and set work zero (X, Y and Z) with it.
@@ -442,28 +437,28 @@ dc-female-1-T2.nc (137 lines):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female-2-T1.nc (1211 lines):
-  Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.001..60.000, Z -4.000..10.000
-    The cutter's edge reaches X 15.144..94.268, Y 16.826..63.175; keep clamps outside that.
-  Estimated time: 1 min 16 s (cutting 1 min 13 s, dwells 3 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated female board time: 1 min 46 s (cutting 1 min 40 s, dwells 6 s); 1.4 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-female-2-T1.nc (1384 lines):
+  Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.000..60.000, Z -4.000..10.000
+    The cutter's edge reaches X 15.144..94.268, Y 16.825..63.175; keep clamps outside that.
+  Estimated time: 1 min 8 s (cutting 1 min 5 s, dwells 3 s); 780 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated female board time: 1 min 38 s (cutting 1 min 32 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Male board, 110.000 mm × 80.000 mm × 12.000 mm:
-dc-male-1-T2.nc (8822 lines):
+dc-male-1-T2.nc (3578 lines):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
-  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-2-T1.nc (680 lines):
+  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 865 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-male-2-T1.nc (649 lines):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
-  Estimated time: 56 s (cutting 53 s, dwells 3 s); 605 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 48 s (cutting 45 s, dwells 3 s); 417 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-male-3-T2.nc (218 lines):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.
   Estimated time: 1 min 19 s (cutting 1 min 16 s, dwells 3 s); 31 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated male board time: 7 min 40 s (cutting 7 min 31 s, dwells 9 s); 1.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Estimated total time: 9 min 26 s (cutting 9 min 11 s, dwells 15 s); 3.0 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
-Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm along the rings and up to 0.400 mm at their corners where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Estimated male board time: 7 min 33 s (cutting 7 min 24 s, dwells 9 s); 1.3 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Estimated total time: 9 min 11 s (cutting 8 min 56 s, dwells 15 s); 2.5 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 ```
 
 The programs are listed by board, each board a setup of its own: you

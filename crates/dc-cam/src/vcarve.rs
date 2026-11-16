@@ -224,11 +224,11 @@ pub struct FloorRidges {
     /// ridge `s / (2 tan(α/2))` high, which with `s = step_over_fraction ·
     /// 2 F tan(α/2)` is `step_over_fraction · F`.
     pub straight_mm: f64,
-    /// At the rings' corners: `straight_mm / sin(θ/2)` for the sharpest
-    /// convex corner θ of any ring, where the next ring's corner stands
-    /// `s / sin(θ/2)` back along the bisector, and never more than twice
-    /// `straight_mm`, since every point of the floor lies within one
-    /// step-over of a ring. `straight_mm` when no ring has a corner.
+    /// At the rings' corners. #522 reported `straight_mm / sin(θ/2)` here
+    /// for the sharpest convex corner θ of any ring; since #527 the floor
+    /// cuts every point its rings leave more than half a step-over from a
+    /// cut, so this is `straight_mm`. The summary and `check` print it
+    /// only where it is higher, so they now print one height.
     pub corner_mm: f64,
 }
 

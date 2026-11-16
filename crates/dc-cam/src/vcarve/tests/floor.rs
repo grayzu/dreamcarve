@@ -244,16 +244,17 @@ fn floor_ridge_height_is_reported() {
     );
 }
 
-/// #522: the corner ridge is the straight-run ridge over `sin(θ/2)` for the
-/// sharpest convex corner θ of the floor's rings, at most twice it. At
-/// step-over 0.1 and `F` 2 the straight-run ridge is 0.2 mm: acceptance
-/// 50's rectangle (90°) reports 0.2 / sin 45°; a regular pentagon (108°)
-/// 0.2 / sin 54°; a right triangle with a 30° corner the cap, 0.4; a
-/// circle, whose rings have no corner, 0.2. On each, the floor's points
-/// stand no higher than the corner ridge: the distance to the nearest cut
-/// at the floor over tan 45°.
+/// #527 (reverses #522's report): the floor cuts every point its rings
+/// leave more than half a step-over from a cut, so the corner ridge is the
+/// straight-run ridge, 0.2 mm at step-over 0.1 and `F` 2, on acceptance
+/// 50's rectangle (90° ring corners, which #522 reported as 0.2 / sin 45°),
+/// a regular pentagon (108°, 0.2 / sin 54°), a right triangle with a 30°
+/// corner (the cap, 0.4) and a circle (0.2). On each, the floor's points
+/// stand no higher than that from the floor's own cuts alone, the medial
+/// chains left out: the distance to the nearest cut at the floor over
+/// tan 45°, within the tolerance.
 #[test]
-fn corner_ridge_is_reported_at_the_rings_sharpest_corner() {
+fn corner_ridge_is_the_straight_run_ridge() {
     let pentagon: Vec<(f64, f64)> = (0..5)
         .map(|k| {
             let a = std::f64::consts::TAU * f64::from(k) / 5.0 + 0.3;
@@ -261,28 +262,16 @@ fn corner_ridge_is_reported_at_the_rings_sharpest_corner() {
         })
         .collect();
     let cases = [
-        (
-            "rectangle",
-            rect(30.0, 10.0),
-            0.2 / 45f64.to_radians().sin(),
-        ),
-        (
-            "pentagon",
-            polygon(&pentagon),
-            0.2 / 54f64.to_radians().sin(),
-        ),
+        ("rectangle", rect(30.0, 10.0)),
+        ("pentagon", polygon(&pentagon)),
         (
             "30° triangle",
             polygon(&[(0.0, 0.0), (30.0, 0.0), (0.0, 17.32)]),
-            0.4,
         ),
-        (
-            "circle",
-            Polyline::circle(Point::new(10.0, 10.0), 10.0),
-            0.2,
-        ),
+        ("circle", Polyline::circle(Point::new(10.0, 10.0), 10.0)),
     ];
-    for (name, shape, corner_mm) in cases {
+    let corner_mm = 0.2;
+    for (name, shape) in cases {
         let (p, op) = with_90(vec![shape], Some(0.1));
         let ridges = floor_ridges(&with_op(&p, &op), &op).expect("a floor");
         assert_approx_eq!(ridges.straight_mm, 0.2, 1e-9);
@@ -538,5 +527,223 @@ fn narrow_bit_traces_an_arc_within_its_wall_tolerance() {
             inside_mm <= wall_mm + 1e-9,
             "the trace's chord {a:?}–{b:?} runs {inside_mm:.4} mm inside its arc, past {wall_mm:.4}"
         );
+    }
+}
+
+/// The highest the floor of `op` in `p` stands above the flat depth, mm,
+/// with the cell where it does: the carve's runs simulated as a
+/// heightfield (`step_mm` grid), over the cells at least `margin_mm` inside
+/// the floor (`F · slope` from the walls as drawn), so the trace's own
+/// flank is not counted. Every run passes `assert_run_safe`.
+pub(super) fn floor_peak_mm(
+    p: &Project,
+    op: &VCarveOp,
+    step_mm: f64,
+    margin_mm: f64,
+) -> (f64, Point) {
+    use crate::heightfield::Heightfield;
+    use crate::test_support::assert_run_safe;
+    use crate::test_support::seat::cutter_of;
+    let p = with_op(p, op);
+    let (runs, _) = generate_vcarve(&p, op).expect("the carve generates");
+    for run in &runs {
+        assert_run_safe(run, &p, &Operation::VCarve(op.clone()));
+    }
+    let tool = p.tools.iter().find(|t| t.id == op.tool).expect("the bit");
+    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+        panic!("a V-bit");
+    };
+    let inset_mm = F_MM * slope_of(included_angle_deg);
+    let regions = regions_of(&p, op);
+    let bounds = regions
+        .iter()
+        .flat_map(|r| r.outer().polyline().vertices().to_vec())
+        .map(|v| v.point())
+        .fold(None, |b: Option<dc_geometry::Rect>, q| {
+            Some(b.map_or(dc_geometry::Rect::from_point(q), |b| b.including(q)))
+        })
+        .expect("bounds");
+    let mut field = Heightfield::new(bounds, step_mm, TOP_MM, None);
+    field.cut_runs(&runs, |run| cutter_of(&p, run));
+    let (nx, ny) = field.size();
+    let mut peak = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+    for j in 0..ny {
+        for i in 0..nx {
+            let q = field.cell(i, j);
+            if !regions.iter().any(|r| r.contains_point(q))
+                || wall_distance(&regions, q) < inset_mm + margin_mm
+            {
+                continue;
+            }
+            let height_mm = field.z_mm(i, j) - FLOOR_Z_MM;
+            if height_mm > peak.0 {
+                peak = (height_mm, q);
+            }
+        }
+    }
+    peak
+}
+
+/// The floor-ridge shapes of #527, each with the bit's included angle:
+/// acceptance 50's rectangle (90° corners), a regular pentagon (108°), a
+/// right triangle with a 30° corner, a five-pointed star (36° tips and
+/// reflex corners), an L (a reflex corner, whose rings turn corners along
+/// the medial parabola round it, where the chains lie on the floor and
+/// are dropped), and a drop (a curved floor narrowing to a tip), with the
+/// 90° bit; the rectangle and the star with the 60° bit too.
+pub(super) fn corner_cases() -> Vec<(&'static str, Polyline, f64)> {
+    let pentagon: Vec<(f64, f64)> = (0..5)
+        .map(|k| {
+            let a = std::f64::consts::TAU * f64::from(k) / 5.0 + 0.3;
+            (12.0 + 10.0 * a.cos(), 12.0 + 10.0 * a.sin())
+        })
+        .collect();
+    let star: Vec<(f64, f64)> = (0..10)
+        .map(|k| {
+            let a = std::f64::consts::TAU * f64::from(k) / 10.0 + 0.1;
+            let r = if k % 2 == 0 { 14.0 } else { 14.0 * 0.382 };
+            (15.0 + r * a.cos(), 15.0 + r * a.sin())
+        })
+        .collect();
+    let l_shape = polygon(&[
+        (0.0, 0.0),
+        (24.0, 0.0),
+        (24.0, 10.0),
+        (10.0, 10.0),
+        (10.0, 24.0),
+        (0.0, 24.0),
+    ]);
+    vec![
+        ("rectangle", rect(30.0, 10.0), 90.0),
+        ("pentagon", polygon(&pentagon), 90.0),
+        (
+            "30° triangle",
+            polygon(&[(0.0, 0.0), (30.0, 0.0), (0.0, 17.32)]),
+            90.0,
+        ),
+        ("star", polygon(&star), 90.0),
+        ("L", l_shape, 90.0),
+        ("rectangle, 60°", rect(30.0, 10.0), 60.0),
+        ("star, 60°", polygon(&star), 60.0),
+        (
+            "drop",
+            Polyline::new(
+                vec![
+                    Vertex::line(0.0, 6.0),
+                    Vertex::new(24.0, 0.0, 1.0),
+                    Vertex::line(24.0, 12.0),
+                ],
+                true,
+            ),
+            90.0,
+        ),
+    ]
+}
+
+/// `shape` carved with a V-bit of `angle_deg` at flat depth [`F_MM`] and
+/// the operation's `step_over_fraction`.
+pub(super) fn with_bit(
+    shape: Polyline,
+    angle_deg: f64,
+    step_over_fraction: Option<f64>,
+) -> (Project, VCarveOp) {
+    let (mut p, op) = with_90(vec![shape], step_over_fraction);
+    p.tools.retain(|t| t.id != op.tool);
+    p.tools.push(v_bit(angle_deg));
+    (p, op)
+}
+
+/// #527: every point of the V-bit's floor lies within half a step-over of
+/// a cut at the floor, corners included, so the heightfield's ridge at
+/// every floor corner is at most the reported straight-run ridge,
+/// `step_over_fraction · F` (0.2 mm at 0.1 and `F` 2), plus what the
+/// flatten tolerance allows: the leftover pieces are found a tolerance
+/// beyond half a step-over, and arcs are cut as chords within it, so
+/// `2 · tolerance / slope`. Before, a ring's corner left up to
+/// `1 / sin(θ/2)` times the straight-run ridge, at most twice it (#522).
+/// [`corner_cases`], swept as a 0.05 mm heightfield over the floor, 0.05 mm
+/// in from its trace; every run passes `assert_run_safe`.
+#[test]
+fn floor_ridge_holds_at_corners() {
+    let mut failures = Vec::new();
+    for (name, shape, angle_deg) in corner_cases() {
+        let (p, op) = with_bit(shape, angle_deg, Some(0.1));
+        let ridges = floor_ridges(&with_op(&p, &op), &op).expect("a floor");
+        assert_approx_eq!(ridges.straight_mm, 0.1 * F_MM, 1e-9);
+        assert_approx_eq!(ridges.corner_mm, ridges.straight_mm, 1e-9);
+        let slack_mm = 2.0 * p.flatten_tolerance_mm / slope_of(angle_deg);
+        let (peak_mm, at_q) = floor_peak_mm(&p, &op, 0.05, 0.05);
+        if peak_mm > ridges.straight_mm + slack_mm {
+            failures.push(format!(
+                "{name}: the floor stands {peak_mm:.3} mm at {at_q:?}, over {:.3} + {slack_mm:.3}",
+                ridges.straight_mm
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// #527, the moves at a corner: the L of [`corner_cases`] (arms 10 mm
+/// wide, the reflex corner at (10, 10)), 90° bit, flat depth 2, step-over
+/// 0.1 (`s` 0.4 mm). Round the reflex corner the floor's rings turn
+/// corners along the medial parabola `y = ((x − 10)² + 100) / 20`, where
+/// the medial chains lie on the floor and are dropped (#405). Every point
+/// of the parabola on the floor, from the junction (5.86, 5.86) to where
+/// it leaves the floor, lies within `s / 2` of a cut at the floor, plus
+/// the tolerance (before #527, 0.29 mm from one at (6.85, 5.5)). Every
+/// floor move there, and everywhere, is a straight feed move at the
+/// floor's Z exactly, its ends and middle at least `F · tan 45°` from the
+/// walls (the cone stays in the material, S17), and nothing goes below the
+/// floor, which [`floor_ridge_holds_at_corners`] also holds with
+/// `assert_run_safe`.
+#[test]
+fn floor_corner_moves_stay_on_the_floor() {
+    let (_, l_shape, _) = corner_cases()
+        .into_iter()
+        .find(|(name, _, _)| *name == "L")
+        .expect("the L");
+    let (p, op) = with_bit(l_shape, 90.0, Some(0.1));
+    let stepover_mm = 0.1 * 2.0 * F_MM;
+    let tolerance_mm = p.flatten_tolerance_mm;
+    let (toolpath, _) = carve(&p, &op);
+    assert!(
+        min_z(&toolpath) >= FLOOR_Z_MM - 1e-9,
+        "a cut below the floor"
+    );
+    let floor = floor_cuts(&toolpath);
+    let mut x = 5.9;
+    while x <= 8.5 {
+        let y = ((x - 10.0) * (x - 10.0) + 100.0) / 20.0;
+        let q = at(x, y);
+        let d = distance_to_cuts(&floor, q);
+        assert!(
+            d <= stepover_mm / 2.0 + 2.0 * tolerance_mm,
+            "the parabola at {q:?} is {d:.3} mm from a cut at the floor"
+        );
+        x += 0.05;
+    }
+    let regions = regions_of(&with_op(&p, &op), &op);
+    let floor_blocks: Vec<CutBlock> = blocks_of(&p, &op)
+        .into_iter()
+        .filter(|b| b.cleared.is_some())
+        .collect();
+    assert!(!floor_blocks.is_empty(), "no floor blocks");
+    for block in &floor_blocks {
+        for (a, b) in block_cuts(block) {
+            assert_approx_eq!(a.z, FLOOR_Z_MM, 1e-9);
+            assert_approx_eq!(b.z, FLOOR_Z_MM, 1e-9);
+            let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            for q in [a.xy(), b.xy(), middle] {
+                let room_mm = wall_distance(&regions, q);
+                assert!(
+                    room_mm >= F_MM - 1e-6,
+                    "a floor move at {q:?} is {room_mm} mm from a wall"
+                );
+            }
+        }
+        for m in &block.cuts {
+            assert_eq!(m.kind, MoveKind::Linear);
+            assert_eq!(m.feed_mm_min, Some(FEED_MM_MIN));
+        }
     }
 }

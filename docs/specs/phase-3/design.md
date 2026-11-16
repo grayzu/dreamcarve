@@ -2155,8 +2155,9 @@ orientation; DreamCarve's regions are normalised anyway.
      drawn within `dc_geometry::wall_tolerance_mm`, the flatten tolerance
      times `min(1, tan(α/2) / tan 30°)`, so a wall stands no further off
      true up the flank than the 60° bit's, whatever the bit; a 60° or
-     wider bit's trace is drawn as before. The rings inside the trace keep
-     the flatten tolerance (`vcarve::narrow_bit_traces_an_arc_within_its_wall_tolerance`).
+     wider bit's trace is drawn as before
+     (`vcarve::narrow_bit_traces_an_arc_within_its_wall_tolerance`). The
+     rings inside the trace keep the flatten tolerance.
    - **V-bit floor**: the floor region minus what the clearing passes
      reach (step 7), cleared as `pocket::rings` clears a tool-centre
      region (the floor region is one, for a tool of radius `F · slope`,
@@ -2169,45 +2170,73 @@ orientation; DreamCarve's regions are normalised anyway.
      neither, a carve with a floor to cut is `MissingStepOver` (outside
      (0, 1], `InvalidStepOver`), and one with no floor needs none (#405).
      With no clearing passes the tree's root rings are the boundary
-     trace above, cut last (`WallRings::Last`). Each innermost ring
-     (a node with no children) gets one more ring half a step-over
-     inside it (`residual_regions` at `s / 2`, upstream's
-     `appendResidualCoreGuides`), since the rings alone can leave the
-     middle up to `s` from a groove, a ridge twice the reported one
-     (#405). A ring with children leaves the same where it is under two
-     step-overs across and its inset is empty or noise there, though not
-     elsewhere (a strip between two wider parts): it gets centre rings
-     too (#484), round the pieces of it more than `0.6 · s` from its
-     ring and from its children (`residual_regions` at `0.6 · s`, just
-     over the `0.586 · s` a square corner of two rings leaves, so a
-     square corner gets none), less the pieces no wider than `s` either
-     way, which are the slivers at corners sharper than a right angle that
-     the corner's medial chain cuts along its bisector. Before, a 0.88 mm
-     strip of a female's floor kept a ridge `s / slope` high along its
-     middle, which held the plug 0.3 mm up
-     (`inlay::dumbbell_floor_seats_flush`); the tutorial's "DC" floor gets
-     a few such strips (its female's V-bit program 1080 → 1173 lines).
+     trace above, cut last (`WallRings::Last`). The floor is scalloped:
+     between two grooves `s` apart the ridge is `s / (2 · slope) =
+     step_over_fraction · F` high, and the rings alone do not hold it
+     everywhere. An innermost ring can be up to `s` from the middle of
+     what it encloses, a ridge twice the reported one (#405). At a ring's
+     convex corner of angle θ the next ring's corner is `s / sin(θ/2)`
+     back along the bisector, `1 / sin(θ/2)` times the ridge where no
+     medial chain cuts that bisector at `F` (#522: a curved floor, or a
+     floor tip where the design narrows, has no medial nodes there, and
+     the chains wholly on the floor are dropped). A ring with children
+     leaves its middle up to a step-over from either where it is under
+     two step-overs across and its inset is empty or noise there (#484: a
+     0.88 mm strip of a female's floor kept a ridge `s / slope` high,
+     `inlay::dumbbell_floor_seats_flush`). **Coverage (#527):** every
+     floor point lies within `s / 2` of a cut, plus the tolerance. Each
+     node of the tree gets its **leftover pieces**: the points of its
+     region more than `s / 2` from its rings and from its children
+     (the node inset by `s / 2 + t` less the children grown by
+     `s / 2 + t`, `t` the bit's wall tolerance), every piece kept however
+     small, none dropped as noise. A leaf's piece is its middle, cut as
+     rings of its own before the leaf's ring (its **centre ring**,
+     upstream's `appendResidualCoreGuides`). Any other node's pieces
+     (slivers along its rings' corner bisectors, strips down narrow
+     necks) are cut from inside the lap of its ring nearest them, as
+     Pocket splices a residual ring (#267): the lap leaves the ring at
+     its point nearest the piece's nearest vertex, runs straight there,
+     cuts round the piece and comes back, so the pieces add no plunge.
+     That link is the shortest way from the vertex to the node's
+     outline, so it stays inside the node's region, inside the floor,
+     and passes the cone test as the rings do. The root's pieces go into
+     the nearest ring of a child instead, when the link, sampled every
+     `s / 4`, stays at least that far inside the root, so the boundary
+     trace stays a plain lap; a piece no lap reaches, or one with an
+     island, is cut as rings of its own. Inside each piece the same is
+     done again (at most 8 deep): a piece is about a step-over across,
+     but wider where the tree dropped an inset as noise (Pocket's
+     `is_noise`, up to twice the flatten tolerance across), and line art
+     `0xa`'s female (15° bit) kept a peak 0.08 mm over the ridge in such
+     a piece's middle. The floor then stands no more than
+     `2 · tolerance / slope` over the ridge (`vcarve::floor_ridge_holds_at_corners`,
+     `vcarve::floor_corner_moves_stay_on_the_floor`). This reverses
+     #484's reach of `0.6 · s` for a node with children (which left a
+     square corner's `0.586 · s` gap, 1.17 times the ridge, uncut, and
+     skipped the slivers at sharper corners as noise or as no wider than
+     `s`, on the assumption that the corner's medial chain cut its
+     bisector); #405's decision 2, dropping the chains that lie wholly on
+     the floor, stands, since the pieces cover what those chains would.
+     The goldens' floors are compared by reach (`vcarve::compare`), so
+     they pass unchanged; the sign's V-bit program grows from 4,164 to
+     4,240 lines (+1.8 %), and on main after #474 the tutorial "DC"
+     female's from 1,197 to 1,384 (+16 %) and its male's from 479 to 649
+     (+35 %), though both lift to safe Z less often (30 → 20, 15 → 9):
+     #484's strip centres are now cut from inside the laps too. The
+     pieces' loops are a few hundredths across, and arc fitting fitted
+     runs round them on circles about 0.04 mm in radius whose snapped I and J S12
+     then refused (`ArcFitViolation`, lettering `0x37`, line art `0x9b`):
+     `dc_gcode::arcfit` no longer fits a circle under six tolerances in
+     radius (`safety::fitted_runs_on_two_small_near_circles_pass_s12`).
      Arcs of the rings are flattened to the floor's side:
      chords for a counter-clockwise arc, lines tangent to a clockwise
      one (outside its circle), so no move comes nearer a wall than its
-     arc (#405). The floor is scalloped: between two grooves `s` apart
-     the ridge is `s / (2 · slope) = step_over_fraction · F` high. At a
-     ring's convex corner of angle θ the next ring's corner is
-     `s / sin(θ/2)` back along the bisector, and where the medial chain
-     does not cut that bisector at `F` (#522: a curved floor, or a floor
-     tip where the design narrows, has no medial nodes there) the ridge
-     is higher. The **corner ridge** is `step_over_fraction · F /
-     sin(θmin/2)` for the sharpest convex corner θmin of any ring of the
-     floors' ring trees, capped at `2 · step_over_fraction · F`: each ring
-     is the one outside it inset by `s` and a leaf's centre ring is `s/2`
-     in, so no floor point is more than `s` from a ring. The sweep's
-     worst measured peaks were 1.5 times the straight-run ridge. `check`
-     prints both heights (`V-bit floor ridges 0.800 mm along the rings
-     and up to 1.131 mm at their corners; a clearing pass or a smaller
-     step_over_fraction flattens them`, `vcarve::floor_ridges`), the
-     corner ridge only where it is higher; the Inlay chapter sets
-     `glue_gap_mm` above the female's corner ridge. Covering the corners
-     instead, so the straight-run ridge holds everywhere, is #527 (3.7, Release).
+     arc (#405). Since the coverage holds at the corners, `check`
+     prints one height (`V-bit floor ridges 0.800 mm; a clearing pass or
+     a smaller step_over_fraction flattens them`, `vcarve::floor_ridges`,
+     whose `corner_mm` is now the straight-run ridge; #522 printed `up to
+     … at their corners` beside it), and the Inlay chapter sets
+     `glue_gap_mm` at or above the female's ridge.
      The chapter recommends
      0.1 for a V-bit's `step_over_fraction`. A floor region that is
      noise at the flatten tolerance (Pocket's `is_noise`), or a region
@@ -4106,7 +4135,7 @@ for V operations.
 
 **dc-cam — vcarve (flat floor and clearing)**
 - `vcarve::floor_boundary_is_traced_at_the_flat_depth` (acceptance 50: 30 × 10, 90° 6.35 mm, flat 2: nothing below −2; the 26 × 6 boundary traced at −2 within 0.01; bisector runs from each floor corner to the surface corner).
-- `vcarve::v_bit_floor_covers_the_floor_region` (union of 4 mm footprints at −2 covers the floor within 0.05 at `step_over_fraction` 0.4 and 0.1), `vcarve::floor_ridge_height_is_reported` (0.8 mm at 0.4 and 0.2 mm at 0.1; no higher across the floor's middle; none without a floor), `vcarve::corner_ridge_is_reported_at_the_rings_sharpest_corner` (#522: rectangle 0.2 / sin 45°, pentagon 0.2 / sin 54°, a 30° corner the cap 0.4, a circle 0.2; the floor no higher than reported), `vcarve::floor_without_a_step_over_is_refused` (#405: `MissingStepOver`, `InvalidStepOver` at 1.5; none needed without a floor), `cli::v_carve_check_reports_the_floor_ridges`.
+- `vcarve::v_bit_floor_covers_the_floor_region` (union of 4 mm footprints at −2 covers the floor within 0.05 at `step_over_fraction` 0.4 and 0.1), `vcarve::floor_ridge_height_is_reported` (0.8 mm at 0.4 and 0.2 mm at 0.1; no higher across the floor's middle; none without a floor), `vcarve::corner_ridge_is_the_straight_run_ridge` (#527, replacing #522's report: rectangle, pentagon, a 30° corner and a circle each 0.2; the floor's own cuts leave it no higher), `vcarve::floor_ridge_holds_at_corners` (#527: a 0.05 mm heightfield of the whole carve over the floors of a rectangle, pentagon, 30° triangle, star, L and drop with the 90° bit, and the rectangle and star with the 60°, at step-over 0.1: no higher than `step_over_fraction · F` plus `2 · tolerance / slope`), `vcarve::floor_corner_moves_stay_on_the_floor` (#527: the L's medial parabola on the floor within `s / 2` of a floor cut; every floor move a feed move at the floor's Z, at least `F · slope` from the walls), `vcarve::floor_without_a_step_over_is_refused` (#405: `MissingStepOver`, `InvalidStepOver` at 1.5; none needed without a floor), `cli::v_carve_check_reports_the_floor_ridges`.
 - `vcarve::chains_inside_the_cleared_floor_are_dropped`, `vcarve::chains_reaching_corners_are_kept`.
 - `vcarve::clearing_pass_takes_the_floor_region_and_depth` (acceptance 51: the run's footprint inside 26 × 6, depth 2), `vcarve::clearing_runs_come_before_the_v_bit_run_with_their_own_tools`, `vcarve::floor_cutting_shrinks_to_what_the_end_mill_cannot_reach` (within 1.5875 of the boundary; under a third of the no-clearing length), `vcarve::floor_coverage_with_the_pass_still_reaches_the_floor`, `vcarve::second_pass_clears_only_what_the_first_left`, `vcarve::wider_second_pass_warns_not_descending_and_still_runs`, `vcarve::clearing_without_a_flat_depth_is_an_error`, `vcarve::clearing_pass_with_a_v_bit_is_an_error`, `vcarve::removing_the_list_gives_the_v_bit_the_whole_floor`, `vcarve::pass_that_reaches_nothing_warns_and_emits_no_run`, `vcarve::clearing_run_footprint_stays_inside_the_floor` (S9/S14), `vcarve::clearing_pass_is_cut_by_the_pocket_code` (the run equals a user Pocket of the floor region move for move), `emit::clearing_runs_become_programs_of_their_own_tools` (`op2 (clearing t1)` in the program comment and the summary), `order::clearing_runs_count_for_the_tool_change_hint`, `cli::preview_legend_names_clearing_runs`.
 

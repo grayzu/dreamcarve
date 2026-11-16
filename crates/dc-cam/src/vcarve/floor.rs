@@ -20,11 +20,12 @@
 //!
 //! Two additions to the Pocket rings:
 //!
-//! - **Centre rings.** The innermost ring of a branch can be up to one
-//!   step-over from the middle of what it encloses, which would leave a
-//!   ridge there twice the one between rings. Each innermost ring gets one
-//!   more ring half a step-over inside it ([`residual_regions`], upstream's
-//!   `appendResidualCoreGuides`), so the middle is no higher than the rest.
+//! - **Leftover pieces (#527).** The rings alone leave some floor more
+//!   than half a step-over from a cut: the middle of an innermost ring,
+//!   which gets one more ring inside it (its centre ring, upstream's
+//!   `appendResidualCoreGuides`), and the slivers along the rings' corner
+//!   bisectors and down narrow necks, cut from inside the rings' laps
+//!   ([`Leftovers`]). So the ridge is the straight-run one everywhere.
 //! - **Arcs are flattened to the floor's side.** The cone test takes
 //!   straight moves. A chord of an arc that turns clockwise (the round join
 //!   at a reflex corner of the outline, round an island's corner) would cut
@@ -36,31 +37,20 @@ use super::cone::Walls;
 use super::{Carve, FloorRidges, VBit, carve_regions, v_bit};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
+use crate::pocket::rest::grow_region;
 use crate::pocket::rest::{self, Reference};
 use crate::pocket::rings::{
-    Ring, RingKind, RingTree, WallRings, inset_region, is_noise, nearest, residual_regions,
+    Cleanup, Ring, RingKind, RingTree, WallRings, inset_region, is_noise, nearest,
 };
 use crate::pocket::{MAX_RINGS, ring_path};
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
 use dc_geometry::{
-    Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, floor_regions, intersection,
-    nearest_point, surround_floor_regions,
+    Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, difference, floor_regions,
+    intersection, nearest_point, surround_floor_regions,
 };
 use dc_project::{CutDirection, OperationId, Project, Tool, VCarveOp};
-use std::f64::consts::{FRAC_PI_2, PI};
-
-/// How far, in step-overs, a ring node with children may leave a point
-/// from its own ring and from its children before the point gets a centre
-/// ring (#484): just over the `s / (1 + sin 45°)` = 0.586 `s` a square
-/// convex corner of two rings `s` apart leaves (its ridge `0.59 s /
-/// tan(α/2)`, design step 6), so a square or blunter corner gets none;
-/// a strip of the node narrower than two step-overs, whose inset is empty
-/// or noise there but not elsewhere, gets one along its middle. A sharper
-/// corner's gap lies along its bisector, which the corner's medial chain
-/// cuts at the floor's depth, so its centre rings cut little that is not
-/// cut already.
-const CENTRE_REACH_STEPS: f64 = 0.6;
+use std::f64::consts::FRAC_PI_2;
 
 /// The flat floor of a carve with one V-bit: where it lies and how its
 /// rings step.
@@ -175,7 +165,8 @@ pub(crate) struct FloorCut<'a> {
     /// ([`super::wall_tolerance_mm`]; #478): the trace is where the flank
     /// meets the walls, and the cone turns its distance off them into
     /// height. The rings inside it, whose grooves the trace's walls stand
-    /// beyond, keep `tolerance_mm`.
+    /// beyond, keep `tolerance_mm`; the leftover pieces between them
+    /// (#527) are found within this one.
     pub wall_tolerance_mm: f64,
 }
 
@@ -344,9 +335,12 @@ fn distance_to_loops(region: &Region, p: Point) -> f64 {
 }
 
 /// The rings that clear `region` (a floor region, or a piece of one) at
-/// the floor: a Pocket ring tree, innermost first, each innermost ring
-/// after its centre ring, the region's own outline and islands last; each
-/// ring with its node's region as `cleared`.
+/// the floor: a Pocket ring tree, innermost first, the region's own
+/// outline and islands last; each ring with its node's region as
+/// `cleared`. What the rings leave more than half a step-over from a cut
+/// (#527, [`Leftovers`]) is cut too: a leaf's middle as rings of its own
+/// before the leaf's ring (its centre ring, #405), the rest from inside
+/// the rings' laps.
 fn rings_clearing(
     region: &Region,
     floor: &Floor,
@@ -366,45 +360,35 @@ fn rings_clearing(
         MAX_RINGS,
     )
     .ok_or_else(too_many)?;
+    let reach = Reach {
+        reach_mm: stepover_mm / 2.0,
+        tolerance_mm: cut.wall_tolerance_mm,
+    };
+    let plan = Leftovers::of(&tree, reach);
     let mut out = Vec::new();
     let mut centred: Vec<usize> = Vec::new();
-    for ring in tree.walk(WallRings::Last, anchor) {
+    for mut ring in tree.walk(WallRings::Last, anchor) {
         let Some(node) = tree.nodes.get(ring.node) else {
             continue;
         };
-        if !node.residual && !centred.contains(&ring.node) {
+        if !centred.contains(&ring.node) {
             centred.push(ring.node);
             let mut from = Some(ring.start);
-            // #484: a node with children is centred too, where it is no
-            // more than two step-overs across and its inset is empty or
-            // noise there, though not elsewhere: its rings leave its middle
-            // up to a step-over from either, as a leaf's would.
-            let children: Vec<Region> = node
-                .children
-                .iter()
-                .filter_map(|&c| tree.nodes.get(c))
-                .filter(|c| !c.residual)
-                .map(|c| c.region.clone())
-                .collect();
-            let reach_mm = if children.is_empty() {
-                stepover_mm / 2.0
-            } else {
-                CENTRE_REACH_STEPS * stepover_mm
-            };
-            let centres = residual_regions(&node.region, &children, reach_mm, cut.tolerance_mm)
-                .into_iter()
-                .filter(|c| children.is_empty() || wider_than(c, stepover_mm));
-            for centre in centres {
-                for centre_ring in rings_of(&centre, ring.node, &mut from, |_| true) {
-                    out.push(ring_block(
-                        centre_ring,
-                        Some(&centre),
-                        floor,
-                        cut,
-                        cut.tolerance_mm,
-                    ));
+            for (_, piece) in plan.own.iter().filter(|(n, _)| *n == ring.node) {
+                let mut rings = rings_of(piece, ring.node, &mut from, |_| true);
+                nest_leftovers(piece, &mut rings, reach, NEST_DEPTH);
+                for own in rings {
+                    out.push(ring_block(own, Some(piece), floor, cut, cut.tolerance_mm));
                 }
             }
+        }
+        if let Some(index) = ring_index(&node.region, &ring) {
+            ring.cleanups.extend(
+                plan.spliced
+                    .iter()
+                    .filter(|(n, i, _)| *n == ring.node && *i == index)
+                    .map(|(_, _, cleanup)| cleanup.clone()),
+            );
         }
         let cleared = node.region.clone();
         // The root's rings run along the floor's outline (the boundary
@@ -422,17 +406,248 @@ fn rings_clearing(
     Ok(out)
 }
 
-/// Whether `region`'s box is wider than `span_mm` either way (#484): a
-/// centre ring of a node with children is cut only along a strip, not in
-/// the sliver its rings leave at a corner sharper than a right angle,
-/// which the corner's own medial chain cuts along its bisector at the
-/// floor's depth.
-fn wider_than(region: &Region, span_mm: f64) -> bool {
-    region
-        .outer()
-        .polyline()
-        .bounds()
-        .is_some_and(|b| b.width_mm().max(b.height_mm()) > span_mm)
+/// How far from a cut the floor may be left (#527): half a step-over, the
+/// straight-run ridge's reach, and the tolerance the pieces past it are
+/// found within (the bit's wall tolerance, so the cone turns it into no
+/// more height than the 60° bit's).
+#[derive(Debug, Clone, Copy)]
+struct Reach {
+    /// Half a step-over, mm.
+    reach_mm: f64,
+    /// The tolerance, mm.
+    tolerance_mm: f64,
+}
+
+/// How many times [`nest_leftovers`] looks again inside a piece. A piece
+/// is about a step-over across at most, so its first inset leaves at most
+/// a sliver, and its second nothing; the limit only bounds the work.
+const NEST_DEPTH: usize = 8;
+
+/// What a node of a floor's ring tree leaves uncut (#527): the points of
+/// `node` more than `reach.reach_mm` (half a step-over) from its rings and
+/// from every one of `children` (whose own rings and subtrees cut them),
+/// each piece however small. Measured `reach.tolerance_mm` further in, as
+/// Pocket's `residual_regions` measures them, but no piece is dropped as
+/// noise: a piece a few hundredths across is what a sharp ring corner
+/// leaves (#522), and the cone turns its distance from a cut into height
+/// at `1 / tan(α/2)`. Only a piece of no area is dropped.
+fn leftover(node: &Region, children: &[Region], reach: Reach) -> Vec<Region> {
+    let by_mm = reach.reach_mm + reach.tolerance_mm;
+    let deep = inset_region(node, by_mm, reach.tolerance_mm);
+    let left = if deep.is_empty() || children.is_empty() {
+        deep
+    } else {
+        let grown: Vec<Region> = children
+            .iter()
+            .flat_map(|c| grow_region(c, by_mm, reach.tolerance_mm))
+            .collect();
+        difference(&deep, &grown, reach.tolerance_mm)
+    };
+    left.into_iter()
+        .filter(|r| r.area_mm2() > EPS_MM * EPS_MM)
+        .collect()
+}
+
+/// Splices into `rings` (the rings of `region`, cut by node `node`'s lap,
+/// in any order) the leftover pieces of `region` itself ([`leftover`] with
+/// no children), each into the ring it lies nearest, and so on inside
+/// each piece, at most `depth` deep (#527). A piece is about a step-over
+/// across, so one ring round it usually covers it; but a piece is wider
+/// where the tree dropped an inset as noise (Pocket's `is_noise`, up to
+/// twice the flatten tolerance across), and its middle then stands that
+/// much further from its ring: line art `0xa`'s female with the 15° bit,
+/// 0.011 mm, which the cone turned into 0.08 mm.
+fn nest_leftovers(region: &Region, rings: &mut [Ring], reach: Reach, depth: usize) {
+    let Some(depth) = depth.checked_sub(1) else {
+        return;
+    };
+    for sub in leftover(region, &[], reach) {
+        let loops: Vec<(&Contour, RingKind)> = loops_of(&sub).collect();
+        let mut placed: Vec<(usize, Cleanup)> = loops
+            .iter()
+            .filter_map(|&(contour, kind)| {
+                let node = rings.first()?.node;
+                let (_, index, cleanup, _) = splice_into(node, region, contour, kind, None)?;
+                Some((index, cleanup))
+            })
+            .collect();
+        if placed.len() == loops.len() {
+            let mut sub_rings: Vec<Ring> = placed.iter().map(|(_, c)| c.ring.clone()).collect();
+            nest_leftovers(&sub, &mut sub_rings, reach, depth);
+            for ((_, cleanup), ring) in placed.iter_mut().zip(sub_rings) {
+                cleanup.ring = ring;
+            }
+        }
+        for (index, cleanup) in placed {
+            if let Some(ring) = rings
+                .iter_mut()
+                .find(|r| ring_index(region, r) == Some(index))
+            {
+                ring.cleanups.push(cleanup);
+            }
+        }
+    }
+}
+
+/// The outer and holes of `region`, each with its kind.
+fn loops_of(region: &Region) -> impl Iterator<Item = (&Contour, RingKind)> {
+    std::iter::once((region.outer(), RingKind::Outer))
+        .chain(region.holes().iter().map(|h| (h, RingKind::Hole)))
+}
+
+/// The leftover pieces of a floor's ring tree (#527, [`leftover`]) and
+/// how each is cut.
+#[derive(Debug, Default)]
+struct Leftovers {
+    /// The pieces cut as rings of their own, before the first ring of
+    /// their node: a leaf's middle (its centre ring, #405), a piece with
+    /// an island, or one no ring's lap reaches.
+    own: Vec<(usize, Region)>,
+    /// The pieces cut from inside a ring's lap: the ring's node, its index
+    /// ([`ring_index`]) and the clean-up, with what the piece's own ring
+    /// leaves spliced into it ([`nest_leftovers`]).
+    spliced: Vec<(usize, usize, Cleanup)>,
+}
+
+impl Leftovers {
+    /// The pieces of every node of `tree` ([`leftover`] at `reach`), each
+    /// placed: a leaf's are its own rings; any other node's are spliced
+    /// into its ring nearest them, except the root's, whose rings are the
+    /// boundary trace (or a piece's outline after clearing passes) and stay
+    /// plain laps; those go into the nearest ring of a child, when the
+    /// link stays inside the root.
+    fn of(tree: &RingTree, reach: Reach) -> Self {
+        let mut out = Self::default();
+        for (index, node) in tree.nodes.iter().enumerate() {
+            if node.residual {
+                continue;
+            }
+            let children: Vec<(usize, &Region)> = node
+                .children
+                .iter()
+                .filter_map(|&c| Some((c, tree.nodes.get(c)?)))
+                .filter(|(_, c)| !c.residual)
+                .map(|(c, n)| (c, &n.region))
+                .collect();
+            let regions: Vec<Region> = children.iter().map(|(_, r)| (*r).clone()).collect();
+            for piece in leftover(&node.region, &regions, reach) {
+                if children.is_empty() || !piece.holes().is_empty() {
+                    out.own.push((index, piece));
+                    continue;
+                }
+                let outer = piece.outer();
+                let target = if index == 0 {
+                    children
+                        .iter()
+                        .filter_map(|&(c, r)| {
+                            splice_into(
+                                c,
+                                r,
+                                outer,
+                                RingKind::Outer,
+                                Some((&node.region, reach.reach_mm)),
+                            )
+                        })
+                        .min_by(|a, b| a.3.total_cmp(&b.3))
+                } else {
+                    splice_into(index, &node.region, outer, RingKind::Outer, None)
+                };
+                match target {
+                    Some((n, ring, mut cleanup, _)) => {
+                        nest_leftovers(
+                            &piece,
+                            std::slice::from_mut(&mut cleanup.ring),
+                            reach,
+                            NEST_DEPTH,
+                        );
+                        out.spliced.push((n, ring, cleanup));
+                    }
+                    None => out.own.push((index, piece)),
+                }
+            }
+        }
+        out
+    }
+}
+
+/// Which ring of `region` `ring` is: 0 its outer, `i + 1` its hole `i`.
+fn ring_index(region: &Region, ring: &Ring) -> Option<usize> {
+    match ring.kind {
+        RingKind::Outer => (*region.outer() == ring.contour).then_some(0),
+        RingKind::Hole => region
+            .holes()
+            .iter()
+            .position(|h| *h == ring.contour)
+            .map(|i| i + 1),
+    }
+}
+
+/// The loop `contour` (of kind `kind`) cut from inside the lap of the ring
+/// of `region` (node `node`) nearest it, as Pocket splices a residual ring
+/// (#267): the lap leaves the ring at its point nearest the loop's nearest
+/// vertex, runs straight to that vertex, cuts round the loop and comes
+/// back. Returns the node, the ring's index ([`ring_index`]), the clean-up
+/// and the link's length.
+///
+/// The link is the shortest way from the vertex to `region`'s outline, so
+/// with `within` `None` (the loop lies in `region`) it stays inside
+/// `region`, which lies inside the floor, and passes the cone test as the
+/// rings do. With `within` `Some((root, reach_mm))` (`region` is a child of
+/// the root the loop lies in) the link is kept only when its points,
+/// `reach_mm / 2` apart, each lie inside `root` and at least that far from
+/// its outline, so no part of it leaves the root. `None` for a loop with
+/// no usable vertex or a link that fails that test.
+fn splice_into(
+    node: usize,
+    region: &Region,
+    contour: &Contour,
+    kind: RingKind,
+    within: Option<(&Region, f64)>,
+) -> Option<(usize, usize, Cleanup, f64)> {
+    let vertices = contour.polyline().vertices();
+    let (ring, start, at, gap_mm) = loops_of(region)
+        .enumerate()
+        .flat_map(|(ring, (target, _))| {
+            vertices.iter().filter_map(move |v| {
+                let n = nearest_point(target.polyline(), v.point())?;
+                Some((ring, v.point(), n.point, n.gap_mm))
+            })
+        })
+        .min_by(|a, b| a.3.total_cmp(&b.3))?;
+    if let Some((root, reach_mm)) = within
+        && !link_stays_in(root, at, start, reach_mm / 2.0)
+    {
+        return None;
+    }
+    let cleanup = Cleanup {
+        at,
+        ring: Ring {
+            contour: contour.clone(),
+            kind,
+            node,
+            start,
+            cleanups: Vec::new(),
+        },
+    };
+    Some((node, ring, cleanup, gap_mm))
+}
+
+/// Whether the straight link `from`–`to` lies inside `region`: its points
+/// `step_mm` apart, ends included, each inside and at least `step_mm` from
+/// the outline, so every point between two of them is too.
+fn link_stays_in(region: &Region, from: Point, to: Point, step_mm: f64) -> bool {
+    if !(step_mm.is_finite() && step_mm > 0.0) {
+        return false;
+    }
+    // Rounds up; a link is a step-over or two long, so the cast cannot
+    // truncate.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let steps = (from.distance_to(to) / step_mm).ceil().max(1.0) as usize;
+    (0..=steps).all(|k| {
+        let t = k as f64 / steps as f64;
+        let q = Point::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t);
+        region.contains_point(q) && distance_to_loops(region, q) >= step_mm
+    })
 }
 
 /// The outer and holes of `region` that `keep` keeps, as rings of `node`,
@@ -614,16 +829,12 @@ impl Floor {
     /// [`blocks`] cuts them without clearing passes; `None` when no region
     /// has a floor or the floor has no step-over.
     ///
-    /// The straight-run ridge is `step_over_fraction · F`. The corner
-    /// ridge (#522) is that over `sin(θ/2)` for the sharpest convex corner
-    /// θ of any ring of the floors' ring trees, the floor's outline and
-    /// islands included, capped at twice the straight-run ridge: each ring
-    /// is the one outside it inset by a step-over `s`, and a leaf's middle
-    /// is no more than `s / 2` from its ring, so no point of the floor is
-    /// more than `s` from a ring, and no ridge higher than `s / (2·tan(α/2))
-    /// · 2`. A floor whose ring tree would be too large to build reports
-    /// the cap. With clearing passes the V-bit's rings cut only what no pass
-    /// reaches, and the report holds for them too.
+    /// The straight-run ridge is `step_over_fraction · F`. Since #527 it
+    /// holds at the rings' corners too: [`leftover`] cuts every point the
+    /// rings leave more than half a step-over from a cut, so the corner
+    /// ridge (#522) is the straight-run ridge. With clearing passes the
+    /// V-bit's rings cut only what no pass reaches, and the report holds
+    /// for them too.
     pub(crate) fn ridges(
         &self,
         regions: &[Region],
@@ -639,62 +850,9 @@ impl Floor {
             return None;
         }
         let straight_mm = fraction * flat_depth_mm;
-        let stepover_mm = fraction * 2.0 * self.inset_mm;
-        // The sharpest convex corner of any ring; none is a straight
-        // angle, and a tree too large to build counts as no angle at all,
-        // which the cap then holds.
-        let sharpest_rad = floors
-            .into_iter()
-            .map(|floor| {
-                RingTree::build(floor, stepover_mm, self.inset_mm, tolerance_mm, MAX_RINGS).map_or(
-                    0.0,
-                    |tree| {
-                        tree.nodes
-                            .iter()
-                            .flat_map(|n| std::iter::once(n.region.outer()).chain(n.region.holes()))
-                            .map(sharpest_convex_corner_rad)
-                            .fold(PI, f64::min)
-                    },
-                )
-            })
-            .fold(PI, f64::min);
-        let corner_mm = (straight_mm / (sharpest_rad / 2.0).sin()).min(2.0 * straight_mm);
         Some(FloorRidges {
             straight_mm,
-            corner_mm: if corner_mm.is_finite() {
-                corner_mm
-            } else {
-                2.0 * straight_mm
-            },
+            corner_mm: straight_mm,
         })
     }
-}
-
-/// The interior angle, radians, of the sharpest convex corner of
-/// `contour`, a ring of a region (its interior on the left, ADR-0001):
-/// where the tangent turns left between two segments, by `φ`, the corner
-/// is `π − φ`. `π` when it has none: an arc's ends meet the next segment
-/// tangent, and a curve flattened to short lines turns by little at each.
-fn sharpest_convex_corner_rad(contour: &Contour) -> f64 {
-    let segments: Vec<Segment> = contour
-        .polyline()
-        .segments()
-        .filter(|s| s.length_mm() > EPS_MM)
-        .collect();
-    let turns = segments
-        .iter()
-        .zip(segments.iter().cycle().skip(1))
-        .take(if segments.len() < 2 {
-            0
-        } else {
-            segments.len()
-        });
-    turns
-        .filter_map(|(before, after)| {
-            let (_, incoming) = before.point_at(before.length_mm())?;
-            let (_, outgoing) = after.point_at(0.0)?;
-            let turn_rad = incoming.cross(outgoing).atan2(incoming.dot(outgoing));
-            (turn_rad > 0.0).then_some(PI - turn_rad)
-        })
-        .fold(PI, f64::min)
 }

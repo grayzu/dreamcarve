@@ -45,6 +45,17 @@ Re-exported since, from the same projects with the same date:
   boolean fallback no longer doubles its vertices. Each ring lies within
   the one it replaces, at most the tolerance inside it. The star's
   programs and the other "DC" ones are unchanged.
+- #527, after #474: the V-bit programs whose floor the V-bit clears
+  itself, `dc-female-female-2-T1.nc` (1197 → 1384 lines),
+  `dc-male-male-2-T1.nc` (479 → 649) and `star-female-female-2-T1.nc`
+  (411 → 583). The floor now cuts every point its rings leave more than
+  half a step-over from a cut: the slivers along the rings' corner
+  bisectors and the strips down narrow necks, each a short loop from
+  inside a ring's lap, so the ridge at the rings' corners is the
+  straight-run ridge. The strips' centre rings #484 cut as blocks of
+  their own are cut that way too, so the "DC" female lifts to safe Z 20
+  times, not 30, and its male 9, not 15. Nothing goes deeper than
+  before; the end mills' programs and the star's male did not change.
 
 They were exported on macOS, and the tests hold the programs to them byte
 for byte there. On another platform the maths library may round a number in

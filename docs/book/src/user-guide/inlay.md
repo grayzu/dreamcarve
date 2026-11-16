@@ -380,8 +380,8 @@ in the pocket fills. The design stands as the plug.
 `check` and `export` say what each board cuts:
 
 ```text
-Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at their corners where no clearing pass reaches.
-Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm along the rings and up to 0.400 mm at their corners where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
+Inlay op1 `DC` (female board): deepest cut 4.000 mm below the stock top, a flat floor at depth_mm 4.000 mm; V-bit floor ridges 0.400 mm where no clearing pass reaches.
+Inlay op1 `DC` (male board): deepest cut 5.000 mm below the male board's top, the plug's start plane 3.000 mm below the male board's top and the surround's flat floor plug_depth_mm 2.000 mm below that; V-bit floor ridges 0.200 mm where no clearing pass reaches; clearing pass `t2` cuts the band's outer edge upright, its inward curves rounded to 10.000 mm; the cut-out frees the plug along the floor's outer edge, its centre 1.587 mm inside the band's edge and at least 6.412 mm out from the design, through the board to 0.200 mm below it.
 ```
 
 ### The band's outer edge
@@ -762,15 +762,14 @@ floor clears it out to the band's outer edge, which it cuts upright (see
 
 Without clearing passes, the V-bit clears the floor itself, in rings
 `step_over_fraction` of its cut width apart, which leave ridges
-`step_over_fraction` × the floor's depth below the start plane high, and
-higher where the rings turn a corner: up to twice that where the floor
-comes to a point (see [V-Carve: the V-bit
-floor](v-carve.md#the-v-bit-floor)). `check` prints both heights; with
-clearing passes they stand only where no pass reaches. Neither floor
-shows in the finished board: the female's is under the glue gap, the
-male's is sawn off. But ridges under the plug hold it up, so keep
-`glue_gap_mm` above the female's **corner ridge**, the higher figure:
-0.8 mm in the quick start, under its 1 mm gap. Keep
+`step_over_fraction` × the floor's depth below the start plane high,
+corners included (see [V-Carve: the V-bit
+floor](v-carve.md#the-v-bit-floor)). `check` prints the height; with
+clearing passes the ridges stand only where no pass reaches. Neither
+floor shows in the finished board: the female's is under the glue gap,
+the male's is sawn off. But ridges under the plug hold it up, so keep
+`glue_gap_mm` at or above the female's ridge: 0.4 mm in the quick
+start, under its 1 mm gap. Keep
 `step_over_fraction` at 0.1, or clear the floor with an end mill.
 
 ## The fit
@@ -791,8 +790,8 @@ pocket dry, without glue.
   plug that is not deep enough to seat.
 - **The top looks right, but a test pair cut in half shows a gap under
   the plug** bigger than you want: lower `glue_gap_mm`; the walls still
-  meet, and the glue line under the plug is thinner. Keep it above the
-  female's corner ridge (see [Clearing passes](#clearing-passes)), or the
+  meet, and the glue line under the plug is thinner. Keep it at or above
+  the female's ridge (see [Clearing passes](#clearing-passes)), or the
   plug rests on the floor's ridges.
 
 Only the male changes: the female's pocket depends on `depth_mm` alone.

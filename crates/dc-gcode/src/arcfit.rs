@@ -95,6 +95,17 @@ pub const MIN_RUN_CHORDS: usize = 3;
 /// Fewest points a run has: [`MIN_RUN_CHORDS`] chords.
 const MIN_RUN_POINTS: usize = MIN_RUN_CHORDS + 1;
 
+/// The smallest radius a run is fitted on, in tolerances (#527). On a
+/// circle a few tolerances across, the tolerance is a fair part of the
+/// radius, so points that are only near it fit: a V-bit floor's leftover
+/// loop a few hundredths across, with its link in and out of the ring's
+/// lap, went round circles about 0.04 mm in radius, and once their I and J
+/// were snapped to the written places the arcs no longer followed the
+/// moves (`ArcFitViolation`, lettering `0x37` in inches, line art `0x9b`).
+/// Such a run is a few moves long and is written as its moves. Six keeps
+/// #262's flat helix revolutions (radius 0.084 mm at 0.01) fitted.
+const MIN_RADIUS_TOLERANCES: f64 = 6.0;
+
 /// The smallest total sweep a run may have, radians (0.5°): a residual-only
 /// fit would turn a very shallow bend into a huge-radius arc.
 const MIN_TOTAL_SWEEP_RAD: f64 = PI / 360.0;
@@ -658,6 +669,10 @@ fn gates_pass(
     radius_mm: f64,
     tolerance_mm: f64,
 ) -> bool {
+    // 0. A circle more than a few tolerances across (#527).
+    if radius_mm < MIN_RADIUS_TOLERANCES * tolerance_mm {
+        return false;
+    }
     // 5. A chord that is a fair part of the radius, unless the run closes.
     let (Some(first), Some(last)) = (points.first(), points.last()) else {
         return false;
