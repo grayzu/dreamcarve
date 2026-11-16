@@ -182,11 +182,17 @@ impl Heights {
     /// The index of every lattice point within `radius_mm` of `p`.
     pub fn disc(&self, p: Point, radius_mm: f64) -> Vec<usize> {
         let mut out = Vec::new();
+        // A disc wholly below or left of the lattice touches none of it;
+        // the `as usize` casts below would saturate to its first row or
+        // column instead.
+        let top = ((p.y + radius_mm - self.origin.y) / self.step).floor();
+        if top < 0.0 {
+            return out;
+        }
         let j0 = ((p.y - radius_mm - self.origin.y) / self.step)
             .ceil()
             .max(0.0) as usize;
-        let j1 =
-            (((p.y + radius_mm - self.origin.y) / self.step).floor() as usize).min(self.ny - 1);
+        let j1 = (top as usize).min(self.ny - 1);
         for j in j0..=j1 {
             let dy = self.origin.y + j as f64 * self.step - p.y;
             let reach = radius_mm * radius_mm - dy * dy;
@@ -194,8 +200,12 @@ impl Heights {
                 continue;
             }
             let half = reach.sqrt();
+            let right = ((p.x + half - self.origin.x) / self.step).floor();
+            if right < 0.0 {
+                continue;
+            }
             let i0 = ((p.x - half - self.origin.x) / self.step).ceil().max(0.0) as usize;
-            let i1 = (((p.x + half - self.origin.x) / self.step).floor() as usize).min(self.nx - 1);
+            let i1 = (right as usize).min(self.nx - 1);
             out.extend((i0..=i1).map(|i| j * self.nx + i));
         }
         out
