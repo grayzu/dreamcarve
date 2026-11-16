@@ -386,7 +386,7 @@ fn least_room_of_finite(
     if (to.z - from.z).abs() <= EPS_MM {
         // Today's segment distance, and the closed forms at a constant
         // radius, which also hold for an arc past a half turn, where the
-        // segment distance can read too far (#678): the lesser.
+        // segment distance can read too far (#686): the lesser.
         let width_mm = profile.room_width_mm(deeper_mm);
         let room_mm = segment_distance_mm(path, wall.segment) - width_mm;
         let exact = least_on(ramp(width_mm, width_mm), 0.0, 1.0, wall);
