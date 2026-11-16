@@ -842,9 +842,16 @@ fn program_digest(p: &Project, op: &VCarveOp) -> u64 {
 /// offset and clearing V-bit carves keep the digests recorded on `main`
 /// before the slice (the goldens, `golden::vcarve_*` and
 /// `golden::phase_1_and_2_cases_are_unchanged`, and the CLI's sign test
-/// hold the written programs byte for byte).
+/// hold the written programs byte for byte). The digests were recorded on
+/// macOS, where they must match bit for bit; elsewhere the platform's
+/// maths library may round a sine or a tangent differently in its last
+/// bit, which the digest of every bit sees, so there the goldens are the
+/// check (as the CLI's `inlay-migration` programs are held, #498).
 #[test]
 fn v_bit_programs_are_unchanged() {
+    if !cfg!(target_os = "macos") {
+        return;
+    }
     let bar = project(vec![rect(20.0, 4.0)]);
     let inner = 12.0 * std::f64::consts::FRAC_1_SQRT_2;
     let star_shape = polygon(&[
