@@ -9,6 +9,18 @@ phases bump the patch number.
 
 ### Added
 
+- **The tapered ball nose tool, format 28 (#677).** A tool may be a
+  tapered ball nose, `{ "tapered_ball_nose": { "tip_diameter_mm",
+  "taper_angle_deg", "flute_length_mm" } }`: the ball's diameter, the
+  taper per side (half the included angle, as vendors give it) and the
+  flute length, each `null` until set; its `diameter_mm` is the cutting
+  diameter. `check` lists each unset value an operation needs and
+  `export` refuses until it is set. The tool library (now version 3)
+  imports, lists and adds one, and `tools add` says which values are
+  still to set. Carving with one comes in later slices: until then a
+  V-Carve or an Inlay with a tapered ball nose is refused, and a Photo
+  V-Carve or a countersink always is. A version 27 project loads and
+  exports the same programs, byte for byte.
 - **`image-prep` reads DXF (#669).** `dreamcarve image-prep <svg|dxf>`
   now takes a DXF too, so a drawing from a CAD program can be cleaned
   before `init`: it is read in the units its `$INSUNITS` declares, with

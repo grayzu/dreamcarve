@@ -971,7 +971,7 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  its report line; `tools list` shows its cut diameter, tip, taper and
  flutes, `-` for an unset value; `tools add` copies it into a project
  and prints each value it still needs and where it is in the file
- (`set tools[2].cutter.tapered_ball_nose.flute_length_mm`), as it does a
+ (`set tools[t3].cutter.tapered_ball_nose.flute_length_mm`), as it does a
  tool's unset feeds, and `init` does the same for its "Set me" tool.
  Once an operation uses the tool, `check` lists every unset value
  (`tool_value_unset`, at its field) and `export` refuses until each is
