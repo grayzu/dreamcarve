@@ -47,6 +47,11 @@
 //!   the last place, the budget S12 judges them by (#355). The snap moves
 //!   a centre up to two quanta each way, 0.0072 mm in inch.
 //! - The Kasa fit is `dc_geometry::fit_circle_kasa`.
+//! - The search skips, before its fit, a window whose moves differ too
+//!   much in length for any circle to pass the step uniformity gate, and
+//!   the gates run cheapest first (#480). Neither changes which arcs are
+//!   found: a V-bit run's long level stretch of moves from 0.0002 to 2 mm
+//!   took 77 s to fit, and now takes 0.3 s.
 
 use std::cmp::Ordering;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
@@ -441,21 +446,42 @@ fn find_arc_runs_counted(
     work: &mut SearchWork,
 ) -> Vec<FoundArc> {
     let n = points.len();
+    let lengths: Vec<f64> = points
+        .windows(2)
+        .map(|pair| match (pair.first(), pair.get(1)) {
+            (Some(a), Some(b)) => a.distance_to(*b),
+            _ => f64::NAN,
+        })
+        .collect();
+    let mut steps = WindowSteps::default();
+    // The gates read `mids` window by window; the skip below reads them as
+    // the gates do only when every move has its entry.
+    let every_mid = mids.len() + 1 >= n;
     let mut found = Vec::new();
     let mut i = 0;
     while i + MIN_RUN_POINTS <= n {
         let min_end = i + MIN_RUN_POINTS - 1;
         let max_end = (n - 1).min(i + MAX_CANDIDATE_POINTS - 1);
+        steps.measure(&lengths, mids, i, max_end);
         let mut best = None;
         for end in (min_end..=max_end).rev() {
             let Some(sub) = points.get(i..=end) else {
                 continue;
             };
-            work.windows += 1;
-            let Some((centre, radius_mm)) = fit_circle_kasa(sub) else {
+            let (Some(&first), Some(&last)) = (sub.first(), sub.last()) else {
                 continue;
             };
-            let (Some(&first), Some(&last)) = (sub.first(), sub.last()) else {
+            // #480: a window whose moves differ too much in length for any
+            // circle to make their steps even is rejected before its fit.
+            if every_mid
+                && steps
+                    .of(end - i)
+                    .is_some_and(|s| s.uneven_on_any_circle(first.distance_to(last), tolerance_mm))
+            {
+                continue;
+            }
+            work.windows += 1;
+            let Some((centre, radius_mm)) = fit_circle_kasa(sub) else {
                 continue;
             };
             // Constrain before validating, so every gate judges the circle
@@ -483,6 +509,109 @@ fn find_arc_runs_counted(
         }
     }
     found
+}
+
+/// `sin(x) / x` at `x = π/4`, rounded down: for `x` up to `π/4`,
+/// `sin(x) ≥ SIN_RATIO · x`.
+const SIN_RATIO: f64 = 0.9;
+
+/// Relative slack [`StepSpan::uneven_on_any_circle`] keeps over its
+/// bound, for the rounding of the angles the gates measure (#480). With
+/// it the bound holds while the median step is over [`SWEEP_EPS`], and a
+/// window whose median step is not fails the gate anyway.
+const UNEVEN_SLACK: f64 = 0.05;
+
+/// The lengths of a window's moves, as the step uniformity gate sees them.
+#[derive(Debug, Clone, Copy)]
+struct StepSpan {
+    /// The longest chord step's length, mm. A chord step is a move that is
+    /// not a shallow corner arc: the gate's largest step and median are
+    /// over chord steps alone.
+    longest_mm: f64,
+    /// The upper middle of the chord steps' lengths, mm: at least their
+    /// median.
+    median_mm: f64,
+    /// The longest move of any kind, mm: the window spans at least this.
+    span_mm: f64,
+}
+
+impl StepSpan {
+    /// Whether the step uniformity gate (3 in [`gates_pass`]) rejects the
+    /// window on every circle the residual gate (1) accepts, where
+    /// `chord_mm` is the distance between its ends (#480). The search then
+    /// skips it before its fit: the arcs found are the same.
+    ///
+    /// Within the residual gate every point is between `r − t` and `r + t`
+    /// from the centre, so a step of angle `θ` over a move of length `L`
+    /// has `4·ra·rb·sin²(θ/2) = L² − (ra − rb)²`, with `|ra − rb| ≤ 2t`:
+    ///
+    /// - `θ ≥ 2·sin(θ/2) ≥ √(L² − 4t²) / (r + t)`;
+    /// - `θ ≤ L / (SIN_RATIO · (r − t))` for `θ` up to `π/2`, the most the
+    ///   step angle gate (2) lets through.
+    ///
+    /// The largest step is at least the first bound over the longest move,
+    /// the median at most the second over the median move. The gate
+    /// rejects when the largest is over [`MAX_STEP_RATIO`] times the
+    /// median, so it surely rejects when
+    /// `√(L_max² − 4t²) · SIN_RATIO · (r − t) > MAX_STEP_RATIO · L_med · (r + t)`.
+    /// The left side gains on the right as `r` grows, and every point is
+    /// within `r + t` of the centre, so `r ≥ D/2 − t` for any distance `D`
+    /// between two of them: the bound is checked at that least radius, and
+    /// holds for every circle.
+    fn uneven_on_any_circle(&self, chord_mm: f64, tolerance_mm: f64) -> bool {
+        // The residual gate's own rounding, far inside this.
+        let t = tolerance_mm * (1.0 + UNEVEN_SLACK) + EPS_MM * EPS_MM;
+        let least_radius_mm = self.span_mm.max(chord_mm) / 2.0 - t;
+        let spread2 = self.longest_mm * self.longest_mm - 4.0 * t * t;
+        if !(least_radius_mm > t && spread2 > 0.0) {
+            return false;
+        }
+        spread2.sqrt() * SIN_RATIO * (least_radius_mm - t)
+            > MAX_STEP_RATIO * (1.0 + UNEVEN_SLACK) * self.median_mm * (least_radius_mm + t)
+    }
+}
+
+/// The [`StepSpan`] of every window from one start, reused from start to
+/// start.
+#[derive(Debug, Default)]
+struct WindowSteps {
+    /// The chord steps' lengths so far, ascending.
+    sorted: Vec<f64>,
+    /// The span of the window of `k + 1` moves at `k`.
+    spans: Vec<Option<StepSpan>>,
+}
+
+impl WindowSteps {
+    /// Measures the windows from point `start` to each end up to
+    /// `max_end`, where `lengths[k]` is the length of the move from point
+    /// `k` and `mids[k]` its shallow arc's midpoint, if it is one.
+    fn measure(&mut self, lengths: &[f64], mids: &[Option<Point>], start: usize, max_end: usize) {
+        self.sorted.clear();
+        self.spans.clear();
+        let mut span_mm = 0.0_f64;
+        for k in start..max_end {
+            let length_mm = lengths.get(k).copied().unwrap_or(f64::NAN);
+            span_mm = span_mm.max(length_mm);
+            if mids.get(k).is_none_or(Option::is_none) {
+                let at = self.sorted.partition_point(|&s| s < length_mm);
+                self.sorted.insert(at, length_mm);
+            }
+            let span = match (self.sorted.last(), self.sorted.get(self.sorted.len() / 2)) {
+                (Some(&longest_mm), Some(&median_mm)) => Some(StepSpan {
+                    longest_mm,
+                    median_mm,
+                    span_mm,
+                }),
+                _ => None,
+            };
+            self.spans.push(span);
+        }
+    }
+
+    /// The span of the window of `moves` moves from the start.
+    fn of(&self, moves: usize) -> Option<&StepSpan> {
+        self.spans.get(moves.checked_sub(1)?)?.as_ref()
+    }
 }
 
 /// Moves a fitted circle onto the perpendicular bisector of `start` and
@@ -513,6 +642,15 @@ fn constrain_to_endpoints(
 /// upstream's, two chord steps of one size at least (#213), every move
 /// within the tolerance of the arc along its whole length (#226, #229),
 /// and at most one turn (#502).
+///
+/// A window passes only if it passes every gate, so their order changes
+/// what a window costs, never whether it passes. They run cheapest first
+/// (#480): the chord ratio from the ends alone, the residual, then one
+/// pass over the steps for the step, turn and sweep gates, and last the
+/// sampled deviation of every move from the arc, which costs a dozen
+/// trigonometric calls a move. On a long level run of short moves almost
+/// every window fails the step uniformity gate, and the deviation used to
+/// be found for all of its moves first.
 fn gates_pass(
     points: &[Point],
     mids: &[Option<Point>],
@@ -520,6 +658,15 @@ fn gates_pass(
     radius_mm: f64,
     tolerance_mm: f64,
 ) -> bool {
+    // 5. A chord that is a fair part of the radius, unless the run closes.
+    let (Some(first), Some(last)) = (points.first(), points.last()) else {
+        return false;
+    };
+    let chord = first.distance_to(*last);
+    let closed = chord <= radius_mm * CLOSED_CHORD_RATIO;
+    if !closed && chord < radius_mm * MIN_CHORD_RATIO {
+        return false;
+    }
     // 1. Every vertex, and every shallow arc's midpoint, is on the circle.
     let on_circle = |p: &Point| (p.distance_to(centre) - radius_mm).abs() <= tolerance_mm;
     if !points.iter().all(on_circle) || !mids.iter().flatten().all(on_circle) {
@@ -531,18 +678,22 @@ fn gates_pass(
     // chord, so its small step is left out of the median: on a faceted
     // curve every other move is one, and counting them would fail every
     // window with an odd number of steps.
-    let angle = |p: &Point| (p.y - centre.y).atan2(p.x - centre.x);
+    let angles: Vec<f64> = points
+        .iter()
+        .map(|p| (p.y - centre.y).atan2(p.x - centre.x))
+        .collect();
+    let mut diffs = Vec::with_capacity(points.len());
     let mut steps = Vec::with_capacity(points.len());
     let mut total_sweep = 0.0;
     // 2a. Every step turns the same way round the centre: a run that goes
     // back along the circle (a Profile ramp's return to its entry point,
     // then the lap) is not one arc, though every point is on it.
     let mut turn = 0.0_f64;
-    for (k, pair) in points.windows(2).enumerate() {
+    for (k, pair) in angles.windows(2).enumerate() {
         let (Some(a), Some(b)) = (pair.first(), pair.get(1)) else {
             return false;
         };
-        let mut diff = angle(b) - angle(a);
+        let mut diff = b - a;
         while diff > PI {
             diff -= TAU;
         }
@@ -551,14 +702,6 @@ fn gates_pass(
         }
         let step = diff.abs();
         if step > MAX_STEP_RAD {
-            return false;
-        }
-        // 1a. The arc stays within the tolerance of every move it
-        // replaces, not only of its ends (#226, #229): a square's four
-        // corners lie on one circle, which bows 1.45 mm off a 7 mm side.
-        // A shallow corner arc counts as its chord: both bow the same way,
-        // each by at most the tolerance.
-        if arc_chord_deviation_mm(centre, radius_mm, angle(a), diff, *a, *b) > tolerance_mm {
             return false;
         }
         if step > SWEEP_EPS {
@@ -570,6 +713,7 @@ fn gates_pass(
         if mids.get(k).is_none_or(Option::is_none) {
             steps.push(step);
         }
+        diffs.push(diff);
         total_sweep += step;
     }
     let Some(median) = median(&mut steps) else {
@@ -595,34 +739,49 @@ fn gates_pass(
     if total_sweep < MIN_TOTAL_SWEEP_RAD {
         return false;
     }
-    // 5. A chord that is a fair part of the radius, unless the run closes.
-    let (Some(first), Some(last)) = (points.first(), points.last()) else {
-        return false;
-    };
-    let chord = first.distance_to(*last);
-    let closed = chord <= radius_mm * CLOSED_CHORD_RATIO;
-    if !closed && chord < radius_mm * MIN_CHORD_RATIO {
-        return false;
-    }
     // 6. At most one turn (#502). `split_arc` takes the sweep from the
     // run's ends, which give it only modulo a turn: a run that goes on
     // round its circle past a full turn (a ring joined a few chords before
     // the point it laps from) would be written as its last part alone and
     // the lap before it never cut. A run that closes is one turn, not two.
     let turns = total_sweep / TAU;
-    if closed { turns < 1.5 } else { turns < 1.0 }
+    if !(if closed { turns < 1.5 } else { turns < 1.0 }) {
+        return false;
+    }
+    // 1a. The arc stays within the tolerance of every move it replaces,
+    // not only of its ends (#226, #229): a square's four corners lie on
+    // one circle, which bows 1.45 mm off a 7 mm side. A shallow corner arc
+    // counts as its chord: both bow the same way, each by at most the
+    // tolerance.
+    !points
+        .windows(2)
+        .zip(angles.iter().zip(&diffs))
+        .any(
+            |(pair, (&from_rad, &diff))| match (pair.first(), pair.get(1)) {
+                (Some(&a), Some(&b)) => {
+                    arc_chord_deviation_mm(centre, radius_mm, from_rad, diff, a, b) > tolerance_mm
+                }
+                _ => true,
+            },
+        )
 }
 
-/// The median of `values`, which it sorts; `None` if empty.
+/// The median of `values`, which it reorders; `None` if empty. It selects
+/// the middle value rather than sorting (#480): every window of a long
+/// level run takes a median of up to [`MAX_CANDIDATE_POINTS`] steps.
 fn median(values: &mut [f64]) -> Option<f64> {
-    values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
     let n = values.len();
     let middle = n / 2;
+    if middle >= n {
+        return None;
+    }
+    let order = |a: &f64, b: &f64| a.partial_cmp(b).unwrap_or(Ordering::Equal);
+    let (below, &mut upper, _) = values.select_nth_unstable_by(middle, order);
     if n.is_multiple_of(2) {
-        let (a, b) = (values.get(middle.wrapping_sub(1))?, values.get(middle)?);
-        Some((a + b) / 2.0)
+        let lower = below.iter().copied().max_by(order)?;
+        Some((lower + upper) / 2.0)
     } else {
-        values.get(middle).copied()
+        Some(upper)
     }
 }
 
@@ -2751,13 +2910,20 @@ mod tests {
 
     /// A level run like the floor rings of a V-bit's long level stretch
     /// (#480): `rings` concentric rings, each an ellipse, walked by moves
-    /// whose lengths are drawn log-uniform from 0.002 to 0.4 mm by a
-    /// fixed generator, each ring joined to the next by a short step in.
-    /// The lengths vary as the stress case's do (#464, line art
-    /// `0x4640000`), so almost every window fails the step uniformity
-    /// gate though its points lie on a circle.
-    fn dense_level_rings(rings: usize, outer_mm: f64) -> Vec<Point> {
-        let mut state: u64 = 0x0480_0480;
+    /// whose lengths are drawn log-uniform from `shortest_mm` to
+    /// `longest_mm` by a fixed generator from `seed`, each ring joined to
+    /// the next by a short step in. From 0.002 to 0.4 mm the lengths vary
+    /// as the stress case's do (#464, line art `0x4640000`), so almost
+    /// every window fails the step uniformity gate though its points lie on
+    /// a circle.
+    fn dense_level_rings(
+        rings: usize,
+        outer_mm: f64,
+        shortest_mm: f64,
+        longest_mm: f64,
+        seed: u64,
+    ) -> Vec<Point> {
+        let mut state = seed;
         let mut uniform = move || {
             state = state
                 .wrapping_mul(6_364_136_223_846_793_005)
@@ -2771,7 +2937,7 @@ mod tests {
             let mut angle = 0.0;
             while angle < TAU {
                 points.push(Point::new(a * angle.cos(), b * angle.sin()));
-                let length_mm = 0.002 * 200.0_f64.powf(uniform());
+                let length_mm = shortest_mm * (longest_mm / shortest_mm).powf(uniform());
                 angle += length_mm / b;
             }
         }
@@ -2779,8 +2945,8 @@ mod tests {
     }
 
     /// The search as it was before #480: every window from each start, a
-    /// circle fit and every gate on each. The reference the pruned search
-    /// must agree with exactly.
+    /// circle fit and every gate on each. The reference the search must
+    /// agree with exactly.
     fn find_arc_runs_exhaustive(
         points: &[Point],
         mids: &[Option<Point>],
@@ -2822,14 +2988,14 @@ mod tests {
     }
 
     /// #480: a long dense level run cost about `n · 128` circle fits, each
-    /// with every gate over up to 128 points, and the stress case's V-bit
-    /// run took 77 s to fit. The search now fits a bounded number of
-    /// windows per point, and finds exactly the arcs the exhaustive search
-    /// finds.
+    /// judged by every gate over up to 128 points, and the stress case's
+    /// V-bit run (84 203 moves, a level stretch of 26 602) took 77 s to fit
+    /// in a release build. The search now fits a few windows a point, and
+    /// finds exactly the arcs the exhaustive search finds.
     #[test]
     fn fit_of_a_long_dense_level_run_is_bounded() {
-        let points = dense_level_rings(8, 8.0);
-        assert!(points.len() > 2000, "{} points", points.len());
+        let points = dense_level_rings(8, 8.0, 0.002, 0.4, 0x0480);
+        assert!(points.len() > 3000, "{} points", points.len());
         let mids = vec![None; points.len() - 1];
         let mut work = SearchWork::default();
         let found = find_arc_runs_counted(&points, &mids, TOL, &mut work);
@@ -2839,12 +3005,43 @@ mod tests {
             work.windows,
             points.len()
         );
-        // Every arc it found is the one the exhaustive search finds there.
-        let head = &points[..600];
-        assert_eq!(
-            find_arc_runs(head, &mids[..599], TOL),
-            find_arc_runs_exhaustive(head, &mids[..599], TOL)
-        );
-        assert!(!found.is_empty() || work.windows > 0);
+        assert_eq!(found, find_arc_runs_exhaustive(&points, &mids, TOL));
+    }
+
+    /// #480: skipping the windows whose moves are too uneven for any circle
+    /// never changes what the search finds: on runs whose lengths vary by
+    /// less than, about, and more than the step uniformity gate's ratio of
+    /// four, with and without shallow corner arcs, at two tolerances, the
+    /// arcs are the exhaustive search's, bit for bit.
+    #[test]
+    fn uneven_window_skip_finds_the_exhaustive_arcs() {
+        let ranges = [(0.05, 0.1), (0.05, 0.2), (0.05, 0.25), (0.01, 1.0)];
+        for (seed, &(shortest_mm, longest_mm)) in (1_u64..).zip(&ranges) {
+            for tolerance_mm in [TOL, 0.001] {
+                for corners in [false, true] {
+                    let points = dense_level_rings(2, 4.0, shortest_mm, longest_mm, seed);
+                    // Every third move a shallow corner arc: its midpoint
+                    // is on the ring, and the gates leave its step out of
+                    // the median.
+                    let mids: Vec<Option<Point>> = points
+                        .windows(2)
+                        .enumerate()
+                        .map(|(k, pair)| {
+                            (corners && k % 3 == 2).then(|| {
+                                Point::new(
+                                    (pair[0].x + pair[1].x) / 2.0,
+                                    (pair[0].y + pair[1].y) / 2.0,
+                                )
+                            })
+                        })
+                        .collect();
+                    assert_eq!(
+                        find_arc_runs(&points, &mids, tolerance_mm),
+                        find_arc_runs_exhaustive(&points, &mids, tolerance_mm),
+                        "lengths {shortest_mm} to {longest_mm} mm, tolerance {tolerance_mm}, corners {corners}"
+                    );
+                }
+            }
+        }
     }
 }
