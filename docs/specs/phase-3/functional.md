@@ -874,10 +874,14 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      1.5 mm stroke is carved 3.500 mm deep and a 0.6 mm stroke 0.146 mm
      deep. The groove's bottom is round, the ball's shape.
     - **Cutting height.** The flank's engagement from the stock top (or a
-     cleared start plane) may not exceed `flute_length_mm`, the TBN's form
-     of the cone height (`v_bit_cone_exceeded`, which names the flutes):
-     with the 0.381 mm bit a 5 mm stroke needs 18.40 mm and exports, a
-     6 mm one 22.65 mm and is refused.
+     cleared start plane) may not exceed the cutting height, the lower of
+     `flute_length_mm` and the height where the cone reaches the cutting
+     diameter, the TBN's form of the cone height (`v_bit_cone_exceeded`,
+     which names the flutes or the cutting diameter; an error, never a
+     warning, question 32): with the 0.381 mm bit a 5 mm stroke needs
+     18.40 mm and exports, a 6 mm one 22.65 mm and is refused; with the
+     1.143 mm bit an engagement past 18.37 mm is refused, naming its
+     6.35 mm cutting diameter.
     - **Flat depth.** The floor boundary is the shape inset by the bit's
      half-width at `F`; the walls are the cone from the outline down to
      the tangent height above the floor and then the ball's arc into it:
@@ -953,8 +957,9 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      how to measure the taper with two plunge holes. No calibration is
      stored in 3.6 (decided 2026-11-16, PR #670); the bench part decides
      whether one is needed. The engagement check
-     reads the flute length: the male's `depth_mm − glue_gap_mm +
-     plug_depth_mm` must not exceed it. The band's edge, the edge pass,
+     reads the cutting height: the male's `depth_mm − glue_gap_mm +
+     plug_depth_mm` must not exceed it (the flute length, or the height
+     where the cone reaches the cutting diameter when that is lower). The band's edge, the edge pass,
      the cut-out and the board's edge (45, 49f) read the bit's width at
      the plug's foot and at the male board's top where they read
      `plug_depth_mm · tan(α/2)` and the flank's width for a V-bit.
