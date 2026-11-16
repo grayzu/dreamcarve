@@ -7559,7 +7559,11 @@ fn v26_project_exports_the_same_programs() {
         );
         let v26 = current
             .replacen("\n  \"bitmaps\": [],\n", "\n", 1)
-            .replacen(&format!("\"version\": {},", dc_project::CURRENT_VERSION), "\"version\": 26,", 1);
+            .replacen(
+                &format!("\"version\": {},", dc_project::CURRENT_VERSION),
+                "\"version\": 26,",
+                1,
+            );
         assert!(v26.contains("\"version\": 26,"), "{stem}: {v26}");
         assert!(!v26.contains("bitmaps"), "{stem}: {v26}");
         std::fs::write(dir.join("old.dcv"), &v26).expect("dcv written");
@@ -7834,7 +7838,8 @@ fn preview_draws_the_boundary_on_the_male_board() {
 fn dc_boundary_fixture_is_the_frame_as_boundary() {
     let text = std::fs::read_to_string(tests_fixture("dc-boundary.dcv")).expect("fixture readable");
     // The boundary is format 26's; the file is kept at the current format.
-    assert!(text.contains("\"version\": 27,"), "format 27: {text}");
+    let current = format!("\"version\": {},", dc_project::CURRENT_VERSION);
+    assert!(text.contains(&current), "the current format: {text}");
     // Exactly the three lines of `dc.dcv` that the boundary replaces.
     let plain = std::fs::read_to_string(tests_fixture("dc.dcv")).expect("fixture readable");
     let mut derived = plain;

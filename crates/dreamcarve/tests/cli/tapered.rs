@@ -41,7 +41,11 @@ fn tools_list_shows_a_tapered_ball_nose() {
         taper_angle_deg: None,
         flute_length_mm: None,
     };
-    write_library_file(&dir, "bits.json", &[(tool_tbn_ultra(), None), (unset, None)]);
+    write_library_file(
+        &dir,
+        "bits.json",
+        &[(tool_tbn_ultra(), None), (unset, None)],
+    );
     let out = run(&dir, &["tools", "import", "bits.json"]);
     assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
 
@@ -78,7 +82,10 @@ fn tools_add_prints_the_values_still_to_set() {
     let out = run(&dir, &["tools", "import", "bits.json"]);
     assert_eq!(out.status.code(), Some(0), "import: {}", stderr(&out));
 
-    let out = run(&dir, &["tools", "add", "coaster.dcv", "IDC Ultra-High Detail"]);
+    let out = run(
+        &dir,
+        &["tools", "add", "coaster.dcv", "IDC Ultra-High Detail"],
+    );
     assert_eq!(out.status.code(), Some(0), "add: {}", stderr(&out));
     let text = stdout(&out);
     assert!(
@@ -158,7 +165,10 @@ fn tapered_ball_nose_library_round_trip() {
             .any(|l| l.contains("warning: unused_tool:") && l.contains("`t2`")),
         "{text}"
     );
-    assert!(text.lines().any(|l| l == format!("t2 {ULTRA_LINE}")), "{text}");
+    assert!(
+        text.lines().any(|l| l == format!("t2 {ULTRA_LINE}")),
+        "{text}"
+    );
 }
 
 /// Every unset value of a tapered ball nose an operation uses is
@@ -186,10 +196,9 @@ fn check_lists_unset_tapered_values() {
         let at = format!("tools[t1].cutter.tapered_ball_nose.{field}");
         let position = map.locate(&at).expect("the field is in the file");
         assert!(
-            report
-                .lines()
-                .any(|l| l.starts_with(&format!("coaster.dcv:{position}: error: "))
-                    && l.contains(&at)),
+            report.lines().any(
+                |l| l.starts_with(&format!("coaster.dcv:{position}: error: ")) && l.contains(&at)
+            ),
             "{at}:\n{report}"
         );
     }

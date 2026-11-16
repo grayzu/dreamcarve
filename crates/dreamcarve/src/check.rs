@@ -78,6 +78,13 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     for warning in &design {
         outln!("warning: {}: {warning}", warning.code())?;
     }
+    // #677: a tapered ball nose's values, as `tools list` prints them, so
+    // its taper per side and its cutting diameter are read back.
+    for tool in &project.tools {
+        if let Some(line) = crate::tools::tool_line(tool.id.as_str(), tool) {
+            outln!("{line}")?;
+        }
+    }
     // Phase 3: a carve's depth follows its shapes, so its deepest cut is
     // stated.
     for line in describe_carves(&project, generated.as_deref().unwrap_or_default()) {

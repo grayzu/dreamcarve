@@ -438,8 +438,8 @@ fn editor(ui: &mut Ui, strings: &Strings, units: Units, tool: &Tool, out: &mut V
         None => {}
     }
     match output.edit {
-        Some(FieldEdit::Set(next, _)) if next != *tool => {
-            out.push(Action::Run(Box::new(Command::UpdateTool(next))));
+        Some(FieldEdit::Set(next, _)) if *next != *tool => {
+            out.push(Action::Run(Box::new(Command::UpdateTool(*next))));
         }
         Some(FieldEdit::Refused(_, reason)) => out.push(Action::Refused(reason)),
         _ => {}
@@ -469,7 +469,7 @@ pub(crate) struct ToolFields<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum FieldEdit {
     /// The tool with `ToolField` changed from what was typed.
-    Set(Tool, ToolField),
+    Set(Box<Tool>, ToolField),
     /// What was typed in the field is not a value of its kind: why.
     Refused(ToolField, String),
 }
@@ -594,7 +594,7 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
             {
                 Some(Ok(Some(Command::UpdateTool(next)))) => {
                     result.hold = Some(false);
-                    result.edit = Some(FieldEdit::Set(next, field));
+                    result.edit = Some(FieldEdit::Set(Box::new(next), field));
                 }
                 Some(Ok(_)) => result.hold = Some(false),
                 Some(Err(e)) => result.edit = Some(FieldEdit::Refused(field, e.to_string())),
@@ -603,7 +603,7 @@ pub(crate) fn tool_fields(ui: &mut Ui, spec: &ToolFields<'_>) -> FieldsOutput {
             }
         } else if let Some(typed) = output.committed {
             result.edit = Some(match tools::set_field(tool, field, &typed, units) {
-                Ok(next) => FieldEdit::Set(next, field),
+                Ok(next) => FieldEdit::Set(Box::new(next), field),
                 Err(e) => FieldEdit::Refused(field, e.to_string()),
             });
         }
@@ -664,7 +664,7 @@ fn kind_row(
         match tools::set_kind(tool, chosen) {
             KindSwitch::Unchanged => {}
             KindSwitch::Update(next) => {
-                result.edit = Some(FieldEdit::Set(*next, ToolField::Angle));
+                result.edit = Some(FieldEdit::Set(next, ToolField::Angle));
             }
             KindSwitch::HoldForAngle => {
                 result.hold = Some(true);

@@ -986,7 +986,8 @@ pub(super) const fn tool_icon(kind: &ToolKind) -> Icon {
     match kind {
         ToolKind::EndMill => Icon::Cylinder,
         ToolKind::BallNose => Icon::CircleDot,
-        ToolKind::VBit { .. } => Icon::Triangle,
+        // A tapered ball nose takes the V-bit's glyph until #685 gives it one.
+        ToolKind::VBit { .. } | ToolKind::TaperedBallNose { .. } => Icon::Triangle,
         ToolKind::Engraver => Icon::PencilLine,
         ToolKind::Drill => Icon::MoveDown,
     }
@@ -998,7 +999,10 @@ pub(super) const fn tool_icon(kind: &ToolKind) -> Icon {
 pub(super) fn paint_tool_icon(ui: &Ui, centre: egui::Pos2, kind: &ToolKind, colour: egui::Color32) {
     let galley = tool_icon(kind).galley(ui, theme::ICON_SMALL_PX, colour);
     let half = galley.size() / 2.0;
-    if matches!(kind, ToolKind::VBit { .. }) {
+    if matches!(
+        kind,
+        ToolKind::VBit { .. } | ToolKind::TaperedBallNose { .. }
+    ) {
         // A text shape turns about its top-left corner.
         let shape = egui::epaint::TextShape::new(centre + half, galley, colour)
             .with_angle(std::f32::consts::PI);

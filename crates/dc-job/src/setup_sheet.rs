@@ -99,6 +99,8 @@ pub enum Label {
     TypeEngraver,
     /// A drill.
     TypeDrill,
+    /// A tapered ball nose (format 28).
+    TypeTaperedBallNose,
     /// The diameter row's label.
     Diameter,
     /// The angle row's label.
@@ -168,6 +170,7 @@ impl Label {
         Self::TypeVBit,
         Self::TypeEngraver,
         Self::TypeDrill,
+        Self::TypeTaperedBallNose,
         Self::Diameter,
         Self::Angle,
         Self::AngleValue,
@@ -222,6 +225,7 @@ impl Label {
             Self::TypeVBit => "setup_sheet.type_v_bit",
             Self::TypeEngraver => "setup_sheet.type_engraver",
             Self::TypeDrill => "setup_sheet.type_drill",
+            Self::TypeTaperedBallNose => "setup_sheet.type_tapered_ball_nose",
             Self::Diameter => "setup_sheet.diameter",
             Self::Angle => "setup_sheet.angle",
             Self::AngleValue => "setup_sheet.angle_value",
@@ -607,6 +611,7 @@ fn tool(page: &mut Page<'_>, project: &Project, summary: &ProgramSummary) {
         ToolKind::VBit { .. } => Label::TypeVBit,
         ToolKind::Engraver => Label::TypeEngraver,
         ToolKind::Drill => Label::TypeDrill,
+        ToolKind::TaperedBallNose { .. } => Label::TypeTaperedBallNose,
     };
     page.row(Label::ToolType, &(page.text)(kind));
     page.row(Label::Diameter, &describe_length(project, tool.diameter_mm));

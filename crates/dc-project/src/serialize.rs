@@ -406,6 +406,10 @@ fn read_version(root: &Value) -> Result<u32, LoadError> {
 fn first_non_finite(problems: &[Problem]) -> Option<String> {
     problems.iter().find_map(|p| match p {
         Problem::NonFinite { field } => Some(field.clone()),
+        // A tapered ball nose's values are checked by their own rule
+        // (#677); a NaN there must not be saved as `null`, which reads
+        // back as unset.
+        Problem::TaperedBallNoseRange { value, .. } if !value.is_finite() => p.field(),
         _ => None,
     })
 }
@@ -881,8 +885,16 @@ mod tests {
     fn tip_and_flute_length_read_inches() {
         let text = save(&tapered_sample()).unwrap();
         let inch = text
-            .replacen("\"tip_diameter_mm\": 0.762", "\"tip_diameter_mm\": \"0.03 in\"", 1)
-            .replacen("\"flute_length_mm\": 19.05", "\"flute_length_mm\": \"0.75 in\"", 1);
+            .replacen(
+                "\"tip_diameter_mm\": 0.762",
+                "\"tip_diameter_mm\": \"0.03 in\"",
+                1,
+            )
+            .replacen(
+                "\"flute_length_mm\": 19.05",
+                "\"flute_length_mm\": \"0.75 in\"",
+                1,
+            );
         assert_eq!(inch.matches(" in\"").count(), 2, "fixture layout changed");
         let loaded = load(inch.as_bytes()).unwrap().project;
         let ToolKind::TaperedBallNose {
@@ -1789,19 +1801,22 @@ mod tests {
     #[test]
     fn photo_v_carve_is_format_27() {
         use crate::test_support::photo_project;
-        assert_eq!(crate::CURRENT_VERSION, 27);
+        const { assert!(crate::CURRENT_VERSION >= 27) };
         let p = photo_project();
         let text = save(&p).unwrap();
-        assert!(text.starts_with("{\n  \"version\": 27,\n"), "{text}");
+        assert!(
+            text.starts_with(&format!("{{\n  \"version\": {},\n", crate::CURRENT_VERSION)),
+            "{text}"
+        );
         assert!(text.contains("\"kind\": \"photo_v_carve\""), "{text}");
         assert!(text.contains("\n  \"bitmaps\": [\n"), "{text}");
         let loaded = load(text.as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
-        assert_eq!(loaded.project.version, 27);
+        assert_eq!(loaded.project.version, crate::CURRENT_VERSION);
         assert_eq!(loaded.problems, vec![]);
 
         // The same text under version 26: `bitmaps` is not a 26 field.
-        let v26 = text.replacen("\"version\": 27,", "\"version\": 26,", 1);
+        let v26 = text.replacen("\"version\": 28,", "\"version\": 26,", 1);
         let err = load(v26.as_bytes()).unwrap_err();
         assert!(
             matches!(
@@ -1819,7 +1834,7 @@ mod tests {
         // A version 26 file with no `bitmaps` but a Photo V-Carve.
         let sample = save(&sample_project()).unwrap();
         let v26 = sample
-            .replacen("\"version\": 27,", "\"version\": 26,", 1)
+            .replacen("\"version\": 28,", "\"version\": 26,", 1)
             .replacen("  \"bitmaps\": [],\n", "", 1)
             .replacen("\"kind\": \"profile\"", "\"kind\": \"photo_v_carve\"", 1);
         assert!(!v26.contains("bitmaps"), "fixture layout changed:\n{v26}");

@@ -204,7 +204,7 @@ pub fn render(project: &Project, ops: &[Run<'_>]) -> String {
             run.toolpath,
             matches!(run.op, Operation::Drill(_)),
             on,
-            run.tool.diameter_mm / 2.0,
+            run.tool.cut_radius_mm(),
         );
         write_operation(&mut svg, on, run, colour, &drawn);
     }
@@ -264,7 +264,7 @@ pub fn marks(run: &Run<'_>) -> Marks {
         run.toolpath,
         matches!(run.op, Operation::Drill(_)),
         &frame,
-        run.tool.diameter_mm / 2.0,
+        run.tool.cut_radius_mm(),
     )
     .marks
 }

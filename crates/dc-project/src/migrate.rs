@@ -135,6 +135,9 @@
 //!   `"bitmaps": []` after `instances`. A version 26 file holds no
 //!   picture and no `photo_v_carve` operation, so it exports what it did,
 //!   byte for byte; one that holds either is refused.
+//! - **28**: the tapered ball nose cutter (sub-phase 3.6, #677). Only the
+//!   version changes: a version 27 file holds no `tapered_ball_nose`, so
+//!   it exports what it did, byte for byte; one that holds one is refused.
 
 use crate::ids::OperationId;
 use crate::post_processor::{
@@ -146,7 +149,7 @@ use dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM;
 use serde_json::{Map, Value};
 
 /// The `.dcv` schema version this build writes.
-pub const CURRENT_VERSION: u32 = 27;
+pub const CURRENT_VERSION: u32 = 28;
 
 /// Something a migration changed that the user should hear about, though
 /// the file loads (#498).
@@ -208,6 +211,7 @@ fn step(from: u32) -> Option<Step> {
         24 => Some(v24_to_v25),
         25 => Some(v25_to_v26),
         26 => Some(v26_to_v27),
+        27 => Some(v27_to_v28),
         _ => None,
     }
 }
@@ -1149,6 +1153,31 @@ fn v26_to_v27(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
         out.insert("bitmaps".into(), Value::Array(Vec::new()));
     }
     Ok(out)
+}
+
+/// Version 27 → 28 (`docs/specs/phase-3/design.md`, sub-phase 3.6,
+/// #677): the tapered ball nose cutter, which no version 27 file holds,
+/// so a version 27 file is already a version 28 one. The bump makes a
+/// version 27 reader refuse a file with a tapered ball nose as newer
+/// instead of failing on an unknown cutter (ADR-0002). Fails if a tool's
+/// cutter is already a `tapered_ball_nose`: that is not a version 27 file.
+fn v27_to_v28(root: Map<String, Value>) -> Result<Map<String, Value>, String> {
+    let tapered = root
+        .get("tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| {
+            tools.iter().position(|tool| {
+                tool.get("cutter")
+                    .and_then(Value::as_object)
+                    .is_some_and(|cutter| cutter.contains_key("tapered_ball_nose"))
+            })
+        });
+    if let Some(i) = tapered {
+        return Err(format!(
+            "`tools[{i}].cutter` is a tapered_ball_nose, which a version 27 file cannot hold"
+        ));
+    }
+    Ok(root)
 }
 
 /// `map` with key `from` renamed `to`, in its place. Fails if `to` is
@@ -3838,7 +3867,11 @@ mod tests {
         assert_eq!(loaded.project, expected);
         assert_eq!(
             crate::save(&loaded.project).unwrap(),
-            text.replacen("\"version\": 27,", &format!("\"version\": {CURRENT_VERSION},"), 1)
+            text.replacen(
+                "\"version\": 27,",
+                &format!("\"version\": {CURRENT_VERSION},"),
+                1
+            )
         );
         let Some(Operation::PhotoVCarve(photo)) = loaded.project.operations.last() else {
             panic!("a Photo V-Carve");
@@ -3869,7 +3902,11 @@ mod tests {
             assert_eq!(loaded.notes, vec![]);
             let saved = crate::save(&loaded.project).unwrap();
             let expected = old
-                .replacen("\"version\": 26,", &format!("\"version\": {CURRENT_VERSION},"), 1)
+                .replacen(
+                    "\"version\": 26,",
+                    &format!("\"version\": {CURRENT_VERSION},"),
+                    1,
+                )
                 .replacen(
                     "\n  \"post_processor\": {",
                     "\n  \"bitmaps\": [],\n  \"post_processor\": {",
@@ -3987,7 +4024,7 @@ mod tests {
         let loaded = load(V28_TAPERED_FIXTURE).unwrap();
         assert_eq!(loaded.project, tapered_project());
         assert_eq!(crate::save(&loaded.project).unwrap(), text);
-        let codes: Vec<&str> = loaded.problems.iter().map(Problem::code).collect();
+        let codes: Vec<&str> = loaded.problems.iter().map(crate::Problem::code).collect();
         assert_eq!(codes, ["v_carve_needs_v_bit"], "{:?}", loaded.problems);
     }
 

@@ -460,6 +460,7 @@ ball_nose = "Ball nose"
 v_bit = "V-bit"
 engraver = "Engraver"
 drill = "Drill"
+tapered_ball_nose = "Tapered ball nose"
 
 # The Tool Library sheet (slice 8, #537; functional spec, capability 64;
 # mock-up 04). Slice 30 (#622; capabilities 64 and 64a): the two panes,
@@ -1131,6 +1132,7 @@ type_ball_nose = "Ball nose"
 type_v_bit = "V-bit"
 type_engraver = "Engraving bit"
 type_drill = "Drill"
+type_tapered_ball_nose = "Tapered ball nose"
 diameter = "Diameter"
 angle = "Included angle"
 angle_value = "{angle}°"
