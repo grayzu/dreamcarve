@@ -879,6 +879,7 @@ fn generate_on(
             ),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
+            limit: dc_project::CuttingLimit::Cone,
         });
     }
     if let Some(axis_x_mm) = side.mirror_x_mm {

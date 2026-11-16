@@ -308,6 +308,7 @@ pub fn generate_photo(
             shape: Box::new(shape),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
+            limit: dc_project::CuttingLimit::Cone,
         });
     }
 

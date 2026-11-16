@@ -56,7 +56,8 @@ pub use post_processor::{
 pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
 pub use tool::{
-    MAX_TAPER_ANGLE_DEG, TBN_FLUTES, TBN_TAPER, TBN_TIP, UnsetValue, tapered_tangent_height_mm,
+    CuttingLimit, MAX_TAPER_ANGLE_DEG, TBN_FLUTES, TBN_TAPER, TBN_TIP, UnsetValue,
+    tapered_tangent_height_mm,
 };
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{

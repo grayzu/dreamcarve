@@ -10567,28 +10567,67 @@ mod tests {
         );
     }
 
-    /// Slice 27a: a V-Carve or an Inlay with a tapered ball nose is
-    /// refused until carving with one is built (27c, #679, turns this
-    /// into `…_is_accepted`).
+    /// Slice 27c (#679): a V-Carve and an Inlay accept a tapered ball
+    /// nose, with no problem at all; any other cutter that is not a V-bit
+    /// is still `v_carve_needs_v_bit`, its message naming both bits that
+    /// carve.
     #[test]
-    fn tapered_ball_nose_v_carve_is_refused_until_built() {
+    fn tapered_ball_nose_is_accepted_by_v_carve_and_inlay() {
         let mut carve = carve_project(|_| {});
         carve.tools[1] = crate::test_support::tool_tbn_ultra();
         let mut inlay = inlay_project(|_| {});
         inlay.tools[1] = crate::test_support::tool_tbn_ultra();
-        for (p, op) in [(carve, "o6"), (inlay, "o7")] {
+        for p in [carve, inlay] {
             let problems = validate(&p);
-            assert_eq!(
-                coded(&problems),
-                [(
-                    "v_carve_needs_v_bit",
-                    Some(format!("operations[{op}].tool"))
-                )],
-                "{problems:?}"
-            );
-            let message = errors(&problems)[0].to_string();
-            assert!(message.contains("a tapered ball nose"), "{message}");
-            assert!(message.contains("not supported yet"), "{message}");
+            assert_eq!(problems, vec![], "{problems:?}");
         }
+        let mut end_mill = carve_project(|_| {});
+        end_mill.tools[1].cutter = ToolKind::EndMill;
+        let problems = validate(&end_mill);
+        let message = errors(&problems)[0].to_string();
+        assert!(
+            message.contains("needs a V-bit or a tapered ball nose"),
+            "{message}"
+        );
+    }
+
+    /// Slice 27c (#679): a tapered ball nose's limit is its cutting
+    /// height, `min(flute_length_mm, h_R)`, and `v_bit_cone_exceeded` says
+    /// which: the Ultra bit's 19.05 mm flutes, or the Fine bit's cone
+    /// reaching its 6.35 mm cutting diameter 18.374 mm up.
+    #[test]
+    fn tapered_ball_nose_cone_exceeded_names_its_limit() {
+        let deep = |tool: Tool, flat_depth_mm: f64| {
+            let mut p = carve_project(|c| c.flat_depth_mm = Some(flat_depth_mm));
+            p.stock.thickness_mm = Some(30.0);
+            for instance in &mut p.instances {
+                instance.z_top_mm = Some(30.0);
+            }
+            p.tools[1] = Tool {
+                id: ToolId::new("t2"),
+                ..tool
+            };
+            validate(&p)
+        };
+        let problems = deep(crate::test_support::tool_tbn_ultra(), 21.2);
+        let (engagement_mm, limit_mm, _, field) = cone_exceeded(&problems);
+        assert!((engagement_mm - 21.2).abs() < 1e-9);
+        assert!((limit_mm - 19.05).abs() < 1e-9);
+        assert_eq!(field.as_deref(), Some("operations[o6].flat_depth_mm"));
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("engaged 21.200 mm, past the bit's 19.050 mm flutes"),
+            "{message}"
+        );
+
+        let problems = deep(crate::test_support::tool_tbn_fine(), 18.5);
+        let (_, limit_mm, _, _) = cone_exceeded(&problems);
+        assert!((limit_mm - 18.374).abs() < 1e-3);
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("past 18.374 mm, where it reaches its 6.350 mm cutting diameter"),
+            "{message}"
+        );
+        assert_eq!(deep(crate::test_support::tool_tbn_fine(), 18.3), vec![]);
     }
 }

@@ -6,7 +6,9 @@
 //! trusted, so none is produced.
 
 use dc_geometry::{GeometryError, Point3};
-use dc_project::{BitmapError, BitmapId, DefinitionId, InstanceId, OperationId, ToolId};
+use dc_project::{
+    BitmapError, BitmapId, CuttingLimit, DefinitionId, InstanceId, OperationId, ToolId,
+};
 use std::fmt;
 
 use crate::{Overhang, StockEdge};
@@ -764,10 +766,11 @@ pub enum CamError {
     /// its shank would cut (`v_bit_cone_exceeded`; security review H4):
     /// the engagement counts from the stock top, or from the start plane
     /// when an enabled earlier Pocket has cleared it, down to the carve's
-    /// deepest point in `shape`.
-    #[error(
-        "operation `{op}` carves {shape} with its V-bit's flanks engaged {depth_mm:.3} mm deep, but the bit's cone is only {cone_mm:.3} mm tall, so its shank would cut; set a flat depth, use a wider V-bit, or clear the start depth with a Pocket first"
-    )]
+    /// deepest point in `shape`. For a tapered ball nose (slice 27c, #679)
+    /// the limit is its cutting height, the lower of its flute length and
+    /// the height where its cone reaches its cutting diameter, and `limit`
+    /// says which.
+    #[error("{}", cone_exceeded_message(op, shape, *depth_mm, *cone_mm, *limit))]
     VBitConeExceeded {
         /// The operation.
         op: OperationId,
@@ -775,8 +778,12 @@ pub enum CamError {
         shape: Box<ShapeRef>,
         /// The flank engagement, mm.
         depth_mm: f64,
-        /// The cone height, `diameter / (2 tan(α/2))`, mm.
+        /// The cutting height, mm: a V-bit's cone height, `diameter / (2
+        /// tan(α/2))`, or a tapered ball nose's `min(flute_length_mm,
+        /// h_R)`.
         cone_mm: f64,
+        /// What sets `cone_mm`.
+        limit: CuttingLimit,
     },
     /// A countersink Drill's tool is not a V-bit (format 21,
     /// `countersink_needs_v_bit`): its depth follows the bit's angle.
@@ -1074,4 +1081,27 @@ fn with_stock_to_leave(stock_to_leave_mm: Option<f64>) -> String {
     stock_to_leave_mm.map_or_else(String::new, |a| {
         format!(" and its {a} mm last pass stock to leave")
     })
+}
+
+/// [`CamError::VBitConeExceeded`]'s text: a V-bit's as before, its cone
+/// named; a tapered ball nose's naming its flutes or where its cone
+/// reaches its cutting diameter (slice 27c, #679).
+fn cone_exceeded_message(
+    op: &OperationId,
+    shape: &ShapeRef,
+    depth_mm: f64,
+    cone_mm: f64,
+    limit: CuttingLimit,
+) -> String {
+    match limit {
+        CuttingLimit::Cone => format!(
+            "operation `{op}` carves {shape} with its V-bit's flanks engaged {depth_mm:.3} mm deep, but the bit's cone is only {cone_mm:.3} mm tall, so its shank would cut; set a flat depth, use a wider V-bit, or clear the start depth with a Pocket first"
+        ),
+        CuttingLimit::Flutes => format!(
+            "operation `{op}` carves {shape} with its tapered ball nose's flanks engaged {depth_mm:.3} mm deep, past the bit's {cone_mm:.3} mm flutes, so its shank would rub; set a flat depth, use a wider bit, or clear the start depth with a Pocket first"
+        ),
+        CuttingLimit::CuttingDiameter { diameter_mm } => format!(
+            "operation `{op}` carves {shape} with its tapered ball nose's flanks engaged {depth_mm:.3} mm deep, past {cone_mm:.3} mm, where it reaches its {diameter_mm:.3} mm cutting diameter and stops being a taper; set a flat depth, use a wider bit, or clear the start depth with a Pocket first"
+        ),
+    }
 }

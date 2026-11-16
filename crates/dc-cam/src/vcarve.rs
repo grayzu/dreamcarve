@@ -673,6 +673,7 @@ fn deepest_is_cut(
             shape: Box::new(shape.clone()),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
+            limit: dc_project::CuttingLimit::Cone,
         });
     }
     if deepest_z_mm < floor_z_mm - EPS_MM {
@@ -892,6 +893,7 @@ pub(crate) fn finish(
                 shape,
                 depth_mm: engaged_mm,
                 cone_mm: bit.cone_mm,
+                limit: dc_project::CuttingLimit::Cone,
             },
             ConeViolation::Wall { overlap_mm, .. } => CamError::ConeOffMaterial {
                 op: op.clone(),

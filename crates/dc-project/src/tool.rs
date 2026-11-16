@@ -20,6 +20,7 @@ use std::fmt;
 
 use crate::ids::ToolId;
 use crate::model::{Tool, ToolKind};
+use dc_geometry::profile::BitProfile;
 
 /// The location of a tapered ball nose's tip diameter within its tool.
 pub const TBN_TIP: &str = "cutter.tapered_ball_nose.tip_diameter_mm";
@@ -32,6 +33,24 @@ pub const TBN_FLUTES: &str = "cutter.tapered_ball_nose.flute_length_mm";
 /// sanity limit, not a physical one (the steepest catalogue TBN is about
 /// 15°; a 45° one is a 90° V-bit with a round tip).
 pub const MAX_TAPER_ANGLE_DEG: f64 = 45.0;
+
+/// What bounds how deep a carving bit's flank may be engaged
+/// ([`Tool::cutting_limit`]): `v_bit_cone_exceeded` names it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CuttingLimit {
+    /// A V-bit's cone, `diameter / (2 tan(α/2))` tall: past it the shank
+    /// cuts.
+    Cone,
+    /// A tapered ball nose's flutes, which end below its cap: past them
+    /// the shank rubs.
+    Flutes,
+    /// A tapered ball nose's cone, which reaches the cutting diameter
+    /// below the flute top: past that height the bit is a cylinder.
+    CuttingDiameter {
+        /// The cutting diameter, mm.
+        diameter_mm: f64,
+    },
+}
 
 /// A value a tool still needs before an enabled operation may use it
 /// ([`Tool::unset_values`]): `tools add`, `init` and the library's import
@@ -180,6 +199,23 @@ impl Tool {
         }
     }
 
+    /// The bit's cross-section for a carve (slice 27c, #679): a V-bit's
+    /// slope, or a tapered ball nose's tip radius, `tan β` and half its
+    /// cutting diameter when every value is set and usable. `None` for any
+    /// other cutter.
+    #[must_use]
+    pub fn carve_profile(&self) -> Option<BitProfile> {
+        None
+    }
+
+    /// What bounds the engagement ([`Tool::cutting_height_mm`]): a
+    /// V-bit's cone, or a tapered ball nose's flutes or cutting diameter,
+    /// whichever comes first. `None` where the cutting height is.
+    #[must_use]
+    pub fn cutting_limit(&self) -> Option<CuttingLimit> {
+        None
+    }
+
     /// The widest the bit cuts, as a radius, mm: the swept radius of a
     /// cut (S7, `swept_bounds`, the preview). `diameter_mm / 2` for every
     /// cutter but a tapered ball nose, whose is `min(w(flute_length_mm),
@@ -236,6 +272,7 @@ impl Tool {
 
 #[cfg(test)]
 mod tests {
+    use super::CuttingLimit;
     use crate::ids::ToolId;
     use crate::model::{Tool, ToolKind};
     use crate::test_support::{tool_6_35_upcut, tool_tbn_fine, tool_tbn_ultra, tool_v_bit_90};
@@ -314,6 +351,48 @@ mod tests {
         );
         assert_eq!(tool_6_35_upcut().cutting_height_mm(), None);
         assert_eq!(unset_tbn().cutting_height_mm(), None);
+    }
+
+    /// Slice 27c (#679): every carving rule reads the bit's profile. A
+    /// V-bit's is its slope, `tan(α/2)`, with no cap; a TBN's is its tip
+    /// radius, `tan β` and half its cutting diameter, when every value is
+    /// set and usable. Any other cutter, or a TBN with a value unset, has
+    /// none. The cutting limit says what bounds the engagement.
+    #[test]
+    fn carve_profile_is_the_bits_cross_section() {
+        use dc_geometry::profile::BitProfile;
+        assert_eq!(
+            tool_v_bit_90().carve_profile(),
+            Some(BitProfile::VBit {
+                slope: 45f64.to_radians().tan()
+            })
+        );
+        assert_eq!(
+            tool_tbn_ultra().carve_profile(),
+            Some(BitProfile::TaperedBall {
+                tip_radius_mm: 0.381,
+                slope: 6.7f64.to_radians().tan(),
+                cap_radius_mm: 3.175,
+            })
+        );
+        assert_eq!(tool_6_35_upcut().carve_profile(), None);
+        assert_eq!(unset_tbn().carve_profile(), None);
+        let flat = Tool {
+            cutter: ToolKind::VBit {
+                included_angle_deg: 180.0,
+            },
+            ..tool_v_bit_90()
+        };
+        assert_eq!(flat.carve_profile(), None);
+
+        assert_eq!(tool_v_bit_90().cutting_limit(), Some(CuttingLimit::Cone));
+        assert_eq!(tool_tbn_ultra().cutting_limit(), Some(CuttingLimit::Flutes));
+        assert_eq!(
+            tool_tbn_fine().cutting_limit(),
+            Some(CuttingLimit::CuttingDiameter { diameter_mm: 6.35 })
+        );
+        assert_eq!(unset_tbn().cutting_limit(), None);
+        assert_eq!(tool_6_35_upcut().cutting_limit(), None);
     }
 
     #[test]

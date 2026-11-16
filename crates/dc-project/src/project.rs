@@ -663,6 +663,35 @@ mod tests {
         assert_eq!(plane(&p), None, "an outline over the slope");
     }
 
+    /// Slice 27c (#679): a V-Carve cut with a tapered ball nose has its
+    /// floor at the bit's half-width at the flat depth, `w(F)`, not `F ·
+    /// tan β`. The Fine bit carving the sample rectangle `i1` (x 10..60)
+    /// 2.5 mm flat has its floor from x 10 + `w(2.5)` = 11.310: a 5 mm
+    /// square from x 11.36 is on it (a V-bit of the same taper would put
+    /// the floor's edge at 10.294, and a 90° V-bit's at 12.5), one from
+    /// x 11.26 is over the slope.
+    #[test]
+    fn tapered_v_carve_floor_clears_its_start_plane() {
+        let floor_edge_mm = 10.0 + (2.5 + 8.6538) * 6.7_f64.to_radians().tan();
+        for (x, expected) in [
+            (floor_edge_mm + 0.05, Some(("v1", Some(2.5)))),
+            (floor_edge_mm - 0.05, None),
+        ] {
+            let mut p = shapes();
+            p.tools.push(crate::model::Tool {
+                id: crate::ids::ToolId::new("t9"),
+                ..crate::test_support::tool_tbn_fine()
+            });
+            place_rect(&mut p, "edge", x, 15.0, 5.0, 5.0);
+            let Operation::VCarve(mut tapered) = floored(&["i1"], Some(2.5), 0.0) else {
+                unreachable!("a V-Carve")
+            };
+            tapered.tool = crate::ids::ToolId::new("t9");
+            p.operations = vec![Operation::VCarve(tapered), carve(&["edge"])];
+            assert_eq!(plane(&p), expected, "a square from x {x}");
+        }
+    }
+
     /// Issue #426: like a Pocket, a disabled V-Carve and one after the
     /// operation clear nothing; of an earlier Pocket and V-Carve that
     /// both hold the footprint, the later one is the plane.
