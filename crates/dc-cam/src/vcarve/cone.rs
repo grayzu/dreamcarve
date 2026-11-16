@@ -844,7 +844,11 @@ mod tests {
             ((5.5, 1.0), (3.5, -1.2), 0.3, 0.9),
             ((-1.9, 1.4), (5.9, -1.4), 0.05, 0.05),
         ];
-        for slope in [1.0, 15.0_f64.to_radians().tan(), 45.0_f64.to_radians().tan()] {
+        for slope in [
+            1.0,
+            15.0_f64.to_radians().tan(),
+            45.0_f64.to_radians().tan(),
+        ] {
             for &((ax, ay), (bx, by), da, db) in &cuts {
                 let a = Point3::new(ax, ay, start_plane_z_mm - da);
                 let b = Point3::new(bx, by, start_plane_z_mm - db);

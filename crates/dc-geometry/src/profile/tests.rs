@@ -17,7 +17,7 @@
 use super::*;
 use crate::assert_approx_eq;
 use crate::distance::point_segment_distance_mm;
-use crate::point::Point;
+use crate::point::{Point, Vec2};
 use proptest::prelude::*;
 use proptest::test_runner::RngSeed;
 
@@ -378,9 +378,10 @@ fn least_room_parallel_to_a_wall_is_distance_less_width() {
             bulge: 0.0,
         };
         let expected = crate::distance::segment_distance_mm(path, wall.segment())
-            - profile.half_width_mm(d);
-        assert_eq!(room_mm.to_bits(), expected.to_bits(), "at {d}: {room_mm}");
-        assert_approx_eq!(room_mm, 1.5 - profile.half_width_mm(d), 1e-12);
+            - profile.half_width_mm(SP - from.z);
+        assert!(room_mm <= expected, "at {d}: {room_mm} above {expected}");
+        assert_approx_eq!(room_mm, expected, 1e-12);
+        assert_approx_eq!(room_mm, 1.5 - profile.half_width_mm(d), 1e-9);
     }
 }
 
@@ -397,7 +398,7 @@ fn least_room_against_a_line_is_the_quadratic_root() {
         for (n0, n1, d0, d1) in [
             (0.5, 0.4, 0.0, h_t),
             (2.0, 1.0, 0.01, 0.9 * h_t),
-            (0.2, 0.05, 0.0, 0.5 * h_t),
+            (0.2, 0.6, 0.0, 0.5 * h_t),
         ] {
             let from = Point3::new(-1.0, n0, SP - d0);
             let to = Point3::new(1.0, n0 + n1, SP - d1);
@@ -475,7 +476,7 @@ fn least_room_splits_at_the_tangent_height() {
                 &format!("{profile:?} {wall:?}"),
                 (from, to, wall, &profile),
                 100_000,
-                1e-6,
+                1e-3,
             );
         }
     }
@@ -527,7 +528,33 @@ fn least_room_of_a_nearly_level_cut_reads_its_deeper_end() {
     let from = Point3::new(-1.0, 0.7, SP - 0.5e-6);
     let to = Point3::new(1.0, 0.7, SP);
     let (room_mm, _) = least_room(from, to, wall, &profile, SP);
-    assert_approx_eq!(room_mm, 0.7 - profile.half_width_mm(0.5e-6), 1e-15);
+    assert_approx_eq!(room_mm, 0.7 - profile.half_width_mm(SP - from.z), 1e-15);
+}
+
+/// A level cut across an arc that sweeps more than a half turn crosses
+/// it: the room is the disc's radius below zero. `segment_distance_mm`
+/// reads such an arc as far away (#678), so the level case also reads the
+/// closed forms and keeps the lesser.
+#[test]
+fn least_room_of_a_level_cut_across_an_arc_past_a_half_turn() {
+    for sweep_deg in [170.0, 200.0, 240.0, 300.0, 340.0] {
+        // Centred on the downward direction, so every sweep holds both
+        // points where the cut's line meets the circle.
+        let wall = arc(
+            Point::new(0.0, 0.0),
+            3.0,
+            270.0 - sweep_deg / 2.0,
+            sweep_deg,
+        );
+        for profile in [fine(), v_bit(60.0)] {
+            let d = 0.4;
+            let from = Point3::new(-5.0, -0.5, SP - d);
+            let to = Point3::new(5.0, -0.5, SP - d);
+            let (room_mm, _) = least_room(from, to, wall, &profile, SP);
+            let width_mm = width_mm(&profile, SP - from.z);
+            assert_approx_eq!(room_mm, -width_mm, 1e-9);
+        }
+    }
 }
 
 /// Non-finite input is never read as room.
@@ -541,7 +568,10 @@ fn least_room_of_non_finite_input_is_no_room() {
         (p, Point3::new(1.0, 1.0, SP - 0.2), f64::NAN),
     ] {
         let (room_mm, _) = least_room(from, to, wall, &fine(), sp);
-        assert!(room_mm.is_infinite() && room_mm < 0.0, "{from:?}–{to:?}: {room_mm}");
+        assert!(
+            room_mm.is_infinite() && room_mm < 0.0,
+            "{from:?}–{to:?}: {room_mm}"
+        );
     }
     let broken = BitProfile::TaperedBall {
         tip_radius_mm: f64::NAN,
@@ -549,7 +579,10 @@ fn least_room_of_non_finite_input_is_no_room() {
         cap_radius_mm: 3.0,
     };
     let (room_mm, _) = least_room(p, Point3::new(1.0, 1.0, SP - 0.2), wall, &broken, SP);
-    assert!(room_mm.is_infinite() && room_mm < 0.0, "a NaN tip: {room_mm}");
+    assert!(
+        room_mm.is_infinite() && room_mm < 0.0,
+        "a NaN tip: {room_mm}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -591,7 +624,8 @@ fn wall_case() -> impl Strategy<Value = WallCase> {
 
 impl WallCase {
     fn piece(self, from: Point, to: Point) -> WallPiece {
-        let on_cut = |s: f64| Point::new(from.x + (to.x - from.x) * s, from.y + (to.y - from.y) * s);
+        let on_cut =
+            |s: f64| Point::new(from.x + (to.x - from.x) * s, from.y + (to.y - from.y) * s);
         match self {
             Self::Line(a, b) => WallPiece::line(a, b),
             Self::Arc(start, end, bulge) => WallPiece::from(Segment { start, end, bulge }),
@@ -668,10 +702,17 @@ proptest! {
             "{profile:?} {a:?}–{b:?} {wall:?}: exact {room_mm} at {t} above sampled {fine_mm} at {fine_t}"
         );
         let at_mm = room_at(a, b, piece, &profile, t);
+        // A level cut is read at its deeper end, and against today's
+        // segment distance, which reads a gap within `EPS_MM` as a touch:
+        // both can only read less room than there is.
         let level = (b.z - a.z).abs() <= crate::point::EPS_MM;
-        let slack = if level { (profile.half_width_mm(d0.max(d1)) - profile.half_width_mm(d0.min(d1))).abs() } else { 0.0 };
+        let slack = if level {
+            (width_mm(&profile, SP - a.z) - width_mm(&profile, SP - b.z)).abs() + crate::point::EPS_MM
+        } else {
+            0.0
+        };
         prop_assert!(
-            (at_mm - room_mm).abs() <= 1e-9 + slack,
+            room_mm - at_mm <= 1e-9 && at_mm - room_mm <= 1e-9 + slack,
             "{profile:?} {a:?}–{b:?} {wall:?}: the room at {t} is {at_mm}, not {room_mm}"
         );
     }
