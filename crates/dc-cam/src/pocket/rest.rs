@@ -124,17 +124,61 @@ pub fn left_by(
     } else {
         vec![region.clone()]
     };
-    let reached: Vec<Region> = references
-        .iter()
-        .flat_map(|&reference| reachable(region, reference, tolerance_mm))
-        .collect();
+    let reached = reached_by(region, references, tolerance_mm);
     without_noise(difference(&material, &reached, tolerance_mm), tolerance_mm)
 }
 
-/// What `references` left of `region` that a V-bit floor must cut (#695).
+/// What `references` reached of `region` ([`reachable`]), every one's.
+fn reached_by(region: &Region, references: &[Reference], tolerance_mm: f64) -> Vec<Region> {
+    references
+        .iter()
+        .flat_map(|&reference| reachable(region, reference, tolerance_mm))
+        .collect()
+}
+
+/// [`left_by`] at no stock to leave, as a V-bit floor cuts it (#695): no
+/// part of what the references left that is at least twice `tolerance_mm`
+/// wide is dropped as noise.
+///
+/// [`left_by`]'s noise rule weighs a whole piece: its area against the
+/// tolerance times its perimeter. At each convex corner of a floor the
+/// reach is round, so the end mill leaves a cusp between the corner and
+/// the round, and the booleans can join the cusps into one piece by
+/// hairline strips along the edges between them, where the reach meets
+/// the edge. Its perimeter is then the whole run of edges, and the rule
+/// dropped every cusp in it: a regular heptagon with the 3.175 mm end mill
+/// kept none of its seven 0.175 mm cusps, and in line art `0x94` such a
+/// cusp, 0.1 mm off the floor's trace, stood 0.8 mm under a 15° bit.
+///
+/// A piece the rule keeps is kept whole, as [`left_by`] keeps it. A piece
+/// it drops keeps its opening: the piece inset by the tolerance and grown
+/// back, within the piece. That is every part of it at least twice the
+/// tolerance wide; the hairlines, thinner, are noise by the same measure
+/// as before. Pieces of the opening whose area is under a quarter of the
+/// tolerance times their perimeter are slivers of the booleans, not
+/// cusps: a part that holds a disc of the tolerance's radius is at least
+/// half the tolerance times its perimeter when it is convex.
 #[must_use]
 pub fn left_wide_by(region: &Region, references: &[Reference], tolerance_mm: f64) -> Vec<Region> {
-    left_by(region, 0.0, references, tolerance_mm)
+    let reached = reached_by(region, references, tolerance_mm);
+    let mut out = Vec::new();
+    for piece in difference(std::slice::from_ref(region), &reached, tolerance_mm) {
+        if !is_thin(&piece, tolerance_mm) {
+            out.push(piece);
+            continue;
+        }
+        let core = inset_region(&piece, tolerance_mm, tolerance_mm);
+        if core.is_empty() {
+            continue;
+        }
+        let opened = intersection(
+            &grow_all(&core, tolerance_mm, tolerance_mm),
+            std::slice::from_ref(&piece),
+            tolerance_mm,
+        );
+        out.extend(without_noise(opened, tolerance_mm / 4.0));
+    }
+    out
 }
 
 /// The tool-centre region of a rest operation: the points of `own_centre`
@@ -195,14 +239,18 @@ pub fn in_air(ring: &Contour, left: &[Region], radius_mm: f64, tolerance_mm: f64
 fn without_noise(regions: Vec<Region>, tolerance_mm: f64) -> Vec<Region> {
     regions
         .into_iter()
-        .filter(|r| {
-            let perimeter_mm: f64 = std::iter::once(r.outer())
-                .chain(r.holes())
-                .map(|c| c.polyline().length_mm())
-                .sum();
-            r.area_mm2() > tolerance_mm * perimeter_mm
-        })
+        .filter(|r| !is_thin(r, tolerance_mm))
         .collect()
+}
+
+/// Whether `region`'s area is at most `tolerance_mm` times its perimeter:
+/// noise, by [`without_noise`]'s rule.
+fn is_thin(region: &Region, tolerance_mm: f64) -> bool {
+    let perimeter_mm: f64 = std::iter::once(region.outer())
+        .chain(region.holes())
+        .map(|c| c.polyline().length_mm())
+        .sum();
+    region.area_mm2() <= tolerance_mm * perimeter_mm
 }
 
 /// The region `contour` alone encloses.
