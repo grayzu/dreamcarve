@@ -939,7 +939,21 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      the cut-out and the board's edge (45, 49f) read the bit's width at
      the plug's foot and at the male board's top where they read
      `plug_depth_mm · tan(α/2)` and the flank's width for a V-bit.
-49l. **Fusion import and the codes.** Fusion's `tapered mill` imports as a
+49l. **The library, Fusion import and the codes.** A tapered ball nose
+ goes through the tool library end to end (maintainer, PR #670: until
+ now library imports left it out): `tools import` reads it from a
+ DreamCarve library (version 3) or a Fusion library, keeping a tool whose
+ values are partly missing with those values unset and naming them on
+ its report line; `tools list` shows its cut diameter, tip, taper and
+ flutes, `-` for an unset value; `tools add` copies it into a project
+ and prints each value it still needs and where it is in the file
+ (`set tools[2].cutter.tapered_ball_nose.flute_length_mm`), as it does a
+ tool's unset feeds, and `init` does the same for its "Set me" tool.
+ Once an operation uses the tool, `check` lists every unset value
+ (`tool_value_unset`, at its field) and `export` refuses until each is
+ set; nothing is guessed. In the phase 4 app the tool editor and the
+ library panel highlight each empty required field in place.
+ Fusion's `tapered mill` imports as a
  tapered ball nose when its corner radius is half its diameter (`RE =
  DC/2`, a ball tip): `DC` is `diameter_mm`, `TA` is `taper_angle_deg`
  as written (per side, as Fusion's chamfer mill's `TA` is the half
