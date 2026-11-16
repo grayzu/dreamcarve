@@ -1097,4 +1097,137 @@ mod tests {
             }
         }
     }
+
+    /// The polylines of `contours`.
+    fn lines(contours: &[Contour]) -> Vec<&Polyline> {
+        contours.iter().map(Contour::polyline).collect()
+    }
+
+    /// #694: cavalier_contours takes arcs of at most a half turn. Shapes
+    /// with an arc of 200°, 270° or 350° offset, in and out, to the same
+    /// contours as the same shapes with that arc as two halves. The test
+    /// covers a sector, a lobe and a notch on a rectangle, and an open
+    /// arc offset to either side.
+    #[test]
+    fn arc_past_a_half_turn_offsets_like_its_split_halves() {
+        const CLOSE_MM: f64 = 1e-5;
+        for case in crate::big_arcs::cases() {
+            let whole = Contour::new(case.whole.clone()).unwrap();
+            let split = Contour::new(case.split.clone()).unwrap();
+            assert_approx_eq!(whole.signed_area_mm2(), split.signed_area_mm2(), 1e-9);
+            for delta_mm in [-3.0, -1.5, -0.5, 0.5, 1.5, 3.0] {
+                let what = format!("{} offset by {delta_mm} mm", case.name);
+                let (a, b) = (offset(&whole, delta_mm), offset(&split, delta_mm));
+                assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
+                let area = |cs: &[Contour]| cs.iter().map(Contour::signed_area_mm2).sum::<f64>();
+                let length_mm: f64 = a.iter().map(|c| c.polyline().length_mm()).sum();
+                assert!(
+                    (area(&a) - area(&b)).abs() <= CLOSE_MM * length_mm.max(1.0),
+                    "{what}: area {} against {}",
+                    area(&a),
+                    area(&b)
+                );
+                let off_mm = crate::big_arcs::deviation_mm(&lines(&a), &lines(&b));
+                assert!(off_mm <= CLOSE_MM, "{what}: {off_mm} mm apart");
+            }
+        }
+        for deg in crate::big_arcs::SWEEPS_DEG {
+            let s = deg.to_radians();
+            let whole = crate::big_arcs::open_arc(s, false);
+            let split = crate::big_arcs::open_arc(s, true);
+            for left_mm in [-3.0, -1.0, 1.0, 3.0] {
+                let what = format!("open arc of {deg}° offset {left_mm} mm left");
+                let (a, b) = (offset_open(&whole, left_mm), offset_open(&split, left_mm));
+                assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
+                let off_mm = crate::big_arcs::deviation_mm(
+                    &a.iter().collect::<Vec<_>>(),
+                    &b.iter().collect::<Vec<_>>(),
+                );
+                assert!(off_mm <= CLOSE_MM, "{what}: {off_mm} mm apart");
+            }
+        }
+    }
+
+    mod to_cavalier {
+        use super::super::{from_cavalier, to_cavalier};
+        use crate::distance::distance_to_segment;
+        use crate::polyline::{Polyline, Vertex};
+        use proptest::prelude::*;
+        use proptest::test_runner::RngSeed;
+
+        /// A bulge: mostly any size up to ±50 (a sweep of 355°), and
+        /// sometimes exactly 0 or ±1, just past ±1, or huge.
+        fn bulge() -> impl Strategy<Value = f64> {
+            prop_oneof![
+                4 => -50.0..50.0_f64,
+                1 => prop::sample::select(vec![0.0, 1.0, -1.0, 1.000_001, -1.000_001, 1e6, -1e6]),
+            ]
+        }
+
+        /// Two to eight vertices within ±50 mm, some repeating the one
+        /// before so a segment has no length, open or closed.
+        fn polyline() -> impl Strategy<Value = Polyline> {
+            let vertex = (-50.0..50.0_f64, -50.0..50.0_f64, bulge());
+            (
+                prop::collection::vec((vertex, prop::bool::weighted(0.1)), 2..8),
+                any::<bool>(),
+            )
+                .prop_map(|(raw, closed)| {
+                    let mut vertices: Vec<Vertex> = Vec::new();
+                    for ((x, y, bulge), repeat) in raw {
+                        let (x, y) = match vertices.last() {
+                            Some(last) if repeat => (last.x, last.y),
+                            _ => (x, y),
+                        };
+                        vertices.push(Vertex::new(x, y, bulge));
+                    }
+                    Polyline::new(vertices, closed)
+                })
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: 2048,
+                rng_seed: RngSeed::Fixed(0x0694_0694),
+                failure_persistence: None,
+                ..ProptestConfig::default()
+            })]
+
+            /// #694: whatever bulges a polyline holds, none past a half
+            /// turn (|bulge| > 1) reaches cavalier_contours. What does is
+            /// the same path: every vertex of the source in order, the
+            /// same length and area, and every point of it on the source.
+            #[test]
+            fn no_bulge_above_one_reaches_cavalier(source in polyline()) {
+                let back = from_cavalier(&to_cavalier(&source));
+                for v in back.vertices() {
+                    prop_assert!(v.bulge.abs() <= 1.0, "bulge {} reaches cavalier", v.bulge);
+                }
+                prop_assert_eq!(back.is_closed(), source.is_closed());
+                let mut kept = back.vertices().iter();
+                for v in source.vertices() {
+                    prop_assert!(
+                        kept.any(|w| w.x == v.x && w.y == v.y),
+                        "vertex ({}, {}) is kept, in order", v.x, v.y
+                    );
+                }
+                let scale_mm = 1e-9 * (1.0 + source.length_mm());
+                prop_assert!((back.length_mm() - source.length_mm()).abs() <= scale_mm);
+                prop_assert!(
+                    (back.signed_area_mm2() - source.signed_area_mm2()).abs()
+                        <= scale_mm * (1.0 + source.reach_mm())
+                );
+                for seg in back.segments() {
+                    let Some((p, _)) = seg.point_at(seg.length_mm() / 3.0) else {
+                        continue;
+                    };
+                    let off_mm = source
+                        .segments()
+                        .map(|s| distance_to_segment(s, p))
+                        .fold(f64::INFINITY, f64::min);
+                    prop_assert!(off_mm <= scale_mm, "{} mm off the source", off_mm);
+                }
+            }
+        }
+    }
 }

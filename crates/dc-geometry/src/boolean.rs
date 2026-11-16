@@ -554,4 +554,55 @@ mod tests {
             );
         }
     }
+
+    /// #694: a shape with an arc of 200°, 270° or 350° unions, subtracts
+    /// and intersects with a bar across that arc as the same shape with
+    /// the arc as two halves does. Arcs are flattened here, so the two
+    /// agree within the flattening tolerance, not exactly.
+    #[test]
+    fn arc_past_a_half_turn_unions_and_subtracts_like_its_split_halves() {
+        for case in crate::big_arcs::cases() {
+            let whole = region_of(vec![case.whole.clone()]);
+            let split = region_of(vec![case.split.clone()]);
+            // Bars across the sector's arc, and down through the lobe or
+            // the notch.
+            let bars = if case.name.starts_with("sector") {
+                [rect(-2.0, -12.0, 4.0, 24.0), rect(-12.0, -1.0, 24.0, 2.0)]
+            } else {
+                [rect(17.0, 20.0, 6.0, 20.0), rect(10.0, 33.0, 20.0, 1.0)]
+            };
+            for bar in bars {
+                for op in [
+                    BooleanOp::Union,
+                    BooleanOp::Difference,
+                    BooleanOp::Intersection,
+                ] {
+                    let what = format!("{} {op:?} {:?}", case.name, bar.outer());
+                    let a = boolean(&[whole.clone()], &[bar.clone()], op, TOL_MM);
+                    let b = boolean(&[split.clone()], &[bar.clone()], op, TOL_MM);
+                    assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
+                    let area = |rs: &[Region]| rs.iter().map(Region::area_mm2).sum::<f64>();
+                    let length_mm = case.whole.length_mm() + bar.outer().polyline().length_mm();
+                    assert!(
+                        (area(&a) - area(&b)).abs() <= TOL_MM * length_mm,
+                        "{what}: area {} against {}",
+                        area(&a),
+                        area(&b)
+                    );
+                    let lines = |rs: &[Region]| -> Vec<Polyline> {
+                        rs.iter()
+                            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+                            .map(|c| c.polyline().clone())
+                            .collect()
+                    };
+                    let (la, lb) = (lines(&a), lines(&b));
+                    let off_mm = crate::big_arcs::deviation_mm(
+                        &la.iter().collect::<Vec<_>>(),
+                        &lb.iter().collect::<Vec<_>>(),
+                    );
+                    assert!(off_mm <= 2.0 * TOL_MM, "{what}: {off_mm} mm apart");
+                }
+            }
+        }
+    }
 }

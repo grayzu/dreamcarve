@@ -331,6 +331,43 @@ mod tests {
         }
     }
 
+    /// #694: where a line crosses an arc past a half turn, the outline
+    /// crosses itself, and is refused at the same point as when that arc
+    /// is drawn as its two halves. A shape with such an arc and no
+    /// crossing is a contour either way.
+    #[test]
+    fn self_crossing_of_an_arc_past_a_half_turn_is_found_like_its_split_halves() {
+        let r = 5.0;
+        for deg in crate::big_arcs::SWEEPS_DEG {
+            let s = deg.to_radians();
+            let end = Point::new(r * s.cos(), r * s.sin());
+            // From the arc's end back through its centre and out the far
+            // side, which the arc sweeps over, then home.
+            let far = Point::new(-1.6 * end.x, -1.6 * end.y);
+            let shape = |arc: Vec<Vertex>| {
+                let mut v = arc;
+                v.push(Vertex::line(end.x, end.y));
+                v.push(Vertex::line(far.x, far.y));
+                Polyline::new(v, true)
+            };
+            let half = (s / 8.0).tan();
+            let whole = shape(vec![Vertex::new(r, 0.0, (s / 4.0).tan())]);
+            let split = shape(vec![
+                Vertex::new(r, 0.0, half),
+                Vertex::new(r * (s / 2.0).cos(), r * (s / 2.0).sin(), half),
+            ]);
+            let at = |p: Polyline| match Contour::new(p) {
+                Err(GeometryError::SelfIntersecting { at }) => at,
+                other => panic!("{deg}°: {other:?} is not refused as crossing itself"),
+            };
+            let (a, b) = (at(whole), at(split));
+            assert!(a.distance_to(b) <= 1e-6, "{deg}°: {a:?} against {b:?}");
+        }
+        for case in crate::big_arcs::cases() {
+            assert!(Contour::new(case.whole).is_ok(), "{}", case.name);
+        }
+    }
+
     #[test]
     fn single_vertex_is_rejected() {
         let one = Polyline::new(vec![Vertex::line(1.0, 1.0)], true);

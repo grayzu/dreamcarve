@@ -2208,6 +2208,89 @@ mod tests {
         import(dxf_entities(entities).as_bytes())
     }
 
+    /// An ARC entity on `layer`, counter-clockwise from `start` to `end`
+    /// degrees.
+    fn arc_entity(layer: &str, centre: (f64, f64), radius: f64, start: f64, end: f64) -> String {
+        format!(
+            "0\nARC\n8\n{layer}\n10\n{:?}\n20\n{:?}\n40\n{radius:?}\n50\n{start:?}\n51\n{end:?}\n",
+            centre.0, centre.1
+        )
+    }
+
+    /// #694: an arc past a half turn imports as its two halves, arcs of
+    /// the same circle that each sweep half of it, so no stored bulge is
+    /// past 1. The test covers an ARC of 270°, an LWPOLYLINE bulge of 2.4
+    /// (269.5°) and a HATCH arc edge of 270°.
+    #[test]
+    fn arc_past_a_half_turn_imports_as_two_segments() {
+        let entities = [
+            arc_entity("arc", (10.0, 10.0), 5.0, 0.0, 270.0),
+            lwpolyline("lw", &[(30.0, 0.0, 2.4), (40.0, 0.0, 0.0)]),
+            hatch(
+                "H1",
+                "fill",
+                UP,
+                &[edge_path(&[
+                    arc_edge((60.0, 10.0), 5.0, 0.0, 270.0, true),
+                    line_edge((60.0, 5.0), (65.0, 10.0)),
+                ])],
+            ),
+        ]
+        .concat();
+        let (result, warnings) = hatch_import(&entities);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let lw_sweep = 4.0 * 2.4_f64.atan();
+        let lw_radius = 10.0 * (1.0 + 2.4 * 2.4) / (4.0 * 2.4);
+        let cases = [
+            ("arc", Point::new(10.0, 10.0), 5.0, 1.5 * PI, false),
+            ("lw", Point::new(35.0, 0.0), lw_radius, lw_sweep, true),
+            ("fill", Point::new(60.0, 10.0), 5.0, 1.5 * PI, true),
+        ];
+        for (name, centre, radius_mm, sweep_rad, closed) in cases {
+            let shape = only(&result, name);
+            assert_eq!(shape.is_closed(), closed, "{name}");
+            assert!(
+                shape.vertices().iter().all(|v| v.bulge.abs() <= 1.0),
+                "{name}: {shape:?}"
+            );
+            let arcs: Vec<_> = shape.segments().filter_map(|s| s.arc()).collect();
+            assert_eq!(arcs.len(), 2, "{name}: {arcs:?}");
+            for arc in &arcs {
+                assert!(arc.centre.distance_to(centre) <= TOL_MM, "{name}: {arc:?}");
+                assert_approx_eq!(arc.radius_mm, radius_mm, TOL_MM);
+                assert_approx_eq!(arc.sweep_rad, sweep_rad / 2.0, TOL_MM);
+            }
+            assert_eq!(shape.vertices().len(), 3, "{name}: {shape:?}");
+        }
+        // The hatch encloses the arc's circular segment: r²/2·(θ − sin θ).
+        let fill = only(&result, "fill");
+        let segment_mm2 = 12.5 * (1.5 * PI - (1.5 * PI).sin());
+        assert_approx_eq!(fill.signed_area_mm2().abs(), segment_mm2, 1e-6);
+    }
+
+    /// #694: the vertex a split adds is charged to the import's vertex
+    /// limit. A 270° ARC is three vertices once split, so a limit of two
+    /// refuses it, while a 90° ARC still imports under that limit.
+    #[test]
+    fn arc_past_a_half_turn_is_charged_to_the_vertex_limit() {
+        let two = DxfImportOptions {
+            max_vertices: 2,
+            ..DxfImportOptions::new()
+        };
+        let quarter_arc = dxf_entities(&arc_entity("arc", (0.0, 0.0), 5.0, 0.0, 90.0));
+        assert!(import_dxf(quarter_arc.as_bytes(), &two).is_ok());
+        let big_arc = dxf_entities(&arc_entity("arc", (0.0, 0.0), 5.0, 0.0, 270.0));
+        assert!(matches!(
+            import_dxf(big_arc.as_bytes(), &two),
+            Err(ImportError::TooManyVertices { limit: 2 })
+        ));
+        let three = DxfImportOptions {
+            max_vertices: 3,
+            ..DxfImportOptions::new()
+        };
+        assert!(import_dxf(big_arc.as_bytes(), &three).is_ok());
+    }
+
     /// The bulge of a quarter arc.
     fn quarter() -> f64 {
         (FRAC_PI_2 / 4.0).tan()
