@@ -814,7 +814,7 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      "side angle" and the vendors' catalogues give it (a V-bit's angle is
      its included angle, as V-bits are sold; the two are not
      interchangeable, and Corbin warns that mixing them up doubles the
-     angle). Above 0° and at most 45°;
+     angle). Above 0° and at most 45° (both decided 2026-11-16, PR #670);
     - `flute_length_mm`, the fluted length from the tip, past which the
      shank would rub. Above the height where the ball meets the cone;
     - the tool's `diameter_mm`, which means for a TBN what it means for
@@ -902,7 +902,7 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      gap). Likewise `plug_depth_mm`, else the plug's wall just under the
      surface is cut by the ball, narrower than the pocket
      (`inlay_plug_depth_below_ball`). Both warnings, as
-     `inlay_plug_base_thin` is.
+     `inlay_plug_base_thin` is (decided 2026-11-16, PR #670).
     - **The design is rounded for the bit**, on both boards. A sharp
      point of the design or a part narrower than the bit can carve to the
      plug's height leaves wood in the pocket that the plug's sharper point
@@ -918,7 +918,8 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      a gap the rounding would remove, split or join is refused instead:
      `inlay_too_narrow_for_bit` names it, its width and the width the bit
      needs, so the user widens it, lowers the plug's height or picks a
-     finer tip. A V-bit inlay is never rounded and is unchanged.
+     finer tip (decided 2026-11-16, PR #670: the Inlay rounds, rather than
+     only warning). A V-bit inlay is never rounded and is unchanged.
     - **The fit is calibrated by a test fit.** A small error in the bit's
      numbers moves where the plug seats, by the same amount everywhere in
      the design (the walls still mate), and a TBN's 6.7° flank turns
@@ -933,7 +934,9 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      **coupon pair**, a 20 mm rounded square at the job's three depths,
      and adjust `glue_gap_mm` until it seats flush, before the real inlay,
      starting from `glue_gap_mm` = tangent height + 0.5 mm. It also shows
-     how to measure the taper with two plunge holes. The engagement check
+     how to measure the taper with two plunge holes. No calibration is
+     stored in 3.6 (decided 2026-11-16, PR #670); the bench part decides
+     whether one is needed. The engagement check
      reads the flute length: the male's `depth_mm − glue_gap_mm +
      plug_depth_mm` must not exceed it. The band's edge, the edge pass,
      the cut-out and the board's edge (45, 49f) read the bit's width at
@@ -1736,7 +1739,8 @@ numbers):
 The model and the plunge holes disagree by about 0.2 mm in radius (the
 design spec, "Tapered ball nose"), which moves an inlay's seat by
 several millimetres; the coupon fit below is what absorbs it, and the
-seat it measures settles open question 27.
+seat it measures settles whether a stored calibration is needed
+(question 27).
 
 **Why 6 mm deep** (maintainer, PR #670, 2026-11-16: "instead of using the
 exact same numbers as the V-bit inlay, … take advantage of the steeper
@@ -1894,20 +1898,22 @@ folded into capabilities 49a to 49g like the table above. Questions 10 to
 | 23  | Circles and arcs in the input come out as polygons (the pipeline's booleans are polygonal). Is that acceptable? | Yes for inlay work: V-Carve flattens its regions before the medial axis anyway, and the tolerance, 0.005 % of the height, is finer than the carve's own. It matters for a Drill on circles from prepared art, so the chapter says: drill holes come from the original drawing. Passing an untouched path's curves through to the output is possible and listed as out of scope for 3.4. |
 | 24  | The synthetic `compass.svg` as the committed stand-in for the maintainer's eagle (test part 3). | Yes, as 49 and the test part say: the eagle is the motivating case and the bench check may use it, but nothing of it is committed. The compass has the same shape of problem: thin ink, many pockets, ridges of a known width. |
 
-### Sub-phase 3.6: open for the maintainer's review
+### Sub-phase 3.6: decided in review
 
-Added with the 3.6 spec (2026-11-13, #445). Each row has a
-recommendation and its reason; the maintainer answers in review, and the
-decisions are then folded into capabilities 49h to 49l.
+Added with the 3.6 spec (2026-11-13, #445). The maintainer agreed with
+the recommendations of 25 to 31 in PR #670's review (2026-11-16), and
+they are folded into capabilities 49h to 49l; 29 was decided with the
+review's change to the TBN's diameters. 32 and 33 came out of that
+review and are open, each with its recommendation.
 
-| #   | Question | Recommendation |
+| #   | Question | Recommendation, and decision |
 | --- | -------- | -------------- |
-| 25  | Should an Inlay with a TBN round its design itself (points to `(depth_mm − glue_gap_mm) · tan β + ρ cos β`, inward corners to `ρ cos β`, on both boards), or only warn and leave the rounding to the drawing? | Round it, and refuse what rounding cannot fix (49k). A single unrounded 90° point holds the plug 0.94 mm proud with the 0.381 mm tip and 2.8 mm with the 1.143 mm tip, so almost every lettered design would fail to seat with a warning nobody can act on without redrawing; Corbin's own advice is to round. The pair stays one design on both boards, as #479's near-part merge already does, and the warning says how far the outline moved. The cost is that the inlay's visible outline is not exactly the drawing (by up to `R_min (1/sin(θ/2) − 1)` at a point); a part or gap the rounding would remove, split or join is refused rather than changed. The alternative, warning only, keeps the outline as drawn and leaves the seat to the user. |
-| 26  | Photo V-Carve with a TBN: allowed? | Not in 3.6 (S19 unchanged). RasterCarve and VCarve's PhotoVCarve model a V-bit, so tone is depth; a TBN's groove widens as `√depth` in the ball, which needs a new tone law (darkness to width) with no reference to test it against, and its narrow taper gives grooves little different from a 30° V-bit's. It is a contained follow-up if wanted: the profile makes width-to-depth one function. |
-| 27  | Calibration. The plunge holes do not fit a ball-and-tangent-cone model at the catalogue tip radii (the cone lines sit 0.2 to 0.25 mm off, which alone would move a seat 3.4 to 4.3 mm). Add a stored calibration (an "effective tip radius" fitted to two plunge holes), or rely on a test fit? | Test fit first (49k): the error moves the seat by the same amount everywhere, which is exactly what Corbin's glue-gap adjustment absorbs, and the coupon pair measures the bit as it actually cuts, runout and wear included, which no hole measured by eye does to 0.05 mm. Start the coupon at `glue_gap_mm` = tangent height + 0.5 mm. Decide on a stored calibration after the bench part: if the coupon's seat is off by more than a glue gap can take, add it then. The ±0.5° of the taper alone moves the seat ±0.30 mm (Fine) and ±0.40 mm (Ultra) at `D` 4, `P` 2, about the 15° V-bit's ±0.41 mm, and `check`'s seat line prints the job's own figures. |
-| 28  | Angle convention: the TBN's taper per side (Fusion's `TA`, Vectric's side angle, the catalogues), though a V-bit stores its included angle? | Per side, named so (`taper_angle_deg`, "per side" in every message). Each bit keeps the convention it is sold and stored by, so the user types the number on the packet; converting one to the other's convention is the doubling mistake Corbin warns of. Phase 4's tables must label the two (design spec, 3.6's phase 4 list). |
-| 29  | `diameter_mm` of a TBN is the ball's diameter (2 × tip radius), with no tip-radius field, rather than a `tip_radius_mm` in the cutter beside a `diameter_mm` that would mean something else? | The ball's diameter: it is Fusion's `DC` for a ball-tipped tapered mill, Corbin's "ball diameter", and the phase 4 mock-up's Ø 0.762 already; one number cannot disagree with itself. Every place that reads `diameter_mm / 2` as a cut's width reads the derived cut radius instead, so nothing treats the ball as the bit's width. |
-| 30  | The taper's range, (0°, 45°]: a sanity bound, not a physical one. | Keep 45°. Catalogue TBNs run 1° to about 15° per side; a 45° "TBN" is a 90° V-bit with a rounded point, better entered as a V-bit. A lower bound of 0 excluded is required (a straight ball mill has no cone). |
-| 31  | `glue_gap_mm` or `plug_depth_mm` below the tangent height: warnings (as here) or errors? | Warnings, as `inlay_plug_base_thin` is: each names its cost (the plug's lift and the gap at the surface), which is small for the 0.381 mm tip (0.03 mm lift at a 0.25 mm gap) and large for the 1.143 mm tip (0.43 mm), so the user can judge. Validation and the generator both say it, once in `check`. |
+| 25  | Should an Inlay with a TBN round its design itself (points to `(depth_mm − glue_gap_mm) · tan β + ρ cos β`, inward corners to `ρ cos β`, on both boards), or only warn and leave the rounding to the drawing? | Round it, and refuse what rounding cannot fix (49k). A single unrounded 90° point holds the plug 0.94 mm proud with the 0.381 mm tip and 2.8 mm with the 1.143 mm tip, so almost every lettered design would fail to seat with a warning nobody can act on without redrawing; Corbin's own advice is to round. The pair stays one design on both boards, as #479's near-part merge already does, and the warning says how far the outline moved. The cost is that the inlay's visible outline is not exactly the drawing (by up to `R_min (1/sin(θ/2) − 1)` at a point); a part or gap the rounding would remove, split or join is refused rather than changed. The alternative, warning only, keeps the outline as drawn and leaves the seat to the user. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
+| 26  | Photo V-Carve with a TBN: allowed? | Not in 3.6 (S19 unchanged). RasterCarve and VCarve's PhotoVCarve model a V-bit, so tone is depth; a TBN's groove widens as `√depth` in the ball, which needs a new tone law (darkness to width) with no reference to test it against, and its narrow taper gives grooves little different from a 30° V-bit's. It is a contained follow-up if wanted: the profile makes width-to-depth one function. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
+| 27  | Calibration. The plunge holes do not fit a ball-and-tangent-cone model at the catalogue tip radii (the cone lines sit 0.2 to 0.25 mm off, which alone would move a seat 3.4 to 4.3 mm). Add a stored calibration (an "effective tip radius" fitted to two plunge holes), or rely on a test fit? | Test fit first (49k): the error moves the seat by the same amount everywhere, which is exactly what Corbin's glue-gap adjustment absorbs, and the coupon pair measures the bit as it actually cuts, runout and wear included, which no hole measured by eye does to 0.05 mm. Start the coupon at `glue_gap_mm` = tangent height + 0.5 mm. Decide on a stored calibration after the bench part: if the coupon's seat is off by more than a glue gap can take, add it then. The ±0.5° of the taper alone moves the seat ±0.30 mm (Fine) and ±0.40 mm (Ultra) at `D` 4, `P` 2, about the 15° V-bit's ±0.41 mm, and `check`'s seat line prints the job's own figures. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
+| 28  | Angle convention: the TBN's taper per side (Fusion's `TA`, Vectric's side angle, the catalogues), though a V-bit stores its included angle? | Per side, named so (`taper_angle_deg`, "per side" in every message). Each bit keeps the convention it is sold and stored by, so the user types the number on the packet; converting one to the other's convention is the doubling mistake Corbin warns of. Phase 4's tables must label the two (design spec, 3.6's phase 4 list). **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
+| 29  | `diameter_mm` of a TBN is the ball's diameter (2 × tip radius), with no tip-radius field, rather than a `tip_radius_mm` in the cutter beside a `diameter_mm` that would mean something else? | The ball's diameter: it is Fusion's `DC` for a ball-tipped tapered mill, Corbin's "ball diameter", and the phase 4 mock-up's Ø 0.762 already; one number cannot disagree with itself. Every place that reads `diameter_mm / 2` as a cut's width reads the derived cut radius instead, so nothing treats the ball as the bit's width. **Resolved: decided 2026-11-16, maintainer, PR #670, superseded in review:** the cutter carries `tip_diameter_mm`, the ball's diameter, and `diameter_mm` keeps its meaning for every tool, the cutting diameter, which caps the taper (49h). One clearly named field per diameter. |
+| 30  | The taper's range, (0°, 45°]: a sanity bound, not a physical one. | Keep 45°. Catalogue TBNs run 1° to about 15° per side; a 45° "TBN" is a 90° V-bit with a rounded point, better entered as a V-bit. A lower bound of 0 excluded is required (a straight ball mill has no cone). **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
+| 31  | `glue_gap_mm` or `plug_depth_mm` below the tangent height: warnings (as here) or errors? | Warnings, as `inlay_plug_base_thin` is: each names its cost (the plug's lift and the gap at the surface), which is small for the 0.381 mm tip (0.03 mm lift at a 0.25 mm gap) and large for the 1.143 mm tip (0.43 mm), so the user can judge. Validation and the generator both say it, once in `check`. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
 | 32  | Added in PR #670's review (2026-11-16). A TBN whose cone reaches its cutting diameter below the top of its flutes (the bench's 1.143 mm tip: 18.37 mm, against 19.05 mm of flute) is a cylinder above that height. Should an operation engaged past it be refused, or only warned? | Refused, as `v_bit_cone_exceeded` naming the cutting diameter, and the tool itself never warned about. Past that height the bit cuts straight walls, so a V-Carve's groove no longer follows the medial law and an Inlay's plug stops mating; refusing keeps one limit, the cutting height, in every rule (validation, generator, S17's shank). The case is rare: only a start depth or a male's engagement reaches 18 mm. If the maintainer prefers a warning for a plain V-Carve, the walls above the cap would be cut vertical and the warning would name the height. |
 | 33  | Added in PR #670's review (2026-11-16). A Fusion tapered mill with no shaft diameter has no cutting diameter, but every tool's `diameter_mm` is required. Write it equal to the tip diameter and read that as unset (as specified), or make `diameter_mm` optional? | Equal to the tip, read as unset: a TBN can never have its cutting diameter equal to its tip, so the mark is unambiguous, `check` points at `tools[i].diameter_mm` like any unset value, and the 327 reads of `diameter_mm` keep their type. Making it optional for every tool would touch all of them for one rare import case (Fusion tools nearly always carry `SFDM`). |

@@ -1359,8 +1359,9 @@ what the maintainer's flute-top widths (6.1 and 5.7 mm, extrapolated
 from the holes) show too. A TBN whose cone is not quite tangent to a
 ball of its catalogue radius, runout, and tear-out all move that line;
 the model cannot tell them apart from two numbers. What it costs an
-inlay, and why a test fit is the calibration, is "Inlay fit" below (open
-question 27).
+inlay, and why a test fit is the calibration, is "Inlay fit" below
+(question 27, decided 2026-11-16, maintainer, PR #670: a test fit now, a stored calibration only if
+the bench part shows the need).
 
 **Format 28.** `CURRENT_VERSION` becomes 28. `v27_to_v28` changes no
 field: it adds a cutter variant a file from before cannot contain, so it
@@ -3522,8 +3523,8 @@ the two it needs.
    one's position and its distance (functional 49j). It is a warning,
    not an error: a plain carve fits nothing, and the soft corner is what
    the user chose the bit for.
-10. **Not in 3.6.** A **Photo V-Carve** with a TBN (recommended out; open
-    question 26): RasterCarve, the behaviour and golden reference, models
+10. **Not in 3.6.** A **Photo V-Carve** with a TBN (out; question 26,
+    decided 2026-11-16, maintainer, PR #670): RasterCarve, the behaviour and golden reference, models
     a V-bit, whose groove is as wide as it is deep times `2 tan(α/2)`, so
     tone is depth. A TBN's groove widens as `√d` in the ball, so its tones
     would need a width law of their own (darkness to width, then `w⁻¹` to
@@ -3575,8 +3576,8 @@ ball changes three things, each with a rule.
   wall: a gap just under the surface. So the design must also be
   **closed** by `w_t`. A V-bit (`ρ` 0) needs neither: its point meets the
   pocket's point, and V-bit inlays are unchanged.
-  The Inlay rounds the design itself, on both boards (recommended; open
-  question 25), as #479 merges near parts on both: after the near parts
+  The Inlay rounds the design itself, on both boards (question 25,
+  decided 2026-11-16, maintainer, PR #670), as #479 merges near parts on both: after the near parts
   are merged, `X′ = ((((X ⊖ R_min) ⊕ R_min) ⊕ w_t) ⊖ w_t)`, round joins,
   flattened within the bit's wall tolerance (`dc_project::inlay::
   rounded_for_bit`, which validation, the generator and the safety pass
@@ -3648,7 +3649,8 @@ is exactly what Corbin's fit adjustment absorbs: the glue gap. Hence:
 
 A measured calibration, an "effective tip radius" fitted to two plunge
 holes, would remove most of the shift before the first cut; it waits for
-the bench part to show whether the coupon is enough (open question 27).
+the bench part to show whether the coupon is enough (question 27,
+decided 2026-11-16, maintainer, PR #670).
 
 ### Safety pass (dc-gcode::material, S17–S19)
 
@@ -4557,7 +4559,7 @@ each other and start at once; 27f needs only 27a.
     Ultra-High Detail bit, a 19 mm male board) and its gap recorded, then
     the carve and the 6 mm pair, cut and recorded; the seat measured
     against the seat line's prediction (0.55 mm per 0.5°), which settles
-    open question 27. Exit:
+    whether a stored calibration is needed (question 27). Exit:
     acceptance 61t to 61z green.
 
 Phase 4 follows the model (its specs are drafts, and these are listed
@@ -4648,11 +4650,14 @@ maintainer may want a say in:
   operation targets. Recommended; a project's shapes are the user's design
   whether or not an operation uses them yet.
 
-**Sub-phase 3.6 (2026-11-13).** The maintainer's questions are in the
-functional spec's table "Sub-phase 3.6: open for the maintainer's
-review" (25 to 31: rounding the design for the bit, Photo V-Carve,
-calibration, the angle convention, `diameter_mm` as the ball's, the
-45° bound, glue gap and plug depth below the ball as warnings). The design
+**Sub-phase 3.6 (2026-11-13; reviewed 2026-11-16).** The maintainer's
+questions are in the functional spec's table "Sub-phase 3.6: decided in
+review". 25 to 31 (rounding the design for the bit, Photo V-Carve,
+calibration, the angle convention, the TBN's diameters, the 45° bound,
+glue gap and plug depth below the ball as warnings) were decided 2026-11-16, maintainer, PR #670,
+29 as `tip_diameter_mm` with `diameter_mm` the cutting diameter; 32 (an
+operation past the cap: error or warning) and 33 (an unset cutting
+diameter on import) were added by the review and are open. The design
 adds these, which the implementer can settle in the slice:
 
 - **Ferrari against a root isolator** for the ball's quartic (step 7).
