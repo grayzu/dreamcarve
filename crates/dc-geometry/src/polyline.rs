@@ -283,6 +283,19 @@ impl Segment {
         };
         Some(Segment { start, end, bulge })
     }
+
+    /// The two halves of an arc past a half turn (|bulge| > 1): the
+    /// [`Segment::piece`]s on either side of its middle, arcs of the same
+    /// circle that each sweep less than a half turn, so the split is
+    /// exact. `None` for any other segment, including one too short to be
+    /// an arc ([`Segment::arc`]) whatever its bulge.
+    pub(crate) fn halves_past_half_turn(&self) -> Option<(Segment, Segment)> {
+        let past_half_turn = self.bulge.abs() > 1.0;
+        if !past_half_turn || self.arc().is_none() {
+            return None;
+        }
+        self.piece(0.0, 0.5).zip(self.piece(0.5, 1.0))
+    }
 }
 
 /// How many equal chords replace `arc` so none strays more than
@@ -524,6 +537,52 @@ impl Polyline {
         };
         for v in self.vertices.iter().skip(covered) {
             vertices.push(Vertex::line(v.x, v.y));
+        }
+        Polyline::new(vertices, self.closed)
+    }
+
+    /// The same path with no arc past a half turn (#694). Each arc with
+    /// |bulge| > 1 is replaced by its two halves
+    /// ([`Segment::halves_past_half_turn`]), so the path is unchanged and
+    /// gains a vertex at the middle of each such arc. A bulge past 1 on a
+    /// segment too short to be an arc ([`Segment::arc`]) becomes 0, the
+    /// line every other reading of it takes. So does one on an open
+    /// polyline's last vertex, which starts no segment. Other vertices
+    /// are kept as they are, and a polyline with no bulge past 1 comes
+    /// back equal.
+    #[must_use]
+    pub fn with_arcs_within_half_turns(&self) -> Polyline {
+        let past = |v: &Vertex| v.bulge.abs() > 1.0;
+        let extra = self.vertices.iter().filter(|v| past(v)).count();
+        if extra == 0 {
+            return self.clone();
+        }
+        let mut vertices = Vec::with_capacity(self.vertices.len() + extra);
+        for (i, v) in self.vertices.iter().enumerate() {
+            if !past(v) {
+                vertices.push(*v);
+                continue;
+            }
+            let next = match self.vertices.get(i + 1) {
+                Some(next) => Some(next),
+                None if self.closed => self.vertices.first(),
+                None => None,
+            };
+            let halves = next.and_then(|end| {
+                Segment {
+                    start: v.point(),
+                    end: end.point(),
+                    bulge: v.bulge,
+                }
+                .halves_past_half_turn()
+            });
+            match halves {
+                Some((first, second)) => {
+                    vertices.push(Vertex::new(v.x, v.y, first.bulge));
+                    vertices.push(Vertex::new(second.start.x, second.start.y, second.bulge));
+                }
+                None => vertices.push(Vertex::new(v.x, v.y, 0.0)),
+            }
         }
         Polyline::new(vertices, self.closed)
     }

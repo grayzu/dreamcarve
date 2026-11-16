@@ -2241,9 +2241,12 @@ mod tests {
         assert!(warnings.is_empty(), "{warnings:?}");
         let lw_sweep = 4.0 * 2.4_f64.atan();
         let lw_radius = 10.0 * (1.0 + 2.4 * 2.4) / (4.0 * 2.4);
+        // Past a half turn the centre is on the same side of the chord
+        // as the arc's middle.
+        let lw_centre = Point::new(35.0, 5.0 * (1.0 - 2.4 * 2.4) / (2.0 * 2.4));
         let cases = [
             ("arc", Point::new(10.0, 10.0), 5.0, 1.5 * PI, false),
-            ("lw", Point::new(35.0, 0.0), lw_radius, lw_sweep, true),
+            ("lw", lw_centre, lw_radius, lw_sweep, true),
             ("fill", Point::new(60.0, 10.0), 5.0, 1.5 * PI, true),
         ];
         for (name, centre, radius_mm, sweep_rad, closed) in cases {
@@ -2262,10 +2265,11 @@ mod tests {
             }
             assert_eq!(shape.vertices().len(), 3, "{name}: {shape:?}");
         }
-        // The hatch encloses the arc's circular segment: r²/2·(θ − sin θ).
+        // The hatch encloses the arc's circular segment: r²/2·(θ − sin θ),
+        // to within the rounding of imported coordinates.
         let fill = only(&result, "fill");
         let segment_mm2 = 12.5 * (1.5 * PI - (1.5 * PI).sin());
-        assert_approx_eq!(fill.signed_area_mm2().abs(), segment_mm2, 1e-6);
+        assert_approx_eq!(fill.signed_area_mm2().abs(), segment_mm2, 1e-5);
     }
 
     /// #694: the vertex a split adds is charged to the import's vertex

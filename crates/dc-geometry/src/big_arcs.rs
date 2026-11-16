@@ -107,12 +107,16 @@ pub(crate) fn open_arc(sweep_rad: f64, split: bool) -> Polyline {
     Polyline::new(v, false)
 }
 
+/// A shape drawn with an arc of the given sweep, radians, whole or
+/// `split`.
+type Shape = fn(f64, bool) -> Polyline;
+
 /// Every closed shape at every sweep in [`SWEEPS_DEG`].
 pub(crate) fn cases() -> Vec<Case> {
     let mut out = Vec::new();
     for deg in SWEEPS_DEG {
         let s = deg.to_radians();
-        let shapes: [(&str, fn(f64, bool) -> Polyline); 3] = [
+        let shapes: [(&str, Shape); 3] = [
             ("sector", sector),
             ("lobe", |s, split| on_rectangle(s, true, split)),
             ("notch", |s, split| on_rectangle(s, false, split)),

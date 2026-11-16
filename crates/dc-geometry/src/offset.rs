@@ -415,7 +415,16 @@ fn without_redundant_vertices(polyline: &Polyline, eps_mm: f64) -> Option<Polyli
         .then(|| Polyline::new(vertices, true))
 }
 
+/// `polyline` as cavalier_contours takes it. Its `PlineVertex` holds an
+/// arc of at most a half turn (|bulge| ≤ 1), and its offsets, booleans
+/// and self-intersection tests assume that: past one they can miss a
+/// crossing or an overlap (#686, #694). So each arc past a half turn goes
+/// in as its two halves ([`Polyline::with_arcs_within_half_turns`]), which
+/// is exact. Every polyline the crate hands cavalier_contours is built
+/// here; its segment intersection gets single segments, split the same
+/// way by `distance::crossings`.
 pub(crate) fn to_cavalier(polyline: &Polyline) -> CavPolyline {
+    let polyline = polyline.with_arcs_within_half_turns();
     let mut out = CavPolyline::with_capacity(polyline.vertices().len(), polyline.is_closed());
     for v in polyline.vertices() {
         out.add(v.x, v.y, v.bulge);
@@ -1207,7 +1216,7 @@ mod tests {
                 let mut kept = back.vertices().iter();
                 for v in source.vertices() {
                     prop_assert!(
-                        kept.any(|w| w.x == v.x && w.y == v.y),
+                        kept.any(|w| w.point() == v.point()),
                         "vertex ({}, {}) is kept, in order", v.x, v.y
                     );
                 }

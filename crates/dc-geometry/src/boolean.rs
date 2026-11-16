@@ -578,8 +578,18 @@ mod tests {
                     BooleanOp::Intersection,
                 ] {
                     let what = format!("{} {op:?} {:?}", case.name, bar.outer());
-                    let a = boolean(&[whole.clone()], &[bar.clone()], op, TOL_MM);
-                    let b = boolean(&[split.clone()], &[bar.clone()], op, TOL_MM);
+                    let a = boolean(
+                        std::slice::from_ref(&whole),
+                        std::slice::from_ref(&bar),
+                        op,
+                        TOL_MM,
+                    );
+                    let b = boolean(
+                        std::slice::from_ref(&split),
+                        std::slice::from_ref(&bar),
+                        op,
+                        TOL_MM,
+                    );
                     assert_eq!(a.len(), b.len(), "{what}: {a:?} against {b:?}");
                     let area = |rs: &[Region]| rs.iter().map(Region::area_mm2).sum::<f64>();
                     let length_mm = case.whole.length_mm() + bar.outer().polyline().length_mm();
