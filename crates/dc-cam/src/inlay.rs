@@ -719,8 +719,8 @@ fn bordering_shape(region: &Region, design: &Targets) -> ShapeRef {
 }
 
 /// The ridges the V-bit leaves on the floor of `board` of Inlay `op`,
-/// along its rings and at their corners, as for a V-Carve
-/// ([`vcarve::floor_ridges`]; #522); `None` when that board has no floor
+/// along its rings and at their corners (the same height since #527), as
+/// for a V-Carve ([`vcarve::floor_ridges`]; #522); `None` when that board has no floor
 /// wide enough, no usable V-bit or step-over, or does not resolve (the
 /// male's, while its board is not measured).
 #[must_use]
