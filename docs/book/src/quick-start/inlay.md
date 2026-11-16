@@ -437,20 +437,20 @@ dc-female-1-T2.nc (137 lines):
   Extents (machine coordinates, mm, tool centre): X 27.149..87.772, Y 23.897..56.103, Z -4.000..10.000
     The cutter's edge reaches X 25.562..89.360, Y 22.309..57.691; keep clamps outside that.
   Estimated time: 30 s (cutting 27 s, dwells 3 s); 362 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-female-2-T1.nc (1440 lines):
+dc-female-2-T1.nc (1384 lines):
   Extents (machine coordinates, mm, tool centre): X 18.319..91.093, Y 20.000..60.000, Z -4.000..10.000
     The cutter's edge reaches X 15.144..94.268, Y 16.825..63.175; keep clamps outside that.
   Estimated time: 1 min 8 s (cutting 1 min 5 s, dwells 3 s); 780 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Estimated female board time: 1 min 38 s (cutting 1 min 32 s, dwells 6 s); 1.1 m of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 Male board, 110.000 mm × 80.000 mm × 12.000 mm:
-dc-male-1-T2.nc (8822 lines):
+dc-male-1-T2.nc (3578 lines):
   Extents (machine coordinates, mm, tool centre): X 11.915..98.095, Y 13.019..66.974, Z -5.000..10.000
     The cutter's edge reaches X 10.328..99.682, Y 11.432..68.562; keep clamps outside that.
-  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 864 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
-dc-male-2-T1.nc (872 lines):
+  Estimated time: 5 min 26 s (cutting 5 min 23 s, dwells 3 s); 865 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+dc-male-2-T1.nc (649 lines):
   Extents (machine coordinates, mm, tool centre): X 17.160..92.836, Y 18.278..61.723, Z -5.000..10.000
     The cutter's edge reaches X 13.985..96.011, Y 15.103..64.898; keep clamps outside that.
-  Estimated time: 48 s (cutting 45 s, dwells 3 s); 419 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
+  Estimated time: 48 s (cutting 45 s, dwells 3 s); 417 mm of rapids not included: set [estimate] rapid_mm_min in config.toml. Excludes acceleration.
 dc-male-3-T2.nc (218 lines):
   Extents (machine coordinates, mm, tool centre): X 11.911..98.095, Y 13.018..66.979, Z -12.200..10.000
     The cutter's edge reaches X 10.324..99.682, Y 11.431..68.567; keep clamps outside that.

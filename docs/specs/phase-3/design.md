@@ -2156,10 +2156,8 @@ orientation; DreamCarve's regions are normalised anyway.
      times `min(1, tan(α/2) / tan 30°)`, so a wall stands no further off
      true up the flank than the 60° bit's, whatever the bit; a 60° or
      wider bit's trace is drawn as before
-     (`vcarve::narrow_bit_traces_an_arc_within_its_wall_tolerance`). Since
-     #527 the rings inside the trace are drawn within the wall tolerance
-     too: a ring's chord `e` inside its arc leaves the floor between two
-     rings up to `e` further from a cut, `e / tan(α/2)` higher.
+     (`vcarve::narrow_bit_traces_an_arc_within_its_wall_tolerance`). The
+     rings inside the trace keep the flatten tolerance.
    - **V-bit floor**: the floor region minus what the clearing passes
      reach (step 7), cleared as `pocket::rings` clears a tool-centre
      region (the floor region is one, for a tool of radius `F · slope`,
@@ -2210,9 +2208,8 @@ orientation; DreamCarve's regions are normalised anyway.
      but wider where the tree dropped an inset as noise (Pocket's
      `is_noise`, up to twice the flatten tolerance across), and line art
      `0xa`'s female (15° bit) kept a peak 0.08 mm over the ridge in such
-     a piece's middle. With the rings and pieces drawn within the wall
-     tolerance, the floor stands no more than `2 · t / slope` over the
-     ridge (`vcarve::floor_ridge_holds_at_corners`,
+     a piece's middle. The floor then stands no more than
+     `2 · tolerance / slope` over the ridge (`vcarve::floor_ridge_holds_at_corners`,
      `vcarve::floor_corner_moves_stay_on_the_floor`). This reverses
      #484's reach of `0.6 · s` for a node with children (which left a
      square corner's `0.586 · s` gap, 1.17 times the ridge, uncut, and
@@ -2222,10 +2219,10 @@ orientation; DreamCarve's regions are normalised anyway.
      the floor, stands, since the pieces cover what those chains would.
      The goldens' floors are compared by reach (`vcarve::compare`), so
      they pass unchanged; the sign's V-bit program grows from 4,164 to
-     4,240 lines (+1.8 %), the tutorial "DC" female's from 1,211 to 1,440
-     (+19 %) and its male's from 680 to 872 (+28 %), though both lift to
-     safe Z less often (30 → 20, 16 → 9): #484's strip centres are now
-     cut from inside the laps too.
+     4,240 lines (+1.8 %), and on main after #474 the tutorial "DC"
+     female's from 1,197 to 1,384 (+16 %) and its male's from 479 to 649
+     (+35 %), though both lift to safe Z less often (30 → 20, 15 → 9):
+     #484's strip centres are now cut from inside the laps too.
      Arcs of the rings are flattened to the floor's side:
      chords for a counter-clockwise arc, lines tangent to a clockwise
      one (outside its circle), so no move comes nearer a wall than its
