@@ -205,7 +205,23 @@ impl Tool {
     /// other cutter.
     #[must_use]
     pub fn carve_profile(&self) -> Option<BitProfile> {
-        None
+        match self.cutter {
+            ToolKind::VBit { included_angle_deg } => {
+                let slope = (included_angle_deg.to_radians() / 2.0).tan();
+                (included_angle_deg.is_finite()
+                    && included_angle_deg > 0.0
+                    && included_angle_deg < 180.0
+                    && slope.is_finite()
+                    && slope > 0.0)
+                    .then_some(BitProfile::VBit { slope })
+            }
+            ToolKind::TaperedBallNose { .. } => Taper::of(self).map(|t| BitProfile::TaperedBall {
+                tip_radius_mm: t.tip_radius_mm,
+                slope: t.slope,
+                cap_radius_mm: t.cap_radius_mm,
+            }),
+            ToolKind::EndMill | ToolKind::BallNose | ToolKind::Engraver | ToolKind::Drill => None,
+        }
     }
 
     /// What bounds the engagement ([`Tool::cutting_height_mm`]): a
@@ -213,7 +229,14 @@ impl Tool {
     /// whichever comes first. `None` where the cutting height is.
     #[must_use]
     pub fn cutting_limit(&self) -> Option<CuttingLimit> {
-        None
+        self.cutting_height_mm()?;
+        Some(match Taper::of(self) {
+            None => CuttingLimit::Cone,
+            Some(t) if t.flute_length_mm <= t.cap_height_mm() => CuttingLimit::Flutes,
+            Some(_) => CuttingLimit::CuttingDiameter {
+                diameter_mm: self.diameter_mm,
+            },
+        })
     }
 
     /// The widest the bit cuts, as a radius, mm: the swept radius of a

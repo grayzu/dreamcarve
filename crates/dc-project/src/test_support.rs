@@ -103,8 +103,8 @@ pub fn tool_tbn_fine() -> Tool {
 
 /// The sample project with [`tool_tbn_ultra`] (`t2`) and a V-Carve of
 /// `i1` that uses it, [`sample_v_carve`] (format 28). Matches the
-/// committed fixture `tests/fixtures/dcv/v28/tapered.dcv`. Until 27c
-/// (#679) validation refuses the carve with `v_carve_needs_v_bit`.
+/// committed fixture `tests/fixtures/dcv/v28/tapered.dcv`, which validation accepts
+/// (27c, #679).
 pub fn tapered_project() -> Project {
     let mut project = sample_project();
     project.tools.push(tool_tbn_ultra());

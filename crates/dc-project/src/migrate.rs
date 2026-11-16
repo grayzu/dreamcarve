@@ -4006,7 +4006,7 @@ mod tests {
 
     /// The version 28 fixtures load as they are: the plain sample, and the
     /// sample with the Ultra-High Detail bit and a V-Carve using it, which
-    /// validation refuses until carving with a tapered ball nose is built
+    /// validation accepts since carving with a tapered ball nose was built
     /// (27c, #679).
     #[test]
     fn version_28_fixtures_load() {
@@ -4024,8 +4024,7 @@ mod tests {
         let loaded = load(V28_TAPERED_FIXTURE).unwrap();
         assert_eq!(loaded.project, tapered_project());
         assert_eq!(crate::save(&loaded.project).unwrap(), text);
-        let codes: Vec<&str> = loaded.problems.iter().map(crate::Problem::code).collect();
-        assert_eq!(codes, ["v_carve_needs_v_bit"], "{:?}", loaded.problems);
+        assert_eq!(loaded.problems, vec![]);
     }
 
     /// A version 27 project, whatever it holds, exports the programs it
