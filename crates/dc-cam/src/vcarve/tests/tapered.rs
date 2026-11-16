@@ -840,7 +840,7 @@ fn program_digest(p: &Project, op: &VCarveOp) -> u64 {
 /// Slice 27c changes no V-bit program: every V site reads the profile,
 /// which for a V-bit reads exactly what it read before. Bar, star, floor,
 /// offset and clearing V-bit carves keep the digests recorded on `main`
-/// before the slice (the goldens, `golden::vcarve_*` and
+/// before the slice (after #474 and #527) (the goldens, `golden::vcarve_*` and
 /// `golden::phase_1_and_2_cases_are_unchanged`, and the CLI's sign test
 /// hold the written programs byte for byte). The digests were recorded on
 /// macOS, where they must match bit for bit; elsewhere the platform's
@@ -894,12 +894,12 @@ fn v_bit_programs_are_unchanged() {
         (
             "star",
             program_digest(&star, &star_op),
-            0x86dc_7a08_cd2d_f398,
+            0x984e_249f_7d15_15cc,
         ),
         (
             "floor",
             program_digest(&floor_p, &floor_op),
-            0x7924_fd17_9b59_cffe,
+            0x5004_612d_02fb_2584,
         ),
         (
             "offset",
