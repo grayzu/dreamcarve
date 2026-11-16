@@ -1684,7 +1684,8 @@ per 0.05 mm of tip radius; test-fit before gluing`.
 - **Offset links in the ball** retract when either end is less than
   `h_t` below the start plane, before the room test.
 - **Ridges past the cap** read the cone's line, which no step-over of at
-  most the floor's width reaches; the corner ridge's cap is `w⁻¹(s)`.
+  most the floor's width reaches. Since #527 the corner ridge is the
+  straight-run ridge, `w⁻¹(s / 2)`, for a TBN as for a V-bit.
 - **`tapered_corners_softened`** counts the pieces of `X \ ((X ⊖ w_t) ⊕
   w_t)` whose farthest vertex lies more than the flatten tolerance from
   the opening, and names the farthest vertex of all; a region the
