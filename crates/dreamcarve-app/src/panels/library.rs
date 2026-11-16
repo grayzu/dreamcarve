@@ -257,6 +257,7 @@ pub(crate) fn kind_label(strings: &Strings, choice: KindChoice) -> &str {
         KindChoice::VBit => StrKey::AppKindVBit,
         KindChoice::Engraver => StrKey::AppKindEngraver,
         KindChoice::Drill => StrKey::AppKindDrill,
+        KindChoice::TaperedBallNose => StrKey::AppKindTaperedBallNose,
     })
 }
 
@@ -1065,7 +1066,7 @@ fn editing_pane(
     }
     match output.edit {
         Some(FieldEdit::Set(next, field)) => {
-            if next == *tool {
+            if *next == *tool {
                 if sheet
                     .marked
                     .as_ref()
@@ -1076,7 +1077,7 @@ fn editing_pane(
             } else {
                 let next = Tool {
                     id: ToolId::new(id.as_str()),
-                    ..next
+                    ..*next
                 };
                 out.push(Action::Library(Request::Set(
                     id.clone(),

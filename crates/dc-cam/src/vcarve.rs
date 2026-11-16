@@ -847,7 +847,7 @@ pub(crate) fn finish(
     };
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
-    if let Some(overhang) = swept_bounds(&toolpath, tool.diameter_mm / 2.0)
+    if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())
         .and_then(|swept| stock_overhang(&project.stock, swept))
     {
         return Err(CamError::OffStock {

@@ -26,7 +26,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use dc_library::{Library, LibraryTool};
-use dc_project::ToolKind;
+use dc_project::{Tool, ToolKind};
 
 use dreamcarve_shell::StagedFile;
 
@@ -121,7 +121,59 @@ fn list(paths: &Paths, json: bool) -> Result<(), Failure> {
             .collect();
         outln!("{}", line.join("  ").trim_end())?;
     }
+    // A tapered ball nose's values do not fit the table: one line each.
+    for entry in &lib.tools {
+        if let Some(line) = tool_line(entry.id.as_str(), &entry.tool) {
+            outln!("{line}")?;
+        }
+    }
     Ok(())
+}
+
+/// The line `tools list` and `check` print for a tapered ball nose (#677),
+/// after its id `id`: `t3 IDC Ultra-High Detail: tapered ball nose, 6.350
+/// mm cut, tip 0.762 mm (radius 0.381 mm), 6.7° per side, 19.050 mm
+/// flutes`, `-` for an unset value. `None` for any other cutter, whose
+/// values the table shows.
+pub fn tool_line(id: &str, tool: &Tool) -> Option<String> {
+    let ToolKind::TaperedBallNose {
+        tip_diameter_mm,
+        taper_angle_deg,
+        flute_length_mm,
+    } = tool.cutter
+    else {
+        return None;
+    };
+    let mm = |value: Option<f64>| value.map_or_else(|| "-".to_owned(), |v| format!("{v:.3}"));
+    let taper = taper_angle_deg.map_or_else(|| "-".to_owned(), |v| v.to_string());
+    Some(format!(
+        "{id} {}: tapered ball nose, {:.3} mm cut, tip {} mm (radius {} mm), {taper}° per side, {} mm flutes",
+        tool.name,
+        tool.diameter_mm,
+        mm(tip_diameter_mm),
+        mm(tool.tip_radius_mm()),
+        mm(flute_length_mm),
+    ))
+}
+
+/// What `tools add` prints for a tool it copied with values still unset
+/// (#677), from [`Tool::unset_values`]: `t3: set
+/// tools[t3].cutter.tapered_ball_nose.flute_length_mm (and feed_mm_min,
+/// rpm) before an operation uses it`. `None` when every value is set.
+pub fn values_to_set(tool: &Tool) -> Option<String> {
+    let unset = tool.unset_values();
+    let (first, rest) = unset.split_first()?;
+    let rest = if rest.is_empty() {
+        String::new()
+    } else {
+        let fields: Vec<&str> = rest.iter().map(|u| u.field).collect();
+        format!(" (and {})", fields.join(", "))
+    };
+    Some(format!(
+        "{}: set {}{rest} before an operation uses it",
+        tool.id,
+        first.location()
+    ))
 }
 
 /// One `tools list` row: `-` for a value not set.
@@ -151,6 +203,7 @@ fn describe_cutter(cutter: &ToolKind) -> String {
         ToolKind::VBit { included_angle_deg } => format!("V-bit {included_angle_deg}°"),
         ToolKind::Engraver => "engraver".into(),
         ToolKind::Drill => "drill".into(),
+        ToolKind::TaperedBallNose { .. } => "tapered ball nose".into(),
     }
 }
 
@@ -161,6 +214,7 @@ fn add(paths: &Paths, dcv: &Path, key: &str) -> Result<(), Failure> {
     let (mut project, _) = load_project(dcv)?;
     let copy = dc_library::project_copy(&project.tools, &entry.tool);
     let id = copy.id.clone();
+    let to_set = values_to_set(&copy);
     project.tools.push(copy);
     let text = dc_project::save(&project).map_err(Failure::error)?;
     StagedFile::write(dcv, text.as_bytes())?.commit()?;
@@ -170,6 +224,9 @@ fn add(paths: &Paths, dcv: &Path, key: &str) -> Result<(), Failure> {
         entry.id,
         dcv.display()
     )?;
+    if let Some(line) = to_set {
+        outln!("{line}")?;
+    }
     Ok(())
 }
 

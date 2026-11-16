@@ -1409,17 +1409,27 @@ goes through the library end to end in 3.6, as every other cutter does:
   missing, its missing values unset. The report's line for such a tool
   names them: `imported IDC Ultra-High Detail (t-…): set
   cutter.tapered_ball_nose.flute_length_mm`, as it names a preset's
-  unset feeds today (`ImportNote::TaperedValueUnset { field }`).
+  unset feeds today (`ImportNote::TaperedValueUnset { fields:
+  Vec<String> }`, 27f, #682; in 27a a DreamCarve library's TBN gets the
+  same words as a report note).
 - **List.** `tools list` shows a TBN's cut diameter, tip, taper and
   flutes (CLI, below), `-` for an unset value; `--json` writes the library
   file as is.
 - **Add to a project.** `tools add <dcv> <tool>` copies it as any tool,
   then prints each value the tool still needs, with its location in the
-  project, `t3: set tools[2].cutter.tapered_ball_nose.flute_length_mm
+  project, `t3: set tools[t3].cutter.tapered_ball_nose.flute_length_mm
   (and feed_mm_min, rpm) before an operation uses it`, from one function,
   `dc_project::Tool::unset_values()`, which lists a tool's unset feeds
   and, for a TBN, its unset cutter values. `init`'s "Set me" tool is
-  printed the same way.
+  printed the same way. (Slice 27a, #677: a location names the tool by
+  its id, `tools[t3]`, as validation's `tool_value_unset` and every
+  other tool finding do, so `tools add` and `check` point at the same
+  text and `SourceMap::locate` finds it either way; the first value is
+  written in full, the rest by their field. `unset_values` lists the
+  cutter's values, then `feed_mm_min`, `plunge_mm_min` and `rpm`, in
+  file order; not `step_down_mm`, which an operation may set instead.
+  `init` lists its values through validation, whose `tool_value_unset`
+  for a TBN's fields is built from the same field list.)
 - **Check and export.** Once an enabled operation uses the tool, each
   unset value is `tool_value_unset` at its field (Validation, above), so
   `check` lists all of them in one run and `export` refuses until every
@@ -1480,8 +1490,8 @@ parameters so the user can fill them in"). Phase 2 skipped every
   finite or not above the tangent height `h_t` (a flute that ends inside
   the ball is not a TBN); and `diameter_mm` not above `tip_diameter_mm`
   (the cutting diameter must be wider than the ball, or there is no cone).
-  Located at `tools[i].cutter.tapered_ball_nose.<field>` or
-  `tools[i].diameter_mm`, reported instead of the general
+  Located at `tools[<id>].cutter.tapered_ball_nose.<field>` or
+  `tools[<id>].diameter_mm`, reported instead of the general
   `tool_out_of_range` for those fields, as `v_bit_angle_range` is. A `diameter_mm` equal to the tip is this
   error like any other not above it; it marks nothing. 45° is
   not a physical limit but a sanity one: the steepest catalogue TBN is
@@ -1490,7 +1500,7 @@ parameters so the user can fill them in"). Phase 2 skipped every
   2026-11-16, maintainer, PR #670).
 - `tool_value_unset` (the existing error for an unset feed) for each of
   the TBN's three fields that is `null` on a tool an enabled operation
-  uses, located at `tools[i].cutter.tapered_ball_nose.<field>`, so
+  uses, located at `tools[<id>].cutter.tapered_ball_nose.<field>`, so
   `check` lists every value to set in one run, and `export` refuses
   until all are set. A tool no operation uses is not reported, as for
   its feeds ("The library and required fields" below).
@@ -1603,7 +1613,34 @@ height), with the same worst point and overlap. `material::Cone` holds a
 **CLI.** `tools list` and `check`'s tool line print a TBN as `t3 IDC
 Ultra-High Detail: tapered ball nose, 6.350 mm cut, tip 0.762 mm (radius
 0.381 mm), 6.7° per side, 19.050 mm flutes`, with `-` for an unset
-value. `check`'s V-bit floor line reads
+value (`tip - mm (radius - mm)`, `-° per side`, `- mm flutes`). Slice
+27a (#677): `tools list` keeps its table, whose CUTTER column reads
+`tapered ball nose`, and prints that line for each TBN after it, under
+its library id (`lt1 IDC Ultra-High Detail: …`); `check`, which had no
+tool line, prints it for each TBN of the project, before the carve
+lines.
+
+**Slice 27a's other decisions (#677).** A library file that says 2 and
+holds a `tapered_ball_nose` is refused by `v2_to_v3`, as the project's
+`v27_to_v28` refuses one. A DreamCarve library's TBN with values unset
+carries one report note naming its unset cutter values, `set
+cutter.tapered_ball_nose.taper_angle_deg,
+cutter.tapered_ball_nose.flute_length_mm`; its unset feeds are not
+noted, as they are not for any DreamCarve library tool. A NaN or
+infinite TBN value is never saved: `save` refuses it with
+`SaveError::NonFinite` at its field, since serde would write it as
+`null`, which reads back as unset. Until 27c `v_carve_needs_v_bit` says
+for a TBN on a V-Carve or an Inlay "carving with a tapered ball nose is
+not supported yet, so use a V-bit", and for a Photo V-Carve "a Photo
+V-Carve needs a V-bit; a tapered ball nose is not supported there";
+`Problem::VCarveNeedsVBit` gains `photo: bool` to tell them apart. The
+`check` extents' edge radius (`dc_job::summary::tool_radius_mm`) keeps
+`diameter_mm / 2`, the widest the bit can be. Phase 4's compile arms:
+the setup sheet's type row reads "Tapered ball nose" (no tip or taper
+row yet), `dc_app::tools::KindChoice::TaperedBallNose` shows a TBN's
+type but is not offered in the type dropdown and changes nothing when
+chosen, the tool glyph is the V-bit's, and the tool picker's cone note
+stays a V-bit's (`Tool::cutting_height_mm`); #685 replaces them. `check`'s V-bit floor line reads
 `floor ridges …` with the TBN's heights; an Inlay with a TBN adds the
 seat line of "Inlay fit": `seat: moves 0.40 mm per 0.5° of taper, 0.76 mm
 per 0.05 mm of tip radius; test-fit before gluing`.
@@ -4179,10 +4216,10 @@ tip 0.762 mm, `ρ` 0.381; both 6.7°, `L` 19.05, cutting diameter 6.35); the num
 *dc-project and dc-library — the tool and format 28 (slice 27a)*
 - `serialize::tapered_ball_nose_round_trips`, `serialize::tapered_ball_nose_is_an_object_with_tip_taper_and_flute_length`, `serialize::tapered_ball_nose_unset_fields_are_null`, `serialize::tapered_ball_nose_is_format_28`, `serialize::tip_and_flute_length_read_inches`.
 - `migrate::v27_to_v28_bumps_the_version_only`, `migrate::v27_file_with_a_tapered_ball_nose_fails`, `migrate::version_27_fixture_loads`, `migrate::version_28_fixtures_load`, `migrate::a_v27_project_exports_the_same_programs`.
-- `validate::tapered_ball_nose_taper_out_of_range_is_error` (0, −1, 45.1, NaN; 45 passes; located at the field, not `tool_out_of_range`), `validate::tapered_ball_nose_flute_must_pass_the_ball` (`L` ≤ `h_t` is an error), `validate::cut_diameter_must_exceed_the_tip` (`diameter_mm` 0.7 or 0.762 with `tip_diameter_mm` 0.762 is `tapered_ball_nose_range` at `tools[i].diameter_mm`, never `tool_value_unset`: equal to the tip marks nothing), `validate::unset_tapered_value_on_a_used_tool_is_tool_value_unset` (each of the three, located at its field; an unused tool's are not reported), `validate::tapered_ball_nose_on_photo_is_v_carve_needs_v_bit`, `validate::tapered_ball_nose_countersink_is_error`, `validate::tapered_ball_nose_v_carve_is_refused_until_built` (slice 27a only; 27c turns it into `…_is_accepted`).
+- `validate::tapered_ball_nose_taper_out_of_range_is_error` (0, −1, 45.1, NaN; 45 passes; located at the field, not `tool_out_of_range`), `validate::tapered_ball_nose_flute_must_pass_the_ball` (`L` ≤ `h_t` is an error), `validate::cut_diameter_must_exceed_the_tip` (`diameter_mm` 0.7 or 0.762 with `tip_diameter_mm` 0.762 is `tapered_ball_nose_range` at `tools[<id>].diameter_mm`, never `tool_value_unset`: equal to the tip marks nothing), `validate::unset_tapered_value_on_a_used_tool_is_tool_value_unset` (each of the three, located at its field; an unused tool's are not reported), `validate::tapered_ball_nose_on_photo_is_v_carve_needs_v_bit`, `validate::tapered_ball_nose_countersink_is_error`, `validate::tapered_ball_nose_v_carve_is_refused_until_built` (slice 27a only; 27c turns it into `…_is_accepted`).
 - `tool::tip_radius_is_half_the_tip_diameter`, `tool::cut_radius_is_capped_by_the_cutting_diameter` (Fine 3.175, the cap; Ultra 2.577, its flute top), `tool::v_bit_cut_radius_is_half_its_diameter` (unchanged), `tool::cutting_height_is_the_lower_of_flutes_and_cap` (Fine 18.374, Ultra 19.05; a V-bit's cone height unchanged), `tool::describe_names_a_tapered_ball_nose`.
 - `library::version_2_library_loads_as_version_3`, `library::version_3_is_written`, `library::tapered_ball_nose_is_validated_on_add`, `library::unset_tapered_values_are_kept` (a TBN with no flute length is stored, saved and loaded with it `null`).
-- `tool::unset_values_lists_feeds_and_tapered_values` (with their `tools[i]…` locations).
+- `tool::unset_values_lists_feeds_and_tapered_values` (with their `tools[<id>]…` locations).
 - `cli::tools_list_shows_a_tapered_ball_nose` (the line of "CLI", `-` for an unset value), `cli::tools_add_prints_the_values_still_to_set` (`flute_length_mm` and the feeds, with locations), `cli::tapered_ball_nose_library_round_trip` (import a DreamCarve library holding both bench bits, list them, add one to a project, `check` quiet once its feeds are set), `cli::check_lists_unset_tapered_values` (`tool_value_unset` at each field; `export` refuses).
 
 *dc-cam — carving with a TBN (slice 27c)*

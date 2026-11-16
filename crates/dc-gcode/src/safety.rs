@@ -308,7 +308,7 @@ fn check_on_stock(
             continue;
         }
         let limits = Limits::for_line(mv.line, spans, stock_thickness_mm);
-        let full_mm = limits.tool.map_or(0.0, |t| t.diameter_mm / 2.0);
+        let full_mm = limits.tool.map_or(0.0, dc_project::Tool::cut_radius_mm);
         let radius_at = |z: Option<f64>| {
             groove_radius_mm(
                 &limits,

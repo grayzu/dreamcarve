@@ -698,7 +698,7 @@ pub fn male_planes(project: &Project, op: &Operation) -> Option<MalePlanes> {
         .tools
         .iter()
         .find(|t| t.id == inlay.tool)
-        .and_then(cone_height_mm);
+        .and_then(Tool::cutting_height_mm);
     Some(MalePlanes {
         start_plane_mm,
         band_floor_mm: engagement_mm,
@@ -747,24 +747,14 @@ pub const fn reset_label(row: &Row) -> StrKey {
 /// for any other cutter, or a V-bit whose angle or diameter has no cone.
 #[must_use]
 pub fn tool_note(project: &Project, strings: &Strings, tool: &Tool) -> Option<String> {
-    let cone_mm = cone_height_mm(tool)?;
+    // The pickers offer no tapered ball nose yet; its own note, the
+    // cutting height, is #685's.
+    if !matches!(tool.cutter, ToolKind::VBit { .. }) {
+        return None;
+    }
+    let cone_mm = tool.cutting_height_mm()?;
     let text = length_text(cone_mm, project.display_units);
     Some(strings.fmt(StrKey::EditorToolCone, &[("value", &text)]))
-}
-
-/// A V-bit's cone height, mm, `diameter / (2 tan(α/2))`, as validation's
-/// cone check takes it: `None` for another cutter, or a V-bit whose angle
-/// or diameter has no cone.
-fn cone_height_mm(tool: &Tool) -> Option<f64> {
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return None;
-    };
-    let usable = included_angle_deg > 0.0
-        && included_angle_deg < 180.0
-        && tool.diameter_mm.is_finite()
-        && tool.diameter_mm > 0.0;
-    let cone_mm = tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
-    (usable && cone_mm.is_finite()).then_some(cone_mm)
 }
 
 /// `value_mm` in `units` with its suffix: `5.5 mm`.

@@ -75,9 +75,9 @@ pub fn read(bytes: &[u8]) -> Result<Incoming, LibraryError> {
             .tools
             .into_iter()
             .map(|entry| IncomingTool {
+                notes: unset_cutter_note(&entry.tool).into_iter().collect(),
                 tool: entry.tool,
                 source: entry.source,
-                notes: Vec::new(),
             })
             .collect();
         Ok(Incoming {
@@ -85,6 +85,20 @@ pub fn read(bytes: &[u8]) -> Result<Incoming, LibraryError> {
             skipped: None,
         })
     }
+}
+
+/// The note on a DreamCarve library tool's report line naming its unset
+/// cutter values (a tapered ball nose's, #677), from
+/// [`Tool::unset_values`]: `set cutter.tapered_ball_nose.flute_length_mm`.
+/// Unset feeds are not noted: a library tool often has none.
+fn unset_cutter_note(tool: &Tool) -> Option<String> {
+    let fields: Vec<&str> = tool
+        .unset_values()
+        .into_iter()
+        .filter(dc_project::UnsetValue::is_cutter)
+        .map(|u| u.field)
+        .collect();
+    (!fields.is_empty()).then(|| format!("set {}", fields.join(", ")))
 }
 
 /// What happened to one item of an imported file.

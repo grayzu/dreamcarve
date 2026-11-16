@@ -581,6 +581,7 @@ pub fn setup_sheet_text(strings: &Strings, label: Label) -> String {
         Label::TypeVBit => StrKey::SetupSheetTypeVBit,
         Label::TypeEngraver => StrKey::SetupSheetTypeEngraver,
         Label::TypeDrill => StrKey::SetupSheetTypeDrill,
+        Label::TypeTaperedBallNose => StrKey::SetupSheetTypeTaperedBallNose,
         Label::Diameter => StrKey::SetupSheetDiameter,
         Label::Angle => StrKey::SetupSheetAngle,
         Label::AngleValue => StrKey::SetupSheetAngleValue,

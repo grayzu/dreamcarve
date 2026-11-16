@@ -19,6 +19,7 @@ mod model;
 mod post_processor;
 mod project;
 mod serialize;
+mod tool;
 pub mod units_input;
 mod validate;
 
@@ -54,6 +55,9 @@ pub use post_processor::{
 };
 pub use project::{ClearedPlane, cleared_start_plane};
 pub use serialize::{LoadError, Loaded, SaveError, load, save};
+pub use tool::{
+    MAX_TAPER_ANGLE_DEG, TBN_FLUTES, TBN_TAPER, TBN_TIP, UnsetValue, tapered_tangent_height_mm,
+};
 pub use units_input::{LENGTH_DECIMALS, RATE_DECIMALS, round_length_mm, round_rate_mm_min};
 pub use validate::{
     INLAY_MIN_PLUG_BASE_MM, MAX_FLATTEN_TOLERANCE_MM, MAX_RATE_MM_MIN, MAX_RPM,

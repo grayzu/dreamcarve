@@ -86,6 +86,10 @@ pub enum KindChoice {
     Engraver,
     /// A drill.
     Drill,
+    /// A tapered ball nose (format 28). Shown for such a tool but not
+    /// offered in the dropdown ([`Self::ALL`]) until the editor has its
+    /// fields (#685).
+    TaperedBallNose,
 }
 
 impl KindChoice {
@@ -107,6 +111,7 @@ impl KindChoice {
             ToolKind::VBit { .. } => Self::VBit,
             ToolKind::Engraver => Self::Engraver,
             ToolKind::Drill => Self::Drill,
+            ToolKind::TaperedBallNose { .. } => Self::TaperedBallNose,
         }
     }
 }
@@ -127,11 +132,15 @@ pub enum KindSwitch {
 
 /// What choosing `choice` in the type dropdown does to `tool`. A V-bit
 /// keeps its angle; any other tool turned into one is held until its
-/// angle is typed.
+/// angle is typed. Choosing *Tapered ball nose* changes nothing: the
+/// dropdown does not offer it until the editor has its fields (#685), and
+/// its values are never invented.
 #[must_use]
 pub fn set_kind(tool: &Tool, choice: KindChoice) -> KindSwitch {
     let cutter = match (choice, &tool.cutter) {
-        (KindChoice::VBit, ToolKind::VBit { .. }) => return KindSwitch::Unchanged,
+        (KindChoice::VBit, ToolKind::VBit { .. }) | (KindChoice::TaperedBallNose, _) => {
+            return KindSwitch::Unchanged;
+        }
         (KindChoice::VBit, _) => return KindSwitch::HoldForAngle,
         (KindChoice::EndMill, _) => ToolKind::EndMill,
         (KindChoice::BallNose, _) => ToolKind::BallNose,

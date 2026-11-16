@@ -377,7 +377,8 @@ pub struct Tool {
 }
 
 /// Cutter geometry. Saved as a plain string, except `VBit`, which is
-/// `{ "v_bit": { "included_angle_deg": … } }`.
+/// `{ "v_bit": { "included_angle_deg": … } }`, and `TaperedBallNose`
+/// (format 28), which is `{ "tapered_ball_nose": { … } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum ToolKind {
@@ -395,6 +396,29 @@ pub enum ToolKind {
     /// Twist drill. Phase 2 drills with any cutter; the kind drives
     /// warnings and Fusion import only.
     Drill,
+    /// A tapered ball nose (format 28, #445): a cone of half-angle
+    /// `taper_angle_deg` capped by a ball of diameter `tip_diameter_mm`,
+    /// its width capped by the tool's `diameter_mm`, the cutting diameter.
+    /// Saved as `{ "tapered_ball_nose": { "tip_diameter_mm": 0.762,
+    /// "taper_angle_deg": 6.7, "flute_length_mm": 19.05 } }`; every field
+    /// is written, `null` when unset, as a tool's feeds are. The derived
+    /// values are [`Tool::tip_radius_mm`], [`Tool::cutting_height_mm`] and
+    /// [`Tool::cut_radius_mm`].
+    TaperedBallNose {
+        /// The ball's diameter, `2ρ`, mm. Above 0 and below the tool's
+        /// `diameter_mm`.
+        #[serde(deserialize_with = "units_input::opt_mm")]
+        tip_diameter_mm: Option<f64>,
+        /// The taper **per side**, degrees from the axis: half the
+        /// included angle, as Fusion's `TA` and the catalogues give it.
+        /// In (0, 45].
+        #[serde(deserialize_with = "Option::deserialize")]
+        taper_angle_deg: Option<f64>,
+        /// The fluted length from the tip, mm: past it the shank rubs.
+        /// Finite and above the height where the ball meets the cone.
+        #[serde(deserialize_with = "units_input::opt_mm")]
+        flute_length_mm: Option<f64>,
+    },
 }
 
 impl ToolKind {
@@ -417,6 +441,7 @@ impl ToolKind {
             Self::VBit { .. } => "a V-bit",
             Self::Engraver => "an engraving bit",
             Self::Drill => "a drill",
+            Self::TaperedBallNose { .. } => "a tapered ball nose",
         }
     }
 }
