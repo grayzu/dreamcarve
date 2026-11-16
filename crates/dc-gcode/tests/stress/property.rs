@@ -15,7 +15,7 @@ use dc_cam::test_support::seat::{SEAT_MM, fit};
 use dc_cam::{CamError, ToolRun, generate_inlay, generate_vcarve};
 use dc_gcode::{EmitOp, ProgramSplit, emit_programs};
 use dc_geometry::{Point, Transform};
-use dc_project::test_support::{sample_inlay, sample_project, tool_6_35_upcut};
+use dc_project::test_support::{sample_project, tool_6_35_upcut};
 use dc_project::{
     Board, ClearanceStrategy, ClearingPass, CutDirection, DefinitionId, Entry, FeatureDefinition,
     FeatureInstance, InlayCutOut, InlayOp, InstanceId, MachiningOrder, MaleBoard, Operation,
@@ -177,9 +177,9 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
     // The glue gap covers the female floor's ridges, `0.1 · D` at the
     // step-over the user guide asks for: the export's summary reports
     // them ("V-bit floor ridges"), and a plug on a smaller gap rests on
-    // them. It is drawn here, and raised below over the ridges at the
-    // rings' corners once the design is placed (#522).
-    let glue_fraction = rng.range(0.12, 0.4);
+    // them. Since #527 they hold at the rings' corners too, so the gap is
+    // drawn down to 1.0 times them, with no margin.
+    let glue_fraction = rng.range(0.1, 0.4);
     let plug_fraction = rng.range(0.3, 0.95);
     // A small family's design (the CI tests') gets a narrower band, so its
     // male and seat check cost less.
@@ -235,25 +235,7 @@ pub fn case(family: &str, seed: u64, design: Design) -> Case {
         },
     ];
     project.operations = Vec::new();
-    // #522: the summary also reports the ridges where the floor's rings
-    // turn a corner, up to twice the straight-run ridge, and the Inlay
-    // chapter sets the glue gap above them. The gap keeps the margin over
-    // them it keeps over the straight-run ridge (0.12 against 0.1 · D):
-    // a fifth more.
-    let corner_ridge_mm = dc_cam::inlay::floor_ridges(
-        &project,
-        &InlayOp {
-            targets: vec![InstanceId::new("i1")],
-            tool: ToolId::new("t1"),
-            depth_mm: Some(depth_mm),
-            glue_gap_mm: Some(glue_fraction * depth_mm),
-            step_over_fraction: Some(0.1),
-            ..sample_inlay()
-        },
-        Board::Female,
-    )
-    .map_or(0.0, |r| r.corner_mm);
-    let glue_gap_mm = (glue_fraction * depth_mm).max(1.2 * corner_ridge_mm);
+    let glue_gap_mm = glue_fraction * depth_mm;
     let plug_depth_mm = (room_mm - depth_mm + glue_gap_mm) * plug_fraction;
     // Arc fitting at export (S12) one time in three. It was drawn so while
     // the fit was slow on the V-bit's long level runs (#480); the draw
