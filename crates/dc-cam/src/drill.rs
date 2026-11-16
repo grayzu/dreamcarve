@@ -1911,10 +1911,16 @@ mod tests {
 
     /// Port of "no V-bit assigned: a drill bit produces no countersink":
     /// the depth follows a V-bit's angle, so any other cutter is refused
-    /// and nothing is cut.
+    /// and nothing is cut. So is a tapered ball nose (#677), for good.
     #[test]
     fn countersink_needs_a_v_bit() {
-        for cutter in [ToolKind::Drill, ToolKind::EndMill, ToolKind::BallNose] {
+        let tapered = dc_project::test_support::tool_tbn_ultra().cutter;
+        for cutter in [
+            ToolKind::Drill,
+            ToolKind::EndMill,
+            ToolKind::BallNose,
+            tapered,
+        ] {
             let mut p = holes(&[(20.0, 20.0)], HOLE_MM, v_bit(90.0, 6.35));
             p.tools[0].cutter = cutter.clone();
             let err = refused(&p, &countersink_op(&p, 6.0));

@@ -867,6 +867,12 @@ fn settings_are_checked_again() {
         generate_photo(&project, &acceptance_op()),
         Err(CamError::VCarveNeedsVBit { .. })
     ));
+    // A tapered ball nose too, for good (#677).
+    project.tools[1].cutter = dc_project::test_support::tool_tbn_ultra().cutter;
+    assert!(matches!(
+        generate_photo(&project, &acceptance_op()),
+        Err(CamError::VCarveNeedsVBit { .. })
+    ));
     let mut project = gradient_project(acceptance_op());
     project.tools[1].plunge_mm_min = None;
     assert!(matches!(

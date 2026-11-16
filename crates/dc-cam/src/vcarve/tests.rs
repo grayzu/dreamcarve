@@ -679,6 +679,22 @@ fn end_mill_is_refused() {
     }
 }
 
+/// Slice 27a (#677): a tapered ball nose is refused with the same typed
+/// error, and no toolpath, until carving with one is built (27c, #679).
+#[test]
+fn tapered_ball_nose_is_refused_until_built() {
+    let mut p = project(vec![rect(20.0, 20.0)]);
+    let op = carve_op(&p);
+    let tool = p.tools.iter_mut().find(|t| t.id == op.tool).unwrap();
+    tool.cutter = dc_project::test_support::tool_tbn_ultra().cutter;
+    match try_carve(&p, &op) {
+        Err(CamError::VCarveNeedsVBit { cutter, .. }) => {
+            assert_eq!(cutter, "a tapered ball nose");
+        }
+        other => panic!("expected VCarveNeedsVBit, got {other:?}"),
+    }
+}
+
 /// Port of `testGeneratorDeterminism`: the same input gives the same
 /// toolpath, move for move.
 #[test]
