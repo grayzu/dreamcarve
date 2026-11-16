@@ -5533,6 +5533,49 @@ mod tests {
         );
     }
 
+    /// #686: S17 refuses a level V-Carve cut across a wall arc that sweeps
+    /// past a half turn. The sample rectangle gets a D-shaped hole: an arc
+    /// of radius 3 about (35, 25), 270° round through its bottom (bulge
+    /// tan 67.5°, past 1), closed by a chord across its top at Y 27.12.
+    /// A cut 0.2 mm deep along Y 24.5 from X 20 to X 40 has its ends and
+    /// middle in the material and crosses the hole through the arc twice,
+    /// so it is off its region; it used to read about 2 mm from the arc
+    /// and pass. The same cut along Y 21.5, 0.5 mm below the arc's
+    /// bottom, still passes.
+    #[test]
+    fn level_v_carve_cut_across_an_arc_past_a_half_turn_fails_s17() {
+        use dc_geometry::{Polyline, Vertex};
+        let mut project = sample_project();
+        project
+            .tools
+            .insert(0, dc_project::test_support::tool_v_bit_90());
+        let at = |deg: f64| {
+            let rad = f64::to_radians(deg);
+            (25.0 + 3.0 * rad.cos(), 15.0 + 3.0 * rad.sin())
+        };
+        let ((sx, sy), (ex, ey)) = (at(135.0), at(45.0));
+        let hole = Polyline::new(
+            vec![
+                Vertex::new(sx, sy, (f64::to_radians(270.0) / 4.0).tan()),
+                Vertex::line(ex, ey),
+            ],
+            true,
+        );
+        if let Some(def) = project.definitions.values_mut().next() {
+            def.profiles.push(hole);
+        }
+        let op = Operation::VCarve(dc_project::test_support::sample_v_carve());
+        let program = |y: f64| {
+            format!("G21 G90\nG54\nG0 Z5\nX20 Y{y}\nG0 Z1\nG1 Z-0.2 F300\nX40 F1000\nG0 Z5\n")
+        };
+        check_material_text(&program(21.5), &project, &op).unwrap();
+        let err = check_material_text(&program(24.5), &project, &op);
+        assert!(
+            matches!(err, Err(ExportError::ConeOffMaterial { line: 7, .. })),
+            "{err:?}"
+        );
+    }
+
     /// S9 on a hand-written program for the sample rectangle's Pocket
     /// (X 10 to 60, Y 10 to 40, stock-top origin): a cut past the wall
     /// fails, so does an arc whose ends are inside but whose bulge takes

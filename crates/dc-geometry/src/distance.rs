@@ -679,4 +679,111 @@ mod tests {
         assert_approx_eq!(near.along_mm, 10.0 + std::f64::consts::PI / 2.0, 1e-9);
         assert!(nearest_point(&Polyline::new(Vec::new(), false), Point::new(0.0, 0.0)).is_none());
     }
+
+    /// The arc of radius 3 about the origin centred on the downward
+    /// direction, sweeping `sweep_deg`: counter-clockwise when `ccw`,
+    /// otherwise the same arc run the other way.
+    fn arc_about_down(sweep_deg: f64, ccw: bool) -> Segment {
+        let at = |deg: f64| {
+            let rad = deg.to_radians();
+            Point::new(3.0 * rad.cos(), 3.0 * rad.sin())
+        };
+        let (from, to) = (at(-90.0 - sweep_deg / 2.0), at(-90.0 + sweep_deg / 2.0));
+        let bulge = (sweep_deg.to_radians() / 4.0).tan();
+        if ccw {
+            Segment {
+                start: from,
+                end: to,
+                bulge,
+            }
+        } else {
+            Segment {
+                start: to,
+                end: from,
+                bulge: -bulge,
+            }
+        }
+    }
+
+    fn line(from: (f64, f64), to: (f64, f64)) -> Segment {
+        Segment {
+            start: Point::new(from.0, from.1),
+            end: Point::new(to.0, to.1),
+            bulge: 0.0,
+        }
+    }
+
+    /// #686: the table on the issue. A line along y = −0.5 across the
+    /// circle of radius 3 crosses every arc centred on the downward
+    /// direction of 170° or more twice, so it is 0 from each, whichever
+    /// way the arc runs and whichever segment comes first; past a half
+    /// turn (|bulge| > 1) it used to read 1 to 2 mm. Near misses are
+    /// exact: a line 0.5 mm below the circle, and a short line inside it
+    /// whose ends are 3 − √1.25 from it.
+    #[test]
+    fn segment_distance_follows_an_arc_past_a_half_turn() {
+        let across = line((-5.0, -0.5), (5.0, -0.5));
+        let below = line((-1.0, -3.5), (1.0, -3.5));
+        let inside = line((-1.0, -0.5), (1.0, -0.5));
+        let inside_mm = 3.0 - 1.25_f64.sqrt();
+        for sweep_deg in [170.0, 181.0, 200.0, 240.0, 270.0, 350.0] {
+            for ccw in [true, false] {
+                let arc = arc_about_down(sweep_deg, ccw);
+                for (path, want_mm) in [(across, 0.0), (below, 0.5), (inside, inside_mm)] {
+                    let case = format!("{sweep_deg}° ccw {ccw} {path:?}");
+                    for got_mm in [
+                        segment_distance_mm(path, arc),
+                        segment_distance_mm(arc, path),
+                    ] {
+                        assert!((got_mm - want_mm).abs() <= TOL, "{case}: {got_mm}");
+                    }
+                    let (p, q) = closest_points(path, arc);
+                    assert!(
+                        (p.distance_to(q) - want_mm).abs() <= TOL,
+                        "{case}: {p:?} {q:?}"
+                    );
+                    assert!(point_segment_distance_mm(path, p) <= 1e-9, "{case}: {p:?}");
+                    assert!(point_segment_distance_mm(arc, q) <= 1e-9, "{case}: {q:?}");
+                    let (q, p) = closest_points(arc, path);
+                    assert!(
+                        (p.distance_to(q) - want_mm).abs() <= TOL,
+                        "{case}: {p:?} {q:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// #686: where a line crosses an arc past a half turn, the meeting
+    /// points are both crossings, at x = ±√8.75 on y = −0.5; a polyline
+    /// holding such an arc is 0 from the line.
+    #[test]
+    fn meeting_points_find_crossings_of_an_arc_past_a_half_turn() {
+        let x = 8.75_f64.sqrt();
+        let across = Polyline::new(
+            vec![Vertex::line(-5.0, -0.5), Vertex::line(5.0, -0.5)],
+            false,
+        );
+        for sweep_deg in [200.0, 270.0, 350.0] {
+            for ccw in [true, false] {
+                let arc = arc_about_down(sweep_deg, ccw);
+                let wall = Polyline::new(
+                    vec![
+                        Vertex::new(arc.start.x, arc.start.y, arc.bulge),
+                        Vertex::line(arc.end.x, arc.end.y),
+                    ],
+                    false,
+                );
+                let case = format!("{sweep_deg}° ccw {ccw}");
+                let points = meeting_points(&across, &wall, 0.01);
+                for want in [Point::new(-x, -0.5), Point::new(x, -0.5)] {
+                    assert!(
+                        points.iter().any(|p| p.distance_to(want) <= 1e-9),
+                        "{case}: {points:?}"
+                    );
+                }
+                assert_approx_eq!(distance_mm(&across, &wall), 0.0, TOL);
+            }
+        }
+    }
 }
