@@ -12,6 +12,12 @@ use serde::{Deserialize, Serialize};
 /// of 1e-9 on a 1 m chord bows the arc by 0.5 nm.
 const BULGE_EPS: f64 = 1e-9;
 
+/// How far past 1 a bulge may be and still be a half circle with
+/// rounding in it: computed half turns come out a few ulps over (#694).
+/// Held to 1, the arc's middle moves by the chord times this over two,
+/// under a nanometre for any chord within the coordinate limit.
+const HALF_TURN_BULGE_NOISE: f64 = 1e-12;
+
 /// A polyline vertex in millimetres, Y-up. `bulge` is tan(θ/4) of the arc
 /// from this vertex to the next, where θ is the signed sweep: positive is
 /// counter-clockwise, 0 is a straight segment. Same convention as
@@ -547,20 +553,24 @@ impl Polyline {
     /// gains a vertex at the middle of each such arc. A bulge past 1 on a
     /// segment too short to be an arc ([`Segment::arc`]) becomes 0, the
     /// line every other reading of it takes. So does one on an open
-    /// polyline's last vertex, which starts no segment. Other vertices
-    /// are kept as they are, and a polyline with no bulge past 1 comes
-    /// back equal.
+    /// polyline's last vertex, which starts no segment. A half circle
+    /// whose bulge rounding left within [`HALF_TURN_BULGE_NOISE`] of ±1
+    /// is held to ±1 rather than split. Other vertices are kept as they
+    /// are, and a polyline with no bulge past 1 comes back equal.
     #[must_use]
     pub fn with_arcs_within_half_turns(&self) -> Polyline {
         let past = |v: &Vertex| v.bulge.abs() > 1.0;
-        let extra = self.vertices.iter().filter(|v| past(v)).count();
-        if extra == 0 {
+        if !self.vertices.iter().any(past) {
             return self.clone();
         }
-        let mut vertices = Vec::with_capacity(self.vertices.len() + extra);
+        let mut vertices = Vec::with_capacity(self.vertices.len() * 2);
         for (i, v) in self.vertices.iter().enumerate() {
             if !past(v) {
                 vertices.push(*v);
+                continue;
+            }
+            if v.bulge.abs() <= 1.0 + HALF_TURN_BULGE_NOISE {
+                vertices.push(Vertex::new(v.x, v.y, v.bulge.signum()));
                 continue;
             }
             let next = match self.vertices.get(i + 1) {
