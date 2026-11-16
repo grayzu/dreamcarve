@@ -840,8 +840,9 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  tip the cone reaches 6.35 mm 18.37 mm up, below its 19.05 mm flutes, so
  18.37 mm is its limit; for the 0.381 mm tip it would be 24.14 mm, past
  the flutes, so 19.05 mm is. The tool itself is never warned about for
- this; only an operation that would go deeper is stopped (open question
- 32). The widest the bit cuts, the lower of its width at the flute top
+ this; an operation that would go deeper is refused with
+ `v_bit_cone_exceeded`, naming the cutting diameter when the cap is the
+ limit (decided 2026-11-16, maintainer, PR #670, question 32). The widest the bit cuts, the lower of its width at the flute top
  and the cutting diameter, is what the stock-edge rule (S7) holds it to.
  Above the **tangent height** `ρ (1 − sin β)` (tip radius `ρ`, taper
  `β`) the bit cuts exactly as a V-bit of included angle `2β` whose point
@@ -851,7 +852,11 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  wider than the tip. Each of the three cutter values may be unset
  (`null`), as a tool's feeds may: a tool imported without one keeps it
  unset for the user to fill in (49l), and `check` and `export` report it
- as a value to set once an operation uses the tool. A TBN is accepted
+ as a value to set once an operation uses the tool. The cutting
+ diameter may not: `diameter_mm` is required for a TBN as for every
+ tool, so a library or project TBN without it cannot be written, and a
+ Fusion tapered mill without a shaft diameter is not imported (49l;
+ decided 2026-11-16, maintainer, PR #670, question 33). A TBN is accepted
  by V-Carve and Inlay; a Photo V-Carve refuses it with
  `v_carve_needs_v_bit` and a countersink with `countersink_needs_v_bit`
  (see Out of scope). Format 28 adds the cutter and changes nothing else: an earlier
@@ -869,10 +874,14 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      1.5 mm stroke is carved 3.500 mm deep and a 0.6 mm stroke 0.146 mm
      deep. The groove's bottom is round, the ball's shape.
     - **Cutting height.** The flank's engagement from the stock top (or a
-     cleared start plane) may not exceed `flute_length_mm`, the TBN's form
-     of the cone height (`v_bit_cone_exceeded`, which names the flutes):
-     with the 0.381 mm bit a 5 mm stroke needs 18.40 mm and exports, a
-     6 mm one 22.65 mm and is refused.
+     cleared start plane) may not exceed the cutting height, the lower of
+     `flute_length_mm` and the height where the cone reaches the cutting
+     diameter, the TBN's form of the cone height (`v_bit_cone_exceeded`,
+     which names the flutes or the cutting diameter; an error, never a
+     warning, question 32): with the 0.381 mm bit a 5 mm stroke needs
+     18.40 mm and exports, a 6 mm one 22.65 mm and is refused; with the
+     1.143 mm bit an engagement past 18.37 mm is refused, naming its
+     6.35 mm cutting diameter.
     - **Flat depth.** The floor boundary is the shape inset by the bit's
      half-width at `F`; the walls are the cone from the outline down to
      the tangent height above the floor and then the ball's arc into it:
@@ -948,8 +957,9 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
      how to measure the taper with two plunge holes. No calibration is
      stored in 3.6 (decided 2026-11-16, PR #670); the bench part decides
      whether one is needed. The engagement check
-     reads the flute length: the male's `depth_mm − glue_gap_mm +
-     plug_depth_mm` must not exceed it. The band's edge, the edge pass,
+     reads the cutting height: the male's `depth_mm − glue_gap_mm +
+     plug_depth_mm` must not exceed it (the flute length, or the height
+     where the cone reaches the cutting diameter when that is lower). The band's edge, the edge pass,
      the cut-out and the board's edge (45, 49f) read the bit's width at
      the plug's foot and at the male board's top where they read
      `plug_depth_mm · tan(α/2)` and the flank's width for a V-bit.
@@ -974,8 +984,11 @@ Nose** to the vocabulary (`CONTEXT.md`, with this spec). Format 28.
  angle, phase 2), `LCF` the flute length and `SFDM`, the shaft
  diameter, `diameter_mm`, in the file's unit. A value the file lacks is
  imported unset, never guessed, and the import names the tool and the
- fields to fill (maintainer, PR #670); a missing shaft diameter leaves
- the cutting diameter to set too. A tapered mill with a flat or bull tip
+ fields to fill (maintainer, PR #670). The shaft diameter is the
+ exception: it is the cutting diameter, which every tool must have, so a
+ ball-tipped tapered mill without `SFDM` is not imported, and the
+ import's skip list names it and says its shaft diameter is missing
+ (decided 2026-11-16, maintainer, PR #670, question 33). A tapered mill with a flat or bull tip
  is a different cutter (a V-bit with a flat) and is still skipped, the
  message saying so and that it may come later; phase 2 skipped every tapered mill. New codes, listed in the Warnings
  chapter: `tapered_ball_nose_range`, `inlay_too_narrow_for_bit`
@@ -1455,7 +1468,8 @@ analytically). The bits are the bench's: **Fine Detail**,
  `flute_length_mm` 19.05, `diameter_mm` 6.35); the same with no `TA` and
  no `LCF` imports with both unset and the report naming them, and a
  project using it lists them as `tool_value_unset` until they are set;
- one with `RE` 0 is skipped as not a ball tip. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
+ the same with no `SFDM` is not imported, the skip list naming it and
+ its missing shaft diameter; one with `RE` 0 is skipped as not a ball tip. A Photo V-Carve with a TBN is `v_carve_needs_v_bit`, a
  countersink with one `countersink_needs_v_bit`. A hand-written program
  whose descent in the ball zone overlaps a wall between the old 1 mm
  sample points fails S17 with the worst point.
@@ -1915,7 +1929,9 @@ Added with the 3.6 spec (2026-11-13, #445). The maintainer agreed with
 the recommendations of 25 to 31 in PR #670's review (2026-11-16), and
 they are folded into capabilities 49h to 49l; 29 was decided with the
 review's change to the TBN's diameters. 32 and 33 came out of that
-review and are open, each with its recommendation.
+review and were answered in a comment on PR #670 the same day: 32 as
+recommended, 33 against the recommendation (the shaft diameter is
+required, and a Fusion tapered mill without one is not imported).
 
 | #   | Question | Recommendation, and decision |
 | --- | -------- | -------------- |
@@ -1926,5 +1942,5 @@ review and are open, each with its recommendation.
 | 29  | `diameter_mm` of a TBN is the ball's diameter (2 × tip radius), with no tip-radius field, rather than a `tip_radius_mm` in the cutter beside a `diameter_mm` that would mean something else? | The ball's diameter: it is Fusion's `DC` for a ball-tipped tapered mill, Corbin's "ball diameter", and the phase 4 mock-up's Ø 0.762 already; one number cannot disagree with itself. Every place that reads `diameter_mm / 2` as a cut's width reads the derived cut radius instead, so nothing treats the ball as the bit's width. **Resolved: decided 2026-11-16, maintainer, PR #670, superseded in review:** the cutter carries `tip_diameter_mm`, the ball's diameter, and `diameter_mm` keeps its meaning for every tool, the cutting diameter, which caps the taper (49h). One clearly named field per diameter. |
 | 30  | The taper's range, (0°, 45°]: a sanity bound, not a physical one. | Keep 45°. Catalogue TBNs run 1° to about 15° per side; a 45° "TBN" is a 90° V-bit with a rounded point, better entered as a V-bit. A lower bound of 0 excluded is required (a straight ball mill has no cone). **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
 | 31  | `glue_gap_mm` or `plug_depth_mm` below the tangent height: warnings (as here) or errors? | Warnings, as `inlay_plug_base_thin` is: each names its cost (the plug's lift and the gap at the surface), which is small for the 0.381 mm tip (0.03 mm lift at a 0.25 mm gap) and large for the 1.143 mm tip (0.43 mm), so the user can judge. Validation and the generator both say it, once in `check`. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed).** |
-| 32  | Added in PR #670's review (2026-11-16). A TBN whose cone reaches its cutting diameter below the top of its flutes (the bench's 1.143 mm tip: 18.37 mm, against 19.05 mm of flute) is a cylinder above that height. Should an operation engaged past it be refused, or only warned? | Refused, as `v_bit_cone_exceeded` naming the cutting diameter, and the tool itself never warned about. Past that height the bit cuts straight walls, so a V-Carve's groove no longer follows the medial law and an Inlay's plug stops mating; refusing keeps one limit, the cutting height, in every rule (validation, generator, S17's shank). The case is rare: only a start depth or a male's engagement reaches 18 mm. If the maintainer prefers a warning for a plain V-Carve, the walls above the cap would be cut vertical and the warning would name the height. |
-| 33  | Added in PR #670's review (2026-11-16). A Fusion tapered mill with no shaft diameter has no cutting diameter, but every tool's `diameter_mm` is required. Write it equal to the tip diameter and read that as unset (as specified), or make `diameter_mm` optional? | Equal to the tip, read as unset: a TBN can never have its cutting diameter equal to its tip, so the mark is unambiguous, `check` points at `tools[i].diameter_mm` like any unset value, and the 327 reads of `diameter_mm` keep their type. Making it optional for every tool would touch all of them for one rare import case (Fusion tools nearly always carry `SFDM`). |
+| 32  | Added in PR #670's review (2026-11-16). A TBN whose cone reaches its cutting diameter below the top of its flutes (the bench's 1.143 mm tip: 18.37 mm, against 19.05 mm of flute) is a cylinder above that height. Should an operation engaged past it be refused, or only warned? | Refused, as `v_bit_cone_exceeded` naming the cutting diameter, and the tool itself never warned about. Past that height the bit cuts straight walls, so a V-Carve's groove no longer follows the medial law and an Inlay's plug stops mating; refusing keeps one limit, the cutting height, in every rule (validation, generator, S17's shank). The case is rare: only a start depth or a male's engagement reaches 18 mm. If the maintainer prefers a warning for a plain V-Carve, the walls above the cap would be cut vertical and the warning would name the height. **Resolved: decided 2026-11-16, maintainer, PR #670 (agreed: "a cut deeper than where the cone reaches cutting diameter should be refused").** |
+| 33  | Added in PR #670's review (2026-11-16). A Fusion tapered mill with no shaft diameter has no cutting diameter, but every tool's `diameter_mm` is required. Write it equal to the tip diameter and read that as unset (as specified), or make `diameter_mm` optional? | Equal to the tip, read as unset: a TBN can never have its cutting diameter equal to its tip, so the mark is unambiguous, `check` points at `tools[i].diameter_mm` like any unset value, and the 327 reads of `diameter_mm` keep their type. Making it optional for every tool would touch all of them for one rare import case (Fusion tools nearly always carry `SFDM`). **Resolved: decided 2026-11-16, maintainer, PR #670, against the recommendation:** "shaft diameter should be required and result in error / bit not being imported without it." `diameter_mm` stays required for a TBN as for every tool, with no "equal to the tip means unset" mark; a ball-tipped Fusion tapered mill without `SFDM` is skipped, and the import's skip list names it and says the shaft diameter is missing (49h, 49l). Its other missing values still import unset. |
