@@ -64,11 +64,59 @@ pub fn tool_v_bit_90() -> Tool {
     }
 }
 
+/// The bench's IDC Woodcraft Ultra-High Detail tapered ball nose (#445),
+/// id `t2`, every value set: tip 0.762 mm (radius 0.015 in), 6.7° per
+/// side, 19.05 mm of flute, a 6.35 mm cutting diameter. Its flutes end
+/// below the cap, so it cuts at most 5.153 mm wide.
+pub fn tool_tbn_ultra() -> Tool {
+    Tool {
+        id: ToolId::new("t2"),
+        name: "IDC Ultra-High Detail".into(),
+        vendor: Some("IDC Woodcraft".into()),
+        cutter: ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(0.762),
+            taper_angle_deg: Some(6.7),
+            flute_length_mm: Some(19.05),
+        },
+        step_down_mm: None,
+        step_over_fraction: None,
+        ..tool_6_35_upcut()
+    }
+}
+
+/// The bench's IDC Woodcraft Fine Detail tapered ball nose (#445), id
+/// `t3`, every value set: tip 2.286 mm (radius 0.045 in), 6.7° per side,
+/// 19.05 mm of flute, a 6.35 mm cutting diameter, which its cone reaches
+/// 18.374 mm up, below the flute top.
+pub fn tool_tbn_fine() -> Tool {
+    Tool {
+        id: ToolId::new("t3"),
+        name: "IDC Fine Detail".into(),
+        cutter: ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(2.286),
+            taper_angle_deg: Some(6.7),
+            flute_length_mm: Some(19.05),
+        },
+        ..tool_tbn_ultra()
+    }
+}
+
+/// The sample project with [`tool_tbn_ultra`] (`t2`) and a V-Carve of
+/// `i1` that uses it, [`sample_v_carve`] (format 28). Matches the
+/// committed fixture `tests/fixtures/dcv/v28/tapered.dcv`. Until 27c
+/// (#679) validation refuses the carve with `v_carve_needs_v_bit`.
+pub fn tapered_project() -> Project {
+    let mut project = sample_project();
+    project.tools.push(tool_tbn_ultra());
+    project.operations.push(Operation::VCarve(sample_v_carve()));
+    project
+}
+
 /// A valid project with no validation problems: 100 × 100 × 6 mm stock, one
 /// 50 × 30 mm rectangle placed at (10, 10), one tool, and one outside climb
 /// profile through the stock with a request for four tabs, none placed
 /// yet, and no bitmap. Matches the committed fixture
-/// `tests/fixtures/dcv/v27/sample.dcv`.
+/// `tests/fixtures/dcv/v28/sample.dcv`.
 pub fn sample_project() -> Project {
     let rect = FeatureDefinition {
         id: DefinitionId::new("d1"),

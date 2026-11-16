@@ -660,7 +660,7 @@ mod tests {
         let lib = sample_library();
         let text = save(&lib).unwrap();
         assert!(
-            text.starts_with("{\n  \"version\": 2,\n  \"tools\": [\n"),
+            text.starts_with("{\n  \"version\": 3,\n  \"tools\": [\n"),
             "{text}"
         );
         assert!(text.ends_with("}\n"), "{text}");
@@ -796,7 +796,7 @@ mod tests {
         assert_eq!(loaded, lib);
         assert_eq!(loaded.version, LIBRARY_VERSION);
         let saved = save(&loaded).unwrap();
-        assert!(saved.starts_with("{\n  \"version\": 2,"), "{saved}");
+        assert!(saved.starts_with("{\n  \"version\": 3,"), "{saved}");
         assert_eq!(saved.matches("\"vendor\": null,").count(), 3, "{saved}");
         assert_eq!(saved.matches("\"product_id\": null,").count(), 3, "{saved}");
         assert_eq!(saved, save(&lib).unwrap());
@@ -1103,9 +1103,9 @@ mod tests {
     #[test]
     fn newer_version_is_rejected() {
         assert_eq!(
-            load(b"{\"version\": 3, \"tools\": []}").unwrap_err(),
+            load(b"{\"version\": 4, \"tools\": []}").unwrap_err(),
             LibraryError::NewerVersion {
-                found: 3,
+                found: 4,
                 supported: LIBRARY_VERSION
             }
         );
@@ -1206,5 +1206,147 @@ mod tests {
 
         assert_eq!(next_id(&lib), LibraryToolId::new("lt4"));
         assert_eq!(next_id(&Library::default()), LibraryToolId::new("lt1"));
+    }
+
+    // Version 3 (sub-phase 3.6, #677): the tapered ball nose.
+
+    /// The bench's Ultra-High Detail bit, as the project fixture has it.
+    fn tbn_ultra() -> Tool {
+        dc_project::test_support::tool_tbn_ultra()
+    }
+
+    /// The Ultra bit with `edit` applied to its cutter values.
+    fn tbn_with(edit: impl FnOnce(&mut Option<f64>, &mut Option<f64>, &mut Option<f64>)) -> Tool {
+        let mut tool = tbn_ultra();
+        let ToolKind::TaperedBallNose {
+            tip_diameter_mm,
+            taper_angle_deg,
+            flute_length_mm,
+        } = &mut tool.cutter
+        else {
+            panic!("a tapered ball nose");
+        };
+        edit(tip_diameter_mm, taper_angle_deg, flute_length_mm);
+        tool
+    }
+
+    /// A version 2 library, which cannot hold a tapered ball nose, loads
+    /// as version 3 with nothing changed, and saves as version 3. A file
+    /// that says 2 and holds one is refused.
+    #[test]
+    fn version_2_library_loads_as_version_3() {
+        let lib = sample_library();
+        let v3 = save(&lib).unwrap();
+        let v2 = v3.replacen("\"version\": 3,", "\"version\": 2,", 1);
+        assert_ne!(v2, v3);
+        let loaded = load(v2.as_bytes()).unwrap();
+        assert_eq!(loaded, lib);
+        assert_eq!(loaded.version, 3);
+        assert_eq!(save(&loaded).unwrap(), v3);
+
+        let mut with_tbn = Library::default();
+        add(&mut with_tbn, tbn_ultra(), None).unwrap();
+        let bad = save(&with_tbn)
+            .unwrap()
+            .replacen("\"version\": 3,", "\"version\": 2,", 1);
+        let err = load(bad.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LibraryError::Migration { from: 2, to: 3, message }
+                if message.contains("tools[0].tool.cutter") && message.contains("tapered_ball_nose")),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn version_3_is_written() {
+        assert_eq!(LIBRARY_VERSION, 3);
+        let text = save(&Library::default()).unwrap();
+        assert!(text.starts_with("{\n  \"version\": 3,"), "{text}");
+        assert_eq!(
+            load(b"{\"version\": 4, \"tools\": []}").unwrap_err(),
+            LibraryError::NewerVersion {
+                found: 4,
+                supported: 3
+            }
+        );
+    }
+
+    /// The tapered ball nose's ranges, as a project checks them: a taper
+    /// per side in (0, 45], a tip above 0, flutes past the ball, a cutting
+    /// diameter wider than the tip; a NaN is `NonFinite`.
+    #[test]
+    fn tapered_ball_nose_is_validated_on_add() {
+        let mut lib = Library::default();
+        let refused = [
+            (
+                tbn_with(|_, taper, _| *taper = Some(50.0)),
+                "cutter.tapered_ball_nose.taper_angle_deg",
+            ),
+            (
+                tbn_with(|tip, _, _| *tip = Some(0.0)),
+                "cutter.tapered_ball_nose.tip_diameter_mm",
+            ),
+            (
+                tbn_with(|_, _, flutes| *flutes = Some(0.3)),
+                "cutter.tapered_ball_nose.flute_length_mm",
+            ),
+            (
+                Tool {
+                    diameter_mm: 0.762,
+                    ..tbn_ultra()
+                },
+                "diameter_mm",
+            ),
+        ];
+        for (tool, field) in refused {
+            let err = add(&mut lib, tool, None).unwrap_err();
+            assert!(
+                matches!(&err, LibraryError::InvalidTool { field: f, .. } if f == field),
+                "{field}: {err:?}"
+            );
+        }
+        let err = add(
+            &mut lib,
+            tbn_with(|_, taper, _| *taper = Some(f64::NAN)),
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, LibraryError::NonFinite { field, .. }
+                if field == "cutter.tapered_ball_nose.taper_angle_deg"),
+            "{err:?}"
+        );
+        assert_eq!(lib, Library::default(), "nothing refused was added");
+        add(&mut lib, tbn_ultra(), None).unwrap();
+        add(
+            &mut lib,
+            dc_project::test_support::tool_tbn_fine(),
+            None,
+        )
+        .unwrap();
+        assert_eq!(lib.tools.len(), 2);
+    }
+
+    /// An unset value is not a fault in the library, as an unset feed is
+    /// not: the tool is stored, saved with it `null` and loaded unset.
+    #[test]
+    fn unset_tapered_values_are_kept() {
+        let mut lib = Library::default();
+        let tool = tbn_with(|_, _, flutes| *flutes = None);
+        add(&mut lib, tool.clone(), None).unwrap();
+        let text = save(&lib).unwrap();
+        assert!(
+            text.contains("\"taper_angle_deg\": 6.7,\n            \"flute_length_mm\": null\n"),
+            "{text}"
+        );
+        let loaded = load(text.as_bytes()).unwrap();
+        assert_eq!(loaded, lib);
+        let ToolKind::TaperedBallNose {
+            flute_length_mm, ..
+        } = loaded.tools[0].tool.cutter
+        else {
+            panic!("a tapered ball nose");
+        };
+        assert_eq!(flute_length_mm, None);
     }
 }

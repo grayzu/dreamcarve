@@ -19,6 +19,7 @@ mod model;
 mod post_processor;
 mod project;
 mod serialize;
+mod tool;
 pub mod units_input;
 mod validate;
 

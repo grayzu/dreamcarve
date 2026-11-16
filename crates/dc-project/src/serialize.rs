@@ -424,7 +424,7 @@ mod tests {
     use serde_json::json;
 
     /// The sample project as this build saves it.
-    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v27/sample.dcv");
+    const CURRENT_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v28/sample.dcv");
     const V1_FIXTURE: &str = include_str!("../tests/fixtures/dcv/v1/sample.dcv");
     /// The sample in the layout before #76: geometry first, and each vertex
     /// over five lines.
@@ -790,6 +790,130 @@ mod tests {
         );
         let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
         assert_eq!(loaded.project, p);
+    }
+
+    // Format 28 (sub-phase 3.6, #677): the tapered ball nose.
+
+    /// The sample with the bench's Ultra-High Detail bit as tool `t1`.
+    fn tapered_sample() -> crate::model::Project {
+        let mut p = sample_project();
+        p.tools[0] = crate::model::Tool {
+            id: ToolId::new("t1"),
+            ..crate::test_support::tool_tbn_ultra()
+        };
+        p
+    }
+
+    #[test]
+    fn tapered_ball_nose_round_trips() {
+        let p = tapered_sample();
+        let loaded = load(save(&p).unwrap().as_bytes()).unwrap();
+        assert_eq!(loaded.project, p);
+    }
+
+    #[test]
+    fn tapered_ball_nose_is_an_object_with_tip_taper_and_flute_length() {
+        let value = serde_json::to_value(tapered_sample()).unwrap();
+        assert_eq!(
+            value["tools"][0]["cutter"],
+            json!({ "tapered_ball_nose": {
+                "tip_diameter_mm": 0.762,
+                "taper_angle_deg": 6.7,
+                "flute_length_mm": 19.05
+            } })
+        );
+        assert_eq!(value["tools"][0]["diameter_mm"], json!(6.35));
+        let text = save(&tapered_sample()).unwrap();
+        assert!(
+            text.contains(
+                "\"cutter\": {\n        \"tapered_ball_nose\": {\n          \"tip_diameter_mm\": 0.762,\n          \"taper_angle_deg\": 6.7,\n          \"flute_length_mm\": 19.05\n        }\n      },"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn tapered_ball_nose_unset_fields_are_null() {
+        for k in 0..3 {
+            let mut p = tapered_sample();
+            let ToolKind::TaperedBallNose {
+                tip_diameter_mm,
+                taper_angle_deg,
+                flute_length_mm,
+            } = &mut p.tools[0].cutter
+            else {
+                panic!("a tapered ball nose");
+            };
+            let (field, value) = [
+                ("tip_diameter_mm", tip_diameter_mm),
+                ("taper_angle_deg", taper_angle_deg),
+                ("flute_length_mm", flute_length_mm),
+            ]
+            .into_iter()
+            .nth(k)
+            .unwrap();
+            *value = None;
+            let text = save(&p).unwrap();
+            let saved: serde_json::Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(
+                saved["tools"][0]["cutter"]["tapered_ball_nose"][field],
+                json!(null),
+                "{field}"
+            );
+            assert_eq!(load(text.as_bytes()).unwrap().project, p, "{field}");
+            // Every field is written; one missing does not load.
+            let missing = text.replacen(&format!("\"{field}\": null"), "\"x\": null", 1);
+            assert!(
+                matches!(load(missing.as_bytes()), Err(LoadError::Schema { .. })),
+                "{field}"
+            );
+        }
+    }
+
+    #[test]
+    fn tapered_ball_nose_is_format_28() {
+        let text = save(&tapered_sample()).unwrap();
+        assert!(text.contains("\n  \"version\": 28,\n"), "{text}");
+        assert_eq!(crate::CURRENT_VERSION, 28);
+    }
+
+    #[test]
+    fn tip_and_flute_length_read_inches() {
+        let text = save(&tapered_sample()).unwrap();
+        let inch = text
+            .replacen("\"tip_diameter_mm\": 0.762", "\"tip_diameter_mm\": \"0.03 in\"", 1)
+            .replacen("\"flute_length_mm\": 19.05", "\"flute_length_mm\": \"0.75 in\"", 1);
+        assert_eq!(inch.matches(" in\"").count(), 2, "fixture layout changed");
+        let loaded = load(inch.as_bytes()).unwrap().project;
+        let ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(tip),
+            taper_angle_deg: Some(taper),
+            flute_length_mm: Some(flutes),
+        } = loaded.tools[0].cutter
+        else {
+            panic!("{:?}", loaded.tools[0].cutter);
+        };
+        dc_geometry::assert_approx_eq!(tip, 0.762, 1e-9);
+        dc_geometry::assert_approx_eq!(flutes, 19.05, 1e-9);
+        assert_eq!(taper, 6.7);
+    }
+
+    /// A NaN in a tapered ball nose is never saved as `null`, which would
+    /// read back as unset.
+    #[test]
+    fn saving_a_nan_tapered_value_fails() {
+        let mut p = tapered_sample();
+        p.tools[0].cutter = ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(0.762),
+            taper_angle_deg: Some(f64::NAN),
+            flute_length_mm: Some(19.05),
+        };
+        assert_eq!(
+            save(&p),
+            Err(SaveError::NonFinite {
+                field: "tools[t1].cutter.tapered_ball_nose.taper_angle_deg".into()
+            })
+        );
     }
 
     /// The version 2 form is read only through the migration.

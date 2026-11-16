@@ -10207,4 +10207,222 @@ mod tests {
             assert!(!message.is_empty() && !message.ends_with('.'), "{message}");
         }
     }
+
+    // Format 28 (sub-phase 3.6, #677): the tapered ball nose.
+
+    /// The sample project with [`crate::test_support::tool_tbn_ultra`]
+    /// (`t2`) edited by `edit`, used by no operation.
+    fn unused_tbn(edit: impl FnOnce(&mut Tool)) -> Project {
+        let mut p = sample_project();
+        let mut tool = crate::test_support::tool_tbn_ultra();
+        edit(&mut tool);
+        p.tools.push(tool);
+        p
+    }
+
+    /// The Ultra bit's cutter values, to edit.
+    fn tbn_of(tool: &mut Tool) -> (&mut Option<f64>, &mut Option<f64>, &mut Option<f64>) {
+        match &mut tool.cutter {
+            ToolKind::TaperedBallNose {
+                tip_diameter_mm,
+                taper_angle_deg,
+                flute_length_mm,
+            } => (tip_diameter_mm, taper_angle_deg, flute_length_mm),
+            cutter => panic!("not a tapered ball nose: {cutter:?}"),
+        }
+    }
+
+    /// The error codes of `problems`, each with its field.
+    fn coded(problems: &[Problem]) -> Vec<(&'static str, Option<String>)> {
+        errors(problems)
+            .into_iter()
+            .map(|p| (p.code(), p.field()))
+            .collect()
+    }
+
+    const TBN_TAPER: &str = "tools[t2].cutter.tapered_ball_nose.taper_angle_deg";
+    const TBN_TIP: &str = "tools[t2].cutter.tapered_ball_nose.tip_diameter_mm";
+    const TBN_FLUTES: &str = "tools[t2].cutter.tapered_ball_nose.flute_length_mm";
+
+    /// The taper per side is in (0, 45]: anything else, or not a number,
+    /// is `tapered_ball_nose_range` at the field, never the general
+    /// `tool_out_of_range` or `non_finite`, on a tool used or not.
+    #[test]
+    fn tapered_ball_nose_taper_out_of_range_is_error() {
+        for taper in [0.0, -1.0, 45.1, f64::NAN, f64::INFINITY] {
+            let p = unused_tbn(|t| *tbn_of(t).1 = Some(taper));
+            let problems = validate(&p);
+            assert_eq!(
+                coded(&problems),
+                [("tapered_ball_nose_range", Some(TBN_TAPER.to_owned()))],
+                "{taper}"
+            );
+            let message = errors(&problems)[0].to_string();
+            assert!(message.contains("per side"), "{message}");
+        }
+        let p = unused_tbn(|t| *tbn_of(t).1 = Some(45.0));
+        assert_eq!(coded(&validate(&p)), []);
+        // The tip, as any length, is above 0.
+        for tip in [0.0, -0.5, f64::NAN] {
+            let p = unused_tbn(|t| *tbn_of(t).0 = Some(tip));
+            assert_eq!(
+                coded(&validate(&p)),
+                [("tapered_ball_nose_range", Some(TBN_TIP.to_owned()))],
+                "{tip}"
+            );
+        }
+    }
+
+    /// The flutes must end above the tangent height, where the ball meets
+    /// the cone: 0.337 mm on the Ultra bit.
+    #[test]
+    fn tapered_ball_nose_flute_must_pass_the_ball() {
+        for flutes in [0.3, 0.0, -1.0, f64::INFINITY] {
+            let p = unused_tbn(|t| *tbn_of(t).2 = Some(flutes));
+            assert_eq!(
+                coded(&validate(&p)),
+                [("tapered_ball_nose_range", Some(TBN_FLUTES.to_owned()))],
+                "{flutes}"
+            );
+        }
+        let p = unused_tbn(|t| *tbn_of(t).2 = Some(0.35));
+        assert_eq!(coded(&validate(&p)), []);
+        // With the taper unset there is no tangent height, but the flutes
+        // still need a length.
+        let p = unused_tbn(|t| {
+            *tbn_of(t).1 = None;
+            *tbn_of(t).2 = Some(0.0);
+        });
+        assert_eq!(
+            coded(&validate(&p)),
+            [("tapered_ball_nose_range", Some(TBN_FLUTES.to_owned()))]
+        );
+    }
+
+    /// The cutting diameter must be wider than the ball, or there is no
+    /// cone: equal to the tip is the same error, and never an unset value.
+    #[test]
+    fn cut_diameter_must_exceed_the_tip() {
+        for diameter in [0.7, 0.762] {
+            let p = unused_tbn(|t| t.diameter_mm = diameter);
+            let problems = validate(&p);
+            assert_eq!(
+                coded(&problems),
+                [(
+                    "tapered_ball_nose_range",
+                    Some("tools[t2].diameter_mm".to_owned())
+                )],
+                "{diameter}"
+            );
+            assert!(
+                !problems
+                    .iter()
+                    .any(|q| matches!(q, Problem::ToolValueUnset { .. })),
+                "{problems:?}"
+            );
+        }
+        // A diameter not above 0 is the general rule's, as on any tool.
+        let p = unused_tbn(|t| t.diameter_mm = 0.0);
+        let codes: Vec<&str> = errors(&validate(&p)).iter().map(|q| q.code()).collect();
+        assert!(codes.contains(&"tool_out_of_range"), "{codes:?}");
+    }
+
+    /// Each unset cutter value of a tool an enabled operation uses is
+    /// `tool_value_unset` at its field; an unused tool's are not reported.
+    #[test]
+    fn unset_tapered_value_on_a_used_tool_is_tool_value_unset() {
+        for (k, field) in [TBN_TIP, TBN_TAPER, TBN_FLUTES].into_iter().enumerate() {
+            let mut p = crate::test_support::tapered_project();
+            let (tip, taper, flutes) = tbn_of(&mut p.tools[1]);
+            *[tip, taper, flutes].into_iter().nth(k).unwrap() = None;
+            let problems = validate(&p);
+            let unset: Vec<Option<String>> = problems
+                .iter()
+                .filter(|q| matches!(q, Problem::ToolValueUnset { .. }))
+                .map(Problem::field)
+                .collect();
+            assert_eq!(unset, [Some(field.to_owned())], "{problems:?}");
+            assert!(
+                problems.iter().all(|q| q.code() != "tapered_ball_nose_range"),
+                "{problems:?}"
+            );
+            let message = problems
+                .iter()
+                .find(|q| q.is_unset_value())
+                .unwrap()
+                .to_string();
+            assert!(message.contains(field), "{message}");
+        }
+        let p = unused_tbn(|t| {
+            let (tip, taper, flutes) = tbn_of(t);
+            *tip = None;
+            *taper = None;
+            *flutes = None;
+        });
+        let problems = validate(&p);
+        assert_eq!(coded(&problems), []);
+        assert_eq!(
+            problems.iter().map(Problem::code).collect::<Vec<_>>(),
+            ["unused_tool"]
+        );
+    }
+
+    /// A Photo V-Carve needs a V-bit for good: a tapered ball nose is not
+    /// supported there.
+    #[test]
+    fn tapered_ball_nose_on_photo_is_v_carve_needs_v_bit() {
+        let mut p = photo_project();
+        p.tools[1] = crate::test_support::tool_tbn_ultra();
+        let problems = validate(&p);
+        assert_eq!(
+            coded(&problems),
+            [("v_carve_needs_v_bit", Some("operations[o8].tool".to_owned()))]
+        );
+        let message = errors(&problems)[0].to_string();
+        assert!(
+            message.contains(
+                "a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there"
+            ),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn tapered_ball_nose_countersink_is_error() {
+        let mut p = countersink_project(|_| {});
+        p.tools[1] = crate::test_support::tool_tbn_ultra();
+        let problems = validate(&p);
+        assert_eq!(
+            problems,
+            vec![Problem::CountersinkNeedsVBit {
+                operation: OperationId::new("o3"),
+                name: "Drill".into(),
+                tool: ToolId::new("t2"),
+                tool_name: "IDC Ultra-High Detail".into(),
+                cutter: "a tapered ball nose",
+            }]
+        );
+    }
+
+    /// Slice 27a: a V-Carve or an Inlay with a tapered ball nose is
+    /// refused until carving with one is built (27c, #679, turns this
+    /// into `…_is_accepted`).
+    #[test]
+    fn tapered_ball_nose_v_carve_is_refused_until_built() {
+        let mut carve = carve_project(|_| {});
+        carve.tools[1] = crate::test_support::tool_tbn_ultra();
+        let mut inlay = inlay_project(|_| {});
+        inlay.tools[1] = crate::test_support::tool_tbn_ultra();
+        for (p, op) in [(carve, "o6"), (inlay, "o7")] {
+            let problems = validate(&p);
+            assert_eq!(
+                coded(&problems),
+                [("v_carve_needs_v_bit", Some(format!("operations[{op}].tool")))],
+                "{problems:?}"
+            );
+            let message = errors(&problems)[0].to_string();
+            assert!(message.contains("a tapered ball nose"), "{message}");
+            assert!(message.contains("not supported yet"), "{message}");
+        }
+    }
 }

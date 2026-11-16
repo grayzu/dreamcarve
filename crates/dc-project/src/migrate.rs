@@ -3836,7 +3836,10 @@ mod tests {
         let mut expected = photo_project();
         expected.bitmaps[0].png_base64 = loaded.project.bitmaps[0].png_base64.clone();
         assert_eq!(loaded.project, expected);
-        assert_eq!(crate::save(&loaded.project).unwrap(), text);
+        assert_eq!(
+            crate::save(&loaded.project).unwrap(),
+            text.replacen("\"version\": 27,", &format!("\"version\": {CURRENT_VERSION},"), 1)
+        );
         let Some(Operation::PhotoVCarve(photo)) = loaded.project.operations.last() else {
             panic!("a Photo V-Carve");
         };
@@ -3866,7 +3869,7 @@ mod tests {
             assert_eq!(loaded.notes, vec![]);
             let saved = crate::save(&loaded.project).unwrap();
             let expected = old
-                .replacen("\"version\": 26,", "\"version\": 27,", 1)
+                .replacen("\"version\": 26,", &format!("\"version\": {CURRENT_VERSION},"), 1)
                 .replacen(
                     "\n  \"post_processor\": {",
                     "\n  \"bitmaps\": [],\n  \"post_processor\": {",
@@ -3879,7 +3882,135 @@ mod tests {
     /// A version 26 reader refuses a version 27 file as newer (ADR-0002).
     #[test]
     fn version_27_is_newer_than_26() {
-        assert_eq!(CURRENT_VERSION, 27);
+        const { assert!(CURRENT_VERSION >= 27) };
+        let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
+        assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
+    }
+
+    // Version 27 → 28 (sub-phase 3.6, #677): the tapered ball nose.
+
+    const V28_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v28/sample.dcv");
+    const V28_TAPERED_FIXTURE: &[u8] = include_bytes!("../tests/fixtures/dcv/v28/tapered.dcv");
+
+    /// Format 28 adds a cutter a version 27 file cannot hold, so the step
+    /// changes nothing but the version: every key, value and key order of
+    /// a project holding every kind a version 27 file can stays as it was.
+    #[test]
+    fn v27_to_v28_bumps_the_version_only() {
+        use crate::test_support::{photo_project, sample_inlay, sample_v_carve};
+        let mut project = photo_project();
+        project.operations.push(Operation::VCarve(sample_v_carve()));
+        project.operations.push(Operation::Inlay(sample_inlay()));
+        let expected = serde_json::to_value(&project).unwrap();
+        let mut root = expected.clone();
+        root["version"] = json!(27);
+        let (migrated, notes) = migrate_with_notes(root, 27).unwrap();
+        assert_eq!(migrated, expected);
+        assert_eq!(
+            serde_json::to_string_pretty(&migrated).unwrap(),
+            serde_json::to_string_pretty(&expected).unwrap(),
+            "the keys keep their order"
+        );
+        assert_eq!(notes, vec![]);
+    }
+
+    /// A file that says 27 and holds a `tapered_ball_nose` cutter is not
+    /// a version 27 file: the migration refuses it, naming the tool.
+    #[test]
+    fn v27_file_with_a_tapered_ball_nose_fails() {
+        let mut root = serde_json::to_value(crate::test_support::tapered_project()).unwrap();
+        root["version"] = json!(27);
+        let err = migrate(root, 27).unwrap_err();
+        match &err {
+            LoadError::Migration {
+                from: 27,
+                to: 28,
+                message,
+                ..
+            } => {
+                assert!(message.contains("`tools[1].cutter`"), "{message}");
+                assert!(message.contains("tapered_ball_nose"), "{message}");
+            }
+            _ => panic!("{err:?}"),
+        }
+        // An older file is refused by the same step, at the end of its chain.
+        let mut root = sample_root_at(20);
+        root["tools"][0]["cutter"] = json!({ "tapered_ball_nose": {
+            "tip_diameter_mm": 0.762, "taper_angle_deg": 6.7, "flute_length_mm": 19.05
+        } });
+        let err = migrate(root, 20).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                LoadError::Migration {
+                    from: 27,
+                    to: 28,
+                    ..
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// The version 27 fixtures load, now as version 28 projects.
+    #[test]
+    fn version_27_fixture_loads() {
+        let text = std::str::from_utf8(V27_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 27,"), "a version 27 file");
+        let loaded = load(V27_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(loaded.notes, vec![]);
+        let loaded = load(V27_PHOTO_FIXTURE).unwrap();
+        assert_eq!(loaded.project.version, CURRENT_VERSION);
+        assert_eq!(loaded.problems, vec![]);
+    }
+
+    /// The version 28 fixtures load as they are: the plain sample, and the
+    /// sample with the Ultra-High Detail bit and a V-Carve using it, which
+    /// validation refuses until carving with a tapered ball nose is built
+    /// (27c, #679).
+    #[test]
+    fn version_28_fixtures_load() {
+        use crate::test_support::tapered_project;
+        let text = std::str::from_utf8(V28_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 28,"), "a version 28 file");
+        let loaded = load(V28_FIXTURE).unwrap();
+        assert_eq!(loaded.project, sample_project());
+        assert_eq!(loaded.problems, vec![]);
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
+
+        let text = std::str::from_utf8(V28_TAPERED_FIXTURE).unwrap();
+        assert!(text.contains("\"version\": 28,"), "a version 28 file");
+        assert!(text.contains("\"tapered_ball_nose\": {"), "{text}");
+        let loaded = load(V28_TAPERED_FIXTURE).unwrap();
+        assert_eq!(loaded.project, tapered_project());
+        assert_eq!(crate::save(&loaded.project).unwrap(), text);
+        let codes: Vec<&str> = loaded.problems.iter().map(Problem::code).collect();
+        assert_eq!(codes, ["v_carve_needs_v_bit"], "{:?}", loaded.problems);
+    }
+
+    /// A version 27 project, whatever it holds, exports the programs it
+    /// did: it loads as the same project, and saving it changes one line
+    /// of the file, its version. (The CLI test
+    /// `v27_project_exports_the_same_programs` compares the programs.)
+    #[test]
+    fn a_v27_project_exports_the_same_programs() {
+        for fixture in [V27_FIXTURE, V27_PHOTO_FIXTURE] {
+            let old = std::str::from_utf8(fixture).unwrap();
+            let loaded = load(fixture).unwrap();
+            assert_eq!(loaded.notes, vec![]);
+            let saved = crate::save(&loaded.project).unwrap();
+            let expected = old.replacen("\"version\": 27,", "\"version\": 28,", 1);
+            assert_eq!(saved, expected, "the version line only");
+        }
+    }
+
+    /// A version 27 reader refuses a version 28 file as newer (ADR-0002).
+    #[test]
+    fn version_28_is_newer_than_27() {
+        assert_eq!(CURRENT_VERSION, 28);
         let err = migrate(sample_root_at(CURRENT_VERSION), CURRENT_VERSION + 1).unwrap_err();
         assert!(matches!(err, LoadError::NewerVersion { .. }), "{err:?}");
     }
