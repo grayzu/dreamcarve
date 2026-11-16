@@ -25,7 +25,9 @@
 //!   [`ToolKind::EndMill`] (a bull nose's corner radius `RE` is not
 //!   modelled; the name gains ` (bull nose r<RE>)`, `RE` as written in the
 //!   file's unit); `"ball end mill"` → [`ToolKind::BallNose`];
-//!   `"chamfer mill"` → [`ToolKind::VBit`]; `"drill"`, `"spot drill"`,
+//!   `"chamfer mill"` → [`ToolKind::VBit`]; a ball-tipped `"tapered
+//!   mill"` → [`ToolKind::TaperedBallNose`] ("Tapered mill" below);
+//!   `"drill"`, `"spot drill"`,
 //!   `"center drill"`, `"counter sink"`, `"counter bore"` and `"reamer"` →
 //!   [`ToolKind::Drill`]. Every other type the schema names is
 //!   [`SkipReason::UnsupportedType`]; a type it does not name is
@@ -37,6 +39,24 @@
 //!   decision, functional spec open question 10). So `TA` is the half
 //!   angle and `included_angle_deg = 2·TA`. Do not re-derive this from the
 //!   schema's wording.
+//! - **Tapered mill** (`docs/specs/phase-3/design.md`, "Data model →
+//!   Tapered ball nose → Fusion import"; #682). A `tapered mill` whose
+//!   corner radius `RE` is `DC/2` within 1e-6 (`BALL_TIP_TOLERANCE`, in the
+//!   file's unit) has a ball tip and is a tapered ball nose: `DC` →
+//!   `tip_diameter_mm` (`2·RE` without a `DC`), `TA` → `taper_angle_deg`
+//!   as written, `LCF` → `flute_length_mm`, and the shaft diameter
+//!   `SFDM` → `diameter_mm`, the cutting diameter, from which the
+//!   stepover fraction is taken. `TA` is per side: Autodesk's tool
+//!   reference defines the taper angle as half the included angle, as
+//!   the chamfer mill's is. A missing `TA` or `LCF`, or a tip with
+//!   neither `DC` nor `RE`, is imported unset with
+//!   [`ImportNote::TaperedValueUnset`] naming each field. `SFDM` absent
+//!   or not positive is [`SkipReason::NoShaftDiameter`], checked after
+//!   the tip, so no tool carries a placeholder cutting diameter. `RE`
+//!   absent with a `DC`, 0, or below `DC/2` (a flat or bull tip) is
+//!   [`SkipReason::TaperedTipNotBall`]; `RE` negative or above `DC/2` is
+//!   [`SkipReason::Invalid`], as is a present value out of range (`TA`
+//!   50, flutes ending in the ball, a shaft no wider than the tip).
 //! - `unit` `"millimeters"` or `"inches"`; every length (`DC`, `stepdown`,
 //!   `stepover`) and feed (`v_f`, `v_f_plunge`) is in that unit and is
 //!   converted to mm or mm/min. `n` is RPM in either unit. A value
@@ -47,7 +67,7 @@
 //!   `1524.0000000000002`; a millimetre value is kept as written. The
 //!   computed `step_over_fraction` is rounded to 6 places in either unit
 //!   (maintainer decision 2026-10-24).
-//! - `geometry.DC` → `diameter_mm`; absent or not positive is
+//! - `geometry.DC` → `diameter_mm` (a tapered mill's is `SFDM`); absent or not positive is
 //!   [`SkipReason::NoDiameter`]. `geometry.NOF` → `flutes`; 0 or absent is
 //!   1 with [`ImportNote::FlutesUnset`].
 //! - `post-process.number` above 0 → [`Tool::number`]; 0 or absent → `None`.
@@ -83,7 +103,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::io::Read;
 
-use dc_project::{Tool, ToolId, ToolKind, round_length_mm, round_rate_mm_min};
+use dc_project::{TBN_TIP, Tool, ToolId, ToolKind, round_length_mm, round_rate_mm_min};
 use serde_json::{Map, Value};
 
 use crate::{LibraryError, LibraryToolId};
@@ -156,6 +176,23 @@ pub enum ImportNote {
         /// The unset fields, in the file's order: tip, taper, flutes.
         fields: Vec<String>,
     },
+}
+
+impl ImportNote {
+    /// The [`Self::TaperedValueUnset`] note for `tool`, naming its unset
+    /// cutter values from [`Tool::unset_values`]; `None` when every one
+    /// is set or it is not a tapered ball nose. A DreamCarve library's
+    /// import line uses it too, so both read alike.
+    #[must_use]
+    pub fn tapered_value_unset(tool: &Tool) -> Option<Self> {
+        let fields: Vec<String> = tool
+            .unset_values()
+            .into_iter()
+            .filter(dc_project::UnsetValue::is_cutter)
+            .map(|u| u.field.to_owned())
+            .collect();
+        (!fields.is_empty()).then_some(Self::TaperedValueUnset { fields })
+    }
 }
 
 impl fmt::Display for ImportNote {
@@ -365,8 +402,62 @@ enum Family {
     BallNose,
     /// `chamfer mill`: a V-bit of twice `TA`.
     Chamfer,
+    /// `tapered mill`: a tapered ball nose when its tip is a ball
+    /// ([`tapered_ball_nose`]).
+    Tapered,
     /// The hole-making tools DreamCarve drills with.
     Drill,
+}
+
+/// How far `RE` may be from `DC/2`, in the file's unit, for a tapered
+/// mill's tip to be a ball.
+const BALL_TIP_TOLERANCE: f64 = 1e-6;
+
+/// A ball-tipped `tapered mill`'s cutter and its cutting diameter in the
+/// file's unit (`SFDM`), or why it is skipped (module docs, "Tapered
+/// mill"). `length_mm` converts a length in the file's unit.
+fn tapered_ball_nose(
+    geometry: Option<&Map<String, Value>>,
+    length_mm: impl Fn(f64) -> f64,
+) -> Result<(ToolKind, f64), SkipReason> {
+    let number = |key: &str| geometry?.get(key)?.as_f64();
+    let invalid_tip = |message: String| SkipReason::Invalid {
+        field: TBN_TIP.into(),
+        message,
+    };
+    // The tip: `DC` when `RE` is half of it, `2·RE` without a `DC`, unset
+    // with neither; a flat or bull tip is another cutter.
+    let tip = match (positive(geometry, "DC"), number("RE")) {
+        (_, Some(re)) if re < 0.0 => {
+            return Err(invalid_tip(format!(
+                "has a negative corner radius `RE` {re}"
+            )));
+        }
+        (_, Some(re)) if re <= 0.0 => return Err(SkipReason::TaperedTipNotBall),
+        (Some(_), None) => return Err(SkipReason::TaperedTipNotBall),
+        (None, None) => None,
+        (None, Some(re)) => Some(2.0 * re),
+        (Some(dc), Some(re)) => {
+            let half = dc / 2.0;
+            if re > half + BALL_TIP_TOLERANCE {
+                return Err(invalid_tip(format!(
+                    "has a corner radius `RE` {re} above half its diameter `DC` {dc}"
+                )));
+            }
+            if re < half - BALL_TIP_TOLERANCE {
+                return Err(SkipReason::TaperedTipNotBall);
+            }
+            Some(dc)
+        }
+    };
+    let shaft = positive(geometry, "SFDM").ok_or(SkipReason::NoShaftDiameter)?;
+    let cutter = ToolKind::TaperedBallNose {
+        tip_diameter_mm: tip.map(&length_mm),
+        // Per side, as written (module docs, "Tapered mill").
+        taper_angle_deg: number("TA"),
+        flute_length_mm: number("LCF").map(&length_mm),
+    };
+    Ok((cutter, shaft))
 }
 
 /// What a Fusion `type` is to the importer.
@@ -387,6 +478,7 @@ const SUPPORTED: &[(&str, Family)] = &[
     ("bull nose end mill", Family::BullNose),
     ("ball end mill", Family::BallNose),
     ("chamfer mill", Family::Chamfer),
+    ("tapered mill", Family::Tapered),
     ("drill", Family::Drill),
     ("spot drill", Family::Drill),
     ("center drill", Family::Drill),
@@ -404,7 +496,6 @@ const UNSUPPORTED: &[&str] = &[
     "face mill",
     "form mill",
     "thread mill",
-    "tapered mill",
     "radius mill",
     "corner chamfer end mill",
     "circle segment barrel",
@@ -529,20 +620,25 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
     let geometry = obj
         .and_then(|o| o.get("geometry"))
         .and_then(Value::as_object);
-    let diameter = positive(geometry, "DC").ok_or_else(|| skip(SkipReason::NoDiameter))?;
-    let cutter = match family {
-        Family::EndMill | Family::BullNose => ToolKind::EndMill,
-        Family::BallNose => ToolKind::BallNose,
-        Family::Drill => ToolKind::Drill,
+    // The cutter, and the cutting diameter in the file's unit: `DC`, or a
+    // tapered ball nose's shaft diameter `SFDM` (its `DC` is the tip).
+    let dc = || positive(geometry, "DC").ok_or_else(|| skip(SkipReason::NoDiameter));
+    let (cutter, diameter) = match family {
+        Family::Tapered => tapered_ball_nose(geometry, length_mm).map_err(skip)?,
+        Family::EndMill | Family::BullNose => (ToolKind::EndMill, dc()?),
+        Family::BallNose => (ToolKind::BallNose, dc()?),
+        Family::Drill => (ToolKind::Drill, dc()?),
         Family::Chamfer => {
+            let diameter = dc()?;
             // TA is the half angle (module docs, "Chamfer angle").
             let half_angle_deg = geometry
                 .and_then(|g| g.get("TA"))
                 .and_then(Value::as_f64)
                 .ok_or_else(|| skip(SkipReason::NoTaperAngle))?;
-            ToolKind::VBit {
+            let cutter = ToolKind::VBit {
                 included_angle_deg: 2.0 * half_angle_deg,
-            }
+            };
+            (cutter, diameter)
         }
     };
     let mut tool_notes = Vec::new();
@@ -591,6 +687,7 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
         step_down_mm: None,
         step_over_fraction: None,
     };
+    tool_notes.extend(ImportNote::tapered_value_unset(&template));
 
     let presets: Vec<(usize, &Map<String, Value>)> = obj
         .and_then(|o| o.get("start-values"))
@@ -706,7 +803,7 @@ fn import_item(index: usize, item: &Value) -> Result<Vec<ImportedTool>, Skipped>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dc_project::{TBN_FLUTES, TBN_TAPER, TBN_TIP};
+    use dc_project::{TBN_FLUTES, TBN_TAPER};
     use serde_json::json;
 
     /// `tests/fixtures/fusion/sample.json`.
@@ -1703,7 +1800,7 @@ mod tests {
         let note = ImportNote::TaperedValueUnset {
             fields: vec![TBN_TAPER.into(), TBN_FLUTES.into()],
         };
-        assert_eq!(imported.notes, [note.clone()]);
+        assert_eq!(imported.notes, std::slice::from_ref(&note));
         assert_eq!(
             note.to_string(),
             "set cutter.tapered_ball_nose.taper_angle_deg, cutter.tapered_ball_nose.flute_length_mm"

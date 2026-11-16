@@ -356,19 +356,38 @@ const FUSION_IMPORTED: [&str; 13] = [
     "3.175 mm Flat End Mill (Acrylic)",
 ];
 
-/// The items of the sample Fusion library that are skipped, with their
-/// types (`crates/dreamcarve/tests/cli.rs`, `FUSION_SKIPPED`).
+/// The items of the sample Fusion library that are skipped, with the
+/// reason each is (`crates/dreamcarve/tests/cli.rs`, `FUSION_SKIPPED`).
 const FUSION_SKIPPED: [(&str, &str); 10] = [
-    ("6 mm Thread Mill, 1 mm Pitch", "thread mill"),
-    ("M6 Right-Hand Tap", "tap right hand"),
-    ("50 mm Face Mill", "face mill"),
-    ("Ogee Form Router Bit", "form mill"),
-    ("6 mm Lollipop Mill", "lollipop mill"),
-    ("12 mm 14-Degree Dovetail Mill", "dovetail mill"),
-    ("3 mm Tapered Ball Mill, 2-Degree Taper", "tapered mill"),
-    ("General Turning Tool", "turning general"),
-    ("Probe, 2 mm Stylus", "probe"),
-    ("ER20 Collet Holder", "holder"),
+    (
+        "6 mm Thread Mill, 1 mm Pitch",
+        "unsupported tool type `thread mill`",
+    ),
+    (
+        "M6 Right-Hand Tap",
+        "unsupported tool type `tap right hand`",
+    ),
+    ("50 mm Face Mill", "unsupported tool type `face mill`"),
+    ("Ogee Form Router Bit", "unsupported tool type `form mill`"),
+    (
+        "6 mm Lollipop Mill",
+        "unsupported tool type `lollipop mill`",
+    ),
+    (
+        "12 mm 14-Degree Dovetail Mill",
+        "unsupported tool type `dovetail mill`",
+    ),
+    // No `RE`: a flat tip (#682).
+    (
+        "3 mm Tapered Ball Mill, 2-Degree Taper",
+        "a tapered mill with a flat or bull tip is not a tapered ball nose; DreamCarve does not model it yet",
+    ),
+    (
+        "General Turning Tool",
+        "unsupported tool type `turning general`",
+    ),
+    ("Probe, 2 mm Stylus", "unsupported tool type `probe`"),
+    ("ER20 Collet Holder", "unsupported tool type `holder`"),
 ];
 
 /// Acceptance 71's import, acceptance 35's report: importing
@@ -398,10 +417,10 @@ fn fusion_import_report_equals_tools_import() {
             lines[k]
         );
     }
-    for (k, (description, kind)) in FUSION_SKIPPED.iter().enumerate() {
+    for (k, (description, reason)) in FUSION_SKIPPED.iter().enumerate() {
         assert_eq!(
             lines[FUSION_IMPORTED.len() + k],
-            format!("`{description}`: skipped: unsupported tool type `{kind}`")
+            format!("`{description}`: skipped: {reason}")
         );
     }
     assert!(lines.contains(&"`5 mm Drill`: imported (lt6); feed unset".to_owned()));
