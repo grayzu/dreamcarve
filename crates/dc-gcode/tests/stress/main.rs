@@ -17,9 +17,9 @@
 //! **Cost.** The CI tests carve [`CI_CASES`] small designs of each family
 //! through the whole property (two line-art motifs, or two or three
 //! letters up to 10 mm tall, a narrower band), each by three of the seven
-//! operations in turn, with arc fitting off (#480), and
+//! operations in turn, with arc fitting on (#480), and
 //! [`OWN_MOVE_CASES`] small designs of each by all seven through
-//! generation alone. In a debug build they take about 50 s of wall time
+//! generation alone. In a debug build they take about 55 s of wall time
 //! and 100 s of CPU (the lettering test is the longest, 48 s), run in
 //! parallel with the crate's other tests. The large sweep is ignored; run
 //! it with a release build, on every core:
@@ -88,8 +88,9 @@ const LETTERING_SMALL: Family = ("small lettering", lettering::lettering_small);
 
 /// Carves `count` designs of each family from `first` ([`carve`]). A
 /// small family's design is carved by three of the seven operations, in
-/// turn by seed: the female, one male, one V-Carve; and with arc fitting
-/// off (#480: it can take minutes on a V-bit's long level runs in a
+/// turn by seed: the female, one male, one V-Carve; each with arc fitting
+/// on, so the safety pass judges fitted arcs (#480 made the fit of a
+/// V-bit's long level runs take a fraction of a second, from minutes in a
 /// debug build).
 fn run(families: &[Family], first: u64, count: u64, seats: Seats, full: bool) -> Outcome {
     let mut all = Outcome::default();
@@ -97,7 +98,7 @@ fn run(families: &[Family], first: u64, count: u64, seats: Seats, full: bool) ->
         for seed in first..first + count {
             let mut c = case(family, seed, draw(seed));
             if full && family.starts_with("small") {
-                c.project.arc_fit_tolerance_mm = None;
+                c.project.arc_fit_tolerance_mm = Some(0.01);
                 let male = MALES[usize::try_from(seed % 4).unwrap_or(0)];
                 let carve = [Kind::VCarveTop, Kind::VCarveStart][usize::from(seed % 2 == 1)];
                 c.ops
