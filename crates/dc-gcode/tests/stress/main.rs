@@ -540,6 +540,29 @@ fn male_of_line_art_0xb3_generates() {
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
 
+/// #695 (found by #527's sweep): the male of line-art seed `0x94` (15°
+/// bit, inch program, D 3.879, G 0.473) with its band's edge open seats
+/// within `SEAT_MM`. The female's clearing pass (a 3.175 mm end mill)
+/// stepped its rings from simplified ones since #474, so one ring ran up to
+/// the tolerance inside the offset the V-bit floor took for the pass's
+/// reach; the floor left the spot to the pass, which missed it by
+/// 0.013 mm, and a sliver 0.8 mm high held the plug 0.328 mm proud.
+#[test]
+fn male_of_line_art_0x94_seats() {
+    let outcome = reproduce(
+        "line art",
+        0x94,
+        designs::line_art(0x94),
+        Kind::MaleOpenEdge,
+    );
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}
+
 /// #513 (found by the sweep): the male cut-out of lettering seed `0xc0`
 /// ("CrC", 90° bit, millimetre program, V-walled band) generates, every
 /// program passes S1–S19 and the pair seats within 0.05 mm. Its cut-out

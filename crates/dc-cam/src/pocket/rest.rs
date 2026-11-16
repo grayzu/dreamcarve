@@ -131,6 +131,12 @@ pub fn left_by(
     without_noise(difference(&material, &reached, tolerance_mm), tolerance_mm)
 }
 
+/// What `references` left of `region` that a V-bit floor must cut (#695).
+#[must_use]
+pub fn left_wide_by(region: &Region, references: &[Reference], tolerance_mm: f64) -> Vec<Region> {
+    left_by(region, 0.0, references, tolerance_mm)
+}
+
 /// The tool-centre region of a rest operation: the points of `own_centre`
 /// (this operation's tool-centre region of the pocket) within `radius_mm`
 /// of `left` (from [`left_by`]), noise dropped. Empty when the tool reaches
@@ -255,6 +261,61 @@ mod tests {
         let want = (4.0 - std::f64::consts::PI) * 25.0;
         let arcs_mm = 4.0 * std::f64::consts::FRAC_PI_2 * 5.0;
         assert_approx_eq!(area_mm2(&left), want, TOL * arcs_mm);
+    }
+
+    /// #695: a regular 12-gon, circumradius 17 mm, and a 3.175 mm end
+    /// mill. The mill leaves a cusp 0.056 mm deep at each corner, between
+    /// the corner and its reach's round. The booleans join the cusps by
+    /// hairline strips along the edges, where the reach meets them, into
+    /// four pieces each under the tolerance times its perimeter, so
+    /// [`left_by`] drops them all as noise. [`left_wide_by`] keeps each
+    /// cusp: the middle of each, on the corner's bisector halfway from the
+    /// corner to the round, lies in one of its pieces, and every piece lies
+    /// in the region and outside the reach.
+    #[test]
+    fn left_wide_by_keeps_cusps_joined_by_hairlines() {
+        let corners: Vec<Point> = (0..12)
+            .map(|k| {
+                let a = 0.1 + std::f64::consts::TAU * f64::from(k) / 12.0;
+                Point::new(31.3 + 17.0 * a.cos(), 64.7 + 17.0 * a.sin())
+            })
+            .collect();
+        let vertices = corners
+            .iter()
+            .map(|c| dc_geometry::Vertex::line(c.x, c.y))
+            .collect();
+        let region = single_region(Contour::new(Polyline::new(vertices, true)).unwrap()).unwrap();
+        let reference = Reference {
+            radius_mm: 3.175 / 2.0,
+            stock_to_leave_mm: 0.0,
+        };
+        assert!(
+            left_by(&region, 0.0, &[reference], TOL).is_empty(),
+            "the cusps are noise to left_by"
+        );
+        let left = left_wide_by(&region, &[reference], TOL);
+        // The round is `R / sin(θ/2) − R` from the corner along the
+        // bisector, θ the corner's 150°.
+        let half_angle = (150.0_f64 / 2.0).to_radians();
+        let depth_mm = reference.radius_mm / half_angle.sin() - reference.radius_mm;
+        let centre = Point::new(31.3, 64.7);
+        for c in &corners {
+            let to_centre = Point::new(centre.x - c.x, centre.y - c.y);
+            let n = to_centre.x.hypot(to_centre.y);
+            let q = Point::new(
+                c.x + to_centre.x / n * depth_mm / 2.0,
+                c.y + to_centre.y / n * depth_mm / 2.0,
+            );
+            assert!(
+                left.iter().any(|piece| piece.contains_point(q)),
+                "the cusp at {c:?} is not left (its middle {q:?})"
+            );
+        }
+        let reached = reachable(&region, reference, TOL);
+        let outside = difference(&left, std::slice::from_ref(&region), TOL);
+        assert!(area_mm2(&outside) < 1e-6, "{}", area_mm2(&outside));
+        let over = intersection(&left, &reached, TOL);
+        assert!(area_mm2(&over) < 1e-6, "{}", area_mm2(&over));
     }
 
     /// A ring whose tool only grazes the leftover is in air; one that
