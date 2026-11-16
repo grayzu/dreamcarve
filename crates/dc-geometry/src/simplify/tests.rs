@@ -188,3 +188,70 @@ fn anchors_are_deterministic() {
         });
     assert_eq!(points_of(&first).first().copied(), Some(lowest));
 }
+
+/// A 120-gon of radius 10 whose every edge is split at a point 0.002 mm
+/// outward, as a polygon offset and flattened again comes back (#474).
+fn doubled_circle(centre: (f64, f64), radius_mm: f64) -> Vec<(f64, f64)> {
+    let n = 120;
+    let mut points = Vec::new();
+    for k in 0..n {
+        let a = TAU * f64::from(k) / f64::from(n);
+        let b = TAU * (f64::from(k) + 0.5) / f64::from(n);
+        let half = TAU / f64::from(n) / 2.0;
+        let mid_r = radius_mm * half.cos() + 0.002;
+        points.push((centre.0 + radius_mm * a.cos(), centre.1 + radius_mm * a.sin()));
+        points.push((centre.0 + mid_r * b.cos(), centre.1 + mid_r * b.sin()));
+    }
+    points
+}
+
+#[test]
+fn polygonal_region_drops_vertices_within_the_tolerance() {
+    let outer = contour(&doubled_circle((0.0, 0.0), 30.0));
+    let hole = contour(&doubled_circle((0.0, 0.0), 10.0)).reversed();
+    let region = region_of(vec![outer.clone(), hole.clone()]).remove(0);
+    let simple = simplify_polygonal(&region, 0.005).expect("vertices drop");
+    assert_eq!(simple.holes().len(), 1);
+    assert!(simple.outer().is_ccw());
+    assert!(!simple.holes()[0].is_ccw());
+    for (before, after) in [(&outer, simple.outer()), (&hole, &simple.holes()[0])] {
+        let (n, m) = (
+            before.polyline().vertices().len(),
+            after.polyline().vertices().len(),
+        );
+        assert!(m * 3 <= n * 2, "{n} vertices only dropped to {m}");
+        // Every input vertex is within the tolerance of the output.
+        let segments: Vec<_> = after.polyline().segments().collect();
+        for v in before.polyline().vertices() {
+            let nearest = segments
+                .iter()
+                .map(|s| point_segment_distance_mm(*s, v.point()))
+                .fold(f64::INFINITY, f64::min);
+            assert!(nearest <= 0.005 + 1e-9, "{nearest} > 0.005");
+        }
+    }
+}
+
+#[test]
+fn polygonal_region_keeps_arcs_and_corners() {
+    // A rectangle drops nothing: no simplified region.
+    let square = contour(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
+    let region = region_of(vec![square.clone()]).remove(0);
+    assert_eq!(simplify_polygonal(&region, 0.01), None);
+    // A dense hole with an arc in it is kept whole; the outer is simplified.
+    let outer = contour(&doubled_circle((0.0, 0.0), 30.0));
+    let mut vertices: Vec<Vertex> = doubled_circle((0.0, 0.0), 10.0)
+        .into_iter()
+        .map(|(x, y)| Vertex::line(x, y))
+        .collect();
+    if let Some(v) = vertices.first_mut() {
+        v.bulge = 0.001;
+    }
+    let hole = Contour::new(Polyline::new(vertices, true))
+        .expect("a hole")
+        .reversed();
+    let region = region_of(vec![outer, hole.clone()]).remove(0);
+    let simple = simplify_polygonal(&region, 0.005).expect("the outer drops vertices");
+    assert_eq!(simple.holes(), std::slice::from_ref(&hole));
+    assert!(simple.outer().polyline().vertices().len() < 300);
+}

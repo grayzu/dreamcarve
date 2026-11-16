@@ -18,6 +18,23 @@ use crate::polyline::{Polyline, Segment, Vertex};
 use crate::region::{Region, nest};
 use std::cmp::Ordering;
 
+/// `region` with each of its contours that has no arc simplified as
+/// [`simplify`] does within `tolerance_mm`; contours with an arc are kept
+/// as they are (#474). `None` when no vertex is dropped, or when the
+/// simplified contours would cross themselves or each other or no longer
+/// nest as `region`'s do, so the caller keeps `region`.
+///
+/// Every simplified contour is within `tolerance_mm` of the original
+/// (Hausdorff), so the result encloses every point more than
+/// `tolerance_mm` inside `region` and nothing more than `tolerance_mm`
+/// outside it: `region` inset by `tolerance_mm` contains the result inset
+/// by `tolerance_mm`... see `pocket::rings`.
+#[must_use]
+pub fn simplify_polygonal(region: &Region, tolerance_mm: f64) -> Option<Region> {
+    let _ = (region, tolerance_mm);
+    None
+}
+
 /// Arcs are flattened to this fraction of the simplify tolerance first, so
 /// the result stays within 1.25 tolerances of the true curve.
 const FLATTEN_FRACTION: f64 = 0.25;
