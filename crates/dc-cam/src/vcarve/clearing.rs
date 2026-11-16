@@ -36,6 +36,7 @@ use crate::pocket::rings::inset_region;
 use crate::pocket::{self};
 use crate::run::{RunLabel, ToolRun};
 use crate::warning::Warning;
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{Contour, Region, nest};
 use dc_project::{
     ClearingPass, CornerRelief, InlayOp, MachiningOrder, OperationId, PocketOp, Project, Tool,
@@ -155,7 +156,8 @@ pub(crate) fn reference(radius_mm: f64) -> Reference {
 /// and 3), one per pass of `passes.clearing` whose end mill
 /// (`tools`, from [`checked_tools`]) reaches some of the floor the passes
 /// before it left, in list order: labelled [`RunLabel::Clearing`], with the
-/// pass's tool. `slope` is the V-bit's `tan(α/2)`.
+/// pass's tool. `profile` is the carving bit's, whose half-width at the
+/// flat depth insets the floor (`w(F)`, #679).
 ///
 /// # Errors
 ///
@@ -167,10 +169,10 @@ pub(crate) fn runs(
     passes: &Passes<'_>,
     carve: &Carve<'_>,
     tools: &[&Tool],
-    slope: f64,
+    profile: &BitProfile,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<ToolRun>, CamError> {
-    let Some(flat) = Floor::of(carve, slope) else {
+    let Some(flat) = Floor::of(carve, profile) else {
         return Ok(Vec::new());
     };
     let tolerance_mm = project.flatten_tolerance_mm;

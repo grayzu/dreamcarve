@@ -80,6 +80,7 @@ use dc_geometry::medial::{
     CornerReach, MedialGraph, Resolution, medial_axis_with, neck_step_mm, refined_step_mm,
     resolution,
 };
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{EPS_MM, Point, Point3, Region};
 use dc_project::OperationId;
 use std::collections::BTreeSet;
@@ -143,24 +144,86 @@ fn sample_pieces(a: Point3, b: Point3) -> f64 {
 /// split, so a few splits reach it.
 pub(crate) const FIT_SLACK_MM: f64 = 1e-4;
 
-/// How deep a carve cuts for a clearance: `min(clearance / slope, F)`
-/// below the start plane.
+/// How deep a carve cuts for a clearance: `min(w⁻¹(clearance), F)` below
+/// the start plane, `w` the bit's profile: `clearance / tan(α/2)` for a
+/// V-bit, the tapered ball nose's ball or cone (slice 27c, #679).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct Depth {
     /// The start plane, mm, project space.
     pub start_plane_z_mm: f64,
     /// The flat depth below the start plane, mm, if any.
     pub flat_depth_mm: Option<f64>,
-    /// `tan(α/2)`: the cone's radius per mm of depth.
-    pub slope: f64,
+    /// The bit's cross-section.
+    pub profile: BitProfile,
 }
 
 impl Depth {
     /// The depth below the start plane, mm, for `clearance_mm`, clamped
     /// at the flat depth.
     pub(crate) fn depth_mm(&self, clearance_mm: f64) -> f64 {
-        let d = clearance_mm / self.slope;
+        let d = self.height_mm(clearance_mm);
         self.flat_depth_mm.map_or(d, |f| d.min(f))
+    }
+
+    /// `w⁻¹(r)`, mm: the height above the tip where the bit cuts `r`
+    /// across, `r / tan(α/2)` for a V-bit. At or past a tapered ball nose's
+    /// cap no height of its taper does (design step 5), so the cone's line
+    /// is read on, `r / t − δ`, past its cutting height, which the
+    /// cutting-height check then refuses.
+    pub(crate) fn height_mm(&self, r: f64) -> f64 {
+        match self.profile {
+            BitProfile::VBit { slope } => r / slope,
+            BitProfile::TaperedBall { slope, .. } => self
+                .profile
+                .height_mm(r)
+                .unwrap_or_else(|| r / slope - self.profile.apex_offset_mm()),
+        }
+    }
+
+    /// `w(d)`, mm: the half-width the bit cuts `d` above its tip, `d ·
+    /// tan(α/2)` for a V-bit.
+    pub(crate) fn width_mm(&self, d: f64) -> f64 {
+        self.profile.half_width_mm(d)
+    }
+
+    /// How far short of the walls, mm, the straight stretch `a`–`b`
+    /// carves at the start plane round the point `p` whose own depth is
+    /// `z_mm` (#457): `p`'s own disc there is `c = w(start − z)` across,
+    /// and the stretch's widest disc about `p` reaches `max_τ w(start −
+    /// z(τ)) − |p − p(τ)|`, so the shortfall is `c` less that.
+    ///
+    /// For a V-bit that is `slope · (low − z)`, `low` the lowest the
+    /// stretch's cone reaches over `p` ([`cone_low_mm`]), as before. For a
+    /// tapered ball nose (#679) the stretch's reach is a concave function
+    /// of `τ` (`w` concave and increasing, the distance convex), whose
+    /// greatest value is found by golden-section search: reading the
+    /// shortfall at `p`'s axis alone (`w(d) − w(d − Δ)`) does not bound it,
+    /// since the ball is nearly flat at its tip and a deeper end of the
+    /// stretch beside `p` reaches its axis without reaching its walls.
+    pub(crate) fn short_mm(&self, a: Point3, b: Point3, p: Point, z_mm: f64) -> f64 {
+        match self.profile {
+            BitProfile::VBit { slope } => slope * (cone_low_mm(a, b, p, slope) - z_mm),
+            BitProfile::TaperedBall { .. } => {
+                let reach = |t: f64| {
+                    let q = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+                    let z = a.z + (b.z - a.z) * t;
+                    self.width_mm(self.start_plane_z_mm - z) - p.distance_to(q)
+                };
+                let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
+                let ratio = (5.0_f64.sqrt() - 1.0) / 2.0;
+                for _ in 0..80 {
+                    let x1 = hi - ratio * (hi - lo);
+                    let x2 = lo + ratio * (hi - lo);
+                    if reach(x1) >= reach(x2) {
+                        hi = x2;
+                    } else {
+                        lo = x1;
+                    }
+                }
+                let best = reach(0.0).max(reach(1.0)).max(reach(0.5 * (lo + hi)));
+                self.width_mm(self.start_plane_z_mm - z_mm) - best
+            }
+        }
     }
 
     /// The tip's Z, mm, for `clearance_mm`.
@@ -648,7 +711,7 @@ fn off_floor(points: Vec<Point3>, depth: &Depth, floors: &[Region]) -> Vec<Point
 /// Step 6: true when the fitted chain `points` lies wholly on the cleared
 /// floor, which cuts it: every point at the flat depth (fitting has held
 /// each stretch between them to the cone test there, so the clearance all
-/// along it is at least `F · slope`) and inside one of `floors`. A chain
+/// along it is at least `w(F)`) and inside one of `floors`. A chain
 /// that reaches a corner or a narrow part rises above the floor there and
 /// is kept, as is every chain when there is no floor.
 fn inside_floor(points: &[Point3], depth: &Depth, floors: &[Region]) -> bool {
@@ -671,7 +734,7 @@ pub(crate) fn links_tool_down(walls: &Walls, depth: &Depth, from: Point3, to: Po
     from.z <= top_mm
         && to.z <= top_mm
         && walls
-            .least_room(from, to, depth.start_plane_z_mm, depth.slope)
+            .least_room(from, to, depth.start_plane_z_mm, &depth.profile)
             .0
             >= EPS_MM
 }
@@ -977,14 +1040,14 @@ pub(crate) fn simplify_chain(
         let mut worst: Option<usize> = None;
         let mut worst_mm = tolerance_mm;
         for (i, &p) in inner() {
-            let short_mm = depth.slope * (cone_low_mm(a, b, p.xy(), depth.slope) - p.z);
+            let short_mm = depth.short_mm(a, b, p.xy(), p.z);
             if short_mm > worst_mm {
                 worst_mm = short_mm;
                 worst = Some(i);
             }
         }
         if worst.is_none() {
-            let (room_mm, at) = walls.least_room(a, b, depth.start_plane_z_mm, depth.slope);
+            let (room_mm, at) = walls.least_room(a, b, depth.start_plane_z_mm, &depth.profile);
             if room_mm < -FIT_SLACK_MM {
                 worst = inner()
                     .min_by(|x, y| {
@@ -1154,7 +1217,7 @@ impl Fit<'_> {
     fn overcut(&self, a: Point3, b: Point3) -> Option<Point3> {
         let (room_mm, worst) =
             self.walls
-                .least_room(a, b, self.depth.start_plane_z_mm, self.depth.slope);
+                .least_room(a, b, self.depth.start_plane_z_mm, &self.depth.profile);
         let inside =
             worst.xy().distance_to(a.xy()) > EPS_MM && worst.xy().distance_to(b.xy()) > EPS_MM;
         (room_mm < -FIT_SLACK_MM && inside).then(|| {
@@ -1179,8 +1242,7 @@ impl Fit<'_> {
     /// even unsimplified.
     fn off_axis(&self, a: Point3, b: Point3) -> Option<Point3> {
         let tolerance_mm = self.axis_mm?;
-        let slope = self.depth.slope;
-        let floor_mm = self.depth.flat_depth_mm.map(|f| f * slope);
+        let floor_mm = self.depth.flat_depth_mm.map(|f| self.depth.width_mm(f));
         let pieces = sample_pieces(a, b);
         let mut worst: Option<(f64, Point3)> = None;
         let mut k = 1.0;
@@ -1218,8 +1280,19 @@ impl Fit<'_> {
                 continue;
             }
             let m = w + u * radius_mm;
+            // #679: with a tapered ball nose, only an axis point beside the
+            // stretch. Inside a rounded corner every point of the normal
+            // from the arc's tangent point to its centre is on the axis,
+            // and a short stretch there finds the centre, beyond its end;
+            // split there, its pieces run along the axis through the ball's
+            // zone, whose convex depth law fitting splits again near the
+            // stretch, which finds the centre again. A V-bit's straight law
+            // leaves those pieces whole, so it keeps upstream's reach.
+            if matches!(self.depth.profile, BitProfile::TaperedBall { .. }) && !beside(a, b, m) {
+                continue;
+            }
             let own_z = self.depth.z_mm(radius_mm);
-            let short_mm = slope * (cone_low_mm(a, b, m, slope) - own_z);
+            let short_mm = self.depth.short_mm(a, b, m, own_z);
             if short_mm > tolerance_mm && worst.is_none_or(|(s, _)| short_mm > s) {
                 worst = Some((short_mm, Point3::new(m.x, m.y, own_z)));
             }
@@ -1227,7 +1300,18 @@ impl Fit<'_> {
         let (_, m) = worst?;
         (m.xy().distance_to(a.xy()) > EPS_MM && m.xy().distance_to(b.xy()) > EPS_MM).then_some(m)
     }
+}
 
+/// Whether `m` lies beside the stretch `a`–`b`: its foot on the stretch's
+/// line falls between the ends.
+fn beside(a: Point3, b: Point3, m: Point) -> bool {
+    let along = b.xy() - a.xy();
+    let length_sq = along.dot(along);
+    let t = (m - a.xy()).dot(along) / length_sq;
+    length_sq > 0.0 && (0.0..=1.0).contains(&t)
+}
+
+impl Fit<'_> {
     /// With `deepen_mm`, the point of `a`–`b`, read every
     /// [`DEEPEN_SAMPLE_MM`] short of its ends, whose own depth is deepest
     /// below the stretch, at that depth, when it is more than `deepen_mm`

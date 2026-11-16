@@ -749,6 +749,22 @@ pub enum CamError {
         /// The cutter in words, such as `an end mill`.
         cutter: &'static str,
     },
+    /// A V-Carve's tapered ball nose has a value unset or out of range
+    /// (slice 27c, #679): its tip diameter, taper per side or flute length,
+    /// or a cutting diameter not above its tip, so it has no profile to
+    /// carve with. Validation reports which first (`tool_value_unset`,
+    /// `tapered_ball_nose_range`).
+    #[error(
+        "operation `{op}` carves with tool `{tool}`, a tapered ball nose with a value unset or out of range; set its tip diameter, taper per side and flute length, and a cutting diameter above its tip"
+    )]
+    TaperedBallNoseUnusable {
+        /// The operation.
+        op: OperationId,
+        /// The tool's name.
+        tool: String,
+        /// The tool's id.
+        tool_id: ToolId,
+    },
     /// A V-bit's included angle is not above 0° and below 180°
     /// (`v_bit_angle_range`). Validation reports this first.
     #[error(

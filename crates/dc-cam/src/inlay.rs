@@ -734,8 +734,9 @@ pub fn floor_ridges(project: &Project, op: &InlayOp, board: Board) -> Option<Flo
     let side = side(project, op, board, &mut Vec::new()).ok()?;
     let floor = Floor {
         z_mm: side.start_plane_z_mm - side.flat_depth_mm,
-        inset_mm: side.flat_depth_mm * bit.slope,
+        inset_mm: bit.profile.half_width_mm(side.flat_depth_mm),
         step_over_fraction: Some(fraction),
+        profile: bit.profile,
     };
     floor.ridges(
         &side.targets.regions,
@@ -953,7 +954,7 @@ fn generate_on(
         &passes,
         &carve,
         &clearing_tools,
-        bit.slope,
+        &bit.profile,
         &mut warnings,
     )?;
     let blocks = vcarve::blocks(project, &op.id, tool, &carve, &mut warnings)?;

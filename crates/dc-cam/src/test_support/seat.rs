@@ -199,6 +199,18 @@ pub(crate) fn cutter_of(project: &Project, run: &ToolRun) -> Cutter {
         ToolKind::VBit { included_angle_deg } => Cutter::VBit {
             slope: (included_angle_deg.to_radians() / 2.0).tan(),
         },
+        ToolKind::TaperedBallNose { .. } => match tool.carve_profile() {
+            Some(dc_geometry::profile::BitProfile::TaperedBall {
+                tip_radius_mm,
+                slope,
+                cap_radius_mm,
+            }) => Cutter::TaperedBall {
+                tip_radius_mm,
+                slope,
+                cap_radius_mm,
+            },
+            _ => panic!("the tapered ball nose has every value set: {tool:?}"),
+        },
         _ => Cutter::Flat {
             radius_mm: tool.diameter_mm / 2.0,
         },

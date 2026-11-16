@@ -7,9 +7,10 @@
 //!
 //! Runs are cut into a grid of heights. A cell keeps the
 //! lowest Z any tool's surface reaches over it: a V-bit's cone, `|q − p| /
-//! slope` above its tip, or an end mill's flat disc. Each cell's height is
-//! exact for every straight move (the cone's least height over a move is
-//! found in closed form, the disc's at the lower end of the stretch it
+//! slope` above its tip, a tapered ball nose's ball and cone, `w⁻¹(|q − p|)`
+//! above it (#679), or an end mill's flat disc. Each cell's height is
+//! exact for every straight move (the cone's and the ball's least height
+//! over a move are found in closed form, the disc's at the lower end of the stretch it
 //! covers); arcs are cut as chords within [`CHORD_MM`]. A coarse grid
 //! therefore samples the true surface at fewer points, but never reports
 //! a cell higher than the programs leave it.
@@ -250,8 +251,102 @@ pub(crate) fn carved_profile_z_mm(toolpath: &Toolpath, q: Point, profile: &BitPr
 pub(crate) fn profile_low_mm(a: Point3, b: Point3, q: Point, profile: &BitProfile) -> f64 {
     match *profile {
         BitProfile::VBit { slope } => cone_low_mm(a, b, q, slope),
-        BitProfile::TaperedBall { .. } => f64::INFINITY,
+        BitProfile::TaperedBall {
+            tip_radius_mm,
+            slope,
+            cap_radius_mm,
+        } => tapered_low_mm(a, b, q, profile, (tip_radius_mm, slope, cap_radius_mm)),
     }
+}
+
+/// The lowest a tapered ball nose reaches over `q` while its tip runs
+/// straight from `a` to `b` (design "Algorithms →
+/// Tapered ball nose", step 8): the least over `t` of `z(t) + w⁻¹(|q −
+/// p(t)|)`, which is convex in `t` (`w⁻¹` is convex and increasing, the
+/// distance convex), infinite past the cap `R`, where the bit is a
+/// cylinder that reaches no lower than `h_R` over a cell beside it. The
+/// move is split where the distance crosses `w_t` and `R`, and on each
+/// piece the least is at an end or the piece's stationary point clamped
+/// to it, in closed form: on the cone the V-bit's with the virtual apex
+/// (`w⁻¹(r) = r / t − δ`, whose offset moves no stationary point), in the
+/// ball the lowest point where the vertical through `q` meets the capsule
+/// the ball sweeps, from `L s = −dz √(ρ² − off² − s²)` squared (a
+/// quadratic in the along-move offset `s`). `(ρ, t, R)` are the
+/// profile's.
+fn tapered_low_mm(
+    a: Point3,
+    b: Point3,
+    q: Point,
+    profile: &BitProfile,
+    (rho, slope, cap_mm): (f64, f64, f64),
+) -> f64 {
+    let w_t = profile.tangent_half_width_mm();
+    let delta = profile.apex_offset_mm();
+    // `w⁻¹(r)`, the cap's own height at `R` (the cone's top edge) and no
+    // reach beyond it.
+    let height = |r: f64| {
+        if r > cap_mm {
+            f64::INFINITY
+        } else if r <= w_t {
+            rho - ((rho - r) * (rho + r)).max(0.0).sqrt()
+        } else {
+            r / slope - delta
+        }
+    };
+    let (dx, dy, dz) = (b.x - a.x, b.y - a.y, b.z - a.z);
+    let at = |t: f64| {
+        let p = Point::new(a.x + dx * t, a.y + dy * t);
+        a.z + dz * t + height(q.distance_to(p))
+    };
+    let length = dx.hypot(dy);
+    if length < 1e-12 {
+        return at(if a.z <= b.z { 0.0 } else { 1.0 });
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (qx, qy) = (q.x - a.x, q.y - a.y);
+    // Along the move to the foot of `q`, mm, and the distance off it.
+    let along = qx * ux + qy * uy;
+    let off = (qx * uy - qy * ux).abs();
+    let mut knots = vec![0.0, 1.0];
+    for r in [w_t, cap_mm] {
+        if off < r {
+            let half = ((r - off) * (r + off)).sqrt();
+            knots.extend(
+                [along - half, along + half]
+                    .iter()
+                    .map(|s| s / length)
+                    .filter(|t| 0.0 < *t && *t < 1.0),
+            );
+        }
+    }
+    knots.sort_by(f64::total_cmp);
+    knots.dedup();
+    let mut low = f64::INFINITY;
+    for pair in knots.windows(2) {
+        let &[lo, hi] = pair else { continue };
+        let mid = 0.5 * (lo + hi);
+        let r_mid = q.distance_to(Point::new(a.x + dx * mid, a.y + dy * mid));
+        let stationary = if r_mid <= w_t {
+            // The ball: `f′ = dz + L s / √(ρ² − off² − s²)`, `s = L t −
+            // along`.
+            let s = -dz * ((rho - off) * (rho + off)).max(0.0).sqrt() / length.hypot(dz);
+            Some((along + s) / length)
+        } else if r_mid <= cap_mm {
+            // The cone, as [`cone_low_mm`]: a move that falls faster than
+            // the cone widens is least at an end.
+            let k = -dz * slope / length;
+            (k.abs() < 1.0).then(|| (along + k * off / (1.0 - k * k).sqrt()) / length)
+        } else {
+            continue;
+        };
+        for t in [lo, hi]
+            .into_iter()
+            .chain(stationary.map(|t| t.clamp(lo, hi)))
+        {
+            low = low.min(at(t));
+        }
+    }
+    low
 }
 
 /// The straight pieces of the move `mv` from `from`: itself, or an arc's
@@ -372,7 +467,7 @@ mod tests {
     fn tapered_tool_drops_as_ball_then_cone() {
         let (cutter, profile) = ultra();
         let top_mm = 20.0;
-        let tip = Point3::new(0.0, 0.0, 15.0);
+        let tip = Point3::new(0.0, 0.0, 12.0);
         let mut field = Heightfield::new(
             Rect {
                 min: Point::new(-2.0, -2.0),

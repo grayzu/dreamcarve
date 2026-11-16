@@ -18,9 +18,9 @@ use crate::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::lowest_cut_through;
 use crate::toolpath::{Move, MoveKind, Toolpath};
-use crate::vcarve::{carve_regions, cone_height_mm, cone_in_material, start_plane};
+use crate::vcarve::{carve_regions, cone_in_material, cutting_height_mm, start_plane};
 use dc_geometry::{EPS_MM, Point3, approx_eq};
-use dc_project::{Board, InlayOp, Operation, PhotoVCarveOp, Project, Tool, ToolKind, VCarveOp};
+use dc_project::{Board, InlayOp, Operation, PhotoVCarveOp, Project, Tool, VCarveOp};
 
 /// Asserts that `toolpath`, generated for `op` in `project`, is safe to run.
 /// Z is absolute: stock bottom 0, stock top `thickness`, safe Z
@@ -54,7 +54,9 @@ use dc_project::{Board, InlayOp, Operation, PhotoVCarveOp, Project, Tool, ToolKi
 /// 6. **Cone (S17).** For a V-Carve or an Inlay side, the toolpath passes
 ///    [`crate::vcarve::cone_in_material`] on the carve's regions, start
 ///    plane and engagement as the project gives them (an Inlay male's: the
-///    mirrored design's surround, engaged from the stock top).
+///    mirrored design's surround, engaged from the stock top), with the
+///    bit's profile and cutting height: a V-bit's cone, or a tapered ball
+///    nose's (#679).
 /// 7. **Grooves (S19).** For a Photo V-Carve (#646), every cutting move
 ///    that ends at or below the start plane ends inside the picture's
 ///    footprint, no deeper than the maximum depth below the start plane
@@ -145,7 +147,7 @@ fn assert_grooves_in_picture(
             (plane + op.stepover_retract_mm).max(thickness_mm + ENTRY_CLEARANCE_MM),
         )
     };
-    let cone_mm = cone_height_mm(tool).expect("the V-bit has a cone");
+    let cone_mm = cutting_height_mm(tool).expect("the V-bit has a cone");
     let mut previous: Option<Point3> = None;
     for (i, mv) in toolpath.moves.iter().enumerate() {
         let from = previous;
@@ -259,21 +261,20 @@ fn assert_cone_in_material(toolpath: &Toolpath, project: &Project, op: &VCarveOp
         .expect("the carve's targets resolve");
     let (start_plane_z_mm, engaged_from_z_mm) =
         start_plane(project, op).expect("the carve's start plane resolves");
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        panic!("a V-Carve's tool is a V-bit: {tool:?}");
-    };
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let cone_mm = cone_height_mm(tool).expect("the V-bit has a cone");
+    let profile = tool
+        .carve_profile()
+        .unwrap_or_else(|| panic!("a V-Carve's tool is a V-bit or a tapered ball nose: {tool:?}"));
+    let cone_mm = cutting_height_mm(tool).expect("the bit has a cutting height");
     if let Err(violation) = cone_in_material(
         toolpath,
         &targets.regions,
         start_plane_z_mm,
         engaged_from_z_mm,
-        slope,
+        &profile,
         cone_mm,
         project.flatten_tolerance_mm,
     ) {
-        panic!("the V-bit cuts outside its material (S17): {violation:?}");
+        panic!("the bit cuts outside its material (S17): {violation:?}");
     }
 }
 
@@ -289,17 +290,16 @@ fn assert_inlay_cone_in_material(
 ) {
     let side = crate::inlay::side(project, op, board, &mut Vec::new())
         .expect("the inlay's board resolves");
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        panic!("an Inlay's tool is a V-bit: {tool:?}");
-    };
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let cone_mm = cone_height_mm(tool).expect("the V-bit has a cone");
+    let profile = tool
+        .carve_profile()
+        .unwrap_or_else(|| panic!("an Inlay's tool is a V-bit: {tool:?}"));
+    let cone_mm = cutting_height_mm(tool).expect("the V-bit has a cone");
     if let Err(violation) = cone_in_material(
         toolpath,
         &side.targets.regions,
         side.start_plane_z_mm,
         side.engaged_from_z_mm,
-        slope,
+        &profile,
         cone_mm,
         project.flatten_tolerance_mm,
     ) {

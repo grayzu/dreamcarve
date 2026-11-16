@@ -33,6 +33,7 @@ use crate::vcarve::cone::{OpenEdgeWalls, Walls};
 use crate::vcarve::medial::{Depth, Run, Tolerances};
 use crate::warning::WarningCode;
 use dc_geometry::medial::{MedialGraph, MedialNode};
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{Point, Point3, Polyline, Transform, Vertex, assert_approx_eq};
 use dc_project::test_support::{sample_pocket, sample_project, sample_v_carve, tool_v_bit_90};
 use dc_project::{
@@ -311,7 +312,7 @@ fn runs_of(
     let depth = Depth {
         start_plane_z_mm: 10.0,
         flat_depth_mm,
-        slope,
+        profile: BitProfile::VBit { slope },
     };
     let walls = Walls::new(std::slice::from_ref(region), 0.01);
     let no_simplifying = Tolerances {
@@ -502,13 +503,13 @@ fn links_keep_the_cone_inside_an_open_edge() {
     let depth = Depth {
         start_plane_z_mm: 10.0,
         flat_depth_mm: Some(0.5),
-        slope: 1.0,
+        profile: BitProfile::VBit { slope: 1.0 },
     };
     let walls = Walls::new(&notched, 0.01);
     let edge = OpenEdgeWalls {
         walls: Walls::new(&notched, 0.01),
         top_z_mm: 10.6,
-        slope: 1.0,
+        profile: BitProfile::VBit { slope: 1.0 },
     };
     let no_simplifying = Tolerances {
         simplify_mm: 0.0,
@@ -570,7 +571,7 @@ fn generator_refuses_its_own_toolpath_on_a_cone_violation() {
     let depth = Depth {
         start_plane_z_mm: TOP_MM,
         flat_depth_mm: None,
-        slope: 1.0,
+        profile: BitProfile::VBit { slope: 1.0 },
     };
     let rates = LapRates {
         feed_mm_min: FEED_MM_MIN,
@@ -1429,7 +1430,7 @@ fn links_never_run_below_the_final_v_surface() {
             let depth = Depth {
                 start_plane_z_mm: TOP_MM,
                 flat_depth_mm: op.flat_depth_mm,
-                slope,
+                profile: BitProfile::VBit { slope },
             };
             let walls = Walls::new(std::slice::from_ref(region), p.flatten_tolerance_mm);
             for run in medial::runs(&graph, &depth, Tolerances::at_step(step_mm), &walls, &[]) {
@@ -1540,7 +1541,9 @@ fn fitting_splits_a_short_stretch_off_the_axis() {
     let depth = Depth {
         start_plane_z_mm: 10.0,
         flat_depth_mm: None,
-        slope: slope_of(60.0),
+        profile: BitProfile::VBit {
+            slope: slope_of(60.0),
+        },
     };
     let walls = Walls::new(std::slice::from_ref(&region), 0.01);
     let tolerances = Tolerances {

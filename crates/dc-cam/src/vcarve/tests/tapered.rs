@@ -96,14 +96,30 @@ fn rounded_rect(w: f64, h: f64, r: f64) -> Polyline {
     )
 }
 
-/// The cut points of `toolpath` below the start plane that a move in XY
-/// reaches: chain points, not plunges.
+/// The points the tip passes below the start plane on every move in XY
+/// (chains, links and floor moves, not plunges), each move read every
+/// 0.1 mm and at its ends.
 fn carving_points(toolpath: &Toolpath) -> Vec<Point3> {
-    xy_cuts(toolpath)
-        .into_iter()
-        .map(|(_, b)| b)
-        .filter(|p| p.z < TBN_TOP_MM - 1e-6)
-        .collect()
+    let mut out = Vec::new();
+    for (a, b) in xy_cuts(toolpath) {
+        let length_mm = a.xy().distance_to(b.xy());
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a move's length in tenths of a millimetre"
+        )]
+        let n = (length_mm / 0.1).ceil().max(1.0) as u32;
+        for k in 1..=n {
+            let t = f64::from(k) / f64::from(n);
+            out.push(Point3::new(
+                a.x + (b.x - a.x) * t,
+                a.y + (b.y - a.y) * t,
+                a.z + (b.z - a.z) * t,
+            ));
+        }
+    }
+    out.retain(|p| p.z < TBN_TOP_MM - 1e-6);
+    out
 }
 
 /// Acceptance 61u: a 20 × 1.5 mm bar carved with the Ultra bit runs along
@@ -624,7 +640,11 @@ fn tapered_offset_rings_follow_the_profile() {
     let profile = ultra_profile();
     let floor_z_mm = TBN_TOP_MM - 10.0;
     let mut seen = [false; 8];
-    for q in carving_points(&toolpath) {
+    let ring_points = xy_cuts(&toolpath)
+        .into_iter()
+        .filter(|(a, b)| (a.z - b.z).abs() <= 1e-9 && b.z < TBN_TOP_MM - 1e-6)
+        .map(|(_, b)| b);
+    for q in ring_points {
         if (q.z - floor_z_mm).abs() <= 1e-6 {
             continue;
         }

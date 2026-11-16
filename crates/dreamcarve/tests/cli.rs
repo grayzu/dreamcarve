@@ -6526,7 +6526,7 @@ fn sign_lettering_is_within_the_cone() {
         .iter()
         .find(|t| t.id == carve.tool)
         .expect("the carve's tool");
-    let cone_mm = dc_cam::vcarve::cone_height_mm(tool).expect("a V-bit");
+    let cone_mm = dc_cam::vcarve::cutting_height_mm(tool).expect("a V-bit");
     assert_approx_eq!(cone_mm, 3.175, 1e-9);
 
     let (runs, warnings) =

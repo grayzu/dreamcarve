@@ -6,7 +6,7 @@
 //! New in DreamCarve: PureCutCNC clamps the depth at `maxCarveDepth` and
 //! cuts nothing more.
 //!
-//! With a flat depth `F` and slope `tan(α/2)`, the floor is each region
+//! With a flat depth `F` and a V-bit of slope `tan(α/2)`, the floor is each region
 //! inset by `F · slope` ([`dc_geometry::floor_regions`]): where the tip is
 //! on it at `F` below the start plane, the cone's disc at the start plane
 //! (radius `F · slope`) stays inside the region, so every move of the
@@ -17,6 +17,12 @@
 //! rings, the floor's outline and islands, are the **boundary trace**, cut
 //! last, climb (the region's own winding), so the flank meets the outline
 //! at the start plane and the wall is a clean slope.
+//!
+//! With a tapered ball nose (slice 27c, #679) the inset is the bit's
+//! half-width at the floor, `w(F)`, and the step-over the same fraction
+//! of `2 w(F)`; the trace's wall is the cone down to `F − h_t`, then the
+//! ball's fillet of radius `ρ` into the floor, and two grooves leave the
+//! ball's scallop between them ([`Floor::ridges`]).
 //!
 //! Two additions to the Pocket rings:
 //!
@@ -34,7 +40,7 @@
 //!   that turns counter-clockwise keeps its chords, which already are.
 
 use super::cone::Walls;
-use super::{Carve, FloorRidges, VBit, carve_regions, v_bit};
+use super::{Carve, FloorRidges, bit, carve_regions};
 use crate::block::CutBlock;
 use crate::error::{CamError, ShapeRef};
 use crate::pocket::rest::grow_region;
@@ -45,6 +51,7 @@ use crate::pocket::rings::{
 use crate::pocket::{MAX_RINGS, ring_path};
 use crate::tabs::LapRates;
 use crate::toolpath::Move;
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{
     Contour, EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, difference, floor_regions,
     intersection, nearest_point, surround_floor_regions,
@@ -59,24 +66,28 @@ pub(crate) struct Floor {
     /// The floor's Z, mm, project space: the start plane less the flat
     /// depth.
     pub z_mm: f64,
-    /// `F · tan(α/2)`, mm: how far the floor lies inside the walls, and
-    /// the half-width at the start plane of the groove the tip cuts on it.
+    /// `w(F)`, mm (`F · tan(α/2)` for a V-bit): how far the floor lies
+    /// inside the walls, and the half-width at the start plane of the
+    /// groove the tip cuts on it.
     pub inset_mm: f64,
     /// The step-over fraction of the cut width `2 · inset_mm`, from the
     /// operation or the tool; `None` when neither sets one, which is an
     /// error only once there is a floor to cut.
     pub step_over_fraction: Option<f64>,
+    /// The bit's cross-section.
+    pub profile: BitProfile,
 }
 
 impl Floor {
-    /// The floor of `carve` cut with a V-bit of slope `tan(α/2)`; `None`
-    /// without a flat depth.
-    pub(crate) fn of(carve: &Carve<'_>, slope: f64) -> Option<Self> {
+    /// The floor of `carve` cut with a bit of `profile`; `None` without a
+    /// flat depth.
+    pub(crate) fn of(carve: &Carve<'_>, profile: &BitProfile) -> Option<Self> {
         let flat_depth_mm = carve.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0)?;
         Some(Self {
             z_mm: carve.start_plane_z_mm - flat_depth_mm,
-            inset_mm: flat_depth_mm * slope,
+            inset_mm: profile.half_width_mm(flat_depth_mm),
             step_over_fraction: carve.step_over_fraction,
+            profile: *profile,
         })
     }
 
@@ -804,7 +815,7 @@ fn flatten_segment(segment: Segment, tolerance_mm: f64) -> Vec<Point> {
 /// for its V-bit to cut.
 pub(crate) fn ridges_of_carve(project: &Project, op: &VCarveOp) -> Option<FloorRidges> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
-    let VBit { slope, .. } = v_bit(tool)?;
+    let profile = bit(tool)?.profile;
     let flat_depth_mm = op.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0)?;
     let fraction = op
         .step_over_fraction
@@ -812,8 +823,9 @@ pub(crate) fn ridges_of_carve(project: &Project, op: &VCarveOp) -> Option<FloorR
         .filter(|f| f.is_finite() && *f > 0.0 && *f <= 1.0)?;
     let floor = Floor {
         z_mm: 0.0,
-        inset_mm: flat_depth_mm * slope,
+        inset_mm: profile.half_width_mm(flat_depth_mm),
         step_over_fraction: Some(fraction),
+        profile,
     };
     let targets = carve_regions(project, &op.id, &op.targets, &mut Vec::new()).ok()?;
     floor.ridges(
@@ -835,6 +847,10 @@ impl Floor {
     /// ridge (#522) is the straight-run ridge. With clearing passes the
     /// V-bit's rings cut only what no pass reaches, and the report holds
     /// for them too.
+    ///
+    /// With a tapered ball nose (#679) the ridge is the profile's height
+    /// half a step-over from a groove, `w⁻¹(s / 2)`: the ball's scallop
+    /// `ρ − √(ρ² − s²/4)` while `s / 2 ≤ w_t`.
     pub(crate) fn ridges(
         &self,
         regions: &[Region],
@@ -849,7 +865,17 @@ impl Floor {
         if floors.is_empty() {
             return None;
         }
-        let straight_mm = fraction * flat_depth_mm;
+        let straight_mm = match self.profile {
+            BitProfile::VBit { .. } => fraction * flat_depth_mm,
+            // `w⁻¹`, read past the cap as the cone's line, which no
+            // step-over of at most the floor's width reaches.
+            BitProfile::TaperedBall { .. } => {
+                let half_mm = fraction * self.inset_mm;
+                self.profile.height_mm(half_mm).unwrap_or_else(|| {
+                    half_mm / self.profile.slope() - self.profile.apex_offset_mm()
+                })
+            }
+        };
         Some(FloorRidges {
             straight_mm,
             corner_mm: straight_mm,
