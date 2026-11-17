@@ -9,6 +9,20 @@ phases bump the patch number.
 
 ### Added
 
+- **Carving with a tapered ball nose (#679, #680).** A V-Carve now takes a
+  tapered ball nose in place of a V-bit. Each depth comes from the bit's
+  real profile, its ball near the tip and its cone above: the medial
+  carve's depth, the flat floor's inset and its scallop ridge, the
+  clearing passes' floor and the offset rings. The bit is held to its
+  cutting height, the lower of its flutes and the height where the taper
+  reaches the cutting diameter, and `v_bit_cone_exceeded` names which.
+  Below the surface the ball cannot follow a convex corner tighter than its
+  tip, so the walls meet in a round valley there; `tapered_corners_softened`
+  counts those corners once per operation and says how far to round them.
+  The safety pass holds the carve to S17 on the same profile, exactly,
+  with no sampling. A Photo V-Carve and a countersink still need a V-bit,
+  and an Inlay does not take one yet. V-bit programs are unchanged, but
+  for the last digit of a few ramp feeds in the "DC" inlay's female.
 - **Fusion tapered ball nose import (#682).** A Fusion library's
   `tapered mill` with a ball tip (`RE` half of `DC`) now imports as a
   tapered ball nose: `DC` (or twice `RE`) is the tip diameter, `TA` the
@@ -26,9 +40,8 @@ phases bump the patch number.
   diameter. `check` lists each unset value an operation needs and
   `export` refuses until it is set. The tool library (now version 3)
   imports, lists and adds one, and `tools add` says which values are
-  still to set. Carving with one comes in later slices: until then a
-  V-Carve or an Inlay with a tapered ball nose is refused, and a Photo
-  V-Carve or a countersink always is. A version 27 project loads and
+  still to set. A V-Carve carves with one (#679, above); a Photo
+  V-Carve or a countersink never does. A version 27 project loads and
   exports the same programs, byte for byte.
 - **`image-prep` reads DXF (#669).** `dreamcarve image-prep <svg|dxf>`
   now takes a DXF too, so a drawing from a CAD program can be cleaned
@@ -120,9 +133,8 @@ phases bump the patch number.
   picture's size, proportions and PNG, read from the PNG's header alone.
   A picture is at most 8192 pixels on a side; one that is larger, is not
   8-bit grayscale, or cannot be decoded is refused with a message that
-  names it, whatever the file claims. Nothing cuts a Photo V-Carve yet:
-  `check` and `export` stop at an enabled one and say so. Older files
-  upgrade with `"bitmaps": []` and export the same programs.
+  names it, whatever the file claims. Older files upgrade with
+  `"bitmaps": []` and export the same programs.
 - **`dreamcarve image-prep` and the import checks (#462, #598, #600, #601).**
   `init` now checks an SVG and prints a warning for each kind of problem
   it finds, changing nothing: overlapping outlines (`shapes_overlap`), a
@@ -366,19 +378,41 @@ phases bump the patch number.
 - **Documentation:** the Inlay chapter's narrow-bit note now says that
   in millimetres the 30° and 15° bits seat within 0.05 mm, except where
   a V-bit floor's ring corners stand up ([#506]).
-- **The V-bit floor's corner ridge.** Where the V-bit clears a floor in
-  rings, `check` and the export summary now give the ridge at the rings'
-  corners beside the one between them: the straight-run ridge over
-  `sin(θ/2)` for the sharpest corner θ of any ring, and at most twice it
-  ("V-bit floor ridges 0.400 mm along the rings and up to 0.800 mm at
-  their corners"). The corner ridge is printed only where it is higher.
-  The Inlay chapter now sets `glue_gap_mm` above the female's corner
-  ridge: a 15° plug on a gap just above the straight-run ridge rested
-  0.16 mm proud on a corner's peak. Toolpaths are unchanged. Covering the
-  corners, so that the lower figure holds everywhere, is [#527] ([#522]).
+- **The V-bit floor is as even at its corners as along its rings (#522,
+  #527).** Where the V-bit clears a floor in rings, the rings' corners
+  and the places the ring tree drops a step as noise left ridges up to
+  twice the straight-run ridge (0.292 mm against 0.2 mm round an L's
+  reflex corner), and a 15° plug on a glue gap just above the
+  straight-run ridge rested 0.16 mm proud on a corner's peak. The V-bit
+  now also cuts every piece of the floor more than half a step-over from
+  its rings, from inside the nearest lap, so no point of the floor stands
+  above the straight-run ridge, `step_over_fraction × F` for a V-bit.
+  `check` and the export summary print that one height, and a glue gap of
+  the straight-run ridge seats. V-bit programs with a floor grow: the
+  sign's V-bit program by 1.8 %, the "DC" inlay's female by 16 % and its
+  male by 35 %, with fewer lifts. Arc fitting no longer fits a run on a
+  circle under six tolerances in radius, which the safety pass could
+  refuse once its centre was rounded to the written places.
 
 ### Fixed
 
+- **The safety pass sees a cut cross an arc past a half turn (#686,
+  #694).** A wall drawn as an arc of more than 180°, a 270° D-shaped hole
+  or island for example, was read as farther from a cut than it is, so S9
+  and S17 could pass a Pocket or V-Carve cut that crosses it; the offset
+  and boolean library also mis-measured such an arc's overlaps. Every such
+  arc is now split exactly at its middle before it is measured, offset or
+  intersected, and DXF import stores it as its two halves (one more vertex
+  per arc). No committed program changes.
+- **Export no longer spends a minute fitting arcs on a long V-bit run
+  (#480).** A run whose moves vary from a fraction of a micrometre to
+  millimetres tried millions of arc windows. Windows that no circle could
+  pass are now skipped before fitting, the same arcs are found, and the
+  program is byte for byte the same.
+- **No crash on a sliver of a shape (#611, #637).** A contour a few
+  micrometres across, or nanometres wide, such as the sliver a stroke
+  union can leave, crashed `image-prep` and the V-bit floor inside the
+  offset library. Such contours are now handled; programs are unchanged.
 - **A V-bit floor cuts the corner cusps a clearing pass leaves (#695).**
   An end mill cannot reach a floor's convex corners, so it leaves a cusp
   at each, and the booleans could join neighbouring cusps by hairline
