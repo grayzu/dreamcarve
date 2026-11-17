@@ -167,7 +167,7 @@ The tools are those of [An inlay pair](inlay.md): a 3.175 mm end mill and a
 <!-- doc-test: write my-tools.json -->
 ```json
 {
-  "version": 2,
+  "version": 3,
   "tools": [
     {
       "id": "lt1",

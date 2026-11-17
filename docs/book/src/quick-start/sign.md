@@ -93,7 +93,7 @@ Save this as `my-tools.json` in the folder:
 <!-- doc-test: write my-tools.json -->
 ```json
 {
-  "version": 2,
+  "version": 3,
   "tools": [
     {
       "id": "lt1",
