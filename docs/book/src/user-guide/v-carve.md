@@ -54,7 +54,7 @@ shape and the bit's angle.
 | `name` | Your name for it, written in the program. |
 | `enabled` | `false` leaves the operation out of the program, with a warning. |
 | `targets` | The ids of the instances to carve. Every closed outline of each one takes part, nested as for a Pocket: an outline inside another is an island, left standing. Open paths are skipped with the warning `vcarve_target_open`. Outlines that cross are an error. |
-| `tool` | The id of the tool. It must be a V-bit, `"cutter": { "v_bit": { "included_angle_deg": 90.0 } }`, with an angle above 0° and below 180°. See [Choosing a bit angle](#choosing-a-bit-angle). |
+| `tool` | The id of the tool. A V-bit, `"cutter": { "v_bit": { "included_angle_deg": 90.0 } }`, with an angle above 0° and below 180°, or a tapered ball nose ([The project file: tools](project-file.md#tools)). See [Choosing a bit angle](#choosing-a-bit-angle). |
 | `strategy` | `"medial"`, along the shape's middle (see [Medial lines and depth](#medial-lines-and-depth)), or `{ "offset": { "step_over_mm": 0.5, "direction": "climb" } }`, in rings stepping in from the outline (see [Offset strategy](#offset-strategy)). |
 | `clearing` | The clearing passes, in the order they cut: a list of `{ "tool", "strategy", "direction", "entry" }`, largest end mill first. `[]` for none. Needs a flat depth. See [Clearing passes](#clearing-passes). |
 | `flat_depth_mm` | `null` to carve every part of the shape to its full depth, or the depth of a flat floor below the start plane, more than 0. See [Flat depth](#flat-depth). |

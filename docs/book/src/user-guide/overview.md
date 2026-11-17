@@ -8,7 +8,7 @@ material inside a closed outline to a depth ([Pocket](pocket.md));
 line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles,
 or countersinks them with a V-bit ([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
 spiralling down inside them ([Bore](bore.md)). **V-Carve** carves
-lettering and signs with a V-bit ([V-Carve](v-carve.md)), **Inlay** cuts
+lettering and signs with a V-bit or a tapered ball nose ([V-Carve](v-carve.md)), **Inlay** cuts
 a design into one board and its mirrored plug from another
 ([Inlay](inlay.md)), and **Photo V-Carve** carves a picture as V-bit
 grooves whose depth follows its shades ([Photo
@@ -31,7 +31,10 @@ the order listed.
 
 To carve a picture, start from the picture instead: `dreamcarve init
 photo.jpg --width 100` writes a project with the picture on the stock and
-one Photo V-Carve of it ([Images](images.md)).
+one Photo V-Carve of it ([Images](images.md)). To inlay a logo or line
+art, clean the drawing first: `dreamcarve image-prep logo.svg` writes
+`logo-inlay.svg`, with strokes made areas and specks dropped, ready for
+`init` ([Preparing artwork](preparing-artwork.md)).
 
 [Your first cut from an SVG](../quick-start/first-cut.md) walks through this
 once, end to end, for one Profile. [A pocketed plaque from
@@ -233,6 +236,19 @@ the project as a bitmap a Photo V-Carve can carve, and `image list <dcv>`
 shows each bitmap's id, name, size in pixels and on the stock, position,
 and the Photo V-Carves that carve it. `add` saves the project.
 
+### `dreamcarve image-prep <svg|dxf>`
+
+Makes a drawing easy to inlay before `init`, and changes nothing else
+([Preparing artwork](preparing-artwork.md)): it reads one SVG or DXF and
+writes one SVG of filled shapes, strokes made areas, fills resolved,
+specks dropped and jagged runs smoothed, then prints a report of the
+design's thinnest piece and narrowest gap. `-o <SVG>` names the result
+(default: the drawing's name with `-inlay` added, beside it); it never
+overwrites a file. `--regions` makes the spaces between the lines of line
+art the shapes to inlay. `--min-detail <PCT>` and `--smooth <PCT>` set its
+two thresholds as a percentage of the design's height. It takes no tool,
+stock or size.
+
 ### `dreamcarve tabs`
 
 Places, lists and removes the project's [tabs](tabs.md): `tabs place
@@ -269,6 +285,8 @@ output: …`.
 
 - [The project file](project-file.md): every field of `.dcv`.
 - [Importing DXF](importing-dxf.md): entities, units, layers and stitching.
+- [Preparing artwork](preparing-artwork.md): the checks `init` prints, and
+  `image-prep` for logos and line art to inlay.
 - [Shapes, holes, and islands](shapes-and-holes.md): how DreamCarve decides
   what is a part and what is a hole.
 - [Profile operation](profile.md): side, depth, passes, direction, entry,
@@ -298,4 +316,5 @@ output: …`.
 - [Tool library](tool-library.md): your tools, and importing Fusion 360
   libraries.
 - [Warnings](warnings.md): every warning code, its message, and what to do.
+- [Keyboard shortcuts](keyboard.md): the app's shortcuts.
 - [Safety](safety.md): what DreamCarve checks, and what it cannot.
