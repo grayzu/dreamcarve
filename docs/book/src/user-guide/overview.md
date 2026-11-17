@@ -8,9 +8,10 @@ material inside a closed outline to a depth ([Pocket](pocket.md));
 line ([Engrave](engrave.md)); **Drill** plunges at the centre of circles,
 or countersinks them with a V-bit ([Drill](drill.md)); **Bore** cuts circles bigger than the bit to size,
 spiralling down inside them ([Bore](bore.md)). **V-Carve** carves
-lettering and signs with a V-bit or a tapered ball nose ([V-Carve](v-carve.md)), **Inlay** cuts
-a design into one board and its mirrored plug from another
-([Inlay](inlay.md)), and **Photo V-Carve** carves a picture as V-bit
+lettering and signs with a V-bit or a tapered ball nose ([V-Carve](v-carve.md),
+[Tapered ball nose](tapered-ball-nose.md)), **Inlay** cuts
+a design into one board and its mirrored plug from another, with either
+bit ([Inlay](inlay.md)), and **Photo V-Carve** carves a picture as V-bit
 grooves whose depth follows its shades ([Photo
 V-Carve](photo-v-carve.md)). A project holds any number of them, cut in
 the order listed.
@@ -299,10 +300,16 @@ output: …`.
   countersinks, canned cycles.
 - [Bore operation](bore.md): holes bigger than the bit, cut to size along
   a helix.
-- [V-Carve operation](v-carve.md): lettering and signs carved with a V-bit,
-  flat depths, clearing passes, and choosing a bit angle.
+- [V-Carve operation](v-carve.md): lettering and signs carved with a V-bit
+  or a tapered ball nose, flat depths, clearing passes, and choosing a bit
+  angle.
 - [Inlay operation](inlay.md): a design in one wood set into another,
-  from a female pocket and a mirrored male plug cut with one V-bit.
+  from a female pocket and a mirrored male plug cut with one V-bit or
+  tapered ball nose.
+- [Tapered ball nose](tapered-ball-nose.md): entering the bit, measuring
+  its taper, how it carves and inlays, the coupon fit, and what refuses
+  it; the [quick start](../quick-start/tapered-ball-nose.md) does it on a
+  test piece.
 - [Images](images.md): choosing and preparing a picture, `init` on a
   picture, `dreamcarve image`, and pictures in the project file.
 - [Photo V-Carve operation](photo-v-carve.md): a picture carved as
