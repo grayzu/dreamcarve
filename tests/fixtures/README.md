@@ -92,6 +92,44 @@ letters, so the band's edge is the frame mirrored about X = 55, and the
 frame is symmetric); the edge is open, cut by the end mill, and the
 finished plug is the frame inset by the end mill's diameter, 3.175 mm.
 
+## `tbn-coupon.svg`, `tbn-coupon.dcv` and `dc-tbn.dcv`
+
+The tapered ball nose test part (`docs/specs/phase-3/functional.md`,
+"Tapered ball nose carve and inlay"; #683). Both projects are what the
+quick start "Carving and inlaying with a tapered ball nose" builds
+(`quick_start::tapered_ball_nose_chapter_runs`): change the chapter, run
+the test, and copy the projects it writes over these. `cli::tapered`
+exports them (`tapered_carve_exports`, `tapered_inlay_exports_both_boards`,
+`tapered_coupon_exports`).
+
+`tbn-coupon.svg` is written by hand: the coupon, a 20 × 20 mm square with
+3 mm corner radii (`coupon`), centred in a 40 × 40 mm `frame` that nothing
+cuts, so that `init` makes a 60 × 60 mm stock. Both are outlines with no
+fill, as in `dc-inlay.svg`.
+
+The bits are the quick start's example pair, entered with every value
+set: two tapered ball noses with a 6.35 mm cutting diameter, 6.7° per side
+and 19.05 mm of flute, one with a 2.286 mm tip (`t2` in `dc-tbn.dcv`, T1)
+and one with a 0.762 mm tip (`t3`, T2; `t2` in the coupon), feed
+1524 mm/min, plunge 635 mm/min, 19 000 RPM, as the test part lists the
+vendor's settings; and the inlay pair's 3.175 mm end mill (T3). DreamCarve
+sets none of them.
+
+| Project | Operation | Values |
+| --- | --- | --- |
+| `tbn-coupon.dcv` | `op1` Inlay `Coupon` of `i1`, the 0.762 mm tip | `depth_mm` 6, `glue_gap_mm` 0.85 (the tangent height 0.337 + 0.5), `plug_depth_mm` 2, `margin_mm` 8, `outline_rounding_mm` `null`, `step_over_fraction` 0.1, the end mill's clearing pass and cut-out with four tabs; the stock 60 × 60 × 12 mm, the male board its size and 19 mm thick |
+| `dc-tbn.dcv` | `op1` V-Carve `DC carve` of the letters, the 2.286 mm tip, **disabled** | `flat_depth_mm` 2, `step_over_fraction` 0.1, no clearing; `tapered_corners_softened` |
+| `dc-tbn.dcv` | `op2` Inlay `DC inlay` of the letters, the 0.762 mm tip | as the coupon's, with `outline_rounding_mm` 10; the stock 110 × 80 × 12 mm, the male board its size and 19 mm thick |
+
+The carve and the pair share the letters and the stock, so the carve is
+disabled in the committed project: the stock is the pair's female board.
+`tapered_carve_exports` enables it and disables the Inlay. The letters
+are `dc-inlay.svg`'s at its own size: no part of them is narrower than
+the 1.967 mm the 0.762 mm tip needs at `depth_mm − glue_gap_mm` 5.15, so
+`inlay_too_narrow_for_bit` refuses nothing and the letters were not
+scaled. Their points are rounded to 0.983 mm and their inward corners to
+0.378 mm (`inlay_rounded_for_bit`).
+
 ## `prep/compass.svg` and `prep/compass-regions.svg`
 
 The phase 3 line-art inlay test part (`docs/specs/phase-3/functional.md`,

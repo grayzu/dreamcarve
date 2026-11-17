@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2026 The DreamCarve Contributors
+     SPDX-License-Identifier: Apache-2.0
+
+     DreamCarve phase 3 test part 5 (docs/specs/phase-3/functional.md,
+     "Tapered ball nose carve and inlay"): the coupon pair cut before a
+     tapered ball nose inlay to find its glue gap. "coupon" is a 20 × 20 mm
+     square with 3 mm corner radii. The 40 × 40 mm rectangle "frame" is not
+     cut: it makes init's stock 60 × 60 mm with the coupon at its centre.
+     Drawn as dc-inlay.svg is, outlines with no fill. SVG is Y-down.
+     Written by hand; tests/fixtures/README.md. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="40mm" viewBox="0 0 40 40">
+  <g fill="none" stroke="#000000" stroke-width="0.2">
+    <rect id="coupon" x="10" y="10" width="20" height="20" rx="3" ry="3"/>
+    <rect id="frame" x="0" y="0" width="40" height="40"/>
+  </g>
+</svg>
