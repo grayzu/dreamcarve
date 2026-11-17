@@ -1743,16 +1743,27 @@ per 0.05 mm of tip radius; test-fit before gluing`.
 
 **Slice 27e's decisions (#681).** Where the issue was silent:
 
-- **The rounding settles.** Drawn as chords, an arc of exactly the radius
-  the next opening shrinks by lies a chord's sag inside it, and a round
-  end of that radius then loses `√(2 R_min · sag)` to the opening, about
-  0.02 mm with the Fine bit, again each time the design is rounded (the
-  "DC" letters' D). So `rounded_for_bit` grows the opening back by `R_min`
-  plus the wall tolerance and holds it to the design (`∩ X`), shrinks the
-  closing back by `w_t` plus the wall tolerance and keeps the opened
-  design (`∪`), and repeats the two, at most four more times, until a
-  round moves the outline by no more than the flatten tolerance. The
-  result is open by `R_min` and closed by `w_t` within the tolerance
+- **The design is closed, then opened** (the tapered sweep's lettering
+  `0x48`, Ultra), `X′ = ((((X ⊕ w_t) ⊖ w_t) ⊖ R_min) ⊕ R_min)`, the
+  issue's order reversed. Opened first, the closing filled the cusp
+  where two of the opened design's round ends meet (a waist) with wood
+  no disc of `R_min` inside the design reaches, which the pocket's ball
+  cannot cut to depth: the plug stood 1.07 mm proud on it. Opened last,
+  the design is open by `R_min` wherever the plug meets the pocket, and
+  such a cusp is left as the opening leaves it, which costs at most the
+  gap under the surface the closing is for. Opening a second time after
+  the issue's order was tried and dropped: an opening of round ends of
+  exactly `R_min` is degenerate, and the female's and the mirrored male's
+  designs came out a bridge apart (a plug 3.5 mm proud). Each step is held
+  to the design's topology on its own (`inlay::waist_is_left_open`).
+- **Round ends a chord's sag rounder.** Drawn as chords, an arc of
+  exactly the radius a later opening shrinks by lies a chord's sag inside
+  it, and a round end of that radius loses `√(2 R_min · sag)`, about
+  0.02 mm with the Fine bit, each time the design is rounded (the "DC"
+  letters' D). So the opening grows back by `R_min` plus the wall
+  tolerance, held to the design (`∩ X`), and the closing shrinks back by
+  `w_t` plus it, keeping what it closed (`∪`); rounding the result again
+  moves it by no more than the flatten tolerance
   (`inlay::rounded_design_is_open_and_closed`, both crates).
 - **A design the rounding moves nowhere by more than the flatten
   tolerance is cut as drawn**, its arcs kept, so a design the bit need
@@ -3867,7 +3878,9 @@ ball changes three things, each with a rule.
   pocket's point, and V-bit inlays are unchanged.
   The Inlay rounds the design itself, on both boards (question 25,
   decided 2026-11-16, maintainer, PR #670), as #479 merges near parts on both: after the near parts
-  are merged, `X′ = ((((X ⊖ R_min) ⊕ R_min) ⊕ w_t) ⊖ w_t)`, round joins,
+  are merged, `X′ = ((((X ⊕ w_t) ⊖ w_t) ⊖ R_min) ⊕ R_min)`, round joins
+(closed first, then opened, since slice 27e: opened first, the closing
+could fill a waist no disc of `R_min` reaches; "Slice 27e's decisions"),
   flattened within the bit's wall tolerance (`dc_project::inlay::
   rounded_for_bit`, which validation, the generator and the safety pass
   call, as `male_band`). Where `X′` differs from `X` by more than the

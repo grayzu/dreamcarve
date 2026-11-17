@@ -146,8 +146,11 @@ pub struct TooNarrow {
 
 /// `design` (an Inlay's, nested, its near parts already merged) rounded
 /// for a carve by `profile` with the plug `rise_mm` (`D − G`) tall (#681;
-/// design spec, "Inlay fit"): `X′ = ((((X ⊖ R_min) ⊕ R_min) ⊕ w_t) ⊖ w_t)`,
-/// round joins ([`BitRounding`]), flattened within the bit's wall
+/// design spec, "Inlay fit"): closed by `w_t`, then opened by `R_min`,
+/// `X′ = ((((X ⊕ w_t) ⊖ w_t) ⊖ R_min) ⊕ R_min)`, so that it is open by
+/// `R_min` wherever the plug meets the pocket (the spec's order, opening
+/// first, could fill a waist the ball cannot reach; slice 27e's
+/// decisions), round joins ([`BitRounding`]), flattened within the bit's wall
 /// tolerance ([`wall_tolerance_mm`] of `tolerance_mm`, the project's
 /// flatten tolerance). The generator, the safety pass and validation all
 /// call it, so the female's design, the male's (on the mirrored design)
@@ -183,37 +186,18 @@ pub fn rounded_for_bit(
     }
     let tolerance_mm = usable_tolerance(tolerance_mm);
     let wall_mm = wall_tolerance_mm(tolerance_mm, profile.slope());
-    // A closing can leave a pinch the opening would take again (where it
-    // fills a notch between two rounded points), so the two are repeated
-    // until the design is both open and closed within the tolerance: the
-    // pocket's ball then reaches every point of the plug.
-    // Each step is held to the design's topology on its own: an opening
-    // that splits a part, which the closing then joins again across the
-    // gap, leaves a neck narrower than `2 R_min` that no ball reaches the
-    // bottom of, so it is a part too narrow, not a rounding.
-    let opened = open(design, rounding, wall_mm);
-    topology(design, &opened, rounding, tolerance_mm)?;
-    let filled = close(&opened, rounding, wall_mm);
-    topology(&opened, &filled, rounding, tolerance_mm)?;
-    // The closing can fill a cusp where two of the opened design's round
-    // ends meet (a waist), wood no disc of `R_min` inside the design
-    // reaches, so the pocket's ball cannot cut it to depth and the plug
-    // would stand proud on it. Opened again, the design is open by
-    // `R_min` wherever the plug meets the pocket; a cusp left unfilled
-    // costs at most a gap under the surface.
-    let mut closed = open(&filled, rounding, wall_mm);
+    // The closing first, then the opening, so the design is open by
+    // `R_min` wherever the plug meets the pocket. Opened first, the
+    // closing could fill a cusp where two of the opened design's round
+    // ends meet (a waist) with wood no disc of `R_min` inside the design
+    // reaches, which the pocket's ball cannot cut to depth: the plug stood
+    // 1.07 mm proud on it. Opened last, such a cusp is left as the opening
+    // leaves it, which costs at most the gap under the surface the closing
+    // is for. Each step is held to the design's topology on its own.
+    let filled = close(design, rounding, wall_mm);
+    topology(design, &filled, rounding, tolerance_mm)?;
+    let closed = open(&filled, rounding, wall_mm);
     topology(&filled, &closed, rounding, tolerance_mm)?;
-    for _ in 0..MAX_ROUNDINGS {
-        let again = open_close(&closed, rounding, wall_mm);
-        let moved_mm = farthest_changes(&closed, &again, tolerance_mm)
-            .iter()
-            .map(|(_, d, _)| *d)
-            .fold(0.0, f64::max);
-        if moved_mm <= tolerance_mm {
-            break;
-        }
-        closed = again;
-    }
     let sources = topology(design, &closed, rounding, tolerance_mm)?;
     let changes: Vec<RoundingChange> = farthest_changes(design, &closed, tolerance_mm)
         .into_iter()
@@ -237,33 +221,12 @@ pub fn rounded_for_bit(
     })
 }
 
-/// How many times [`rounded_for_bit`] repeats the opening and closing at
-/// most, after the first, for the design to settle open and closed.
-const MAX_ROUNDINGS: usize = 4;
-
-/// `regions` opened by `R_min`, closed by `w_t` and opened by `R_min`
-/// again, round joins, within `wall_mm`: `((((X ⊖ R_min) ⊕ R_min) ⊕ w_t)
-/// ⊖ w_t)`, then the opening once more, which keeps only the closing's
-/// fills that a disc of `R_min` inside the design reaches.
-///
-/// Drawn as chords, an arc of exactly the radius the next opening shrinks
-/// by lies a chord's sag inside it, and a round end of that radius loses
-/// `√(2 R sag)` to it, which repeats each time the design is rounded. So
-/// the opening grows back by `R_min` plus `wall_mm`, held to the design
-/// (`∩ X`), and the closing shrinks back by `w_t` plus `wall_mm`, the
-/// opened design kept (`∪ X`): its round ends and fillets are a chord's
-/// sag rounder than the radii, and rounding the result again leaves it as
-/// it is ([`rounded_for_bit`]'s property).
-fn open_close(regions: &[Region], rounding: BitRounding, wall_mm: f64) -> Vec<Region> {
-    open(
-        &close(&open(regions, rounding, wall_mm), rounding, wall_mm),
-        rounding,
-        wall_mm,
-    )
-}
-
-/// `regions` opened by `R_min`, grown back by `wall_mm` more and held to
-/// `regions` ([`open_close`]).
+/// `regions` opened by `R_min`, `(X ⊖ R_min) ⊕ (R_min + wall_mm)`, held
+/// to `regions` (`∩ X`). Drawn as chords, an arc of exactly the radius a
+/// later opening shrinks by lies a chord's sag inside it, and a round end
+/// of that radius loses `√(2 R sag)` to it each time; grown back a wall
+/// tolerance more, the round ends are a sag rounder than `R_min`, so
+/// rounding the result again leaves it as it is.
 fn open(regions: &[Region], rounding: BitRounding, wall_mm: f64) -> Vec<Region> {
     intersection(
         &union(
@@ -279,8 +242,9 @@ fn open(regions: &[Region], rounding: BitRounding, wall_mm: f64) -> Vec<Region> 
     )
 }
 
-/// `opened` closed by `w_t`, shrunk back by `wall_mm` more and with
-/// `opened` kept ([`open_close`]).
+/// `opened` closed by `w_t`, `(X ⊕ w_t) ⊖ (w_t + wall_mm)`, with `opened`
+/// kept (`∪ X`), so its fillets are a chord's sag rounder than `w_t` (as
+/// [`open`]'s ends).
 fn close(opened: &[Region], rounding: BitRounding, wall_mm: f64) -> Vec<Region> {
     let closed = floor_regions(
         &union(&grown(opened, rounding.close_mm), &[], wall_mm),
