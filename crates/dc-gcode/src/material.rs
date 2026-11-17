@@ -220,15 +220,28 @@
 //!   floor rings are re-entered from 0.5 mm above the start plane.
 //!
 //!   The tool must be the operation's, a V-bit with an angle in (0°,
-//!   180°); the rule is the same for the medial and the offset strategy,
-//!   floors and links included. Anything else is unresolved.
+//!   180°) or a tapered ball nose with every value set and usable
+//!   ([`Tool::carve_profile`]); the rule is the same for the medial and
+//!   the offset strategy, floors and links included. Anything else is
+//!   unresolved.
+//!
+//!   **A tapered ball nose** (3.6, #680) is held to the same rule on its
+//!   profile: the disc at the start plane is `w(d)` across, ball, cone or
+//!   cylinder, measured exactly by the shared
+//!   [`dc_geometry::profile::least_room`] ([`cone`]); the shank's limit is
+//!   its cutting height `min(flute_length_mm, h_R)`
+//!   ([`Tool::cutting_height_mm`]), named in `ConeHeightExceeded`; its
+//!   floor inset is `w(F)`. S7 widens its cuts by its cut radius
+//!   `min(w(flute_length_mm), R)` ([`Tool::cut_radius_mm`]). An Inlay
+//!   side cut with one stays unresolved until slice 27e (#681).
 //! - **V-Carve, a clearing run** (#406, security review M3): the run
 //!   labelled with one of the carve's passes and cut with that pass's flat
 //!   end mill is held as a Pocket of the carve's floor regions with no
 //!   stock to leave: the end mill's centre stays inside one, at least its
 //!   radius from its outline and islands, and no lower than the floor. The
 //!   floor regions are re-derived from the project: the targets' regions
-//!   inset by `F · tan(α/2)` ([`dc_geometry::floor_regions`]), less those
+//!   inset by `w(F)`, `F · tan(α/2)` for a V-bit
+//!   ([`dc_geometry::floor_regions`]), less those
 //!   too thin to cut (area at most the flatten tolerance times the
 //!   perimeter), as the generator's floor drops them. The earlier passes'
 //!   reach does not bound the run: a rest pass's footprint runs into what
@@ -307,6 +320,7 @@ mod photo;
 use cone::{Cone, Fault};
 use countersink::Sink;
 use dc_cam::RunLabel;
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{
     Arc, Contour, EPS_MM, Point, Point3, Polyline, Rect, Region, Segment, SelfBand, Transform,
     Vec2, as_circle, band_on_board, closest_points, difference_within, floor_regions,
@@ -317,8 +331,8 @@ use dc_geometry::{
 use dc_project::{
     Board, ClearingPass, CornerRelief, CutDirection, DefinitionId, Entry, FeatureDefinition,
     FeatureInstance, INLAY_MERGE_MM, InlayOp, InstanceId, MaleBand, Operation, PostProcessor,
-    ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, ToolKind, Units, VCarveOp,
-    band_edge_of, cleared_start_plane, male_band,
+    ProfileOp, Project, Side, StartAt, TabShape, Tool, ToolId, Units, VCarveOp, band_edge_of,
+    cleared_start_plane, male_band,
 };
 use photo::Picture;
 
@@ -965,11 +979,11 @@ impl Material {
     }
 }
 
-/// The V-bit material of V-Carve `carve` (module docs, [`cone`]): its
-/// regions, start plane, slope, flat-depth floor, engagement and cone
-/// height, all from the project; [`Material::Unresolved`] when its tool
-/// is not a usable V-bit, its start or flat depth is not usable, or its
-/// targets do not resolve.
+/// The carving bit's material of V-Carve `carve` (module docs, [`cone`]):
+/// its regions, start plane, bit profile, flat-depth floor, engagement
+/// and cutting height, all from the project; [`Material::Unresolved`]
+/// when its tool is not a usable V-bit or tapered ball nose, its start or
+/// flat depth is not usable, or its targets do not resolve.
 fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
     match cone_of(project, carve) {
         Some(cone) => Material::VBit(cone),
@@ -977,28 +991,32 @@ fn v_bit_material(project: &Project, carve: &VCarveOp) -> Material {
     }
 }
 
-/// The V-bit `id` of `project` as S17 needs it: its slope `tan(α/2)` and
-/// its cone height, mm; `None` when it is missing or not a V-bit with an
-/// angle in (0°, 180°) and a positive diameter.
-pub(crate) fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
+/// The carving bit `id` of `project` as S17 needs it (slice 27d, #680):
+/// its profile ([`Tool::carve_profile`]) and its cutting height, mm
+/// ([`Tool::cutting_height_mm`]: a V-bit's cone height, a tapered ball
+/// nose's `min(flute_length_mm, h_R)`); `None` when it is missing or not
+/// a V-bit with an angle in (0°, 180°) and a positive diameter, nor a
+/// tapered ball nose with every value set and usable.
+pub(crate) fn carve_bit_of(project: &Project, id: &ToolId) -> Option<(BitProfile, f64)> {
     let tool = project.tools.iter().find(|t| &t.id == id)?;
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return None;
-    };
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let usable = included_angle_deg > 0.0
-        && included_angle_deg < 180.0
-        && slope.is_finite()
-        && slope > 0.0
-        && tool.diameter_mm.is_finite()
-        && tool.diameter_mm > 0.0;
-    usable.then(|| (slope, tool.diameter_mm / (2.0 * slope)))
+    Some((tool.carve_profile()?, tool.cutting_height_mm()?))
+}
+
+/// The V-bit `id` of `project`: its slope `tan(α/2)` and its cone
+/// height, mm, through [`carve_bit_of`]; `None` for a tapered ball nose
+/// too. A Photo V-Carve's S19 needs a V-bit, and an Inlay's S17 does until
+/// slice 27e (#681) re-derives its rounded design.
+pub(crate) fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
+    match carve_bit_of(project, id)? {
+        (BitProfile::VBit { slope }, cone_mm) => Some((slope, cone_mm)),
+        (BitProfile::TaperedBall { .. }, _) => None,
+    }
 }
 
 /// [`v_bit_material`]'s cone, `None` when it is unresolved.
 fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     let thickness_mm = project.stock.thickness_mm?;
-    let (slope, cone_mm) = v_bit_of(project, &carve.tool)?;
+    let (profile, cone_mm) = carve_bit_of(project, &carve.tool)?;
     let start_depth_mm = carve.start_depth_mm;
     let flat_usable = carve.flat_depth_mm.is_none_or(|f| f.is_finite() && f > 0.0);
     let usable = thickness_mm.is_finite()
@@ -1020,7 +1038,7 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     Some(Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,
-        slope,
+        profile,
         floor_z_mm: carve.flat_depth_mm.map(|f| start_plane_z_mm - f),
         engaged_from_z_mm: if cleared_at_start {
             start_plane_z_mm
@@ -1163,7 +1181,7 @@ fn inlay_cone(
         Box::new(Cone {
             areas: areas_of(m.edge.clone(), true),
             start_plane_z_mm: thickness_mm,
-            slope,
+            profile: BitProfile::VBit { slope },
             floor_z_mm: None,
             engaged_from_z_mm: thickness_mm,
             cone_mm,
@@ -1173,7 +1191,7 @@ fn inlay_cone(
     let cone = Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,
-        slope,
+        profile: BitProfile::VBit { slope },
         floor_z_mm: Some(start_plane_z_mm - flat_depth_mm),
         engaged_from_z_mm: thickness_mm,
         cone_mm,
@@ -1294,7 +1312,7 @@ fn cut_out_geometry(
     let (cone, male) = inlay_cone(project, inlay, board)?;
     let male = male?;
     let floor_z_mm = cone.floor_z_mm?;
-    let inset_mm = (cone.start_plane_z_mm - floor_z_mm) * cone.slope;
+    let inset_mm = cone.radius_mm(floor_z_mm);
     let tolerance_mm = project.flatten_tolerance_mm;
     let rings = male
         .floors(inset_mm, tolerance_mm)
@@ -1405,10 +1423,7 @@ fn floor_of(
         if !(end_mill.cutter.is_flat() && radius_mm.is_finite() && radius_mm > 0.0) {
             return None;
         }
-        let inset_mm = |cone: &Cone| {
-            cone.floor_z_mm
-                .map(|floor_z_mm| (cone.start_plane_z_mm - floor_z_mm) * cone.slope)
-        };
+        let inset_mm = |cone: &Cone| cone.floor_z_mm.map(|floor_z_mm| cone.radius_mm(floor_z_mm));
         let (cone, floors) = floors(&inset_mm, project.flatten_tolerance_mm)?;
         Some(Material::Floor {
             areas: areas_of(floors, true),
