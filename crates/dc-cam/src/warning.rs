@@ -8,7 +8,9 @@
 use std::fmt;
 
 use dc_geometry::EPS_MM;
-use dc_project::{CornerRelief, InstanceId, OperationId, StartFootprint, TabId, ToolId};
+use dc_project::{
+    CornerKind, CornerRelief, InstanceId, OperationId, StartFootprint, TabId, ToolId,
+};
 
 use crate::entry::{EntryKind, FallbackReason};
 use crate::error::ShapeRef;
@@ -246,6 +248,18 @@ pub enum WarningCode {
     /// than the bit's ball can follow below the surface (slice 27c, #679;
     /// functional 49j): their walls meet in a round valley.
     TaperedCornersSoftened,
+    /// An Inlay cut with a tapered ball nose rounds its design for the bit
+    /// on both boards (slice 27e, #681): its points by `R_min`, its notches
+    /// by `w_t`. Once for points and once for notches.
+    InlayRoundedForBit,
+    /// An Inlay cut with a tapered ball nose has a glue gap below the
+    /// bit's tangent height (#681): the plug rides on the pocket's fillet.
+    /// Validation reports it too.
+    InlayGlueGapBelowBall,
+    /// An Inlay cut with a tapered ball nose has a plug depth below the
+    /// bit's tangent height (#681): the plug's wall near the surface is
+    /// the ball's. Validation reports it too.
+    InlayPlugDepthBelowBall,
 }
 
 impl WarningCode {
@@ -311,6 +325,9 @@ impl WarningCode {
             Self::InlayBoundaryHoleIgnored => "inlay_boundary_hole_ignored",
             Self::PhotoLinesOverlap => "photo_lines_overlap",
             Self::TaperedCornersSoftened => "tapered_corners_softened",
+            Self::InlayRoundedForBit => "inlay_rounded_for_bit",
+            Self::InlayGlueGapBelowBall => "inlay_glue_gap_below_ball",
+            Self::InlayPlugDepthBelowBall => "inlay_plug_depth_below_ball",
         }
     }
 }
@@ -1073,6 +1090,48 @@ pub enum Warning {
         /// bit's `w_t = ρ cos β`, mm.
         radius_mm: f64,
     },
+    /// [`WarningCode::InlayRoundedForBit`]: the Inlay's design, rounded for
+    /// its tapered ball nose (`X′ = ((((X ⊖ R_min) ⊕ R_min) ⊕ w_t) ⊖
+    /// w_t)`), differs from the design by more than the flatten tolerance.
+    InlayRoundedForBit {
+        /// The Inlay.
+        op: OperationId,
+        /// Points (`R_min`) or notches (`w_t`).
+        kind: CornerKind,
+        /// Where the largest change is, mm, project space, as drawn (the
+        /// male's mirrored back).
+        x_mm: f64,
+        /// See `x_mm`.
+        y_mm: f64,
+        /// How far the outline moved there, mm.
+        change_mm: f64,
+        /// The radius it was rounded by, mm.
+        radius_mm: f64,
+    },
+    /// [`WarningCode::InlayGlueGapBelowBall`].
+    InlayGlueGapBelowBall {
+        /// The Inlay.
+        op: OperationId,
+        /// `glue_gap_mm`.
+        glue_gap_mm: f64,
+        /// The bit's tangent height `h_t`, mm.
+        tangent_height_mm: f64,
+        /// How far the plug stands proud, mm.
+        lift_mm: f64,
+        /// How far its walls open at the surface, mm.
+        wall_gap_mm: f64,
+    },
+    /// [`WarningCode::InlayPlugDepthBelowBall`].
+    InlayPlugDepthBelowBall {
+        /// The Inlay.
+        op: OperationId,
+        /// `plug_depth_mm`.
+        plug_depth_mm: f64,
+        /// The bit's tangent height `h_t`, mm.
+        tangent_height_mm: f64,
+        /// The widest gap at the plug's wall, mm.
+        wall_gap_mm: f64,
+    },
 }
 
 impl Warning {
@@ -1092,6 +1151,10 @@ impl Warning {
             }
             Self::PhotoLinesOverlap { op, .. } => {
                 Some(format!("operations[{op}].line_spacing_fraction"))
+            }
+            Self::InlayGlueGapBelowBall { op, .. } => Some(format!("operations[{op}].glue_gap_mm")),
+            Self::InlayPlugDepthBelowBall { op, .. } => {
+                Some(format!("operations[{op}].plug_depth_mm"))
             }
             _ => None,
         }
@@ -1160,6 +1223,9 @@ impl Warning {
             Self::InlayBoundaryHoleIgnored { .. } => WarningCode::InlayBoundaryHoleIgnored,
             Self::PhotoLinesOverlap { .. } => WarningCode::PhotoLinesOverlap,
             Self::TaperedCornersSoftened { .. } => WarningCode::TaperedCornersSoftened,
+            Self::InlayRoundedForBit { .. } => WarningCode::InlayRoundedForBit,
+            Self::InlayGlueGapBelowBall { .. } => WarningCode::InlayGlueGapBelowBall,
+            Self::InlayPlugDepthBelowBall { .. } => WarningCode::InlayPlugDepthBelowBall,
         }
     }
 
@@ -1216,6 +1282,9 @@ impl Warning {
             | Self::InlayBoundaryHoleIgnored { op, .. }
             | Self::PhotoLinesOverlap { op, .. }
             | Self::TaperedCornersSoftened { op, .. }
+            | Self::InlayRoundedForBit { op, .. }
+            | Self::InlayGlueGapBelowBall { op, .. }
+            | Self::InlayPlugDepthBelowBall { op, .. }
             | Self::InlayMaleBoardUnset { op } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1290,6 +1359,9 @@ impl Warning {
             | Self::InlayBoundaryHoleIgnored { .. }
             | Self::PhotoLinesOverlap { .. }
             | Self::TaperedCornersSoftened { .. }
+            | Self::InlayRoundedForBit { .. }
+            | Self::InlayGlueGapBelowBall { .. }
+            | Self::InlayPlugDepthBelowBall { .. }
             | Self::InlayMaleBoardUnset { .. } => None,
         }
     }
@@ -2091,6 +2163,59 @@ impl fmt::Display for Warning {
                 rounded(*x_mm, 3),
                 rounded(*y_mm, 3),
                 rounded(*radius_mm, 3)
+            ),
+            Self::InlayRoundedForBit {
+                kind,
+                x_mm,
+                y_mm,
+                change_mm,
+                radius_mm,
+                ..
+            } => match kind {
+                CornerKind::Point => write!(
+                    f,
+                    "its tapered ball nose cannot cut a point or a part narrower than its tip and taper allow, so both boards round the design's points to a radius of {} mm; the outline moves up to {} mm, at ({}, {}). Round the drawing yourself, carve less deep, or use a finer tip to keep it",
+                    rounded(*radius_mm, 3),
+                    rounded(*change_mm, 3),
+                    rounded(*x_mm, 3),
+                    rounded(*y_mm, 3)
+                ),
+                CornerKind::Notch => write!(
+                    f,
+                    "its tapered ball nose cannot cut an inward corner or a gap tighter than its tip, so both boards round the design's notches to a radius of {} mm; the outline moves up to {} mm, at ({}, {}). Round the drawing yourself, or use a finer tip to keep it",
+                    rounded(*radius_mm, 3),
+                    rounded(*change_mm, 3),
+                    rounded(*x_mm, 3),
+                    rounded(*y_mm, 3)
+                ),
+            },
+            Self::InlayGlueGapBelowBall {
+                glue_gap_mm,
+                tangent_height_mm,
+                lift_mm,
+                wall_gap_mm,
+                ..
+            } => write!(
+                f,
+                "its glue_gap_mm {} mm is below its tapered ball nose's tangent height {} mm, so the plug's top edge rides on the pocket's rounded floor: it stands about {} mm proud with its walls {} mm open at the surface; set glue_gap_mm to at least {} mm and test-fit a coupon first",
+                rounded(*glue_gap_mm, 3),
+                rounded(*tangent_height_mm, 3),
+                rounded(*lift_mm, 3),
+                rounded(*wall_gap_mm, 3),
+                rounded(*tangent_height_mm, 3)
+            ),
+            Self::InlayPlugDepthBelowBall {
+                plug_depth_mm,
+                tangent_height_mm,
+                wall_gap_mm,
+                ..
+            } => write!(
+                f,
+                "its plug_depth_mm {} mm is below its tapered ball nose's tangent height {} mm, so the plug's wall just below the surface is cut by the ball, up to {} mm narrower than the pocket; set plug_depth_mm to at least {} mm",
+                rounded(*plug_depth_mm, 3),
+                rounded(*tangent_height_mm, 3),
+                rounded(*wall_gap_mm, 3),
+                rounded(*tangent_height_mm, 3)
             ),
             Self::InlayMarginIgnored { field, .. } => write!(
                 f,
@@ -2964,6 +3089,47 @@ mod tests {
                 },
                 "its tapered ball nose cannot follow 4 corners sharper than its tip below the surface, so their walls meet in a round valley instead of a crease, up to 0.157 mm from the corner as drawn at (20, 40); round the corners by at least 0.378 mm to cut them as the taper would",
             ),
+            (
+                Warning::InlayRoundedForBit {
+                    op: op(),
+                    kind: CornerKind::Point,
+                    x_mm: 80.0,
+                    y_mm: 50.0,
+                    change_mm: 1.260_5,
+                    radius_mm: 0.730_8,
+                },
+                "its tapered ball nose cannot cut a point or a part narrower than its tip and taper allow, so both boards round the design's points to a radius of 0.731 mm; the outline moves up to 1.26 mm, at (80, 50). Round the drawing yourself, carve less deep, or use a finer tip to keep it",
+            ),
+            (
+                Warning::InlayRoundedForBit {
+                    op: op(),
+                    kind: CornerKind::Notch,
+                    x_mm: 58.5,
+                    y_mm: 58.5,
+                    change_mm: 0.161,
+                    radius_mm: 0.378_4,
+                },
+                "its tapered ball nose cannot cut an inward corner or a gap tighter than its tip, so both boards round the design's notches to a radius of 0.378 mm; the outline moves up to 0.161 mm, at (58.5, 58.5). Round the drawing yourself, or use a finer tip to keep it",
+            ),
+            (
+                Warning::InlayGlueGapBelowBall {
+                    op: op(),
+                    glue_gap_mm: 0.25,
+                    tangent_height_mm: 1.009_6,
+                    lift_mm: 0.432,
+                    wall_gap_mm: 0.050_8,
+                },
+                "its glue_gap_mm 0.25 mm is below its tapered ball nose's tangent height 1.01 mm, so the plug's top edge rides on the pocket's rounded floor: it stands about 0.432 mm proud with its walls 0.051 mm open at the surface; set glue_gap_mm to at least 1.01 mm and test-fit a coupon first",
+            ),
+            (
+                Warning::InlayPlugDepthBelowBall {
+                    op: op(),
+                    plug_depth_mm: 0.5,
+                    tangent_height_mm: 1.009_6,
+                    wall_gap_mm: 0.130_3,
+                },
+                "its plug_depth_mm 0.5 mm is below its tapered ball nose's tangent height 1.01 mm, so the plug's wall just below the surface is cut by the ball, up to 0.13 mm narrower than the pocket; set plug_depth_mm to at least 1.01 mm",
+            ),
         ]
     }
 
@@ -3036,7 +3202,10 @@ mod tests {
             C::InlayBoundaryEmpty => C::InlayBoundaryHoleIgnored,
             C::InlayBoundaryHoleIgnored => C::PhotoLinesOverlap,
             C::PhotoLinesOverlap => C::TaperedCornersSoftened,
-            C::TaperedCornersSoftened => return None,
+            C::TaperedCornersSoftened => C::InlayRoundedForBit,
+            C::InlayRoundedForBit => C::InlayGlueGapBelowBall,
+            C::InlayGlueGapBelowBall => C::InlayPlugDepthBelowBall,
+            C::InlayPlugDepthBelowBall => return None,
         })
     }
 
@@ -3073,7 +3242,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 58);
+        assert_eq!(count, 61);
     }
 
     #[test]

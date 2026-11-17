@@ -785,6 +785,40 @@ pub enum Problem {
         /// What is left under the floor, mm.
         base_mm: f64,
     },
+    /// An Inlay cut with a tapered ball nose has a `glue_gap_mm` below the
+    /// bit's tangent height `h_t` (slice 27e, #681): the plug's top edge
+    /// rides on the pocket's floor fillet, so it stands `lift_mm` proud
+    /// and its walls open by `wall_gap_mm` at the surface. A warning.
+    InlayGlueGapBelowBall {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `glue_gap_mm`.
+        glue_gap_mm: f64,
+        /// The bit's tangent height `h_t`, mm.
+        tangent_height_mm: f64,
+        /// How far the plug stands proud, mm.
+        lift_mm: f64,
+        /// How far its walls open at the surface, mm.
+        wall_gap_mm: f64,
+    },
+    /// An Inlay cut with a tapered ball nose has a `plug_depth_mm` below
+    /// the bit's tangent height `h_t` (slice 27e, #681): the plug's wall
+    /// just below the surface is the ball's, narrower than the pocket by up
+    /// to `wall_gap_mm`. A warning.
+    InlayPlugDepthBelowBall {
+        /// The operation.
+        operation: OperationId,
+        /// Its display name.
+        name: String,
+        /// `plug_depth_mm`.
+        plug_depth_mm: f64,
+        /// The bit's tangent height `h_t`, mm.
+        tangent_height_mm: f64,
+        /// The widest gap at the plug's wall, mm.
+        wall_gap_mm: f64,
+    },
     /// An Inlay's male board has a width or height set that is not above 0
     /// (format 25, #498): `null` is the stock's, a number is the board's
     /// size. An error.
@@ -1191,6 +1225,8 @@ impl Problem {
             Self::InlayMarginPositive { .. } => "inlay_margin_positive",
             Self::InlayOutlineRounding { .. } => "inlay_outline_rounding",
             Self::InlayPlugBaseThin { .. } => "inlay_plug_base_thin",
+            Self::InlayGlueGapBelowBall { .. } => "inlay_glue_gap_below_ball",
+            Self::InlayPlugDepthBelowBall { .. } => "inlay_plug_depth_below_ball",
             Self::InlayMaleBoardSize { .. } => "inlay_male_board_size",
             Self::InlayMaleBoardThickness { .. } => "inlay_male_board_thickness",
             Self::InlayMaleBoardsDiffer { .. } => "inlay_male_boards_differ",
@@ -1238,6 +1274,8 @@ impl Problem {
             | Self::ClearingNotDescending { .. }
             | Self::CountersinkIgnoresToolWidth { .. }
             | Self::InlayPlugBaseThin { .. }
+            | Self::InlayGlueGapBelowBall { .. }
+            | Self::InlayPlugDepthBelowBall { .. }
             | Self::InlayMarginIgnored { .. }
             | Self::InlayBoundaryEmpty { .. }
             | Self::InlayBoundaryHoleIgnored { .. }
@@ -1463,6 +1501,12 @@ impl Problem {
                 Some(format!("operations[{operation}].outline_rounding_mm"))
             }
             Self::InlayPlugBaseThin { operation, .. } => {
+                Some(format!("operations[{operation}].{INLAY_PLUG_DEPTH}"))
+            }
+            Self::InlayGlueGapBelowBall { operation, .. } => {
+                Some(format!("operations[{operation}].glue_gap_mm"))
+            }
+            Self::InlayPlugDepthBelowBall { operation, .. } => {
                 Some(format!("operations[{operation}].{INLAY_PLUG_DEPTH}"))
             }
             Self::InlayMaleBoardSize {
@@ -2032,6 +2076,27 @@ impl fmt::Display for Problem {
             } => write!(
                 f,
                 "operation `{name}` (`{operation}`) cuts its plug's surround {floor_depth_mm} mm below the male board's top, leaving {base_mm} mm of the {thickness_mm} mm male board under it, less than {INLAY_MIN_PLUG_BASE_MM} mm; the base may flex or crack when the plug is pressed into the glue. Use a thicker male board, or a smaller depth_mm or plug_depth_mm"
+            ),
+            Self::InlayGlueGapBelowBall {
+                operation,
+                name,
+                glue_gap_mm,
+                tangent_height_mm,
+                lift_mm,
+                wall_gap_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has glue_gap_mm {glue_gap_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's top edge rides on the pocket's rounded floor: it stands about {lift_mm:.3} mm proud with its walls {wall_gap_mm:.3} mm open at the surface. Set glue_gap_mm to at least {tangent_height_mm:.3} mm, and test-fit a coupon first"
+            ),
+            Self::InlayPlugDepthBelowBall {
+                operation,
+                name,
+                plug_depth_mm,
+                tangent_height_mm,
+                wall_gap_mm,
+            } => write!(
+                f,
+                "operation `{name}` (`{operation}`) has plug_depth_mm {plug_depth_mm} mm, below its tapered ball nose's tangent height {tangent_height_mm:.3} mm, so the plug's wall just below the surface is cut by the ball, up to {wall_gap_mm:.3} mm narrower than the pocket. Set plug_depth_mm to at least {tangent_height_mm:.3} mm"
             ),
             Self::InlayMaleBoardSize {
                 operation,
@@ -4163,6 +4228,11 @@ impl Validator {
                     limit,
                 });
             }
+            // #681: a tapered ball nose's glue gap and plug depth below its
+            // tangent height (warnings), once, with the female.
+            if !male && let Some(profile) = tool.and_then(Tool::carve_profile) {
+                self.inlay_ball(inlay, &profile, glue_gap_ok, plug_depth_ok);
+            }
             if male
                 && let Some(thickness_mm) = inlay
                     .male_board
@@ -4180,6 +4250,43 @@ impl Validator {
                     });
                 }
             }
+        }
+    }
+
+    /// An Inlay cut with a tapered ball nose of `profile` (slice 27e, #681):
+    /// a `glue_gap_mm` below the bit's tangent height is
+    /// `inlay_glue_gap_below_ball`, and a `plug_depth_mm` below it
+    /// `inlay_plug_depth_below_ball`, each a warning naming what it costs.
+    /// Only values that passed their own checks are compared.
+    fn inlay_ball(
+        &mut self,
+        inlay: &InlayOp,
+        profile: &dc_geometry::profile::BitProfile,
+        glue_gap_ok: bool,
+        plug_depth_ok: bool,
+    ) {
+        if let Some(glue_gap_mm) = inlay.glue_gap_mm.filter(|_| glue_gap_ok)
+            && let Some(cost) = crate::glue_gap_below_ball(profile, glue_gap_mm)
+        {
+            self.problems.push(Problem::InlayGlueGapBelowBall {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                glue_gap_mm,
+                tangent_height_mm: cost.tangent_height_mm,
+                lift_mm: cost.lift_mm,
+                wall_gap_mm: cost.wall_gap_mm,
+            });
+        }
+        if let Some(plug_depth_mm) = inlay.plug_depth_mm.filter(|_| plug_depth_ok)
+            && let Some(cost) = crate::plug_depth_below_ball(profile, plug_depth_mm)
+        {
+            self.problems.push(Problem::InlayPlugDepthBelowBall {
+                operation: inlay.id.clone(),
+                name: inlay.name.clone(),
+                plug_depth_mm,
+                tangent_height_mm: cost.tangent_height_mm,
+                wall_gap_mm: cost.wall_gap_mm,
+            });
         }
     }
 
@@ -10595,7 +10702,9 @@ mod tests {
     fn tapered_ball_nose_is_accepted_by_v_carve_and_inlay() {
         let mut carve = carve_project(|_| {});
         carve.tools[1] = crate::test_support::tool_tbn_ultra();
-        let mut inlay = inlay_project(|_| {});
+        // A glue gap at or above the Ultra bit's 0.337 mm tangent height
+        // (#681: below it, `inlay_glue_gap_below_ball` warns).
+        let mut inlay = inlay_project(|inlay| inlay.glue_gap_mm = Some(0.5));
         inlay.tools[1] = crate::test_support::tool_tbn_ultra();
         for p in [carve, inlay] {
             let problems = validate(&p);
@@ -10649,5 +10758,110 @@ mod tests {
             "{message}"
         );
         assert_eq!(deep(crate::test_support::tool_tbn_fine(), 18.3), vec![]);
+    }
+
+    /// Slice 27e (#681, question 32): a male Inlay's engagement from its
+    /// board's top, `D − G + P`, past a tapered ball nose's cutting height
+    /// is `v_bit_cone_exceeded` at `plug_depth_mm`, an error naming the
+    /// flutes (Ultra, 19.05 mm) or the cutting diameter (Fine, 18.374 mm).
+    #[test]
+    fn tapered_inlay_engagement_beyond_the_flute_is_error() {
+        let deep = |tool: Tool, plug_depth_mm: f64| {
+            let mut p = inlay_project(|inlay| {
+                star(inlay, Board::Male);
+                inlay.depth_mm = Some(12.0);
+                // Above both bits' tangent heights.
+                inlay.glue_gap_mm = Some(1.5);
+                inlay.plug_depth_mm = Some(plug_depth_mm);
+                inlay.male_board.thickness_mm = Some(30.0);
+            });
+            p.stock.thickness_mm = Some(30.0);
+            p.tools[1] = Tool {
+                id: ToolId::new("t2"),
+                ..tool
+            };
+            validate(&p)
+        };
+        let problems = deep(crate::test_support::tool_tbn_ultra(), 9.0);
+        let (engagement_mm, limit_mm, from_stock_top, field) = cone_exceeded(&problems);
+        assert!((engagement_mm - 19.5).abs() < 1e-9, "{engagement_mm}");
+        assert!((limit_mm - 19.05).abs() < 1e-9, "{limit_mm}");
+        assert!(from_stock_top);
+        assert_eq!(field.as_deref(), Some("operations[o7].plug_depth_mm"));
+        assert!(
+            problems[0].to_string().contains("19.050 mm flutes"),
+            "{}",
+            problems[0]
+        );
+        let problems = deep(crate::test_support::tool_tbn_fine(), 9.0);
+        let (_, limit_mm, _, _) = cone_exceeded(&problems);
+        assert!((limit_mm - 18.374).abs() < 1e-3, "{limit_mm}");
+        assert!(
+            problems[0]
+                .to_string()
+                .contains("6.350 mm cutting diameter"),
+            "{}",
+            problems[0]
+        );
+        // 10.5 + 7 = 17.5 mm is within both.
+        assert_eq!(deep(crate::test_support::tool_tbn_ultra(), 7.0), vec![]);
+        assert_eq!(deep(crate::test_support::tool_tbn_fine(), 7.0), vec![]);
+    }
+
+    /// Slice 27e (#681; functional 49k): an Inlay cut with a tapered ball
+    /// nose warns `inlay_glue_gap_below_ball` at `glue_gap_mm` and
+    /// `inlay_plug_depth_below_ball` at `plug_depth_mm` when either is
+    /// below the bit's tangent height (the Fine bit's 1.010 mm), naming
+    /// what each costs: with `G` 0.25 a 0.432 mm lift and a 0.051 mm wall
+    /// gap, with `P` 0.5 a 0.130 mm gap. Warnings, once; a V-bit's never.
+    #[test]
+    fn tapered_inlay_glue_gap_and_plug_depth_below_the_ball_warn() {
+        let mut p = inlay_project(|inlay| {
+            star(inlay, Board::Male);
+            inlay.glue_gap_mm = Some(0.25);
+            inlay.plug_depth_mm = Some(0.5);
+        });
+        p.tools[1] = Tool {
+            id: ToolId::new("t2"),
+            ..crate::test_support::tool_tbn_fine()
+        };
+        let problems = validate(&p);
+        assert_eq!(problems.len(), 2, "{problems:?}");
+        assert!(problems.iter().all(|p| p.severity() == Severity::Warning));
+        let Problem::InlayGlueGapBelowBall {
+            tangent_height_mm,
+            lift_mm,
+            wall_gap_mm,
+            ..
+        } = &problems[0]
+        else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(problems[0].code(), "inlay_glue_gap_below_ball");
+        assert_eq!(
+            problems[0].field().as_deref(),
+            Some("operations[o7].glue_gap_mm")
+        );
+        assert!((tangent_height_mm - 1.010).abs() < 5e-4);
+        assert!((lift_mm - 0.432).abs() < 5e-4, "{lift_mm}");
+        assert!((wall_gap_mm - 0.051).abs() < 5e-4, "{wall_gap_mm}");
+        let Problem::InlayPlugDepthBelowBall { wall_gap_mm, .. } = &problems[1] else {
+            panic!("{problems:?}");
+        };
+        assert_eq!(problems[1].code(), "inlay_plug_depth_below_ball");
+        assert_eq!(
+            problems[1].field().as_deref(),
+            Some("operations[o7].plug_depth_mm")
+        );
+        assert!((wall_gap_mm - 0.130).abs() < 5e-4, "{wall_gap_mm}");
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("below its tapered ball nose's tangent height 1.010 mm"),
+            "{message}"
+        );
+        // A V-bit has no ball.
+        let mut v_bit = p.clone();
+        v_bit_angle(&mut v_bit, 60.0);
+        assert_eq!(validate(&v_bit), vec![]);
     }
 }

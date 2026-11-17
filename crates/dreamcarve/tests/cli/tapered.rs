@@ -264,3 +264,46 @@ fn v27_project_exports_the_same_programs() {
         }
     }
 }
+
+/// Slice 27e (#681; design spec, "The taper's ±0.5°"): `check` prints the
+/// seat line of an Inlay cut with a tapered ball nose, from its own
+/// `depth_mm` and `plug_depth_mm`: the "DC" pair with the Ultra-High
+/// Detail bit at the 6 mm test part's depths (`D` 6, `G` 0.85, `P` 2, a
+/// 19 mm male board) moves 0.55 mm per 0.5° of taper and 0.76 mm per
+/// 0.05 mm of tip radius. The pair with its 60° V-bit prints none.
+#[test]
+fn check_prints_the_seat_line() {
+    let dir = work_dir("check_prints_the_seat_line");
+    let dcv = copy_fixture(&dir, "dc.dcv", "dc.dcv");
+    let out = run(&dir, &["check", "dc.dcv"]);
+    assert_eq!(out.status.code(), Some(0), "check: {}", stdout(&out));
+    assert!(!stdout(&out).contains("seat:"), "{}", stdout(&out));
+
+    let mut project = load_file(&dcv).project;
+    let bit = project
+        .tools
+        .iter_mut()
+        .find(|t| t.id.as_str() == "t3")
+        .expect("the pair's V-bit");
+    *bit = dc_project::Tool {
+        id: bit.id.clone(),
+        ..tool_tbn_ultra()
+    };
+    for op in &mut project.operations {
+        if let dc_project::Operation::Inlay(inlay) = op {
+            inlay.depth_mm = Some(6.0);
+            inlay.glue_gap_mm = Some(0.85);
+            inlay.plug_depth_mm = Some(2.0);
+            inlay.male_board.thickness_mm = Some(19.0);
+        }
+    }
+    std::fs::write(&dcv, save(&project).expect("project saves")).expect("dcv written");
+    let out = run(&dir, &["check", "dc.dcv"]);
+    let report = stdout(&out);
+    assert_eq!(out.status.code(), Some(0), "check: {report}");
+    assert!(
+        report.lines().any(|l| l
+            == "op1 `DC` seat: moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius; test-fit before gluing"),
+        "{report}"
+    );
+}

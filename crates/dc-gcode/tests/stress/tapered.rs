@@ -116,7 +116,11 @@ fn tapered_case(family: &str, seed: u64, design: Design, bit: Bit) -> Case {
     c.ops.retain(|(kind, _)| {
         matches!(
             kind,
-            Kind::Female | Kind::MaleVWall | Kind::MaleOpenEdge | Kind::MaleRounded | Kind::MaleCutOut
+            Kind::Female
+                | Kind::MaleVWall
+                | Kind::MaleOpenEdge
+                | Kind::MaleRounded
+                | Kind::MaleCutOut
         )
     });
     for (_, op) in &mut c.ops {
@@ -155,7 +159,8 @@ fn run(families: &[Family], first: u64, count: u64, seats: Seats) -> Outcome {
                 let mut c = tapered_case(family, seed, draw(seed), bit);
                 if family.starts_with("small") {
                     let male = MALES[usize::try_from(seed % 4).unwrap_or(0)];
-                    c.ops.retain(|(kind, _)| [Kind::Female, male].contains(kind));
+                    c.ops
+                        .retain(|(kind, _)| [Kind::Female, male].contains(kind));
                 }
                 all.absorb(carve(&c, seats, true));
             }

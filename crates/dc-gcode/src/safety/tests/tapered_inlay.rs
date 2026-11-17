@@ -14,8 +14,7 @@
 //! Fine Detail (tip 2.286 mm).
 
 use super::inlay::{
-    assert_cone_off, check_male, edge_pass, export_inlay, inlay, program_at, small_star,
-    two_shapes,
+    assert_cone_off, check_male, edge_pass, export_inlay, inlay, program_at, small_star, two_shapes,
 };
 use super::*;
 use crate::emit::{EmitOp, ProgramSplit, emit_programs};
@@ -164,4 +163,130 @@ fn generated_tapered_inlays_pass_s17_and_s9() {
         export_inlay(&shapes, &inlay(Board::Male, "t2", 1.0, 6.0))
             .unwrap_or_else(|e| panic!("{name} two shapes: {e}\n{e:?}"));
     }
+}
+
+/// The 6 mm test part's pair (functional spec, "Tapered ball nose carve
+/// and inlay", item 2): the "DC" letters of `tests/fixtures/dc.dcv` as an
+/// Inlay with the Ultra-High Detail bit, `depth_mm` 6, `glue_gap_mm`
+/// 0.85, `plug_depth_mm` 2, `margin_mm` 8, `outline_rounding_mm` 10, the
+/// 3.175 mm end mill's clearing pass and cut-out with four tabs, the male
+/// board 19 mm thick. As generated: the female's floor at Z 6, inset
+/// `w(6)` = 1.044 mm; the male's floor 7.15 mm below the male board's top
+/// (`D − G` = 5.15 mm to its start plane, against 19.05 mm of flute),
+/// with 11.85 mm of board under it, so no `inlay_plug_base_thin`; the
+/// points rounded to `R_min` = 0.983 mm; the band's foot `w(2)` =
+/// 0.574 mm and flank `w(7.15)` = 1.179 mm, its edge open; the seat line
+/// 0.55 mm per 0.5°. Every program passes S1 to S19 and the pair seats
+/// within 0.05 mm by heightfield.
+#[test]
+fn six_mm_tapered_pair_exports_and_seats() {
+    let mut project = dc_project::load(include_bytes!("../../../../../tests/fixtures/dc.dcv"))
+        .expect("the DC pair loads")
+        .project;
+    let ultra = project
+        .tools
+        .iter_mut()
+        .find(|t| t.id.as_str() == "t3")
+        .expect("the fixture's V-bit");
+    *ultra = Tool {
+        id: ToolId::new("t3"),
+        ..tool_tbn_ultra()
+    };
+    let Some(Operation::Inlay(mut inlay)) = project.operations.first().cloned() else {
+        panic!("the fixture's Inlay");
+    };
+    inlay.depth_mm = Some(6.0);
+    inlay.glue_gap_mm = Some(0.85);
+    inlay.plug_depth_mm = Some(2.0);
+    inlay.male_board.thickness_mm = Some(19.0);
+    project.operations = vec![Operation::Inlay(inlay.clone())];
+    let problems: Vec<_> = dc_project::validate(&project)
+        .into_iter()
+        .filter(|p| p.code() != "unused_tool")
+        .collect();
+    assert_eq!(problems, vec![], "{problems:?}");
+
+    let (runs, warnings) = dc_cam::generate_inlay(&project, &inlay)
+        .unwrap_or_else(|e| panic!("the pair generates: {e}\n{e:?}"));
+    let lowest = |board: Board, label: &RunLabel| {
+        runs.iter()
+            .filter(|r| r.board == board && &r.label == label)
+            .flat_map(|r| r.toolpath.moves.iter())
+            .filter(|m| m.is_cut())
+            .map(|m| m.to.z)
+            .fold(f64::INFINITY, f64::min)
+    };
+    let female_floor_z = lowest(Board::Female, &RunLabel::Main);
+    let male_floor_z = lowest(Board::Male, &RunLabel::Main);
+    println!("female floor Z {female_floor_z:.4}, male floor Z {male_floor_z:.4}");
+    assert!((female_floor_z - 6.0).abs() < 0.01, "{female_floor_z}");
+    assert!(
+        (male_floor_z - (19.0 - 7.15)).abs() < 0.01,
+        "{male_floor_z}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.code() == dc_cam::WarningCode::InlayPlugBaseThin),
+        "{warnings:?}"
+    );
+    let rounded: Vec<(f64, f64, f64, f64)> = warnings
+        .iter()
+        .filter_map(|w| match w {
+            dc_cam::Warning::InlayRoundedForBit {
+                x_mm,
+                y_mm,
+                change_mm,
+                radius_mm,
+                ..
+            } => Some((*x_mm, *y_mm, *change_mm, *radius_mm)),
+            _ => None,
+        })
+        .collect();
+    println!("rounded for the bit (x, y, change, radius): {rounded:?}");
+    assert!(
+        rounded.iter().any(|w| (w.3 - 0.983).abs() < 5e-4),
+        "{rounded:?}"
+    );
+    let profile = project.tools[2].carve_profile().expect("the bit's profile");
+    let (foot, flank) = (profile.half_width_mm(2.0), profile.half_width_mm(7.15));
+    let floor_inset = profile.half_width_mm(6.0);
+    println!("floor inset {floor_inset:.4}, foot {foot:.4}, flank {flank:.4}");
+    assert!((floor_inset - 1.044).abs() < 5e-4);
+    assert!((foot - 0.574).abs() < 5e-4);
+    assert!((flank - 1.179).abs() < 5e-4);
+    let band = dc_project::male_band(&project, &inlay).expect("the band");
+    assert!(band.is_open(), "{band:?}");
+    assert!((band.foot_mm - foot).abs() < 1e-9);
+    assert!((band.flank_mm - (foot + flank)).abs() < 1e-9);
+    let seat = dc_project::inlay_seat_sensitivity(&project, &inlay).expect("a seat line");
+    println!("seat: {seat:?}");
+    assert!((seat.taper_mm - 0.55).abs() < 5e-3, "{seat:?}");
+    assert!((seat.tip_mm - 0.76).abs() < 5e-3, "{seat:?}");
+
+    let ops: Vec<EmitOp> = runs
+        .iter()
+        .map(|run| EmitOp {
+            op: Operation::Inlay(inlay.clone()),
+            tool: project
+                .tools
+                .iter()
+                .find(|t| t.id == run.tool)
+                .cloned()
+                .expect("the run's tool"),
+            toolpath: run.toolpath.clone(),
+            holes: None,
+            label: run.label.clone(),
+            board: run.board,
+        })
+        .collect();
+    let (programs, _) = emit_programs(&project, &ops, ProgramSplit::ProgramPerTool, DATE)
+        .unwrap_or_else(|e| panic!("S1 to S19: {e}\n{e:?}"));
+    println!("{} programs", programs.len());
+    let fit = dc_cam::test_support::seat::fit(&project, &inlay, &runs, 0.2);
+    println!(
+        "seat {:.3} mm at {:?}, the male's share {:.3}",
+        fit.seat_mm, fit.seat_at, fit.male_mm
+    );
+    assert!(fit.is_flush(), "{fit:?}");
 }

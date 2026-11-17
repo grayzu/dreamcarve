@@ -144,7 +144,11 @@ fn topology_changes_are_refused() {
     let narrow = rounded_for_bit(&bar, &ultra(), 3.0, 0.01).unwrap_err();
     assert_eq!(narrow.kind, CornerKind::Point);
     assert!((narrow.width_mm - 1.0).abs() < 5e-4, "{}", narrow.width_mm);
-    assert!((narrow.needed_mm - 1.462).abs() < 5e-4, "{}", narrow.needed_mm);
+    assert!(
+        (narrow.needed_mm - 1.462).abs() < 5e-4,
+        "{}",
+        narrow.needed_mm
+    );
 
     let two = [
         region(&[(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]),
@@ -221,10 +225,16 @@ fn the_ball_s_costs_are_the_spec_s() {
     assert!((fine_gap.wall_gap_mm - 0.051).abs() < 5e-4, "{fine_gap:?}");
     let ultra_gap = glue_gap_below_ball(&ultra(), 0.25).unwrap();
     assert!((ultra_gap.lift_mm - 0.03).abs() < 5e-3, "{ultra_gap:?}");
-    assert!((ultra_gap.wall_gap_mm - 0.004).abs() < 5e-4, "{ultra_gap:?}");
+    assert!(
+        (ultra_gap.wall_gap_mm - 0.004).abs() < 5e-4,
+        "{ultra_gap:?}"
+    );
     let plug = plug_depth_below_ball(&fine(), 0.5).unwrap();
     assert!((plug.wall_gap_mm - 0.130).abs() < 5e-4, "{plug:?}");
     assert_eq!(glue_gap_below_ball(&fine(), 1.1), None);
     assert_eq!(plug_depth_below_ball(&fine(), 1.1), None);
-    assert_eq!(glue_gap_below_ball(&BitProfile::VBit { slope: 1.0 }, 0.0), None);
+    assert_eq!(
+        glue_gap_below_ball(&BitProfile::VBit { slope: 1.0 }, 0.0),
+        None
+    );
 }

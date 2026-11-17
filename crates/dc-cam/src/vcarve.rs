@@ -45,7 +45,7 @@ use crate::profile::{crossing_error, outer_shape, rates_of};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
-use crate::toolpath::{MoveKind, Toolpath};
+use crate::toolpath::{Move, MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
 use dc_geometry::medial::{CornerReach, REACH_SLACK_MM};
@@ -879,7 +879,13 @@ pub(crate) fn finish(
         .ok_or(CamError::MissingThickness)?;
     let safe_z_mm = thickness_mm + operation.safe_z_mm();
     let input = SequenceInput {
-        blocks,
+        blocks: written_depths(
+            blocks,
+            project,
+            &bit.profile,
+            rates.feed_mm_min,
+            rates.plunge_mm_min,
+        ),
         order,
         containment,
         safe_z_mm,
@@ -959,6 +965,97 @@ pub(crate) fn finish(
         }
     })?;
     Ok(toolpath)
+}
+
+/// A tapered ball nose's cut blocks with their depths as the program
+/// writes them (#681): every Z below the stock top raised to the written
+/// Z grid above it (the machine's Z zero, then whole units of the last
+/// written place), so writing never puts the tip deeper than the room
+/// planned for it. Near its tip the ball's disc grows as `√(2ρd)`, so half
+/// a written unit deeper, 0.0005 mm, widens it by up to `√(ρ · 0.001)`,
+/// 0.034 mm with the Fine bit, where a cut runs into a corner at the
+/// surface; the room is exact, so the ball would pass the wall as written
+/// (the stress sweep found it, S17 refusing the program). Raised, a cut
+/// stands at most a unit shallower, and at most a unit above the start
+/// plane, in the air, which S17 allows. The blocks are raised before they
+/// are sequenced, so the rapids down onto earlier cuts and the links see
+/// the depths as written; each straight move's feed is set again as the
+/// generator sets it (a plunge at `plunge_mm_min`, a descent limited to
+/// it, S10, a move across at `feed_mm_min`). A V-bit's disc widens by `s ·
+/// 0.0005`, within the slack, and its blocks are left as they are.
+fn written_depths(
+    mut blocks: Vec<CutBlock>,
+    project: &Project,
+    profile: &BitProfile,
+    feed_mm_min: f64,
+    plunge_mm_min: f64,
+) -> Vec<CutBlock> {
+    let BitProfile::TaperedBall { .. } = profile else {
+        return blocks;
+    };
+    let quantum_mm = project
+        .post_processor
+        .decimal_places
+        .quantum_mm(project.display_units);
+    let (Some(top_mm), true) = (project.stock.thickness_mm, quantum_mm > 0.0) else {
+        return blocks;
+    };
+    let zero_mm = match project.origin.z {
+        dc_project::OriginZ::StockTop => top_mm,
+        dc_project::OriginZ::StockBottom => 0.0,
+    };
+    if !(quantum_mm.is_finite() && zero_mm.is_finite()) {
+        return blocks;
+    }
+    let raised = |z: f64| {
+        if z >= top_mm - EPS_MM {
+            return z;
+        }
+        let units = (z - zero_mm) / quantum_mm;
+        // A value already on the grid, to its rounding, stays there.
+        let up = if (units - units.round()).abs() < 1e-6 {
+            units.round()
+        } else {
+            units.ceil()
+        };
+        zero_mm + up * quantum_mm
+    };
+    let refeed = |from: Point3, mv: &mut Move| {
+        if !matches!(mv.kind, MoveKind::Linear) {
+            return;
+        }
+        if from.xy().distance_to(mv.to.xy()) > EPS_MM {
+            mv.feed_mm_min = Some(crate::entry::plunge_limited_feed_mm_min(
+                feed_mm_min,
+                plunge_mm_min,
+                from,
+                mv.to,
+            ));
+        } else if mv.to.z < from.z - EPS_MM {
+            mv.feed_mm_min = Some(plunge_mm_min);
+        }
+    };
+    for block in &mut blocks {
+        block.z_mm = raised(block.z_mm);
+        block.entry_z_mm = raised(block.entry_z_mm);
+        let mut from = Point3::new(
+            block.descent_from.x,
+            block.descent_from.y,
+            raised(block.descent_from_z_mm),
+        );
+        for mv in &mut block.descent {
+            mv.to.z = raised(mv.to.z);
+            refeed(from, mv);
+            from = mv.to;
+        }
+        let mut from = Point3::new(block.entry.x, block.entry.y, block.entry_z_mm);
+        for mv in &mut block.cuts {
+            mv.to.z = raised(mv.to.z);
+            refeed(from, mv);
+            from = mv.to;
+        }
+    }
+    blocks
 }
 
 /// Design step 9 (functional 49j): the corners of `regions` a tapered

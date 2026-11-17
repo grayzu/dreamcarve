@@ -141,6 +141,12 @@ pub fn explains(error: &CamError) -> bool {
             // narrower than its end mill: the user picks a smaller tool
             // or moves the parts apart.
             | CamError::BandNarrowerThanTool { .. }
+            // #681: an Inlay cut with a tapered ball nose whose design has a
+            // part or a gap too narrow for the bit to round: the user widens
+            // it, carves less deep or picks a finer tip (the message says
+            // how wide it must be). A seed refused so is a pass of the
+            // refusal, not a seat (`tapered::tapered_inlays_seat`).
+            | CamError::InlayTooNarrowForBit { .. }
     )
 }
 

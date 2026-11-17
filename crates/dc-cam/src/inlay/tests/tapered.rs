@@ -13,9 +13,9 @@
 //! values are the tests' own, from the bit's formulas ([`Bench`]).
 
 use super::*;
+use crate::WarningCode;
 use dc_geometry::profile::BitProfile;
 use dc_project::test_support::{tool_tbn_fine, tool_tbn_ultra};
-use crate::WarningCode;
 use dc_project::{CornerKind, CuttingLimit, rounded_design};
 
 /// A bench bit by hand: tip radius `ρ`, `t = tan 6.7°`.
@@ -130,7 +130,12 @@ fn rounded_rect(w: f64, h: f64, r: f64) -> Polyline {
 /// 3 mm, at (40, 40) on the star's 100 × 100 × 12 mm stock, carved by
 /// `bit`; no rounding needed with either bench bit.
 fn coupon(bit: Bench) -> Project {
-    let mut p = project_of(vec![rounded_rect(20.0, 20.0, 3.0)], (40.0, 40.0), 100.0, 100.0);
+    let mut p = project_of(
+        vec![rounded_rect(20.0, 20.0, 3.0)],
+        (40.0, 40.0),
+        100.0,
+        100.0,
+    );
     p.tools[0] = bit.tool();
     p
 }
@@ -190,7 +195,9 @@ fn mirrored_regions(regions: &[Region], axis_x_mm: f64) -> Vec<Region> {
     let contours = regions
         .iter()
         .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
-        .map(|c| Contour::new(mirror.apply_polyline(c.polyline()).expect("placed")).expect("closed"))
+        .map(|c| {
+            Contour::new(mirror.apply_polyline(c.polyline()).expect("placed")).expect("closed")
+        })
         .collect();
     nest(contours).expect("nests").0
 }
@@ -455,7 +462,10 @@ fn glue_gap_below_the_ball_warns() {
     assert_eq!(found.len(), 1, "{warnings:?}");
     let (glue_gap_mm, tangent_height_mm, lift_mm, wall_gap_mm) = found[0];
     assert!((glue_gap_mm - 0.25).abs() < 1e-12);
-    assert!((tangent_height_mm - 1.010).abs() < 5e-4, "{tangent_height_mm}");
+    assert!(
+        (tangent_height_mm - 1.010).abs() < 5e-4,
+        "{tangent_height_mm}"
+    );
     assert!((lift_mm - 0.432).abs() < 5e-4, "{lift_mm}");
     assert!((wall_gap_mm - 0.051).abs() < 5e-4, "{wall_gap_mm}");
     let warning = warnings
@@ -560,7 +570,15 @@ fn sharp_point_is_rounded_on_both_boards() {
     let (_, _, warnings) = both_boards(&project, &op);
     let points: Vec<&Warning> = warnings
         .iter()
-        .filter(|w| matches!(w, Warning::InlayRoundedForBit { kind: CornerKind::Point, .. }))
+        .filter(|w| {
+            matches!(
+                w,
+                Warning::InlayRoundedForBit {
+                    kind: CornerKind::Point,
+                    ..
+                }
+            )
+        })
         .collect();
     assert_eq!(points.len(), 1, "{warnings:?}");
     let Warning::InlayRoundedForBit {
@@ -623,7 +641,15 @@ fn narrow_notch_is_closed_on_both_boards() {
     let (_, _, warnings) = both_boards(&project, &op);
     let notches: Vec<&Warning> = warnings
         .iter()
-        .filter(|w| matches!(w, Warning::InlayRoundedForBit { kind: CornerKind::Notch, .. }))
+        .filter(|w| {
+            matches!(
+                w,
+                Warning::InlayRoundedForBit {
+                    kind: CornerKind::Notch,
+                    ..
+                }
+            )
+        })
         .collect();
     assert_eq!(notches.len(), 1, "{warnings:?}");
     let Warning::InlayRoundedForBit {
@@ -659,10 +685,12 @@ fn rounded_design_is_open_and_closed() {
         for (name, project, op) in cases {
             let p = with_op(&project, Operation::Inlay(op.clone()));
             let female = side(&p, &op, Board::Female, &mut Vec::new()).expect("resolves");
-            let again =
-                rounded_design(&p, &op, &female.targets.regions).expect("still rounds");
+            let again = rounded_design(&p, &op, &female.targets.regions).expect("still rounds");
             assert!(
-                again.changes.iter().all(|c| c.change_mm <= p.flatten_tolerance_mm),
+                again
+                    .changes
+                    .iter()
+                    .all(|c| c.change_mm <= p.flatten_tolerance_mm),
                 "{} {name}: {:?}",
                 bit.name(),
                 again.changes
@@ -833,7 +861,11 @@ fn tapered_band_reads_the_profile() {
     assert!((band.foot_mm - foot).abs() < 1e-9, "{}", band.foot_mm);
     assert!((band.flank_mm - flank).abs() < 1e-9, "{}", band.flank_mm);
     assert!(band.is_open());
-    assert!((band.v_bit_radius_mm - 2.5767).abs() < 1e-3, "{}", band.v_bit_radius_mm);
+    assert!(
+        (band.v_bit_radius_mm - 2.5767).abs() < 1e-3,
+        "{}",
+        band.v_bit_radius_mm
+    );
     assert!((band.cut_out_margin_needed_mm(3.175) - (foot + 3.175)).abs() < 1e-9);
     assert!((band.cut_out_inset_mm(3.175) - 1.5875).abs() < 1e-9);
     // The V-bit's `w(P) + R_v` with `R_v` its cut radius, or the edge
@@ -974,7 +1006,13 @@ fn plug_seat_mm(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64)
     let beyond = beyond_band(&male, &male_side.targets.regions);
     seat(&female, &male, male_side.start_plane_z_mm, &beyond)
         .into_iter()
-        .filter(|c| female_side.targets.regions.iter().any(|r| r.contains_point(c.at)))
+        .filter(|c| {
+            female_side
+                .targets
+                .regions
+                .iter()
+                .any(|r| r.contains_point(c.at))
+        })
         .map(|c| c.need_mm)
         .fold(f64::NEG_INFINITY, f64::max)
 }

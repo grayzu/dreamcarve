@@ -388,7 +388,8 @@ fn generate_on(project: &Project, operation: &Operation, board: Option<Board>) -
 
 /// Whether validation already reports `warning`, so generation does not
 /// repeat it: `clearing_not_descending` (#406), `inlay_plug_base_thin`
-/// (#434), the drawn boundary's `inlay_margin_ignored`,
+/// (#434), a tapered ball nose's `inlay_glue_gap_below_ball` and
+/// `inlay_plug_depth_below_ball` (#681), the drawn boundary's `inlay_margin_ignored`,
 /// `inlay_boundary_empty` and `inlay_boundary_hole_ignored` (#603), and
 /// `photo_lines_overlap` (#646).
 fn reported_by_validation(warning: &Warning) -> bool {
@@ -396,6 +397,8 @@ fn reported_by_validation(warning: &Warning) -> bool {
         warning,
         Warning::ClearingNotDescending { .. }
             | Warning::InlayPlugBaseThin { .. }
+            | Warning::InlayGlueGapBelowBall { .. }
+            | Warning::InlayPlugDepthBelowBall { .. }
             | Warning::InlayMarginIgnored { .. }
             | Warning::InlayBoundaryEmpty { .. }
             | Warning::InlayBoundaryHoleIgnored { .. }
@@ -406,8 +409,9 @@ fn reported_by_validation(warning: &Warning) -> bool {
 /// Generates Inlay `op` (the enabled `operation`) of `project` on each
 /// board (#498): both, or `only` that one, female first, appending its
 /// runs to `out` (each tagged with its board) and its findings. A male
-/// board's warning names the board; its `inlay_parts_merged` and
-/// `inlay_hole_filled`, the female's design mirrored, and any warning the
+/// board's warning names the board; its `inlay_parts_merged`,
+/// `inlay_hole_filled` and `inlay_rounded_for_bit` (#681), the female's
+/// design mirrored, and any warning the
 /// female already gave, are left out, as [`dc_cam::generate_inlay`] leaves
 /// them. `inlay_male_board_unset` is located at the male board's
 /// thickness.
@@ -450,7 +454,9 @@ fn inlay_boards(
                     || (female_cut
                         && matches!(
                             w,
-                            Warning::InlayPartsMerged { .. } | Warning::InlayHoleFilled { .. }
+                            Warning::InlayPartsMerged { .. }
+                                | Warning::InlayHoleFilled { .. }
+                                | Warning::InlayRoundedForBit { .. }
                         )));
             if reported_by_validation(w) || repeats {
                 continue;
