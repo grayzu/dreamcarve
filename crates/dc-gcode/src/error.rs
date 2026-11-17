@@ -470,7 +470,8 @@ pub enum ExportError {
         /// The engagement, mm: from the stock top (or the cleared start
         /// plane) down to the tip.
         engaged_mm: f64,
-        /// The cone's height, mm: `diameter / (2 · tan(α/2))`.
+        /// The cutting height, mm: a V-bit's cone height, `diameter / (2 ·
+        /// tan(α/2))`, or a tapered ball nose's `min(flute_length_mm, h_R)`.
         cone_mm: f64,
     },
     /// S18 (`docs/specs/phase-3/design.md`, "Safety pass"; #427): a

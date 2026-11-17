@@ -1697,7 +1697,8 @@ per 0.05 mm of tip radius; test-fit before gluing`.
 - **The Inlay.** `dc_project::inlay::v_bit_of` reads `Tool::carve_profile`
   but answers only for a V-bit until 27e, so `male_band` and the cut-out
   rule skip a TBN; the generator refuses it with `VCarveNeedsVBit`, and
-  the safety pass's S17 skips a TBN's program until 27d.
+  the safety pass holds an Inlay side cut with a TBN unresolved, so it
+  refuses every cut, until 27e (27d left the Inlay as it is; below).
 - `v_carve_needs_v_bit`'s message for any other cutter on a V-Carve or an
   Inlay: "a carve's depth follows the bit's profile, so it needs a V-bit
   or a tapered ball nose"; on a Photo V-Carve: "a Photo V-Carve's depth
@@ -1707,6 +1708,38 @@ per 0.05 mm of tip radius; test-fit before gluing`.
   a 20 mm square's 90° corner at Z −2 with a 4 mm floor, from the exact
   surface the program leaves): within 0.01 mm of 0.156 mm (Ultra) and
   0.469 mm (Fine).
+
+**Slice 27d's decisions (#680).** Where the issue was silent:
+
+- **Only the V-Carve gains the TBN.** `material::carve_bit_of` reads
+  `Tool::carve_profile` and `Tool::cutting_height_mm`; `material::v_bit_of`
+  answers through it for a V-bit only, and the Inlay's S17 (`inlay_cone`)
+  and the Photo's S19 keep reading it. An Inlay side cut with a TBN stays
+  unresolved until 27e re-derives its rounded design, as its generator
+  still refuses it. The Photo's S7 `groove_radius_mm` reads
+  `Tool::carve_profile` and requires a V-bit.
+- **A V-bit's numbers are read as before, bit for bit.** Its cutting
+  height `diameter / 2 / slope` is the old `diameter / (2 · slope)` to the
+  bit (both are the one correctly rounded quotient); its radius at the
+  start plane stays `d · slope`, negative above the plane, where a TBN's
+  is `w(d)`, 0 above it; a level cut and an arc keep the segment distance
+  less the deeper end's radius. Only a straight cut whose Z varies calls
+  `least_room`, which for a V-bit returns the deleted closed forms' room
+  bit for bit (the pin test said so before it went with them).
+- **The clearing run's floor** is inset by the cone's radius at the floor,
+  `w(F)` for a TBN, as the generator's.
+- **`ConeHeightExceeded` keeps its message.** It still says the V-bit's
+  cone; `cone_mm` is the cutting height. The generator's
+  `VBitConeExceeded`, which names the flutes or the cutting diameter,
+  refuses a generated carve first, so S17's error is the backstop for a
+  program that was edited or is wrong.
+- **The cylinder test is a cut past the cap within the slack.** The
+  shank rule refuses anything deeper than the cutting height plus the
+  slack before the room test, so the only cut that reaches the cylinder
+  stretch is the Fine bit's within the slack of its cap (18.385 mm against
+  18.374): it is held to `R` (0.5 mm over, not the cone line's 0.5013).
+- **The dc-gcode closed forms' tests** (`cone::tests`) are deleted with
+  them; `dc_geometry::profile`'s brute-force tests cover V-bits and TBNs.
 
 ## Algorithms
 

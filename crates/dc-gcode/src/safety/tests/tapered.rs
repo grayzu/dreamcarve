@@ -165,7 +165,7 @@ fn up3(x: f64) -> f64 {
 fn tapered_cut_touching_a_wall_passes() {
     for bit in [Bench::ULTRA, Bench::FINE] {
         let (p, op) = rectangle(bit);
-        for d in [bit.h_t() / 2.0, 4.0, 12.0] {
+        for d in [(bit.h_t() * 500.0).round() / 1000.0, 4.0, 12.0] {
             let y = up3(10.0 + bit.w(d));
             let text = program_at(
                 30.0,
@@ -260,8 +260,7 @@ fn sampled_ring_room(bit: Bench, from: Point3, to: Point3, walls: &[(Point, f64,
 /// Descents in the Fine bit's ball and onto its cone, beside the outer
 /// wall (inside an arc) and beside the island (outside one), are refused
 /// by the least room a 400 000-sample brute force reads, within 1e-5 mm
-/// and never by less; each passes once moved clear by its overlap and
-/// the slack.
+/// and never by less, at a point on the cut.
 #[test]
 fn tapered_arc_wall_overlap_is_refused_exactly() {
     let c = Point::new(50.0, 50.0);
@@ -275,7 +274,7 @@ fn tapered_arc_wall_overlap_is_refused_exactly() {
     // the ball onto the cone.
     let cuts = [
         ((50.0, 57.62, 0.0), (51.6, 56.6, -1.0)),
-        ((47.0, 57.5, 0.0), (52.5, 56.9, -2.0)),
+        ((47.5, 57.2, 0.0), (52.5, 56.9, -2.0)),
         ((53.25, 49.0, 0.0), (53.4, 51.5, -1.0)),
         ((53.3, 47.5, 0.0), (53.5, 52.5, -2.5)),
     ];

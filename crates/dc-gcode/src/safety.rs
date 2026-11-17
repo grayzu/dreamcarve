@@ -359,14 +359,15 @@ fn groove_radius_mm(
     let (Some(Operation::PhotoVCarve(_)), Some(tool)) = (limits.op, limits.tool) else {
         return None;
     };
-    let dc_project::ToolKind::VBit { included_angle_deg } = tool.cutter else {
+    // The Photo's groove follows a V-bit's angle (S19), so a tapered ball
+    // nose, which validation refuses there, is unresolved too.
+    let Some(dc_geometry::profile::BitProfile::VBit { slope }) = tool.carve_profile() else {
         return None;
     };
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let usable = included_angle_deg > 0.0 && included_angle_deg < 180.0 && slope.is_finite();
     let full_mm = tool.diameter_mm / 2.0;
     let z_mm = z_mm?;
-    (usable && z_mm.is_finite()).then(|| ((stock_thickness_mm - z_mm) * slope).clamp(0.0, full_mm))
+    z_mm.is_finite()
+        .then(|| ((stock_thickness_mm - z_mm) * slope).clamp(0.0, full_mm))
 }
 
 /// Checks `text` against S1–S5, S10 and S16 and returns its blocks.
