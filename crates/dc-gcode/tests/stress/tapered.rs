@@ -134,7 +134,9 @@ fn tapered_case(family: &str, seed: u64, design: Design, bit: Bit) -> Case {
         "{} with the {bit:?} tapered ball nose, drawn {k}× larger: D {depth_mm:.3} G {glue_gap_mm:.3} P {plug_depth_mm:.3}",
         c.label
     );
-    c.family = format!("tapered {family}");
+    // The bit in the family's name, so a known issue names it
+    // (`property::KNOWN_CASES`).
+    c.family = format!("tapered {family} ({bit:?})");
     c
 }
 

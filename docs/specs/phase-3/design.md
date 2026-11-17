@@ -1838,7 +1838,15 @@ per 0.05 mm of tip radius; test-fit before gluing`.
   from `h_t` to `h_t + 0.8`, `P` from `h_t` to 3 mm), the designs drawn
   3× (Ultra) and 6× (Fine) larger so most keep their parts and gaps wider
   than the bit rounds away; `InlayTooNarrowForBit` is on the allow-list
-  and counted as a refusal, not a seat.
+  and counted as a refusal, not a seat. The family's name carries the bit
+  (`tapered lettering (Fine)`), so a known issue names it. The full sweep
+  (200 designs of each family, both bits, 800 cases, 63 minutes on every
+  core) carved 979 operations and seated 770 pairs; 2975 operations were
+  refused as too narrow (line art, whose strokes are hairlines, in 193 of
+  200 designs with either bit; lettering in about half); two cases fail
+  and are filed: lettering `0x5b` with the Ultra bit, whose cut-out's path
+  crosses itself (#704), and lettering `0x60` with the Fine bit, whose
+  plug stands 0.107 mm proud at a rounded point (#705, known).
 - **The 6 mm test part as generated** (the "DC" letters, Ultra, `D` 6,
   `G` 0.85, `P` 2, `M` 8, `outline_rounding_mm` 10, the 3.175 mm end
   mill's pass and cut-out, a 19 mm male board;
