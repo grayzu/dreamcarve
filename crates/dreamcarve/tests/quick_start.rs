@@ -1926,3 +1926,187 @@ fn warnings_chapter_lists_the_photo_codes() {
         );
     }
 }
+
+/// #700: every term phase 3 adds to the vocabulary has an entry in
+/// `CONTEXT.md` (functional spec, "Capabilities" and exit criteria), as a
+/// `**Term**:` line, so the glossary cannot fall behind the code again.
+#[test]
+fn context_terms_are_defined() {
+    let context = chapter_text("CONTEXT.md");
+    let terms = [
+        "Flat Depth",
+        "Start Depth",
+        "Clearing",
+        "Inlay",
+        "Glue Gap",
+        "Plug Depth",
+        "Photo V-Carve",
+        "Bitmap",
+        "Countersink",
+        "Image Prep",
+        "Ink",
+        "Piece",
+        "Speck",
+        "Boundary",
+        "Tapered Ball Nose",
+    ];
+    let missing: Vec<&str> = terms
+        .into_iter()
+        .filter(|term| !context.lines().any(|line| line == format!("**{term}**:")))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "CONTEXT.md has no entry for {missing:?}"
+    );
+}
+
+/// The anchor mdBook gives a heading: lower case, spaces as hyphens, and
+/// only letters, digits, `-` and `_` kept.
+fn heading_anchor(heading: &str) -> String {
+    heading
+        .trim()
+        .chars()
+        .filter_map(|c| {
+            if c == ' ' {
+                Some('-')
+            } else if c.is_alphanumeric() || c == '-' || c == '_' {
+                Some(c.to_ascii_lowercase())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+/// Whether `line` opens or closes a fenced block.
+fn is_fence(line: &str) -> bool {
+    line.trim_start().starts_with("```")
+}
+
+/// The anchors of the headings of a chapter, outside fenced blocks, with
+/// mdBook's `-1`, `-2` … for a repeated heading.
+fn chapter_anchors(text: &str) -> Vec<String> {
+    let mut anchors: Vec<String> = Vec::new();
+    let mut bases: Vec<String> = Vec::new();
+    let mut fenced = false;
+    for line in text.lines() {
+        if is_fence(line) {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced || !line.starts_with('#') {
+            continue;
+        }
+        let heading = line.trim_start_matches('#');
+        if !heading.starts_with(' ') {
+            continue;
+        }
+        let base = heading_anchor(heading);
+        let seen = bases.iter().filter(|b| **b == base).count();
+        anchors.push(if seen == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{seen}")
+        });
+        bases.push(base);
+    }
+    anchors
+}
+
+/// The targets of the inline links `[text](target)` of a chapter, outside
+/// fenced blocks and code spans, each with its line number.
+fn chapter_links(text: &str) -> Vec<(usize, String)> {
+    let mut links = Vec::new();
+    let mut fenced = false;
+    for (n, line) in text.lines().enumerate() {
+        if is_fence(line) {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            continue;
+        }
+        // Code spans hold brackets that are not links.
+        let prose: Vec<&str> = line.split('`').step_by(2).collect();
+        let prose = prose.join(" ");
+        let mut rest = prose.as_str();
+        while let Some(at) = rest.find("](") {
+            let after = &rest[at + 2..];
+            let end = after.find(')').unwrap_or(after.len());
+            let target = after[..end].split_whitespace().next().unwrap_or("");
+            links.push((n + 1, target.to_string()));
+            rest = &after[end..];
+        }
+    }
+    links
+}
+
+/// The Markdown files under `dir`, sorted.
+fn markdown_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    let mut dirs = vec![dir.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).expect("book directory reads") {
+            let path = entry.expect("book entry reads").path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "md") {
+                files.push(path);
+            }
+        }
+    }
+    files.sort();
+    files
+}
+
+/// #700: every internal link of the book resolves: the chapter or
+/// repository file it names exists, and an anchor names a heading of
+/// that chapter. `mdbook build` checks neither. The rustdoc under `api/`
+/// exists only in the published site, so it is not checked.
+#[test]
+fn book_links_resolve() {
+    let src = repo_root().join("docs/book/src");
+    let chapters = markdown_files(&src);
+    assert!(chapters.len() > 30, "the book's chapters are found");
+
+    let mut broken = Vec::new();
+    let mut checked = 0;
+    for chapter in &chapters {
+        let text = std::fs::read_to_string(chapter).expect("chapter reads");
+        let name = chapter.strip_prefix(&src).unwrap_or(chapter).display();
+        for (line, target) in chapter_links(&text) {
+            // `api/` is the rustdoc CI copies beside the built book.
+            if target.is_empty()
+                || target.contains("://")
+                || target.starts_with("mailto:")
+                || target.starts_with("api/")
+            {
+                continue;
+            }
+            checked += 1;
+            let (file, anchor) = match target.split_once('#') {
+                Some((file, anchor)) => (file, Some(anchor)),
+                None => (target.as_str(), None),
+            };
+            let path = if file.is_empty() {
+                chapter.clone()
+            } else {
+                chapter.parent().unwrap_or(&src).join(file)
+            };
+            if !path.exists() {
+                broken.push(format!("{name}:{line}: {target}: no such file"));
+                continue;
+            }
+            let Some(anchor) = anchor else { continue };
+            if path.extension().is_none_or(|e| e != "md") {
+                continue;
+            }
+            let linked = std::fs::read_to_string(&path).expect("linked chapter reads");
+            if !chapter_anchors(&linked).iter().any(|a| a == anchor) {
+                broken.push(format!("{name}:{line}: {target}: no such heading"));
+            }
+        }
+    }
+    assert!(checked > 100, "the book's links are found ({checked})");
+    assert!(broken.is_empty(), "broken links:\n{}", broken.join("\n"));
+}

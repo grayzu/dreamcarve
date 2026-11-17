@@ -1,12 +1,13 @@
 # Golden corpus
 
 The golden corpus is PureCutCNC's own output for a set of small projects,
-committed to this repository. `cargo test` compares DreamCarve's program for
-the same project against it. It is how a port proves it matches PureCutCNC, and
-how a Y-up mistake is caught (see [Porting](porting.md)).
+committed to this repository, and RasterCarve's for the Photo V-Carve.
+`cargo test` compares DreamCarve's program for the same project against
+it. It is how a port proves it matches PureCutCNC, and how a Y-up mistake
+is caught (see [Porting](porting.md)).
 
-Node is needed only to capture a case. Running the comparison needs Rust
-alone.
+Node (or, for the photo cases, Python and a RasterCarve checkout) is
+needed only to capture a case. Running the comparison needs Rust alone.
 
 ## Where things are
 
@@ -15,10 +16,12 @@ alone.
 | `tools/parity/cases/<case>.camj` | The PureCutCNC project for each case. |
 | `tools/parity/cases/<case>.notes.md` | Notes copied into the case README: the equivalent DreamCarve project, the tolerance, and every known difference. |
 | `tools/parity/capture.ts` | Runs PureCutCNC's engine on a case and writes its output. |
-| `tests/golden/<case>/` | The captured output: `program.nc` (G-code), `toolpath.json` (PureCutCNC's toolpath, Y-down), and `README.md` (the PureCutCNC commit and the notes). |
-| `tests/golden/<case>/dreamcarve.dcv` | The equivalent DreamCarve project, for the phase 2 cases. Written by hand, not captured. |
-| `crates/dc-gcode/tests/golden.rs` | One test per case. The phase 1 tests build their DreamCarve project in Rust; the phase 2 tests load `dreamcarve.dcv`. |
-| `crates/dc-gcode/tests/golden/harness.rs` | The comparison. |
+| `tools/parity/photo/` | `capture.py`, which runs RasterCarve's command line for a photo case, its own tests, and each photo case's notes. |
+| `tests/golden/<case>/` | The captured output: `program.nc` (G-code), `toolpath.json` (PureCutCNC's toolpath, Y-down; not for the photo cases), and `README.md` (the PureCutCNC or RasterCarve commit and the notes). |
+| `tests/golden/<case>/dreamcarve.dcv` | The equivalent DreamCarve project, for the phase 2 and phase 3 cases. Written by hand, not captured. |
+| `crates/dc-gcode/tests/golden.rs` | One test per case. The phase 1 tests build their DreamCarve project in Rust; the later tests load `dreamcarve.dcv`. `phase_1_and_2_cases_are_unchanged` runs the phase 1 and 2 cases and checks that every directory under `tests/golden/` but `smoke` and the `post-*-coaster` cases has a test. |
+| `crates/dc-gcode/tests/golden/harness.rs` | The comparison, and the `Difference`s. |
+| `crates/dc-gcode/tests/golden/vcarve.rs`, `photo.rs` | The V-Carve comparison in three dimensions, and the Photo V-Carve's groove by groove. |
 
 ## The cases
 
@@ -41,6 +44,7 @@ alone.
 | `vcarve-medial-rect`, `vcarve-medial-square`, `vcarve-medial-circle`, `vcarve-medial-ring`, `vcarve-medial-l`, `vcarve-medial-triangle` | Medial V-Carve of simple shapes: spine and corner tips, diagonals, a circle that collapses to one plunge, an island, a junction with a reflex corner, three arms. Each is clamped within the bench bit's cone. |
 | `vcarve-medial-text-rag` | Medial V-Carve of the outline text "Rag", the polygons of `tests/fixtures/vcarve/rag.json`. |
 | `vcarve-offset-square` | Offset V-Carve of a square: rings 1 mm apart. |
+| `photo-raster-inch`, `photo-raster-metric` | Photo V-Carve, captured from RasterCarve: see [Photo V-Carve cases](#photo-v-carve-cases). |
 | `smoke` | The phase 0 check that capture runs and is repeatable. No test compares it. |
 
 The `post-*-coaster` cases are different: DreamCarve captured them itself,
@@ -131,8 +135,8 @@ two programs, with the dated header line normalised.
 ## Photo V-Carve cases
 
 PureCutCNC has no Photo V-Carve, so the Photo V-Carve goldens are
-RasterCarve's output instead (`tools/parity/photo/`, sub-phase 3.5;
-design spec, "Golden corpus"). RasterCarve is GPLv2+, and DreamCarve is
+RasterCarve's output instead (`tools/parity/photo/`; phase 3 design spec,
+"Golden corpus"). RasterCarve is GPLv2+, and DreamCarve is
 Apache-2.0, so the boundary is strict:
 
 - **What is captured.** `program.nc`, the G-code RasterCarve writes from
@@ -257,7 +261,14 @@ difference is:
 | `LeadArcsAtCuttingFeed` | #185 | Lead arcs at the tool's feed in DreamCarve, below it in PureCutCNC. |
 | `PassOrderWithinLayer` | Design, "Sequence", D5 | The passes are compared in order, each as a set. DreamCarve's walk within a pass is checked against D5. |
 | `DescentsHeldToPlunge` | S10 | A V-Carve cut that descends while it moves in XY falls no faster than the plunge rate in DreamCarve; PureCutCNC's runs at the cutting feed. |
+| `NotchRisesFromLapEnd` | #240, #373 | A Profile's relief notches are cut from the lap: DreamCarve's lifts into each notch are not compared (PureCutCNC has none) and must run at the plunge rate. |
 | `ChainDepthFitted` | #404, decision 2; #410 | Where medial chains differ in depth at one XY, DreamCarve's point lies on the V surface, and a deeper golden point reaches past a wall: PureCutCNC's simplified chords gouge, DreamCarve's depth fitting raises them. |
+| `EveryCornerReached` | #456 | DreamCarve comes within 0.01 mm of every convex corner turning more than 20°; the golden program must miss one, and a DreamCarve cut on no golden cut must lie on the V surface and reach a wall the golden misses. |
+| `ChainsOnTheAxis` | #457 | DreamCarve's chains follow the medial axis between its nodes. Where the programs part, DreamCarve's point is on the final V surface and the golden point is carved at least as deep by DreamCarve, or reaches past a wall. |
+
+The photo cases have differences of their own, `Resampled` and
+`LastLineUncut` in `golden/photo.rs`, described under
+[Photo V-Carve cases](#photo-v-carve-cases).
 
 A difference needs a reason in a spec, a recorded decision or a safety
 rule. "Our output is different" is not one: fix the port instead. When a

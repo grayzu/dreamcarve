@@ -11,7 +11,10 @@ which points to a per-folder `INDEX.md`. The engine lives under
 `simulation/` for the preview.
 
 Each DreamCarve design spec has a "PureCutCNC sources" table mapping our
-modules to theirs: `docs/specs/phase-1/design.md` and `docs/specs/phase-2/design.md`.
+modules to theirs: `docs/specs/phase-1/design.md`,
+`docs/specs/phase-2/design.md` and `docs/specs/phase-3/design.md`. A row
+whose PureCutCNC column says "none" is DreamCarve's own design; see
+[What is not a port](#what-is-not-a-port).
 
 ## What changes in the port
 
@@ -100,6 +103,53 @@ same way:
   and `G73` count from `R`, not from the stock top as upstream does (#153;
   `drill.rs`). The golden Drill cases carry the `PecksFromRetractPlane`
   difference for this.
+
+## Y-up rules settled in phase 3
+
+Phase 3 ported PureCutCNC's medial axis and its V-Carve generators. Most
+of what changed hands is stated in the design spec
+(`docs/specs/phase-3/design.md`, "Overview" and "PureCutCNC sources") and
+in each module's doc comment, under "What changed in the port".
+
+| Rule | DreamCarve (Y-up, seen from +Z) | PureCutCNC (Y-down) | Where |
+| --- | --- | --- | --- |
+| Medial axis | **Nothing to re-derive.** The Delaunay-dual skeleton of a region is the same under a reflection, so a clockwise outer gives the same nodes and edges as a counter-clockwise one. | The same construction, on Y-down loops. | `dc_geometry::medial`; test `winding_does_not_change_the_graph` (`medial/tests.rs`) |
+| Medial links | A link between two chain ends stays down only when the straight move passes the exact cone test at its own depth; otherwise the bit retracts. Not about Y, but not ported. | Bridges chain ends tool-down within 0.9 of the disc the bit carves at the surface, which can run below the final V surface (security review H2). | `vcarve/medial.rs` module doc |
+| V-Carve offset rings | Ring direction as a Pocket's (`ring_is_ccw`): climb runs an outer's rings counter-clockwise and an island's clockwise. Every level is inset from the region itself, not from the level before. | Each level inset from the one before, in its Y-down frame. | `vcarve/offset.rs`; tests `offset_ring_direction_matches_pocket_rings`, `offset_climb_and_conventional_reverse_every_ring` |
+| Male Inlay mirror | The male is its targets mirrored in X about their bounding box's centre line, in place (`Transform::mirror_x_about`). The mirror reverses winding and negates bulges, and `Contour::new` makes an outer counter-clockwise again. | None: the Inlay is Corbin's Workshop's method, not a port. | `dc_cam::inlay::male_mirror`; test `male_mirrors_about_the_targets_centre_line` |
+| Picture rows | A bitmap's top row is at its footprint's highest Y, as it shows on screen: row 0 is the top row, at the highest Y. | None (no Photo V-Carve). RasterCarve's origin is the picture's top-left corner, Y up, so its picture lies at negative Y. | `dc_cam::photo`; test `top_row_is_at_the_highest_y` |
+| Photo groove family | One groove passes through the picture's top-left corner, RasterCarve's origin, so the goldens compare groove for groove. | None. | `dc_cam::photo`; test `one_groove_passes_through_the_top_left_corner` |
+
+## What is not a port
+
+Some of DreamCarve's features have no PureCutCNC code behind them. They
+follow the public documentation of other products and are designed in
+the spec, with tests derived from the geometry instead of goldens where
+no program exists to compare against:
+
+- **Clearing passes and the V-bit floor** follow VCarve's "Use Clearance
+  Tools" and Corbin's Workshop's pocket setup. PureCutCNC clamps a carve's
+  depth at `maxCarveDepth` and clears nothing.
+- **Inlay** follows Corbin's Workshop's V-bit inlay method, which VCarve's
+  "V-Carve Inlay" also follows, built from the V-Carve generator and the
+  geometry crate.
+- **Image prep** extends what PureCutCNC's SVG import reads (paint intent
+  and the ambiguous-nesting checks of `svg.ts` and `classifier.ts`); the
+  stroke outlines, fill resolution, speck filter and smoothing are
+  DreamCarve's own.
+- **The tapered ball nose** follows Fusion's tool library for its values
+  and VCarve's and Corbin's documentation for its behaviour; its geometry
+  is derived in the design spec, with analytic tests.
+- **Photo V-Carve** follows VCarve's PhotoVCarve and RasterCarve's
+  documented behaviour and command-line defaults. **RasterCarve is
+  GPLv2+**, which is not compatible with Apache-2.0: never read its source
+  to port or to fix a difference, and never copy from it. Only the G-code
+  its own command line writes on DreamCarve's own fixture pictures enters
+  the repository, as goldens ([Golden corpus](golden-corpus.md#photo-v-carve-cases)).
+
+Files of these features carry the DreamCarve header, not the upstream one.
+The same holds for any reference that is not Apache-2.0-compatible: it
+may describe behaviour, never supply code ([Licensing](licensing.md)).
 
 ## Attribution
 

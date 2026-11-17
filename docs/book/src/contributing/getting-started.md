@@ -11,9 +11,10 @@ This chapter is for anyone, human or AI agent, who wants to change DreamCarve.
 3. `docs/specs/phase-N/` for the current phase: the functional spec says what,
    the design spec says how and where.
 4. `CONTEXT.md`: the glossary. Code, tests, and issues use its terms.
-5. `docs/adr/`: decisions that constrain every phase, starting with ADR-0001
-   (Y-up internal coordinates), ADR-0002 (own project format), and ADR-0003
-   (heightfield-only 3D).
+5. `docs/adr/`: decisions that constrain every phase: ADR-0001 (Y-up
+   internal coordinates), ADR-0002 (own project format), ADR-0003
+   (heightfield-only 3D), ADR-0004 (post-processors by reference) and
+   ADR-0005 (placed tabs).
 6. `docs/rust-guidelines.md`: Rust patterns the code follows.
 
 ## Set up
@@ -66,12 +67,12 @@ mdbook build docs/book
 CI runs the same commands, on the same pinned toolchain, on Windows, macOS,
 and Linux for every pull request, and also builds the API docs
 (`cargo doc --no-deps --workspace`). `cargo test` includes
-`crates/dreamcarve/tests/quick_start.rs`, which runs the quick start
-chapters ([Your first cut from an SVG](../quick-start/first-cut.md) and
-[A pocketed plaque from DXF](../quick-start/plaque.md)) as written, and
-checks every program excerpt they show; if you change a command's
+`crates/dreamcarve/tests/quick_start.rs`, which runs every quick start
+chapter, and the user guide chapters with commands in them, as written,
+and checks every program excerpt they show; if you change a command's
 behaviour or output file, update those chapters in the same pull
-request.
+request. It also checks that every internal link of this book resolves,
+and that `CONTEXT.md` defines each of the terms it lists.
 
 ## Picking up work
 

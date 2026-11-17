@@ -154,7 +154,7 @@ when not set):
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "tools": [
     {
       "id": "lt1",
@@ -181,7 +181,7 @@ when not set):
 
 | Field | Meaning |
 | --- | --- |
-| `version` | The file format version, `2`. Version 2 adds each tool's `vendor` and `product_id`; a version 1 file is read with both `null` and saved as version 2 the next time a command changes the library. A file from a newer DreamCarve is refused rather than misread. |
+| `version` | The file format version, `3`. Version 2 added each tool's `vendor` and `product_id`, and version 3 the tapered ball nose cutter. A version 1 file is read with both `null`, and a version 1 or 2 file is saved as version 3 the next time a command changes the library. A file from a newer DreamCarve is refused rather than misread. |
 | `id` | The library id, `lt<n>`. New tools get the number after the highest one in the file. |
 | `source` | Where the tool came from: `"fusion:<guid>:<preset>"` for a tool imported from Fusion 360, `null` otherwise. `--replace` matches on it. |
 | `tool` | The tool, with the fields described in [The project file](project-file.md#tools). Its `id` repeats the library id and is ignored when the file is read. |
@@ -208,6 +208,29 @@ PureCutCNC's tool library:
 Feeds, plunge rate and RPM may be left `null` in the library, as in a
 project. DreamCarve never fills them in: a project using a tool without
 them will not export until you set them.
+
+## V-bit angle and cone height
+
+A V-bit's `included_angle_deg` is the **included** angle, the full angle
+between its two cutting edges, as V-bits are sold: a "90° V-bit" is
+`{ "v_bit": { "included_angle_deg": 90.0 } }`. Fusion describes the same
+bit by its taper per side, half that (see
+[How Fusion tools map](#how-fusion-tools-map)).
+
+Its `diameter_mm` is the widest the cone gets, usually the shank's. The
+angle and the diameter together set the bit's **cone height**, the depth
+at which its sides reach that diameter:
+
+```text
+cone height = diameter_mm / (2 × tan(included_angle_deg / 2))
+```
+
+A 6.35 mm bit has a cone height of 24.1 mm at 15°, 11.8 mm at 30°, 5.5 mm
+at 60° and 3.175 mm at 90°. A V-Carve, Inlay, Photo V-Carve or countersink
+that would carve deeper than that is refused with `v_bit_cone_exceeded`,
+because the shank would cut, so set the diameter to the bit's real
+cutting diameter, not a rounder number. [Choosing a bit
+angle](v-carve.md#choosing-a-bit-angle) says what each angle is good for.
 
 ## Fusion 360 tool libraries
 

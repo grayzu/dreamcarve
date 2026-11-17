@@ -18,16 +18,19 @@ Development runs in phases, each ending in a working product. The
 workspace, continuous integration on Windows, macOS, and Linux, releases,
 and this site. Phase 1 brought the first G-code: a command line tool that
 imports an SVG and writes a Profile toolpath, with tabs, for a
-grblHAL or GRBL machine. Phase 2 adds every 2.5D operation except V-Carve
-(Pocket, Drill, Engrave, and Profile entries, leads and corner relief), DXF
-import, a tool library with Fusion import, and six controllers. Phase 3,
-in progress, adds V-Carve: lettering and signs carved with a V-bit, with
-flat floors an end mill can clear first, countersinks, and V-bit inlays
-of one wood in another. Start with
-[Your first cut from an SVG](quick-start/first-cut.md), then
+grblHAL or GRBL machine. Phase 2 added every 2.5D operation except V-Carve
+(Pocket, Drill, Bore, Engrave, and Profile entries, leads and corner
+relief), DXF import, a tool library with Fusion import, and six
+controllers. Phase 3, in progress, adds V-Carve: lettering and signs carved
+with a V-bit or a tapered ball nose, with flat floors an end mill can clear
+first, countersinks, V-bit inlays of one wood in another, `image-prep` to
+make artwork easy to inlay, and Photo V-Carve, a picture carved as grooves.
+Start with [Your first cut from an SVG](quick-start/first-cut.md), then
 [A pocketed plaque from DXF](quick-start/plaque.md),
-[A V-carved sign from SVG outlines](quick-start/sign.md) and
-[An inlay pair](quick-start/inlay.md). The
+[A V-carved sign from SVG outlines](quick-start/sign.md),
+[An inlay pair](quick-start/inlay.md),
+[From line art](quick-start/line-art.md) and
+[Carving a photo](quick-start/photo.md). The
 [Changelog](changelog.md) lists what changed in each release.
 
 ## Who this site is for

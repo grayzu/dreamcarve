@@ -17,7 +17,8 @@ see where a piece of work stands.
    tests. They fail. Tests ported from PureCutCNC count, and keep the
    upstream header.
 4. **Green.** Following commits make them pass with the smallest change that
-   does. Golden comparisons against the PureCutCNC corpus are part of the
+   does. Golden comparisons against the [golden corpus](golden-corpus.md)
+   (PureCutCNC's and RasterCarve's programs) are part of the
    suite.
 5. **Gate.** `cargo fmt`, `cargo clippy -D warnings`, `cargo test --all`,
    `cargo run -p check-headers`, `cargo deny` and `mdbook build docs/book`
