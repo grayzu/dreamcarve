@@ -40,6 +40,11 @@ whose license asks for attribution, add it to `NOTICE` in the same change.
 Unicode-3.0. GPL code is never compatible. LGPL needs a separate review
 before use. The allowed list is in `deny.toml`.
 
+The same holds for code read while porting. A GPL program may still be a
+behaviour reference, as RasterCarve is for Photo V-Carve: its
+documentation and its output on our own inputs may be used, its source
+may not ([What is not a port](porting.md#what-is-not-a-port)).
+
 ## Interoperability, not reverse engineering
 
 Reading a data file a user owns is interoperability. DreamCarve imports
