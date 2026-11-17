@@ -20,6 +20,7 @@ mod line_art;
 mod near;
 mod seats;
 mod spike;
+mod tapered;
 mod traced;
 
 use super::*;
@@ -740,30 +741,6 @@ fn male_engagement_beyond_the_cone_is_an_error() {
         other => panic!("expected VBitConeExceeded, got {other:?}"),
     }
     inlay_runs(&project, &corbin(Board::Female));
-}
-
-/// Slice 27c (#679; removed by 27e, #681): validation accepts a tapered
-/// ball nose on an Inlay, but the Inlay generator's support for one is
-/// 27e's. Until then the generator refuses it on either board with the
-/// typed `VCarveNeedsVBit`, before any motion is built.
-#[test]
-fn tapered_ball_nose_is_refused_until_27e() {
-    let mut project = star_project(THICKNESS_MM);
-    project.tools[0] = Tool {
-        id: project.tools[0].id.clone(),
-        ..dc_project::test_support::tool_tbn_ultra()
-    };
-    for side in [Board::Female, Board::Male] {
-        match try_inlay(&project, &inlay(side)) {
-            Err(CamError::VCarveNeedsVBit {
-                tool_id, cutter, ..
-            }) => {
-                assert_eq!(tool_id, project.tools[0].id);
-                assert_eq!(cutter, "a tapered ball nose");
-            }
-            other => panic!("{side:?}: expected VCarveNeedsVBit, got {other:?}"),
-        }
-    }
 }
 
 /// `0 <= G < D` on either side, else `InlayGlueGap`; a male's margin must

@@ -839,6 +839,37 @@ pub fn describe_carves(project: &Project, generated: &[EmitOp]) -> Vec<String> {
     format_carves(&carve_facts(project, generated))
 }
 
+/// The seat line of each enabled Inlay cut with a tapered ball nose
+/// (slice 27e, #681; design spec, "The taper's ±0.5°, and calibration"):
+/// how far its plug's seat moves for an error in the bit's taper and tip
+/// radius, from its own `depth_mm` and `plug_depth_mm`, as `check` prints
+/// it: `op1 `DC` seat: moves 0.40 mm per 0.5° of taper, 0.76 mm per
+/// 0.05 mm of tip radius; test-fit before gluing`. Information for the
+/// test fit, not a warning; in millimetres whatever the display units,
+/// as the steps are.
+#[must_use]
+pub fn seat_lines(project: &Project) -> Vec<String> {
+    project
+        .operations
+        .iter()
+        .filter_map(|op| match op {
+            Operation::Inlay(inlay) if inlay.enabled => {
+                let seat = dc_project::inlay_seat_sensitivity(project, inlay)?;
+                Some(format!(
+                    "{} `{}` seat: moves {:.2} mm per {}° of taper, {:.2} mm per {} mm of tip radius; test-fit before gluing",
+                    inlay.id,
+                    inlay.name,
+                    seat.taper_mm,
+                    dc_project::SEAT_TAPER_STEP_DEG,
+                    seat.tip_mm,
+                    dc_project::SEAT_TIP_STEP_MM
+                ))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
 /// One line per exported tool run, in cut order: each enabled operation's
 /// id, name, tool, target count (a Photo V-Carve's picture, #648) and
 /// depth, a carve's clearing runs before

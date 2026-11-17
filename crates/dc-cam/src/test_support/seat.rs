@@ -307,12 +307,40 @@ pub fn fit(project: &Project, op: &InlayOp, runs: &[ToolRun], step_mm: f64) -> F
         .iter()
         .find(|r| r.label == RunLabel::Main)
         .expect("a V-bit run");
-    let Cutter::VBit { slope } = cutter_of(female_project, main) else {
-        panic!("the female's main run is a V-bit's");
-    };
     let depth_mm = female.depth_mm.expect("a depth");
+    // The pocket's depth `e` inside the design: `e / s` for a V-bit; for a
+    // tapered ball nose (#681) the `h` whose inset `w(D) − w(D − h)` is `e`.
+    let pocket_at = match cutter_of(female_project, main) {
+        Cutter::VBit { slope } => {
+            Box::new(move |e: f64| (e / slope).clamp(0.0, depth_mm)) as Box<dyn Fn(f64) -> f64>
+        }
+        Cutter::TaperedBall {
+            tip_radius_mm,
+            slope,
+            cap_radius_mm,
+        } => {
+            let profile = dc_geometry::profile::BitProfile::TaperedBall {
+                tip_radius_mm,
+                slope,
+                cap_radius_mm,
+            };
+            let floor_mm = profile.half_width_mm(depth_mm);
+            Box::new(move |e: f64| {
+                if e <= 0.0 {
+                    0.0
+                } else if e >= floor_mm {
+                    depth_mm
+                } else {
+                    (depth_mm - profile.height_mm(floor_mm - e).unwrap_or(0.0)).clamp(0.0, depth_mm)
+                }
+            })
+        }
+        Cutter::Flat { .. } => {
+            panic!("the female's main run is a V-bit's or a tapered ball nose's")
+        }
+    };
     let share = |c: &SeatCell| {
-        let pocket_mm = (inset_mm(&female_side.targets.regions, c.at) / slope).clamp(0.0, depth_mm);
+        let pocket_mm = pocket_at(inset_mm(&female_side.targets.regions, c.at));
         (c.plug_mm - pocket_mm, c.at)
     };
     // Where the plug seats within `SEAT_MM` everywhere, the male's share

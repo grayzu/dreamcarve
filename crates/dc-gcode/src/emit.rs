@@ -2444,11 +2444,17 @@ impl<'a> Writer<'a> {
             }
         }
         // A Photo V-Carve's grooves are never fitted (#646): their points
-        // are not on arcs, and S19 holds every cut to a straight one.
+        // are not on arcs, and S19 holds every cut to a straight one. Nor
+        // is a tapered ball nose's carve (#681): near its tip the ball cuts
+        // nothing a written unit deep, so its chains run level at the
+        // start plane within micrometres of the walls, where an arc fitted
+        // within the tolerance would take the tip across one, which S17
+        // refuses however small.
         let fitting = self
             .arc_fit_tolerance_mm
             .filter(|_| self.post.motion.arc_interpolation)
-            .filter(|_| !matches!(op, Operation::PhotoVCarve(_)));
+            .filter(|_| !matches!(op, Operation::PhotoVCarve(_)))
+            .filter(|_| !matches!(tool.cutter, dc_project::ToolKind::TaperedBallNose { .. }));
         let (fitted, fallback_runs) = match fitting {
             Some(tolerance_mm) => {
                 let fitted = arcfit::fit(&toolpath.moves, tolerance_mm);

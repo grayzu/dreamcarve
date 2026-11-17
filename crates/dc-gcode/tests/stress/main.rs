@@ -60,6 +60,7 @@ mod designs;
 mod lettering;
 mod property;
 mod rng;
+mod tapered;
 
 use dc_project::{ToolKind, Units};
 use designs::Design;

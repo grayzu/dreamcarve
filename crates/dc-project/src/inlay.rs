@@ -16,10 +16,24 @@
 //! pass**) and the V-bit's flank at the plug's foot, `(D − G + P)·s` wide
 //! at the stock top, stays inside the band: `M ≥ (D − G + 2P)·s`.
 //!
+//! With a tapered ball nose (slice 27e, #681) every V-bit width reads the
+//! bit's profile `w`: the foot is `w(P)`, the flank at the stock top
+//! `w(D − G + P)` from a tip `w(P)` out, so the edge is open when `M −
+//! w(P) ≥ 2r` and `M ≥ w(P) + w(D − G + P)`. The design itself is rounded
+//! for the bit on both boards ([`rounded_for_bit`]).
+//!
 //! Where the band runs past the board's edge it is clipped to the board
 //! (#495, [`MaleBand::board`]): an open edge to the board itself, a V
 //! wall to the board less the V-bit's radius. The design must still
 //! leave the band's own room there ([`MaleBand::board_room_mm`]).
+
+mod tapered;
+
+pub use tapered::{
+    BitRounding, CornerKind, GlueGapBelowBall, PlugDepthBelowBall, RoundedDesign, RoundingChange,
+    SEAT_TAPER_STEP_DEG, SEAT_TIP_STEP_MM, SeatSensitivity, TooNarrow, glue_gap_below_ball,
+    plug_depth_below_ball, rounded_for_bit, seat_sensitivity,
+};
 
 use crate::ids::{InstanceId, ToolId};
 use crate::model::{InlayOp, Operation, Project, Stock};
@@ -118,7 +132,8 @@ pub struct MaleBand {
     /// ([`BandSource::Drawn`]), which every rule reads in its place.
     pub margin_mm: f64,
     /// `plug_depth_mm · tan(α/2)`, `P·s`: how far the plug's foot stands
-    /// out from the design at the floor, mm.
+    /// out from the design at the floor, mm; a tapered ball nose's `w(P)`
+    /// (#681).
     pub foot_mm: f64,
     /// `outline_rounding_mm`, `R`, 0 when unset.
     pub outline_rounding_mm: f64,
@@ -129,10 +144,12 @@ pub struct MaleBand {
     /// Open or a V wall.
     pub edge: BandEdge,
     /// The V-bit's radius, `R_v`, mm: the stock-boundary rule (S7) holds
-    /// a V-bit to its full radius, wherever its cone reaches (#495).
+    /// a V-bit to its full radius, wherever its cone reaches (#495); a
+    /// tapered ball nose's cut radius, `min(w(L), R)` (#681).
     pub v_bit_radius_mm: f64,
     /// How far the V-bit's flank at the plug's foot reaches from the
-    /// design at the stock top, `(D − G + 2P)·s`, mm.
+    /// design at the stock top, `(D − G + 2P)·s`, mm; a tapered ball
+    /// nose's `w(P) + w(D − G + P)` (#681).
     pub flank_mm: f64,
 }
 
@@ -230,25 +247,71 @@ impl MaleBand {
     }
 }
 
-/// `tan(α/2)` of Inlay `op`'s V-bit, when it is one with an angle in (0°,
-/// 180°).
+/// The flank's slope of Inlay `op`'s bit ([`BitProfile::slope`]):
+/// `tan(α/2)` of a V-bit, `tan β` of a tapered ball nose.
 fn slope_of(project: &Project, op: &InlayOp) -> Option<f64> {
-    v_bit_of(project, op).map(|(slope, _)| slope)
+    carve_bit_of(project, op).map(|(profile, _)| profile.slope())
 }
 
-/// `tan(α/2)` of Inlay `op`'s V-bit, when it is one with an angle in (0°,
-/// 180°), and its radius, mm, as the tool gives it (`dc-cam` and the
-/// safety pass refuse a diameter that is not above 0 before they use it).
-/// Read from the bit's profile ([`crate::Tool::carve_profile`]); a
-/// tapered ball nose has none here until the Inlay's band reads its
-/// profile (slice 27e, #681), and the Inlay generator refuses it until
-/// then.
-fn v_bit_of(project: &Project, op: &InlayOp) -> Option<(f64, f64)> {
+/// Inlay `op`'s carving bit: its profile ([`crate::Tool::carve_profile`],
+/// a V-bit with an angle in (0°, 180°) or a tapered ball nose with every
+/// value set and usable; slice 27e, #681) and its radius on the board, mm
+/// ([`crate::Tool::cut_radius_mm`]: half a V-bit's diameter as the tool
+/// gives it, which `dc-cam` and the safety pass refuse when it is not above
+/// 0 before they use it; a tapered ball nose's widest cut).
+fn carve_bit_of(project: &Project, op: &InlayOp) -> Option<(BitProfile, f64)> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
-    match tool.carve_profile()? {
-        BitProfile::VBit { slope } => Some((slope, tool.diameter_mm / 2.0)),
-        BitProfile::TaperedBall { .. } => None,
+    Some((tool.carve_profile()?, tool.cut_radius_mm()))
+}
+
+/// The profile of Inlay `op`'s carving bit, when it is a V-bit or a
+/// tapered ball nose with every value usable (#681).
+#[must_use]
+pub fn inlay_profile(project: &Project, op: &InlayOp) -> Option<BitProfile> {
+    carve_bit_of(project, op).map(|(profile, _)| profile)
+}
+
+/// Inlay `op`'s design `design` (nested, its near parts merged, the male's
+/// mirrored) rounded for its bit ([`rounded_for_bit`], #681), with its
+/// `D − G` and the project's flatten tolerance. A design carved by a
+/// V-bit, or whose bit, depth or glue gap is not usable, comes back as it
+/// is.
+///
+/// # Errors
+///
+/// [`TooNarrow`] where the rounding would change the design's topology.
+pub fn rounded_design(
+    project: &Project,
+    op: &InlayOp,
+    design: &[Region],
+) -> Result<RoundedDesign, TooNarrow> {
+    let rise_mm = op
+        .depth_mm
+        .zip(op.glue_gap_mm)
+        .map(|(d, g)| d - g)
+        .filter(|r| r.is_finite() && *r >= 0.0);
+    match (inlay_profile(project, op), rise_mm) {
+        (Some(profile), Some(rise_mm)) => {
+            rounded_for_bit(design, &profile, rise_mm, tolerance_mm(project))
+        }
+        _ => rounded_for_bit(
+            design,
+            &BitProfile::VBit { slope: 1.0 },
+            0.0,
+            tolerance_mm(project),
+        ),
     }
+}
+
+/// How far the seat of Inlay `op` moves for an error in its tapered ball
+/// nose's taper and tip radius (#681; `check`'s seat line), from its own
+/// `depth_mm` and `plug_depth_mm`; `None` for a V-bit or an unusable
+/// value.
+#[must_use]
+pub fn inlay_seat_sensitivity(project: &Project, op: &InlayOp) -> Option<SeatSensitivity> {
+    let depth_mm = positive(op.depth_mm)?;
+    let plug_depth_mm = positive(op.plug_depth_mm)?;
+    seat_sensitivity(&inlay_profile(project, op)?, depth_mm, plug_depth_mm)
 }
 
 /// A positive finite length.
@@ -287,7 +350,8 @@ pub fn edge_pass(project: &Project, op: &InlayOp) -> Option<EdgePass> {
 /// [`edge_pass`] for a band whose margin, or narrowest band, is
 /// `margin_mm`.
 fn edge_pass_at(project: &Project, op: &InlayOp, margin_mm: f64) -> Option<EdgePass> {
-    let foot_mm = positive(op.plug_depth_mm)? * slope_of(project, op)?;
+    let (profile, _) = carve_bit_of(project, op)?;
+    let foot_mm = profile.half_width_mm(positive(op.plug_depth_mm)?);
     let ring_mm = margin_mm - foot_mm;
     pass_radii(project, op).find_map(|(index, tool, radius_mm)| {
         let radius_mm = radius_mm?;
@@ -339,7 +403,7 @@ fn band_source(project: &Project, op: &InlayOp) -> Option<BandSource> {
 /// ([`MaleBand::board`]).
 #[must_use]
 pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
-    let (slope, v_bit_radius_mm) = v_bit_of(project, op)?;
+    let (profile, v_bit_radius_mm) = carve_bit_of(project, op)?;
     let source = band_source(project, op)?;
     let margin_mm = source.margin_mm();
     let plug_depth_mm = positive(op.plug_depth_mm)?;
@@ -354,10 +418,19 @@ pub fn male_band(project: &Project, op: &InlayOp) -> Option<MaleBand> {
         } => *outline_rounding_mm,
         BandSource::Drawn { .. } => 0.0,
     };
-    let foot_mm = plug_depth_mm * slope;
-    // The V-bit's flank at the plug's foot reaches `(D − G + P)·s` from its
-    // tip at the stock top, the tip `P·s` from the design.
-    let flank_mm = (depth_mm - glue_gap_mm + 2.0 * plug_depth_mm) * slope;
+    // #681: every V-bit width reads the bit's profile: the plug's foot
+    // `w(P)`, and the flank at the stock top `w(D − G + P)` from a tip
+    // `w(P)` out.
+    let foot_mm = profile.half_width_mm(plug_depth_mm);
+    let flank_mm = match profile {
+        // The V-bit's flank at the plug's foot reaches `(D − G + P)·s` from
+        // its tip at the stock top, the tip `P·s` from the design: written
+        // as before, so no V-bit band moves.
+        BitProfile::VBit { slope } => (depth_mm - glue_gap_mm + 2.0 * plug_depth_mm) * slope,
+        BitProfile::TaperedBall { .. } => {
+            foot_mm + profile.half_width_mm(depth_mm - glue_gap_mm + plug_depth_mm)
+        }
+    };
     let flank_fits = flank_mm <= margin_mm + EPS_MM;
     let edge = match edge_pass_at(project, op, margin_mm) {
         Some(pass) if flank_fits => BandEdge::Open(pass),
@@ -709,7 +782,14 @@ fn merged_design_of(project: &Project, op: &InlayOp) -> Vec<Region> {
     let tolerance_mm = tolerance_mm(project);
     let plug_tolerance_mm =
         slope_of(project, op).map_or(tolerance_mm, |slope| wall_tolerance_mm(tolerance_mm, slope));
-    merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions
+    let merged = merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions;
+    // #681: rounded for a tapered ball nose as both boards cut it; a design
+    // the rounding refuses is the generator's error, and is measured here
+    // as drawn.
+    match rounded_design(project, op, &merged) {
+        Ok(rounded) => rounded.regions,
+        Err(_) => merged,
+    }
 }
 
 /// How close two parts of an Inlay's design may come before both sides

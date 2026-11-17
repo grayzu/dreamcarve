@@ -141,6 +141,12 @@ pub fn explains(error: &CamError) -> bool {
             // narrower than its end mill: the user picks a smaller tool
             // or moves the parts apart.
             | CamError::BandNarrowerThanTool { .. }
+            // #681: an Inlay cut with a tapered ball nose whose design has a
+            // part or a gap too narrow for the bit to round: the user widens
+            // it, carves less deep or picks a finer tip (the message says
+            // how wide it must be). A seed refused so is a pass of the
+            // refusal, not a seat (`tapered::tapered_inlays_seat`).
+            | CamError::InlayTooNarrowForBit { .. }
     )
 }
 
@@ -459,10 +465,16 @@ fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
         .map(|&(.., issue)| issue)
 }
 
-/// Seat failures of the CI tests' designs, each with the open issue it
-/// is filed under:
-/// family, seed, operation, issue.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 0] = [];
+/// Seat failures of the sweeps' designs, each with the open issue it is
+/// filed under: family, seed, operation, issue. #705: the tapered sweep's
+/// lettering `0x60` with the Fine bit, whose female's carve stops
+/// 0.013 mm short of a rounded point, 0.107 mm in height.
+const KNOWN_CASES: [(&str, u64, Kind, u32); 4] = [
+    ("tapered lettering (Fine)", 0x60, Kind::MaleVWall, 705),
+    ("tapered lettering (Fine)", 0x60, Kind::MaleOpenEdge, 705),
+    ("tapered lettering (Fine)", 0x60, Kind::MaleRounded, 705),
+    ("tapered lettering (Fine)", 0x60, Kind::MaleCutOut, 705),
+];
 
 /// The validation problems a valid design may still raise with the
 /// settings drawn: as [`explains`], each names a setting that does not

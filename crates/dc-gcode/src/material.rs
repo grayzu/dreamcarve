@@ -233,7 +233,10 @@
 //!   ([`Tool::cutting_height_mm`]), named in `ConeHeightExceeded`; its
 //!   floor inset is `w(F)`. S7 widens its cuts by its cut radius
 //!   `min(w(flute_length_mm), R)` ([`Tool::cut_radius_mm`]). An Inlay
-//!   side cut with one stays unresolved until slice 27e (#681).
+//!   side cut with one (slice 27e, #681) is held the same way to its
+//!   design rounded for the bit ([`dc_project::rounded_for_bit`]), on
+//!   either board, as the generator rounds it; a design the rounding
+//!   refuses is unresolved.
 //! - **V-Carve, a clearing run** (#406, security review M3): the run
 //!   labelled with one of the carve's passes and cut with that pass's flat
 //!   end mill is held as a Pocket of the carve's floor regions with no
@@ -1004,8 +1007,7 @@ pub(crate) fn carve_bit_of(project: &Project, id: &ToolId) -> Option<(BitProfile
 
 /// The V-bit `id` of `project`: its slope `tan(α/2)` and its cone
 /// height, mm, through [`carve_bit_of`]; `None` for a tapered ball nose
-/// too. A Photo V-Carve's S19 needs a V-bit, and an Inlay's S17 does until
-/// slice 27e (#681) re-derives its rounded design.
+/// too. A Photo V-Carve's S19 needs a V-bit.
 pub(crate) fn v_bit_of(project: &Project, id: &ToolId) -> Option<(f64, f64)> {
     match carve_bit_of(project, id)? {
         (BitProfile::VBit { slope }, cone_mm) => Some((slope, cone_mm)),
@@ -1083,11 +1085,11 @@ impl MaleGeometry {
         let band = male_band(project, inlay)?;
         let (design, mirror) = male_design(project, inlay)?;
         let tolerance_mm = project.flatten_tolerance_mm;
-        // #478: the plug's outline within the V-bit's wall tolerance, as
-        // the generator draws it.
-        let plug_tolerance_mm = v_bit_of(project, &inlay.tool)
-            .map_or(tolerance_mm, |(slope, _)| {
-                wall_tolerance_mm(tolerance_mm, slope)
+        // #478: the plug's outline within the bit's wall tolerance, as the
+        // generator draws it (#681: a tapered ball nose's `tan β`).
+        let plug_tolerance_mm = carve_bit_of(project, &inlay.tool)
+            .map_or(tolerance_mm, |(profile, _)| {
+                wall_tolerance_mm(tolerance_mm, profile.slope())
             });
         let (edge, clipped) = male_band_on_board(project, inlay, &band, mirror, &design);
         let drawn = matches!(band.source, dc_project::BandSource::Drawn { .. });
@@ -1153,7 +1155,8 @@ fn inlay_cone(
     board: Board,
 ) -> Option<(Cone, Option<MaleGeometry>)> {
     let thickness_mm = project.stock.thickness_mm.filter(|t| t.is_finite())?;
-    let (slope, cone_mm) = v_bit_of(project, &inlay.tool)?;
+    // #681: a V-bit or a tapered ball nose, on its profile.
+    let (profile, cone_mm) = carve_bit_of(project, &inlay.tool)?;
     let depth_mm = inlay.depth_mm.filter(|d| d.is_finite() && *d > 0.0)?;
     let glue_gap_mm = inlay
         .glue_gap_mm
@@ -1161,7 +1164,7 @@ fn inlay_cone(
     let plug_depth_mm = inlay.plug_depth_mm.filter(|p| p.is_finite() && *p > 0.0)?;
     let (regions, start_depth_mm, flat_depth_mm, male) = match board {
         Board::Female => (
-            merged_design(project, inlay, regions_of(project, &inlay.targets)?),
+            merged_design(project, inlay, regions_of(project, &inlay.targets)?)?,
             0.0,
             depth_mm,
             None,
@@ -1181,7 +1184,7 @@ fn inlay_cone(
         Box::new(Cone {
             areas: areas_of(m.edge.clone(), true),
             start_plane_z_mm: thickness_mm,
-            profile: BitProfile::VBit { slope },
+            profile,
             floor_z_mm: None,
             engaged_from_z_mm: thickness_mm,
             cone_mm,
@@ -1191,7 +1194,7 @@ fn inlay_cone(
     let cone = Cone {
         areas: areas_of(regions, true),
         start_plane_z_mm,
-        profile: BitProfile::VBit { slope },
+        profile,
         floor_z_mm: Some(start_plane_z_mm - flat_depth_mm),
         engaged_from_z_mm: thickness_mm,
         cone_mm,
@@ -1254,19 +1257,26 @@ fn male_design(project: &Project, inlay: &InlayOp) -> Option<(Vec<Region>, Optio
         None => Vec::new(),
     };
     let (design, _) = nest(contours).ok()?;
-    Some((merged_design(project, inlay, design), mirror))
+    Some((merged_design(project, inlay, design)?, mirror))
 }
 
 /// Inlay `inlay`'s `design` (nested) with the parts that come closer
-/// than [`INLAY_MERGE_MM`] merged into one shape, drawn within its V-bit's
+/// than [`INLAY_MERGE_MM`] merged into one shape, drawn within its bit's
 /// wall tolerance ([`wall_tolerance_mm`], #478), as the generator merges
-/// them (#479; [`merge_near_parts`]).
-fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Vec<Region> {
+/// them (#479; [`merge_near_parts`]), then rounded for a tapered ball nose
+/// ([`dc_project::rounded_design`], #681), as the generator rounds it.
+/// `None` when the rounding refuses the design, which the generator
+/// refuses too: no program of it is held to anything.
+fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Option<Vec<Region>> {
     let tolerance_mm = project.flatten_tolerance_mm;
-    let plug_tolerance_mm = v_bit_of(project, &inlay.tool).map_or(tolerance_mm, |(slope, _)| {
-        wall_tolerance_mm(tolerance_mm, slope)
-    });
-    merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions
+    let plug_tolerance_mm = carve_bit_of(project, &inlay.tool)
+        .map_or(tolerance_mm, |(profile, _)| {
+            wall_tolerance_mm(tolerance_mm, profile.slope())
+        });
+    let merged = merge_near_parts(&design, INLAY_MERGE_MM, plug_tolerance_mm).regions;
+    dc_project::rounded_design(project, inlay, &merged)
+        .ok()
+        .map(|rounded| rounded.regions)
 }
 
 /// What a male Inlay's cut-out run is held to (#443, #448; module docs):

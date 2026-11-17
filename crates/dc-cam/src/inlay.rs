@@ -46,6 +46,18 @@
 //! is the mirrored design inset by the same, for `h` from 0 to `D − G`
 //! (design step 5, the fit property). The plug seats with its start plane
 //! at the female's surface and its top `G` above the pocket's floor.
+//!
+//! **A tapered ball nose** (slice 27e, #681; design spec, "Inlay fit")
+//! cuts both sides on its profile: the walls mate wherever both are cut by
+//! its cone. Its design, merged, is rounded for the bit on both boards
+//! ([`dc_project::rounded_for_bit`]: opened by `R_min = (D − G)·tan β +
+//! w_t`, closed by `w_t`), warning [`Warning::InlayRoundedForBit`], and a
+//! part or gap the rounding would remove, split or join is
+//! [`CamError::InlayTooNarrowForBit`]. A glue gap or plug depth below the
+//! bit's tangent height warns [`Warning::InlayGlueGapBelowBall`] or
+//! [`Warning::InlayPlugDepthBelowBall`]; the band reads the bit's profile
+//! ([`dc_project::male_band`]), and the male's engagement is held to the
+//! bit's cutting height.
 
 #[cfg(test)]
 mod tests;
@@ -58,9 +70,10 @@ use crate::run::{RunLabel, ToolRun};
 use crate::stock::StockEdge;
 use crate::vcarve::{
     self, Carve, Clearing, FloorRidges, OpenEdge, Targets, carve_regions, carve_regions_then,
-    checked_v_bit, clearing, floor::Floor,
+    checked_bit, clearing, floor::Floor,
 };
 use crate::warning::Warning;
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{
     Contour, EPS_MM, Point, Polyline, Rect, Region, Transform, band_on_board, difference_within,
     inset_outers, merge_near_parts, nearest_point, rounded_band, surround_within,
@@ -469,8 +482,9 @@ fn side_of(
     let start_plane_z_mm = thickness_mm - values.start_depth_mm();
     let Some(margin_mm) = values.margin_mm else {
         let design = carve_regions(project, &op.id, &op.targets, warnings)?;
+        let design = merge_near(design, project, op, None, warnings);
         return Ok(Side {
-            targets: merge_near(design, project, op, None, warnings),
+            targets: round_for_bit(design, project, op, None, warnings)?,
             start_plane_z_mm,
             engaged_from_z_mm: thickness_mm,
             flat_depth_mm: values.flat_depth_mm(),
@@ -486,6 +500,9 @@ fn side_of(
     let mirror = mirror_x_mm.map(Transform::mirror_x_about);
     let design = carve_regions_then(project, &op.id, &op.targets, mirror, warnings)?;
     let design = merge_near(design, project, op, mirror, warnings);
+    // #681: rounded for a tapered ball nose, on the mirrored design, as the
+    // female's is on the design.
+    let design = round_for_bit(design, project, op, mirror, warnings)?;
     // #448: the band's edge, closed by `R'`, and whether it is open.
     let band = male_band(project, op);
     let edge_rounding_mm = band.as_ref().map_or(0.0, |b| b.edge_rounding_mm);
@@ -574,19 +591,83 @@ fn side_of(
 }
 
 /// How near, mm, the plug's outline is drawn for Inlay `op` (#478): the
-/// project's flatten tolerance scaled for its V-bit
-/// ([`wall_tolerance_mm`]), or the tolerance itself when the tool is not a
-/// usable V-bit.
+/// project's flatten tolerance scaled for its bit's flank
+/// ([`wall_tolerance_mm`]: a V-bit's `tan(α/2)`, a tapered ball nose's
+/// `tan β`, #681), or the tolerance itself when the tool is not a usable
+/// carving bit.
 fn plug_tolerance_mm(project: &Project, op: &InlayOp) -> f64 {
     let tolerance_mm = project.flatten_tolerance_mm;
-    project
-        .tools
+    dc_project::inlay_profile(project, op).map_or(tolerance_mm, |profile| {
+        wall_tolerance_mm(tolerance_mm, profile.slope())
+    })
+}
+
+/// `design`, Inlay `op`'s design resolved and merged (the male's moved by
+/// its `mirror`), rounded for its tapered ball nose
+/// ([`dc_project::rounded_design`]; #681, design spec "Inlay fit"), as the
+/// safety pass rounds it. Each kind of change warns
+/// [`Warning::InlayRoundedForBit`] at its largest, the point as drawn: the
+/// male's is mirrored back. A rounded region is named by the shape it was
+/// rounded from. A design carved by a V-bit is returned as it is.
+///
+/// # Errors
+///
+/// [`CamError::InlayTooNarrowForBit`] where the rounding would remove,
+/// split or join a part or a hole.
+fn round_for_bit(
+    design: Targets,
+    project: &Project,
+    op: &InlayOp,
+    mirror: Option<Transform>,
+    warnings: &mut Vec<Warning>,
+) -> Result<Targets, CamError> {
+    if !matches!(
+        dc_project::inlay_profile(project, op),
+        Some(BitProfile::TaperedBall { .. })
+    ) {
+        return Ok(design);
+    }
+    // A mirror is its own inverse.
+    let as_drawn = |p: Point| mirror.map_or(p, |m| m.apply(p));
+    let rounded = dc_project::rounded_design(project, op, &design.regions).map_err(|narrow| {
+        let at = as_drawn(narrow.at);
+        CamError::InlayTooNarrowForBit {
+            op: op.id.clone(),
+            kind: narrow.kind,
+            x_mm: at.x,
+            y_mm: at.y,
+            width_mm: narrow.width_mm,
+            needed_mm: narrow.needed_mm,
+        }
+    })?;
+    for change in &rounded.changes {
+        let at = as_drawn(change.at);
+        warnings.push(Warning::InlayRoundedForBit {
+            op: op.id.clone(),
+            kind: change.kind,
+            x_mm: at.x,
+            y_mm: at.y,
+            change_mm: change.change_mm,
+            radius_mm: change.radius_mm,
+        });
+    }
+    let shapes = rounded
+        .sources
         .iter()
-        .find(|t| t.id == op.tool)
-        .and_then(|t| checked_v_bit(&op.id, t).ok())
-        .map_or(tolerance_mm, |bit| {
-            wall_tolerance_mm(tolerance_mm, bit.slope)
+        .map(|&i| {
+            design.shapes.get(i).cloned().unwrap_or_else(|| ShapeRef {
+                instance: InstanceId::new(""),
+                instance_name: String::new(),
+                profile: 0,
+            })
         })
+        .collect();
+    Ok(Targets {
+        regions: rounded.regions,
+        shapes,
+        containment: design.containment,
+        contours: design.contours,
+    })
 }
 
 /// `design`, the targets of Inlay `op` resolved (the male's moved by its
@@ -726,7 +807,7 @@ fn bordering_shape(region: &Region, design: &Targets) -> ShapeRef {
 #[must_use]
 pub fn floor_ridges(project: &Project, op: &InlayOp, board: Board) -> Option<FloorRidges> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
-    let bit = checked_v_bit(&op.id, tool).ok()?;
+    let bit = checked_bit(&op.id, tool).ok()?;
     let fraction = op
         .step_over_fraction
         .or(tool.step_over_fraction)
@@ -752,10 +833,10 @@ pub fn floor_ridges(project: &Project, op: &InlayOp, board: Board) -> Option<Flo
 /// cut: the runs are the female's, with [`Warning::InlayMaleBoardUnset`].
 ///
 /// The warnings are the female's, then the male's that differ from them;
-/// the male's [`Warning::InlayPartsMerged`] and
-/// [`Warning::InlayHoleFilled`] are left out, since it merges and fills
-/// the same design's parts, mirrored, and the female's already name them
-/// where they are drawn.
+/// the male's [`Warning::InlayPartsMerged`], [`Warning::InlayHoleFilled`]
+/// and [`Warning::InlayRoundedForBit`] are left out, since it merges, fills
+/// and rounds the same design's parts, mirrored, and the female's already
+/// name them where they are drawn.
 ///
 /// # Errors
 ///
@@ -771,7 +852,9 @@ pub fn generate_inlay(
     for warning in male_warnings {
         let repeats = matches!(
             warning,
-            Warning::InlayPartsMerged { .. } | Warning::InlayHoleFilled { .. }
+            Warning::InlayPartsMerged { .. }
+                | Warning::InlayHoleFilled { .. }
+                | Warning::InlayRoundedForBit { .. }
         ) || warnings.contains(&warning);
         if !repeats {
             warnings.push(warning);
@@ -806,12 +889,15 @@ pub fn generate_inlay(
 ///
 /// # Errors
 ///
-/// An unknown tool, a tool that is not a usable V-bit, a missing rate or
+/// An unknown tool, a tool that is not a usable V-bit or tapered ball nose
+/// ([`CamError::TaperedBallNoseUnusable`]), a missing rate or
 /// thickness, a safe Z that is not positive; [`CamError::InlayValueUnset`],
 /// [`CamError::InlayValueRange`], [`CamError::InlayGlueGap`],
 /// [`CamError::InlayMargin`]; [`CamError::VBitConeExceeded`] when the
 /// flank's engagement from the board's top, `D` or `D − G + P`, is past
-/// the bit's cone (security review H4); a clearing pass that cannot run;
+/// the bit's cone or a tapered ball nose's cutting height (security review
+/// H4); [`CamError::InlayTooNarrowForBit`] (#681); a clearing pass that
+/// cannot run;
 /// and what [`vcarve::blocks`] and the V-Carve's sequencing and cone test
 /// refuse.
 #[must_use = "the toolpath is the whole point"]
@@ -847,7 +933,8 @@ fn generate_on(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
-    let bit = checked_v_bit(&op.id, tool)?;
+    // #681: a V-bit or a tapered ball nose.
+    let bit = checked_bit(&op.id, tool)?;
     rates_of(tool)?;
     if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
         return Err(CamError::InvalidSafeZ {
@@ -880,7 +967,26 @@ fn generate_on(
             ),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
-            limit: dc_project::CuttingLimit::Cone,
+            limit: bit.limit,
+        });
+    }
+    // #681: a glue gap or plug depth below a tapered ball nose's tangent
+    // height (validation reports both too).
+    if let Some(cost) = dc_project::glue_gap_below_ball(&bit.profile, values.glue_gap_mm) {
+        warnings.push(Warning::InlayGlueGapBelowBall {
+            op: op.id.clone(),
+            glue_gap_mm: values.glue_gap_mm,
+            tangent_height_mm: cost.tangent_height_mm,
+            lift_mm: cost.lift_mm,
+            wall_gap_mm: cost.wall_gap_mm,
+        });
+    }
+    if let Some(cost) = dc_project::plug_depth_below_ball(&bit.profile, values.plug_depth_mm) {
+        warnings.push(Warning::InlayPlugDepthBelowBall {
+            op: op.id.clone(),
+            plug_depth_mm: values.plug_depth_mm,
+            tangent_height_mm: cost.tangent_height_mm,
+            wall_gap_mm: cost.wall_gap_mm,
         });
     }
     if let Some(axis_x_mm) = side.mirror_x_mm {

@@ -1011,6 +1011,37 @@ pub enum CamError {
         /// The least margin with room, mm.
         needed_mm: f64,
     },
+    /// An Inlay cut with a tapered ball nose has a part or a gap too narrow
+    /// for the bit (`inlay_too_narrow_for_bit`; slice 27e, #681): rounding
+    /// the design for the bit ([`dc_project::rounded_for_bit`]) would
+    /// remove, split or join a part or a hole, which is not rounding. A
+    /// part needs `2 R_min`, `2 ((D − G)·tan β + w_t)`, and a gap `2 w_t`.
+    #[error(
+        "operation `{op}` has a {what} {width_mm:.3} mm wide at ({x_mm:.3}, {y_mm:.3}), but its tapered ball nose needs {needed_mm:.3} mm there to carve both boards so the plug seats; {fix}",
+        what = match kind {
+            dc_project::CornerKind::Point => "part",
+            dc_project::CornerKind::Notch => "gap",
+        },
+        fix = match kind {
+            dc_project::CornerKind::Point => "widen it, lower depth_mm − glue_gap_mm, or use a bit with a finer tip",
+            dc_project::CornerKind::Notch => "widen the gap, join the parts in the drawing, or use a bit with a finer tip",
+        }
+    )]
+    InlayTooNarrowForBit {
+        /// The Inlay.
+        op: OperationId,
+        /// A part (`Point`) or a gap (`Notch`).
+        kind: dc_project::CornerKind,
+        /// Where, mm, project space, as drawn (the male's mirrored back).
+        x_mm: f64,
+        /// See `x_mm`.
+        y_mm: f64,
+        /// How wide it is, mm: twice the largest clearance of the piece the
+        /// rounding would lose.
+        width_mm: f64,
+        /// How wide it must be, mm.
+        needed_mm: f64,
+    },
     /// A male Inlay's band runs past a stock edge, which clips it (#495),
     /// but its design is too near that edge for what the band holds there:
     /// the V-bit along the plug's foot with its full radius on the board,

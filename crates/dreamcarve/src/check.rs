@@ -90,6 +90,11 @@ pub fn run(args: &CheckArgs) -> Result<ExitCode, Failure> {
     for line in describe_carves(&project, generated.as_deref().unwrap_or_default()) {
         outln!("{line}")?;
     }
+    // #681: an Inlay cut with a tapered ball nose: how far its seat moves
+    // for an error in the bit's numbers, so the user test-fits first.
+    for line in dc_job::summary::seat_lines(&project) {
+        outln!("{line}")?;
+    }
     // #62: where the program would take the tool, and capability 30: how
     // long it would run, as `export` prints them; for each program when
     // there is one per tool run (#95), then the total.

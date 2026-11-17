@@ -7938,4 +7938,5 @@ mod tests {
     mod s17;
     mod s18;
     mod tapered;
+    mod tapered_inlay;
 }
