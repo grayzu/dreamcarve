@@ -2110,3 +2110,201 @@ fn book_links_resolve() {
     assert!(checked > 100, "the book's links are found ({checked})");
     assert!(broken.is_empty(), "broken links:\n{}", broken.join("\n"));
 }
+
+/// The tapered ball nose quick start (sub-phase 3.6, #683), relative to the
+/// repository root.
+const TAPERED: &str = "docs/book/src/quick-start/tapered-ball-nose.md";
+
+/// The tapered ball nose chapter of the user guide (#683).
+const TAPERED_GUIDE: &str = "docs/book/src/user-guide/tapered-ball-nose.md";
+
+/// #683 (slice 27g): "Carving and inlaying with a tapered ball nose", run
+/// as written, like `photo_quick_start_runs`. It starts from the coupon,
+/// `tests/fixtures/tbn-coupon.svg`, with the "DC" drawing beside it, writes
+/// a version 3 library with two tapered ball noses and an end mill, cuts
+/// the coupon pair, then the "DC" carve, then the 6 mm "DC" pair. The two
+/// projects it builds are the committed `tests/fixtures/tbn-coupon.dcv`
+/// and `tests/fixtures/dc-tbn.dcv`. The chapter is generic: it names no
+/// vendor, says the numbers are an example and tells the reader to enter
+/// their own bit's, and shows the seat line `check` prints. Every program
+/// passes S1 to S19 (`export` writes none otherwise); the end mill's are
+/// also held to the program-alone checks here.
+#[test]
+fn tapered_ball_nose_chapter_runs() {
+    let run = Run {
+        chapter: TAPERED,
+        drawing: ("tests/fixtures/tbn-coupon.svg", "tbn-coupon.svg"),
+        swap: None,
+    };
+    let text = chapter_text(TAPERED);
+    let steps = steps(TAPERED, &text);
+    for (what, has) in [
+        (
+            "write",
+            steps.iter().any(|s| matches!(s, Step::Write { .. })),
+        ),
+        (
+            "paste",
+            steps.iter().any(|s| matches!(s, Step::Paste { .. })),
+        ),
+        ("edit", steps.iter().any(|s| matches!(s, Step::Edit { .. }))),
+    ] {
+        assert!(has, "{TAPERED} has no `{what}` step");
+    }
+    for (needle, what) in [
+        ("\"version\": 3", "writes a version 3 library"),
+        ("\"tapered_ball_nose\"", "enters a tapered ball nose"),
+        ("per side", "says the taper is per side"),
+        ("example", "presents the bits' numbers as an example"),
+        (
+            "your own",
+            "tells the reader to enter their own bit's numbers",
+        ),
+        ("glue_gap_mm", "adjusts the glue gap"),
+        ("0.25 mm", "adjusts it in 0.25 mm steps"),
+        ("--board male", "re-exports the male alone"),
+        (
+            "tapered_corners_softened",
+            "explains the carve's soft corners",
+        ),
+        ("inlay_rounded_for_bit", "explains the rounding"),
+        (
+            "../user-guide/tapered-ball-nose.md",
+            "points to the tapered ball nose chapter",
+        ),
+    ] {
+        assert!(text.contains(needle), "{TAPERED} {what}");
+    }
+    for bench in ["IDC", "Woodcraft", "Ultra-High", "Fine Detail"] {
+        assert!(
+            !text.contains(bench),
+            "{TAPERED} names `{bench}`: the quick start stays generic"
+        );
+    }
+    let dir = run_chapter_with(
+        "tapered_ball_nose_chapter_runs",
+        &run,
+        &[("tests/fixtures/dc-inlay.svg", "dc-inlay.svg")],
+    );
+
+    for (built, fixture) in [
+        ("tbn-coupon.dcv", "tests/fixtures/tbn-coupon.dcv"),
+        ("dc-tbn.dcv", "tests/fixtures/dc-tbn.dcv"),
+    ] {
+        let project = std::fs::read_to_string(dir.join(built)).expect("project written");
+        let committed =
+            std::fs::read_to_string(repo_root().join(fixture)).expect("fixture readable");
+        assert_same_project(&project, &committed, fixture, &dir.join(built));
+    }
+
+    let mut programs: Vec<String> = std::fs::read_dir(&dir)
+        .expect("work dir readable")
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".nc"))
+        .collect();
+    programs.sort();
+    assert_eq!(
+        programs,
+        [
+            "dc-tbn-female-1-T3.nc",
+            "dc-tbn-female-2-T2.nc",
+            "dc-tbn-male-1-T3.nc",
+            "dc-tbn-male-2-T2.nc",
+            "dc-tbn-male-3-T3.nc",
+            "dc-tbn.nc",
+            "tbn-coupon-female-1-T3.nc",
+            "tbn-coupon-female-2-T2.nc",
+            "tbn-coupon-male-1-T3.nc",
+            "tbn-coupon-male-2-T2.nc",
+            "tbn-coupon-male-3-T3.nc",
+        ]
+    );
+
+    // The seat lines the chapter shows are the ones `check` prints.
+    for dcv in ["tbn-coupon.dcv", "dc-tbn.dcv"] {
+        let (code, report) = dreamcarve(&dir, &["check", dcv]);
+        assert_eq!(code, Some(0), "{report}");
+        let seat = report
+            .lines()
+            .find(|l| l.contains(" seat: moves "))
+            .unwrap_or_else(|| panic!("check prints the seat line of {dcv}: {report}"));
+        assert!(
+            text.contains(seat),
+            "{TAPERED} shows the seat line `check` prints for {dcv}: {seat}"
+        );
+    }
+
+    // The end mill's programs, held to the checks a reader can make on
+    // the program alone: the female on its 12 mm stock, the male on its
+    // 19 mm board, the cut-out 0.2 mm through it.
+    let read = |name: &str| std::fs::read_to_string(dir.join(name)).expect("program readable");
+    let end_mill = |floor_mm, stock_mm| Limits {
+        safe_z_mm: 10.0,
+        floor_mm,
+        stock_mm,
+        radius_mm: 1.5875,
+        feed_mm_min: 1000.0,
+        plunge_mm_min: 300.0,
+        spindle: "M3 S18000",
+        cone_half_angle_deg: None,
+    };
+    for (stem, stock_mm) in [("tbn-coupon", (60.0, 60.0)), ("dc-tbn", (110.0, 80.0))] {
+        for (board, floor_mm) in [("female-1", 12.0), ("male-1", 19.0), ("male-3", 19.2)] {
+            let name = format!("{stem}-{board}-T3.nc");
+            assert_program_safe(&name, &read(&name), &end_mill(floor_mm, stock_mm));
+        }
+    }
+}
+
+/// #683: the Warnings chapter lists every code sub-phase 3.6 added
+/// (functional spec, capability 49l), and says what `v_bit_cone_exceeded`,
+/// `v_carve_needs_v_bit` and `countersink_needs_v_bit` mean for a tapered
+/// ball nose; the tapered ball nose chapter names each new code too.
+#[test]
+fn warnings_chapter_lists_the_tapered_codes() {
+    let text = chapter_text(WARNINGS);
+    let guide = chapter_text(TAPERED_GUIDE);
+    for code in [
+        "tapered_ball_nose_range",
+        "inlay_too_narrow_for_bit",
+        "tapered_corners_softened",
+        "inlay_glue_gap_below_ball",
+        "inlay_plug_depth_below_ball",
+        "inlay_rounded_for_bit",
+        "tool_value_unset",
+    ] {
+        assert!(
+            text.contains(&format!("| `{code}` |")),
+            "{WARNINGS} lists `{code}`"
+        );
+        assert!(
+            guide.contains(&format!("`{code}`")),
+            "{TAPERED_GUIDE} names `{code}`"
+        );
+    }
+    for (code, needles) in [
+        (
+            "v_bit_cone_exceeded",
+            &[
+                "tapered ball nose",
+                "cutting height",
+                "flutes",
+                "cutting diameter",
+            ][..],
+        ),
+        ("v_carve_needs_v_bit", &["tapered ball nose"][..]),
+        ("countersink_needs_v_bit", &["tapered ball nose"][..]),
+    ] {
+        let row = text
+            .lines()
+            .find(|l| l.starts_with(&format!("| `{code}` |")))
+            .unwrap_or_else(|| panic!("{WARNINGS} lists `{code}`"));
+        for needle in needles {
+            assert!(
+                row.contains(needle),
+                "{WARNINGS}'s `{code}` row says `{needle}`"
+            );
+        }
+    }
+}
