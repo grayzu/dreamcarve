@@ -209,6 +209,32 @@ fn tapered_inlays_seat() {
     report(&outcome);
 }
 
+/// #704 (found by the tapered sweep, #681): lettering seed `0x5b` with
+/// the Ultra bit, drawn 3× larger (30° V-bit case, inch program), as the
+/// female and the male with a cut-out, generates, passes S1–S19 and
+/// seats. The cut-out's path, the band's edge inset 1.5875 mm, came back
+/// from the offset with segments nanometres long where the edge's curve
+/// has about that radius; the outline test took one and its neighbour,
+/// going on the same way 2° apart, to overlap, and the generator refused
+/// the path as crossing itself. dc-geometry's
+/// `a_tiny_segment_going_on_the_same_way_is_no_crossing` is its minimal
+/// case. About a minute in a release build, so it runs with the sweep.
+#[test]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
+fn cut_out_of_lettering_0x5b_with_the_ultra_bit_is_cut() {
+    let mut c = tapered_case("lettering", 0x5b, lettering::lettering(0x5b), Bit::Ultra);
+    c.ops
+        .retain(|(kind, _)| [Kind::Female, Kind::MaleCutOut].contains(kind));
+    let outcome = carve(&c, Seats::All, true);
+    assert_eq!(outcome.carved, 2, "{outcome:?}");
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+}
+
 /// The large sweep for a tapered ball nose: `STRESS_CASES` (default
 /// [`SWEEP_CASES`]) full-size designs of each family from `STRESS_SEED`,
 /// each with both bench bits, every male's two boards seated, on every
