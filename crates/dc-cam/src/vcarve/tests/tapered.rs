@@ -919,3 +919,122 @@ fn v_bit_programs_are_unchanged() {
         .collect();
     assert!(changed.is_empty(), "{changed:#?}");
 }
+
+/// #705 (the tapered sweep's lettering `0x60`, Fine bit, drawn 6×
+/// larger): the carve reaches the walls of a point the Inlay rounded to
+/// `R_min`, though its chain runs past the round end's centre. The
+/// female's design, rounded for the bit, has a point of about 87° rounded
+/// to 1.193 mm, drawn as chords about 0.12 mm long, about the centre `C`
+/// (26.227, 162.750). The letter is large, so its medial axis is sampled
+/// 0.93 mm apart, and the node at `C` was merged into the spine's node
+/// 0.58 mm down the bisector: the graph ran straight from there to a node
+/// 0.16 mm past `C`, on the axis toward one of the chords' corners (both
+/// nodes here as the graph gave them). Fitting sought the axis only from
+/// the nearest wall of each point it read on the stretch, and the stretch
+/// passes `C` on the side away from the arc, so no point read had its
+/// nearest wall on the arc and none found `C`: the carve stopped
+/// 0.0126 mm short of the arc's middle, and the plug stood 0.107 mm proud
+/// there. The carve reaches the middle of every chord of the arc, the
+/// walls the disc at `C` touches, within the fit's axis tolerance.
+#[test]
+fn tapered_carve_reaches_a_rounded_point_past_its_centre() {
+    let arc = [
+        (25.969_10, 163.914_08),
+        (25.874_14, 163.890_25),
+        (25.748_47, 163.843_23),
+        (25.628_85, 163.782_42),
+        (25.516_81, 163.708_60),
+        (25.413_73, 163.622_69),
+        (25.320_93, 163.525_78),
+        (25.239_57, 163.419_08),
+        (25.170_67, 163.303_94),
+        (25.115_11, 163.181_80),
+        (25.073_57, 163.054_21),
+        (25.046_59, 162.922_77),
+        (25.034_51, 162.789_14),
+        (25.037_46, 162.654_99),
+        (25.050_58, 162.557_95),
+    ];
+    // The point's two walls, closed far beyond it.
+    let mut outline: Vec<(f64, f64)> = vec![(37.6, 166.83)];
+    outline.extend_from_slice(&arc);
+    outline.extend_from_slice(&[(25.883_58, 158.236_63), (37.6, 158.24)]);
+    let contour = Contour::new(polygon(&outline)).expect("an outline");
+    let region = nest(vec![contour]).expect("one region").0.remove(0);
+    let profile = fine_profile();
+    let slope = profile.slope();
+    let walls = Walls::new(
+        std::slice::from_ref(&region),
+        wall_tolerance_mm(dc_geometry::FLATTEN_TOLERANCE_DEFAULT_MM, slope),
+    );
+    let (spine, past) = (Point::new(26.7125, 162.4248), Point::new(26.1730, 162.9000));
+    let chain = graph(
+        &[
+            (spine.x, spine.y, walls.clearance_mm(spine)),
+            (past.x, past.y, walls.clearance_mm(past)),
+        ],
+        &[&[1], &[0]],
+    );
+    let top_mm = 12.0;
+    let depth = Depth {
+        start_plane_z_mm: top_mm,
+        flat_depth_mm: Some(2.129),
+        profile,
+    };
+    let axis_mm = wall_tolerance_mm(medial::EDGE_MM, slope);
+    let tolerances = Tolerances {
+        simplify_mm: axis_mm,
+        redundancy_mm: axis_mm,
+        deepen_mm: None,
+        axis_mm: Some(axis_mm),
+        written_mm: 0.0,
+        grid: None,
+    };
+    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]);
+    let mut moves: Vec<(Point3, Point3)> = Vec::new();
+    for run in &runs {
+        let mut from = run.start;
+        for step in &run.steps {
+            moves.push((from, step.to));
+            from = step.to;
+        }
+    }
+    // How far short of `q` the moves' discs at the start plane stop, each
+    // move read every micrometre.
+    let short_of = |q: Point| {
+        let mut reach = f64::NEG_INFINITY;
+        for &(a, b) in &moves {
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a short move's length in micrometres"
+            )]
+            let n = (a.xy().distance_to(b.xy()) / 0.001).ceil().max(1.0) as u32;
+            for k in 0..=n {
+                let t = f64::from(k) / f64::from(n);
+                let p = Point3::new(
+                    a.x + (b.x - a.x) * t,
+                    a.y + (b.y - a.y) * t,
+                    a.z + (b.z - a.z) * t,
+                );
+                reach = reach.max(profile.half_width_mm(top_mm - p.z) - p.xy().distance_to(q));
+            }
+        }
+        -reach
+    };
+    let (short_mm, at) = arc
+        .windows(2)
+        .map(|pair| {
+            let [(x0, y0), (x1, y1)] = pair else {
+                unreachable!("a window of two")
+            };
+            let q = Point::new((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+            (short_of(q), q)
+        })
+        .max_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("the arc has chords");
+    assert!(
+        short_mm <= axis_mm + 1e-4,
+        "the carve stops {short_mm:.4} mm short of the arc at {at:?}, past {axis_mm:.4}: {moves:?}"
+    );
+}

@@ -265,3 +265,27 @@ fn tapered_sweep() {
     println!("tapered sweep: {count} designs of each family from seed {first}, both bits");
     report(&all.into_inner().expect("the threads are done"));
 }
+
+/// #705 (found by the sweep): lettering `0x60` with the Fine bit, drawn
+/// 6× larger (`D` 2.129, `G` 1.629, `P` 2.908, inch program), its female
+/// and V-wall male, seats. The plug stood 0.107 mm proud 0.03 mm inside a
+/// point the Inlay rounded to `R_min` (1.194 mm): the letter's medial axis
+/// is sampled 0.93 mm apart, which merged the node at the round end's
+/// centre into the spine's, and fitting found no point of the stretch
+/// past it whose nearest wall was the arc, so the female's carve stopped
+/// 0.0126 mm short of it (dc-cam's
+/// `tapered_carve_reaches_a_rounded_point_past_its_centre`). The
+/// full-size design through S1–S19 and the seat check takes about a
+/// minute and a half in a release build, so it runs with the sweep.
+#[test]
+#[ignore = "slow: the sweep's full-size design; run with --release -- --ignored"]
+fn lettering_0x60_seats_at_a_rounded_point() {
+    let mut c = tapered_case("lettering", 0x60, lettering::lettering(0x60), Bit::Fine);
+    c.ops
+        .retain(|(kind, _)| [Kind::Female, Kind::MaleVWall].contains(kind));
+    let outcome = carve(&c, Seats::All, true);
+    assert!(
+        outcome.seated == 1 && outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{outcome:?}"
+    );
+}

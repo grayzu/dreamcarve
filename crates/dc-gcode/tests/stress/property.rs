@@ -466,15 +466,10 @@ fn known_issue(case: &Case, kind: Kind) -> Option<u32> {
 }
 
 /// Seat failures of the sweeps' designs, each with the open issue it is
-/// filed under: family, seed, operation, issue. #705: the tapered sweep's
-/// lettering `0x60` with the Fine bit, whose female's carve stops
-/// 0.013 mm short of a rounded point, 0.107 mm in height.
-const KNOWN_CASES: [(&str, u64, Kind, u32); 4] = [
-    ("tapered lettering (Fine)", 0x60, Kind::MaleVWall, 705),
-    ("tapered lettering (Fine)", 0x60, Kind::MaleOpenEdge, 705),
-    ("tapered lettering (Fine)", 0x60, Kind::MaleRounded, 705),
-    ("tapered lettering (Fine)", 0x60, Kind::MaleCutOut, 705),
-];
+/// filed under: family, seed, operation, issue. None is open: #705's
+/// (the tapered sweep's lettering `0x60`, Fine bit) seats since its fix
+/// (`tapered::lettering_0x60_seats_at_a_rounded_point`).
+const KNOWN_CASES: [(&str, u64, Kind, u32); 0] = [];
 
 /// The validation problems a valid design may still raise with the
 /// settings drawn: as [`explains`], each names a setting that does not
