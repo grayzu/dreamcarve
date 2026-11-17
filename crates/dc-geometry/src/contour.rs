@@ -7,7 +7,7 @@
 
 use crate::offset::to_cavalier;
 use crate::point::{EPS_MM, Point};
-use crate::polyline::Polyline;
+use crate::polyline::{Polyline, Segment};
 use crate::{DegenerateReason, GeometryError};
 use cavalier_contours::polyline::{
     PlineIntersect, PlineSelfIntersectOptions, PlineSource, SelfIntersectsInclude,
@@ -28,7 +28,11 @@ impl Contour {
     /// even at a single point, or neighbours meet anywhere but their shared
     /// vertex (an arc that loops back over the next segment, or a spike
     /// that doubles back). Arcs are tested as true arcs. Vertices repeated
-    /// back to back are ignored, as zero-length segments.
+    /// back to back are ignored, as zero-length segments, and neighbours
+    /// that go on the same way round at their shared vertex are not taken
+    /// to overlap however short one is (#704: an inward offset leaves
+    /// segments nanometres long where a curve's radius is about the
+    /// offset).
     pub fn new(polyline: Polyline) -> Result<Self, GeometryError> {
         let contour = Self::oriented(polyline)?;
         match first_self_intersection(contour.polyline()) {
@@ -124,9 +128,41 @@ fn first_self_intersection(polyline: &Polyline) -> Option<Point> {
         out
     };
     let at_shared = |p: Point, shared: &[Point]| shared.iter().any(|s| s.distance_to(p) <= EPS_MM);
+    // Segment `i`, as the crate's segment.
+    let segment_at = |i: usize| {
+        let v = pline.at(i);
+        Segment {
+            start: position(i),
+            end: position(pline.next_wrapping_index(i)),
+            bulge: v.bulge,
+        }
+    };
+    // #704: whether segment `i` runs on into segment `j` the same way
+    // round at their shared vertex, `i`'s tangent at its end within a
+    // quarter turn of `j`'s at its start.
+    let goes_on = |i: usize, j: usize| {
+        let (a, b) = (segment_at(i), segment_at(j));
+        match (a.point_at(a.length_mm()), b.point_at(0.0)) {
+            (Some((_, out)), Some((_, into))) => out.dot(into) > 0.0,
+            _ => false,
+        }
+    };
+    // Neighbours `i` and `j` that go on the same way round at every
+    // vertex they share: with each no more than a half turn, they meet
+    // only there, so an overlap reported between them is
+    // cavalier_contours' tolerance taking a very short segment for one
+    // along the other, not a segment running back over the other.
+    let run_on = |i: usize, j: usize| {
+        let into_j = pline.next_wrapping_index(i) == j;
+        let into_i = pline.next_wrapping_index(j) == i;
+        (into_j || into_i) && (!into_j || goes_on(i, j)) && (!into_i || goes_on(j, i))
+    };
 
     let mut first: Option<(usize, f64, Point)> = None;
-    let mut consider = |i: usize, j: usize, points: &[Point]| {
+    let mut consider = |i: usize, j: usize, points: &[Point], overlap: bool| {
+        if overlap && run_on(i, j) {
+            return;
+        }
         let shared = shared(i, j);
         // Neighbours always meet at their shared vertex; that alone is fine.
         let Some(&at) = points.iter().find(|p| !at_shared(**p, &shared)) else {
@@ -149,6 +185,7 @@ fn first_self_intersection(polyline: &Polyline) -> Option<Point> {
             b.start_index1,
             b.start_index2,
             &[Point::new(b.point.x, b.point.y)],
+            false,
         ),
         PlineIntersect::Overlapping(o) => consider(
             o.start_index1,
@@ -157,6 +194,7 @@ fn first_self_intersection(polyline: &Polyline) -> Option<Point> {
                 Point::new(o.point1.x, o.point1.y),
                 Point::new(o.point2.x, o.point2.y),
             ],
+            true,
         ),
     };
     pline.visit_self_intersects_opt(&mut visitor, &options);
