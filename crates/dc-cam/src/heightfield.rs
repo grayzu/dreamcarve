@@ -7,9 +7,10 @@
 //!
 //! Runs are cut into a grid of heights. A cell keeps the
 //! lowest Z any tool's surface reaches over it: a V-bit's cone, `|q − p| /
-//! slope` above its tip, or an end mill's flat disc. Each cell's height is
-//! exact for every straight move (the cone's least height over a move is
-//! found in closed form, the disc's at the lower end of the stretch it
+//! slope` above its tip, a tapered ball nose's ball and cone, `w⁻¹(|q − p|)`
+//! above it (#679), or an end mill's flat disc. Each cell's height is
+//! exact for every straight move (the cone's and the ball's least height
+//! over a move are found in closed form, the disc's at the lower end of the stretch it
 //! covers); arcs are cut as chords within [`CHORD_MM`]. A coarse grid
 //! therefore samples the true surface at fewer points, but never reports
 //! a cell higher than the programs leave it.
@@ -30,6 +31,7 @@
 
 use crate::run::ToolRun;
 use crate::toolpath::{Move, MoveKind, Toolpath};
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{Arc, Point, Point3, Rect};
 
 /// How far an arc's chords may stray from it, mm.
@@ -42,6 +44,16 @@ pub(crate) enum Cutter {
     VBit {
         /// `tan(α/2)`.
         slope: f64,
+    },
+    /// A tapered ball nose (slice 27c, #679): a ball of `tip_radius_mm`
+    /// tangent to a cone of `slope` (`tan β`), capped at `cap_radius_mm`.
+    TaperedBall {
+        /// The ball's radius `ρ`, mm.
+        tip_radius_mm: f64,
+        /// `tan β`.
+        slope: f64,
+        /// Half the cutting diameter, mm.
+        cap_radius_mm: f64,
     },
     /// An end mill's flat bottom.
     Flat {
@@ -145,6 +157,7 @@ impl Heightfield {
         let low_mm = a.z.min(b.z);
         let reach_mm = match cutter {
             Cutter::VBit { slope } => (self.top_z_mm - low_mm) * slope,
+            Cutter::TaperedBall { cap_radius_mm, .. } => cap_radius_mm,
             Cutter::Flat { radius_mm } => radius_mm,
         };
         if low_mm >= self.top_z_mm || reach_mm <= 0.0 {
@@ -168,6 +181,20 @@ impl Heightfield {
                 let q = self.sample(i, j);
                 let z = match cutter {
                     Cutter::VBit { slope } => cone_low_mm(a, b, q, slope),
+                    Cutter::TaperedBall {
+                        tip_radius_mm,
+                        slope,
+                        cap_radius_mm,
+                    } => profile_low_mm(
+                        a,
+                        b,
+                        q,
+                        &BitProfile::TaperedBall {
+                            tip_radius_mm,
+                            slope,
+                            cap_radius_mm,
+                        },
+                    ),
                     Cutter::Flat { radius_mm } => disc_low_mm(a, b, q, radius_mm),
                 };
                 let cell = &mut self.z_mm[j * self.nx + i];
@@ -196,6 +223,128 @@ pub(crate) fn carved_z_mm(toolpath: &Toolpath, q: Point, slope: f64) -> f64 {
             }
         }
         from = Some(mv.to);
+    }
+    low
+}
+
+/// The lowest a bit of `profile` reaches over `q` along any cutting move
+/// of `toolpath`, mm (infinite when it cuts nothing), as
+/// [`carved_z_mm`] reads a V-bit's.
+pub(crate) fn carved_profile_z_mm(toolpath: &Toolpath, q: Point, profile: &BitProfile) -> f64 {
+    let mut low = f64::INFINITY;
+    let mut from: Option<Point3> = None;
+    for mv in &toolpath.moves {
+        if let Some(a) = from
+            && mv.is_cut()
+        {
+            for (p, r) in chords(a, mv) {
+                low = low.min(profile_low_mm(p, r, q, profile));
+            }
+        }
+        from = Some(mv.to);
+    }
+    low
+}
+
+/// The lowest a bit of `profile` reaches over `q` while its tip runs
+/// straight from `a` to `b`.
+pub(crate) fn profile_low_mm(a: Point3, b: Point3, q: Point, profile: &BitProfile) -> f64 {
+    match *profile {
+        BitProfile::VBit { slope } => cone_low_mm(a, b, q, slope),
+        BitProfile::TaperedBall {
+            tip_radius_mm,
+            slope,
+            cap_radius_mm,
+        } => tapered_low_mm(a, b, q, profile, (tip_radius_mm, slope, cap_radius_mm)),
+    }
+}
+
+/// The lowest a tapered ball nose reaches over `q` while its tip runs
+/// straight from `a` to `b` (design "Algorithms →
+/// Tapered ball nose", step 8): the least over `t` of `z(t) + w⁻¹(|q −
+/// p(t)|)`, which is convex in `t` (`w⁻¹` is convex and increasing, the
+/// distance convex), infinite past the cap `R`, where the bit is a
+/// cylinder that reaches no lower than `h_R` over a cell beside it. The
+/// move is split where the distance crosses `w_t` and `R`, and on each
+/// piece the least is at an end or the piece's stationary point clamped
+/// to it, in closed form: on the cone the V-bit's with the virtual apex
+/// (`w⁻¹(r) = r / t − δ`, whose offset moves no stationary point), in the
+/// ball the lowest point where the vertical through `q` meets the capsule
+/// the ball sweeps, from `L s = −dz √(ρ² − off² − s²)` squared (a
+/// quadratic in the along-move offset `s`). `(ρ, t, R)` are the
+/// profile's.
+fn tapered_low_mm(
+    a: Point3,
+    b: Point3,
+    q: Point,
+    profile: &BitProfile,
+    (rho, slope, cap_mm): (f64, f64, f64),
+) -> f64 {
+    let w_t = profile.tangent_half_width_mm();
+    let delta = profile.apex_offset_mm();
+    // `w⁻¹(r)`, the cap's own height at `R` (the cone's top edge) and no
+    // reach beyond it.
+    let height = |r: f64| {
+        if r > cap_mm {
+            f64::INFINITY
+        } else if r <= w_t {
+            rho - ((rho - r) * (rho + r)).max(0.0).sqrt()
+        } else {
+            r / slope - delta
+        }
+    };
+    let (dx, dy, dz) = (b.x - a.x, b.y - a.y, b.z - a.z);
+    let at = |t: f64| {
+        let p = Point::new(a.x + dx * t, a.y + dy * t);
+        a.z + dz * t + height(q.distance_to(p))
+    };
+    let length = dx.hypot(dy);
+    if length < 1e-12 {
+        return at(if a.z <= b.z { 0.0 } else { 1.0 });
+    }
+    let (ux, uy) = (dx / length, dy / length);
+    let (qx, qy) = (q.x - a.x, q.y - a.y);
+    // Along the move to the foot of `q`, mm, and the distance off it.
+    let along = qx * ux + qy * uy;
+    let off = (qx * uy - qy * ux).abs();
+    let mut knots = vec![0.0, 1.0];
+    for r in [w_t, cap_mm] {
+        if off < r {
+            let half = ((r - off) * (r + off)).sqrt();
+            knots.extend(
+                [along - half, along + half]
+                    .iter()
+                    .map(|s| s / length)
+                    .filter(|t| 0.0 < *t && *t < 1.0),
+            );
+        }
+    }
+    knots.sort_by(f64::total_cmp);
+    knots.dedup();
+    let mut low = f64::INFINITY;
+    for pair in knots.windows(2) {
+        let &[lo, hi] = pair else { continue };
+        let mid = 0.5 * (lo + hi);
+        let r_mid = q.distance_to(Point::new(a.x + dx * mid, a.y + dy * mid));
+        let stationary = if r_mid <= w_t {
+            // The ball: `f′ = dz + L s / √(ρ² − off² − s²)`, `s = L t −
+            // along`.
+            let s = -dz * ((rho - off) * (rho + off)).max(0.0).sqrt() / length.hypot(dz);
+            Some((along + s) / length)
+        } else if r_mid <= cap_mm {
+            // The cone, as [`cone_low_mm`]: a move that falls faster than
+            // the cone widens is least at an end.
+            let k = -dz * slope / length;
+            (k.abs() < 1.0).then(|| (along + k * off / (1.0 - k * k).sqrt()) / length)
+        } else {
+            continue;
+        };
+        for t in [lo, hi]
+            .into_iter()
+            .chain(stationary.map(|t| t.clamp(lo, hi)))
+        {
+            low = low.min(at(t));
+        }
     }
     low
 }
@@ -287,4 +436,124 @@ fn disc_low_mm(a: Point3, b: Point3, q: Point, radius_mm: f64) -> f64 {
     }
     let z = |t: f64| a.z + (b.z - a.z) * t;
     z(t0).min(z(t1))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bench's Ultra-High Detail bit: tip radius 0.381 mm, 6.7° per
+    /// side, cutting diameter 6.35 mm.
+    fn ultra() -> (Cutter, BitProfile) {
+        let (tip_radius_mm, slope, cap_radius_mm) = (0.381, 6.7_f64.to_radians().tan(), 3.175);
+        (
+            Cutter::TaperedBall {
+                tip_radius_mm,
+                slope,
+                cap_radius_mm,
+            },
+            BitProfile::TaperedBall {
+                tip_radius_mm,
+                slope,
+                cap_radius_mm,
+            },
+        )
+    }
+
+    /// Design step 8: in a plunge, a cell 0.2 mm from the axis (in the
+    /// ball, under `w_t` 0.378) is `w⁻¹(0.2) = ρ − √(ρ² − 0.04)` above the
+    /// tip, and one 1 mm out is on the cone, `1 / t − δ` above it.
+    #[test]
+    fn tapered_tool_drops_as_ball_then_cone() {
+        let (cutter, profile) = ultra();
+        let top_mm = 20.0;
+        let tip = Point3::new(0.0, 0.0, 12.0);
+        let mut field = Heightfield::new(
+            Rect {
+                min: Point::new(-2.0, -2.0),
+                max: Point::new(2.0, 2.0),
+            },
+            0.1,
+            top_mm,
+            None,
+        );
+        field.cut_segment(Point3::new(0.0, 0.0, top_mm + 1.0), tip, cutter);
+        let (nx, ny) = field.size();
+        let cell_at = |x: f64| {
+            let mut best = (0, 0);
+            for j in 0..ny {
+                for i in 0..nx {
+                    let c = field.cell(i, j);
+                    let b = field.cell(best.0, best.1);
+                    if (c.x - x).abs() + c.y.abs() < (b.x - x).abs() + b.y.abs() {
+                        best = (i, j);
+                    }
+                }
+            }
+            best
+        };
+        let rho: f64 = 0.381;
+        for x in [0.2, 1.0] {
+            let (i, j) = cell_at(x);
+            let r = field.cell(i, j).distance_to(Point::new(0.0, 0.0));
+            assert!((r - x).abs() < 1e-9, "the cell at {r}");
+            let want = if x < profile.tangent_half_width_mm() {
+                rho - (rho * rho - r * r).sqrt()
+            } else {
+                r / profile.slope() - profile.apex_offset_mm()
+            };
+            assert!(
+                (field.z_mm(i, j) - (tip.z + want)).abs() < 1e-9,
+                "{x} mm out: {} above the tip, want {want}",
+                field.z_mm(i, j) - tip.z
+            );
+            assert!((want - profile.height_mm(r).expect("below the cap")).abs() < 1e-12);
+        }
+    }
+
+    /// Design step 8: a cell's height under a straight move that descends
+    /// as it goes is the least of `z(τ) + w⁻¹(|q − p(τ)|)`, exactly: never
+    /// above a 10⁵-sample brute force of it, and within its sampling error
+    /// below, for cells in the ball's reach, on the cone and past the cap.
+    #[test]
+    fn tapered_descending_move_is_exact() {
+        let (_, profile) = ultra();
+        let moves = [
+            (Point3::new(0.0, 0.0, 10.0), Point3::new(4.0, 1.0, 9.6)),
+            (Point3::new(1.0, -1.0, 9.0), Point3::new(-2.0, 0.5, 8.0)),
+            (Point3::new(0.0, 0.0, 10.0), Point3::new(0.3, 0.0, 9.0)),
+            (Point3::new(-1.0, 0.0, 9.95), Point3::new(1.0, 0.0, 9.9)),
+        ];
+        let cells = [
+            Point::new(0.1, 0.05),
+            Point::new(2.0, 0.6),
+            Point::new(2.0, 0.2),
+            Point::new(0.15, -0.1),
+            Point::new(-1.0, 2.0),
+            Point::new(3.0, -3.5),
+            Point::new(0.0, 0.0),
+        ];
+        let height = |r: f64| profile.height_mm(r).unwrap_or(f64::INFINITY);
+        for (a, b) in moves {
+            for q in cells {
+                let exact = profile_low_mm(a, b, q, &profile);
+                let n = 100_000;
+                let brute = (0..=n)
+                    .map(|k| {
+                        let t = f64::from(k) / f64::from(n);
+                        let p = Point::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+                        a.z + (b.z - a.z) * t + height(q.distance_to(p))
+                    })
+                    .fold(f64::INFINITY, f64::min);
+                assert!(
+                    exact <= brute + 1e-12 || (exact.is_infinite() && brute.is_infinite()),
+                    "{a:?} → {b:?} over {q:?}: {exact} above the brute force's {brute}"
+                );
+                assert!(
+                    exact.is_infinite() || exact >= brute - 1e-4,
+                    "{a:?} → {b:?} over {q:?}: {exact} far below the brute force's {brute}"
+                );
+            }
+        }
+    }
 }

@@ -242,6 +242,10 @@ pub enum WarningCode {
     /// so its full-depth grooves overlap and leave no ridge between them.
     /// Validation reports it too.
     PhotoLinesOverlap,
+    /// A V-Carve cut with a tapered ball nose has convex corners sharper
+    /// than the bit's ball can follow below the surface (slice 27c, #679;
+    /// functional 49j): their walls meet in a round valley.
+    TaperedCornersSoftened,
 }
 
 impl WarningCode {
@@ -306,6 +310,7 @@ impl WarningCode {
             Self::InlayBoundaryEmpty => "inlay_boundary_empty",
             Self::InlayBoundaryHoleIgnored => "inlay_boundary_hole_ignored",
             Self::PhotoLinesOverlap => "photo_lines_overlap",
+            Self::TaperedCornersSoftened => "tapered_corners_softened",
         }
     }
 }
@@ -1049,6 +1054,25 @@ pub enum Warning {
         /// Its `line_spacing_fraction`, below 1.
         fraction: f64,
     },
+    /// [`WarningCode::TaperedCornersSoftened`]: the carve's regions differ
+    /// from their opening by the bit's `w_t` (`(X ⊖ w_t) ⊕ w_t`, round
+    /// joins) by more than the flatten tolerance, in `count` pieces.
+    TaperedCornersSoftened {
+        /// The V-Carve.
+        op: OperationId,
+        /// How many pieces of the carve the opening changes.
+        count: usize,
+        /// Where the farthest change is, mm, project space: the point of
+        /// the outline as drawn that lies farthest from the opening.
+        x_mm: f64,
+        /// See `x_mm`.
+        y_mm: f64,
+        /// How far that point lies from the opening, mm.
+        change_mm: f64,
+        /// The radius a corner must be rounded by to be cut as drawn: the
+        /// bit's `w_t = ρ cos β`, mm.
+        radius_mm: f64,
+    },
 }
 
 impl Warning {
@@ -1135,6 +1159,7 @@ impl Warning {
             Self::InlayBoundaryEmpty { .. } => WarningCode::InlayBoundaryEmpty,
             Self::InlayBoundaryHoleIgnored { .. } => WarningCode::InlayBoundaryHoleIgnored,
             Self::PhotoLinesOverlap { .. } => WarningCode::PhotoLinesOverlap,
+            Self::TaperedCornersSoftened { .. } => WarningCode::TaperedCornersSoftened,
         }
     }
 
@@ -1190,6 +1215,7 @@ impl Warning {
             | Self::InlayBoundaryEmpty { op, .. }
             | Self::InlayBoundaryHoleIgnored { op, .. }
             | Self::PhotoLinesOverlap { op, .. }
+            | Self::TaperedCornersSoftened { op, .. }
             | Self::InlayMaleBoardUnset { op } => Some(op),
             Self::OpenPathSkipped { .. }
             | Self::SideNeedsOpenPath { .. }
@@ -1263,6 +1289,7 @@ impl Warning {
             | Self::InlayBoundaryEmpty { .. }
             | Self::InlayBoundaryHoleIgnored { .. }
             | Self::PhotoLinesOverlap { .. }
+            | Self::TaperedCornersSoftened { .. }
             | Self::InlayMaleBoardUnset { .. } => None,
         }
     }
@@ -2047,6 +2074,23 @@ impl fmt::Display for Warning {
                 f,
                 "its line_spacing_fraction {} is less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges",
                 rounded(*fraction, 4)
+            ),
+            Self::TaperedCornersSoftened {
+                count,
+                x_mm,
+                y_mm,
+                change_mm,
+                radius_mm,
+                ..
+            } => write!(
+                f,
+                "its tapered ball nose cannot follow {count} {} sharper than its tip below the surface, so {} walls meet in a round valley instead of a crease, up to {} mm from the corner as drawn at ({}, {}); round the corners by at least {} mm to cut them as the taper would",
+                if *count == 1 { "corner" } else { "corners" },
+                if *count == 1 { "its" } else { "their" },
+                rounded(*change_mm, 3),
+                rounded(*x_mm, 3),
+                rounded(*y_mm, 3),
+                rounded(*radius_mm, 3)
             ),
             Self::InlayMarginIgnored { field, .. } => write!(
                 f,
@@ -2909,6 +2953,17 @@ mod tests {
                 },
                 "its line_spacing_fraction 0.9 is less than 1, so its grooves overlap where the picture is darkest and no ridge is left between them; use 1 or more to keep the ridges",
             ),
+            (
+                Warning::TaperedCornersSoftened {
+                    op: op(),
+                    count: 4,
+                    x_mm: 20.0,
+                    y_mm: 40.0,
+                    change_mm: 0.156_6,
+                    radius_mm: 0.378_4,
+                },
+                "its tapered ball nose cannot follow 4 corners sharper than its tip below the surface, so their walls meet in a round valley instead of a crease, up to 0.157 mm from the corner as drawn at (20, 40); round the corners by at least 0.378 mm to cut them as the taper would",
+            ),
         ]
     }
 
@@ -2980,7 +3035,8 @@ mod tests {
             C::InlayMarginIgnored => C::InlayBoundaryEmpty,
             C::InlayBoundaryEmpty => C::InlayBoundaryHoleIgnored,
             C::InlayBoundaryHoleIgnored => C::PhotoLinesOverlap,
-            C::PhotoLinesOverlap => return None,
+            C::PhotoLinesOverlap => C::TaperedCornersSoftened,
+            C::TaperedCornersSoftened => return None,
         })
     }
 
@@ -3017,7 +3073,7 @@ mod tests {
             count += 1;
             code = next_code(c);
         }
-        assert_eq!(count, 57);
+        assert_eq!(count, 58);
     }
 
     #[test]

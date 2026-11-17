@@ -422,7 +422,7 @@ fn floor_rings_pass_the_cone_test() {
             panic!("a V-bit");
         };
         let slope = slope_of(included_angle_deg);
-        let cone_mm = cone_height_mm(&tool).expect("a cone");
+        let cone_mm = cutting_height_mm(&tool).expect("a cone");
         let regions = regions_of(&p, &op);
         let floor_blocks: Vec<CutBlock> = blocks_of(&p, &op)
             .into_iter()
@@ -443,7 +443,7 @@ fn floor_rings_pass_the_cone_test() {
                 &regions,
                 TOP_MM,
                 TOP_MM,
-                slope,
+                &dc_geometry::profile::BitProfile::VBit { slope },
                 cone_mm,
                 tolerance_mm,
             ) {

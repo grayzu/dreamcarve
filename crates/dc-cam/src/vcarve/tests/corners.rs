@@ -278,7 +278,7 @@ fn chain_along_a_wall_into_a_corner_is_fitted_to_its_axis() {
     let depth = Depth {
         start_plane_z_mm: 10.0,
         flat_depth_mm: None,
-        slope,
+        profile: BitProfile::VBit { slope },
     };
     let axis_mm = wall_tolerance_mm(medial::EDGE_MM, slope);
     let tolerances = Tolerances {

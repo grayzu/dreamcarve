@@ -229,7 +229,7 @@ impl Snap<'_> {
             .widening_clearance_holds(g.xy(), q.xy(), self.grid.margin_mm())
             && self
                 .walls
-                .least_room(g, q, self.depth.start_plane_z_mm, self.depth.slope)
+                .least_room(g, q, self.depth.start_plane_z_mm, &self.depth.profile)
                 .0
                 >= -FIT_SLACK_MM
             && self.edge.is_none_or(|edge| edge.allows(g, q))
@@ -283,7 +283,9 @@ mod tests {
         let depth = Depth {
             start_plane_z_mm: 10.0,
             flat_depth_mm: None,
-            slope: 7.5_f64.to_radians().tan(),
+            profile: dc_geometry::profile::BitProfile::VBit {
+                slope: 7.5_f64.to_radians().tan(),
+            },
         };
         let grid = WrittenGrid {
             origin: Point::new(0.0, 0.0),
@@ -334,7 +336,7 @@ mod tests {
             walls.widening_clearance_holds(first.xy(), to.xy(), w),
             "the move from {first:?} to {to:?} can cross a wall as written"
         );
-        let (room_mm, at) = walls.least_room(first, to, depth.start_plane_z_mm, depth.slope);
+        let (room_mm, at) = walls.least_room(first, to, depth.start_plane_z_mm, &depth.profile);
         assert!(
             room_mm >= -FIT_SLACK_MM,
             "the cone reaches {:.6} mm past a wall at {at:?}",

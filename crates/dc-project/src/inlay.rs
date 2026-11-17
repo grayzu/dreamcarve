@@ -22,9 +22,10 @@
 //! leave the band's own room there ([`MaleBand::board_room_mm`]).
 
 use crate::ids::{InstanceId, ToolId};
-use crate::model::{InlayOp, Operation, Project, Stock, ToolKind};
+use crate::model::{InlayOp, Operation, Project, Stock};
 use crate::project::closed_outlines;
 use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{
     BandClearance, Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Rect, Region, Transform,
     area_mm2, band_clearance, closed_band, drawn_band, intersection, merge_near_parts, nest,
@@ -238,14 +239,16 @@ fn slope_of(project: &Project, op: &InlayOp) -> Option<f64> {
 /// `tan(α/2)` of Inlay `op`'s V-bit, when it is one with an angle in (0°,
 /// 180°), and its radius, mm, as the tool gives it (`dc-cam` and the
 /// safety pass refuse a diameter that is not above 0 before they use it).
+/// Read from the bit's profile ([`crate::Tool::carve_profile`]); a
+/// tapered ball nose has none here until the Inlay's band reads its
+/// profile (slice 27e, #681), and the Inlay generator refuses it until
+/// then.
 fn v_bit_of(project: &Project, op: &InlayOp) -> Option<(f64, f64)> {
     let tool = project.tools.iter().find(|t| t.id == op.tool)?;
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return None;
-    };
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    (included_angle_deg > 0.0 && included_angle_deg < 180.0 && slope.is_finite() && slope > 0.0)
-        .then_some((slope, tool.diameter_mm / 2.0))
+    match tool.carve_profile()? {
+        BitProfile::VBit { slope } => Some((slope, tool.diameter_mm / 2.0)),
+        BitProfile::TaperedBall { .. } => None,
+    }
 }
 
 /// A positive finite length.

@@ -30,7 +30,7 @@ const FLOOR: (f64, f64, f64, f64) = (2.0, 2.0, 28.0, 8.0);
 
 /// A flat end mill `id` of `diameter_mm`, every rate set, stepping down
 /// 1 mm at a 0.4 step-over.
-fn end_mill(id: &str, diameter_mm: f64) -> Tool {
+pub(super) fn end_mill(id: &str, diameter_mm: f64) -> Tool {
     Tool {
         id: ToolId::new(id),
         name: format!("{diameter_mm} mm end mill"),
@@ -42,7 +42,7 @@ fn end_mill(id: &str, diameter_mm: f64) -> Tool {
 }
 
 /// A pass with `tool`, offset, climb, plunging.
-fn pass(tool: &str) -> ClearingPass {
+pub(super) fn pass(tool: &str) -> ClearingPass {
     ClearingPass {
         tool: ToolId::new(tool),
         strategy: ClearanceStrategy::Offset,
@@ -88,7 +88,7 @@ fn main_run(runs: &[ToolRun]) -> &Toolpath {
 }
 
 /// The clearing run of `runs` with `tool`.
-fn clearing_run<'r>(runs: &'r [ToolRun], tool: &str) -> &'r Toolpath {
+pub(super) fn clearing_run<'r>(runs: &'r [ToolRun], tool: &str) -> &'r Toolpath {
     &runs
         .iter()
         .find(|r| r.label == RunLabel::Clearing(ToolId::new(tool)))

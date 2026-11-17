@@ -12,22 +12,23 @@
 //! cone at `p` reaches `q` at `d − |q − p| / slope`, which the triangle
 //! inequality keeps above it everywhere when `d · slope ≤ dist(p, wall)`.
 //!
-//! Along a straight move the tip's distance to one straight wall segment is
-//! convex in the move's parameter and the disc's radius is linear in it,
-//! so their difference is convex and its minimum is found by a
-//! golden-section search to far below [`EPS_MM`]: no sampling step. Arcs
-//! are flattened to chords within the caller's tolerance first, as
-//! `dc_geometry::medial` flattens them, so the walls here are the walls
-//! the medial axis measured its clearances to.
+//! A tapered ball nose (slice 27c, #679) cuts nested discs too, `w(d)`
+//! across at depth `d` ([`BitProfile`]), so the same holds with `w(d)` in
+//! place of `d · slope`.
+//!
+//! Along a straight move the least room to each straight wall segment is
+//! found exactly, with no sampling step, by the shared
+//! [`dc_geometry::profile::least_room`] (#678): the V-bit's closed forms,
+//! the virtual apex on a TBN's cone, the ball's polynomial stationary
+//! points. Arcs are flattened to chords within the caller's tolerance
+//! first, as `dc_geometry::medial` flattens them, so the walls here are
+//! the walls the medial axis measured its clearances to.
 
 use dc_geometry::medial::point_in_loops;
+use dc_geometry::profile::{BitProfile, WallPiece, least_room};
 use dc_geometry::{
     EPS_MM, Point, Point3, Polyline, Region, Segment, Vec2, Vertex, segment_distance_mm,
 };
-
-/// Golden-section iterations per wall segment: 0.618⁸⁰ of a move's length
-/// is far below a nanometre for any move on the coordinate range.
-const SEARCH_ITERATIONS: usize = 80;
 
 /// Cells a side of the wall grid at most.
 const MAX_CELLS: f64 = 128.0;
@@ -384,7 +385,16 @@ impl Walls {
     /// piece's far end, which asks a little more than the exact test.
     pub(crate) fn widening_clearance_holds(&self, g: Point, q: Point, margin_mm: f64) -> bool {
         let at = |z: f64, p: Point| Point3::new(p.x, p.y, z);
-        if self.least_room(at(0.0, g), at(-margin_mm, q), 0.0, 1.0).0 < -EPS_MM {
+        if self
+            .least_room(
+                at(0.0, g),
+                at(-margin_mm, q),
+                0.0,
+                &BitProfile::VBit { slope: 1.0 },
+            )
+            .0
+            < -EPS_MM
+        {
             return false;
         }
         let lo = Point::new(g.x.min(q.x), g.y.min(q.y));
@@ -608,19 +618,29 @@ impl Walls {
     }
 
     /// The least, along the straight move `a`–`b`, of the tip's distance
-    /// to the walls less the cone's radius `(start_plane_z_mm − z) ·
-    /// slope` there, mm, with the point where it is least. Exact for the
-    /// walls within reach; walls beyond it count as `2 · EPS_MM` of room,
-    /// which is all a caller asks of them. A move with no XY motion is
-    /// read at its lower end.
+    /// to the walls less the radius of the disc `profile` cuts at the start
+    /// plane `start_plane_z_mm` there, mm, with the point where it is
+    /// least: `(start_plane − z) · slope` for a V-bit, `w(start_plane − z)`
+    /// for a tapered ball nose. Exact for the walls within reach, by
+    /// [`least_room`] against each wall segment; walls beyond it count as
+    /// `2 · EPS_MM` of room, which is all a caller asks of them. A move
+    /// with no XY motion is read at its lower end.
     pub(crate) fn least_room(
         &self,
         a: Point3,
         b: Point3,
         start_plane_z_mm: f64,
-        slope: f64,
+        profile: &BitProfile,
     ) -> (f64, Point3) {
-        let radius = |z: f64| (start_plane_z_mm - z) * slope;
+        // A V-bit's radius reads linearly on either side of the plane, as
+        // `least_room` reads it; a TBN's is 0 above it.
+        let radius = |z: f64| {
+            let d = start_plane_z_mm - z;
+            match *profile {
+                BitProfile::VBit { slope } => d * slope,
+                BitProfile::TaperedBall { .. } => profile.half_width_mm(d),
+            }
+        };
         let (a, b) = if a.xy().distance_to(b.xy()) <= EPS_MM {
             let low = if a.z <= b.z { a } else { b };
             (low, low)
@@ -644,16 +664,9 @@ impl Walls {
             .iter()
             .filter_map(|&i| self.segments.get(i))
         {
-            let room = |t: f64| {
-                let p = at(t);
-                point_segment(p.xy(), c, d) - radius(p.z)
-            };
-            let t = golden_minimum(&room);
-            for t in [0.0, t, 1.0] {
-                let g = room(t);
-                if g < best.0 {
-                    best = (g, at(t));
-                }
+            let (room_mm, t) = least_room(a, b, WallPiece::line(c, d), profile, start_plane_z_mm);
+            if room_mm < best.0 {
+                best = (room_mm, at(t));
             }
         }
         best
@@ -662,17 +675,17 @@ impl Walls {
 
 /// A male Inlay's open band edge (#448; `docs/specs/phase-3/design.md`,
 /// "Algorithms → Inlay", step 4): beyond these walls the board stands to
-/// the stock top, so the V-bit's cone may not cross them below it. The
-/// widest disc a cone cuts below the stock top is the one at the stock
-/// top, `(top − z) · slope` across for a tip at `z`.
+/// the stock top, so the bit may not cross them below it. The widest disc
+/// a bit cuts below the stock top is the one at the stock top, `w(top −
+/// z)` across for a tip at `z`.
 #[derive(Debug, Clone)]
 pub(crate) struct OpenEdgeWalls {
     /// The band's edge, `B`.
     pub walls: Walls,
     /// The stock top, mm.
     pub top_z_mm: f64,
-    /// The V-bit's `tan(α/2)`.
-    pub slope: f64,
+    /// The bit's profile.
+    pub profile: BitProfile,
 }
 
 impl OpenEdgeWalls {
@@ -680,33 +693,8 @@ impl OpenEdgeWalls {
     /// stock top within the walls all along it, exactly
     /// ([`Walls::least_room`]).
     pub(crate) fn allows(&self, a: Point3, b: Point3) -> bool {
-        self.walls.least_room(a, b, self.top_z_mm, self.slope).0 >= 0.0
+        self.walls.least_room(a, b, self.top_z_mm, &self.profile).0 >= 0.0
     }
-}
-
-/// The minimiser in [0, 1] of convex `f`, by golden-section search.
-fn golden_minimum(f: &impl Fn(f64) -> f64) -> f64 {
-    let ratio = (5.0_f64.sqrt() - 1.0) / 2.0;
-    let (mut lo, mut hi) = (0.0_f64, 1.0_f64);
-    let mut x1 = hi - ratio * (hi - lo);
-    let mut x2 = lo + ratio * (hi - lo);
-    let (mut f1, mut f2) = (f(x1), f(x2));
-    for _ in 0..SEARCH_ITERATIONS {
-        if f1 <= f2 {
-            hi = x2;
-            x2 = x1;
-            f2 = f1;
-            x1 = hi - ratio * (hi - lo);
-            f1 = f(x1);
-        } else {
-            lo = x1;
-            x1 = x2;
-            f1 = f2;
-            x2 = lo + ratio * (hi - lo);
-            f2 = f(x2);
-        }
-    }
-    (lo + hi) / 2.0
 }
 
 /// Distance, mm, from `p` to the segment `a`–`b`.
@@ -794,91 +782,5 @@ fn count_of(v: f64) -> usize {
         0
     } else {
         v.min(MAX_CELLS) as usize
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use dc_geometry::profile::{BitProfile, WallPiece, least_room};
-    use dc_geometry::{Contour, nest};
-
-    /// The shared `dc_geometry::profile::least_room` (#678) agrees with
-    /// [`Walls::least_room`] for a V-bit, cut by cut, over every wall:
-    /// never more room (this copy finds each wall's least by a
-    /// golden-section search, which can only land at or above the exact
-    /// least), and within 1e-9 of it. This copy is not a closed form, so
-    /// the two cannot agree bit for bit; slice 27c (#679) deletes it on
-    /// the strength of this.
-    #[test]
-    fn v_bit_least_room_matches_the_existing_closed_forms() {
-        let outline = Polyline::new(
-            [
-                (-2.0, -1.5),
-                (6.0, -1.5),
-                (6.0, 1.5),
-                (2.45, 1.5),
-                (2.4, 0.95),
-                (2.35, 1.5),
-                (-2.0, 1.5),
-            ]
-            .iter()
-            .map(|&(x, y)| Vertex::line(x, y))
-            .collect(),
-            true,
-        );
-        let hole = Polyline::rect(Point::new(4.0, -0.5), 1.0, 0.6);
-        let regions = nest(vec![
-            Contour::new(outline).expect("a notched bar"),
-            Contour::new(hole).expect("a hole"),
-        ])
-        .expect("one region")
-        .0;
-        let walls = Walls::new(&regions, 0.01);
-        let start_plane_z_mm = 10.0;
-        let cuts = [
-            ((-1.5, 0.0), (5.5, 0.2), 0.1, 1.2),
-            ((1.5, 0.0), (3.3, 0.0), 0.5, 0.5),
-            ((0.0, -1.0), (3.0, 1.2), 0.0, 1.4),
-            ((2.4, 0.5), (2.6, -1.0), 1.0, 0.2),
-            ((5.5, 1.0), (3.5, -1.2), 0.3, 0.9),
-            ((-1.9, 1.4), (5.9, -1.4), 0.05, 0.05),
-        ];
-        for slope in [
-            1.0,
-            15.0_f64.to_radians().tan(),
-            45.0_f64.to_radians().tan(),
-        ] {
-            for &((ax, ay), (bx, by), da, db) in &cuts {
-                let a = Point3::new(ax, ay, start_plane_z_mm - da);
-                let b = Point3::new(bx, by, start_plane_z_mm - db);
-                let (old_mm, _) = walls.least_room(a, b, start_plane_z_mm, slope);
-                // Walls beyond the cut's reach count as `2 · EPS_MM`.
-                let widest_mm = da.max(db) * slope;
-                let beyond_mm = widest_mm.max(0.0) + 2.0 * EPS_MM - widest_mm;
-                let new_mm = walls
-                    .segments
-                    .iter()
-                    .map(|&(c, d)| {
-                        least_room(
-                            a,
-                            b,
-                            WallPiece::line(c, d),
-                            &BitProfile::VBit { slope },
-                            start_plane_z_mm,
-                        )
-                        .0
-                    })
-                    .fold(beyond_mm, f64::min);
-                assert!(
-                    new_mm <= old_mm + 1e-12,
-                    "slope {slope} {a:?}–{b:?}: exact {new_mm} above the search's {old_mm}"
-                );
-                assert!(
-                    old_mm - new_mm <= 1e-9,
-                    "slope {slope} {a:?}–{b:?}: exact {new_mm} far below the search's {old_mm}"
-                );
-            }
-        }
     }
 }

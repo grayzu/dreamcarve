@@ -8,7 +8,7 @@
 //! "Crate boundaries"); `dc-cam` calls them.
 
 use crate::ids::InstanceId;
-use crate::model::{Bitmap, Operation, Project, ToolKind, VCarveOp};
+use crate::model::{Bitmap, Operation, Project, VCarveOp};
 use crate::validate::MAX_FLATTEN_TOLERANCE_MM;
 use dc_geometry::{
     Contour, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Polyline, Region, area_mm2, as_circle,
@@ -132,10 +132,11 @@ fn target_regions(project: &Project, targets: &[InstanceId]) -> Option<Vec<Regio
 }
 
 /// The floor regions of V-Carve `carve` (#426): its targets' regions
-/// inset by `F · tan(α/2)` with its own V-bit, less those too thin to cut
-/// (area at most `tolerance_mm` times the perimeter, the generator's
-/// noise rule). `None` without a flat depth above 0, without a V-bit
-/// with an angle in (0°, 180°), with a start depth that is not 0 or more,
+/// inset by its own bit's half-width at the flat depth, `w(F)` (`F ·
+/// tan(α/2)` for a V-bit; #679), less those too thin to cut (area at most
+/// `tolerance_mm` times the perimeter, the generator's noise rule).
+/// `None` without a flat depth above 0, without a usable V-bit or tapered
+/// ball nose ([`crate::Tool::carve_profile`]), with a start depth that is not 0 or more,
 /// or when the targets do not resolve.
 fn v_carve_floor(project: &Project, carve: &VCarveOp, tolerance_mm: f64) -> Option<Vec<Region>> {
     let flat_depth_mm = carve.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0)?;
@@ -143,14 +144,9 @@ fn v_carve_floor(project: &Project, carve: &VCarveOp, tolerance_mm: f64) -> Opti
         return None;
     }
     let tool = project.tools.iter().find(|t| t.id == carve.tool)?;
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return None;
-    };
-    if !(included_angle_deg > 0.0 && included_angle_deg < 180.0) {
-        return None;
-    }
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    let inset_mm = flat_depth_mm * slope;
+    // Slice 27c (#679): the bit's half-width at the flat depth, `w(F)`,
+    // which for a V-bit is `F · tan(α/2)`.
+    let inset_mm = tool.carve_profile()?.half_width_mm(flat_depth_mm);
     if !(inset_mm.is_finite() && inset_mm > 0.0) {
         return None;
     }
@@ -661,6 +657,35 @@ mod tests {
         );
         p.operations = vec![floored(&["i1"], Some(2.5), 0.0), carve(&["edge"])];
         assert_eq!(plane(&p), None, "an outline over the slope");
+    }
+
+    /// Slice 27c (#679): a V-Carve cut with a tapered ball nose has its
+    /// floor at the bit's half-width at the flat depth, `w(F)`, not `F ·
+    /// tan β`. The Fine bit carving the sample rectangle `i1` (x 10..60)
+    /// 2.5 mm flat has its floor from x 10 + `w(2.5)` = 11.310: a 5 mm
+    /// square from x 11.36 is on it (a V-bit of the same taper would put
+    /// the floor's edge at 10.294, and a 90° V-bit's at 12.5), one from
+    /// x 11.26 is over the slope.
+    #[test]
+    fn tapered_v_carve_floor_clears_its_start_plane() {
+        let floor_edge_mm = 10.0 + (2.5 + 8.6538) * 6.7_f64.to_radians().tan();
+        for (x, expected) in [
+            (floor_edge_mm + 0.05, Some(("v1", Some(2.5)))),
+            (floor_edge_mm - 0.05, None),
+        ] {
+            let mut p = shapes();
+            p.tools.push(crate::model::Tool {
+                id: crate::ids::ToolId::new("t9"),
+                ..crate::test_support::tool_tbn_fine()
+            });
+            place_rect(&mut p, "edge", x, 15.0, 5.0, 5.0);
+            let Operation::VCarve(mut tapered) = floored(&["i1"], Some(2.5), 0.0) else {
+                unreachable!("a V-Carve")
+            };
+            tapered.tool = crate::ids::ToolId::new("t9");
+            p.operations = vec![Operation::VCarve(tapered), carve(&["edge"])];
+            assert_eq!(plane(&p), expected, "a square from x {x}");
+        }
     }
 
     /// Issue #426: like a Pocket, a disabled V-Carve and one after the

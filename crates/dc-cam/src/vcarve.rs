@@ -15,6 +15,11 @@
 //! toolpath (step 10): a library crate never hands back motion it can
 //! prove wrong.
 //!
+//! Every V rule reads the bit's profile ([`BitProfile`], slice 27c,
+//! #679): a V-bit's `d · tan(α/2)`, or a tapered ball nose's ball, cone
+//! and cap (design "Algorithms → Tapered ball nose"). For a V-bit each
+//! reads exactly what it read before, so no V-bit program changes.
+//!
 //! The medial strategy (#404) clamps at the flat depth, as PureCutCNC
 //! does; the offset strategy's rings (#407) step in until the next would
 //! reach it. Where a region is wider than the groove there, the `floor`
@@ -44,13 +49,14 @@ use crate::toolpath::{MoveKind, Toolpath};
 use crate::warning::Warning;
 use cone::{OpenEdgeWalls, Walls};
 use dc_geometry::medial::{CornerReach, REACH_SLACK_MM};
+use dc_geometry::profile::BitProfile;
 use dc_geometry::{
-    Contour, EPS_MM, GeometryWarning, Point3, Region, floor_regions, is_design_hole, nest,
-    wall_tolerance_mm,
+    Contour, EPS_MM, GeometryWarning, Point, Point3, Region, difference, floor_regions,
+    is_design_hole, nest, offset, point_segment_distance_mm, union, wall_tolerance_mm,
 };
 use dc_project::{
-    InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp, VCarveStrategy,
-    cleared_start_plane,
+    CuttingLimit, InstanceId, Operation, OperationId, Project, Tool, ToolKind, VCarveOp,
+    VCarveStrategy, cleared_start_plane,
 };
 use floor::{Floor, FloorCut, OpenFloor};
 use medial::{Depth, Tolerances};
@@ -107,7 +113,7 @@ impl Carve<'_> {
     }
 
     /// How far the medial axis of `region` reaches into its corners, for
-    /// a V-bit of `slope`: every convex corner of the loops the carve's
+    /// a bit of `profile`: every convex corner of the loops the carve's
     /// walls are (#452, #456). A chain ending at a corner, its tip at the
     /// start plane, cuts the corner crisp, a disc of radius `h · tan(α/2)`
     /// at height `h` above the tip about it; upstream's passes leave some
@@ -116,30 +122,31 @@ impl Carve<'_> {
     /// Inlay's plug), keeps wood up to the stock top there. A male's band
     /// region has the plug's outline as its holes only; its outer edge is
     /// not the plug's, so its corners keep upstream's reach.
-    pub(crate) fn corner_reach(&self, region: &Region, slope: f64) -> CornerReach {
+    pub(crate) fn corner_reach(&self, region: &Region, profile: &BitProfile) -> CornerReach {
         CornerReach::Every {
             outer: self
                 .design
                 .as_ref()
                 .is_none_or(|design| is_design_hole(region, design)),
-            floor_inset_mm: self.flat_depth_mm.map(|f| f * slope),
+            floor_inset_mm: self.flat_depth_mm.map(|f| profile.half_width_mm(f)),
             // #506: a corner left that far beyond every disc stands
             // `gap / tan(α/2)` high, so the slack scales with the bit.
-            reach_slack_mm: wall_tolerance_mm(REACH_SLACK_MM, slope),
+            reach_slack_mm: wall_tolerance_mm(REACH_SLACK_MM, profile.slope()),
         }
     }
 
     /// How far the medial chains of a region sampled every `step_mm` may
-    /// be simplified (#452), for a V-bit of `slope` (`tan(α/2)`):
+    /// be simplified (#452), for a bit of `profile` (its slope `tan(α/2)`
+    /// or `tan β`):
     /// upstream's tolerances, and where material may stand above the start
     /// plane, no stretch left more than [`DEEPEN_MM`] shallower than its
     /// own depth. How far short of the walls the carved edge may stop,
     /// [`medial::EDGE_MM`] (#457), scales with the bit as the wall
     /// tolerance does (#506): the cone turns it into `edge / tan(α/2)` of
     /// height, 0.038 mm with the 15° bit, which a plug stood proud by.
-    pub(crate) fn tolerances(&self, step_mm: f64, slope: f64) -> Tolerances {
+    pub(crate) fn tolerances(&self, step_mm: f64, profile: &BitProfile) -> Tolerances {
         let upstream = Tolerances::at_step(step_mm);
-        let edge_mm = wall_tolerance_mm(medial::EDGE_MM, slope);
+        let edge_mm = wall_tolerance_mm(medial::EDGE_MM, profile.slope());
         Tolerances {
             simplify_mm: upstream.simplify_mm.min(edge_mm),
             redundancy_mm: upstream.redundancy_mm.min(edge_mm),
@@ -208,12 +215,16 @@ pub enum ConeViolation {
     },
 }
 
-/// A V-bit's cone height, mm: the depth at which its flanks reach its full
-/// diameter, `diameter / (2 tan(α/2))`. `None` for any other cutter, or a
-/// V-bit with an angle outside (0°, 180°) or no positive diameter.
+/// A carving bit's cutting height, mm, the deepest its flank may be
+/// engaged: a V-bit's cone height, the depth at which its flanks reach its
+/// full diameter, `diameter / (2 tan(α/2))`, or a tapered ball nose's
+/// `min(flute_length_mm, h_R)` ([`Tool::cutting_height_mm`]; #679). `None`
+/// for any other cutter, a V-bit with an angle outside (0°, 180°) or no
+/// positive diameter, or a tapered ball nose with a value unset or out of
+/// range.
 #[must_use]
-pub fn cone_height_mm(tool: &Tool) -> Option<f64> {
-    v_bit(tool).map(|bit| bit.cone_mm)
+pub fn cutting_height_mm(tool: &Tool) -> Option<f64> {
+    bit(tool).map(|bit| bit.cone_mm)
 }
 
 /// The heights, mm, of the ridges the V-bit leaves on its floor
@@ -240,35 +251,55 @@ pub fn floor_ridges(project: &Project, op: &VCarveOp) -> Option<FloorRidges> {
     floor::ridges_of_carve(project, op)
 }
 
-/// A usable V-bit's slope and cone.
+/// A usable carving bit (a V-bit, or a tapered ball nose with every value
+/// set and usable): its profile, slope and cutting height.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct VBit {
-    /// `tan(α/2)`.
+pub(crate) struct Bit {
+    /// The cross-section ([`Tool::carve_profile`]).
+    pub profile: BitProfile,
+    /// `tan(α/2)` or `tan β`: the flank's slope.
     pub slope: f64,
-    /// Cone height, mm.
+    /// The cutting height, mm ([`Tool::cutting_height_mm`]): a V-bit's
+    /// cone height.
     pub cone_mm: f64,
+    /// What sets `cone_mm`.
+    pub limit: CuttingLimit,
 }
 
-fn v_bit(tool: &Tool) -> Option<VBit> {
-    let ToolKind::VBit { included_angle_deg } = tool.cutter else {
-        return None;
-    };
-    let usable = included_angle_deg.is_finite()
-        && included_angle_deg > 0.0
-        && included_angle_deg < 180.0
-        && tool.diameter_mm.is_finite()
-        && tool.diameter_mm > 0.0;
-    let slope = (included_angle_deg.to_radians() / 2.0).tan();
-    (usable && slope.is_finite() && slope > 0.0).then(|| VBit {
-        slope,
-        cone_mm: tool.diameter_mm / (2.0 * slope),
+/// The carving bit `tool` is, when it is a usable one.
+pub(crate) fn bit(tool: &Tool) -> Option<Bit> {
+    let profile = tool.carve_profile()?;
+    Some(Bit {
+        profile,
+        slope: profile.slope(),
+        cone_mm: tool.cutting_height_mm()?,
+        limit: tool.cutting_limit()?,
     })
 }
 
+/// The carving bit of V-Carve `op` (slice 27c, #679): a V-bit, checked as
+/// [`checked_v_bit`] checks it, or a tapered ball nose, refused with
+/// [`CamError::TaperedBallNoseUnusable`] while a value is unset or out of
+/// range; any other cutter is [`CamError::VCarveNeedsVBit`].
+pub(crate) fn checked_bit(op: &OperationId, tool: &Tool) -> Result<Bit, CamError> {
+    match tool.cutter {
+        ToolKind::TaperedBallNose { .. } => {
+            bit(tool).ok_or_else(|| CamError::TaperedBallNoseUnusable {
+                op: op.clone(),
+                tool: tool.name.clone(),
+                tool_id: tool.id.clone(),
+            })
+        }
+        _ => checked_v_bit(op, tool),
+    }
+}
+
 /// The V-bit of operation `op`, or the error that says why `tool` is not
-/// one: [`CamError::VCarveNeedsVBit`], [`CamError::VBitAngleRange`] or
+/// one: [`CamError::VCarveNeedsVBit`] (a tapered ball nose too: a Photo
+/// V-Carve's grooves need a V-bit, and an Inlay's generator takes one
+/// from slice 27e, #681), [`CamError::VBitAngleRange`] or
 /// [`CamError::InvalidToolDiameter`].
-pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamError> {
+pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<Bit, CamError> {
     let ToolKind::VBit { included_angle_deg } = tool.cutter else {
         return Err(CamError::VCarveNeedsVBit {
             op: op.clone(),
@@ -284,7 +315,7 @@ pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamEr
             angle_deg: included_angle_deg,
         });
     }
-    v_bit(tool).ok_or_else(|| CamError::InvalidToolDiameter {
+    bit(tool).ok_or_else(|| CamError::InvalidToolDiameter {
         tool: tool.name.clone(),
         tool_id: tool.id.clone(),
         diameter_mm: tool.diameter_mm,
@@ -292,8 +323,9 @@ pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamEr
 }
 
 /// Generator-side S17 (`docs/specs/phase-3/design.md`, "Safety pass",
-/// the S17 bullet; step 10): the exact test, on `toolpath`, that a V-bit
-/// of `slope` (`tan(α/2)`) and cone height `cone_mm` cuts only inside
+/// the S17 bullet; step 10): the exact test, on `toolpath`, that a bit of
+/// `profile` and cutting height `cone_mm` (a V-bit's cone height, a
+/// tapered ball nose's `min(L, h_R)`; #679) cuts only inside
 /// `regions` (mm, Y-up; arcs flattened to chords within `tolerance_mm`,
 /// as the medial axis flattens them) below the start plane
 /// `start_plane_z_mm`, with its flanks engaged from `engaged_from_z_mm`.
@@ -303,8 +335,8 @@ pub(crate) fn checked_v_bit(op: &OperationId, tool: &Tool) -> Result<VBit, CamEr
 /// when that end is above the start plane (the descent exemption,
 /// security review H3: it is in the air or in material above the start
 /// plane the project vouches for). Every other move must not run above
-/// the start plane; its tip path must stay inside the regions; the cone's
-/// disc at the start plane, radius `(start_plane − z) · slope`, must stay
+/// the start plane; its tip path must stay inside the regions; the bit's
+/// disc at the start plane, radius `w(start_plane − z)`, must stay
 /// inside them everywhere along it, found exactly (the room to the walls
 /// less the radius is convex along a straight move, so its minimum is
 /// searched, not sampled); and the engagement `engaged_from − z` must not
@@ -320,7 +352,7 @@ pub fn cone_in_material(
     regions: &[Region],
     start_plane_z_mm: f64,
     engaged_from_z_mm: f64,
-    slope: f64,
+    profile: &BitProfile,
     cone_mm: f64,
     tolerance_mm: f64,
 ) -> Result<(), ConeViolation> {
@@ -370,10 +402,10 @@ pub fn cone_in_material(
             );
             return Err(ConeViolation::Wall {
                 at,
-                overlap_mm: out.outside_mm + (start_plane_z_mm - at.z).max(0.0) * slope,
+                overlap_mm: out.outside_mm + profile.half_width_mm(start_plane_z_mm - at.z),
             });
         }
-        let (room_mm, at) = walls.least_room(tip_from, tip_to, start_plane_z_mm, slope);
+        let (room_mm, at) = walls.least_room(tip_from, tip_to, start_plane_z_mm, profile);
         if room_mm < -tol {
             return Err(ConeViolation::Wall {
                 at,
@@ -385,7 +417,7 @@ pub fn cone_in_material(
 }
 
 /// The cut blocks of `carve` for operation `op`, cut with `tool` (a
-/// V-bit), in region order and, within a region, in the generator's cut
+/// V-bit or a tapered ball nose), in region order and, within a region, in the generator's cut
 /// order (`docs/specs/phase-3/design.md`, "V-Carve generator", steps 3–6
 /// and 8). Each block is one run of medial chains, or of offset rings,
 /// the bit cuts without lifting, at pass 0, entered by a straight plunge
@@ -395,8 +427,9 @@ pub fn cone_in_material(
 ///
 /// # Errors
 ///
-/// [`CamError::VCarveNeedsVBit`] or [`CamError::VBitAngleRange`] for an
-/// unusable tool, a missing rate, [`CamError::UnknownOperation`],
+/// [`CamError::VCarveNeedsVBit`], [`CamError::VBitAngleRange`] or
+/// [`CamError::TaperedBallNoseUnusable`] for an unusable tool, a missing
+/// rate, [`CamError::UnknownOperation`],
 /// [`CamError::MissingThickness`], [`CamError::VBitConeExceeded`] when a
 /// region's deepest point (the offset strategy's deepest ring, or its
 /// floor) engages the flank past the cone,
@@ -417,7 +450,7 @@ pub fn blocks(
     carve: &Carve<'_>,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<CutBlock>, CamError> {
-    let bit = checked_v_bit(op, tool)?;
+    let bit = checked_bit(op, tool)?;
     let rates = rates_of(tool)?;
     let operation = project
         .operations
@@ -446,9 +479,9 @@ pub fn blocks(
     let depth = Depth {
         start_plane_z_mm: carve.start_plane_z_mm,
         flat_depth_mm: carve.flat_depth_mm,
-        slope: bit.slope,
+        profile: bit.profile,
     };
-    let flat = Floor::of(carve, bit.slope);
+    let flat = Floor::of(carve, &bit.profile);
     let tolerance_mm = project.flatten_tolerance_mm;
     // #478: the walls' arcs, where the cone turns their error into height.
     let wall_tolerance_mm = wall_tolerance_mm(tolerance_mm, bit.slope);
@@ -460,7 +493,7 @@ pub fn blocks(
     let edge_walls = carve.open_edge.as_ref().map(|edge| OpenEdgeWalls {
         walls: Walls::new(&edge.band, tolerance_mm),
         top_z_mm: edge.top_z_mm,
-        slope: bit.slope,
+        profile: bit.profile,
     });
     let open_floor = carve
         .open_edge
@@ -470,7 +503,7 @@ pub fn blocks(
         .map(|((edge, flat), walls)| OpenFloor {
             tip_room: floor_regions(
                 &edge.band,
-                (edge.top_z_mm - flat.z_mm) * bit.slope,
+                bit.profile.half_width_mm(edge.top_z_mm - flat.z_mm),
                 tolerance_mm,
             ),
             band: walls.walls.clone(),
@@ -557,7 +590,7 @@ pub fn blocks(
         let Some((mut graph, step_mm)) = medial::region_graph(
             region,
             tolerance_mm,
-            carve.corner_reach(region, bit.slope),
+            carve.corner_reach(region, &bit.profile),
             op,
             shape,
             &mut budget_warned,
@@ -592,7 +625,9 @@ pub fn blocks(
             }
         }
         // Step 3: the deepest point, from the widest node, engages the
-        // flank from `engaged_from`; below the cone the shank cuts.
+        // flank from `engaged_from`; below the cone the shank cuts. A
+        // tapered ball nose's widest node at or past its cap no depth of
+        // its taper reaches, which reads past its cutting height (#679).
         let widest_mm = graph
             .nodes
             .iter()
@@ -616,7 +651,7 @@ pub fn blocks(
             Tolerances {
                 written_mm,
                 grid: Some(grid),
-                ..carve.tolerances(step_mm, bit.slope)
+                ..carve.tolerances(step_mm, &bit.profile)
             },
             &walls,
             &floors,
@@ -652,15 +687,16 @@ pub fn blocks(
     Ok(out)
 }
 
-/// Step 3 and S1 for one region of `carve` (operation `op`, V-bit `bit`):
+/// Step 3 and S1 for one region of `carve` (operation `op`, bit `bit`):
 /// its deepest point, at `deepest_z_mm`, must not engage the flank from
-/// `engaged_from_z_mm` past the cone ([`CamError::VBitConeExceeded`]),
+/// `engaged_from_z_mm` past the cutting height
+/// ([`CamError::VBitConeExceeded`]),
 /// nor lie below `floor_z_mm`, the stock bottom less the allowance
 /// ([`CamError::BelowMaterialBottom`]).
 fn deepest_is_cut(
     op: &OperationId,
     shape: &ShapeRef,
-    bit: VBit,
+    bit: Bit,
     carve: &Carve<'_>,
     deepest_z_mm: f64,
     floor_z_mm: f64,
@@ -673,6 +709,7 @@ fn deepest_is_cut(
             shape: Box::new(shape.clone()),
             depth_mm: engaged_mm,
             cone_mm: bit.cone_mm,
+            limit: bit.limit,
         });
     }
     if deepest_z_mm < floor_z_mm - EPS_MM {
@@ -690,7 +727,7 @@ fn deepest_is_cut(
 /// op.safe_z_mm`): one [`ToolRun`] per clearing pass that reaches some of
 /// the floor, [`RunLabel::Clearing`] with the pass's end mill, in list
 /// order (the `clearing` module), then [`RunLabel::Main`] with the
-/// operation's V-bit.
+/// operation's V-bit or tapered ball nose.
 ///
 /// The targets' closed outlines are nested even-odd into regions (an open
 /// path warns [`Warning::VCarveTargetOpen`] and is skipped); each region
@@ -707,6 +744,11 @@ fn deepest_is_cut(
 /// in the generator's order, each entered by a straight plunge at the
 /// plunge rate from the entry clearance above the stock top. Before
 /// returning, the toolpath passes [`cone_in_material`].
+///
+/// With a tapered ball nose (#679) every depth is the profile's,
+/// `w⁻¹(clearance)` and `w⁻¹(inset)`, and the floor's inset `w(F)`; the
+/// carve warns [`Warning::TaperedCornersSoftened`] once when its shapes
+/// have corners the ball cannot follow below the surface.
 ///
 /// # Errors
 ///
@@ -731,7 +773,7 @@ pub fn generate_vcarve(
             op: op.id.clone(),
             tool: op.tool.clone(),
         })?;
-    checked_v_bit(&op.id, tool)?;
+    let bit = checked_bit(&op.id, tool)?;
     rates_of(tool)?;
     if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
         return Err(CamError::InvalidSafeZ {
@@ -778,16 +820,21 @@ pub fn generate_vcarve(
         open_edge: None,
         design: None,
     };
-    let bit = checked_v_bit(&op.id, tool)?;
     let mut runs = clearing::runs(
         project,
         &passes,
         &carve,
         &clearing_tools,
-        bit.slope,
+        &bit.profile,
         &mut warnings,
     )?;
     let blocks = blocks(project, &op.id, tool, &carve, &mut warnings)?;
+    warnings.extend(softened_corners(
+        &op.id,
+        &carve.regions,
+        &bit.profile,
+        project.flatten_tolerance_mm,
+    ));
     let toolpath = finish(
         project,
         &op.id,
@@ -819,7 +866,7 @@ pub(crate) fn finish(
     containment: &[(ShapeRef, ShapeRef)],
     order: dc_project::MachiningOrder,
 ) -> Result<Toolpath, CamError> {
-    let bit = checked_v_bit(op, tool)?;
+    let bit = checked_bit(op, tool)?;
     let rates = rates_of(tool)?;
     let operation = project
         .operations
@@ -860,7 +907,7 @@ pub(crate) fn finish(
         &carve.regions,
         carve.start_plane_z_mm,
         carve.engaged_from_z_mm,
-        bit.slope,
+        &bit.profile,
         bit.cone_mm,
         project.flatten_tolerance_mm,
     )
@@ -873,7 +920,7 @@ pub(crate) fn finish(
                 &edge.band,
                 edge.top_z_mm,
                 edge.top_z_mm,
-                bit.slope,
+                &bit.profile,
                 bit.cone_mm,
                 project.flatten_tolerance_mm,
             )
@@ -892,6 +939,7 @@ pub(crate) fn finish(
                 shape,
                 depth_mm: engaged_mm,
                 cone_mm: bit.cone_mm,
+                limit: bit.limit,
             },
             ConeViolation::Wall { overlap_mm, .. } => CamError::ConeOffMaterial {
                 op: op.clone(),
@@ -911,6 +959,98 @@ pub(crate) fn finish(
         }
     })?;
     Ok(toolpath)
+}
+
+/// Design step 9 (functional 49j): the corners of `regions` a tapered
+/// ball nose of `profile` cannot follow below the surface, as one
+/// [`Warning::TaperedCornersSoftened`] for operation `op`; `None` for a
+/// V-bit, or when nothing changes. The regions are compared with their
+/// opening by the bit's `w_t = ρ cos β`, `(X ⊖ w_t) ⊕ w_t` with round
+/// joins: each piece of `X` the opening loses whose farthest point lies
+/// more than `tolerance_mm` (the flatten tolerance) from the opening is
+/// counted, and the farthest of all is named, with its distance. A piece
+/// with no opening left at all (a stroke narrower than `2 w_t`, which the
+/// ball carves in full) counts its own half-diagonal.
+fn softened_corners(
+    op: &OperationId,
+    regions: &[Region],
+    profile: &BitProfile,
+    tolerance_mm: f64,
+) -> Option<Warning> {
+    let BitProfile::TaperedBall { .. } = profile else {
+        return None;
+    };
+    let w_t = profile.tangent_half_width_mm();
+    if !(w_t.is_finite() && w_t > 0.0) {
+        return None;
+    }
+    let opened = union(
+        &grown(&floor_regions(regions, w_t, tolerance_mm), w_t),
+        &[],
+        tolerance_mm,
+    );
+    let walls: Vec<dc_geometry::Segment> = opened
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .flat_map(|c| c.polyline().segments().collect::<Vec<_>>())
+        .collect();
+    let mut count = 0;
+    let mut farthest: Option<(f64, Point)> = None;
+    for piece in difference(regions, &opened, tolerance_mm) {
+        let points: Vec<Point> = std::iter::once(piece.outer())
+            .chain(piece.holes())
+            .flat_map(|c| c.polyline().vertices().iter().map(|v| v.point()))
+            .collect();
+        let change = |p: Point| {
+            walls
+                .iter()
+                .map(|&w| point_segment_distance_mm(w, p))
+                .fold(f64::INFINITY, f64::min)
+        };
+        let worst = if walls.is_empty() {
+            piece.outer().polyline().bounds().map(|b| {
+                let centre = Point::new((b.min.x + b.max.x) / 2.0, (b.min.y + b.max.y) / 2.0);
+                (centre.distance_to(b.max), centre)
+            })
+        } else {
+            points
+                .iter()
+                .map(|&p| (change(p), p))
+                .max_by(|a, b| a.0.total_cmp(&b.0))
+        };
+        let Some((change_mm, at)) = worst.filter(|(c, _)| *c > tolerance_mm) else {
+            continue;
+        };
+        count += 1;
+        if farthest.is_none_or(|(c, _)| change_mm > c) {
+            farthest = Some((change_mm, at));
+        }
+    }
+    let (change_mm, at) = farthest?;
+    Some(Warning::TaperedCornersSoftened {
+        op: op.clone(),
+        count,
+        x_mm: at.x,
+        y_mm: at.y,
+        change_mm,
+        radius_mm: w_t,
+    })
+}
+
+/// `regions` grown by `distance_mm` with round joins: each outer offset
+/// outward and each hole inward, nested again; the pieces may overlap,
+/// which the caller unites.
+fn grown(regions: &[Region], distance_mm: f64) -> Vec<Region> {
+    regions
+        .iter()
+        .flat_map(|region| {
+            let mut loops = offset(region.outer(), distance_mm);
+            for hole in region.holes() {
+                loops.extend(offset(hole, -distance_mm));
+            }
+            nest(loops).map(|(nested, _)| nested).unwrap_or_default()
+        })
+        .collect()
 }
 
 /// The shape of the region of `carve` that holds `at`, or else the one

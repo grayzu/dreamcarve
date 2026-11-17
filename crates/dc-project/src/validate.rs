@@ -71,6 +71,7 @@ use crate::post_processor::{
     MAX_FILE_EXTENSION_CHARS, SpindleControl, ToolChangeMode, is_safe_file_extension,
 };
 use crate::project::cleared_start_plane;
+use crate::tool::CuttingLimit;
 use dc_geometry::{EPS_MM, GeometryError, MAX_COORDINATE_MM};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -515,10 +516,10 @@ pub enum Problem {
         flatten_tolerance_mm: f64,
     },
     /// An enabled V-Carve or Inlay (format 22) cuts with a tool that is
-    /// not a V-bit (format 20; functional spec, capability 38): its depth
-    /// follows the bit's angle. So does a Photo V-Carve (format 27), for
-    /// good. A tapered ball nose (format 28) is refused on a V-Carve and an
-    /// Inlay until carving with one is built (27c, #679). An error.
+    /// neither a V-bit (format 20; functional spec, capability 38) nor a
+    /// tapered ball nose (format 28, slice 27c, #679): its depth follows
+    /// the bit's profile. A Photo V-Carve (format 27) needs a V-bit, for
+    /// good. An error.
     VCarveNeedsVBit {
         /// The operation.
         operation: OperationId,
@@ -593,6 +594,10 @@ pub enum Problem {
         /// `depth_mm`, and a male's `plug_depth_mm`, its engagement
         /// counted from the stock top (format 22).
         field: &'static str,
+        /// What sets `cone_height_mm` (slice 27c, #679): a V-bit's cone,
+        /// or a tapered ball nose's flutes or cutting diameter, its cutting
+        /// height ([`Tool::cutting_height_mm`]).
+        limit: CuttingLimit,
     },
     /// A V-Carve has clearing passes but no flat depth (format 20;
     /// capability 40): with no floor there is nothing to clear. An error.
@@ -1820,13 +1825,13 @@ impl fmt::Display for Problem {
                         f,
                         "a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there"
                     ),
-                    (true, false) => write!(
+                    (false, true) => write!(
                         f,
-                        "carving with a tapered ball nose is not supported yet, so use a V-bit"
+                        "a Photo V-Carve's depth follows the angle of a V-bit, so use a V-bit"
                     ),
-                    (false, _) => write!(
+                    (_, false) => write!(
                         f,
-                        "a carve's depth follows the angle of a V-bit, so use a V-bit"
+                        "a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose; use a V-bit or a tapered ball nose"
                     ),
                 }
             }
@@ -1856,7 +1861,28 @@ impl fmt::Display for Problem {
                 cone_height_mm,
                 from_stock_top,
                 field,
+                limit,
             } => {
+                if *limit != CuttingLimit::Cone {
+                    // Slice 27c (#679): a tapered ball nose's cutting height.
+                    write!(
+                        f,
+                        "operation `{name}` (`{operation}`) engages tool `{tool_name}`, a tapered ball nose, "
+                    )?;
+                    if *from_stock_top {
+                        write!(f, "from the stock top, ")?;
+                    }
+                    return match limit {
+                        CuttingLimit::CuttingDiameter { diameter_mm } => write!(
+                            f,
+                            "engaged {engagement_mm:.3} mm, past {cone_height_mm:.3} mm, where it reaches its {diameter_mm:.3} mm cutting diameter; above that the bit is a cylinder, whose walls follow no carve, so use a shallower depth"
+                        ),
+                        _ => write!(
+                            f,
+                            "engaged {engagement_mm:.3} mm, past the bit's {cone_height_mm:.3} mm flutes; above them the shank rubs, so use a shallower depth or a bit with longer flutes"
+                        ),
+                    };
+                }
                 write!(
                     f,
                     "operation `{name}` (`{operation}`) engages tool `{tool_name}` {engagement_mm} mm deep"
@@ -3299,6 +3325,7 @@ impl Validator {
                 cone_height_mm,
                 from_stock_top,
                 field: COUNTERSINK_DIAMETER,
+                limit: CuttingLimit::Cone,
             });
         }
     }
@@ -3458,23 +3485,19 @@ impl Validator {
         let Some(tool) = tool else {
             return;
         };
-        let ToolKind::VBit { included_angle_deg } = tool.cutter else {
+        // A V-bit's cone height, or a tapered ball nose's cutting height
+        // (slice 27c, #679); `None` for any other cutter or a value out of
+        // range, which other rules name.
+        let (Some(cone_height_mm), Some(limit)) = (tool.cutting_height_mm(), tool.cutting_limit())
+        else {
             return;
         };
-        if !(included_angle_deg > 0.0
-            && included_angle_deg < 180.0
-            && tool.diameter_mm.is_finite()
-            && tool.diameter_mm > 0.0)
-        {
-            return;
-        }
         let flat_depth_mm = carve.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0);
         // Without a flat depth the carve's depth follows from the shapes,
         // which only the generator knows; the start depth alone may
         // already be too much.
         let engagement_mm =
             flat_depth_mm.unwrap_or(0.0) + if from_stock_top { start_depth_mm } else { 0.0 };
-        let cone_height_mm = tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan();
         if engagement_mm > cone_height_mm + EPS_MM {
             self.problems.push(Problem::VBitConeExceeded {
                 operation: carve.id.clone(),
@@ -3488,6 +3511,7 @@ impl Validator {
                 } else {
                     "start_depth_mm"
                 },
+                limit,
             });
         }
     }
@@ -3650,6 +3674,7 @@ impl Validator {
                 cone_height_mm,
                 from_stock_top,
                 field: "max_depth_mm",
+                limit: CuttingLimit::Cone,
             });
         }
     }
@@ -3769,8 +3794,15 @@ impl Validator {
         tool: Option<&Tool>,
         clearing: &[ClearingPass],
     ) {
+        let photo = p
+            .operations
+            .iter()
+            .any(|o| matches!(o, Operation::PhotoVCarve(photo) if &photo.id == operation));
+        // Slice 27c (#679): a V-Carve and an Inlay carve with a tapered
+        // ball nose too; a Photo V-Carve only with a V-bit.
         if let Some(tool) = tool
-            && !matches!(tool.cutter, ToolKind::VBit { .. })
+            && !(matches!(tool.cutter, ToolKind::VBit { .. })
+                || !photo && matches!(tool.cutter, ToolKind::TaperedBallNose { .. }))
         {
             self.problems.push(Problem::VCarveNeedsVBit {
                 operation: operation.clone(),
@@ -3778,10 +3810,7 @@ impl Validator {
                 tool: tool.id.clone(),
                 tool_name: tool.name.clone(),
                 cutter: tool.cutter.describe(),
-                photo: p
-                    .operations
-                    .iter()
-                    .any(|o| matches!(o, Operation::PhotoVCarve(photo) if &photo.id == operation)),
+                photo,
             });
         }
         let mut previous: Option<&Tool> = None;
@@ -4107,20 +4136,10 @@ impl Validator {
         let plug_depth_ok = inlay
             .plug_depth_mm
             .is_some_and(|p| p.is_finite() && p > 0.0);
-        let cone_height_mm = tool.and_then(|tool| match tool.cutter {
-            ToolKind::VBit { included_angle_deg }
-                if included_angle_deg > 0.0
-                    && included_angle_deg < 180.0
-                    && tool.diameter_mm.is_finite()
-                    && tool.diameter_mm > 0.0 =>
-            {
-                Some((
-                    tool,
-                    tool.diameter_mm / 2.0 / (included_angle_deg.to_radians() / 2.0).tan(),
-                ))
-            }
-            _ => None,
-        });
+        // A V-bit's cone height, or a tapered ball nose's cutting height
+        // (slice 27c, #679).
+        let cone_height_mm =
+            tool.and_then(|tool| Some((tool, tool.cutting_height_mm()?, tool.cutting_limit()?)));
         let mut boards = vec![(Board::Female, depth_ok)];
         if inlay.cuts_male() {
             boards.push((Board::Male, depth_ok && glue_gap_ok && plug_depth_ok));
@@ -4130,7 +4149,7 @@ impl Validator {
                 continue;
             };
             let male = board == Board::Male;
-            if let Some((tool, cone_height_mm)) = cone_height_mm
+            if let Some((tool, cone_height_mm, limit)) = cone_height_mm
                 && engagement_mm > cone_height_mm + EPS_MM
             {
                 self.problems.push(Problem::VBitConeExceeded {
@@ -4141,6 +4160,7 @@ impl Validator {
                     cone_height_mm,
                     from_stock_top: male,
                     field: if male { INLAY_PLUG_DEPTH } else { "depth_mm" },
+                    limit,
                 });
             }
             if male
@@ -10567,28 +10587,67 @@ mod tests {
         );
     }
 
-    /// Slice 27a: a V-Carve or an Inlay with a tapered ball nose is
-    /// refused until carving with one is built (27c, #679, turns this
-    /// into `…_is_accepted`).
+    /// Slice 27c (#679): a V-Carve and an Inlay accept a tapered ball
+    /// nose, with no problem at all; any other cutter that is not a V-bit
+    /// is still `v_carve_needs_v_bit`, its message naming both bits that
+    /// carve.
     #[test]
-    fn tapered_ball_nose_v_carve_is_refused_until_built() {
+    fn tapered_ball_nose_is_accepted_by_v_carve_and_inlay() {
         let mut carve = carve_project(|_| {});
         carve.tools[1] = crate::test_support::tool_tbn_ultra();
         let mut inlay = inlay_project(|_| {});
         inlay.tools[1] = crate::test_support::tool_tbn_ultra();
-        for (p, op) in [(carve, "o6"), (inlay, "o7")] {
+        for p in [carve, inlay] {
             let problems = validate(&p);
-            assert_eq!(
-                coded(&problems),
-                [(
-                    "v_carve_needs_v_bit",
-                    Some(format!("operations[{op}].tool"))
-                )],
-                "{problems:?}"
-            );
-            let message = errors(&problems)[0].to_string();
-            assert!(message.contains("a tapered ball nose"), "{message}");
-            assert!(message.contains("not supported yet"), "{message}");
+            assert_eq!(problems, vec![], "{problems:?}");
         }
+        let mut end_mill = carve_project(|_| {});
+        end_mill.tools[1].cutter = ToolKind::EndMill;
+        let problems = validate(&end_mill);
+        let message = errors(&problems)[0].to_string();
+        assert!(
+            message.contains("needs a V-bit or a tapered ball nose"),
+            "{message}"
+        );
+    }
+
+    /// Slice 27c (#679): a tapered ball nose's limit is its cutting
+    /// height, `min(flute_length_mm, h_R)`, and `v_bit_cone_exceeded` says
+    /// which: the Ultra bit's 19.05 mm flutes, or the Fine bit's cone
+    /// reaching its 6.35 mm cutting diameter 18.374 mm up.
+    #[test]
+    fn tapered_ball_nose_cone_exceeded_names_its_limit() {
+        let deep = |tool: Tool, flat_depth_mm: f64| {
+            let mut p = carve_project(|c| c.flat_depth_mm = Some(flat_depth_mm));
+            p.stock.thickness_mm = Some(30.0);
+            for instance in &mut p.instances {
+                instance.z_top_mm = Some(30.0);
+            }
+            p.tools[1] = Tool {
+                id: ToolId::new("t2"),
+                ..tool
+            };
+            validate(&p)
+        };
+        let problems = deep(crate::test_support::tool_tbn_ultra(), 21.2);
+        let (engagement_mm, limit_mm, _, field) = cone_exceeded(&problems);
+        assert!((engagement_mm - 21.2).abs() < 1e-9);
+        assert!((limit_mm - 19.05).abs() < 1e-9);
+        assert_eq!(field.as_deref(), Some("operations[o6].flat_depth_mm"));
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("engaged 21.200 mm, past the bit's 19.050 mm flutes"),
+            "{message}"
+        );
+
+        let problems = deep(crate::test_support::tool_tbn_fine(), 18.5);
+        let (_, limit_mm, _, _) = cone_exceeded(&problems);
+        assert!((limit_mm - 18.374).abs() < 1e-3);
+        let message = problems[0].to_string();
+        assert!(
+            message.contains("past 18.374 mm, where it reaches its 6.350 mm cutting diameter"),
+            "{message}"
+        );
+        assert_eq!(deep(crate::test_support::tool_tbn_fine(), 18.3), vec![]);
     }
 }

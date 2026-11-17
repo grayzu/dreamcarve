@@ -22,9 +22,15 @@
 //!   same set without the error adding up. A level that is noise at the
 //!   flatten tolerance (Pocket's rule) is not a ring.
 //! - **The flat depth.** Upstream stops at the last step at or above its
-//!   `maxCarveDepth`. Here the rings stop short of `F · slope`, and the
-//!   ring at `F` exactly is the floor's boundary trace (`floor::blocks`),
-//!   cut after the V-bit floor it encloses.
+//!   `maxCarveDepth`. Here the rings stop short of `w(F)`, the bit's
+//!   half-width at the flat depth (`F · slope` for a V-bit), and the ring
+//!   at `F` exactly is the floor's boundary trace (`floor::blocks`), cut
+//!   after the V-bit floor it encloses.
+//! - **A tapered ball nose** (slice 27c, #679). Ring `k`, inset `i_k`, is
+//!   cut at `w⁻¹(i_k)`, the profile's height for its inset. A link stays
+//!   down only on the cone: in the ball the surface the rings cut is
+//!   convex along a corner's bisector, so a straight link runs below it
+//!   and the tool retracts ([`ring_links_tool_down`]).
 //! - **Direction.** Upstream's `applyContourDirection` (Y-down). The rings
 //!   run as a Pocket's ([`ring_is_ccw`], re-derived for Y-up in phase 2):
 //!   a ring of an outer wall is a Pocket wall ring, a ring round a hole an
@@ -69,7 +75,8 @@ pub(crate) struct Level {
 /// The levels of `region` stepping in by `step_over_mm` (mm, positive)
 /// for `depth`, outermost first, outlines flattened within `tolerance_mm`
 /// where the insets need it, until the inset is empty or reaches the flat
-/// depth's `F · slope` (within [`EPS_MM`]): that ring is the floor's.
+/// depth's `w(F)` (within [`EPS_MM`]): that ring is the floor's. Each
+/// level is `w⁻¹(inset)` below the start plane.
 /// `None` when the region would have more than [`MAX_RINGS`] rings.
 pub(crate) fn levels(
     region: &Region,
@@ -77,7 +84,7 @@ pub(crate) fn levels(
     depth: &Depth,
     tolerance_mm: f64,
 ) -> Option<Vec<Level>> {
-    let floor_inset_mm = depth.flat_depth_mm.map(|f| f * depth.slope);
+    let floor_inset_mm = depth.flat_depth_mm.map(|f| depth.width_mm(f));
     let mut out = Vec::new();
     let mut rings = 0usize;
     for k in 1..=u32::try_from(MAX_RINGS)
@@ -112,7 +119,7 @@ pub(crate) fn levels(
             return None;
         }
         out.push(Level {
-            z_mm: depth.start_plane_z_mm - inset_mm / depth.slope,
+            z_mm: depth.start_plane_z_mm - depth.height_mm(inset_mm),
             rings: level_rings,
         });
     }
@@ -199,14 +206,20 @@ pub(crate) fn runs(
 /// A ring's own points have no room to spare (its cone touches the wall),
 /// so the margin a medial link keeps ([`super::medial::links_tool_down`])
 /// would retract every ring; this holds the link to the surface the rings
-/// themselves cut.
+/// themselves cut. With a tapered ball nose (#679) that surface is
+/// straight along a corner's bisector only on the cone; where either end
+/// is less than the ball's `h_t` deep it is convex, a straight link would
+/// run below it, and the tool retracts.
 pub(crate) fn ring_links_tool_down(walls: &Walls, depth: &Depth, from: Point3, to: Point3) -> bool {
     let top_mm = depth.start_plane_z_mm + EPS_MM;
+    let cone_mm = depth.start_plane_z_mm - depth.profile.tangent_height_mm() + EPS_MM;
     from.z <= top_mm
         && to.z <= top_mm
+        && from.z <= cone_mm
+        && to.z <= cone_mm
         && from.xy().distance_to(to.xy()) > EPS_MM
         && walls
-            .least_room(from, to, depth.start_plane_z_mm, depth.slope)
+            .least_room(from, to, depth.start_plane_z_mm, &depth.profile)
             .0
             >= -EPS_MM
 }

@@ -1583,7 +1583,7 @@ keeps it as the cutting diameter, which it is. For a V-bit both return
 what they return today, so no V-bit program changes (`golden::vcarve_*`
 and every CLI program test unchanged).
 
-**`dc-cam` additions.** `vcarve::cone_height_mm(tool)` becomes
+**`dc-cam` additions.** `vcarve::cone_height_mm(tool)` became (27c)
 `vcarve::cutting_height_mm(tool)` (the same number for a V-bit);
 `vcarve::Carve` gains nothing (the tool comes with `blocks`);
 `cone_in_material` takes a `&BitProfile` in place of `slope` and `cone_mm`
@@ -1644,6 +1644,69 @@ stays a V-bit's (`Tool::cutting_height_mm`); #685 replaces them. `check`'s V-bit
 `floor ridges …` with the TBN's heights; an Inlay with a TBN adds the
 seat line of "Inlay fit": `seat: moves 0.40 mm per 0.5° of taper, 0.76 mm
 per 0.05 mm of tip radius; test-fit before gluing`.
+
+**Slice 27c's decisions (#679).** Where the issue was silent:
+
+- **The limit is named.** `CamError::VBitConeExceeded` and
+  `Problem::VBitConeExceeded` keep their fields and gain one, `limit:
+  dc_project::CuttingLimit` (`Cone`, `Flutes` or `CuttingDiameter {
+  diameter_mm }`, from `Tool::cutting_limit`), so the generator's
+  message names the flutes or the cutting diameter as validation's does
+  ("… engaged 22.650 mm deep, past the bit's 19.050 mm flutes …"). A
+  V-bit's messages are unchanged.
+- **An unusable TBN at generation** (a value unset or out of range, which
+  validation names first) is `CamError::TaperedBallNoseUnusable`, not
+  `VCarveNeedsVBit`.
+- **A node at or past the cap** (`c ≥ R`, no height of the taper reaches
+  both walls) is read on the cone's line, `c / t − δ`, which is past the
+  cutting height, so it is `VBitConeExceeded` with that engagement
+  (the Fine bit's 20 × 7 mm bar, at 21.14 mm).
+- **Simplify and fit read the shortfall at the walls, not the axis.**
+  The stretch `a`–`b` falls short at a point `p` of own depth `z` by `c −
+  max_τ (w(start − z(τ)) − |p − p(τ)|)`, `c = w(start − z)`: how far its
+  widest disc about `p` stops short of `p`'s own. For a V-bit this is
+  exactly `slope · (low − z)`, and that formula is kept. The draft's `w(d)
+  − w(d − Δ)` with `Δ = low − z` does not bound it for a ball: the ball
+  is nearly flat at its tip, so a deeper end of the stretch beside `p`
+  reaches `p`'s axis without reaching its walls, and a corner chain
+  simplified across the floor's kink stood 0.05 mm back with the Fine
+  bit. `reach` is concave in `τ`, so its greatest value is found by
+  golden-section search: a tolerance of the generator, not S17, which
+  stays exact.
+- **The axis fit reaches only beside the stretch with a TBN.** Inside a
+  rounded corner every point of the normal from the arc's tangent point
+  to its centre is on the medial axis; a short stretch there found the
+  centre beyond its end, and the ball zone's convex depth law split the
+  pieces again near the stretch, which found the centre again, until
+  the fit's halvings ran out (exponentially many). With a TBN,
+  `Fit::off_axis` takes only axis points whose foot lies on the
+  stretch; a V-bit keeps upstream's reach, so no V-bit program changes.
+- **Offset links in the ball** retract when either end is less than
+  `h_t` below the start plane, before the room test.
+- **Ridges past the cap** read the cone's line, which no step-over of at
+  most the floor's width reaches. Since #527 the corner ridge is the
+  straight-run ridge, `w⁻¹(s / 2)`, for a TBN as for a V-bit.
+- **`tapered_corners_softened`** counts the pieces of `X \ ((X ⊖ w_t) ⊕
+  w_t)` whose farthest vertex lies more than the flatten tolerance from
+  the opening, and names the farthest vertex of all; a region the
+  opening removes entirely (a stroke narrower than `2 w_t`, which the
+  ball carves whole) counts its own half-diagonal.
+- **The acceptance offset square** (61v) is carved with a 10 mm flat
+  depth: with no floor its rings would reach `w⁻¹(2.8)` = 20.95 mm, past
+  the Ultra bit's flutes.
+- **The Inlay.** `dc_project::inlay::v_bit_of` reads `Tool::carve_profile`
+  but answers only for a V-bit until 27e, so `male_band` and the cut-out
+  rule skip a TBN; the generator refuses it with `VCarveNeedsVBit`, and
+  the safety pass's S17 skips a TBN's program until 27d.
+- `v_carve_needs_v_bit`'s message for any other cutter on a V-Carve or an
+  Inlay: "a carve's depth follows the bit's profile, so it needs a V-bit
+  or a tapered ball nose"; on a Photo V-Carve: "a Photo V-Carve's depth
+  follows the angle of a V-bit, so use a V-bit".
+- **One V-bit program moved in its last places.** `Walls::least_room` now reads the exact least room of `dc_geometry::profile::least_room` (#678), and its golden-section copy is gone. The rooms move by about 1e-12 mm and no decision against `EPS_MM` changes, but the fit splits a stretch where its room is least, which the exact search puts a hair from where the golden section did. The goldens (`golden::vcarve_*`, `golden::phase_1_and_2_cases_are_unchanged`) and the sign are byte for byte as before; the "DC" female of `tests/expected/inlay-migration/dc-female-female-2-T1.nc` changes five ramp feeds in their last digit (777.448 to 777.449 mm/min), its coordinates unchanged, and is re-recorded.
+- **Corner setbacks measured** (`vcarve::tapered_corner_setback_matches_the_formula`,
+  a 20 mm square's 90° corner at Z −2 with a 4 mm floor, from the exact
+  surface the program leaves): within 0.01 mm of 0.156 mm (Ultra) and
+  0.469 mm (Fine).
 
 ## Algorithms
 
