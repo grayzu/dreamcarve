@@ -368,6 +368,56 @@ mod tests {
         }
     }
 
+    /// #704: a convex run with a segment 28 nm long, whose neighbours go
+    /// on the same way round within 2°, as an inward offset leaves one
+    /// where a curve's radius is about the offset (the tapered sweep's
+    /// lettering `0x5b` cut-out, its vertices moved to the origin). It
+    /// crosses nothing, but cavalier_contours' tolerance read the short
+    /// segment and the next as overlapping, at a point 8 nm past their
+    /// shared vertex, and the outline was refused as crossing itself.
+    #[test]
+    fn a_tiny_segment_going_on_the_same_way_is_no_crossing() {
+        let run = Polyline::new(
+            vec![
+                Vertex::line(0.020_427_221_437, -0.328_868_795_319),
+                Vertex::line(0.036_673_120_929, 0.041_134_829_302),
+                Vertex::line(0.036_673_345_887, 0.041_162_330_973),
+                Vertex::line(0.026_481_981_361, 0.411_386_787_298),
+                Vertex::line(-4.0, 0.0),
+            ],
+            true,
+        );
+        assert_eq!(
+            Contour::new(run.clone()).map(|c| c.into_polyline()),
+            Ok(run)
+        );
+    }
+
+    /// A spike that doubles back over the segment before it, along the
+    /// same line or a hair off it, is still refused: the neighbours run
+    /// back over each other, which is a crossing however short the spike.
+    #[test]
+    fn a_spike_doubling_back_is_still_a_crossing() {
+        for (tip_y, back_y) in [(0.0, 0.0), (0.0, 1e-9), (1e-9, 0.0)] {
+            let spike = Polyline::new(
+                vec![
+                    Vertex::line(0.0, 0.0),
+                    Vertex::line(10.0, tip_y),
+                    Vertex::line(5.0, back_y),
+                    Vertex::line(5.0, 10.0),
+                ],
+                true,
+            );
+            assert!(
+                matches!(
+                    Contour::new(spike),
+                    Err(GeometryError::SelfIntersecting { .. })
+                ),
+                "tip {tip_y}, back {back_y}"
+            );
+        }
+    }
+
     #[test]
     fn single_vertex_is_rejected() {
         let one = Polyline::new(vec![Vertex::line(1.0, 1.0)], true);
