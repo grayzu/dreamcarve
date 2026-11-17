@@ -540,6 +540,36 @@ fn male_of_line_art_0xb3_generates() {
     assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
 }
 
+/// #695 (found by #527's sweep): the male of line-art seed `0x94` (15°
+/// bit, inch program, D 3.879, G 0.473) with its band's edge open passes
+/// S1–S19 and seats within `SEAT_MM` but for the written-grid limit
+/// (#438, #559). The female's 3.175 mm end mill leaves a cusp at a floor
+/// corner, 0.013 mm beyond its reach at (29.875, 65.075); the booleans
+/// joined it by hairline strips to the cusps at the next corners, the
+/// floor dropped that piece as noise, and the cone, its trace 0.105 mm
+/// off, left a sliver 0.8 mm high that held the plug 0.328 mm proud. The
+/// plug now stands highest, 0.131 mm, on the male's own 3.7° notch, which
+/// the sweep excuses as the written-grid limit; the male's share there was
+/// 0.127 mm before as well.
+#[test]
+fn male_of_line_art_0x94_seats() {
+    let outcome = reproduce(
+        "line art",
+        0x94,
+        designs::line_art(0x94),
+        Kind::MaleOpenEdge,
+    );
+    assert!(outcome.failures.is_empty(), "{:?}", outcome.failures);
+    assert!(
+        outcome
+            .known
+            .iter()
+            .all(|k| k.starts_with("written-grid limit")),
+        "{:?}",
+        outcome.known
+    );
+}
+
 /// #513 (found by the sweep): the male cut-out of lettering seed `0xc0`
 /// ("CrC", 90° bit, millimetre program, V-walled band) generates, every
 /// program passes S1–S19 and the pair seats within 0.05 mm. Its cut-out

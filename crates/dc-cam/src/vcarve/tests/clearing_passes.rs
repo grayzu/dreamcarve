@@ -814,3 +814,37 @@ fn clearing_reach_leaves_no_bay_uncut() {
         "the bay keeps {over_mm:.3} mm of wood too much at {q:?}"
     );
 }
+
+/// #695: a regular heptagon, circumradius 12 mm, carved with the 15°
+/// bit at flat depth 2 and step-over 0.1 after the 3.175 mm end mill's
+/// pass. The end mill cannot reach the floor's corners: at each it leaves
+/// a cusp 0.175 mm deep between the corner and its reach's round. The
+/// seven cusps and the hairline strips the booleans leave along the
+/// edges between them, where the reach meets the floor's edge, make
+/// pieces whose area is under the tolerance times their perimeter, so the
+/// floor took them for noise and cut none of them; only its trace ran
+/// past each corner, and 0.1 mm off it the cone left wood 0.8 mm above
+/// the floor. In the stress sweep this held line art `0x94`'s plug
+/// 0.328 mm proud. Simulated as a 0.05 mm heightfield over the floor
+/// ([`super::floor::floor_peak_mm`]), the floor stands no higher than its
+/// straight-run ridge, `0.1 · F`, plus the flatten tolerance's
+/// `2 · tolerance / slope`, as [`super::floor::floor_ridge_holds_at_corners`]
+/// allows without a pass. Every run passes `assert_run_safe`.
+#[test]
+fn v_bit_floor_cuts_the_corner_cusps_a_pass_leaves() {
+    let heptagon: Vec<(f64, f64)> = (0..7)
+        .map(|k| {
+            let a = 0.1 + std::f64::consts::TAU * f64::from(k) / 7.0;
+            (20.0 + 12.0 * a.cos(), 20.0 + 12.0 * a.sin())
+        })
+        .collect();
+    let (mut p, op) = with_passes(Some(vec![polygon(&heptagon)]), Some(0.1), vec![pass("t3")]);
+    p.tools.retain(|t| t.id != op.tool);
+    p.tools.push(v_bit(15.0));
+    let ridge_mm = 0.1 * F_MM + 2.0 * p.flatten_tolerance_mm / slope_of(15.0);
+    let (peak_mm, q) = super::floor::floor_peak_mm(&p, &op, 0.05, 0.05);
+    assert!(
+        peak_mm <= ridge_mm,
+        "the floor stands {peak_mm:.3} mm at {q:?}, over {ridge_mm:.3}"
+    );
+}

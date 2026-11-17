@@ -194,8 +194,9 @@ pub(crate) struct FloorCut<'a> {
 /// After the clearing passes `reached_by` (#406; design step 7; empty
 /// without them) the boundary trace is still the whole floor's outline and
 /// islands, cut last, but the rings clear only what no pass reached: each
-/// floor region less every pass's reach ([`rest::left_by`], from the
-/// passes' radii, never from their toolpaths: S14). Each piece left is
+/// floor region less every pass's reach ([`rest::left_wide_by`], from the
+/// passes' radii, never from their toolpaths: S14; a cusp the passes
+/// leave at a corner is never dropped as noise, #695). Each piece left is
 /// cleared as a floor region is, its own outline included
 /// (`WallRings::Last`): that outline runs along the edge the end mills left
 /// as well as along the trace, and without it the groove next to that edge
@@ -288,7 +289,7 @@ pub(crate) fn blocks_open(
                 out.extend(rings_clearing(region, floor, cut, anchor)?);
                 continue;
             }
-            for piece in rest::left_by(region, 0.0, &reaching, cut.tolerance_mm) {
+            for piece in rest::left_wide_by(region, &reaching, cut.tolerance_mm) {
                 out.extend(rings_clearing(&piece, floor, cut, anchor)?);
             }
             for ring in rings_of(region, 0, anchor, |_| true) {
@@ -317,7 +318,7 @@ pub(crate) fn blocks_open(
             }
             continue;
         }
-        let left = rest::left_by(region, 0.0, &reaching, cut.tolerance_mm);
+        let left = rest::left_wide_by(region, &reaching, cut.tolerance_mm);
         for piece in open.within(&left, cut.tolerance_mm, cut.tolerance_mm) {
             out.extend(rings_clearing(&piece, floor, cut, anchor)?);
         }

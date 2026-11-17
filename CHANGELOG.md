@@ -379,6 +379,16 @@ phases bump the patch number.
 
 ### Fixed
 
+- **A V-bit floor cuts the corner cusps a clearing pass leaves (#695).**
+  An end mill cannot reach a floor's convex corners, so it leaves a cusp
+  at each, and the booleans could join neighbouring cusps by hairline
+  strips along the edges into one piece the floor took for noise. The
+  V-bit then cut none of them: a regular heptagon with a 3.175 mm end
+  mill and a 15° bit kept wood 0.8 mm above its floor at every corner,
+  and in a line-art inlay such a cusp held the plug 0.328 mm proud. The
+  floor now keeps every part of a piece at least twice the flatten
+  tolerance wide. The tutorial programs are unchanged.
+
 - **Pocket and clearing rings no longer grow thousands of vertices
   (#474).** Where a Pocket's or a clearing pass's rings step round
   several islands or inlay plugs that they merge, each step flattened the

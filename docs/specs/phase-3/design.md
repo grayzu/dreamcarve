@@ -2351,7 +2351,13 @@ orientation; DreamCarve's regions are normalised anyway.
    `floor − ⋃ reach_i` where `reach_i` is what pass `i` can reach: the
    floor region inset by its radius and grown back by it, the same
    computation `pocket::rest` makes for `rest_of` (`rest::left_by`, which
-   takes the list of references). Never from a toolpath (S14). Per floor
+   takes the list of references). Never from a toolpath (S14). What is
+   left is `rest::left_wide_by` (#695): a piece `left_by`'s noise rule
+   (area under the tolerance times the perimeter) drops keeps its parts
+   at least twice the tolerance wide, its opening at the tolerance. The
+   booleans join the cusps the reach leaves at a floor's convex corners by
+   hairline strips along the edges between them, and the rule weighed the
+   whole chain, so it dropped every cusp in it. Per floor
    region (#406): only the passes whose end mill fits that region count, so
    a region no end mill fits is cut exactly as with no passes; each piece
    left is cleared as step 6 clears a floor region, its own outline
