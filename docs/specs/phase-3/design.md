@@ -1846,7 +1846,14 @@ per 0.05 mm of tip radius; test-fit before gluing`.
   200 designs with either bit; lettering in about half); two cases fail
   and are filed: lettering `0x5b` with the Ultra bit, whose cut-out's path
   crosses itself (#704), and lettering `0x60` with the Fine bit, whose
-  plug stands 0.107 mm proud at a rounded point (#705, known).
+  plug stands 0.107 mm proud at a rounded point (#705, known). #704
+  was the outline test, not the offset: the band's edge inset by the
+  cut-out's reach left segments nanometres long where its curve has
+  about that radius, and cavalier_contours' tolerance read one and the
+  next, going on the same way 2° apart, as overlapping. `Contour::new`
+  now takes neighbours that go on the same way round at their shared
+  vertex (tangents within a quarter turn, each at most a half turn) as
+  meeting only there.
 - **The 6 mm test part as generated** (the "DC" letters, Ultra, `D` 6,
   `G` 0.85, `P` 2, `M` 8, `outline_rounding_mm` 10, the 3.175 mm end
   mill's pass and cut-out, a 19 mm male board;

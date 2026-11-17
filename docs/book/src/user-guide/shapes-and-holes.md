@@ -182,7 +182,8 @@ caught too. An outline may still touch itself where two neighbouring edges
 meet at their shared corner, which is every corner of every shape. Touching
 anywhere else counts as crossing, even at a single point, as does an edge
 that doubles back over the one before it. A point repeated twice in a row
-in the drawing is ignored.
+in the drawing is ignored, and so is a very short edge that runs on the
+same way as the next: it doesn't double back, however short it is.
 
 ## For contributors
 
