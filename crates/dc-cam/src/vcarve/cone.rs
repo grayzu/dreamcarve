@@ -244,6 +244,24 @@ impl Walls {
         Vec2::new(-along.y, along.x).normalized()
     }
 
+    /// The middle of every wall segment that may come within `margin_mm`
+    /// of the box of `a` and `b`, with its unit normal into the regions
+    /// (#705), as [`Walls::inward_normal`] reads it; a segment with no
+    /// length has no normal and is left out.
+    pub(crate) fn middles_near(&self, a: Point, b: Point, margin_mm: f64) -> Vec<(Point, Vec2)> {
+        let lo = Point::new(a.x.min(b.x), a.y.min(b.y));
+        let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
+        self.near(lo, hi, margin_mm)
+            .into_iter()
+            .filter_map(|i| self.segments.get(i))
+            .filter_map(|&(p, q)| {
+                let along: Vec2 = q - p;
+                let normal = Vec2::new(-along.y, along.x).normalized()?;
+                Some((p + along * 0.5, normal))
+            })
+            .collect()
+    }
+
     /// [`Walls::nearest`] with the index of the segment it lies on.
     fn nearest_segment(&self, p: Point) -> Option<(f64, Point, usize)> {
         let foot = |a: Point, b: Point| {
