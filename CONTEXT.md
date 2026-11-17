@@ -248,13 +248,15 @@ _Avoid_: Top offset, Z offset, surface height
 _PureCutCNC_: a band's `topZ`
 
 **Inlay**:
-An operation (format 22) that cuts both boards of a V-bit inlay of a design
-from one project: the **female**, a flat-bottomed V-carved pocket
-`depth_mm` deep, on the stock, and the **male**, a plug of the design
-mirrored in place, left standing by carving the band round it, on the
-Inlay's **Male Board**. The plug is turned over and glued into the pocket,
-its V-sloped walls seating in the pocket's, and the excess planed off. One
-design and one set of values make both boards. (changed: maintainer
+An operation (format 22) that cuts both boards of an inlay of a design
+from one project, with one V-bit or Tapered Ball Nose: the **female**, a
+flat-bottomed V-carved pocket `depth_mm` deep, on the stock, and the
+**male**, a plug of the design mirrored in place, left standing by carving
+the band round it, on the Inlay's **Male Board**. The plug is turned over
+and glued into the pocket, its sloped walls seating in the pocket's, and
+the excess planed off. One design and one set of values make both boards.
+With a Tapered Ball Nose the design is first rounded for the bit, the same
+on both boards (#681). (changed: maintainer
 decision 2026-11-02, #498: was one side per operation, chosen by `side`,
 so a pair took two projects)
 _Avoid_: Insert, female/male V-Carve, side (of an Inlay)
@@ -412,9 +414,12 @@ past which the shank rubs. Its `diameter_mm` is the cutting diameter, as
 for every tool: where the cone reaches it the bit is a cylinder, so its
 flank may be engaged no deeper than the lower of the flutes and that
 height. Its width at any height is derived from the four.
-V-Carve and Inlay accept it in place of a V-bit. Above its **tangent
-height**, `tip radius × (1 − sin taper)`, it cuts as a V-bit of twice
-its taper whose point lies below the real tip; below, the ball cuts.
+V-Carve and Inlay cut with it in place of a V-bit; a Photo V-Carve and a
+countersink do not. Above its **tangent height**, `tip radius × (1 − sin
+taper)`, it cuts as a V-bit of twice its taper whose point lies below the
+real tip; below, the ball cuts, so a carve's floor has a fillet and its
+corners are soft below the surface, and an Inlay rounds its design for
+the bit.
 _Avoid_: TBN in user-facing text, tapered mill (Fusion's name, which
 includes flat and bull tips), included angle (a V-bit's convention)
 _Fusion_: tapered mill with a ball tip (`RE = DC/2`); _Vectric_: Tapered

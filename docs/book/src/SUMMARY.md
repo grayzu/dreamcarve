@@ -11,6 +11,7 @@
 - [A pocketed plaque from DXF](quick-start/plaque.md)
 - [A V-carved sign from SVG outlines](quick-start/sign.md)
 - [An inlay pair](quick-start/inlay.md)
+- [Carving and inlaying with a tapered ball nose](quick-start/tapered-ball-nose.md)
 - [From line art](quick-start/line-art.md)
 - [Carving a photo](quick-start/photo.md)
 
@@ -29,6 +30,7 @@
 - [Bore operation](user-guide/bore.md)
 - [V-Carve operation](user-guide/v-carve.md)
 - [Inlay operation](user-guide/inlay.md)
+- [Tapered ball nose](user-guide/tapered-ball-nose.md)
 - [Images](user-guide/images.md)
 - [Photo V-Carve operation](user-guide/photo-v-carve.md)
 - [Machining order and cut order](user-guide/machining-order.md)

@@ -1,7 +1,9 @@
 # Inlay operation
 
 An **Inlay** cuts a V-bit inlay: a design in one wood set flush into
-another. One operation, in one project, cuts both boards:
+another. One operation, in one project, cuts both boards, with one
+V-bit or one [tapered ball nose](tapered-ball-nose.md) (see [With a
+tapered ball nose](#with-a-tapered-ball-nose)):
 
 - the **female** cuts the design as a **pocket** in the project's
   stock, with walls that slope at the V-bit's angle;
@@ -66,7 +68,7 @@ project, two boards](#one-project-two-boards).
 | `name` | Your name for it, written in the program. |
 | `enabled` | `false` leaves the operation out of the program, with a warning. |
 | `targets` | The ids of the instances that make the design. Every closed outline of each takes part, nested as for a [V-Carve](v-carve.md#medial-lines-and-depth): an outline inside another is a hole in the design. Open paths are skipped with the warning `vcarve_target_open`. |
-| `tool` | The id of the tool. It must be a V-bit; it cuts both boards. See [Choosing the bit](#choosing-the-bit). |
+| `tool` | The id of the tool: a V-bit or a tapered ball nose. It cuts both boards. See [Choosing the bit](#choosing-the-bit) and [With a tapered ball nose](#with-a-tapered-ball-nose). |
 | `male_board` | The board the male is cut from: `{ "width_mm": …, "height_mm": …, "thickness_mm": … }`. Width and height `null` are the stock's; set them, above 0, for a male board of another size. The thickness is the male board's own, above 0: until it is set, only the female is cut, with the warning `inlay_male_board_unset`. See [One project, two boards](#one-project-two-boards). |
 | `depth_mm` | How deep the female's pocket is, above 0. See [The four values](#the-four-values). |
 | `glue_gap_mm` | The gap left under the seated plug, 0 or more and below `depth_mm`. The value you change to adjust the fit. |
@@ -133,6 +135,12 @@ With the 90° 1/4 in bit, Corbin's usual values are refused on the male:
 
 Both boards are cut with the operation's one V-bit, so their angles
 always agree.
+
+A tapered ball nose takes the place of the cone height with its
+**cutting height**, the lower of its flutes and the height where its
+taper reaches its cutting diameter: a 1/4 in bit with 19.05 mm of flute
+takes Corbin's cutting-board depth of 6 mm with room to spare. See [With
+a tapered ball nose](#with-a-tapered-ball-nose).
 
 ### Choosing a V-bit for an inlay
 
@@ -208,12 +216,14 @@ meet the pocket first: a line that ends inside the design, a curve that
 narrows, two parts that nearly touch
 ([#506](https://github.com/grayzu/dreamcarve/issues/506)). In
 millimetres the 30° bit's plugs seat within 0.05 mm. So do the 15°
-bit's, as long as the glue gap stands above the floor's ridges at their
-corners, as [Clearing passes](#clearing-passes) says: where the V-bit
-clears a wide floor itself, in rings, the rings' corners leave peaks
-taller than the ridges between them, and on a glue gap set just above
-the lower figure a 15° plug rested on one 0.16 mm proud
-([#522](https://github.com/grayzu/dreamcarve/issues/522)). Either way,
+bit's, as long as the glue gap stands above the floor's ridges, as
+[Clearing passes](#clearing-passes) says: where the V-bit clears a wide
+floor itself, in rings, it leaves ridges `step_over_fraction` × the
+floor's depth high, no higher at the rings' corners than between them
+([#527](https://github.com/grayzu/dreamcarve/issues/527); before that,
+the corners' peaks held a 15° plug 0.16 mm proud on a glue gap just
+above the ridge, [#522](https://github.com/grayzu/dreamcarve/issues/522)).
+Either way,
 press the plug home with a clamp and flat cauls, and keep `glue_gap_mm`
 at 1 mm or more, so that the plug has room under it to go down.
 
@@ -868,6 +878,42 @@ If the parts are meant to touch, nothing needs doing. If they are meant
 to stay apart, move them at least the distance the warning gives apart
 in the drawing.
 
+## With a tapered ball nose
+
+A [tapered ball nose](tapered-ball-nose.md) cuts both boards in place of
+a V-bit, with the same four values. Where both walls are cut by its
+taper they mate exactly as a V-bit's do, and its steep taper lets the
+pocket go deep: the [tapered ball nose quick
+start](../quick-start/tapered-ball-nose.md) inlays the "DC" 6 mm deep
+with a 0.762 mm tip at 6.7° per side. Its ball adds four rules,
+explained in full in [Tapered ball nose: inlay with
+it](tapered-ball-nose.md#inlay-with-it):
+
+- **`glue_gap_mm` and `plug_depth_mm` at least the tangent height**,
+  `tip radius × (1 − sin(taper))`, where the ball meets the taper (0.337 mm
+  for that tip). The pocket's floor is rounded by the ball up to it.
+  Below it, `inlay_glue_gap_below_ball` or `inlay_plug_depth_below_ball`
+  warns what it costs.
+- **The design is rounded for the bit**, on both boards: its points to
+  `(depth_mm − glue_gap_mm) × tan(taper) + tip radius × cos(taper)`
+  (0.983 mm in the quick start), its inward corners to `tip radius ×
+  cos(taper)` (0.378 mm), with the warning `inlay_rounded_for_bit`. A
+  part or a gap the rounding would remove, split or join is refused
+  instead, `inlay_too_narrow_for_bit`. A V-bit inlay is never rounded.
+- **The seat line.** `check` prints how far the plug's seat moves per
+  0.5° of taper and per 0.05 mm of tip radius, because a steep taper
+  turns a small error in the bit's numbers into a large one in height:
+  0.55 mm per 0.5° and 0.76 mm per 0.05 mm for the quick start's pair.
+- **A coupon first.** Cut a 20 mm rounded square at the inlay's depths
+  and adjust `glue_gap_mm` in 0.25 mm steps until it seats flush,
+  starting at the tangent height plus 0.5 mm; then cut the inlay with
+  that glue gap. [The fit](#the-fit) is the same procedure.
+
+The male's engagement, `depth_mm − glue_gap_mm + plug_depth_mm`, must be
+within the cutting height, and the band's edge, the edge pass and the
+cut-out read the bit's width at the plug's foot and at the male board's
+top where they read a V-bit's cone.
+
 ## Gluing and planing
 
 1. Spread glue on the plug's walls and in the pocket. The gap under the
@@ -919,6 +965,8 @@ These stop `check` and `export`.
 | `inlay_outline_rounding` | "… has outline_rounding_mm … mm; the male's band is rounded by that radius, so it must be above 0 …" | Set a radius above 0, or `null` for none. |
 | `v_carve_needs_v_bit` | "operation … carves with tool …, an end mill; a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose" | Give the Inlay a V-bit or a tapered ball nose. |
 | `v_bit_angle_range` | "tool … has an included angle of … degrees; …" | Fix the tool's `included_angle_deg`. |
+| `inlay_too_narrow_for_bit` | "operation … has a part (or gap) … mm wide at (…, …), but its tapered ball nose needs … mm there to carve both boards so the plug seats; …" | Widen the part or gap in the drawing, lower `depth_mm − glue_gap_mm`, or use a bit with a finer tip ([With a tapered ball nose](#with-a-tapered-ball-nose)). |
+| `tapered_ball_nose_range`, `tool_value_unset` | The Inlay's tapered ball nose has a value out of range, or unset | Correct or set it ([Tapered ball nose](tapered-ball-nose.md#entering-one)). |
 | `v_bit_cone_exceeded` | "operation … engages tool … … mm deep …"; for the male "… from the stock top (its start plane, depth_mm − glue_gap_mm below the stock top, plus its plug_depth_mm; the plug above the start plane is never cleared)", the stock top being the male board's | See [Choosing the bit](#choosing-the-bit). The female's is at `depth_mm`, the male's at `plug_depth_mm`; with both boards cut, both can be reported. |
 | `inlay_cut_out_no_room` | "… cuts its plug out with tool …, … mm across, along the outer edge of the band's flat floor; with margin_mm … mm that floor is narrower than the tool … Raise margin_mm to at least … mm …, or use a narrower end mill" | Raise `margin_mm`, or use a narrower end mill. |
 | `cutter_not_flat` | "… cuts its plug's cut-out with tool …, a V-bit; …" at `cut_out.tool` | Give the cut-out a flat end mill. |
@@ -937,6 +985,8 @@ neither the operation nor its V-bit sets `step_over_fraction`.
 | `inlay_male_board_unset` | The male board has no thickness set, so only the female is cut. Measure the male board and set `male_board.thickness_mm`. |
 | `inlay_male_mirrored` | Every Inlay that cuts its male, once: a note giving the mirror line. |
 | `inlay_plug_base_thin` | The male leaves less than 6 mm of the male board under its band. |
+| `inlay_rounded_for_bit` | The Inlay's tapered ball nose rounds the design's points or inward corners on both boards; it gives the radius and the largest change ([With a tapered ball nose](#with-a-tapered-ball-nose)). |
+| `inlay_glue_gap_below_ball`, `inlay_plug_depth_below_ball` | `glue_gap_mm` or `plug_depth_mm` is below the tapered ball nose's tangent height; it says how proud the plug stands, or how far its wall opens. |
 | `inlay_band_edge_v_wall` | A male has clearing passes, but none fits its band's floor, so the V-bit cuts the band's outer edge as a sloped wall; it names the margin that would let a pass cut it upright. |
 | `inlay_band_clipped` | The male's band runs past the male board's edge, so it is clipped to the board there; it names the edges and the narrowest band left. |
 | `inlay_margin_ignored` | `margin_mm` or `outline_rounding_mm` is set beside a `boundary`, which replaces both ([The boundary](#what-it-replaces)). |
@@ -957,5 +1007,7 @@ neither the operation nor its V-bit sets `step_over_fraction`.
   that is a saw and a plane, after the glue-up.
 - The cut-out has no entry ramp or lead: it plunges at the plunge rate,
   a step-down at a time.
-- The bit is an ideal point; a real tip has a small flat. The fit
+- A V-bit is an ideal point; a real tip has a small flat. The fit
   procedure absorbs it, as it absorbs a bit whose angle is a little off.
+  A tapered ball nose's ball is modelled; a coupon absorbs the
+  difference between its catalogue numbers and its real cut.

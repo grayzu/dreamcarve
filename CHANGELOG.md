@@ -9,6 +9,34 @@ phases bump the patch number.
 
 ### Added
 
+- **Tapered ball nose chapter, quick start and test part (#683).** The
+  user guide has a Tapered ball nose chapter: the bit's four numbers (tip
+  diameter, taper per side, flute length, cutting diameter), its cutting
+  height, unset values, measuring the taper with two plunge holes, Fusion
+  import, how it carves (depth, fillet, scallop, soft corners) and
+  inlays (the tangent height, rounding for the bit, the seat line, the
+  coupon fit), and every rule that refuses it. The quick start "Carving
+  and inlaying with a tapered ball nose" cuts a coupon pair, a carve and
+  a 6 mm "DC" inlay with an example pair of bits, and its projects are
+  the committed `tests/fixtures/tbn-coupon.dcv` and `dc-tbn.dcv`. The
+  Tool library, V-Carve, Inlay, Warnings, Safety and Project file
+  chapters, and `CONTEXT.md`, now cover the tapered ball nose (#700).
+- **Inlay with a tapered ball nose (#681).** An Inlay now cuts both
+  boards with a tapered ball nose. Both boards round the design for the
+  bit, its points to `(depth_mm − glue_gap_mm) × tan(taper) + tip radius ×
+  cos(taper)` and its inward corners to `tip radius × cos(taper)`, with
+  `inlay_rounded_for_bit`; a part or gap the rounding would remove, split
+  or join is refused with `inlay_too_narrow_for_bit`. A `glue_gap_mm` or
+  `plug_depth_mm` below the bit's tangent height warns
+  (`inlay_glue_gap_below_ball`, `inlay_plug_depth_below_ball`). `check`
+  prints a seat line, how far the plug's seat moves per 0.5° of taper and
+  per 0.05 mm of tip radius, to say why a coupon is test-fitted first.
+  The male's engagement is held to the bit's cutting height, and the
+  band's edge and the cut-out read the bit's width; the safety pass
+  works the rounded design out again from the project. A tapered ball
+  nose's cut depths are written on the grid above them and its carves get
+  no fitted arcs, so S17 holds them as written. V-bit inlays are
+  unchanged.
 - **Carving with a tapered ball nose (#679, #680).** A V-Carve now takes a
   tapered ball nose in place of a V-bit. Each depth comes from the bit's
   real profile, its ball near the tip and its cone above: the medial
@@ -20,8 +48,8 @@ phases bump the patch number.
   tip, so the walls meet in a round valley there; `tapered_corners_softened`
   counts those corners once per operation and says how far to round them.
   The safety pass holds the carve to S17 on the same profile, exactly,
-  with no sampling. A Photo V-Carve and a countersink still need a V-bit,
-  and an Inlay does not take one yet. V-bit programs are unchanged, but
+  with no sampling. A Photo V-Carve and a countersink still need a V-bit;
+  an Inlay takes one from #681 (above). V-bit programs are unchanged, but
   for the last digit of a few ramp feeds in the "DC" inlay's female.
 - **Fusion tapered ball nose import (#682).** A Fusion library's
   `tapered mill` with a ball tip (`RE` half of `DC`) now imports as a
@@ -40,7 +68,7 @@ phases bump the patch number.
   diameter. `check` lists each unset value an operation needs and
   `export` refuses until it is set. The tool library (now version 3)
   imports, lists and adds one, and `tools add` says which values are
-  still to set. A V-Carve carves with one (#679, above); a Photo
+  still to set. A V-Carve (#679) and an Inlay (#681) carve with one; a Photo
   V-Carve or a countersink never does. A version 27 project loads and
   exports the same programs, byte for byte.
 - **`image-prep` reads DXF (#669).** `dreamcarve image-prep <svg|dxf>`

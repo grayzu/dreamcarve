@@ -129,9 +129,11 @@ gives each message and what to do.
 
 | Code | When |
 | --- | --- |
-| `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is neither a V-bit nor a tapered ball nose, or a Photo V-Carve's is not a V-bit. |
+| `v_carve_needs_v_bit` | A V-Carve's or an Inlay's tool is neither a V-bit nor a tapered ball nose, or a Photo V-Carve's is not a V-bit. A Photo V-Carve with a tapered ball nose says "a Photo V-Carve needs a V-bit; a tapered ball nose is not supported there": its depth follows a V-bit's angle. Use a V-bit. |
 | `v_bit_angle_range` | A V-bit's `included_angle_deg` is not above 0 and below 180. |
-| `v_bit_cone_exceeded` | A carve, an Inlay, a countersink or a Photo V-Carve would engage the V-bit deeper than its cone is tall: the flat depth, the Inlay's depth from each board's top, the countersink's depth or the Photo V-Carve's `max_depth_mm`, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. |
+| `tapered_ball_nose_range` | A tapered ball nose's `tip_diameter_mm` is not above 0, its `taper_angle_deg` not above 0 or above 45 (per side), its `flute_length_mm` not above the tangent height, where the ball meets the taper, or its `diameter_mm` not wider than the tip: "tool …: cutter.tapered_ball_nose.taper_angle_deg is …, expected a taper above 0 and at most 45 degrees per side (half the included angle)". At the field, whether or not an operation uses the tool. Correct the value; a taper that is twice what it should be is an included angle ([Tapered ball nose](tapered-ball-nose.md#the-bit)). |
+| `tool_value_unset` | A value a used tool needs is `null`: a feed, plunge rate or RPM, or a tapered ball nose's tip, taper or flute length, "tools[t3].cutter.tapered_ball_nose.taper_angle_deg is not set (degrees per side) for tool …". At the field; `check` lists every one in one run. Set it, from the bit's maker or measured; DreamCarve never guesses one. |
+| `v_bit_cone_exceeded` | A carve, an Inlay, a countersink or a Photo V-Carve would engage the bit deeper than it can cut: the flat depth, the Inlay's depth from each board's top, the countersink's depth or the Photo V-Carve's `max_depth_mm`, plus a start depth no Pocket or V-Carve floor clears, or with no flat depth the widest part of a shape. For a V-bit the limit is its cone height. For a tapered ball nose it is its **cutting height**, the lower of its flutes and the height where its taper reaches its cutting diameter, and the message names which: "… engaged 22.650 mm, past the bit's 19.050 mm flutes …", or "… past 18.374 mm, where it reaches its 6.350 mm cutting diameter …". Use a flat depth or a shallower one, or a bit with longer flutes ([Tapered ball nose](tapered-ball-nose.md#the-bit)). |
 | `clearing_needs_flat_depth` | A V-Carve has clearing passes but no flat depth. |
 | `clearing_needs_end_mill` | A clearing pass's tool is not a flat end mill. |
 | `clearing_dangling_tool` | A clearing pass names a tool the project does not have. |
@@ -159,7 +161,8 @@ is at `depth_mm` for the female, whose flank engages that deep, and at
 `plug_depth_mm` for the male, whose flank engages `depth_mm −
 glue_gap_mm + plug_depth_mm` from the male board's top, since the plug
 above its start plane is never cleared; with both boards cut, both can
-be reported. The male's own rules (its margin, its cone, its cut-out
+be reported. With a tapered ball nose the limit is the bit's cutting
+height, not a cone. The male's own rules (its margin, its cone, its cut-out
 and its plug base) wait until the male board's thickness is set.
 
 | Code | When |
@@ -207,7 +210,7 @@ For a countersink, the start depth errors are at its
 
 | Code | When |
 | --- | --- |
-| `countersink_needs_v_bit` | A countersink's tool is not a V-bit: "… countersinks with tool …; a countersink's depth follows the angle of a V-bit, so use a V-bit". |
+| `countersink_needs_v_bit` | A countersink's tool is not a V-bit, a tapered ball nose included: "… countersinks with tool …; a countersink's depth follows the angle of a V-bit, so use a V-bit". A countersink's seat is a cone by purpose. |
 | `countersink_diameter_positive` | A countersink's `diameter_mm` is 0 or less: "… has a countersink diameter_mm of … mm; the mouth must be wider than 0". |
 | `countersink_mouth_exceeds_tool` | A countersink's `diameter_mm` is wider than its V-bit: "… asks for a … mm countersink, wider than the … mm tool …; past its diameter a V-bit has no cutting edge, so use a mouth at most the bit's diameter or a wider bit". |
 
