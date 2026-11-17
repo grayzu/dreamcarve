@@ -238,3 +238,60 @@ fn the_ball_s_costs_are_the_spec_s() {
         None
     );
 }
+
+/// The stress sweep's lettering `0x48` with the Ultra bit (#681): where
+/// two of the opened design's round ends meet at a waist, the closing
+/// fills the cusp between them with wood no disc of `R_min` inside the
+/// design reaches, and the pocket's ball could not cut it to depth: the
+/// plug stood 1.07 mm proud on it. Two discs of radius `1.2 R_min` whose
+/// centres are `2 R_min` apart make such a waist. Rounded, every point of
+/// the outline lies on a disc of `R_min` inside the design (within the
+/// wall tolerance), so the waist's cusps are left as the opening leaves
+/// them.
+#[test]
+fn waist_is_left_open() {
+    let profile = ultra();
+    let rounding = BitRounding::of(&profile, 3.0).unwrap();
+    let r = 1.2 * rounding.open_mm;
+    let disc = |cx: f64| {
+        nest(vec![
+            Contour::new(Polyline::circle(Point::new(cx, 50.0), r)).unwrap(),
+        ])
+        .unwrap()
+        .0
+    };
+    let two = union(&disc(50.0), &disc(50.0 + 2.0 * rounding.open_mm), 0.001);
+    assert_eq!(two.len(), 1, "one shape with a waist");
+    let rounded = rounded_for_bit(&two, &profile, 3.0, 0.01).unwrap();
+    let eroded = floor_regions(&rounded.regions, rounding.open_mm, 0.001);
+    let walls: Vec<&Polyline> = eroded
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .map(Contour::polyline)
+        .collect();
+    let worst = rounded
+        .regions
+        .iter()
+        .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+        .flat_map(|c| {
+            c.polyline()
+                .with_arcs_flattened(0.001)
+                .vertices()
+                .iter()
+                .map(|v| v.point())
+                .collect::<Vec<_>>()
+        })
+        .map(|p| {
+            walls
+                .iter()
+                .filter_map(|w| nearest_point(w, p))
+                .map(|n| n.gap_mm)
+                .fold(f64::INFINITY, f64::min)
+        })
+        .fold(0.0, f64::max);
+    assert!(
+        worst <= rounding.open_mm + 0.005,
+        "an outline point {worst} mm from the centres of the discs of R_min {}",
+        rounding.open_mm
+    );
+}
