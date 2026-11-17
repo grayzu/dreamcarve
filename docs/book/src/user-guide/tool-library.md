@@ -201,13 +201,21 @@ PureCutCNC's tool library:
 - `diameter_mm` is greater than 0;
 - `flutes` is 1 or more;
 - a V-bit's `included_angle_deg` is greater than 0 and less than 180;
+- a tapered ball nose's `tip_diameter_mm`, when set, is greater than 0;
+  its `taper_angle_deg`, when set, is greater than 0 and at most 45 (per
+  side); its `flute_length_mm`, when set, reaches past the ball, above
+  the tangent height; and its `diameter_mm` is wider than the tip
+  (`tapered_ball_nose_range`; see [Tapered ball
+  nose](tapered-ball-nose.md#entering-one));
 - `step_over_fraction`, when set, is greater than 0 and at most 1;
 - `feed_mm_min`, `plunge_mm_min`, `rpm` and `step_down_mm`, when set, are
   greater than 0, and `number`, when set, is 1 or more.
 
 Feeds, plunge rate and RPM may be left `null` in the library, as in a
-project. DreamCarve never fills them in: a project using a tool without
-them will not export until you set them.
+project, and so may a tapered ball nose's tip, taper and flute length.
+DreamCarve never fills them in: a project using a tool without them will
+not export until you set them. `tools add` says which values a tool it
+copies still needs.
 
 ## V-bit angle and cone height
 
@@ -231,6 +239,35 @@ that would carve deeper than that is refused with `v_bit_cone_exceeded`,
 because the shank would cut, so set the diameter to the bit's real
 cutting diameter, not a rounder number. [Choosing a bit
 angle](v-carve.md#choosing-a-bit-angle) says what each angle is good for.
+
+## Tapered ball nose
+
+A tapered ball nose is entered with four numbers: `tip_diameter_mm`, the
+ball's diameter (twice the tip radius vendors usually give);
+`taper_angle_deg`, the taper **per side**, half the included angle, as
+tapered bits are sold (so not a V-bit's convention: do not double it);
+`flute_length_mm`; and `diameter_mm`, the cutting diameter, where the
+taper becomes a cylinder:
+
+```json
+"cutter": { "tapered_ball_nose": { "tip_diameter_mm": 0.762, "taper_angle_deg": 6.7, "flute_length_mm": 19.05 } },
+"diameter_mm": 6.35,
+```
+
+Its **cutting height**, the deepest its flank may be engaged, takes the
+place of a V-bit's cone height: the lower of the flute length and the
+height where the taper reaches the cutting diameter. A carve or inlay
+deeper than that is refused with `v_bit_cone_exceeded`, naming which.
+`tools list` prints a line of the bit's numbers after the table, `-` for
+one not set:
+
+```text
+lt2 0.762 mm tip tapered ball nose: tapered ball nose, 6.350 mm cut, tip 0.762 mm (radius 0.381 mm), 6.7° per side, 19.050 mm flutes
+```
+
+[Tapered ball nose](tapered-ball-nose.md) says what each number does,
+how to measure the taper with two plunge holes, and how the bit carves
+and inlays.
 
 ## Fusion 360 tool libraries
 

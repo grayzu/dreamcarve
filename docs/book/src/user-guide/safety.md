@@ -128,7 +128,9 @@ never cuts on both boards.
    the width the V-bit cuts at the stock top, `(stock top − Z) ×
    tan(α / 2)` either side, at most its radius, rather than by the whole
    radius: a groove at the picture's edge runs half its width past the
-   picture, and this rule keeps that on the stock.
+   picture, and this rule keeps that on the stock. A [tapered ball
+   nose](tapered-ball-nose.md)'s radius here is the widest it cuts: the
+   lower of its width at the top of its flutes and its cutting diameter.
 
 10. **Canned cycles mean what the plain moves mean.** When a Drill is
     written as [canned cycles](drill.md#canned-cycles) (`G81`, `G82`,
@@ -208,14 +210,16 @@ never cuts on both boards.
       into stock that stands full height,
       stops the export. A ramp or helix that starts at or above the stock
       top clears its own way, and so passes.
-    - a [V-Carve](v-carve.md): the V-bit's cone, by rule 14. A clearing
+    - a [V-Carve](v-carve.md): the V-bit's cone, or a tapered ball
+      nose's profile, by rule 14. A clearing
       pass is held as a Pocket of the carve's floor: the whole width of its
       end mill stays inside the carved shapes inset by `F × tan(α / 2)`
-      (the floor, for flat depth `F` and bit angle `α`), and never below
+      (the floor, for flat depth `F` and bit angle `α`; for a tapered
+      ball nose, its half-width at `F`), and never below
       the flat depth. A later, smaller pass may run through what an
       earlier one cleared. Each pass is checked only with its own end
       mill, in its own run.
-    - an [Inlay](inlay.md): the V-bit's cone, by rule 14, against its
+    - an [Inlay](inlay.md): the bit's cone or profile, by rule 14, against its
       board's own material: the design on the female, the surround on the
       male. The surround's outer edge is worked out again from the
       project, not read from the program: with a drawn
@@ -312,6 +316,23 @@ never cuts on both boards.
       by sampling: arcs as arcs, and for a move that goes down while it
       moves, the closest point found in closed form, so half a
       millimetre of wall between two samples cannot be missed.
+
+    A [tapered ball nose](tapered-ball-nose.md) is held the same way,
+    with its own shape in place of the cone: at every point of a move the
+    tip is at least `w(start plane − Z)` from every outline, where `w(h)`
+    is the bit's half-width `h` above its tip (the ball, then the taper,
+    then the cutting diameter), and the shank rule holds the flank to the
+    bit's **cutting height**, the lower of its flutes and the height
+    where its taper reaches its cutting diameter, in place of the cone
+    height. This too is exact, with no sampling: a descent in the ball,
+    whose width grows fastest near the tip, cannot slip a wall between
+    two samples. An Inlay cut with one is held to its design rounded for
+    the bit, worked out again from the project as the generator rounds
+    it, and the male's open band edge is held on the bit's profile at the
+    male board's top. Its shank error reads as a V-bit's, "… past its …
+    mm cone …", the number being the cutting height; the generator
+    refuses such a carve first, with `v_bit_cone_exceeded` naming the
+    flutes or the cutting diameter.
 
     The slack is as for rule 12: one unit in the last decimal place, plus
     `flatten_tolerance_mm`, plus `arc_fit_tolerance_mm` when arc fitting

@@ -499,7 +499,7 @@ A countersink adds its own errors, which stop `check` and `export`:
 
 | Code | When | What to do |
 | --- | --- | --- |
-| `countersink_needs_v_bit` | The tool is not a V-bit. | A countersink's depth follows the bit's angle: use a V-bit. |
+| `countersink_needs_v_bit` | The tool is not a V-bit; a [tapered ball nose](tapered-ball-nose.md) is refused too. | A countersink's depth follows the bit's angle: use a V-bit. |
 | `v_bit_angle_range` | The V-bit's `included_angle_deg` is not above 0 and below 180. | Fix the tool's angle. |
 | `countersink_diameter_positive` | `diameter_mm` is 0 or less. | Give the mouth's width. |
 | `countersink_mouth_exceeds_tool` | `diameter_mm` is wider than the V-bit. | Past its diameter a V-bit has no cutting edge: use a mouth at most the bit's diameter, or a wider bit. |

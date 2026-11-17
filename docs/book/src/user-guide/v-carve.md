@@ -313,6 +313,37 @@ of a straight-walled shape), and lifts otherwise, such as across a
 narrow neck. A step-over of 0 or less, or so small that a shape would
 need more than 10000 rings, is an error.
 
+## With a tapered ball nose
+
+A [tapered ball nose](tapered-ball-nose.md) carves wherever a V-bit
+does, with the same settings. Its taper is steep, so it carves deep and
+narrow, and its tip is a ball, so near the tip it cuts as a ball nose:
+
+- **Depth.** Each point is carved as deep as the bit goes with its cut
+  at the start plane as wide as the shape there, on the bit's real
+  profile: `tip radius − √(tip radius² − c²)` while the ball does it,
+  for half-width `c`, and `c / tan(taper) − tip radius × (1 / sin(taper)
+  − 1)` above. A groove's bottom is round. With a 0.762 mm tip at 6.7°
+  per side, a 1.5 mm stroke is carved 3.5 mm deep.
+- **Cutting height.** In place of the cone height, the bit's flank may be
+  engaged no deeper than the lower of its flutes and the height where its
+  taper reaches its cutting diameter; deeper is `v_bit_cone_exceeded`,
+  naming which. Widths grow slowly with depth at a steep taper, so a
+  stroke much over 5 mm wide needs a flat depth.
+- **Flat depth.** The floor boundary is the shape inset by the bit's
+  half-width at the flat depth, and every floor meets its wall in a
+  fillet of the tip's radius. The step-over is a fraction of the bit's
+  width at the floor, and the ridge between rings is the ball's scallop,
+  a few thousandths of a millimetre at 0.1. `check` prints it.
+- **Corners.** At the surface every corner is cut as drawn; below it the
+  ball cannot follow a convex corner sharper than about its own radius,
+  and the walls meet in a round valley. `tapered_corners_softened` warns
+  once per operation, with the radius that would let the bit follow them.
+
+Clearing passes and the offset strategy work as for a V-bit, on the
+bit's width at each depth. [Tapered ball nose: carving with
+it](tapered-ball-nose.md#carving-with-it) gives the details.
+
 ## Safety
 
 Every V-Carve program passes the [safety](safety.md) rules, and one more,
@@ -320,7 +351,8 @@ S17, which holds the V-bit's cone, not just its tip, to the carve: the
 cone never passes through a wall of the shape below the start plane, the
 tip never goes below the flat depth, the flank is never engaged deeper
 than the cone height, and the only cut above the start plane is a
-straight descent. A clearing pass is held as a Pocket of the floor. See
+straight descent. A tapered ball nose is held the same way on its own
+profile, with its cutting height in place of the cone height. A clearing pass is held as a Pocket of the floor. See
 [Safety](safety.md), rule 14.
 
 ## Errors
@@ -332,7 +364,8 @@ shape or tool concerned.
 | --- | --- | --- |
 | `v_carve_needs_v_bit` | "operation … carves with tool …, an end mill; a carve's depth follows the bit's profile, so it needs a V-bit or a tapered ball nose" | Give the operation a V-bit or a tapered ball nose. |
 | `v_bit_angle_range` | "tool … has an included angle of … degrees; a V-Carve, an Inlay, a Photo V-Carve or a countersink needs a V-bit angle above 0 and below 180 degrees …" | Fix the tool's `included_angle_deg`. |
-| `v_bit_cone_exceeded` | "operation … engages tool … … mm deep, but the bit's cone is only … mm tall; below that the shank cuts …", or at export "operation … carves … with its V-bit's flanks engaged … mm deep …" | The flat depth (plus a start depth no Pocket or V-Carve floor clears), or with no flat depth the widest part of a shape, needs more than the cone. Set or lower `flat_depth_mm`, use a wider bit or a larger angle, or clear the start depth with a Pocket. |
+| `v_bit_cone_exceeded` | "operation … engages tool … … mm deep, but the bit's cone is only … mm tall; below that the shank cuts …", or at export "operation … carves … with its V-bit's flanks engaged … mm deep …"; for a tapered ball nose "… engaged … mm, past the bit's … mm flutes …" or "… past … mm, where it reaches its … mm cutting diameter …" | The flat depth (plus a start depth no Pocket or V-Carve floor clears), or with no flat depth the widest part of a shape, needs more than the cone, or than a tapered ball nose's cutting height. Set or lower `flat_depth_mm`, use a wider bit, a larger angle or longer flutes, or clear the start depth with a Pocket. |
+| `tapered_ball_nose_range`, `tool_value_unset` | A tapered ball nose's tip, taper, flute length or cutting diameter is out of range, or unset ([Tapered ball nose: entering one](tapered-ball-nose.md#entering-one)) | Correct or set the value. |
 | `clearing_needs_flat_depth` | "operation … has clearing passes but no flat_depth_mm …" | Set a flat depth, or remove the passes. |
 | `clearing_needs_end_mill` | "clearing pass … of operation … cuts with tool …, …; a clearing pass is cut as a Pocket, which only a flat end mill cuts to size …" | Use an end mill for the pass. |
 | `clearing_dangling_tool` | "clearing pass … of operation … uses tool …, which does not exist" | Fix the pass's `tool`. |
@@ -353,14 +386,17 @@ an offset carve's `step_over_mm` is unusable.
 | `clearing_no_room` | A clearing pass can reach nothing the passes before it left; it has no program. |
 | `clearing_not_descending` | A clearing pass's end mill is wider than the one before it. |
 | `start_depth_mismatch` | An earlier Pocket, or an earlier V-Carve's flat floor, contains the targets, at a depth other than the start depth. |
+| `tapered_corners_softened` | A tapered ball nose cannot follow some convex corners below the surface; it names how many, the one that changes most, and the radius that would let it ([With a tapered ball nose](#with-a-tapered-ball-nose)). |
 
 [Warnings](warnings.md) says what to do about each.
 
 ## Limits
 
-- The bit is an ideal point. A real V-bit's tip has a small flat, so the
+- A V-bit is an ideal point. A real V-bit's tip has a small flat, so the
   finest corners come out a little rounded and the carve a little deeper
-  than its width needs; nothing models it yet.
+  than its width needs; nothing models the flat yet. A tapered ball
+  nose's round tip is modelled ([With a tapered ball
+  nose](#with-a-tapered-ball-nose)); a tapered bit with a flat tip is not.
 - Open paths are not carved: cut a line at a fixed depth with an
   [Engrave](engrave.md).
 - No depth passes (VCarve's "Multiple Depths"); one pass, whatever the

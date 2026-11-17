@@ -480,7 +480,7 @@ These stop `check` and `export`. Each names the operation and the field.
 | `photo_unknown_bitmap` | "operation … carves bitmap …, which does not exist" | Set `image` to a bitmap of the project; `dreamcarve image list` shows them. |
 | `operation_value_unset` | "… max_depth_mm is not set" | Set `max_depth_mm`. |
 | `v_bit_cone_exceeded` | "operation … engages tool … … mm deep, but the bit's cone is only … mm tall …", with "from the stock top (its start depth, which no Pocket or V-Carve floor of the project clears, plus its max_depth_mm)" when the start plane is not cleared | Use a smaller `max_depth_mm` or a bit with a taller cone; clear the start depth with a Pocket. |
-| `v_carve_needs_v_bit`, `v_bit_angle_range` | The tool is not a V-bit, or its angle is not above 0 and below 180. | Use a V-bit. |
+| `v_carve_needs_v_bit`, `v_bit_angle_range` | The tool is not a V-bit (a [tapered ball nose](tapered-ball-nose.md) included: a Photo V-Carve's depth follows a V-bit's angle), or its angle is not above 0 and below 180. | Use a V-bit. |
 | `photo_line_angle_range` | "… has line_angle_deg …; the grooves' angle is 0 degrees or more and less than 180" | Use 0 to 179.99; 180 is the same as 0. |
 | `photo_line_spacing_positive` | "… has line_spacing_fraction …; the spacing of the grooves is a fraction of a groove's width, above 0" | Use 1 or more, usually 1.1. |
 | `photo_sample_positive` | "… has sample_mm … mm; the distance between samples along a groove is above 0" | Use 0.1 to 0.5. |
