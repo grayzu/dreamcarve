@@ -195,7 +195,7 @@ dreamcarve check coaster.dcv --preview coaster-preview.svg
   for each tab on each pass that rises over it.
 - Each pass starts at a circle the size of the bit, with a tick one bit
   diameter long pointing the way the cut goes. This is where `at_distances`
-  tabs are measured from ([Tabs: placement](tabs.md#placement)).
+  tabs are measured from ([Tabs: at distances along the outline](tabs.md#at-distances-along-the-outline)).
 - A Drill draws a circle the size of the bit at each hole.
 - With an [Inlay](inlay.md#programs) that cuts its male, the male board
   is drawn to the right of the stock, 10 mm apart, their bottom edges

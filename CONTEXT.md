@@ -53,13 +53,25 @@ between a user-set top and bottom over a user-set footprint. Not a mesh.
 _Avoid_: Depth map, grayscale relief, bump map, height field (that is the
 simulation's internal grid)
 
+**Bitmap**:
+A picture placed on the stock (format 27), `bitmaps`: an 8-bit grayscale
+PNG embedded in the project, with an id of its own (`b1`), a name, the
+bottom-left corner of its footprint and its width and height in
+millimetres, `visible` and `locked`. Not a shape and not an instance: only a
+Photo V-Carve can name it, and it cannot be rotated. Its top row is at the
+highest Y. `init` on a PNG or JPEG and `image add` place one; a colour
+picture is stored by luminance.
+_Avoid_: Image (in the data model), photo (that is what it shows), raster,
+heightmap (a phase 7 model whose pixels are heights)
+_PureCutCNC_: none; _Vectric_: bitmap
+
 **Image Prep**:
 Making an SVG easy to inlay before `init` (`dreamcarve image-prep`, opt-in):
 strokes become areas, fills are resolved, line art can be turned into the
 spaces between its lines, and specks and jagged runs are cleaned up. It reads
-and writes SVG, takes no tool, stock or final size, and every threshold is a
-percentage of the design's height. The checks `init` always runs report the
-same problems and change nothing.
+an SVG or a DXF and writes an SVG, takes no tool, stock or final size, and
+every threshold is a percentage of the design's height. The checks `init`
+always runs report the same problems and change nothing.
 _Avoid_: Cleanup, vectorize, trace (tracing a picture is a different, deferred
 job), repair
 
@@ -87,8 +99,8 @@ _Avoid_: Noise, artifact, dust
 
 **Operation**:
 A machining strategy applied to one or more feature instances, with a tool,
-depth and feeds. The kinds are Profile, Pocket, Drill, Bore, V-Carve and Engrave,
-with Surface Rough and Surface Finish from phase 7.
+depth and feeds. The kinds are Profile, Pocket, Drill, Bore, V-Carve, Inlay,
+Photo V-Carve and Engrave, with Surface Rough and Surface Finish from phase 7.
 _Avoid_: Job, cut, pass (a pass is one depth step inside an operation)
 
 **Profile**:
@@ -101,7 +113,7 @@ _PureCutCNC_: Edge Route
 
 **Pocket**:
 An operation that clears all material inside a closed shape to a depth.
-_Avoid_: Clearing, area clear
+_Avoid_: Clearing (a carve's end-mill passes), area clear
 _PureCutCNC_: Pocket Rough, Pocket Finish
 
 **Clearance Strategy**:
@@ -192,10 +204,48 @@ _Avoid_: Chamfer, counterbore (a flat-bottomed step, a Bore or Pocket)
 _PureCutCNC_: Drilling, `countersink` drill type
 
 **V-Carve**:
-An operation that drives a V-bit along the medial lines of a shape so the cut
-width follows the shape width.
+An operation (format 20) that drives a V-bit, or a Tapered Ball Nose,
+along the medial lines of a shape so the cut width follows the shape
+width, in one pass whatever its depth; or, with the offset strategy, in
+rings stepping in from the outline.
 _Avoid_: Carve, vcarve, chamfer
 _PureCutCNC_: V-Carve
+
+**Flat Depth**:
+The depth a V-Carve stops at, `flat_depth_mm` (`null` for none), counted
+from the start plane. Where the shape is wider than the bit's flanks reach
+at that depth, the bit runs along the **floor boundary**, the shape inset
+by the bit's half-width there, and the floor inside it is flat: cleared by
+the carve's Clearing passes, and by the V-bit itself where they cannot
+reach. The depth must fit the bit's cone. An Inlay's `depth_mm` is the
+female's flat depth. VCarve's "Flat Depth".
+_Avoid_: Max depth (a Photo V-Carve's `max_depth_mm` is a black pixel's
+depth), floor depth, clamp
+_PureCutCNC_: `maxCarveDepth` (a clamp with no floor clearing)
+
+**Clearing**:
+The end-mill passes that clear a V-Carve's or Inlay's flat floor before
+the V-bit runs, `clearing`: a list of **clearing passes**, each a flat end
+mill with a Pocket's strategy, direction and entry. Each pass clears what
+the ones before it could not reach, worked out from their tools, never
+their toolpaths, and is a tool run of its own (`op2 (clearing t1)`). An
+empty list leaves the whole floor to the V-bit. A V-Carve's needs a flat
+depth. VCarve's "Use Clearance Tools", Corbin's "Clearance" toolpaths.
+_Avoid_: Clearance (that is the Clearance Height or Strategy), rough, Pocket
+(a Pocket is its own operation), rest pass
+_PureCutCNC_: none
+
+**Start Depth**:
+How far below the stock top a carve begins, `start_depth_mm` (default 0):
+the **start plane**, from which every depth of a V-Carve, a Photo V-Carve or
+a countersink counts, and where the bit's flanks meet the outline. Above 0
+it is the floor of an earlier Pocket, or of a V-Carve's flat floor, that
+holds the carve (`start_depth_mismatch` when its depth differs), or of a
+pocket cut by another program, which the operation must state with
+`start_plane_cleared_externally`; otherwise export refuses it
+(`start_depth_uncleared`). An Inlay has none. VCarve's "Start Depth".
+_Avoid_: Top offset, Z offset, surface height
+_PureCutCNC_: a band's `topZ`
 
 **Inlay**:
 An operation (format 22) that cuts both boards of a V-bit inlay of a design
@@ -248,6 +298,19 @@ female. Its narrowest band, the least distance from the design to its edge,
 stands in for the margin in the band's rules.
 _Avoid_: Outline, frame (the "DC" fixture's frame is a drawing that can be
 used as one), plug stock offset (Corbin's computed margin)
+
+**Photo V-Carve**:
+An operation (format 27) that carves one Bitmap with a V-bit as parallel
+grooves whose depth follows the picture's darkness, up to `max_depth_mm`
+for black (`invert` swaps black and white): spaced `line_spacing_fraction`
+of a full-depth groove's width apart at `line_angle_deg`, with a second set
+at right angles for `hatch`, depth read every `sample_mm`, and the bit
+lifted `stepover_retract_mm` above the start plane between grooves. VCarve's
+"Photo V-Carve"; RasterCarve's engraving, which is a behaviour reference only
+(GPL).
+_Avoid_: Photo carve, raster carve, engraving (Engrave is its own
+operation), heightmap carve
+_PureCutCNC_: none
 
 **Engrave**:
 An operation that follows an open or closed path with the tool centre on the
