@@ -22,7 +22,7 @@ space layout is left out.
 | Entity | Becomes |
 | --- | --- |
 | `LINE` | An open shape of one segment. |
-| `ARC`, `CIRCLE` | Arcs. They stay arcs in the project, with the centre and radius the file states, and are written as `G2`/`G3` where the post-processor allows. |
+| `ARC`, `CIRCLE` | Arcs. They stay arcs in the project, with the centre and radius the file states, and are written as `G2`/`G3` where the post-processor allows. An arc of more than a half turn, in an `ARC` or a polyline's bulge, is stored as its two halves, one more vertex, so every part of DreamCarve measures it exactly (#694). |
 | `LWPOLYLINE`, `POLYLINE` | A shape with the polyline's vertices and bulges (arc segments). The polyline's closed flag closes the shape. Polygon and polyface meshes are skipped. A polyline smoothed with "spline fit" imports as the smoothed curve, not the frame it was fitted to; one smoothed with "curve fit" keeps its fitted arcs. |
 | `SPLINE` | Short straight lines within the project's tolerance (0.01 mm) of the curve. Rational splines and fit-point-only splines are read. |
 | `ELLIPSE` | Short straight lines within the tolerance of the ellipse or elliptical arc. |
