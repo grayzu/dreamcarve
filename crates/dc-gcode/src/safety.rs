@@ -7936,4 +7936,5 @@ mod tests {
     mod photo;
     mod s17;
     mod s18;
+    mod tapered;
 }

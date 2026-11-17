@@ -25,7 +25,7 @@ use dc_project::{
 };
 use std::collections::BTreeMap;
 
-const DATE: &str = "2026-10-28";
+pub(super) const DATE: &str = "2026-10-28";
 
 /// A flat end mill `id` of `diameter_mm`, every rate set, stepping down
 /// 1 mm at a 0.4 step-over.
@@ -71,7 +71,7 @@ fn carve_with(edit: impl FnOnce(&mut VCarveOp)) -> VCarveOp {
 }
 
 /// The project's tool `id`.
-fn tool_of(project: &Project, id: &str) -> Tool {
+pub(super) fn tool_of(project: &Project, id: &str) -> Tool {
     project
         .tools
         .iter()
@@ -82,7 +82,7 @@ fn tool_of(project: &Project, id: &str) -> Tool {
 
 /// S9 and S17 alone on hand-written `text`, as the run `label` of `op`
 /// cut with `tool`.
-fn check_run(
+pub(super) fn check_run(
     text: &str,
     project: &Project,
     op: &Operation,
@@ -124,7 +124,7 @@ fn check_carve(text: &str, project: &Project, op: &VCarveOp) -> Result<(), Expor
 
 /// A program that rapids to (`x`, `y`) at Z 5, down to Z 1 (the stock
 /// top plus the entry clearance), runs `cuts` and lifts.
-fn program_at(x: f64, y: f64, cuts: &str) -> String {
+pub(super) fn program_at(x: f64, y: f64, cuts: &str) -> String {
     format!("G21 G90\nG54\nG0 Z5\nX{x} Y{y}\nG0 Z1\n{cuts}G0 Z5\n")
 }
 
@@ -292,7 +292,7 @@ fn with_islands(islands: Vec<Polyline>, op: &VCarveOp) -> Project {
     project
 }
 
-fn polygon(points: &[(f64, f64)]) -> Polyline {
+pub(super) fn polygon(points: &[(f64, f64)]) -> Polyline {
     Polyline::new(
         points.iter().map(|&(x, y)| Vertex::line(x, y)).collect(),
         true,
@@ -484,12 +484,12 @@ fn clearing_run_is_held_to_the_rederived_floor() {
 
 /// One drawing of the generated fixtures: its profiles, definition
 /// space, and where it is placed.
-type Drawing = (Vec<Polyline>, (f64, f64));
+pub(super) type Drawing = (Vec<Polyline>, (f64, f64));
 
 /// A 200 × 150 × 12 mm project with one instance `i1`, `i2`, … per
 /// drawing, the V-bits `t2` (90°) and `t5` (60°), the end mills `t1`,
 /// `t3` and `t4`, and no operations.
-fn drawn(drawings: &[Drawing]) -> Project {
+pub(super) fn drawn(drawings: &[Drawing]) -> Project {
     let mut p = sample_with(Vec::new());
     p.tools.push(v_bit("t5", 60.0));
     p.stock = Stock {
@@ -522,7 +522,7 @@ fn drawn(drawings: &[Drawing]) -> Project {
 
 /// A stadium `w` × `h` (`w` > `h`) with its corner at (`x`, `y`): two
 /// straight sides and two half circles.
-fn stadium(x: f64, y: f64, w: f64, h: f64) -> Polyline {
+pub(super) fn stadium(x: f64, y: f64, w: f64, h: f64) -> Polyline {
     let r = h / 2.0;
     Polyline::new(
         vec![
@@ -539,7 +539,7 @@ fn stadium(x: f64, y: f64, w: f64, h: f64) -> Polyline {
 /// no flat depth: a 20 × 5 rectangle, a triangle, an L, a circle of
 /// radius 3, a ring 3.5 mm wide, a rectangle round a square island, and a
 /// stadium 6 mm wide.
-fn small_shapes() -> Vec<Drawing> {
+pub(super) fn small_shapes() -> Vec<Drawing> {
     vec![
         (
             vec![Polyline::rect(Point::new(0.0, 0.0), 20.0, 5.0)],
@@ -585,7 +585,7 @@ fn small_shapes() -> Vec<Drawing> {
 /// The larger shapes, for floors and clearing: a 30 × 10 rectangle, a
 /// circle of radius 8, and a 40 × 24 rectangle round a 20 × 8 stadium
 /// island.
-fn large_shapes() -> Vec<Drawing> {
+pub(super) fn large_shapes() -> Vec<Drawing> {
     vec![
         (
             vec![Polyline::rect(Point::new(0.0, 0.0), 30.0, 10.0)],
@@ -607,7 +607,11 @@ fn large_shapes() -> Vec<Drawing> {
 
 /// The V-Carve `o6` of every instance of `project` with `tool`, edited
 /// by `edit`.
-fn carve_of(project: &Project, tool: &str, edit: impl FnOnce(&mut VCarveOp)) -> VCarveOp {
+pub(super) fn carve_of(
+    project: &Project,
+    tool: &str,
+    edit: impl FnOnce(&mut VCarveOp),
+) -> VCarveOp {
     carve_with(|op| {
         op.targets = project.instances.iter().map(|i| i.id.clone()).collect();
         op.tool = ToolId::new(tool);
@@ -618,7 +622,7 @@ fn carve_of(project: &Project, tool: &str, edit: impl FnOnce(&mut VCarveOp)) -> 
 /// Generates `op` in `project` (which gains it as its last operation) and
 /// emits every run of it, one program per tool, through the whole safety
 /// pass.
-fn export_carve(project: &Project, op: &VCarveOp) -> Result<Vec<String>, ExportError> {
+pub(super) fn export_carve(project: &Project, op: &VCarveOp) -> Result<Vec<String>, ExportError> {
     let mut project = project.clone();
     project.operations.retain(|o| o.id() != &op.id);
     project.operations.push(Operation::VCarve(op.clone()));
@@ -639,7 +643,7 @@ fn export_carve(project: &Project, op: &VCarveOp) -> Result<Vec<String>, ExportE
     Ok(programs.into_iter().map(|p| p.text).collect())
 }
 
-fn offset(step_over_mm: f64, direction: CutDirection) -> VCarveStrategy {
+pub(super) fn offset(step_over_mm: f64, direction: CutDirection) -> VCarveStrategy {
     VCarveStrategy::Offset {
         step_over_mm,
         direction,
