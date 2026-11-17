@@ -1741,6 +1741,104 @@ per 0.05 mm of tip radius; test-fit before gluing`.
 - **The dc-gcode closed forms' tests** (`cone::tests`) are deleted with
   them; `dc_geometry::profile`'s brute-force tests cover V-bits and TBNs.
 
+**Slice 27e's decisions (#681).** Where the issue was silent:
+
+- **The rounding settles.** Drawn as chords, an arc of exactly the radius
+  the next opening shrinks by lies a chord's sag inside it, and a round
+  end of that radius then loses `√(2 R_min · sag)` to the opening, about
+  0.02 mm with the Fine bit, again each time the design is rounded (the
+  "DC" letters' D). So `rounded_for_bit` grows the opening back by `R_min`
+  plus the wall tolerance and holds it to the design (`∩ X`), shrinks the
+  closing back by `w_t` plus the wall tolerance and keeps the opened
+  design (`∪`), and repeats the two, at most four more times, until a
+  round moves the outline by no more than the flatten tolerance. The
+  result is open by `R_min` and closed by `w_t` within the tolerance
+  (`inlay::rounded_design_is_open_and_closed`, both crates).
+- **A design the rounding moves nowhere by more than the flatten
+  tolerance is cut as drawn**, its arcs kept, so a design the bit need
+  not round carves exactly as a V-Carve does
+  (`inlay::tapered_female_equals_a_flat_depth_v_carve`).
+- **The change is measured from the design.** Every point of the
+  design's outlines (arcs flattened within the tolerance) is measured to
+  the rounded outline; one the rounded design leaves outside is a
+  point's change, one it covers a notch's, so a filled slot names its
+  bottom.
+- **The width of what is lost.** A part removed, the wood between a hole
+  and the outside, or a part split: twice the largest clearance of the
+  piece the opening takes (an inset halved down to a micrometre). A hole
+  filled: twice its own. Two parts joined: how near the nearest two of
+  them come, at the middle of that gap ("two parts 0.5 mm apart" is a
+  gap 0.500 mm wide, not the bridge the closing builds, whose ends flare).
+  A hole split, or a bay closed into a new hole, is a gap's too; two holes
+  joined, a part's.
+- **Validation does not round the design** (the corners are the
+  generator's, "Validation"); it reads the rounded design only where the
+  drawn boundary is measured from the design (`merged_design_of`), so the
+  narrowest band is the one both boards cut. The ball's two warnings are
+  validation's and the generator's, given once per Inlay (the female's;
+  a male that differs adds none), and `dc-job` drops the generator's as
+  it drops `inlay_plug_base_thin`. Below `h_t` by any amount warns: the
+  star test part's `G` 1 is 0.0096 mm under the Fine bit's `h_t` and warns
+  a 0.0003 mm lift.
+- **The male repeats nothing.** Its `inlay_rounded_for_bit`, the mirrored
+  design's, is left out of `generate_inlay` and `check`, as its
+  `inlay_parts_merged` is.
+- **One wall tolerance for a TBN everywhere.** The near parts are
+  merged, the plug's outline drawn and the design rounded within
+  `wall_tolerance_mm(tolerance, tan β)` (#478), in the generator, the
+  safety pass and validation alike; a V-bit's is as before.
+- **A V-bit's band is written as before.** The flank stays `(D − G +
+  2P)·s` for a V-bit, so no V-bit band moves by a rounding; a TBN's is
+  `w(P) + w(D − G + P)`. `MaleBand::v_bit_radius_mm` is the bit's cut
+  radius (`Tool::cut_radius_mm`), the Ultra bit's 2.577 mm.
+- **The seat line** is printed by `check` after the carve lines, one per
+  enabled Inlay with a TBN, female alone or both boards: `op1 `DC` seat:
+  moves 0.55 mm per 0.5° of taper, 0.76 mm per 0.05 mm of tip radius;
+  test-fit before gluing`, in millimetres whatever the display units, as
+  its steps are (`dc_job::summary::seat_lines`,
+  `dc_project::inlay_seat_sensitivity`).
+- **A TBN's depths are written on the grid above them** (found by the
+  stress sweep; V-Carve and Inlay alike). Near the tip the ball's disc
+  grows as `√(2ρd)`, so a cut written half a unit deeper than planned,
+  0.0005 mm, widened it by up to 0.034 mm (Fine) where a chain ran into a
+  corner at the surface, and S17 refused the program. The generator
+  raises every Z of a TBN's cut blocks below the stock top to the
+  written grid above it before they are sequenced (at most a unit
+  shallower, at most a unit above the start plane, in the air) and sets
+  each straight move's feed again (S10). A V-bit's blocks are left as
+  they are.
+- **A TBN's carve is written without fitted arcs.** Its chains near the
+  tip run level at the start plane within micrometres of the walls,
+  where an arc fitted within the tolerance would take the tip across one,
+  which S17 refuses however small; the emitter fits no arc to a run cut
+  with a TBN, as it fits none to a Photo V-Carve's grooves.
+- **The seat check reads the profile.** `test_support::seat::fit`'s male
+  share reads the pocket's depth at an inset `e` as the `h` with `w(D) −
+  w(D − h) = e`. `inlay::seat_shift_matches_the_formula` measures the
+  seat over the plug proper (the cells inside the design): in the seat
+  model a sinking plug lands first on its own band's V wall below the
+  start plane, not on its walls; and it uses `G` 1.5, the Fine bit's
+  `h_t + 0.5`, which the table's figure does not read, so a sinking plug
+  stays off the fillet. Ultra: +0.447 and −0.359 mm (0.40 mean); Fine:
+  +0.335 and −0.266 mm (0.30).
+- **The stress sweep's TBN families** (`tests/stress/tapered.rs`) carve
+  the line-art and lettering designs with both bits as the female and
+  the four males, their depths drawn for the bit (`D` 1.5 to 5 mm, `G`
+  from `h_t` to `h_t + 0.8`, `P` from `h_t` to 3 mm), the designs drawn
+  3× (Ultra) and 6× (Fine) larger so most keep their parts and gaps wider
+  than the bit rounds away; `InlayTooNarrowForBit` is on the allow-list
+  and counted as a refusal, not a seat.
+- **The 6 mm test part as generated** (the "DC" letters, Ultra, `D` 6,
+  `G` 0.85, `P` 2, `M` 8, `outline_rounding_mm` 10, the 3.175 mm end
+  mill's pass and cut-out, a 19 mm male board;
+  `safety::six_mm_tapered_pair_exports_and_seats`): the female's floor
+  6 mm down, inset `w(6)` 1.044 mm; the male's start plane 5.15 mm and its
+  floor 7.15 mm below its top, 11.85 mm of board under it; the points
+  rounded to `R_min` 0.983 mm (the largest change 0.689 mm, at a serif
+  of the C), the notches to `w_t` 0.378 mm (0.155 mm); the band's foot
+  0.574 mm, its flank 1.179 mm, its edge open; the seat line 0.55 and
+  0.76 mm; five programs through S1 to S19; seated within 0.016 mm.
+
 ## Algorithms
 
 ### Medial axis (dc-geometry::medial)
