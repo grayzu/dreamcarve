@@ -1681,6 +1681,22 @@ per 0.05 mm of tip radius; test-fit before gluing`.
   the fit's halvings ran out (exponentially many). With a TBN,
   `Fit::off_axis` takes only axis points whose foot lies on the
   stretch; a V-bit keeps upstream's reach, so no V-bit program changes.
+- **With a TBN the axis fit also seeks the axis from the walls (#705).**
+  A point the Inlay rounded to `R_min` is a round end, whose centre ends
+  the spine. On a large design (the tapered sweep's lettering `0x60`,
+  Fine bit, sampled 0.93 mm apart) the graph merged the centre's node
+  into the spine's 0.58 mm down, and the chain ran on past the centre on
+  the side away from the arc. Every point the fit read there had its
+  nearest wall off the arc, so none found the centre: the female's carve
+  stopped 0.0126 mm short of the arc and the plug stood 0.107 mm proud.
+  So the fit also takes, from the middle of each wall segment within the
+  stretch's reach, the largest disc tangent there, and splits at its
+  centre when the stretch carves more than the axis tolerance short of
+  it. It takes only a centre inside the circle on the stretch as its
+  diameter, whose disc the stretch reaches into. A centre farther off is
+  another branch's: split onto one beside a junction, a short stretch of
+  the star ran out of halvings before its cone was held to the walls. A
+  V-bit's fit is unchanged.
 - **Offset links in the ball** retract when either end is less than
   `h_t` below the start plane, before the room test.
 - **Ridges past the cap** read the cone's line, which no step-over of at

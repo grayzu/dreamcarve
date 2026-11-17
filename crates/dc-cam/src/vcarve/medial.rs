@@ -1297,8 +1297,61 @@ impl Fit<'_> {
                 worst = Some((short_mm, Point3::new(m.x, m.y, own_z)));
             }
         }
+        if matches!(self.depth.profile, BitProfile::TaperedBall { .. }) {
+            for (short_mm, m) in self.axis_of_the_walls(a, b, floor_mm) {
+                if short_mm > tolerance_mm && worst.is_none_or(|(s, _)| short_mm > s) {
+                    worst = Some((short_mm, m));
+                }
+            }
+        }
         let (_, m) = worst?;
         (m.xy().distance_to(a.xy()) > EPS_MM && m.xy().distance_to(b.xy()) > EPS_MM).then_some(m)
+    }
+
+    /// For a tapered ball nose (#705), the axis points of the walls the
+    /// stretch `a`–`b` reaches toward, each at its own depth with how far
+    /// short of its disc's walls the stretch carves: from the middle of
+    /// each wall segment near the stretch, the largest disc inside the
+    /// walls tangent there (`Walls::ball_radius_mm`), whose centre is on
+    /// the axis. [`Fit::off_axis`]'s points read on the stretch find the
+    /// axis only from their own nearest wall, so where a stretch passes
+    /// the centre of a round end on the side away from its arc (the graph
+    /// merged the centre's node into one down the spine), none has its
+    /// nearest wall on the arc and the centre, which the arc's every disc
+    /// shares, is missed. Only a centre the cut would turn through by at
+    /// most a right angle counts, one inside the circle on `a`–`b` as its
+    /// diameter (so beside the stretch, as for the points read on it), and
+    /// only one whose disc the stretch reaches into (short of it by less
+    /// than its radius): a centre farther off is the axis of another
+    /// branch, which other chains carve, and a short stretch beside a
+    /// junction split onto one ran out of fitting's halvings before its
+    /// cone was held to the walls (the star's notches). Discs at the flat
+    /// depth are left to the floor (`floor_mm`, the floor's inset).
+    fn axis_of_the_walls(&self, a: Point3, b: Point3, floor_mm: Option<f64>) -> Vec<(f64, Point3)> {
+        let start_mm = self.depth.start_plane_z_mm;
+        let reach_mm = self.depth.width_mm(start_mm - a.z.min(b.z));
+        if !reach_mm.is_finite() || reach_mm <= 0.0 {
+            return Vec::new();
+        }
+        let middle = Point::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+        let half_mm = a.xy().distance_to(b.xy()) / 2.0;
+        let mut out = Vec::new();
+        for (w, u) in self.walls.middles_near(a.xy(), b.xy(), reach_mm) {
+            let radius_mm = self.walls.ball_radius_mm(w, u, reach_mm + AXIS_REACH_MM);
+            if radius_mm <= EPS_MM || floor_mm.is_some_and(|f| radius_mm >= f) {
+                continue;
+            }
+            let m = w + u * radius_mm;
+            if m.distance_to(middle) > half_mm {
+                continue;
+            }
+            let own_z = self.depth.z_mm(radius_mm);
+            let short_mm = self.depth.short_mm(a, b, m, own_z);
+            if short_mm < radius_mm {
+                out.push((short_mm, Point3::new(m.x, m.y, own_z)));
+            }
+        }
+        out
     }
 }
 
