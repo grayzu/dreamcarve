@@ -264,15 +264,40 @@ fn draw_note(
 ) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let lines: usize = note
+    let small = TextStyle::Small.resolve(ui.style());
+    let body = TextStyle::Body.resolve(ui.style());
+    let title = TextStyle::Name(theme::TITLE.into()).resolve(ui.style());
+    // The values wrap at the row's right edge (#628: a long one ran out of
+    // the drawer), each fact as tall as its value.
+    let width = ui.available_width();
+    let value_width = (width - 12.0 - NOTE_FACTS_PX - NOTE_LABEL_PX - 12.0).max(0.0);
+    let values: Vec<Vec<std::sync::Arc<egui::Galley>>> = note
         .sections
         .iter()
-        .map(|s| s.facts.len() + usize::from(s.heading.is_some()))
-        .sum();
+        .map(|section| {
+            section
+                .facts
+                .iter()
+                .map(|fact| {
+                    ui.painter().layout(
+                        fact.value.clone(),
+                        body.clone(),
+                        palette.text_primary,
+                        value_width,
+                    )
+                })
+                .collect()
+        })
+        .collect();
+    let line_height = ui.fonts_mut(|f| f.row_height(&body));
+    let fact_height =
+        |galley: &egui::Galley| NOTE_LINE_PX.max(galley.size().y + NOTE_LINE_PX - line_height);
+    let headings = note.sections.iter().filter(|s| s.heading.is_some()).count();
     #[allow(clippy::cast_precision_loss, reason = "a note has a handful of lines")]
-    let height = (NOTE_LINE_PX * lines as f32 + 12.0).max(ROW_PX);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
+    let facts_height: f32 = NOTE_LINE_PX * headings as f32
+        + values.iter().flatten().map(|g| fact_height(g)).sum::<f32>();
+    let height = (facts_height + 12.0).max(ROW_PX);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
     if response.hovered() {
         ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
@@ -298,9 +323,6 @@ fn draw_note(
         glyph,
         colour,
     );
-    let small = TextStyle::Small.resolve(ui.style());
-    let body = TextStyle::Body.resolve(ui.style());
-    let title = TextStyle::Name(theme::TITLE.into()).resolve(ui.style());
     painter.text(
         egui::pos2(left + theme::ICON_SMALL_PX + 8.0, first_y),
         egui::Align2::LEFT_CENTER,
@@ -311,7 +333,7 @@ fn draw_note(
     let label_x = left + NOTE_FACTS_PX;
     let value_x = label_x + NOTE_LABEL_PX;
     let mut y = first_y;
-    for section in &note.sections {
+    for (section, values) in note.sections.iter().zip(values) {
         if let Some(heading) = &section.heading {
             painter.text(
                 egui::pos2(label_x, y),
@@ -322,7 +344,7 @@ fn draw_note(
             );
             y += NOTE_LINE_PX;
         }
-        for fact in &section.facts {
+        for (fact, value) in section.facts.iter().zip(values) {
             painter.text(
                 egui::pos2(label_x, y),
                 egui::Align2::LEFT_CENTER,
@@ -330,14 +352,14 @@ fn draw_note(
                 body.clone(),
                 palette.text_secondary,
             );
-            painter.text(
-                egui::pos2(value_x, y),
-                egui::Align2::LEFT_CENTER,
-                &fact.value,
-                body.clone(),
+            let height = fact_height(&value);
+            // The value's first line centred where the label is.
+            painter.galley(
+                egui::pos2(value_x, y - line_height / 2.0),
+                value,
                 palette.text_primary,
             );
-            y += NOTE_LINE_PX;
+            y += height;
         }
     }
 }

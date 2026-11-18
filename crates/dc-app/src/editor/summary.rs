@@ -59,6 +59,9 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
     // Rows a choice's or a switch's phrase already holds.
     let mut folded: Vec<String> = Vec::new();
     let mut phrases: Vec<String> = Vec::new();
+    // Boxes left unticked: said only when nothing else is, so a group of
+    // boxes still reads (`Alternate direction off`; #628).
+    let mut unticked: Vec<String> = Vec::new();
     for row in &rows {
         if folded
             .iter()
@@ -68,6 +71,8 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
         }
         if let Some(phrase) = cx.phrase(row, &rows) {
             phrases.push(phrase);
+        } else if matches!(row.kind, FieldKind::Checkbox) {
+            unticked.push(cx.off(row));
         }
         if matches!(
             row.kind,
@@ -75,6 +80,9 @@ pub fn group(project: &Project, strings: &Strings, op: &Operation, group: Group)
         ) {
             folded.push(format!("{}.", row.key));
         }
+    }
+    if phrases.is_empty() {
+        phrases = unticked;
     }
     capitalised(
         &phrases
