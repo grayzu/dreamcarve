@@ -26,7 +26,8 @@ a handful of structural and safety items that the line count hides.
    inside single functions.
 4. **The lint policy has produced a fail-silent idiom.** Because
    `indexing_slicing` warns, the code uses `.get(i)` with `continue`,
-   `unwrap_or_default()`, or `unwrap_or(0.0)` several hundred times. In a
+   `unwrap_or_default()`, or `unwrap_or(0.0)` at 114 or more places in
+   production generator, geometry, and verifier code. In a
    toolpath generator that silently drops a pass; in the safety verifier it
    silently passes. This is the most important finding in the review.
 5. **The strongest safety nets do not run.** Three motion simulators, ten
@@ -107,8 +108,97 @@ The ten largest production functions:
   arm, the fail-open `walls_allow`, the dead `FactKey`, the digest without
   bitmaps, the `unwrap_or(0.0)` floor Z, and `post.rs` being test-only.
   All six held.
-- Not done: no profiling, no coverage run, no test timing. Performance
-  findings are from reading code, and say so.
+- Not done in the first pass: profiling, coverage, test timing. Coverage
+  and timing were measured the next day ("Second pass" below). Nothing has
+  been profiled; performance findings are from reading code, and say so.
+
+## Second pass: measurements (2026-11-18)
+
+Run with the tools `tools/install-dev-tools.sh` installs, on the non-UI
+workspace (`dreamcarve-app` excluded), on an Apple Silicon laptop.
+
+**Test timing (cargo-nextest).** 3,016 tests pass, 15 are ignored. The
+whole suite runs in 74 seconds of wall time (10 minutes of CPU) on a warm
+build. 24 tests take over 5 seconds and 8 over 10; the slowest is
+`dc-gcode::stress tapered::tapered_inlays_seat` at 53 seconds. Test volume
+is not what makes CI slow: compiling on three operating systems is.
+
+**Coverage (cargo-llvm-cov).** Line coverage of non-test files, with
+inline test modules counted as covered code, so the figures run a little
+high:
+
+| Crate | Line coverage |
+| --- | ---: |
+| dc-geometry | 97.4% |
+| dc-gcode | 97.1% |
+| dc-library | 96.9% |
+| dc-cam | 96.5% |
+| dc-project | 96.2% |
+| dc-job | 95.1% |
+| dc-import | 94.9% |
+| dreamcarve (CLI) | 93.5% |
+| dreamcarve-shell | 90.9% |
+| dc-app (without the UI crate's tests) | 88.7% |
+| tools | 35% to 94% |
+
+`safety.rs` is at 98.1%, `emit.rs` 95.3%, `offset.rs` 99.0%,
+`sequence.rs` 99.2%. Two conclusions. The suite executes nearly all of
+the code, so coverage will not find large dead areas, and the test
+reductions in stage 2 are consolidation, not deletion of unused tests.
+And the simulator tools are the least covered code in the repository
+(`grbl-sim-motion` 40%, `gcode-conformance` 35%), because they only run
+by hand (stage 0.1).
+
+**Fail-silent lookups (pattern search, cross-checked with ast-grep).** A
+strict search for a lookup miss answered by `continue`, a default, zero,
+or the origin finds 114 sites in production code of dc-cam, dc-gcode, and
+dc-geometry: 63 `.unwrap_or(0.0 | 0 | false | true)`, 18
+`.get(..).unwrap_or_default()`, 18 `let Some(..) = ...get(..) else {
+continue }`, 9 early returns of an empty value, and 6
+`map_or(Point::new(0.0, 0.0), ..)`. This is a lower bound: it misses
+multi-statement forms. The files with the most are `dc-gcode/src/safety.rs`
+(15), `dc-cam/src/profile.rs` (13), `dc-gcode/src/arcfit.rs` (10), and
+`dc-cam/src/sequence.rs` (9). The first-pass counts in findings 1.2 (167
+`.get(` calls, about 120 `continue` guards) are every lookup and every
+`continue`, not only the silent ones; use 114 as the worklist size.
+
+**Mutation testing (cargo-mutants).** A one-in-sixteen sample of the
+1,643 mutants in `dc-gcode/src/safety.rs` and `emit.rs`, each run against
+dc-gcode's own tests (unit, golden, property, stress): of 103 mutants, 82
+were caught, 17 survived, and 4 did not compile. That is 83% of viable
+mutants caught, against 95 to 98% line coverage for the same files, and
+it extrapolates to roughly 270 survivors across the two files. The
+survivors are almost all guard conditions and tolerance arithmetic:
+
+- `safety.rs:333` `check_on_stock`: the −X edge overhang can be computed
+  wrongly and no verifier test notices.
+- `safety.rs:2410`, `:2428`, `:2433` `arc_follows` and `:2488`, `:2500`
+  `ToolpathArc::turn_to`: the check that a fitted arc follows its
+  toolpath.
+- `safety.rs:1692` `Matching::search`, `:2051` `match_rapid_on_the_way`.
+- `emit.rs:2851` `Writer::feed_at_most_plunge` (the step that lowers a
+  feed to the plunge rate), `:2759` `holds_arc_to_plunge` (replaced by
+  `true`), `:2721` `linear_held`.
+- `emit.rs:3023` `arc_ij` and `:3058` `arc_r`: the acceptance guards on a
+  written arc; `:2164` `ArcGeometry::part`.
+- `emit.rs:1128` `Lifts::of`, `:1458` `canned_plan`, `:1673`
+  `expansion_is_toolpath`.
+
+Some will be equivalent mutants, and tests in dc-job or the CLI may catch
+others; each needs a look. The takeaway is that the safety code's
+boundary conditions are the least-tested part of a heavily tested crate.
+A full run of both files is about three and a half hours on this laptop
+and belongs in the phase gate (stage 0.4), with each survivor either
+killed by a new test or recorded as equivalent.
+
+**Dependencies.** cargo-machete finds no unused dependencies. `cargo deny
+check bans` fails locally: `deny.toml` sets `wildcards = "deny"`, and
+`tools/grbl-sim-motion` and `tools/linuxcnc-sim` depend on `rs274-motion`
+by path with no version. CI does not see it because the workflow runs
+only `check licenses advisories` (stage 0.7).
+
+**Line counts.** tokei gives 251,042 lines for the non-UI crates and
+tools, matching the table above.
 
 ## Root causes
 
@@ -144,10 +234,11 @@ needs byte-identical golden and parity proof for every step.
 | --- | --- | --- |
 | 0.1 | Add `cargo run -p rs274-motion` to the `gcode-conformance` CI job, which already installs `rs274`. Add `grbl-sim-motion` and `linuxcnc-sim` where their simulators can be installed. | About 5,100 lines of simulator tooling run by hand only. CI runs only the weakest check (the program is accepted). |
 | 0.2 | Add a nightly workflow: property tests with a random logged seed, and `--release -- --ignored` for the ten stress sweeps. | Seeds are pinned (`dc-gcode/tests/properties/main.rs:51`, `dc-geometry/tests/properties.rs:38`), so the properties are frozen examples. The sweeps found 13 or more generator bugs when last run by hand. |
-| 0.3 | Add cargo-llvm-cov to CI and publish per-crate coverage. | Nobody can say which of 3,118 tests are load-bearing. |
+| 0.3 | Add cargo-llvm-cov to the nightly run and publish per-crate coverage. | The first measurement is 94% overall (see "Second pass"); the job keeps it from slipping. |
 | 0.4 | Run cargo-mutants on `dc-gcode/src/{safety,emit}.rs` and the depth and feed code in dc-cam. | The only evidence-based way to judge test value in safety-critical code. |
 | 0.5 | Add cargo-fuzz targets for `import_svg`, `import_dxf`, bitmap decode, `fusion::import`, `dc_project::load`, and `parse_motion`. | Untrusted-file parsers are covered by example tests only. |
 | 0.6 | Add a recapture script for `crates/dreamcarve/tests/expected/` that prints a motion-level diff, and a rule that a recapture commit contains nothing else. | 103 self-captured programs have been bulk-regenerated at least six times, 10 to 24 files per commit. A blanket recapture can hide a regression. |
+| 0.7 | Run `cargo deny check` in full (add `bans`), and give the two simulator tools' `rs274-motion` path dependency a version. | `deny.toml` forbids wildcard dependencies but CI never checks bans; it fails locally today. |
 
 Note on 0.1: `docs/testing/post-processor-e2e.md` says the agents' token
 lacks `workflow` scope, so a human has to make the CI edits.
