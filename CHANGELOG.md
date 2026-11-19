@@ -445,6 +445,85 @@ phases bump the patch number.
   placed before it is cut, and the safety pass places the same ones. A
   cut-out the board does not clip is cut as before; no committed program
   changes.
+- **A cut written outside every operation is refused.** A post-processor
+  definition's header or footer line can hold a `G1`, `G2` or `G3`. Such
+  a line belongs to no operation, so the safety pass held it only to the
+  material bottom, a running spindle and a feed above zero: it has no
+  toolpath to reproduce, no material of its own and no tool to take its
+  rates from. A footer of `G1 Z-1 F5000` exported, a plunge into the
+  stock at 5000 mm/min. Export now fails for any cut on a line of no
+  operation, and names the line. The bundled definitions have no such
+  line, so no program changes.
+- **The safety pass fails closed when its own lookup misses (#711).**
+  Where the pass looked something up in its own data and did not find
+  it, 31 of 102 places read the miss as nothing to check, which is a
+  pass. None could be reached from a project. Each now refuses: project
+  data that does not resolve (a tab request that cannot be placed, a tab
+  whose outline is missing, a Profile without a stock top) refuses the
+  run it belongs to, and a miss in the pass's own data stops export with
+  an error that says the defect is DreamCarve's, not the project's, and
+  that no program was written. No committed program changes.
+- **A generator stops when it meets a state that should be impossible.**
+  Where a toolpath generator's own lookup missed (a pass, a ring or a
+  chain its earlier steps should have made), it skipped that pass, or
+  carried on from a stand-in point or depth, and said nothing: a program
+  could have come out with a pass missing. Every generator, the
+  sequencer, tab placing and corner relief now stop instead, with an
+  error that names the operation, says the defect is DreamCarve's and
+  not the project's, and that no toolpath was produced. No test, sweep
+  or committed program meets the error, so no dropped pass was found.
+  The offset, boolean and medial-axis code under the generators is not
+  done yet.
+- **A plug no longer stands proud at a short dead-end channel inside a
+  drawn boundary (#713).** The medial axis prunes its short dead ends by
+  a length that follows the sampling step, and the step grows with the
+  region. In a male's band inside a large drawn boundary, a channel
+  between two serif feet, 0.44 mm wide and 0.60 mm long, fell under that
+  length: the male cut nothing in the channel's last 0.3 mm and the plug
+  stood 0.182 mm proud. The same letters with a `margin_mm` band seated.
+  A pruned dead end is now put back when it reaches a wall that nothing
+  left of the axis reaches. A V-Carve or Inlay of another design can
+  gain a few short cuts into such channels; no committed program
+  changes.
+- **A smooth tab at the end of an open path is no longer cut away.** A
+  smooth tab whose span the end of an open path cuts short kept its
+  whole slope, laid inside what was left of the span. A pass was then at
+  its own depth at the path's end, within the tool's radius of the tab's
+  centre, and cut the tab through: on a 15 mm line cut on its Right with
+  a 2.578 mm bit and one smooth tab 1 mm wide at distance 0, the last two
+  passes plunged at the tab's centre, about 1 mm below its top. The tab
+  now holds its top right to the path's end, as a `rect`
+  tab does. The safety pass also holds a plunge off a tab on an open
+  path now (an On line Profile's, a clipped Inlay cut-out's stretches,
+  and a Left or Right Profile's); it held one on a closed outline only.
+  No committed program changes.
+- **An Inlay's schema error names its field (#712).** A `.dcv` with a
+  wrong or missing value inside an Inlay reported the error at
+  `operations[1]` alone. It now names the field and its line,
+  `operations[1].step_over_fraction`, as every other kind of operation
+  does.
+- **A large or hostile DXF cannot stall `init` or write to the
+  terminal.** Joining a drawing's lines into shapes, and dropping
+  duplicate shapes, compared every piece with every other: about 10¹⁰
+  steps for a drawing of 100,000 lines. Both now look pieces up by
+  position, give the same shapes in the same order, and work to a
+  budget; a drawing past it fails with an error that says to simplify it
+  or lower the join tolerance. A layer, block or type name or a handle
+  could carry an escape or a line break into shape names, warnings and
+  errors that the CLI prints; every control character in DXF text is now
+  replaced with U+FFFD, the replacement character, where it is read. A
+  read error quotes the first 80 characters of the line, not all of it,
+  and the warnings for missing and too deeply nested blocks name the
+  first 20 and count the rest.
+- **No file is read without a size limit.** A project, drawing, tool
+  library or configuration file of any size was read whole into memory.
+  One over 256 MiB is now refused, in the CLI and the app, with an error
+  that names the file, its size and the limit; a Fusion library given as
+  plain JSON is held to the 64 MiB an archive's document already was.
+- **`init` and `image-prep` never replace a file.** Both checked that
+  their output did not exist and then moved it into place, which
+  replaced a file that appeared in between. The output is now put in
+  place by a step the file system refuses when anything is there.
 - **The safety pass sees a cut cross an arc past a half turn (#686,
   #694).** A wall drawn as an arc of more than 180°, a 270° D-shaped hole
   or island for example, was read as farther from a cut than it is, so S9
