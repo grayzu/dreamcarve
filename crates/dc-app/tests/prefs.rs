@@ -93,11 +93,11 @@ fn view_state_is_not_project_state() {
 /// The preferences' defaults are `gui.toml`'s (`dreamcarve-shell`, which
 /// owns the file): a 1280 × 800 window, panels of 280 and 320 px open and
 /// the Warnings drawer closed, everything but the arrows visible, colour
-/// by operation, the system theme, no recent files.
+/// by operation, the dark theme, no recent files.
 #[test]
 fn prefs_defaults_match_the_file_defaults() {
     let prefs = Prefs::default();
-    assert_eq!(prefs.theme, Theme::System);
+    assert_eq!(prefs.theme, Theme::Dark);
     assert_eq!(prefs.window, None);
     assert_eq!(
         WindowGeometry::default().width.to_bits(),

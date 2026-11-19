@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The disclosure section (`docs/specs/phase-4/experience.md`, section 7,
-//! "Disclosure section header"; section 12, `section_header`): a 28-px
-//! full-width header, 13-px SemiBold, the chevron left, and, while the
-//! section is closed, the glyph and count of the located messages inside
-//! it at the right end so nothing hides. Whether it is open is a
+//! "Disclosure section header"; section 12, `section_header`): a 32-px
+//! full-width header with no band, 13-px SemiBold, the chevron left, and,
+//! while the section is closed, the glyph and count of the located
+//! messages inside it at the right end so nothing hides. An open section
+//! leaves 20 px under its body before what follows. Whether it is open is a
 //! preference (`gui.toml`'s `sections`), passed in and reported back, not
 //! held here; egui's `CollapsingState` only animates the body. An
 //! operation editor's closed group also shows a summary of its values, and
@@ -20,7 +21,7 @@ use crate::widgets::button::focus_ring;
 use crate::widgets::icon::Icon;
 
 /// The header's height, px (section 3).
-const HEADER_PX: f32 = 28.0;
+const HEADER_PX: f32 = theme::SECTION_HEADER_PX;
 
 /// Draws a section titled `title`, open when `open`, whose body holds
 /// `located` messages (the worst tier and how many); `body` draws it.
@@ -95,8 +96,14 @@ pub(crate) fn section_with(
     } else {
         response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, title));
     }
+    // No band at rest: the wash is the pointer's, on its own rounded
+    // surface inside the header's row.
     if collapses && response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
+        ui.painter().rect_filled(
+            rect.shrink2(egui::vec2(0.0, 2.0)),
+            theme::CONTROL_RADIUS_PX,
+            palette.surface_hover,
+        );
     }
     let mut title_x = rect.left() + 8.0;
     if collapses {
@@ -168,6 +175,13 @@ pub(crate) fn section_with(
     if collapses {
         focus_ring(ui, &response);
     }
-    state.show_body_unindented(ui, body);
+    let gap = theme::SECTION_GAP_PX - ui.spacing().item_spacing.y;
+    state.show_body_unindented(ui, |ui| {
+        body(ui);
+        // The gap between sections in a card, under an open one.
+        if collapses {
+            ui.add_space(gap);
+        }
+    });
     collapses && response.clicked()
 }

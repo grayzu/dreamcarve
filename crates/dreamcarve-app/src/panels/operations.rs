@@ -5,7 +5,8 @@
 //! mock-up `01-workspace.svg`; `experience.md`, sections 7 and 8): the
 //! toolbar (*Add ▾*, *Duplicate*, *Delete*), the list in cut order, and
 //! under it the editor of the operation the list has selected
-//! ([`crate::panels::editor`]). Each row is 40 px: the drag grip, the
+//! ([`crate::panels::editor`]), in a card of its own. Each row is 52 px
+//! on its own rounded surface: the drag grip, the
 //! enable checkbox, the kind's glyph in the operation's colour, the name
 //! over its kind and tool, the eye, and the status cell (the spinner
 //! while it generates, its warning count, the red mark of an error).
@@ -23,21 +24,23 @@ use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
+use crate::widgets::card::card;
 use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
+use crate::widgets::row::{INSET_PX, surface, surface_rect};
 use crate::widgets::spinner::spinner;
 
 /// A row's height, px (`experience.md`, section 3).
-const ROW_PX: f32 = 40.0;
-/// The toolbar's height, px.
-const TOOLBAR_PX: f32 = 36.0;
+const ROW_PX: f32 = theme::LIST_ROW_PX;
+/// The toolbar's height, px: a control and the gap under it.
+const TOOLBAR_PX: f32 = theme::CONTROL_PX + theme::GAP_PX;
 /// A glyph's box, px.
 const ICON_PX: f32 = 16.0;
 /// The status cell's width, px.
 const STATUS_PX: f32 = 24.0;
 /// The panel's content margin, px.
-const MARGIN_PX: f32 = 12.0;
+const MARGIN_PX: f32 = theme::CARD_PADDING_PX;
 /// The Add menu's width, px: its longest reason on one line.
 const MENU_PX: f32 = 260.0;
 
@@ -62,11 +65,16 @@ fn dragging_id() -> Id {
     Id::unique("dc.operations.dragging")
 }
 
-/// Draws the tab: the toolbar, the editor of the selected operation in a
-/// resizable bottom pane, and the list above it.
-pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// Draws the tab: the editor of the selected operation in a resizable
+/// card at the column's bottom, and above it the card that holds `head`
+/// (the CAM panel's title and tabs), the toolbar and the list.
+pub(crate) fn show(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    head: impl FnOnce(&mut Ui),
+    out: &mut Vec<Action>,
+) {
     let palette = Palette::current(ui);
-    toolbar(ui, state, out);
     let app = state.app;
     let editing = app
         .editing()
@@ -77,34 +85,40 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         panels::editor::arm_point_pick(ui.ctx(), None);
     }
     if let Some(op) = editing {
-        let height = (ui.available_height() * 0.62).max(160.0);
+        let height = (ui.available_height() * 0.5).max(160.0);
         egui::Panel::bottom("operation_editor")
             .resizable(true)
-            .show_separator_line(true)
+            .show_separator_line(false)
             .default_size(height)
             .size_range(egui::Rangef::new(120.0, f32::INFINITY))
-            .frame(egui::Frame::NONE.fill(palette.surface_panel))
+            .frame(panels::side::lower_frame(palette))
             .show(ui, |ui| {
-                ui.set_min_height(ui.available_height());
-                panels::editor::show(ui, state, op, out);
+                card(ui, |ui| {
+                    ui.set_min_height(ui.available_height());
+                    panels::editor::show(ui, state, op, out);
+                });
             });
     }
-    if app.project().operations.is_empty() {
-        ui.add_space(24.0);
-        ui.vertical_centered(|ui| {
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(app.strings().get(StrKey::AppPanelNoOperations))
-                        .text_style(TextStyle::Body)
-                        .color(palette.text_secondary),
-                )
-                .wrap()
-                .selectable(false),
-            );
-        });
-        return;
-    }
-    list(ui, state, out);
+    card(ui, |ui| {
+        head(ui);
+        toolbar(ui, state, out);
+        if app.project().operations.is_empty() {
+            ui.add_space(24.0);
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(app.strings().get(StrKey::AppPanelNoOperations))
+                            .text_style(TextStyle::Body)
+                            .color(palette.text_secondary),
+                    )
+                    .wrap()
+                    .selectable(false),
+                );
+            });
+            return;
+        }
+        list(ui, state, out);
+    });
 }
 
 /// *Add ▾*, *Duplicate*, *Delete*.
@@ -115,7 +129,7 @@ fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         ui.allocate_exact_size(egui::vec2(ui.available_width(), TOOLBAR_PX), Sense::hover());
     let mut bar = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(MARGIN_PX - 4.0, 5.0)))
+            .max_rect(rect.shrink2(egui::vec2(MARGIN_PX, 0.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
     bar.spacing_mut().item_spacing.x = 8.0;
@@ -217,7 +231,7 @@ fn kind_item(
 ) -> egui::Response {
     let palette = Palette::current(ui);
     let name = strings.get(kind.label());
-    let height = if reason.is_some() { 38.0 } else { 26.0 };
+    let height = if reason.is_some() { 44.0 } else { 32.0 };
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(MENU_PX, height),
         if enabled {
@@ -228,7 +242,8 @@ fn kind_item(
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::MenuItem, enabled, name));
     if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 3.0, palette.surface_hover);
+        ui.painter()
+            .rect_filled(rect, theme::CONTROL_RADIUS_PX, palette.surface_hover);
     }
     let colour = if enabled {
         palette.text_primary
@@ -236,7 +251,7 @@ fn kind_item(
         palette.text_disabled
     };
     let glyph_rect = Rect::from_min_size(
-        egui::pos2(rect.left() + 6.0, rect.top() + 5.0),
+        egui::pos2(rect.left() + 8.0, rect.top() + 8.0),
         egui::vec2(ICON_PX, ICON_PX),
     );
     op_glyph(ui.painter(), glyph_rect, kind, colour);
@@ -249,7 +264,7 @@ fn kind_item(
     );
     if let Some(reason) = reason {
         ui.painter().text(
-            egui::pos2(glyph_rect.right() + 8.0, rect.bottom() - 9.0),
+            egui::pos2(glyph_rect.right() + 8.0, rect.bottom() - 11.0),
             egui::Align2::LEFT_CENTER,
             reason,
             TextStyle::Small.resolve(ui.style()),
@@ -304,8 +319,8 @@ fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .map(|r| r.top())
                 .or_else(|| rects.last().map(|r| r.bottom()))
             {
-                let left = ui.max_rect().left() + 4.0;
-                let right = ui.max_rect().right() - 4.0;
+                let left = ui.max_rect().left() + INSET_PX;
+                let right = ui.max_rect().right() - INSET_PX;
                 ui.painter()
                     .hline(left..=right, y, Stroke::new(2.0, palette.accent));
                 ui.painter()
@@ -331,17 +346,17 @@ fn lifted(ui: &Ui, at: egui::Pos2, row: &ListRow) {
         Id::unique("dc.operations.lifted"),
     ));
     let rect = Rect::from_min_size(
-        egui::pos2(ui.max_rect().left() + 4.0, at.y - ROW_PX / 2.0),
-        egui::vec2(ui.max_rect().width() - 8.0, ROW_PX),
+        egui::pos2(ui.max_rect().left() + INSET_PX, at.y - ROW_PX / 2.0),
+        egui::vec2(ui.max_rect().width() - 2.0 * INSET_PX, ROW_PX),
     );
-    painter.add(egui::epaint::RectShape::filled(
-        rect.translate(egui::vec2(0.0, 2.0)),
-        4.0,
-        palette.shadow,
-    ));
-    painter.rect_filled(rect, 4.0, palette.surface_raised.gamma_multiply(0.96));
+    painter.add(theme::shadow(palette).as_shape(rect, theme::CONTROL_RADIUS_PX));
+    painter.rect_filled(
+        rect,
+        theme::CONTROL_RADIUS_PX,
+        palette.surface_raised.gamma_multiply(0.96),
+    );
     let glyph = Rect::from_min_size(
-        egui::pos2(rect.left() + 40.0, rect.center().y - ICON_PX / 2.0),
+        egui::pos2(rect.left() + 54.0, rect.center().y - ICON_PX / 2.0),
         egui::vec2(ICON_PX, ICON_PX),
     );
     op_glyph(&painter, glyph, row.kind, palette.operation(row.index));
@@ -358,8 +373,10 @@ fn lifted(ui: &Ui, at: egui::Pos2, row: &ListRow) {
 fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Action>) -> Rect {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let (rect, _) =
+    let (slot, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
+    // The row's own surface, inset from the card's edges.
+    let rect = surface_rect(slot);
     // The operation's own id, not the layout's: a status cell that comes
     // or goes (the spinner's child) must not move a row's id between the
     // frame a click is aimed and the frame it lands.
@@ -371,16 +388,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::Role::ListItem, true, row.editing, &row.name)
     });
-    if row.editing {
-        ui.painter().rect_filled(rect, 0.0, palette.accent_soft);
-        ui.painter().rect_filled(
-            Rect::from_min_size(rect.min, egui::vec2(2.0, rect.height())),
-            0.0,
-            palette.accent,
-        );
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 0.0, palette.surface_hover);
-    }
+    surface(ui, rect, row.editing, response.hovered());
     if response.clicked() {
         out.push(Action::EditOperation(row.id.clone()));
     }
@@ -443,7 +451,7 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
         )
     };
     // The grip: a drag handle, the row's only one.
-    let grip_rect = cell(rect.left() + 6.0);
+    let grip_rect = cell(rect.left() + 8.0);
     let grip = ui.interact(
         grip_rect.expand(4.0),
         Id::unique(("dc.operations.grip", row.id.as_str())),
@@ -494,11 +502,8 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
 
     // The status cell and the eye, from the right.
     let status_rect = Rect::from_center_size(
-        egui::pos2(
-            rect.right() - MARGIN_PX + 4.0 - STATUS_PX / 2.0,
-            rect.center().y,
-        ),
-        egui::vec2(STATUS_PX, ROW_PX),
+        egui::pos2(rect.right() - 4.0 - STATUS_PX / 2.0, rect.center().y),
+        egui::vec2(STATUS_PX, rect.height()),
     );
     status_cell(ui, state, status_rect, row);
     let eye_rect = cell(status_rect.left() - 4.0 - ICON_PX);
@@ -548,14 +553,14 @@ fn list_row(ui: &mut Ui, state: &FrameState<'_>, row: &ListRow, out: &mut Vec<Ac
         palette.text_secondary,
         width,
     );
+    // Two lines, 2 px apart, centred in the row.
+    let top = rect.center().y - (name.size().y + 2.0 + detail.size().y) / 2.0;
+    let detail_top = top + name.size().y + 2.0;
     ui.painter()
-        .galley(egui::pos2(left, rect.top() + 5.0), name, name_colour);
-    ui.painter().galley(
-        egui::pos2(left, rect.top() + 22.0),
-        detail,
-        palette.text_secondary,
-    );
-    rect
+        .galley(egui::pos2(left, top), name, name_colour);
+    ui.painter()
+        .galley(egui::pos2(left, detail_top), detail, palette.text_secondary);
+    slot
 }
 
 /// The status cell (section 7): the spinner, a warning count, the error
@@ -620,11 +625,12 @@ fn status_cell(ui: &mut Ui, state: &FrameState<'_>, rect: Rect, row: &ListRow) {
             response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, text));
             ui.painter()
                 .circle_filled(rect.center(), 7.0, palette.status_error.stroke);
-            let cross = Icon::X.galley(ui, 12.0, palette.text_on_accent);
+            // The mark cut out of the disc, in the card's own colour.
+            let cross = Icon::X.galley(ui, 12.0, palette.surface_panel);
             ui.painter().galley(
                 rect.center() - cross.size() / 2.0,
                 cross,
-                palette.text_on_accent,
+                palette.surface_panel,
             );
             let _ = response.on_hover_text(hover_text(text, row));
         }

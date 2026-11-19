@@ -23,7 +23,7 @@ const WIDTH_PX: f32 = 420.0;
 /// Its padding, px.
 const PADDING_PX: i8 = 24;
 /// A footer button's height, px.
-const FOOTER_PX: f32 = 28.0;
+const FOOTER_PX: f32 = theme::CONTROL_PX;
 
 /// Shows the sheet asking about `file`; pushes the answer when given.
 pub(crate) fn sheet(ctx: &egui::Context, strings: &Strings, file: &str, out: &mut Vec<Action>) {
@@ -33,11 +33,7 @@ pub(crate) fn sheet(ctx: &egui::Context, strings: &Strings, file: &str, out: &mu
     } else {
         &theme::LIGHT
     };
-    let frame = egui::Frame::popup(&style)
-        .fill(palette.surface_raised)
-        .stroke(egui::Stroke::new(1.0, palette.border_default))
-        .corner_radius(8)
-        .inner_margin(PADDING_PX);
+    let frame = theme::sheet(palette);
     let response = egui::Modal::new(egui::Id::unique("unsaved_changes"))
         .backdrop_color(palette.scrim)
         .frame(frame)

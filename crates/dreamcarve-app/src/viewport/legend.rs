@@ -152,7 +152,11 @@ fn paint_legend(
         ),
         layout.size,
     );
-    painter.rect_filled(frame, 8.0, palette.viewport_label_bg);
+    painter.rect_filled(
+        frame,
+        theme::INNER_CARD_RADIUS_PX,
+        palette.viewport_label_bg,
+    );
     let origin = frame.min + egui::vec2(PAD_PX, PAD_PX);
     painter.galley(origin, layout.title, palette.text_primary);
     if layout.band_px > 0.0 {
@@ -259,9 +263,9 @@ pub(crate) fn extents_caption(
         .into_iter()
         .find(|r| !covers.iter().any(|c| c.intersects(*r)))
         .unwrap_or(above);
-    painter.rect_filled(rect, 6.0, palette.viewport_label_bg);
+    painter.rect_filled(rect, theme::pill(rect.height()), palette.viewport_label_bg);
     painter.galley(
-        rect.min + egui::vec2(6.0, 2.0),
+        rect.min + egui::vec2(8.0, 2.0),
         galley,
         palette.text_secondary,
     );

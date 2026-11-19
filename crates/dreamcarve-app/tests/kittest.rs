@@ -351,10 +351,11 @@ fn panels_collapse_below_the_minimum() {
 }
 
 /// Capability 50a and `experience.md` sections 4, 5 and 12: both palettes
-/// are installed; with the preference at System the app follows the OS
-/// appearance as it changes; a Light or Dark preference overrides the OS
-/// and is kept in `gui.toml`; the bundled fonts and the type scale are in
-/// force.
+/// are installed; the app is dark until the user chooses, whatever the OS
+/// shows (`redesign.md`, principle 5); with the preference at System it
+/// follows the OS appearance as it changes; a Light or Dark preference
+/// overrides the OS and is kept in `gui.toml`; the bundled fonts and the
+/// type scale are in force.
 #[test]
 fn theme_follows_system_and_both_palettes_apply() {
     let dir = scratch("theme");
@@ -374,10 +375,24 @@ fn theme_follows_system_and_both_palettes_apply() {
     assert_eq!(dark.error_fg_color, theme::DARK.status_error.text);
     assert!(dark.dark_mode);
 
-    // System: follow the OS, both ways.
-    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::System);
+    // Dark by default, over a light OS.
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Dark);
     h.input_mut().system_theme = Some(egui::Theme::Light);
     h.run();
+    assert_eq!(h.ctx.theme(), egui::Theme::Dark, "dark until chosen");
+    assert_eq!(
+        h.ctx.global_style().visuals.panel_fill,
+        theme::DARK.surface_panel
+    );
+
+    // System, once chosen: follow the OS, both ways.
+    h.get_by_label("View").click();
+    h.run();
+    h.get_by_label("Appearance").hover();
+    h.run();
+    h.get_by_label("System").click();
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::System);
     assert_eq!(h.ctx.theme(), egui::Theme::Light);
     assert_eq!(
         h.ctx.global_style().visuals.panel_fill,
@@ -4252,11 +4267,13 @@ fn snapshot_workspace_light_and_dark() {
     assert!(h.query_by_label("Panel · Pocket").is_some(), "the editor");
 
     let mut failures = Vec::new();
-    for (theme, name) in [
-        (egui::Theme::Light, "workspace_light"),
-        (egui::Theme::Dark, "workspace_dark"),
+    // The appearance is the preference's: dark by default, whatever the
+    // OS shows.
+    for (choice, theme, name) in [
+        (dc_app::Theme::Light, egui::Theme::Light, "workspace_light"),
+        (dc_app::Theme::Dark, egui::Theme::Dark, "workspace_dark"),
     ] {
-        h.input_mut().system_theme = Some(theme);
+        h.state_mut().app_mut().prefs_mut().theme = choice;
         h.run();
         assert_eq!(h.ctx.theme(), theme);
         if let Err(err) = h.try_snapshot(name) {
@@ -4266,6 +4283,10 @@ fn snapshot_workspace_light_and_dark() {
     std::fs::remove_dir_all(&dir).unwrap();
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// What the status bar takes of the window's bottom, px (`experience.md`,
+/// section 3): its 28 px and the 6-px margin under it.
+const STATUS_BAR_PX: f32 = 34.0;
 
 /// Where in the last frame's paint order the first text shape containing
 /// `needle` is.
@@ -4709,9 +4730,11 @@ fn cam_panel_has_a_title_and_tools_first() {
         "the title band {title:?} is above the tab strip {:?}",
         tabs[0].2
     );
+    // The title runs the card's width; the pill tabs sit inside it, the
+    // card's padding in from each edge.
     assert!(
-        title.min.x >= tabs[0].2.min.x - 0.5 && title.max.x <= tabs[1].2.max.x + 0.5,
-        "over the CAM panel"
+        title.min.x <= tabs[0].2.min.x + 0.5 && title.max.x >= tabs[1].2.max.x - 0.5,
+        "the title {title:?} and the tabs are one card's"
     );
 
     // The tab picked stays until the next project: New opens on Tools.
@@ -4973,7 +4996,10 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
 
     let mut h = generated_plaque(&dir.join("plaque"), false);
     let button = h.get_by_role_and_label(Role::Button, "Toolpaths").rect();
-    assert!(button.min.y > 800.0 - 30.0, "in the status bar: {button:?}");
+    assert!(
+        button.min.y >= 800.0 - STATUS_BAR_PX,
+        "in the status bar: {button:?}"
+    );
     assert_eq!(
         h.query_all_by_label("Toolpaths").count(),
         1,
@@ -5068,7 +5094,10 @@ fn regenerate_all_only_after_stop() {
         .map(|n| n.rect())
         .collect();
     assert_eq!(offered.len(), 1, "one Regenerate all");
-    assert!(offered[0].min.y > 800.0 - 30.0, "in the status bar");
+    assert!(
+        offered[0].min.y >= 800.0 - STATUS_BAR_PX,
+        "in the status bar"
+    );
 
     h.get_by_label("Regenerate all").click();
     h.step();
@@ -5102,7 +5131,10 @@ fn units_menu_switches_display_units() {
     let mut h = generated_plaque(&dir, true);
     let steps = undo_steps(&h);
     let button = h.get_by_role_and_label(Role::Button, "mm").rect();
-    assert!(button.min.y > 800.0 - 30.0, "in the status bar: {button:?}");
+    assert!(
+        button.min.y >= 800.0 - STATUS_BAR_PX,
+        "in the status bar: {button:?}"
+    );
     h.get_by_role_and_label(Role::Button, "mm").click();
     h.run();
     h.get_by_label("Inches (in)").click();
@@ -5518,9 +5550,10 @@ fn file_menu_labels_in_order() {
 }
 
 /// Slice 35 (#627), capability 79a: View ▸ Appearance holds three checked
-/// choices; System is checked by default; choosing Dark checks it alone,
-/// sets `Prefs::theme`, keeps it in `gui.toml` and applies the dark
-/// visuals over a light OS.
+/// choices; Dark is checked by default (`redesign.md`, principle 5) and
+/// shows over a light OS; choosing Light checks it alone, sets
+/// `Prefs::theme`, keeps it in `gui.toml` and applies the light visuals
+/// over a dark OS.
 #[test]
 fn appearance_has_three_checked_choices() {
     use egui::accesskit::Toggled;
@@ -5555,39 +5588,45 @@ fn appearance_has_three_checked_choices() {
     };
 
     open_appearance(&mut h);
-    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::System);
-    assert_eq!(
-        checked(&h),
-        [
-            ("System".to_owned(), true),
-            ("Light".to_owned(), false),
-            ("Dark".to_owned(), false)
-        ]
-    );
-
-    h.get_by_label("Dark").click();
-    h.run();
     assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Dark);
     assert_eq!(
         h.ctx.theme(),
         egui::Theme::Dark,
-        "Dark wins over a light OS"
+        "Dark is the default, over a light OS"
     );
-    assert!(h.ctx.global_style().visuals.dark_mode);
-    assert_eq!(
-        h.ctx.global_style().visuals.panel_fill,
-        theme::DARK.surface_panel
-    );
-    let saved = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
-    assert_eq!(saved.theme, gui_prefs::Theme::Dark);
-
-    open_appearance(&mut h);
     assert_eq!(
         checked(&h),
         [
             ("System".to_owned(), false),
             ("Light".to_owned(), false),
             ("Dark".to_owned(), true)
+        ]
+    );
+
+    h.input_mut().system_theme = Some(egui::Theme::Dark);
+    h.get_by_label("Light").click();
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Light);
+    assert_eq!(
+        h.ctx.theme(),
+        egui::Theme::Light,
+        "Light wins over a dark OS"
+    );
+    assert!(!h.ctx.global_style().visuals.dark_mode);
+    assert_eq!(
+        h.ctx.global_style().visuals.panel_fill,
+        theme::LIGHT.surface_panel
+    );
+    let saved = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
+    assert_eq!(saved.theme, gui_prefs::Theme::Light);
+
+    open_appearance(&mut h);
+    assert_eq!(
+        checked(&h),
+        [
+            ("System".to_owned(), false),
+            ("Light".to_owned(), true),
+            ("Dark".to_owned(), false)
         ]
     );
     std::fs::remove_dir_all(&dir).ok();

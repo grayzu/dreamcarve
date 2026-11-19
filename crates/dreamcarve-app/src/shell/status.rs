@@ -2,39 +2,131 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The status bar (functional spec, capability 50b; `experience.md`,
-//! section 2, "Status bar"; slice 24, #616): 24 px on `surface.panel`
-//! under a rule; cells of 12-px text 12 px apart, split by 1-px rules.
-//! The cells are `dc_app::status`'s, drawn left to right: the units
-//! button and its menu, the cursor's fixed cell, the *Toolpaths* button
-//! and its popover (`shell::toolpaths`), generation (*Generating k of
-//! n…* and Stop, or *Stopped* and *Regenerate all*), the counts (the
-//! button that opens the Warnings drawer), the estimate, the Z range, a
-//! drag, the shape under the pointer and the last message. A cell with
-//! nothing to say is not drawn and takes no rule. No stock size: Project
-//! Settings shows it.
+//! section 2, "Status bar"; slice 24, #616; `redesign.md`, "The window"):
+//! 28 px on the `surface.window` backdrop, each cell a quiet 24-px pill
+//! of 12-px text, 6 px apart, with no rules between them. The cells are
+//! `dc_app::status`'s, drawn left to right: the units button and its
+//! menu, the cursor's fixed cell, the *Toolpaths* button and its popover
+//! (`shell::toolpaths`), generation (*Generating k of n…* and Stop, or
+//! *Stopped* and *Regenerate all*), the counts (the button that opens the
+//! Warnings drawer), the estimate, the Z range, a drag, the shape under
+//! the pointer and the last message. A cell with nothing to say is not
+//! drawn. No stock size: Project Settings shows it.
 
 use dc_app::status::{self, CountsCell, GenerationAction, GenerationCell, Inputs};
 use dc_app::warnings::Level;
 use dc_app::{Command, StrKey};
 use dc_project::Units;
-use eframe::egui::{self, Sense, TextStyle, Ui};
+use eframe::egui::{self, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::toolpaths;
 use crate::shell::window::{Action, FrameState};
-use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring, text};
+use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_at, text};
 use crate::widgets::icon::Icon;
 use crate::widgets::spinner::spinner;
 
 /// The status bar's height, px.
-const HEIGHT_PX: f32 = 24.0;
+const HEIGHT_PX: f32 = theme::STATUS_BAR_PX;
+/// The margin under the bar, px: with the 2 px a pill stands off the
+/// bar's edge, the gap round the cards.
+pub(crate) const BOTTOM_PX: i8 = 6;
+/// A cell's pill, px high.
+const CELL_PX: f32 = theme::CHIP_PX;
+/// The gap between cells, px.
+const CELL_GAP_PX: f32 = 6.0;
+/// The space left and right of a cell's content, px.
+const CELL_PADDING_PX: f32 = 10.0;
 /// The cursor cell's fixed width, px, so the cells after it hold still.
 const CURSOR_PX: f32 = 120.0;
 
-/// A cell's rule on its right.
-fn rule(ui: &mut Ui, palette: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(1.0, HEIGHT_PX - 8.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, palette.border_default);
+/// The pill of a cell in `rect`, with `wash` over it (a button cell's
+/// hover or pressed look).
+fn pill(palette: &Palette, rect: Rect, wash: egui::Color32) -> egui::Shape {
+    let radius = theme::pill(rect.height());
+    egui::Shape::Vec(vec![
+        egui::epaint::RectShape::new(
+            rect,
+            radius,
+            palette.surface_panel,
+            Stroke::new(1.0, palette.border_default),
+            StrokeKind::Inside,
+        )
+        .into(),
+        egui::epaint::RectShape::filled(rect, radius, wash).into(),
+    ])
+}
+
+/// Lays `body` out in a cell and returns the cell's rectangle and a slot
+/// under the content for its pill, which the caller paints.
+fn cell_body<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> (Rect, egui::layers::ShapeIdx, R) {
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let inner = ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), CELL_PX),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            // The closing padding stays inside the bar. Set before
+            // anything is laid out: narrowing a row rewinds its cursor.
+            ui.set_max_width((ui.available_width() - CELL_PADDING_PX).max(0.0));
+            ui.add_space(CELL_PADDING_PX);
+            let out = body(ui);
+            ui.add_space(CELL_PADDING_PX);
+            out
+        },
+    );
+    let content = inner.response.rect;
+    let rect = Rect::from_center_size(content.center(), egui::vec2(content.width(), CELL_PX));
+    (rect, slot, inner.inner)
+}
+
+/// A cell that only shows: `body` on a quiet pill.
+fn cell<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
+    let palette = Palette::current(ui);
+    let (rect, slot, out) = cell_body(ui, body);
+    ui.painter().set(slot, pill(palette, rect, theme::NONE));
+    out
+}
+
+/// A cell that is a button named `name`, its id from `salt`: the pill
+/// takes the hover wash, and the pressed one while `pressed` or held.
+fn button_cell(
+    ui: &mut Ui,
+    salt: &str,
+    name: &str,
+    pressed: bool,
+    body: impl FnOnce(&mut Ui),
+) -> Response {
+    let palette = Palette::current(ui);
+    let (rect, slot, ()) = cell_body(ui, body);
+    let response = ui.interact(rect, ui.make_persistent_id(salt), Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+    let wash = if pressed || response.is_pointer_button_down_on() {
+        palette.surface_active
+    } else if response.hovered() {
+        palette.surface_hover
+    } else {
+        theme::NONE
+    };
+    ui.painter().set(slot, pill(palette, rect, wash));
+    focus_ring_at(ui, &response, theme::pill(rect.height()));
+    response
+}
+
+/// `label` in `colour` at the small size, cut with an ellipsis at the
+/// room left: a button cell's own name, painted, so it is not a second
+/// node of that name beside the button.
+fn painted(ui: &mut Ui, label: &str, colour: egui::Color32) {
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        label.to_owned(),
+        TextStyle::Small.resolve(ui.style()),
+        colour,
+    );
+    job.wrap = egui::text::TextWrapping::truncate_at_width(ui.available_width().max(0.0));
+    let galley = ui.painter().layout_job(job);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    ui.painter().galley(rect.min, galley, colour);
 }
 
 /// A glyph in `colour` at the small icon size.
@@ -44,48 +136,20 @@ fn glyph(ui: &mut Ui, icon: Icon, colour: egui::Color32) {
     ui.painter().galley(rect.min, galley, colour);
 }
 
-/// The units cell: a quiet button reading `mm` or `in` with a
-/// `chevron-down`, whose two-row menu switches the project's display
-/// units (capability 53) as Project Settings' switch does: one undo step.
+/// The units cell: a button reading `mm` or `in` with a `chevron-down`,
+/// whose two-row menu switches the project's display units (capability
+/// 53) as Project Settings' switch does: one undo step.
 fn units(ui: &mut Ui, state: &FrameState<'_>, label: &str, current: Units, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let small = TextStyle::Small.resolve(ui.style());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(label.to_owned(), small, palette.text_secondary);
-    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
-    let size = egui::vec2(
-        galley.size().x + 4.0 + chevron.size().x + 12.0,
-        HEIGHT_PX - 4.0,
-    );
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
-    let response = response.on_hover_text(strings.get(StrKey::AppStatusUnitsHint));
-    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
-    if response.hovered() || open {
-        let wash = if open {
-            palette.surface_active
-        } else {
-            palette.surface_hover
-        };
-        ui.painter().rect_filled(rect, 4.0, wash);
-    }
-    let x = rect.left() + 6.0;
-    ui.painter().galley(
-        egui::pos2(x, rect.center().y - galley.size().y / 2.0),
-        galley.clone(),
-        palette.text_secondary,
-    );
-    ui.painter().galley(
-        egui::pos2(
-            x + galley.size().x + 4.0,
-            rect.center().y - chevron.size().y / 2.0,
-        ),
-        chevron,
-        palette.text_secondary,
-    );
-    focus_ring(ui, &response);
+    let id = "status_units";
+    // The id `Popup::menu` gives the menu of the response made below.
+    let open = egui::Popup::is_id_open(ui.ctx(), ui.make_persistent_id(id).with("popup"));
+    let response = button_cell(ui, id, label, open, |ui| {
+        painted(ui, label, palette.text_secondary);
+        glyph(ui, Icon::ChevronDown, palette.text_secondary);
+    })
+    .on_hover_text(strings.get(StrKey::AppStatusUnitsHint));
     egui::Popup::menu(&response)
         .align(egui::RectAlign::TOP_START)
         .show(|ui| {
@@ -118,7 +182,7 @@ fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut V
     };
     text(ui, &cell.text, TextStyle::Small, colour);
     if let Some(action) = &cell.action {
-        let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(HEIGHT_PX - 4.0);
+        let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(CELL_PX - 4.0);
         if button(ui, spec).clicked() {
             out.push(match action.action {
                 GenerationAction::Stop => Action::StopGeneration,
@@ -133,8 +197,8 @@ fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut V
 /// *No problems*; one button that opens and closes the Warnings drawer.
 fn counts(ui: &mut Ui, state: &FrameState<'_>, cell: &CountsCell, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
-    let strings = state.app.strings();
-    let inner = ui.horizontal(|ui| {
+    let title = state.app.strings().get(StrKey::AppWarningsTitle);
+    let response = button_cell(ui, "warnings_counts", title, state.warnings_open, |ui| {
         if let Some(none) = &cell.none {
             glyph(ui, Icon::CircleCheck, palette.text_secondary);
             text(ui, none, TextStyle::Small, palette.text_secondary);
@@ -149,41 +213,34 @@ fn counts(ui: &mut Ui, state: &FrameState<'_>, cell: &CountsCell, out: &mut Vec<
             text(ui, label, TextStyle::Small, colour);
         }
     });
-    let response = ui.interact(
-        inner.response.rect,
-        ui.make_persistent_id("warnings_counts"),
-        Sense::click(),
-    );
-    let title = strings.get(StrKey::AppWarningsTitle);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, title));
     if response.clicked() {
         out.push(Action::ToggleWarnings);
     }
-    focus_ring(ui, &response);
 }
 
 /// Draws the status bar.
 pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
+    #[allow(clippy::cast_possible_truncation, reason = "the window gap, 8 px")]
+    let side = theme::GAP_PX as i8;
     egui::Panel::bottom("status_bar")
-        .exact_size(HEIGHT_PX)
+        .exact_size(HEIGHT_PX + f32::from(BOTTOM_PX))
         .resizable(false)
         .show_separator_line(false)
         .frame(
             egui::Frame::NONE
-                .fill(palette.surface_panel)
-                .inner_margin(egui::Margin::symmetric(12, 0)),
+                .fill(palette.surface_window)
+                .inner_margin(egui::Margin {
+                    left: side,
+                    right: side,
+                    top: 0,
+                    bottom: BOTTOM_PX,
+                }),
         )
         .show(ui, |ui| {
             if state.inert() {
                 ui.disable();
             }
-            let full = ui.max_rect();
-            ui.painter().hline(
-                full.x_range(),
-                full.top(),
-                egui::Stroke::new(1.0, palette.border_default),
-            );
             let inputs = Inputs {
                 cursor_mm: state.pointer.cursor_mm,
                 drag: state.pointer.drag.as_deref(),
@@ -197,61 +254,50 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             };
             let cells = status::cells(state.app, &inputs);
             ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = 12.0;
+                ui.spacing_mut().item_spacing.x = CELL_GAP_PX;
                 let secondary = palette.text_secondary;
                 units(ui, state, &cells.units_label, cells.units, out);
-                rule(ui, palette);
-                // The cursor's fixed cell, blank off the Viewport.
-                ui.allocate_ui_with_layout(
-                    egui::vec2(CURSOR_PX, HEIGHT_PX),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_width(CURSOR_PX);
-                        if !cells.cursor.is_empty() {
-                            text(ui, &cells.cursor, TextStyle::Small, secondary);
-                        }
-                    },
-                );
+                // The cursor's fixed cell, blank off the Viewport: it
+                // keeps its width, and shows no pill while it is empty.
+                if cells.cursor.is_empty() {
+                    ui.allocate_exact_size(egui::vec2(CURSOR_PX, CELL_PX), Sense::hover());
+                } else {
+                    cell(ui, |ui| {
+                        ui.set_width(CURSOR_PX - 2.0 * CELL_PADDING_PX);
+                        text(ui, &cells.cursor, TextStyle::Small, secondary);
+                    });
+                }
                 if cells.toolpaths {
-                    rule(ui, palette);
                     let open = toolpaths::is_open(ui.ctx());
-                    let spec = ButtonSpec::new(
-                        Kind::Quiet,
-                        state.app.strings().get(StrKey::AppToolpathsTitle),
-                    )
-                    .icon(Icon::Layers, theme::ICON_SMALL_PX)
-                    .height(HEIGHT_PX - 4.0)
-                    .pressed(open);
-                    let response = button(ui, spec);
+                    let title = state.app.strings().get(StrKey::AppToolpathsTitle);
+                    let response = button_cell(ui, "status_toolpaths", title, open, |ui| {
+                        glyph(ui, Icon::Layers, secondary);
+                        painted(ui, title, secondary);
+                    });
                     toolpaths::popover(ui, &response, state.app, out);
                 }
-                if let Some(cell) = &cells.generation {
-                    rule(ui, palette);
-                    generation(ui, cell, palette, out);
+                if let Some(generating) = &cells.generation {
+                    cell(ui, |ui| generation(ui, generating, palette, out));
                 }
-                rule(ui, palette);
                 counts(ui, state, &cells.counts, out);
-                for (cell, colour) in [
+                let total_help = state.app.strings().get(StrKey::ExportStatusTotalHelp);
+                for (label, colour, help) in [
                     // Capability 78: every program's estimated time.
-                    (&cells.estimate, secondary),
+                    (&cells.estimate, secondary, Some(total_help)),
                     // Capability 74: the program's Z range beside its boxes.
-                    (&cells.z_range, secondary),
+                    (&cells.z_range, secondary, None),
                     // A drag's travel, scale or angle (#534).
-                    (&cells.drag, palette.text_primary),
-                    (&cells.hover, palette.text_primary),
+                    (&cells.drag, palette.text_primary, None),
+                    (&cells.hover, palette.text_primary, None),
                 ] {
-                    if let Some(label) = cell {
-                        rule(ui, palette);
-                        let response = text(ui, label, TextStyle::Small, colour);
-                        if std::ptr::eq(cell, &cells.estimate) {
-                            response.on_hover_text(
-                                state.app.strings().get(StrKey::ExportStatusTotalHelp),
-                            );
+                    if let Some(label) = label {
+                        let response = cell(ui, |ui| text(ui, label, TextStyle::Small, colour));
+                        if let Some(help) = help {
+                            response.on_hover_text(help);
                         }
                     }
                 }
                 if let Some(label) = &cells.message {
-                    rule(ui, palette);
                     message(ui, state, label, cells.message_op.as_ref(), out);
                 }
             });
@@ -268,20 +314,18 @@ fn message(
     out: &mut Vec<Action>,
 ) {
     let palette = Palette::current(ui);
-    let response = text(ui, label, TextStyle::Small, palette.text_secondary);
     let Some(op) = op else {
+        cell(ui, |ui| {
+            text(ui, label, TextStyle::Small, palette.text_secondary)
+        });
         return;
     };
-    let response = ui
-        .interact(
-            response.rect,
-            ui.make_persistent_id(("status_note", op.as_str())),
-            Sense::click(),
-        )
-        .on_hover_text(state.app.strings().get(StrKey::AppCarveOpenNote));
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, label));
+    let salt = format!("status_note.{}", op.as_str());
+    let response = button_cell(ui, &salt, label, false, |ui| {
+        text(ui, label, TextStyle::Small, palette.text_secondary);
+    })
+    .on_hover_text(state.app.strings().get(StrKey::AppCarveOpenNote));
     if response.clicked() {
         out.push(Action::ShowNote(op.clone()));
     }
-    focus_ring(ui, &response);
 }

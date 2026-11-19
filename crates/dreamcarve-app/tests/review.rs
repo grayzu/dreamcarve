@@ -13,6 +13,14 @@
 //! Each scene is written as `<scene>-<light|dark>-<1x|2x>.png` in
 //! `DC_REVIEW_DIR` (default `target/review`). These are pictures for a
 //! person; the compared snapshots are `kittest::snapshot_workspace_light_and_dark`'s.
+//!
+//! `redesign_d2_screenshots` writes the redesign's slice D2 set
+//! (`docs/specs/phase-4/redesign.md`, "Slices") into
+//! `docs/specs/phase-4/review/d2/`, where it is committed:
+//!
+//! ```sh
+//! cargo test -p dreamcarve-app --test review redesign_d2 -- --ignored
+//! ```
 
 #![allow(
     clippy::panic,
@@ -76,20 +84,37 @@ thread_local! {
 
 /// Writes `scene` in both appearances at the current pass's scale.
 fn shoot(h: &mut H, scene: &str) {
-    let dir = out_dir();
+    shoot_in(
+        h,
+        &out_dir(),
+        scene,
+        &[dc_app::Theme::Light, dc_app::Theme::Dark],
+    );
+}
+
+/// Writes `scene` into `dir` in each of `looks` at the current pass's
+/// scale, as `<scene>-<light|dark>-<scale>x.png`, and leaves the window in
+/// the appearance it had. The appearance is set as the preference, which
+/// wins over the OS's.
+fn shoot_in(h: &mut H, dir: &Path, scene: &str, looks: &[dc_app::Theme]) {
     let ppp = SCALE.get();
-    for (theme, look) in [(egui::Theme::Light, "light"), (egui::Theme::Dark, "dark")] {
-        h.input_mut().system_theme = Some(theme);
+    let before = h.state().app().prefs().theme;
+    for theme in looks {
+        let look = match theme {
+            dc_app::Theme::Light => "light",
+            dc_app::Theme::Dark | dc_app::Theme::System => "dark",
+        };
+        h.state_mut().app_mut().prefs_mut().theme = *theme;
         h.run();
         let name = format!("{scene}-{look}-{ppp}x");
-        let options = SnapshotOptions::new().output_path(&dir);
+        let options = SnapshotOptions::new().output_path(dir);
         let _ = std::fs::remove_file(dir.join(format!("{name}.png")));
         // No reference exists, so this fails having written `.new.png`.
         let _ = h.try_snapshot_options(&name, &options);
         let new = dir.join(format!("{name}.new.png"));
         std::fs::rename(&new, dir.join(format!("{name}.png"))).expect("the picture was written");
     }
-    h.input_mut().system_theme = Some(egui::Theme::Light);
+    h.state_mut().app_mut().prefs_mut().theme = before;
     h.run();
 }
 
@@ -117,7 +142,6 @@ fn window_with(
         .with_pixels_per_point(SCALE.get())
         .renderer(egui_kittest::wgpu::WgpuTestRenderer::new())
         .build_eframe(move |cc| dreamcarve_app::Shell::new(cc, options).expect("the shell starts"));
-    h.input_mut().system_theme = Some(egui::Theme::Light);
     settle(&mut h);
     Some(h)
 }
@@ -406,4 +430,103 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "22-unsaved-changes-sheet");
     drop(h);
     true
+}
+
+/// Takes the pointer off the window, so no control shows its hover.
+fn park_pointer(h: &mut H) {
+    h.event(egui::Event::PointerGone);
+    h.run();
+}
+
+/// Where the redesign's slice D2 pictures are committed.
+fn d2_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-4/review/d2"),
+        PathBuf::from,
+    )
+}
+
+/// The redesign's slice D2 set (`docs/specs/phase-4/redesign.md`,
+/// "Slices"): the workspace on the plaque, an operation's editor with its
+/// fields and segmented controls, a menu, the Warnings drawer, the Tools
+/// tab and two sheets, each in dark and light at 1×, and the first two in
+/// dark at 2×.
+#[test]
+#[ignore = "writes the committed D2 review pictures; run by hand"]
+fn redesign_d2_screenshots() {
+    let out = d2_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let both = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    for (ppp, looks, all) in [(1.0, &both[..], true), (2.0, &both[..1], false)] {
+        SCALE.set(ppp);
+        let dir = scratch(&format!("review-d2-{ppp}"));
+        // A library to show in its sheet: the Fusion sample, as imported.
+        let bytes = std::fs::read(fixture("fusion/sample.tools")).unwrap();
+        let library = dc_app::library::import(&dc_library::Library::default(), &bytes, false)
+            .unwrap()
+            .library;
+        std::fs::create_dir_all(dir.join("config")).unwrap();
+        std::fs::write(
+            dir.join("config/tools.json"),
+            dc_library::save(&library).unwrap(),
+        )
+        .unwrap();
+        let dialogs = QueuedDialogs::default();
+        let plaque = fixture("plaque.dcv");
+        let Some(mut h) = window_with(&dir, Some(plaque), 1280.0, 800.0, &dialogs) else {
+            return;
+        };
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "01-workspace", looks);
+
+        // An operation's editor: its Setup block with its fields and its
+        // segmented control, then Depth opened, scrolled into view.
+        open_operation(&mut h, "Panel");
+        h.get_by_role_and_label(Role::Button, "Depth").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "Stock to leave")
+            .scroll_to_me();
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "02-operation-editor", looks);
+        if !all {
+            drop(h);
+            std::fs::remove_dir_all(&dir).unwrap();
+            continue;
+        }
+
+        click(&mut h, "File");
+        shoot_in(&mut h, &out, "03-file-menu", looks);
+        h.key_press(egui::Key::Escape);
+        h.run();
+
+        click(&mut h, "Warnings");
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "04-warnings-drawer", looks);
+        h.get_by_label("Close the Warnings drawer").click();
+        h.run();
+
+        h.get_by_label_contains("Tools ·").click();
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "05-tools-tab", looks);
+        h.get_by_label_contains("Operations ·").click();
+        h.run();
+
+        click(&mut h, "Project");
+        click(&mut h, "Tool Library…");
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "06-tool-library-sheet", looks);
+        h.key_press(egui::Key::Escape);
+        h.run();
+
+        h.input_mut()
+            .dropped_files
+            .push(std::sync::Arc::new(Dropped(fixture("sign.svg"))));
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "07-import-sheet", looks);
+        drop(h);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

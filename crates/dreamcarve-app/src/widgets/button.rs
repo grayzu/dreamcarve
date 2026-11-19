@@ -1,9 +1,11 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The app's buttons (`docs/specs/phase-4/experience.md`, section 7,
-//! "Buttons"): quiet (toolbar, row actions), secondary (sheets, the empty
-//! state) and primary (once per surface), with an optional Lucide icon and
+//! The app's buttons (`docs/specs/phase-4/redesign.md`, "Components";
+//! `docs/specs/phase-4/experience.md`, section 7, "Buttons"): primary (an
+//! accent pill, once per view), secondary (raised, outlined, the control
+//! radius), quiet (text and icon, a wash on hover) and destructive (a
+//! secondary button in the error colour), with an optional Lucide icon and
 //! trailing text. Painted here rather than with egui's `Button` so the
 //! accessible name is the label alone (not the icon's private-use code
 //! point), the heights are the spec's, and the focus ring is drawn.
@@ -16,14 +18,37 @@ use crate::widgets::icon::Icon;
 /// Which of the spec's button styles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// No outline; a wash on hover.
+    /// Text and icon only; `surface.hover` behind it on hover.
     Quiet,
-    /// Raised fill, strong outline.
+    /// `surface.raised` with a `border.default` outline, the control
+    /// radius.
     Secondary,
-    /// The accent fill, white text.
+    /// An `accent.fill` pill with `text.on-accent`; `accent.hover` under
+    /// the pointer. One per view.
     Primary,
-    /// Secondary at rest; error-red text and outline on hover only.
+    /// A secondary button whose label and icon take `status.error`.
     Destructive,
+}
+
+impl Kind {
+    /// The space left and right of the content, px: a pill needs more
+    /// than a rounded rectangle, and a quiet button has no edge to clear.
+    const fn padding_px(self) -> f32 {
+        match self {
+            Self::Quiet => 8.0,
+            Self::Secondary | Self::Destructive => 12.0,
+            Self::Primary => 16.0,
+        }
+    }
+
+    /// The corner radius at `height_px`: a pill for the primary button,
+    /// else the control radius.
+    const fn radius_px(self, height_px: f32) -> f32 {
+        match self {
+            Self::Primary => theme::pill(height_px),
+            Self::Quiet | Self::Secondary | Self::Destructive => theme::CONTROL_RADIUS_PX,
+        }
+    }
 }
 
 /// A button to draw.
@@ -50,8 +75,8 @@ pub struct ButtonSpec<'a> {
     /// Whether the content starts at the left edge whatever the style: a
     /// full-width button in a column of left-aligned ones.
     pub leading: bool,
-    /// Height, px: 26 for a control, 28 in the toolbar and sheet footers,
-    /// 32 and 40 for the empty state's actions.
+    /// Height, px: 32 for a control, 34 for the toolbar's primary button,
+    /// 40 for the empty state's.
     pub height_px: f32,
     /// Width, px; `None` fits the content.
     pub width_px: Option<f32>,
@@ -63,7 +88,7 @@ pub struct ButtonSpec<'a> {
 }
 
 impl<'a> ButtonSpec<'a> {
-    /// A 26-px button of `kind` reading `label`.
+    /// A 32-px button of `kind` reading `label`.
     #[must_use]
     pub const fn new(kind: Kind, label: &'a str) -> Self {
         Self {
@@ -75,7 +100,7 @@ impl<'a> ButtonSpec<'a> {
             name: None,
             trailing: None,
             leading: false,
-            height_px: 26.0,
+            height_px: theme::CONTROL_PX,
             width_px: None,
             enabled: true,
             pressed: false,
@@ -147,14 +172,14 @@ impl<'a> ButtonSpec<'a> {
     }
 }
 
-/// Fill, outline and text colours of `kind` in `state`.
+/// Fill, the wash over it, outline and text colours of `kind` in `state`.
 fn colours(
     palette: &Palette,
     kind: Kind,
     response: &Response,
     enabled: bool,
     held: bool,
-) -> (Color32, Stroke, Color32) {
+) -> (Color32, Color32, Stroke, Color32) {
     let hovered = enabled && response.hovered();
     let pressed = enabled && (held || response.is_pointer_button_down_on());
     let wash = if pressed {
@@ -171,34 +196,42 @@ fn colours(
             } else {
                 palette.text_disabled
             };
-            (wash, Stroke::NONE, text)
+            (theme::NONE, wash, Stroke::NONE, text)
         }
-        Kind::Secondary => {
-            let (stroke, text) = if enabled {
-                (palette.border_strong, palette.text_primary)
-            } else {
-                (palette.border_default, palette.text_disabled)
+        Kind::Secondary | Kind::Destructive => {
+            let text = match (enabled, kind) {
+                (false, _) => palette.text_disabled,
+                (true, Kind::Destructive) => palette.status_error.text,
+                (true, _) => palette.text_primary,
             };
-            (palette.surface_raised, Stroke::new(1.0, stroke), text)
-        }
-        Kind::Destructive => {
-            let (stroke, text) = if !enabled {
-                (palette.border_default, palette.text_disabled)
-            } else if hovered {
-                (palette.status_error.stroke, palette.status_error.text)
-            } else {
-                (palette.border_strong, palette.text_primary)
+            let stroke = match (hovered || pressed, kind) {
+                (true, Kind::Destructive) => palette.status_error.stroke,
+                (true, _) => palette.border_strong,
+                (false, _) => palette.border_default,
             };
-            (palette.surface_raised, Stroke::new(1.0, stroke), text)
+            (palette.surface_raised, wash, Stroke::new(1.0, stroke), text)
         }
         Kind::Primary => {
-            if enabled {
-                (palette.accent_fill, Stroke::NONE, palette.text_on_accent)
-            } else {
+            if !enabled {
                 (
                     palette.surface_sunken,
+                    theme::NONE,
                     Stroke::new(1.0, palette.border_default),
                     palette.text_disabled,
+                )
+            } else if hovered && !pressed {
+                (
+                    palette.accent_hover,
+                    theme::NONE,
+                    Stroke::NONE,
+                    palette.text_on_accent,
+                )
+            } else {
+                (
+                    palette.accent_fill,
+                    theme::NONE,
+                    Stroke::NONE,
+                    palette.text_on_accent,
                 )
             }
         }
@@ -208,8 +241,7 @@ fn colours(
 /// Draws `spec`; the response's `clicked` is the press.
 pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     let palette = Palette::current(ui);
-    let padding = 8.0;
-    let gap = 8.0;
+    let gap = theme::GAP_PX;
     let body = TextStyle::Body.resolve(ui.style());
     let small = TextStyle::Small.resolve(ui.style());
     let painter = ui.painter().clone();
@@ -224,10 +256,15 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
             0.0
         }
         + text_w;
+    // An icon alone sits in a square, whatever the style.
+    let padding = if label.is_some() {
+        spec.kind.padding_px()
+    } else {
+        0.0
+    };
     let width = spec
         .width_px
-        .unwrap_or(inner + 2.0 * padding)
-        .max(spec.height_px);
+        .unwrap_or_else(|| (inner + 2.0 * padding).max(spec.height_px));
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, spec.height_px),
         if spec.enabled {
@@ -245,14 +282,19 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
 
     if ui.is_rect_visible(rect) {
-        let (fill, stroke, text) = colours(palette, spec.kind, &response, enabled, spec.pressed);
+        let (fill, wash, stroke, text) =
+            colours(palette, spec.kind, &response, enabled, spec.pressed);
+        let radius = spec.kind.radius_px(rect.height());
         let painter = ui.painter_at(rect.expand(4.0));
-        painter.rect(rect, 4.0, fill, stroke, StrokeKind::Inside);
-        let mut x = match spec.width_px {
-            Some(_) if spec.kind != Kind::Secondary && !spec.leading => {
-                rect.center().x - inner / 2.0
-            }
-            _ => rect.left() + padding,
+        painter.rect(rect, radius, fill, stroke, StrokeKind::Inside);
+        if wash != theme::NONE {
+            painter.rect_filled(rect, radius, wash);
+        }
+        let padding = spec.kind.padding_px();
+        let mut x = if spec.leading {
+            rect.left() + padding
+        } else {
+            rect.center().x - inner / 2.0
         };
         if let Some(icon) = spec.icon {
             let glyph = icon.galley(ui, spec.icon_px, text);
@@ -275,12 +317,12 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
             };
             let galley = painter.layout_no_wrap(trailing.to_owned(), small, theme::PAINT_TIME);
             let at = egui::pos2(
-                rect.right() - padding - galley.size().x,
+                rect.right() - spec.kind.padding_px() - galley.size().x,
                 rect.center().y - galley.size().y / 2.0,
             );
             painter.galley(at, galley, colour);
         }
-        focus_ring(ui, &response);
+        focus_ring_at(ui, &response, radius);
     }
     match spec.tooltip {
         Some(tip) if enabled => response.on_hover_text(tip),
@@ -294,11 +336,17 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
 /// clickable widget focus only from the keyboard, so `has_focus` is the
 /// keyboard case.
 pub fn focus_ring(ui: &Ui, response: &Response) {
+    focus_ring_at(ui, response, theme::CONTROL_RADIUS_PX);
+}
+
+/// [`focus_ring`] round a control whose corner radius is `radius_px`: a
+/// pill's ring is a pill.
+pub fn focus_ring_at(ui: &Ui, response: &Response, radius_px: f32) {
     if response.has_focus() {
         let palette = Palette::current(ui);
         ui.painter().rect_stroke(
             response.rect.expand(3.0),
-            6.0,
+            radius_px + 3.0,
             Stroke::new(2.0, palette.focus_ring),
             StrokeKind::Middle,
         );

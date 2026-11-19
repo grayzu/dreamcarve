@@ -72,14 +72,14 @@ use crate::widgets::toggle::toggle;
 use crate::widgets::unit_field::{HEIGHT_PX, Required, UnitField, field as unit_field};
 
 /// The panel's content margin, px (`experience.md`, section 3).
-const MARGIN_PX: i8 = 12;
+const MARGIN_PX: i8 = 16;
 /// A segment's widest label, px (section 7, "Segmented control").
 const SEGMENT_LABEL_PX: f32 = 56.0;
 /// How far a feature's or a variant's own rows indent, px (section 7,
 /// "Toggle").
 const NESTED_PX: f32 = 16.0;
 /// The header band's height, px.
-const HEADER_PX: f32 = 32.0;
+const HEADER_PX: f32 = 48.0;
 /// The gap between a row's trailing icon buttons, px.
 const BUTTON_GAP_PX: f32 = 2.0;
 
@@ -182,7 +182,12 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, op: &Operation, out: &mu
         .auto_shrink(false)
         .show(ui, |ui| {
             egui::Frame::NONE
-                .inner_margin(egui::Margin::symmetric(MARGIN_PX, 4))
+                .inner_margin(egui::Margin {
+                    left: MARGIN_PX,
+                    right: MARGIN_PX,
+                    top: 0,
+                    bottom: MARGIN_PX,
+                })
                 .show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
                     for (group, rows) in fields::groups(op) {
@@ -252,7 +257,8 @@ fn rename_id(op: &Operation) -> Id {
     Id::unique(("dc.editor.rename", op.id().as_str()))
 }
 
-/// The 32-px header band (capability 66; section 7, "Editor header"): the
+/// The card's header, with no band and no rule (capability 66; section 7,
+/// "Editor header"): the
 /// kind's glyph in the operation's colour, the name, editable in place,
 /// `· Kind` in text.secondary, and the operation's worst located tier's
 /// glyph at the right. Clicking the name, double-clicking the band, or F2
@@ -271,8 +277,10 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
     let (rect, band) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), HEADER_PX), Sense::click());
     band.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &title));
+    // Centred a little low, in the room the card's top padding leaves.
+    let rect = rect.translate(egui::vec2(0.0, 2.0));
     let glyph = Rect::from_center_size(
-        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+        egui::pos2(rect.left() + f32::from(MARGIN_PX) + 8.0, rect.center().y),
         egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
     );
     op_glyph(ui.painter(), glyph, kind, palette.operation(index));
@@ -285,7 +293,7 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
                 .iter()
                 .any(|f| f.op.as_ref() == Some(cx.op.id()) && f.tier == *tier)
         });
-    let mut right = rect.right() - 12.0;
+    let mut right = rect.right() - f32::from(MARGIN_PX);
     if let Some(tier) = worst {
         let (icon, colours) = match tier {
             Tier::Error => (Icon::CircleX, palette.status_error),
@@ -315,8 +323,8 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
     let left = glyph.right() + 8.0;
     let name_room = (right - left - kind_galley.size().x - 8.0).max(24.0);
     let name_rect = Rect::from_min_max(
-        egui::pos2(left - 4.0, rect.top() + 4.0),
-        egui::pos2(left + name_room, rect.bottom() - 4.0),
+        egui::pos2(left - 8.0, rect.top() + 8.0),
+        egui::pos2(left + name_room, rect.bottom() - 8.0),
     );
 
     let field_id = rename_id(cx.op);
@@ -362,8 +370,8 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
         job.wrap = egui::text::TextWrapping::truncate_at_width(name_room);
         let galley = ui.painter().layout_job(job);
         let at = Rect::from_min_size(
-            egui::pos2(left - 4.0, rect.top() + 4.0),
-            egui::vec2(galley.size().x + 8.0, rect.height() - 8.0),
+            egui::pos2(left - 8.0, rect.top() + 8.0),
+            egui::vec2(galley.size().x + 16.0, rect.height() - 16.0),
         );
         let response = ui
             .interact(at, field_id.with("name"), Sense::click())
@@ -372,8 +380,8 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
         if response.hovered() {
             ui.painter().rect_stroke(
                 at,
-                4.0,
-                egui::Stroke::new(1.0, palette.border_default),
+                theme::CONTROL_RADIUS_PX,
+                egui::Stroke::new(1.0, palette.border_strong),
                 egui::StrokeKind::Inside,
             );
         }
@@ -398,11 +406,6 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
         ),
         kind_galley,
         palette.text_secondary,
-    );
-    ui.painter().hline(
-        rect.x_range(),
-        rect.bottom() - 0.5,
-        egui::Stroke::new(1.0, palette.border_default),
     );
     if let Some(reason) = ui.data(|d| d.get_temp::<String>(field_id.with("refused"))) {
         row::message(ui, Tier::Error, &reason);
@@ -1056,19 +1059,22 @@ fn tool_picker(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(egui::Role::ComboBox, true, cx.strings.get(row.label))
     });
-    let outline = if response.hovered() {
-        palette.text_secondary
-    } else {
+    let open = egui::Popup::is_id_open(ui.ctx(), egui::Popup::default_response_id(&response));
+    let outline = if open {
+        palette.focus_ring
+    } else if response.hovered() {
         palette.border_strong
+    } else {
+        palette.border_default
     };
     ui.painter().rect(
         rect,
-        4.0,
+        theme::CONTROL_RADIUS_PX,
         palette.surface_sunken,
         egui::Stroke::new(1.0, outline),
         egui::StrokeKind::Inside,
     );
-    let mut x = rect.left() + 8.0;
+    let mut x = rect.left() + 10.0;
     if let Some(tool) = current {
         paint_tool_icon(
             ui,
@@ -1078,17 +1084,25 @@ fn tool_picker(
         );
         x += theme::ICON_SMALL_PX + 6.0;
     }
-    ui.painter().text(
-        egui::pos2(x, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        &text,
+    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    // One line, an ellipsis before the chevron when the name is long.
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        text.clone(),
         TextStyle::Body.resolve(ui.style()),
         palette.text_primary,
     );
-    let chevron = Icon::ChevronDown.galley(ui, theme::ICON_SMALL_PX, palette.text_secondary);
+    job.wrap = egui::text::TextWrapping::truncate_at_width(
+        (rect.right() - 10.0 - chevron.size().x - 6.0 - x).max(0.0),
+    );
+    let name = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(x, rect.center().y - name.size().y / 2.0),
+        name,
+        palette.text_primary,
+    );
     ui.painter().galley(
         egui::pos2(
-            rect.right() - 8.0 - chevron.size().x,
+            rect.right() - 10.0 - chevron.size().x,
             rect.center().y - chevron.size().y / 2.0,
         ),
         chevron,

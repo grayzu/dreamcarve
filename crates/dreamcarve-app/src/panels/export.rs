@@ -41,7 +41,7 @@ use dc_app::{App, SnapshotId, StrKey, Strings};
 use dc_job::{EstimateConfig, ProgramSplit, Tier};
 use dc_project::ToolChangeMode;
 use dreamcarve_shell::{StagedFile, commit_all};
-use eframe::egui::{self, Align, Layout, Stroke, TextStyle, Ui};
+use eframe::egui::{self, Align, Layout, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
@@ -59,7 +59,7 @@ const MARGIN_PX: i8 = 24;
 /// The header, px.
 const HEADER_PX: f32 = 32.0;
 /// A sheet footer button, px.
-const FOOTER_PX: f32 = 28.0;
+const FOOTER_PX: f32 = theme::CONTROL_PX;
 /// How soon the window looks for the plan again while it is building.
 const POLL: Duration = Duration::from_millis(50);
 
@@ -399,11 +399,7 @@ pub(crate) fn show(
     };
     let screen = ctx.content_rect().size();
     let width = WIDTH_PX.min(screen.x - 48.0);
-    let frame = egui::Frame::popup(&style)
-        .fill(palette.surface_raised)
-        .stroke(Stroke::new(1.0, palette.border_default))
-        .corner_radius(8)
-        .inner_margin(MARGIN_PX);
+    let frame = theme::sheet(palette);
     let response = egui::Modal::new(egui::Id::unique("export_sheet"))
         .backdrop_color(palette.scrim)
         .frame(frame)
@@ -771,7 +767,7 @@ fn programs(ui: &mut Ui, app: &App, ready: &Ready, stem: &str) {
         };
         egui::Frame::NONE
             .fill(fill)
-            .corner_radius(4)
+            .corner_radius(theme::CONTROL_RADIUS_PX)
             .inner_margin(egui::Margin::symmetric(8, 4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());

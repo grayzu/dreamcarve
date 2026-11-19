@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The checkbox (`docs/specs/phase-4/experience.md`, section 7,
-//! "Checkbox"): a 16-px box with a 3-px radius and a `border.strong`
-//! outline, filled `accent` with a white `check` when checked, its label
-//! 8 px to the right, the whole 26-px row the hit target. egui's own
+//! "Checkbox"): a 16-px box with a 4-px radius and a `border.strong`
+//! outline, filled `accent.fill` with a `check` in text.on-accent when
+//! checked, its label 8 px to the right, the whole 32-px row the hit
+//! target. egui's own
 //! checkbox fills the box with the widget state's background and strokes
 //! the tick in the text colour, so checked and unchecked differ only by
 //! the tick; the review (#549) found it beside the painted one in the
@@ -21,8 +22,8 @@ use crate::widgets::icon::Icon;
 
 /// The box's side, px.
 pub(crate) const BOX_PX: f32 = 16.0;
-/// The row's height, px.
-const ROW_PX: f32 = 26.0;
+/// The row's height, px: a control's.
+const ROW_PX: f32 = theme::CONTROL_PX;
 /// The gap between the box and its label, px.
 const GAP_PX: f32 = 8.0;
 /// The narrowest hit target (section 11), px.
@@ -89,33 +90,34 @@ pub(crate) fn checkbox(
     response
 }
 
-/// The 16-px box in `rect`: `accent` with a white tick when `checked`,
-/// else a `border.strong` outline (`text.secondary` on hover); disabled,
-/// the outline is `border.default` and a checked box `text.disabled`.
+/// The 16-px box in `rect`: `accent.fill` with a tick in text.on-accent
+/// when `checked` (`accent.hover` under the pointer), else a
+/// `border.strong` outline (`text.secondary` on hover); disabled, the
+/// outline is `border.default` and a checked box `text.disabled`.
 pub(crate) fn paint_box(ui: &Ui, rect: Rect, checked: bool, hovered: bool, enabled: bool) {
     let palette = Palette::current(ui);
     if checked {
-        let fill = if enabled {
-            palette.accent
-        } else {
-            palette.text_disabled
+        let (fill, mark) = match (enabled, hovered) {
+            (false, _) => (palette.text_disabled, palette.surface_panel),
+            (true, true) => (palette.accent_hover, palette.text_on_accent),
+            (true, false) => (palette.accent_fill, palette.text_on_accent),
         };
-        ui.painter().rect_filled(rect, 3.0, fill);
-        let tick = Icon::Check.galley(ui, theme::ICON_SMALL_PX - 4.0, palette.text_on_accent);
-        ui.painter().galley(
-            rect.center() - tick.size() / 2.0,
-            tick,
-            palette.text_on_accent,
-        );
+        ui.painter().rect_filled(rect, theme::MARK_RADIUS_PX, fill);
+        let tick = Icon::Check.galley(ui, theme::ICON_SMALL_PX - 4.0, mark);
+        ui.painter()
+            .galley(rect.center() - tick.size() / 2.0, tick, mark);
     } else {
         let stroke = match (enabled, hovered) {
             (false, _) => palette.border_default,
             (true, true) => palette.text_secondary,
             (true, false) => palette.border_strong,
         };
-        ui.painter()
-            .rect_filled(rect.shrink(1.0), 3.0, palette.surface_sunken);
-        ui.painter()
-            .rect_stroke(rect, 3.0, Stroke::new(1.0, stroke), StrokeKind::Inside);
+        ui.painter().rect(
+            rect,
+            theme::MARK_RADIUS_PX,
+            palette.surface_sunken,
+            Stroke::new(1.0, stroke),
+            StrokeKind::Inside,
+        );
     }
 }
