@@ -52,7 +52,7 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 | A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for every generator in dc-cam (about 160 lookups now error, 110 removed, 16 sentinels replaced); the sweeps' totals are identical and none met the new error. Still to do: the interior of dc-geometry (about 275 unclassified pattern hits, mostly `medial.rs`, `merge.rs`, `simplify.rs`, `self_band.rs`, `polyline.rs`); making `medial_axis` and `boolean` fallible changes signatures in dc-import and about 36 call sites | doing |
 
 | A8 | A smooth tab at the end of an open path was cut away: the generator laid the tab's slope inside the clamped span and plunged at the tab's centre. Fixed in `dc-cam/src/tabs.rs`; the safety pass's tab spine now covers Left and Right open paths | done |
-| A9 | `PROPTEST_RNG_SEED=37` fails `random_valid_profiles_never_panic_and_pass_safety`: an Outside Profile, no tabs, helix 0.05, a 0.94 mm bit, `OffMaterial`. The shrunk case is in `docs/alpha-notes/profile-seed-37.txt` | doing |
+| A9 | `PROPTEST_RNG_SEED=37` failed the Profile property: the checker, not the generator. Arc fitting merged a tiny helix's tail, the handoff and a dogbone into one arc, and S9's notch rule accepted straight cuts only. `Notch::allows` now judges an arc piece by piece. Seeds 38 to 47 pass | done |
 
 Notes from the fixes:
 
