@@ -3223,6 +3223,65 @@ mod tests {
         }
     }
 
+    /// A smooth span an end of an open path cuts short holds the tab top
+    /// right to that end (`layout_open`): the path leaves no room for the
+    /// slope there. A 4 mm tab cut with a 6 mm bit raises 5 mm either side
+    /// of its centre: the top for the 3 mm radius, then down over 2 mm.
+    /// Laid at 0, 1 and 4 mm along a 50 mm open path, its span runs past
+    /// the path's start; at 49 mm, past its end; at 5 mm it fits, and
+    /// keeps both slopes. `reversed`, the path is cut from its last
+    /// vertex, and the layout is measured from there.
+    ///
+    /// Before, the slope was laid inside what the end left of the span,
+    /// so a pass was at its own depth at the path's end, at or beside the
+    /// tab's centre, and cut the tab through.
+    #[test]
+    fn smooth_span_cut_short_by_an_open_end_holds_its_top_there() {
+        let tabs = Tabs::new(3.0, 6.0, 0.01);
+        let cut = |centre_mm: f64| TabCut {
+            centre_mm,
+            width_mm: 4.0,
+            top_z_mm: 3.0,
+            shape: TabShape::Smooth,
+        };
+        // (centre, [(distance along the path as drawn, Z of a pass at 0)]).
+        // A span is asked just inside the path's end it is held to: it is
+        // half open, so the far end of the path as cut is past it.
+        let cases: [(f64, &[(f64, f64)]); 5] = [
+            (0.0, &[(0.001, 3.0), (3.0, 3.0), (4.0, 1.5), (5.5, 0.0)]),
+            (1.0, &[(0.001, 3.0), (4.0, 3.0), (5.0, 1.5), (6.5, 0.0)]),
+            // The path's start is on the tab's slope: held, so no lower.
+            (4.0, &[(0.001, 3.0), (7.0, 3.0), (8.0, 1.5), (9.5, 0.0)]),
+            (
+                49.0,
+                &[(43.5, 0.0), (45.0, 1.5), (46.0, 3.0), (49.999, 3.0)],
+            ),
+            (
+                5.0,
+                &[(0.0, 0.0), (1.0, 1.5), (2.0, 3.0), (8.0, 3.0), (9.0, 1.5)],
+            ),
+        ];
+        for reversed in [false, true] {
+            for (centre_mm, expected) in cases {
+                let (layout, overlapped) =
+                    tabs.layout(&[cut(centre_mm)], 50.0, PathEnds::Open { reversed });
+                assert!(!overlapped);
+                for &(drawn_mm, z_mm) in expected {
+                    let along_mm = if reversed { 50.0 - drawn_mm } else { drawn_mm };
+                    assert_approx_eq!(layout.z_at_mm(along_mm, 0.0), z_mm, TOL);
+                }
+            }
+        }
+        // A span that starts with one the end cuts short is held with it,
+        // whichever is laid first.
+        for cuts in [[cut(1.0), cut(5.0)], [cut(5.0), cut(1.0)]] {
+            let (layout, overlapped) = tabs.layout(&cuts, 50.0, PathEnds::Open { reversed: false });
+            assert!(overlapped);
+            assert_approx_eq!(layout.z_at_mm(0.0, 0.0), 3.0, TOL);
+            assert_approx_eq!(layout.z_at_mm(9.0, 0.0), 1.5, TOL);
+        }
+    }
+
     /// #285: `avoid_corners: false` lays the tabs as before: on the
     /// rotated square, four tabs centred an eighth, three eighths, five
     /// eighths and seven eighths of the way along the path from its
