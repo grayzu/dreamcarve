@@ -230,10 +230,10 @@ fn corners_of(polyline: &Polyline) -> Vec<CornerGeometry> {
     if n < 2 {
         return out;
     }
-    for (k, next) in segments.iter().enumerate() {
-        let Some(prev) = segments.get((k + n - 1) % n) else {
-            continue;
-        };
+    // Each segment with the one before it round the path.
+    let before = segments.iter().cycle().skip(n - 1);
+    for (prev, next) in before.zip(&segments) {
+        // A segment with no tangent at the vertex turns no corner there.
         let (Some((_, incoming)), Some((_, outgoing))) =
             (prev.point_at(prev.length_mm()), next.point_at(0.0))
         else {
@@ -289,7 +289,7 @@ fn locate_descend(
     let direction = g.bisector;
     let min_t = radius_mm - RELIEF_POSITION_TOLERANCE_MM;
     let max_t = radius_mm / (g.interior_angle_rad / 2.0).sin() + RELIEF_POSITION_TOLERANCE_MM;
-    let mut best = f64::INFINITY;
+    let mut best: Option<f64> = None;
     for &(a, b) in segments {
         let edge = b - a;
         let denominator = direction.cross(edge);
@@ -298,7 +298,7 @@ fn locate_descend(
         }
         let to_start = a - g.corner;
         let t = to_start.cross(edge) / denominator;
-        if t.is_nan() || t < min_t || t > max_t || t >= best {
+        if t.is_nan() || t < min_t || t > max_t || best.is_some_and(|nearest| t >= nearest) {
             continue;
         }
         let along = to_start.cross(direction) / denominator;
@@ -306,9 +306,10 @@ fn locate_descend(
         if along < -slack || along > 1.0 + slack {
             continue;
         }
-        best = t;
+        best = Some(t);
     }
-    best.is_finite().then(|| g.corner + direction * best)
+    best.filter(|t| t.is_finite())
+        .map(|t| g.corner + direction * t)
 }
 
 /// [`Warning::ReliefCornerNotCut`] for corner `g` of `shape`.
@@ -485,14 +486,13 @@ fn moves_cut_at(
 fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<ReliefCorner> {
     let mut ordered = Vec::with_capacity(corners.len());
     let mut from = start;
-    while !corners.is_empty() {
-        let next = nearest_of(
-            corners
-                .iter()
-                .enumerate()
-                .map(|(i, c)| (i, from.distance_to(c.descend))),
-        )
-        .unwrap_or(0);
+    // `nearest_of` has none to give only when none is left.
+    while let Some(next) = nearest_of(
+        corners
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, from.distance_to(c.descend))),
+    ) {
         let corner = corners.remove(next);
         from = corner.descend;
         ordered.push(corner);
@@ -510,6 +510,7 @@ fn nearest_neighbour(mut corners: Vec<ReliefCorner>, start: Point) -> Vec<Relief
 fn level_groups(levels: &[f64], passes: &[(usize, f64)]) -> Vec<(usize, Vec<f64>)> {
     let mut groups: Vec<(usize, Vec<f64>)> = Vec::new();
     for &level in levels {
+        // With no pass at all there is none to cut the level in.
         let Some(pass) = passes
             .iter()
             .find(|(_, z)| *z <= level + RELIEF_Z_TOLERANCE_MM)
@@ -721,9 +722,12 @@ impl Relief {
             };
             let mut all = true;
             for (index, levels) in rings {
-                if let Some(block) = blocks.get_mut(index) {
-                    all &= self.splice(block, &corner, levels, guard_mm);
-                }
+                all &= match blocks.get_mut(index) {
+                    Some(block) => self.splice(block, &corner, levels, guard_mm),
+                    // A ring just found is among the blocks; were it not,
+                    // its levels are not cut inline.
+                    None => false,
+                };
             }
             // Never in practice: the ring was found by the same test the
             // splice makes. The separate pass then cuts the levels again,
@@ -818,18 +822,19 @@ impl Relief {
     fn blocks(&self, corner: &ReliefCorner) -> Vec<CutBlock> {
         let (p, e) = (corner.descend, corner.end);
         let feed = self.rates.feed_mm_min;
+        // What each level's plunge starts from: safe Z, then the level
+        // above.
+        let above = std::iter::once(self.safe_z_mm).chain(self.levels.iter().copied());
         self.levels
             .iter()
+            .zip(above)
             .enumerate()
-            .map(|(pass, &z_mm)| CutBlock {
+            .map(|(pass, (&z_mm, above_z_mm))| CutBlock {
                 shape: corner.shape.clone(),
                 pass,
                 z_mm,
                 descent_from: p,
-                descent_from_z_mm: pass
-                    .checked_sub(1)
-                    .and_then(|k| self.levels.get(k).copied())
-                    .unwrap_or(self.safe_z_mm),
+                descent_from_z_mm: above_z_mm,
                 descent: Vec::new(),
                 entry: p,
                 entry_z_mm: z_mm,
@@ -888,19 +893,17 @@ impl Relief {
         }
         // Each corner's levels, grouped by the pass whose unit cuts them.
         let mut planned: Vec<(ReliefCorner, usize, Vec<f64>)> = Vec::new();
-        let mut shapes: Vec<&ShapeRef> = Vec::new();
+        // Each shape, with where its first block ends.
+        let mut shapes: Vec<(&ShapeRef, Point)> = Vec::new();
         for block in blocks.iter() {
-            if !shapes.contains(&&block.shape) {
-                shapes.push(&block.shape);
+            if !shapes.iter().any(|(shape, _)| *shape == &block.shape) {
+                shapes.push((&block.shape, block.exit));
             }
         }
-        for shape in shapes {
+        for (shape, first_exit) in shapes {
             let own: Vec<&CutBlock> = blocks.iter().filter(|b| &b.shape == shape).collect();
             let mine: Vec<ReliefCorner> =
                 cut.iter().filter(|c| &c.shape == shape).cloned().collect();
-            let Some(first) = own.first() else {
-                continue;
-            };
             // The shape's passes, top first, with their Zs.
             let mut passes: Vec<(usize, f64)> = own.iter().map(|b| (b.pass, b.z_mm)).collect();
             passes.sort_by_key(|(pass, _)| *pass);
@@ -909,7 +912,7 @@ impl Relief {
                 passes.retain(|(pass, _)| *pass == only);
             }
             let groups = level_groups(&self.levels, &passes);
-            for corner in nearest_neighbour(mine, first.exit) {
+            for corner in nearest_neighbour(mine, first_exit) {
                 planned.extend(
                     groups
                         .iter()
