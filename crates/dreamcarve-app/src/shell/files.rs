@@ -32,13 +32,20 @@ pub fn recent_has_missing(prefs: &Prefs) -> bool {
     prefs.recent.iter().any(|path| !path.is_file())
 }
 
-/// The bytes of the project at `path`.
+/// The bytes of the file at `path`: a project, a drawing, a picture or a
+/// tool library, read under the size limit the CLI reads under
+/// ([`dreamcarve_shell::MAX_FILE_BYTES`]; review 1.6).
 ///
 /// # Errors
 ///
-/// The OS's, when the file cannot be read.
-pub fn read(path: &Path) -> std::io::Result<Vec<u8>> {
-    std::fs::read(path)
+/// Why not, for a message that already names the file: the OS's reason
+/// when the file cannot be read, as before; for a file past the limit,
+/// the shell's whole message, with its size and the limit.
+pub fn read(path: &Path) -> Result<Vec<u8>, String> {
+    dreamcarve_shell::read_capped(path, dreamcarve_shell::MAX_FILE_BYTES).map_err(|e| match e {
+        ShellError::Read { source, .. } => source.to_string(),
+        other => other.to_string(),
+    })
 }
 
 /// Writes `bytes` to `path` through a staged write: a crash or a full disk

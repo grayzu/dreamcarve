@@ -21,9 +21,8 @@ use dc_import::prep::{
 };
 use dc_import::{ImportError, MAX_IMPORT_VERTICES};
 use dc_job::prep_report;
-use dreamcarve_shell::StagedFile;
 
-use crate::cli::{Failure, ImagePrepArgs, read_file};
+use crate::cli::{Failure, ImagePrepArgs, output_exists, read_file, write_new};
 use crate::output::{errln, outln};
 
 /// What a picture is called in the `prep_not_svg` message.
@@ -71,10 +70,7 @@ pub fn run(args: &ImagePrepArgs) -> Result<ExitCode, Failure> {
     // Step 2: where it goes, and never over a file that exists.
     let output = args.output.clone().unwrap_or_else(|| default_output(input));
     if output.exists() {
-        return Err(Failure::error(format!(
-            "{} already exists; remove it or choose another file with -o",
-            output.display()
-        )));
+        return Err(output_exists(&output));
     }
 
     // Step 3: prepare. The library checks the thresholds again and reads
@@ -95,7 +91,8 @@ pub fn run(args: &ImagePrepArgs) -> Result<ExitCode, Failure> {
     };
     let (prepared, warnings) = prepared.map_err(|e| prepare_failure(&e, input))?;
     let text = write_svg(&prepared);
-    StagedFile::write(&output, text.as_bytes())?.commit()?;
+    // Not over a file that appeared while the drawing was prepared.
+    write_new(&output, text.as_bytes())?;
 
     // Step 4: the warnings, the report, where the file went.
     for warning in &warnings {

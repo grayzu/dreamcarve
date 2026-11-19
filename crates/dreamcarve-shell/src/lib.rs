@@ -7,8 +7,10 @@
 //! or none ([`staged`]), the user config directory ([`config_dir`]),
 //! `config.toml` ([`config`]), the app's `gui.toml` ([`gui_prefs`]) and
 //! the tool library file ([`library`]), today's date for a program header
-//! ([`clock`]) and the check that a file is a DreamCarve preview before an
-//! export writes over it ([`is_preview`]).
+//! ([`clock`]), the check that a file is a DreamCarve preview before an
+//! export writes over it ([`is_preview`]), and the read of a whole file
+//! under a size limit that every one of those, and each binary, reads
+//! through ([`read_capped`]).
 //! Moved from the `dreamcarve` CLI, which keeps printing and exit codes;
 //! errors here are [`ShellError`]s, which the CLI prints as it printed its
 //! own.
@@ -22,10 +24,12 @@ pub mod config_dir;
 mod error;
 pub mod gui_prefs;
 pub mod library;
+pub mod read;
 pub mod staged;
 
 pub use config::{Config, ExportConfig};
 pub use config_dir::Paths;
 pub use error::ShellError;
 pub use gui_prefs::GuiPrefs;
+pub use read::{MAX_FILE_BYTES, read_capped, read_capped_text};
 pub use staged::{StagedFile, commit_all, is_preview};

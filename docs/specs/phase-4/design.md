@@ -39,7 +39,17 @@ added and one is made thin:
   preferences file. It owns every `std::fs`, thread and `eframe` type.
 - **`dreamcarve-shell`** (library): the file I/O both binaries share and
   `dc-*` crates may not do: the staged write (`StagedFile`, `commit_all`),
-  the config directory, `config.toml`, and `gui.toml`.
+  the config directory, `config.toml`, and `gui.toml`. A staged file
+  goes into place by `commit` (a rename, which replaces) or, for the
+  commands that promise never to overwrite (`init`, `image-prep`), by
+  `commit_new` (a hard link to the destination, which the file system
+  refuses when anything is there; `ShellError::AlreadyExists`; review
+  1.9), so a file that appears after the command's own check is not
+  replaced. Every file either
+  binary reads whole is read by `read_capped(path, limit)` under
+  `MAX_FILE_BYTES` (256 MiB; review 1.6): the size is checked before
+  the read and the read stops a byte past the limit, and a larger file
+  is `ShellError::FileTooLarge { path, size_bytes, limit_bytes }`.
 - **`dreamcarve`** (the CLI) keeps its commands and its tests and loses its
   pipeline modules to `dc-job` and `dreamcarve-shell`. Slice 1 is that
   move, with every CLI test green and every golden byte unchanged, before
@@ -503,7 +513,7 @@ crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings
 crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, warnings.rs (merge, tiers, grouping), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
 crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, menu.rs, toolbar.rs, status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{tree.rs, properties.rs, project.rs, operations.rs, editor.rs (renderers per field kind), tools.rs, library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
-crates/dreamcarve-shell/src/{lib.rs, staged.rs (StagedFile, commit_all; moved from cli.rs), config_dir.rs (moved from config.rs), config.rs (config.toml), gui_prefs.rs (gui.toml)}
+crates/dreamcarve-shell/src/{lib.rs, staged.rs (StagedFile, commit_all; moved from cli.rs), config_dir.rs (moved from config.rs), config.rs (config.toml), gui_prefs.rs (gui.toml), read.rs (read_capped, MAX_FILE_BYTES)}
 crates/dreamcarve/src/{cli.rs, export.rs, check.rs, init.rs, tabs.rs, tools.rs, config.rs, image.rs}  — thin: argument parsing, printing, calls into dc-job and dreamcarve-shell
 crates/dreamcarve/tests/gui_equality.rs
 docs/specs/phase-4/{functional.md, design.md, experience.md, mockups/}

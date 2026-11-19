@@ -184,6 +184,14 @@ pub const JOIN_TOLERANCE_DEFAULT_MM: f64 = 0.01;
 /// block that inserts itself.
 pub const MAX_INSERT_DEPTH: usize = 12;
 
+/// How many distinct blocks [`ImportWarning::DxfBlockMissing`] names, and
+/// how many [`ImportWarning::DxfInsertTooDeep`] does. The blocks past it
+/// are counted in one warning each
+/// ([`ImportWarning::DxfBlocksMissingUnnamed`],
+/// [`ImportWarning::DxfInsertsTooDeepUnnamed`]): a drawing can name as
+/// many blocks as it has lines, and a report that long helps nobody.
+pub const MAX_BLOCKS_NAMED: usize = 20;
+
 /// The drawing units a DXF declares in `$INSUNITS`, among those DreamCarve
 /// scales from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -329,10 +337,48 @@ pub struct DxfLayer {
 ///
 /// [`ImportError`] when the bytes are not a readable DXF, the units are
 /// unknown and not overridden, a coordinate is not finite or beyond
-/// [`dc_geometry::MAX_COORDINATE_MM`], or an option is out of range.
+/// [`dc_geometry::MAX_COORDINATE_MM`], an option is out of range, or the
+/// drawing is past a work limit: the vertex limit, the block-insert limit
+/// ([`ImportError::TooMuchWork`]), or the comparisons joining and deduping
+/// may make ([`ImportError::DxfJoinTooMuchWork`]).
 pub fn import_dxf(
     bytes: &[u8],
     options: &DxfImportOptions,
+) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
+    import_within(bytes, options, &mut Work::new())
+}
+
+/// The work one import did, kept whether it succeeds or is refused. The
+/// tests bound an import by it, where a clock would only say how fast the
+/// machine was that day (review 1.11).
+#[derive(Debug)]
+struct Work {
+    /// The comparisons of the dedupe and the stitch, and their limit.
+    joins: stitch::JoinBudget,
+    /// Block entities placed by INSERT and MINSERT expansion.
+    #[cfg_attr(not(test), allow(dead_code, reason = "read by the tests"))]
+    placements: usize,
+    /// Vertices taken from the vertex limit: those made, and every count
+    /// a file declares, taken before the items it counts are read.
+    #[cfg_attr(not(test), allow(dead_code, reason = "read by the tests"))]
+    vertices: usize,
+}
+
+impl Work {
+    fn new() -> Self {
+        Self {
+            joins: stitch::JoinBudget::new(),
+            placements: 0,
+            vertices: 0,
+        }
+    }
+}
+
+/// [`import_dxf`], which records in `work` what it did.
+fn import_within(
+    bytes: &[u8],
+    options: &DxfImportOptions,
+    work: &mut Work,
 ) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
     let tolerance_mm = options.flatten_tolerance_mm;
     if !(tolerance_mm.is_finite() && tolerance_mm >= MIN_FLATTEN_TOLERANCE_MM) {
@@ -367,23 +413,37 @@ pub fn import_dxf(
         join_mm,
         options.max_vertices,
     );
-    for entity in &document.entities {
-        if entity.in_paper_space() {
-            continue;
-        }
-        walker.walk(entity, scale, None, 0)?;
-    }
+    let walked = document
+        .entities
+        .iter()
+        .filter(|entity| !entity.in_paper_space())
+        .try_for_each(|entity| walker.walk(entity, scale, None, 0));
+    work.placements = walker.placements();
+    work.vertices = walker.vertices();
+    walked?;
 
     let skipped = walker.skipped;
     let skipped_per_layer = walker.skipped_per_layer;
     if !skipped.is_empty() {
         warnings.push(ImportWarning::DxfEntitiesSkipped { counts: skipped });
     }
-    for block in unique(walker.too_deep) {
-        warnings.push(ImportWarning::DxfInsertTooDeep { block });
+    for block in walker.too_deep.named() {
+        warnings.push(ImportWarning::DxfInsertTooDeep {
+            block: block.clone(),
+        });
     }
-    for block in unique(walker.missing) {
-        warnings.push(ImportWarning::DxfBlockMissing { block });
+    match walker.too_deep.unnamed() {
+        0 => {}
+        count => warnings.push(ImportWarning::DxfInsertsTooDeepUnnamed { count }),
+    }
+    for block in walker.missing.named() {
+        warnings.push(ImportWarning::DxfBlockMissing {
+            block: block.clone(),
+        });
+    }
+    match walker.missing.unnamed() {
+        0 => {}
+        count => warnings.push(ImportWarning::DxfBlocksMissingUnnamed { count }),
     }
     for hatch in walker.unreadable {
         warnings.push(ImportWarning::DxfHatchUnreadable {
@@ -403,7 +463,8 @@ pub fn import_dxf(
             .as_ref()
             .is_none_or(|layers| layers.iter().any(|l| l == layer))
     };
-    let shapes = stitch::stitch(stitch::dedupe(walker.shapes), join_mm);
+    let joins = &mut work.joins;
+    let shapes = stitch::stitch(stitch::dedupe(walker.shapes, joins)?, join_mm, joins)?;
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
     // can leave a shape too few points.
@@ -606,17 +667,6 @@ fn insunits_name(code: i64) -> String {
         other => return format!("{other}, which DXF does not define"),
     };
     name.to_owned()
-}
-
-/// The first occurrence of each name, in order.
-fn unique(names: Vec<String>) -> Vec<String> {
-    let mut out: Vec<String> = Vec::with_capacity(names.len());
-    for name in names {
-        if !out.contains(&name) {
-            out.push(name);
-        }
-    }
-    out
 }
 
 #[cfg(test)]
@@ -1150,6 +1200,88 @@ mod tests {
             .map(|p| p.bounds().unwrap().max.y)
             .fold(0.0, f64::max);
         assert_approx_eq!(top, MAX_INSERT_DEPTH as f64, TOL_MM);
+    }
+
+    /// An INSERT of the undefined block `name` on layer `0`.
+    fn insert_of(name: &str) -> String {
+        format!("0\nINSERT\n8\n0\n2\n{name}\n10\n0.0\n20\n0.0\n")
+    }
+
+    /// Review 1.12: each undefined block is warned about once, in the
+    /// order first inserted, however often it is inserted; past
+    /// [`MAX_BLOCKS_NAMED`] names the rest are counted in one warning, so
+    /// a file of many distinct names cannot flood the report.
+    #[test]
+    fn missing_blocks_are_named_once_and_the_rest_counted() {
+        let n = MAX_BLOCKS_NAMED + 5;
+        let entities: String = (0..n)
+            .chain(0..n)
+            .map(|i| insert_of(&format!("GONE{i}")))
+            .collect();
+        let (_, warnings) = import(dxf_with_blocks(&[], &entities).as_bytes());
+        let named: Vec<&str> = warnings
+            .iter()
+            .filter_map(|w| match w {
+                ImportWarning::DxfBlockMissing { block } => Some(block.as_str()),
+                _ => None,
+            })
+            .collect();
+        let expected: Vec<String> = (0..MAX_BLOCKS_NAMED).map(|i| format!("GONE{i}")).collect();
+        assert_eq!(named, expected);
+        let rest: Vec<_> = warnings
+            .iter()
+            .filter(|w| matches!(w, ImportWarning::DxfBlocksMissingUnnamed { .. }))
+            .collect();
+        assert_eq!(
+            rest,
+            [&ImportWarning::DxfBlocksMissingUnnamed { count: 5 }],
+            "{warnings:?}"
+        );
+        assert_eq!(
+            rest[0].to_string(),
+            "INSERTs of 5 more undefined blocks were skipped"
+        );
+    }
+
+    /// As many missing blocks as are named get no "more" warning.
+    #[test]
+    fn missing_blocks_up_to_the_cap_are_all_named() {
+        let entities: String = (0..MAX_BLOCKS_NAMED)
+            .map(|i| insert_of(&format!("GONE{i}")))
+            .collect();
+        let (_, warnings) = import(dxf_with_blocks(&[], &entities).as_bytes());
+        assert_eq!(warnings.len(), MAX_BLOCKS_NAMED, "{warnings:?}");
+        assert!(
+            warnings
+                .iter()
+                .all(|w| matches!(w, ImportWarning::DxfBlockMissing { .. })),
+            "{warnings:?}"
+        );
+    }
+
+    /// The same cap for blocks inserted too deep: each of these blocks
+    /// inserts itself, so each passes the depth limit.
+    #[test]
+    fn too_deep_blocks_are_named_once_and_the_rest_counted() {
+        let n = MAX_BLOCKS_NAMED + 3;
+        let names: Vec<String> = (0..n).map(|i| format!("LOOP{i}")).collect();
+        let bodies: Vec<String> = names.iter().map(|name| insert_of(name)).collect();
+        let blocks: Vec<(&str, &str)> = names
+            .iter()
+            .zip(&bodies)
+            .map(|(name, body)| (name.as_str(), body.as_str()))
+            .collect();
+        let entities: String = names.iter().map(|name| insert_of(name)).collect();
+        let (_, warnings) = import(dxf_with_blocks(&blocks, &entities).as_bytes());
+        let named = warnings
+            .iter()
+            .filter(|w| matches!(w, ImportWarning::DxfInsertTooDeep { .. }))
+            .count();
+        assert_eq!(named, MAX_BLOCKS_NAMED, "{warnings:?}");
+        assert!(
+            warnings.contains(&ImportWarning::DxfInsertsTooDeepUnnamed { count: 3 }),
+            "{warnings:?}"
+        );
     }
 
     /// Model- and paper-space blocks, blocks named with a leading `_`, the
@@ -1940,33 +2072,42 @@ mod tests {
     /// A zero-length LINE: read, but it yields no vertices.
     const DOT: &str = "0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n";
 
-    fn assert_fails_fast(dxf: &str) {
-        let start = std::time::Instant::now();
-        let result = import_dxf(dxf.as_bytes(), &DxfImportOptions::new());
-        let elapsed = start.elapsed();
+    /// The placement limit of an import with the default options.
+    const MAX_PLACEMENTS: usize = MAX_IMPORT_VERTICES / 10;
+
+    /// Imports `dxf`, which must be refused for the block entities it
+    /// would place, and returns how many it had placed by then: the work
+    /// the refusal cost, whatever the machine's speed.
+    fn placements_when_refused(dxf: &str) -> usize {
+        let mut work = Work::new();
+        let result = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut work);
         assert!(
-            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_IMPORT_VERTICES / 10),
+            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_PLACEMENTS),
             "{result:?}"
         );
-        assert!(elapsed.as_secs_f64() < 2.0, "took {elapsed:?}");
+        work.placements
     }
 
     /// A 1000 × 1000 MINSERT of a block that yields no vertices would walk
     /// a million cells while the vertex limit never trips; it is refused
-    /// before the first cell. A block with nothing readable at all is
-    /// never expanded (upstream's rule), so it costs nothing.
+    /// before the first cell: nothing was placed. A block with nothing
+    /// readable at all is never expanded (upstream's rule), so its million
+    /// cells place nothing either.
     #[test]
     fn huge_minsert_of_empty_block_fails_fast() {
-        assert_fails_fast(&dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000)));
+        let dots = dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000));
+        assert_eq!(placements_when_refused(&dots), 0);
         let empty = dxf_with_blocks(&[("EMPTY", "")], &minsert("EMPTY", 1000));
-        let start = std::time::Instant::now();
-        let (result, _) = import(empty.as_bytes());
+        let mut work = Work::new();
+        let (result, _) = import_within(empty.as_bytes(), &DxfImportOptions::new(), &mut work)
+            .expect("import succeeds");
         assert!(result.definitions.is_empty());
-        assert!(start.elapsed().as_secs_f64() < 1.0);
+        assert_eq!(work.placements, 0);
     }
 
     /// Three nested 100 × 100 MINSERTs are 10¹² visits of the innermost
-    /// block; the per-visit count stops the walk at the limit.
+    /// block; the per-visit count stops the walk at the limit, one
+    /// placement past it.
     #[test]
     fn nested_minserts_fail_fast() {
         let inner = minsert("C", 100);
@@ -1975,7 +2116,11 @@ mod tests {
             &[("C", DOT), ("B", &inner), ("A", &middle)],
             &minsert("A", 100),
         );
-        assert_fails_fast(&dxf);
+        let placed = placements_when_refused(&dxf);
+        assert!(
+            (1..=MAX_PLACEMENTS + 1).contains(&placed),
+            "{placed} placements"
+        );
     }
 
     /// An INSERT's attributes (ATTRIB, after `66 = 1`, up to SEQEND) are
@@ -2612,24 +2757,23 @@ mod tests {
 
     /// Counts the file declares are capped before anything is read for
     /// them: a hatch claiming two billion boundaries, or more edges than
-    /// one hatch may hold (in one path or across several), fails at once
-    /// with a typed error, though the file holds none of them. Within the
-    /// caps, every declared edge is charged to the import's vertex limit.
+    /// one hatch may hold (in one path or across several), fails with a
+    /// typed error, though the file holds none of them. Within the caps,
+    /// every declared edge is charged to the import's vertex limit.
+    ///
+    /// A declared count is taken from the vertex limit before the loop
+    /// over it runs, so what an import had taken when it was refused
+    /// bounds the items it read: none for the boundary count, the one
+    /// boundary for an edge count past the cap, and no more than the caps
+    /// or the limit in any case.
     #[test]
     fn hatch_loop_and_edge_caps_are_enforced() {
-        let fails_fast = |entities: &str, options: &DxfImportOptions| {
-            let start = std::time::Instant::now();
-            let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
-            assert!(
-                start.elapsed().as_secs_f64() < 1.0,
-                "took {:?}",
-                start.elapsed()
-            );
-            err
+        let fails_fast = |entities: &str, options: &DxfImportOptions, most_vertices: usize| {
+            refused(entities, options, most_vertices)
         };
         let defaults = DxfImportOptions::new();
         let loops = "0\nHATCH\n5\nE1\n8\n0\n91\n2000000000\n92\n2\n93\n0\n";
-        match fails_fast(loops, &defaults) {
+        match fails_fast(loops, &defaults, 0) {
             ImportError::DxfHatchTooLarge {
                 hatch,
                 what,
@@ -2648,7 +2792,7 @@ mod tests {
             MAX_HATCH_EDGES + 1
         );
         assert!(matches!(
-            fails_fast(&edges, &defaults),
+            fails_fast(&edges, &defaults, 1),
             ImportError::DxfHatchTooLarge { limit, .. } if limit == MAX_HATCH_EDGES
         ));
         // Two paths of 60 000 edges: each within the cap, together past it.
@@ -2657,8 +2801,9 @@ mod tests {
             "0\nHATCH\n5\nE3\n8\n0\n91\n2\n92\n0\n93\n{half}\n{}97\n0\n92\n0\n93\n{half}\n",
             "72\n1\n10\n0.0\n20\n0.0\n11\n1.0\n21\n0.0\n".repeat(half)
         );
+        // The two boundaries and the first path's edges were taken.
         assert!(matches!(
-            fails_fast(&two, &defaults),
+            fails_fast(&two, &defaults, 2 + half),
             ImportError::DxfHatchTooLarge { hatch, .. } if hatch == "E3"
         ));
         // A small vertex limit: the declared edges are charged to it.
@@ -2668,7 +2813,7 @@ mod tests {
         };
         let charged = "0\nHATCH\n5\nE4\n8\n0\n91\n1\n92\n0\n93\n500\n";
         assert!(matches!(
-            fails_fast(charged, &small),
+            fails_fast(charged, &small, 1),
             ImportError::TooManyVertices { limit: 100 }
         ));
     }
@@ -2692,14 +2837,19 @@ mod tests {
 
     // ── curve caps (#668 security review) ────────────────────────────────
 
-    /// Runs an import that must fail fast, returning its error.
-    fn refused(entities: &str, options: &DxfImportOptions) -> ImportError {
-        let start = std::time::Instant::now();
-        let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
+    /// Runs an import that must be refused before it does the work its
+    /// file asks for, and returns its error. The work is what it had taken
+    /// from the vertex limit by then, at most `most_vertices`: every count
+    /// is taken before the items it counts are read or made, and a count
+    /// that is refused is not taken.
+    fn refused(entities: &str, options: &DxfImportOptions, most_vertices: usize) -> ImportError {
+        let mut work = Work::new();
+        let err = import_within(dxf_entities(entities).as_bytes(), options, &mut work)
+            .expect_err("the import is refused");
         assert!(
-            start.elapsed().as_secs_f64() < 1.0,
-            "took {:?}",
-            start.elapsed()
+            work.vertices <= most_vertices,
+            "{} vertices taken before {err:?}, more than {most_vertices}",
+            work.vertices
         );
         err
     }
@@ -2809,13 +2959,13 @@ mod tests {
             spline_edge(degree, &knots, &control),
             line_edge(last, (0.0, 0.0)),
         ];
-        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small);
+        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small, 300);
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 300 }),
             "{err:?}"
         );
         let entity = spline_entity("zigzag", degree, &knots, &control);
-        let err = refused(&entity, &small);
+        let err = refused(&entity, &small, 300);
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 300 }),
             "{err:?}"
@@ -2834,7 +2984,8 @@ mod tests {
         let defaults = DxfImportOptions::new();
         for (major, centre) in [((1e300, 0.0), (0.0, 0.0)), ((4000.0, 0.0), (3000.0, 0.0))] {
             let edges = [ellipse_edge(centre, major, 0.5, 0.0, 360.0)];
-            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults);
+            // Its one boundary and one edge, and nothing of the curve.
+            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults, 2);
             assert!(
                 matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
                 "{err:?}"
@@ -2843,12 +2994,180 @@ mod tests {
                 "0\nELLIPSE\n8\nbig\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n40\n0.5\n41\n0.0\n42\n6.283185307179586\n",
                 centre.0, centre.1, major.0, major.1
             );
-            let err = refused(&entity, &defaults);
+            let err = refused(&entity, &defaults, 0);
             assert!(
                 matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
                 "{err:?}"
             );
         }
+    }
+
+    /// Review 1.8: a layer named with ESC and a newline (as `\U+001B` and
+    /// `\U+000A`, which a file before R2007 may write), an undefined
+    /// block and an entity type named with a raw ESC, and a hatch whose
+    /// handle holds one. No name the import returns, and no warning it
+    /// prints, holds a control character: each is U+FFFD instead.
+    #[test]
+    fn control_characters_never_reach_a_name_or_a_warning() {
+        let layer = "a\\U+001B[31m\\U+000Ab";
+        let open = edge_path(&[line_edge((0.0, 0.0), (10.0, 0.0))]);
+        let entities = format!(
+            "0\nCIRCLE\n8\n{layer}\n10\n0.0\n20\n0.0\n40\n1.0\n\
+             0\nCIRCLE\n8\n{layer}\n10\n5.0\n20\n0.0\n40\n1.0\n\
+             0\nINSERT\n8\n{layer}\n2\ngone\u{1b}[2J\n10\n0.0\n20\n0.0\n\
+             0\nTE\u{1b}XT\n8\n{layer}\n\
+             {}",
+            hatch("D\u{1b}1", layer, UP, &[open])
+        );
+        let (result, warnings) = hatch_import(&entities);
+        let clean = "a\u{fffd}[31m\u{fffd}b";
+        assert_eq!(names(&result), [format!("{clean}-1"), format!("{clean}-2")]);
+        assert_eq!(
+            result
+                .layers
+                .iter()
+                .map(|l| l.name.as_str())
+                .collect::<Vec<_>>(),
+            [clean]
+        );
+        assert!(
+            warnings.contains(&ImportWarning::DxfBlockMissing {
+                block: "gone\u{fffd}[2J".into()
+            }),
+            "{warnings:?}"
+        );
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        let printed: Vec<String> = warnings
+            .iter()
+            .map(ToString::to_string)
+            .chain(result.instances.iter().map(|i| i.name.clone()))
+            .chain(result.layers.iter().flat_map(|l| l.skipped.keys().cloned()))
+            .collect();
+        for text in &printed {
+            assert!(!text.contains(char::is_control), "{text:?}");
+        }
+        assert!(
+            printed.iter().any(|t| t.contains("HATCH `D\u{fffd}1`")),
+            "{printed:?}"
+        );
+        assert!(
+            printed.iter().any(|t| t.contains("TE\u{fffd}XT: 1")),
+            "{printed:?}"
+        );
+    }
+
+    /// A DXF, in millimetres, of one LINE on layer `0` per pair of ends.
+    fn lines_dxf(lines: impl IntoIterator<Item = ((f64, f64), (f64, f64))>) -> String {
+        let entities: String = lines
+            .into_iter()
+            .map(|((x0, y0), (x1, y1))| {
+                format!("0\nLINE\n8\n0\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n")
+            })
+            .collect();
+        dxf_entities(&entities)
+    }
+
+    /// Review 1.5: a file of 100 000 separate 1 mm LINEs that make 100
+    /// chains of 1000 imports as those 100 chains, and its dedupe and
+    /// stitching take at most 4 comparisons a line (400 000), where
+    /// comparing every line with every line took 10¹⁰. Row `c` runs along
+    /// y = 10c mm; every third line is drawn backwards; the file's line
+    /// `i` is line `7919 i mod n` of the rows, a stride that visits each
+    /// once and puts no two neighbours together, so every chain grows
+    /// from its middle at both ends.
+    #[test]
+    fn hundred_thousand_lines_import_within_the_join_budget() {
+        let (chains, per_chain) = (100, 1000);
+        let n = chains * per_chain;
+        let lines = (0..n).map(|i| {
+            let k = i * 7919 % n;
+            let (c, j) = (k / per_chain, k % per_chain);
+            let (a, b) = (
+                (j as f64, 10.0 * c as f64),
+                ((j + 1) as f64, 10.0 * c as f64),
+            );
+            if j % 3 == 0 { (b, a) } else { (a, b) }
+        });
+        let mut work = Work::new();
+        let (result, warnings) = import_within(
+            lines_dxf(lines).as_bytes(),
+            &DxfImportOptions::new(),
+            &mut work,
+        )
+        .expect("import succeeds");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            work.joins.comparisons() <= 4 * n,
+            "{} comparisons for {n} lines",
+            work.joins.comparisons()
+        );
+        assert_eq!(result.definitions.len(), chains);
+        for definition in &result.definitions {
+            let [chain] = definition.profiles.as_slice() else {
+                panic!(
+                    "{} has {} profiles",
+                    definition.name,
+                    definition.profiles.len()
+                );
+            };
+            assert!(!chain.is_closed(), "{}", definition.name);
+            assert_eq!(chain.vertices().len(), per_chain + 1, "{}", definition.name);
+            assert_approx_eq!(chain.length_mm(), per_chain as f64, TOL_MM);
+        }
+    }
+
+    /// `n` LINEs from the origin to a circle of 100 mm.
+    fn star_dxf(n: usize) -> String {
+        lines_dxf((0..n).map(|i| {
+            let angle = TAU * i as f64 / n as f64;
+            ((0.0, 0.0), (100.0 * angle.cos(), 100.0 * angle.sin()))
+        }))
+    }
+
+    /// Review 1.5: lines that all start on one point cannot be told apart
+    /// by where their ends are, so each chain's search looks at every free
+    /// end there: a quarter of n² comparisons. Past the budget the import
+    /// is refused with the typed error, not left running; here 2000 lines
+    /// (a million comparisons) against a budget of 200 000.
+    #[test]
+    fn lines_crowded_on_one_point_past_the_join_budget_are_refused() {
+        let dxf = star_dxf(2000);
+        let mut work = Work {
+            joins: stitch::JoinBudget::with_limit(200_000),
+            ..Work::new()
+        };
+        let error = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut work)
+            .expect_err("past the budget");
+        assert!(
+            matches!(error, ImportError::DxfJoinTooMuchWork { limit: 200_000 }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "joining the drawing's lines takes more than 200000 comparisons: too many of them \
+             end at one point, or too many shapes lie on one another; simplify the drawing in \
+             the CAD program, or lower the join tolerance"
+        );
+        // Within the budget, the same lines join in pairs at the centre.
+        let (result, _) = import(dxf.as_bytes());
+        assert_eq!(result.definitions.len(), 1000);
+    }
+
+    /// The same refusal from `import_dxf` itself, at the limit it is
+    /// built with: 21 000 such lines pass [`stitch::MAX_JOIN_COMPARISONS`].
+    #[test]
+    fn a_star_of_lines_past_the_import_limit_is_refused() {
+        let result = import_dxf(star_dxf(21_000).as_bytes(), &DxfImportOptions::new());
+        assert!(
+            matches!(
+                result,
+                Err(ImportError::DxfJoinTooMuchWork {
+                    limit: stitch::MAX_JOIN_COMPARISONS
+                })
+            ),
+            "{:?}",
+            result.map(|(import, _)| import.definitions.len())
+        );
     }
 
     /// The duplicate rule's work is bounded (#668 security review): 300

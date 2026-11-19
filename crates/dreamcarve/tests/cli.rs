@@ -5791,6 +5791,94 @@ fn init_reads_a_cr_only_dxf() {
     assert_eq!(definition_names(&project), ["square", "circle"]);
 }
 
+/// Review 1.8: a DXF whose layer is named with ESC and a newline (written
+/// as `\U+001B` and `\U+000A`) and which inserts an undefined block named
+/// with a raw ESC. Printed as they are, the names would start terminal
+/// escape sequences and break a line in two. Nothing `init`, `check` and
+/// `tabs list` print holds a control character but the newline that ends
+/// each line, and the project's names hold U+FFFD in their place.
+#[test]
+fn init_prints_no_control_characters_from_a_dxf() {
+    let dir = work_dir("init_prints_no_control_characters_from_a_dxf");
+    let layer = "red\\U+001B[31m\\U+000Aname";
+    let dxf = format!(
+        "0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+         0\nCIRCLE\n8\n{layer}\n10\n50.0\n20\n50.0\n40\n20.0\n\
+         0\nLINE\n8\n{layer}\n10\n0.0\n20\n0.0\n11\n10.0\n21\n0.0\n\
+         0\nINSERT\n8\n0\n2\ngone\u{1b}[2J\n10\n0.0\n20\n0.0\n\
+         0\nENDSEC\n0\nEOF\n"
+    );
+    std::fs::write(dir.join("part.dxf"), dxf).expect("dxf written");
+
+    let init = run(&dir, &["init", "part.dxf"]);
+    assert_eq!(init.status.code(), Some(0), "{}", stderr(&init));
+    assert!(
+        stderr(&init).contains("warning: INSERT of undefined block `gone\u{fffd}[2J` was skipped"),
+        "{}",
+        stderr(&init)
+    );
+    let project = load_file(&dir.join("part.dcv")).project;
+    assert_eq!(
+        definition_names(&project),
+        [
+            "red\u{fffd}[31m\u{fffd}name-1",
+            "red\u{fffd}[31m\u{fffd}name-2"
+        ]
+    );
+
+    let check = run(&dir, &["check", "part.dcv"]);
+    assert!(
+        stdout(&check).contains("red\u{fffd}[31m\u{fffd}name-2"),
+        "check names the open path: {}",
+        stdout(&check)
+    );
+    let tabs = run(&dir, &["tabs", "list", "part.dcv"]);
+    assert_eq!(tabs.status.code(), Some(0), "{}", stderr(&tabs));
+    for (command, out) in [("init", &init), ("check", &check), ("tabs list", &tabs)] {
+        for text in [stdout(out), stderr(out)] {
+            assert!(
+                !text.contains(|c: char| c.is_control() && c != '\n'),
+                "`{command}` prints a control character: {text:?}"
+            );
+        }
+    }
+}
+
+/// Review 1.6: every file a command reads whole is read under
+/// `dreamcarve_shell::MAX_FILE_BYTES`. A drawing, a project and a tool
+/// library one byte past it (sparse files, which cost no disk) are each
+/// refused with an error naming the file, its size and the limit, before
+/// anything is read or written.
+#[test]
+fn a_file_past_the_read_limit_is_refused_by_name_and_size() {
+    let dir = work_dir("a_file_past_the_read_limit_is_refused_by_name_and_size");
+    let size = dreamcarve_shell::MAX_FILE_BYTES + 1;
+    for (name, args) in [
+        ("huge.dxf", vec!["init", "huge.dxf"]),
+        ("huge.svg", vec!["init", "huge.svg"]),
+        ("huge.png", vec!["init", "huge.png", "--width", "100"]),
+        ("huge.dcv", vec!["check", "huge.dcv"]),
+        ("huge.tools", vec!["tools", "import", "huge.tools"]),
+    ] {
+        let file = std::fs::File::create(dir.join(name)).expect("file created");
+        file.set_len(size).expect("file sized");
+        drop(file);
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", stderr(&out));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "error: cannot read {name}: it is {size} bytes, more than the limit of {} bytes\n",
+                dreamcarve_shell::MAX_FILE_BYTES
+            ),
+            "{name}"
+        );
+        std::fs::remove_file(dir.join(name)).expect("file removed");
+    }
+    assert!(!dir.join("huge.dcv").exists(), "init wrote a project");
+    assert!(!config_dir(&dir).join("tools.json").exists());
+}
+
 /// A closed LWPOLYLINE on layer `0` through `(x, y)`, as DXF group text.
 fn organiser_lwpolyline(points: &[(f64, f64)]) -> String {
     let mut e = format!("0\nLWPOLYLINE\n8\n0\n90\n{}\n70\n1\n", points.len());

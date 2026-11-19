@@ -1795,7 +1795,7 @@ fn import(
     };
     let bytes = match files::read(&path) {
         Ok(bytes) => bytes,
-        Err(e) => return failed(e.to_string()),
+        Err(reason) => return failed(reason),
     };
     let current = match read(paths) {
         Ok(library) => library,

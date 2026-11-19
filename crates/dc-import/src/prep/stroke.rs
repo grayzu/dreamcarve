@@ -244,15 +244,16 @@ mod tests {
             .expect("one painted path")
     }
 
-    /// A tiny dash period on a long path is refused from an estimate,
-    /// quickly and without building the outline.
+    /// A tiny dash period on a long path, fifty million dashes, is refused
+    /// from an estimate, without building the outline: the budget is
+    /// charged for an outline only once one is built, and it is left
+    /// uncharged.
     #[test]
     fn tiny_dash_period_on_a_long_path_is_refused() {
         let path = painted(
             r#"<svg xmlns="http://www.w3.org/2000/svg" width="100mm" height="100mm" viewBox="0 0 100 100"><path d="M0,0 L50000,0" fill="none" stroke="black" stroke-width="50" stroke-dasharray="0.001"/></svg>"#,
         );
         let stroke = path.stroke.clone().expect("stroked");
-        let started = std::time::Instant::now();
         let mut budget = Budget::new(0, 5_000_000);
         let result = outline(&path, &stroke, 0.01, &mut budget);
         assert!(
@@ -262,7 +263,7 @@ mod tests {
             ),
             "{result:?}"
         );
-        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(budget.used, 0, "an outline was built and charged");
     }
 
     /// An ordinary stroke is built and charged for its outline.

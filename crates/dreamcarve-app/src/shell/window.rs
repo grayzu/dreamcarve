@@ -805,13 +805,11 @@ impl Shell {
     /// Opens the project at `path`, or says why not.
     fn open_path(&mut self, path: &Path) {
         let name = files::file_name(path);
-        let result = files::read(path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| {
-                self.app
-                    .open(&bytes, Some(path.to_path_buf()))
-                    .map_err(|e| e.to_string())
-            });
+        let result = files::read(path).and_then(|bytes| {
+            self.app
+                .open(&bytes, Some(path.to_path_buf()))
+                .map_err(|e| e.to_string())
+        });
         match result {
             Ok(opened) => {
                 self.app.prefs_mut().push_recent(path.to_path_buf());
@@ -960,8 +958,7 @@ impl Shell {
                     path, &name, format, bytes, purpose,
                 ));
             }
-            Err(e) => {
-                let reason = e.to_string();
+            Err(reason) => {
                 self.message = Some(self.strings().fmt(
                     StrKey::AppMessageImportFailed,
                     &[("name", &name), ("reason", &reason)],

@@ -696,15 +696,26 @@ fn same_input_twice_is_identical() {
 /// Security review L3: a step along the groove or a spacing of 1e-9 in a
 /// shared file is refused before anything is allocated, naming the field
 /// and what to change.
+///
+/// The count the error gives shows the refusal came from counting, not
+/// from making moves (review 1.11; this was a one-second wall-clock
+/// bound). For the step it is at least a thousand times the limit: one
+/// groove's length over the step, which no run could have stepped
+/// through. For the spacing it is at most twice the limit and three: the
+/// lines are counted from the footprint's extent over the spacing, held
+/// to the limit either side of zero, so nothing that walks them can run
+/// longer than that.
 #[test]
 fn move_budget_refuses_a_microscopic_sample_step() {
-    for (field, op) in [
+    let limit = MAX_PHOTO_MOVES as f64;
+    for (field, op, counted) in [
         (
             "sample_mm",
             PhotoVCarveOp {
                 sample_mm: 1e-9,
                 ..acceptance_op()
             },
+            1000.0 * limit..=f64::INFINITY,
         ),
         (
             "line_spacing_fraction",
@@ -712,12 +723,16 @@ fn move_budget_refuses_a_microscopic_sample_step() {
                 line_spacing_fraction: 1e-9,
                 ..acceptance_op()
             },
+            limit..=2.0 * limit + 3.0,
         ),
     ] {
         let project = gradient_project(op.clone());
-        let started = std::time::Instant::now();
         let err = generate_photo(&project, &op).unwrap_err();
-        assert!(started.elapsed().as_secs_f64() < 1.0, "{field}: it ran");
+        assert!(
+            matches!(&err, CamError::PhotoSetting { problem: PhotoProblem::TooManyMoves { moves, .. }, .. }
+                if counted.contains(moves)),
+            "{field}: the count is not within {counted:?}: {err:?}"
+        );
         assert!(
             matches!(&err, CamError::PhotoSetting { field: f, problem: PhotoProblem::TooManyMoves { limit, .. }, .. }
                 if *f == field && *limit == MAX_PHOTO_MOVES),

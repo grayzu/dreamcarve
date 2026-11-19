@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use dc_gcode::ProgramSplit;
 use dc_project::{PostProcessorError, PostProcessorRef, SettingReset};
-use dreamcarve_shell::ShellError;
+use dreamcarve_shell::{ShellError, StagedFile};
 
 use crate::output::{self, errln, outln};
 use crate::{check, config, export, image, init, prep, tabs, tools};
@@ -550,9 +550,35 @@ pub fn switch_post(
     }
 }
 
-/// Reads `path`, naming it in the error.
+/// Reads `path`, naming it in the error. A file past
+/// [`dreamcarve_shell::MAX_FILE_BYTES`] is refused unread (review 1.6).
 pub fn read_file(path: &Path) -> Result<Vec<u8>, Failure> {
-    std::fs::read(path).map_err(|e| Failure::error(format!("cannot read {}: {e}", path.display())))
+    Ok(dreamcarve_shell::read_capped(
+        path,
+        dreamcarve_shell::MAX_FILE_BYTES,
+    )?)
+}
+
+/// Why a command that only ever creates its output will not write
+/// `output`: something is there.
+pub fn output_exists(output: &Path) -> Failure {
+    Failure::error(format!(
+        "{} already exists; remove it or choose another file with -o",
+        output.display()
+    ))
+}
+
+/// Writes `contents` as the new file `output`, for the commands that
+/// promise never to overwrite one (`init`, `image-prep`). The write is
+/// staged and put in place with [`StagedFile::commit_new`], which refuses
+/// a file that is there, however late it appeared (review 1.9): a check
+/// before the work is a courtesy, not the guarantee.
+pub fn write_new(output: &Path, contents: &[u8]) -> Result<(), Failure> {
+    match StagedFile::write(output, contents)?.commit_new() {
+        Ok(()) => Ok(()),
+        Err(ShellError::AlreadyExists { path }) => Err(output_exists(&path)),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Today's date in UTC as `YYYY-MM-DD`, for the program header.

@@ -19,7 +19,8 @@ const TEMP_ATTEMPTS: u32 = 64;
 
 /// A file ready to be moved into place: written in full to a temporary
 /// file beside its destination, so a failure never leaves a partial file
-/// and the final [`StagedFile::commit`] is a rename.
+/// and the final [`StagedFile::commit`] is a rename, which replaces a
+/// file already there; [`StagedFile::commit_new`] never does.
 ///
 /// The temporary file is created with `create_new` (`O_EXCL`), which fails
 /// on any existing file or symlink instead of following it, under a name
@@ -116,6 +117,77 @@ impl StagedFile {
                 })
             }
         }
+    }
+
+    /// Moves the file into place only if nothing is there, and never
+    /// replaces what is: for a file a command promises to create, not to
+    /// overwrite (review 1.9). Checking first and then calling
+    /// [`StagedFile::commit`] is not that: the rename replaces whatever
+    /// appeared in between.
+    ///
+    /// The staged file is given the destination as a second name (a hard
+    /// link), which the file system refuses in one step when anything has
+    /// that name already: a file, a directory, or a symlink, whatever it
+    /// points at. The temporary name is then removed. Where the file
+    /// system has no hard links (FAT, some network shares), the
+    /// destination is created with `create_new`, which refuses the same
+    /// things, and the staged bytes are copied into it; a crash during
+    /// that copy can leave part of the file, but still only where there
+    /// was none. Both are std calls that behave alike on Unix and
+    /// Windows.
+    ///
+    /// # Errors
+    ///
+    /// [`ShellError::AlreadyExists`] when something is at the
+    /// destination, which is left as it was, and [`ShellError::Write`]
+    /// when the file system refuses. The temporary file is removed either
+    /// way.
+    pub fn commit_new(self) -> Result<(), ShellError> {
+        self.commit_new_via(|from, to| std::fs::hard_link(from, to))
+    }
+
+    /// [`StagedFile::commit_new`] with the call that links the temporary
+    /// file to the destination.
+    fn commit_new_via(
+        self,
+        link: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+    ) -> Result<(), ShellError> {
+        let Some(temp) = &self.temp else {
+            return Ok(());
+        };
+        let exists = || ShellError::AlreadyExists {
+            path: self.dest.clone(),
+        };
+        let fail = |source: std::io::Error| ShellError::Write {
+            path: self.dest.clone(),
+            source,
+        };
+        match link(temp, &self.dest) {
+            // The file now has both names; `Drop` removes the temporary
+            // one.
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(exists()),
+            // No hard links here, or none allowed: claim the name instead.
+            Err(_) => {}
+        }
+        let mut from = std::fs::File::open(temp).map_err(fail)?;
+        let mut to = match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&self.dest)
+        {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(exists()),
+            Err(e) => return Err(fail(e)),
+        };
+        // From here the destination is ours, made a moment ago, and is
+        // removed again if it cannot be filled.
+        let copied = std::io::copy(&mut from, &mut to).and_then(|_| to.sync_all());
+        drop(to);
+        copied.map_err(|e| {
+            let _ = std::fs::remove_file(&self.dest);
+            fail(e)
+        })
     }
 }
 
@@ -536,6 +608,115 @@ mod tests {
         assert_eq!(std::fs::read(&target).unwrap(), b"secret\n");
         assert_eq!(names_in(&dir), ["coaster.nc", "secret"]);
         no_copy_of_target(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Review 1.9: `commit_new` puts the file in place when nothing is
+    /// there, and leaves nothing else behind.
+    #[test]
+    fn commit_new_writes_a_file_that_is_not_there() {
+        let dir = scratch("new-free");
+        let dest = dir.join("part.dcv");
+        StagedFile::write(&dest, b"ours")
+            .unwrap()
+            .commit_new()
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"ours");
+        assert_eq!(names_in(&dir), ["part.dcv"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Review 1.9: `init` checked that its output did not exist and then
+    /// renamed over whatever was there by the time it had imported the
+    /// drawing. A file that appears after the check, here between the
+    /// stage and the commit, is not replaced: the commit fails saying it
+    /// exists, the file keeps its contents, and the staged file is gone.
+    #[test]
+    fn commit_new_never_replaces_a_file_that_appeared() {
+        let dir = scratch("new-taken");
+        let dest = dir.join("part.dcv");
+        let staged = StagedFile::write(&dest, b"ours").unwrap();
+        std::fs::write(&dest, b"theirs").unwrap();
+        let error = staged.commit_new().unwrap_err();
+        assert!(
+            matches!(&error, ShellError::AlreadyExists { path } if *path == dest),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            format!("{} already exists", dest.display())
+        );
+        assert_eq!(std::fs::read(&dest).unwrap(), b"theirs", "replaced");
+        assert_eq!(names_in(&dir), ["part.dcv"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Nor is a directory, or a symlink whatever it points at: a link to
+    /// nothing is still something at the destination, and it is neither
+    /// followed nor replaced. The link is Unix only, as creating one on
+    /// Windows needs a privilege.
+    #[test]
+    fn commit_new_never_replaces_a_directory_or_a_link() {
+        let dir = scratch("new-other");
+        let folder = dir.join("part.dcv");
+        std::fs::create_dir(&folder).unwrap();
+        let error = StagedFile::write(&folder, b"ours")
+            .unwrap()
+            .commit_new()
+            .unwrap_err();
+        assert!(
+            matches!(error, ShellError::AlreadyExists { .. }),
+            "{error:?}"
+        );
+        assert!(folder.is_dir());
+        #[cfg(unix)]
+        {
+            let target = dir.join("elsewhere");
+            let link = dir.join("link.dcv");
+            std::os::unix::fs::symlink(&target, &link).unwrap();
+            let error = StagedFile::write(&link, b"ours")
+                .unwrap()
+                .commit_new()
+                .unwrap_err();
+            assert!(
+                matches!(error, ShellError::AlreadyExists { .. }),
+                "{error:?}"
+            );
+            assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+            assert!(!target.exists(), "the link was followed");
+            assert_eq!(names_in(&dir), ["link.dcv", "part.dcv"]);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Where the file system has no hard links (FAT, some network
+    /// shares), the destination is claimed with `create_new` and the
+    /// staged bytes copied into it: still never over a file that is
+    /// there, and nothing but the destination left.
+    #[test]
+    fn commit_new_without_hard_links_still_never_replaces() {
+        let no_links =
+            |_: &Path, _: &Path| Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+        let dir = scratch("new-no-links");
+        let dest = dir.join("part.dcv");
+        StagedFile::write(&dest, b"ours")
+            .unwrap()
+            .commit_new_via(no_links)
+            .unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"ours");
+        assert_eq!(names_in(&dir), ["part.dcv"]);
+
+        std::fs::write(&dest, b"theirs").unwrap();
+        let error = StagedFile::write(&dest, b"ours")
+            .unwrap()
+            .commit_new_via(no_links)
+            .unwrap_err();
+        assert!(
+            matches!(error, ShellError::AlreadyExists { .. }),
+            "{error:?}"
+        );
+        assert_eq!(std::fs::read(&dest).unwrap(), b"theirs", "replaced");
+        assert_eq!(names_in(&dir), ["part.dcv"]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

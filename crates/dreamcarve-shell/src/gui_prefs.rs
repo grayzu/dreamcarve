@@ -236,12 +236,19 @@ pub struct Loaded {
 #[must_use]
 pub fn load(paths: &Paths) -> Loaded {
     let path = &paths.gui_prefs_file;
-    match std::fs::read_to_string(path) {
+    match crate::read_capped_text(path, crate::MAX_FILE_BYTES) {
         Ok(text) => parse(&text, path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Loaded::default(),
+        Err(crate::ShellError::Read { source, .. })
+            if source.kind() == std::io::ErrorKind::NotFound =>
+        {
+            Loaded::default()
+        }
+        // A read error's message is `cannot read <path>: <why>`, the note
+        // as it always was; a file past the size limit says so the same
+        // way.
         Err(e) => Loaded {
             prefs: GuiPrefs::default(),
-            notes: vec![format!("cannot read {}: {e}", path.display())],
+            notes: vec![e.to_string()],
         },
     }
 }

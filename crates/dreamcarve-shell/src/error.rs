@@ -23,6 +23,22 @@ pub enum ShellError {
         /// What the file system said.
         source: std::io::Error,
     },
+    /// A file holds more than the shell reads into memory
+    /// ([`crate::read_capped`]; review 1.6).
+    #[error(
+        "cannot read {}: it is {size_bytes} bytes, more than the limit of {limit_bytes} bytes",
+        path.display()
+    )]
+    FileTooLarge {
+        /// The file.
+        path: PathBuf,
+        /// Its size, bytes; for a file whose size is not known before it
+        /// is read (a pipe, a device), the bytes read when it passed the
+        /// limit.
+        size_bytes: u64,
+        /// The most it may hold, bytes.
+        limit_bytes: u64,
+    },
     /// A file could not be written, or moved into place.
     #[error("cannot write {}: {source}", path.display())]
     Write {
@@ -38,6 +54,14 @@ pub enum ShellError {
         path: PathBuf,
         /// What the file system said.
         source: std::io::Error,
+    },
+    /// Something is already at a destination that must be new
+    /// ([`crate::StagedFile::commit_new`]; review 1.9). It was left as it
+    /// was.
+    #[error("{} already exists", path.display())]
+    AlreadyExists {
+        /// The file's destination.
+        path: PathBuf,
     },
     /// A destination with no file name, such as `/` or `..`.
     #[error("{} is not a file path", path.display())]

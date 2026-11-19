@@ -124,6 +124,18 @@ pub enum LibraryError {
         /// The `version` value as written.
         found: String,
     },
+    /// A Fusion library given as plain JSON is larger than
+    /// [`crate::fusion::MAX_DOCUMENT_BYTES`], the cap an archive's
+    /// document has too (review 1.6); refused before it is parsed.
+    #[error(
+        "Fusion tool library is {size_bytes} bytes, more than the limit of {limit_bytes} bytes"
+    )]
+    FusionDocumentTooLarge {
+        /// The document's size, bytes.
+        size_bytes: u64,
+        /// The cap, bytes.
+        limit_bytes: u64,
+    },
     /// A `.tools` archive could not be unpacked, or holds no JSON document.
     #[error("Fusion `.tools` archive cannot be read: {message}")]
     FusionArchive {

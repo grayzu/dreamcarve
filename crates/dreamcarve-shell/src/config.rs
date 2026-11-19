@@ -52,17 +52,18 @@ pub struct ExportConfig {
 ///
 /// # Errors
 ///
-/// [`ShellError::Read`] when the file exists but cannot be read, and
-/// [`ShellError::Config`] when it does not parse ([`parse`]).
+/// [`ShellError::Read`] when the file exists but cannot be read,
+/// [`ShellError::FileTooLarge`] when it is past
+/// [`crate::MAX_FILE_BYTES`], and [`ShellError::Config`] when it does not
+/// parse ([`parse`]).
 pub fn load_from(paths: &Paths) -> Result<Config, ShellError> {
     let path = &paths.config_file;
-    match std::fs::read_to_string(path) {
+    match crate::read_capped_text(path, crate::MAX_FILE_BYTES) {
         Ok(text) => parse(&text, path),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-        Err(source) => Err(ShellError::Read {
-            path: path.clone(),
-            source,
-        }),
+        Err(ShellError::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            Ok(Config::default())
+        }
+        Err(e) => Err(e),
     }
 }
 
