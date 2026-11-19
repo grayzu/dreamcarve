@@ -26,6 +26,17 @@
 //! one on the GPU. A frame egui discards, or one a test harness never
 //! renders, so loses nothing.
 //!
+//! Pictures (functional spec, capability 56) are a second pipeline,
+//! `picture.wgsl`: one textured quad per visible bitmap at its footprint,
+//! drawn after the stock's outline and under the shapes. A bitmap's gray
+//! is one `R8Unorm` texture, kept by the Scene's key of its stored
+//! picture ([`PictureQuad::key`]), so it is uploaded once, and moving,
+//! resizing, renaming or locking the bitmap writes only its quad's
+//! 32-byte uniform. It is sampled with linear filtering; its mip chain
+//! ([`mips`]) is uploaded when the frame brings it, and until then the
+//! quad samples the picture itself. A picture wider than the device's
+//! largest texture is shown from the first mip level that fits.
+//!
 //! Geometry is `f64` up to here; `f32` appears only in the bytes written to
 //! the GPU (`docs/rust-guidelines.md`, "Types").
 
@@ -33,6 +44,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use dc_app::view::DEPTH_STEPS;
+use dc_project::Grayscale;
 use eframe::egui::{self, Color32};
 use eframe::egui_wgpu::{self, CallbackResources, CallbackTrait, ScreenDescriptor, wgpu};
 
@@ -40,19 +52,17 @@ use crate::theme::{gamma, linear, ramp_linear};
 
 /// The fixed layers, drawn in this order (design, "The Viewport
 /// renderer"; `experience.md` section 9: toolpaths over the shapes, hover
-/// under selection). The operations' toolpaths draw after `Shapes`, in
-/// the order the frame lists them. The male board (slice 14) goes after
-/// `Stock`, bitmaps (slice 15) before `Shapes`.
+/// under selection). The pictures draw after `Stock` and before `Shapes`
+/// (toolpaths over the picture, the picture over the grid), and the
+/// operations' toolpaths after `Shapes`, in the order the frame lists
+/// them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Layer {
     /// The grid's minor and major lines and the axes through the origin.
     Grid,
-    /// The stock's dashed outline.
+    /// The stock's dashed outline. The pictures draw after it
+    /// ([`Frame::pictures`]), under the shapes.
     Stock,
-    // TODO(#544): `Bitmaps`, a textured quad per picture at its footprint,
-    // under the shapes (functional spec, capability 56). It waits for
-    // phase 3.5: `dc_project::Bitmap` is here (format 27, #644), its importer not,
-    // so slice 6 (#535) builds the drawing half only.
     /// Every visible shape.
     Shapes,
     /// The direction arrows of every drawn toolpath.
@@ -410,6 +420,95 @@ pub struct ToolpathData {
     pub data: Arc<LayerData>,
 }
 
+/// One level of a picture's mip chain: the level above it averaged two
+/// samples by two, row-major from the top row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MipLevel {
+    /// Samples per row.
+    pub width_px: u32,
+    /// Rows.
+    pub height_px: u32,
+    /// The samples, top row first.
+    pub bytes: Vec<u8>,
+}
+
+/// `side_px` halved `level` times, never under one sample.
+const fn mip_side(side_px: u32, level: u32) -> u32 {
+    let side = side_px >> level;
+    if side == 0 { 1 } else { side }
+}
+
+/// How many levels a `width_px × height_px` picture's mip chain has, the
+/// picture itself counted: down to one sample.
+#[must_use]
+pub const fn mip_levels(width_px: u32, height_px: u32) -> u32 {
+    let side = if width_px > height_px {
+        width_px
+    } else {
+        height_px
+    };
+    if side == 0 { 1 } else { side.ilog2() + 1 }
+}
+
+/// The mip chain under `pixels`, level 1 first, down to one sample: each
+/// level the 2 × 2 box average of the one above, so a picture drawn much
+/// smaller than its pixels shows their average, not every n-th. A side
+/// with an odd count drops its last sample, as the GPU's own sizes do.
+/// Empty for a picture of one sample, or one whose bytes do not fill it.
+#[must_use]
+pub fn mips(pixels: &Grayscale) -> Vec<MipLevel> {
+    let (mut width, mut height) = (pixels.width_px as usize, pixels.height_px as usize);
+    if pixels.bytes.len() < width * height {
+        return Vec::new();
+    }
+    let levels = mip_levels(pixels.width_px, pixels.height_px);
+    let mut chain: Vec<MipLevel> = Vec::with_capacity(levels as usize);
+    for level in 1..levels {
+        let above: &[u8] = chain.last().map_or(&pixels.bytes, |l| &l.bytes);
+        let (w, h) = (
+            mip_side(pixels.width_px, level) as usize,
+            mip_side(pixels.height_px, level) as usize,
+        );
+        let mut bytes = Vec::with_capacity(w * h);
+        for row in 0..h {
+            // A side already down to one sample is its own pair.
+            let (r0, r1) = (row * 2, (row * 2 + 1).min(height - 1));
+            for column in 0..w {
+                let (c0, c1) = (column * 2, (column * 2 + 1).min(width - 1));
+                let at =
+                    |r: usize, c: usize| u32::from(above.get(r * width + c).copied().unwrap_or(0));
+                let sum = at(r0, c0) + at(r0, c1) + at(r1, c0) + at(r1, c1);
+                bytes.push(u8::try_from((sum + 2) / 4).unwrap_or(u8::MAX));
+            }
+        }
+        chain.push(MipLevel {
+            width_px: u32::try_from(w).unwrap_or(1),
+            height_px: u32::try_from(h).unwrap_or(1),
+            bytes,
+        });
+        (width, height) = (w, h);
+    }
+    chain
+}
+
+/// One picture in a frame: its texture's contents and where its quad is.
+#[derive(Debug, Clone)]
+pub struct PictureQuad {
+    /// The Scene's key of the stored picture
+    /// (`dc_app::scene::SceneBitmap::picture`): the texture is uploaded
+    /// once per key.
+    pub key: u64,
+    /// The picture: 8-bit gray, top row first.
+    pub pixels: Arc<Grayscale>,
+    /// Its mip chain ([`mips`]), once built; until then the quad samples
+    /// `pixels` alone.
+    pub mips: Option<Arc<Vec<MipLevel>>>,
+    /// The footprint: its least corner then its greatest, mm, Y-up.
+    pub rect_mm: [f32; 4],
+    /// How strongly it draws, 0 to 1.
+    pub opacity: f32,
+}
+
 /// What the GPU needs for one frame of the Viewport.
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -428,7 +527,34 @@ pub struct Frame {
     /// The drawn operations' toolpaths, bottom first, drawn after
     /// [`Layer::Shapes`].
     pub toolpaths: Vec<ToolpathData>,
+    /// The visible pictures, bottom first, drawn after [`Layer::Stock`].
+    pub pictures: Vec<PictureQuad>,
 }
+
+/// A picture's texture on the GPU.
+struct GpuPicture {
+    view: wgpu::TextureView,
+    texture: wgpu::Texture,
+    /// The level of the picture's chain that is the texture's level 0: 0
+    /// unless the picture is wider than the device's largest texture.
+    base: u32,
+    /// Whether the levels under the base are uploaded.
+    mipped: bool,
+}
+
+/// One picture quad's uniform and what it is bound to.
+struct GpuQuad {
+    buffer: wgpu::Buffer,
+    bind_group: Option<wgpu::BindGroup>,
+    /// The picture key the bind group shows, and whether through its mip
+    /// chain.
+    shows: Option<(u64, bool)>,
+}
+
+/// A picture quad's uniform, bytes: the footprint and its parameters.
+const QUAD_BYTES: usize = 32;
+/// A picture texture's format: one 8-bit channel, filterable.
+const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
 /// One buffer on the GPU.
 struct GpuLayer {
@@ -454,6 +580,21 @@ pub struct Renderer {
     toolpaths: BTreeMap<u64, GpuLayer>,
     /// This frame's toolpath keys, bottom first.
     order: Vec<u64>,
+    picture_pipeline: wgpu::RenderPipeline,
+    picture_layout: wgpu::BindGroupLayout,
+    /// The sampler of a picture whose mip chain is not uploaded yet:
+    /// linear, level 0 alone.
+    sampler: wgpu::Sampler,
+    /// The sampler of a picture with its mip chain: trilinear.
+    mip_sampler: wgpu::Sampler,
+    /// The device's largest texture side, pixels.
+    max_side_px: u32,
+    /// The picture textures, by the Scene's key of the stored picture.
+    pictures: BTreeMap<u64, GpuPicture>,
+    /// The quads, one per picture of the frame, in its order.
+    quads: Vec<GpuQuad>,
+    /// How many of `quads` this frame draws.
+    quad_count: usize,
 }
 
 impl std::fmt::Debug for Renderer {
@@ -547,6 +688,20 @@ impl Renderer {
             multiview_mask: None,
             cache: None,
         });
+        let (picture_pipeline, picture_layout) = picture_pipeline(device, format, &globals_layout);
+        let sampler = |label, mipmap_filter, lod_max_clamp| {
+            device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter,
+                lod_max_clamp,
+                ..wgpu::SamplerDescriptor::default()
+            })
+        };
         let buffer = |label, size, usage| {
             device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(label),
@@ -610,6 +765,18 @@ impl Renderer {
             layers: Vec::with_capacity(Layer::ALL.len()),
             toolpaths: BTreeMap::new(),
             order: Vec::new(),
+            picture_pipeline,
+            picture_layout,
+            sampler: sampler("viewport picture", wgpu::MipmapFilterMode::Nearest, 0.0),
+            mip_sampler: sampler(
+                "viewport picture, mipped",
+                wgpu::MipmapFilterMode::Linear,
+                32.0,
+            ),
+            max_side_px: device.limits().max_texture_dimension_2d,
+            pictures: BTreeMap::new(),
+            quads: Vec::new(),
+            quad_count: 0,
         };
         for _ in Layer::ALL {
             let layer = renderer.layer(device, SEGMENT_BYTES as u64);
@@ -797,10 +964,193 @@ impl Renderer {
         }
         self.toolpaths = toolpaths;
         self.order = frame.toolpaths.iter().map(|t| t.key).collect();
+        self.upload_pictures(device, queue, &frame.pictures);
     }
 
-    /// Draws every non-empty buffer, back to front, into `pass`: the
-    /// fixed layers through [`Layer::Shapes`], the toolpaths in the
+    /// Level `level` of `quad`'s chain: its size and samples. Level 0 is
+    /// the picture; the rest are its mips, when the frame brought them.
+    fn level(quad: &PictureQuad, level: u32) -> Option<(u32, u32, &[u8])> {
+        let (width_px, height_px, bytes) = if level == 0 {
+            let p = &quad.pixels;
+            (p.width_px, p.height_px, p.bytes.as_slice())
+        } else {
+            let l = quad.mips.as_ref()?.get(level as usize - 1)?;
+            (l.width_px, l.height_px, l.bytes.as_slice())
+        };
+        let samples = width_px as usize * height_px as usize;
+        (width_px > 0 && height_px > 0 && bytes.len() >= samples)
+            .then(|| (width_px, height_px, bytes.get(..samples).unwrap_or(bytes)))
+    }
+
+    /// Writes level `level` of `quad`'s chain into `picture`.
+    fn write_level(queue: &wgpu::Queue, picture: &GpuPicture, quad: &PictureQuad, level: u32) {
+        let Some((width, height, bytes)) = Self::level(quad, level) else {
+            return;
+        };
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &picture.texture,
+                mip_level: level - picture.base,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// The texture of `quad`'s picture, its first level written and the
+    /// rest too when the frame brought them. `None` while it cannot be
+    /// made: the picture has no samples, or is wider than the device's
+    /// largest texture and its mips are not here yet.
+    fn picture(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        quad: &PictureQuad,
+    ) -> Option<GpuPicture> {
+        let (width_px, height_px) = (quad.pixels.width_px, quad.pixels.height_px);
+        let levels = mip_levels(width_px, height_px);
+        // The first level that fits the device.
+        let base = (0..levels)
+            .find(|level| mip_side(width_px.max(height_px), *level) <= self.max_side_px)?;
+        let (width, height, _) = Self::level(quad, base)?;
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("viewport picture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: levels - base,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: PICTURE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let mut picture = GpuPicture {
+            view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+            texture,
+            base,
+            mipped: false,
+        };
+        Self::write_level(queue, &picture, quad, base);
+        self.write_mips(queue, &mut picture, quad);
+        Some(picture)
+    }
+
+    /// Writes the levels under `picture`'s base once the frame brings
+    /// `quad`'s mips.
+    fn write_mips(&self, queue: &wgpu::Queue, picture: &mut GpuPicture, quad: &PictureQuad) {
+        if picture.mipped || quad.mips.is_none() {
+            return;
+        }
+        let levels = mip_levels(quad.pixels.width_px, quad.pixels.height_px);
+        for level in picture.base + 1..levels {
+            Self::write_level(queue, picture, quad, level);
+        }
+        picture.mipped = true;
+    }
+
+    /// Uploads each picture of the frame that the GPU lacks, drops the
+    /// textures of pictures no longer in it, and writes every quad's
+    /// footprint and strength.
+    fn upload_pictures(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        quads: &[PictureQuad],
+    ) {
+        let mut pictures = std::mem::take(&mut self.pictures);
+        pictures.retain(|key, _| quads.iter().any(|q| q.key == *key));
+        for quad in quads {
+            match pictures.get_mut(&quad.key) {
+                Some(picture) => self.write_mips(queue, picture, quad),
+                None => {
+                    if let Some(picture) = self.picture(device, queue, quad) {
+                        pictures.insert(quad.key, picture);
+                    }
+                }
+            }
+        }
+        while self.quads.len() < quads.len() {
+            self.quads.push(GpuQuad {
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("viewport picture quad"),
+                    size: QUAD_BYTES as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
+                bind_group: None,
+                shows: None,
+            });
+        }
+        let linear = if self.linear_output { 1.0 } else { 0.0 };
+        for (slot, quad) in self.quads.iter_mut().zip(quads) {
+            let picture = pictures.get(&quad.key);
+            let shows = picture.map(|p| (quad.key, p.mipped));
+            if slot.shows != shows {
+                slot.bind_group = picture.map(|p| {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("viewport picture quad"),
+                        layout: &self.picture_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: slot.buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&p.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(if p.mipped {
+                                    &self.mip_sampler
+                                } else {
+                                    &self.sampler
+                                }),
+                            },
+                        ],
+                    })
+                });
+                slot.shows = shows;
+            }
+            let [x0, y0, x1, y1] = quad.rect_mm;
+            let uniform = [
+                x0,
+                y0,
+                x1,
+                y1,
+                quad.opacity.clamp(0.0, 1.0),
+                linear,
+                0.0,
+                0.0,
+            ];
+            let bytes: Vec<u8> = uniform.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            queue.write_buffer(&slot.buffer, 0, &bytes);
+        }
+        // A quad the frame no longer has lets go of its texture.
+        for slot in self.quads.iter_mut().skip(quads.len()) {
+            slot.bind_group = None;
+            slot.shows = None;
+        }
+        self.quad_count = quads.len();
+        self.pictures = pictures;
+    }
+
+    /// Draws every non-empty buffer, back to front, into `pass`: the grid
+    /// and the stock, the pictures, the shapes, the toolpaths in the
     /// frame's order, then the rest.
     pub fn draw(&self, pass: &mut wgpu::RenderPass<'_>) {
         if self.styles_version.is_none() {
@@ -816,6 +1166,18 @@ impl Renderer {
         };
         for (slot, layer) in self.layers.iter().enumerate() {
             draw(pass, layer);
+            if slot == Layer::Stock.index() && self.quad_count > 0 {
+                pass.set_pipeline(&self.picture_pipeline);
+                pass.set_bind_group(0, &self.globals, &[]);
+                for quad in self.quads.iter().take(self.quad_count) {
+                    if let Some(bind_group) = &quad.bind_group {
+                        pass.set_bind_group(1, bind_group, &[]);
+                        pass.draw(0..6, 0..1);
+                    }
+                }
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.globals, &[]);
+            }
             if slot == Layer::Shapes.index() {
                 for key in &self.order {
                     if let Some(layer) = self.toolpaths.get(key) {
@@ -825,6 +1187,83 @@ impl Renderer {
             }
         }
     }
+}
+
+/// The picture pipeline for a framebuffer of `format`, sharing the line
+/// pipeline's `globals` (the camera), and the layout of a quad's bind
+/// group: its uniform, its picture and a sampler.
+fn picture_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    globals: &wgpu::BindGroupLayout,
+) -> (wgpu::RenderPipeline, wgpu::BindGroupLayout) {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("viewport pictures"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("picture.wgsl").into()),
+    });
+    let both = wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT;
+    let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("viewport picture quad"),
+        entries: &[
+            wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: both,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 1,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 2,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+        ],
+    });
+    let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        label: Some("viewport pictures"),
+        bind_group_layouts: &[Some(globals), Some(&layout)],
+        immediate_size: 0,
+    });
+    let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("viewport pictures"),
+        layout: Some(&pipeline_layout),
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            buffers: &[],
+        },
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        multiview_mask: None,
+        cache: None,
+    });
+    (pipeline, layout)
 }
 
 /// Installs the renderer in eframe's wgpu state, so the Viewport's
@@ -926,5 +1365,54 @@ mod tests {
         assert_eq!(target.row(), StyleId::Target as u32);
         assert_eq!(target.colour_slot(), 3);
         assert!(!target.is_faded() && !target.stale());
+    }
+
+    /// A picture's mip chain halves each side down to one sample, each
+    /// sample the rounded mean of the four above it, rows kept in order;
+    /// an odd side drops its last sample, and a side already at one
+    /// sample pairs it with itself.
+    #[test]
+    fn mips_average_two_by_two_down_to_one_sample() {
+        let pixels = Grayscale {
+            width_px: 4,
+            height_px: 2,
+            bytes: vec![0, 100, 200, 255, 50, 150, 250, 255],
+        };
+        assert_eq!(mip_levels(4, 2), 3);
+        let chain = mips(&pixels);
+        assert_eq!(chain.len(), 2, "4 × 2, then 2 × 1 and 1 × 1");
+        assert_eq!((chain[0].width_px, chain[0].height_px), (2, 1));
+        assert_eq!(
+            chain[0].bytes,
+            [75, 240],
+            "(0+100+50+150)/4, (200+255+250+255)/4"
+        );
+        assert_eq!((chain[1].width_px, chain[1].height_px), (1, 1));
+        assert_eq!(chain[1].bytes, [158], "(75+240+75+240)/4, rounded");
+
+        // Three rows: the top two average, the third is dropped.
+        let tall = Grayscale {
+            width_px: 1,
+            height_px: 3,
+            bytes: vec![10, 30, 200],
+        };
+        let chain = mips(&tall);
+        assert_eq!(chain.len(), 1);
+        assert_eq!(chain[0].bytes, [20], "the top rows, in order");
+
+        assert_eq!(mip_levels(1, 1), 1);
+        let one = Grayscale {
+            width_px: 1,
+            height_px: 1,
+            bytes: vec![7],
+        };
+        assert!(mips(&one).is_empty());
+        // Bytes that do not fill the picture make no chain, and no panic.
+        let short = Grayscale {
+            width_px: 8,
+            height_px: 8,
+            bytes: vec![0; 3],
+        };
+        assert!(mips(&short).is_empty());
     }
 }

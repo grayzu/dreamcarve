@@ -487,10 +487,17 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         }
         _ => {}
     }
-    // The lines under it: a V-bit's cone, an Inlay's derived line and the
-    // board under its band, an alert in red with its glyph.
+    // The lines under it (`editor::notes`): under a tool picker a V-bit's
+    // cone height or a tapered ball nose's cutting height (#685), the
+    // board under an Inlay's band, and an Inlay's derived lines, the last
+    // of which is the seat line when a tapered ball nose cuts it; an
+    // alert in red with its glyph. The derived row has no field, so its
+    // lines, which are sentences, take the row's whole width.
+    let whole_width = matches!(row.kind, FieldKind::InlayDerived);
     for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
-        if note.alert {
+        if whole_width {
+            row::line(ui, note.alert, &note.text);
+        } else if note.alert {
             row::message(ui, Tier::Error, &note.text);
         } else {
             row::hint(ui, &note.text);
@@ -580,6 +587,7 @@ pub(super) fn control(
         FieldKind::Checkbox => checkbox(ui, cx, slot, out),
         FieldKind::Toggle(_) => switch(ui, cx, slot, out),
         FieldKind::ToolPicker => tool_picker(ui, cx, slot, id, offered, out),
+        FieldKind::PicturePicker => picture_picker(ui, cx, slot.row, id, out),
         FieldKind::InstanceList => {
             // Setup's Targets row: one line (capability 67).
             label(ui, cx, slot);
@@ -958,6 +966,51 @@ fn earlier_pocket(
             ui,
             id.with("refused"),
             editor::set_earlier_pocket(cx.op, row, pocket.as_ref()),
+            out,
+        );
+    }
+    Some(response)
+}
+
+/// A Photo V-Carve's Picture row (capability 67): a dropdown of the
+/// project's pictures, the one carved shown as chosen. A picture the
+/// project no longer has shows by the id the file still names, with
+/// validation's message under the row, so the row never reads as empty.
+fn picture_picker(
+    ui: &mut Ui,
+    cx: &Cx<'_>,
+    row: &Row,
+    id: Id,
+    out: &mut Vec<Action>,
+) -> Option<egui::Response> {
+    label(ui, cx, &Slot::of(row));
+    let selected = editor::picture_text(cx.project, cx.strings, cx.op).unwrap_or_default();
+    let current = editor::picture(cx.project, cx.op).map(|bitmap| &bitmap.id);
+    let offered = editor::offered_pictures(cx.project);
+    let mut picked: Option<dc_project::BitmapId> = None;
+    let width = ui.available_width();
+    let response = egui::ComboBox::from_id_salt(id)
+        .icon(crate::widgets::icon::combo_chevron)
+        .truncate()
+        .selected_text(selected)
+        .width(width)
+        .show_ui(ui, |ui| {
+            for (picture, name) in &offered {
+                if ui
+                    .selectable_label(current == Some(picture), name)
+                    .clicked()
+                {
+                    picked = Some(picture.clone());
+                }
+            }
+        })
+        .response
+        .accessible_name(cx.strings.get(row.label));
+    if let Some(picture) = picked {
+        commit(
+            ui,
+            id.with("refused"),
+            editor::set_picture(cx.op, row, &picture),
             out,
         );
     }

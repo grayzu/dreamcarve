@@ -358,8 +358,17 @@ pub struct FieldRow {
 /// text and unit, and whether it is still required.
 #[must_use]
 pub fn rows(tool: &Tool, units: Units) -> Vec<FieldRow> {
+    rows_for(tool, KindChoice::of(&tool.cutter), units)
+}
+
+/// The editor's rows for `tool` drawn as a tool of type `choice`
+/// ([`fields_for`]): [`rows`] for its own type, and, while its switch to
+/// V-bit is held ([`KindSwitch::HoldForAngle`]), a V-bit's rows over the
+/// tool the project still holds, whose *Angle* is then empty.
+#[must_use]
+pub fn rows_for(tool: &Tool, choice: KindChoice, units: Units) -> Vec<FieldRow> {
     let unset = unset_values(tool);
-    fields(tool)
+    fields_for(choice)
         .into_iter()
         .map(|field| FieldRow {
             field,

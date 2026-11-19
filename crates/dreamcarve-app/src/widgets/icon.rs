@@ -22,6 +22,8 @@ pub enum Icon {
     FileInput,
     /// `image-plus`: Import a picture.
     ImagePlus,
+    /// `image`: a picture's row in the Design Tree.
+    Image,
     /// `maximize`: Fit.
     Maximize,
     /// `bookmark-plus`: the Tab tool.
@@ -144,6 +146,7 @@ impl Icon {
             Self::Redo => "redo-2",
             Self::FileInput => "file-input",
             Self::ImagePlus => "image-plus",
+            Self::Image => "image",
             Self::Maximize => "maximize",
             Self::BookmarkPlus => "bookmark-plus",
             Self::Download => "download",
@@ -208,6 +211,7 @@ impl Icon {
             Self::Redo => '\u{e2a0}',
             Self::FileInput => '\u{e0c5}',
             Self::ImagePlus => '\u{e1f7}',
+            Self::Image => '\u{e0f6}',
             Self::Maximize => '\u{e112}',
             Self::BookmarkPlus => '\u{e23d}',
             Self::Download => '\u{e0b2}',
@@ -265,12 +269,13 @@ impl Icon {
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 57] = [
+    pub const ALL: [Self; 58] = [
         Self::FolderOpen,
         Self::Undo,
         Self::Redo,
         Self::FileInput,
         Self::ImagePlus,
+        Self::Image,
         Self::Maximize,
         Self::BookmarkPlus,
         Self::Download,

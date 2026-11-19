@@ -107,11 +107,17 @@ fn add_targets_the_selection_with_cli_defaults() {
         .collect();
     harness.app.select(Selection::Instances(coaster.clone()));
 
-    let menu = operations::add_menu(harness.app.project(), &strings, &coaster);
+    let menu = operations::add_menu(harness.app.project(), &strings, &coaster, &[]);
     assert_eq!(menu.prompt, None);
     assert!(menu.available.contains(&Kind::Profile), "{menu:?}");
-    let command = operations::add(harness.app.project(), &strings, Kind::Profile, &coaster)
-        .expect("the coaster can take a Profile");
+    let command = operations::add(
+        harness.app.project(),
+        &strings,
+        Kind::Profile,
+        &coaster,
+        &[],
+    )
+    .expect("the coaster can take a Profile");
     let label = harness.run(command).unwrap();
     assert_eq!(label, "Add “Profile 1”");
     assert_eq!(
@@ -140,7 +146,14 @@ fn add_targets_the_selection_with_cli_defaults() {
         "the new operation is the editor's"
     );
 
-    let again = operations::add(harness.app.project(), &strings, Kind::Profile, &coaster).unwrap();
+    let again = operations::add(
+        harness.app.project(),
+        &strings,
+        Kind::Profile,
+        &coaster,
+        &[],
+    )
+    .unwrap();
     harness.run(again).unwrap();
     assert_eq!(harness.app.project().operations[1].name(), "Profile 2");
     assert_ne!(
@@ -149,26 +162,26 @@ fn add_targets_the_selection_with_cli_defaults() {
     );
 
     // Nothing selected: one sentence, nothing offered.
-    let empty = operations::add_menu(harness.app.project(), &strings, &[]);
+    let empty = operations::add_menu(harness.app.project(), &strings, &[], &[]);
     assert_eq!(
         empty.prompt.as_deref(),
         Some(strings.get(StrKey::OperationsAddSelectShapes))
     );
     assert!(empty.available.is_empty());
     assert_eq!(empty.unavailable.len(), Kind::ALL.len());
-    assert!(operations::add(harness.app.project(), &strings, Kind::Profile, &[]).is_none());
+    assert!(operations::add(harness.app.project(), &strings, Kind::Profile, &[], &[]).is_none());
 
     // An open path: Pocket is below the divider, with its reason.
     let plaque = common::plaque();
     let squiggle = ids(&["i10"]);
-    let menu = operations::add_menu(&plaque, &strings, &squiggle);
+    let menu = operations::add_menu(&plaque, &strings, &squiggle, &[]);
     let (_, reason) = menu
         .unavailable
         .iter()
         .find(|(kind, _)| *kind == Kind::Pocket)
         .expect("an open path cannot take a Pocket");
     assert_eq!(reason.as_deref(), Some("An open path cannot take a Pocket"));
-    assert!(operations::add(&plaque, &strings, Kind::Pocket, &squiggle).is_none());
+    assert!(operations::add(&plaque, &strings, Kind::Pocket, &squiggle, &[]).is_none());
 
     // Each kind's tool: the sign has end mills, a V-bit; no drill.
     let sign = common::load_dcv(&common::fixture("sign.dcv"));
@@ -230,7 +243,8 @@ fn add_targets_the_selection_with_cli_defaults() {
 fn add_menu_partitions_by_eligibility() {
     let strings = Strings::english();
     let plaque = common::plaque();
-    let available = |selected: &[&str]| operations::add_menu(&plaque, &strings, &ids(selected));
+    let available =
+        |selected: &[&str]| operations::add_menu(&plaque, &strings, &ids(selected), &[]);
 
     // Circles take every kind with a record.
     let holes = available(&["i5", "i6"]);
@@ -476,4 +490,63 @@ fn delete_keeps_placed_tabs() {
             .iter()
             .any(|o| *o.id() == cut_out)
     );
+}
+
+/// #685 (functional 68, "The carving kinds' tool pickers"): a new carve
+/// takes the first tool its Tool row's picker offers
+/// (`editor::offered_tools`, which asks validation), so the two cannot
+/// differ. The tapered ball nose test part has no V-bit: a new V-Carve and
+/// a new Inlay take its first tapered ball nose, `t2`, where they used to
+/// take none; a Photo V-Carve, whose depth follows a V-bit's angle, still
+/// finds no tool. With a V-bit ahead of the tapered ball noses, every
+/// carve takes the V-bit, and never the end mill before it.
+#[test]
+fn a_new_carve_takes_the_first_tool_its_picker_offers() {
+    let strings = Strings::english();
+    let tapered = common::load_dcv(&common::fixture("dc-tbn.dcv"));
+    assert!(
+        !tapered
+            .tools
+            .iter()
+            .any(|t| matches!(t.cutter, ToolKind::VBit { .. })),
+        "the fixture has no V-bit"
+    );
+    let shapes: Vec<InstanceId> = tapered.instances.iter().map(|i| i.id.clone()).collect();
+    for kind in [Kind::VCarve, Kind::Inlay] {
+        let new = operations::new_operation(&tapered, &strings, kind, &shapes)
+            .expect("a carve of shapes");
+        let offered = dc_app::editor::offered_tools(&tapered, &new);
+        let first = offered.first().expect("a tapered ball nose is offered");
+        assert!(
+            matches!(first.cutter, ToolKind::TaperedBallNose { .. }),
+            "{kind:?} is offered {first:?} first"
+        );
+        assert_eq!(new.tool(), &first.id, "{kind:?} takes the first offered");
+        assert_eq!(new.tool().as_str(), "t2");
+        assert_eq!(
+            operations::fitting_tool(&tapered, kind).as_ref(),
+            Some(&first.id)
+        );
+    }
+    assert_eq!(
+        operations::fitting_tool(&tapered, Kind::PhotoVCarve),
+        None,
+        "a Photo V-Carve carves with a V-bit alone"
+    );
+
+    let mut both = tapered.clone();
+    both.tools.insert(
+        1,
+        Tool {
+            id: ToolId::new("t9"),
+            ..dc_project::test_support::tool_v_bit_90()
+        },
+    );
+    for kind in [Kind::VCarve, Kind::Inlay, Kind::PhotoVCarve] {
+        assert_eq!(
+            operations::fitting_tool(&both, kind),
+            Some(ToolId::new("t9")),
+            "{kind:?}"
+        );
+    }
 }

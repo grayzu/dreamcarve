@@ -220,11 +220,14 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Action::NewFromDrawing,
         out,
     );
-    ui.add_enabled(
-        false,
-        Button::new(strings.get(StrKey::AppMenuNewFromPicture)),
-    )
-    .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
+    item(
+        ui,
+        strings,
+        StrKey::AppMenuNewFromPicture,
+        None,
+        Action::NewFromPicture,
+        out,
+    );
     item(
         ui,
         strings,
@@ -277,11 +280,14 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         Action::ImportDrawing,
         out,
     );
-    ui.add_enabled(
-        false,
-        Button::new(strings.get(StrKey::AppMenuImportPicture)),
-    )
-    .on_disabled_hover_text(strings.get(StrKey::AppEmptyPictureUnavailable));
+    item(
+        ui,
+        strings,
+        StrKey::AppMenuImportPicture,
+        None,
+        Action::ImportPicture,
+        out,
+    );
     ui.separator();
     item(
         ui,

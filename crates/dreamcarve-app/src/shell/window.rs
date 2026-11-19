@@ -23,12 +23,22 @@
 //!
 //! Files are read and written on the UI thread: a `.dcv` is small, and the
 //! progress sheet the design gives slow disks arrives with export (slice
-//! 18), the first job that can be large.
+//! 18), the first job that can be large. A picture is the exception: it
+//! is decoded on a thread of its own ([`PictureOpening`]), since a
+//! camera's JPEG takes longer than a frame, and the Add picture sheet
+//! opens when it lands.
+//!
+//! A file dropped on the window does what its kind's command does
+//! (`dc_app::import::FileKind`, capabilities 51, 55 and 56): a `.dcv`
+//! opens, through the unsaved-changes sheet when there are changes; a
+//! drawing opens the Add drawing sheet and a picture the Add picture
+//! sheet, each over the open project.
 
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Instant;
 
-use dc_app::import::{DrawingFormat, Purpose};
+use dc_app::import::{Dropped, FileKind, PictureImport, Purpose};
 use dc_app::onboarding::Thumbnail;
 use dc_app::steps::{self, Step};
 use dc_app::{App, Command, Prefs, SnapshotId, StrKey, Strings};
@@ -124,6 +134,10 @@ pub trait Dialogs {
     fn save_project(&mut self, title: &str, file_name: &str) -> Option<PathBuf>;
     /// Asks for a drawing to import.
     fn open_drawing(&mut self, title: &str) -> Option<PathBuf>;
+    /// Asks for a picture to add: a PNG or a JPEG.
+    fn open_picture(&mut self, _title: &str) -> Option<PathBuf> {
+        None
+    }
     /// Asks for a tool library to import: a Fusion `.tools` or `.json`,
     /// or a DreamCarve library.
     fn open_library(&mut self, _title: &str) -> Option<PathBuf> {
@@ -149,6 +163,7 @@ pub trait Dialogs {
 pub struct NativeDialogs {
     project_filter: String,
     drawing_filter: String,
+    picture_filter: String,
     library_filter: String,
     setup_sheet_filter: String,
 }
@@ -160,6 +175,7 @@ impl NativeDialogs {
         Self {
             project_filter: strings.get(StrKey::AppDialogProjectFilter).to_owned(),
             drawing_filter: strings.get(StrKey::AppDialogDrawingFilter).to_owned(),
+            picture_filter: strings.get(StrKey::AppDialogPictureFilter).to_owned(),
             library_filter: strings.get(StrKey::AppDialogLibraryFilter).to_owned(),
             setup_sheet_filter: strings.get(StrKey::ExportSetupSheetFilter).to_owned(),
         }
@@ -186,6 +202,13 @@ impl Dialogs for NativeDialogs {
         rfd::FileDialog::new()
             .set_title(title)
             .add_filter(&self.drawing_filter, &["svg", "dxf"])
+            .pick_file()
+    }
+
+    fn open_picture(&mut self, title: &str) -> Option<PathBuf> {
+        rfd::FileDialog::new()
+            .set_title(title)
+            .add_filter(&self.picture_filter, &["png", "jpg", "jpeg"])
             .pick_file()
     }
 
@@ -274,6 +297,14 @@ pub(crate) enum Action {
     NewFromDrawing,
     /// Something the Import drawing sheet asked for.
     ImportSheet(panels::import::Request),
+    /// File ▸ Add Picture to Project…, the Design step's *Add picture*
+    /// (capability 56).
+    ImportPicture,
+    /// File ▸ New Project from Picture…, the start screen's *New from
+    /// picture…* (capability 51).
+    NewFromPicture,
+    /// Something the Add picture sheet asked for.
+    PictureSheet(panels::picture::Request),
     Undo,
     Redo,
     Quit,
@@ -312,6 +343,8 @@ pub(crate) enum Action {
     /// Rename a shape in its Design Tree row (F2, the context menu's
     /// *Rename*; #617).
     Rename(dc_project::InstanceId),
+    /// Rename a picture in its Design Tree row (F2, its menu's *Rename*).
+    RenamePicture(dc_project::BitmapId),
     /// Arrange ▸ Rotate…: the Arrange group's Rotate popover opened, on
     /// the Design step where the group is (#617).
     OpenRotate,
@@ -360,11 +393,13 @@ pub(crate) enum Action {
     HideAllToolpaths,
     /// Show an operation in the editor (its row clicked).
     EditOperation(dc_project::OperationId),
-    /// *Add ▸ kind* on these shapes, from the Operations step or the Design
+    /// *Add ▸ kind* on these shapes, or for a Photo V-Carve on the
+    /// picture among `pictures`, from the Operations step or the Design
     /// Tree.
     AddOperation {
         kind: dc_app::operations::Kind,
         targets: Vec<dc_project::InstanceId>,
+        pictures: Vec<dc_project::BitmapId>,
     },
     /// An operation row's eye: its toolpath hidden or shown (view state).
     ToggleOperationHidden(dc_project::OperationId),
@@ -454,6 +489,22 @@ enum Pending {
     OpenPath(PathBuf),
     Example(Example),
     NewFromDrawing,
+    NewFromPicture,
+    /// A `.dcv` dropped on the window.
+    Dropped(PathBuf),
+}
+
+/// A picture being decoded on its own thread, for the Add picture sheet
+/// to open over when it lands. Decoding is `dc-import`'s, as `image add`
+/// decodes; a large PNG or a camera's JPEG takes longer than a frame, so
+/// the window never waits for it.
+struct PictureOpening {
+    /// Where the file is.
+    path: PathBuf,
+    /// The sheet's model, once decoded.
+    decoded: Receiver<PictureImport>,
+    /// What the status bar says meanwhile, taken back when it lands.
+    reading: String,
 }
 
 /// The app's window.
@@ -469,6 +520,10 @@ pub struct Shell {
     library: Option<panels::library::Sheet>,
     /// The Import drawing sheet, while open.
     import: Option<panels::import::Sheet>,
+    /// The Add picture sheet, while open.
+    picture: Option<panels::picture::Sheet>,
+    /// The picture being decoded for that sheet, until it lands.
+    picture_opening: Option<PictureOpening>,
     /// The export sheet, while open (#547).
     export: Option<panels::export::Sheet>,
     /// The setup sheet of this project's last export, for File ▸ Save
@@ -577,6 +632,8 @@ impl Shell {
             sheet: None,
             library: None,
             import: None,
+            picture: None,
+            picture_opening: None,
             export: None,
             setup_sheet: None,
             estimate,
@@ -662,6 +719,13 @@ impl Shell {
         self.export
             .as_ref()
             .is_some_and(|sheet| sheet.planning(&self.app))
+    }
+
+    /// Whether a picture is being decoded for the Add picture sheet,
+    /// which opens when it lands.
+    #[must_use]
+    pub fn opening_picture(&self) -> bool {
+        self.picture_opening.is_some()
     }
 
     /// Whether the Warnings drawer is open.
@@ -814,42 +878,97 @@ impl Shell {
                     self.open_import(&path, Purpose::New);
                 }
             }
+            Pending::NewFromPicture => {
+                let title = self
+                    .strings()
+                    .get(StrKey::AppDialogNewFromPictureTitle)
+                    .to_owned();
+                if let Some(path) = self.dialogs.open_picture(&title) {
+                    self.open_picture(&path, Purpose::New);
+                }
+            }
+            Pending::Dropped(path) => self.drop_file(&path),
         }
     }
 
     /// Opens the project at `path`, or says why not.
     fn open_path(&mut self, path: &Path) {
-        let name = files::file_name(path);
         let result = files::read(path).and_then(|bytes| {
             self.app
                 .open(&bytes, Some(path.to_path_buf()))
                 .map_err(|e| e.to_string())
         });
         match result {
-            Ok(opened) => {
-                self.app.prefs_mut().push_recent(path.to_path_buf());
-                self.import_warnings = 0;
-                self.viewport.fit_on_next_frame();
-                let count = opened.notes.len().to_string();
-                // The project's name, as the title has it (capability
-                // 50b: *Saved plaque*).
-                let name = files::stem(path);
-                self.message = Some(if opened.notes.is_empty() {
-                    self.strings()
-                        .fmt(StrKey::AppMessageOpened, &[("name", &name)])
-                } else {
-                    self.strings().fmt(
-                        StrKey::AppMessageOpenedNotes,
-                        &[("name", &name), ("count", &count)],
-                    )
-                });
-            }
+            Ok(opened) => self.opened(path, &opened),
+            Err(reason) => self.open_failed(path, &reason),
+        }
+    }
+
+    /// The project at `path` is open: it is the newest recent file, the
+    /// view fits it, and the status bar says so.
+    fn opened(&mut self, path: &Path, opened: &dc_app::Opened) {
+        self.app.prefs_mut().push_recent(path.to_path_buf());
+        self.import_warnings = 0;
+        self.viewport.fit_on_next_frame();
+        let count = opened.notes.len().to_string();
+        // The project's name, as the title has it (capability 50b:
+        // *Saved plaque*).
+        let name = files::stem(path);
+        self.message = Some(if opened.notes.is_empty() {
+            self.strings()
+                .fmt(StrKey::AppMessageOpened, &[("name", &name)])
+        } else {
+            self.strings().fmt(
+                StrKey::AppMessageOpenedNotes,
+                &[("name", &name), ("count", &count)],
+            )
+        });
+    }
+
+    /// The file at `path` did not open: the status bar says why.
+    fn open_failed(&mut self, path: &Path, reason: &str) {
+        let name = files::file_name(path);
+        self.message = Some(self.strings().fmt(
+            StrKey::AppMessageOpenFailed,
+            &[("name", &name), ("reason", reason)],
+        ));
+    }
+
+    /// What a file dropped at `path` becomes (`dc_app::App::drop_file`):
+    /// a `.dcv` opens, the caller having asked about unsaved changes; a
+    /// drawing or a picture opens its sheet over the open project;
+    /// anything else is refused in the status bar, naming the file. A
+    /// picture goes by its own thread ([`Shell::open_picture`]), so a
+    /// large one never holds a frame.
+    fn drop_file(&mut self, path: &Path) {
+        let name = files::file_name(path);
+        if let Some(FileKind::Picture(_)) = FileKind::of(&name) {
+            self.open_picture(path, Purpose::Import);
+            return;
+        }
+        let bytes = match files::read(path) {
+            Ok(bytes) => bytes,
             Err(reason) => {
-                self.message = Some(self.strings().fmt(
-                    StrKey::AppMessageOpenFailed,
-                    &[("name", &name), ("reason", &reason)],
-                ));
+                self.open_failed(path, &reason);
+                return;
             }
+        };
+        match self.app.drop_file(path, bytes) {
+            Ok(Dropped::Project(opened)) => {
+                self.picture_opening = None;
+                self.opened(path, &opened);
+            }
+            Ok(Dropped::Drawing(model)) => {
+                self.picture = None;
+                self.picture_opening = None;
+                self.import = Some(panels::import::Sheet::of(path, *model));
+            }
+            Ok(Dropped::Picture(model)) => {
+                self.import = None;
+                self.picture = Some(panels::picture::Sheet::new(path, *model));
+            }
+            Err(dc_app::CommandError::Load(e)) => self.open_failed(path, &e.to_string()),
+            Err(e) => self.message = Some(e.to_string()),
         }
     }
 
@@ -948,27 +1067,19 @@ impl Shell {
     /// sheet's model.
     fn open_import(&mut self, path: &Path, purpose: Purpose) {
         let name = files::file_name(path);
-        let format = match files::kind(path) {
-            Some(files::FileKind::Svg) => DrawingFormat::Svg,
-            Some(files::FileKind::Dxf) => DrawingFormat::Dxf,
-            Some(files::FileKind::Picture) => {
-                self.message = Some(
-                    self.strings()
-                        .get(StrKey::AppEmptyPictureUnavailable)
-                        .to_owned(),
-                );
-                return;
-            }
-            _ => {
-                self.message = Some(
-                    self.strings()
-                        .fmt(StrKey::AppMessageNotADrawing, &[("name", &name)]),
-                );
-                return;
-            }
+        let Some(FileKind::Drawing(format)) = FileKind::of(&name) else {
+            self.message = Some(
+                self.strings()
+                    .fmt(StrKey::AppMessageNotADrawing, &[("name", &name)]),
+            );
+            return;
         };
         match files::read(path) {
             Ok(bytes) => {
+                // The newest file wins: a picture still being decoded is
+                // let go.
+                self.picture = None;
+                self.picture_opening = None;
                 self.import = Some(panels::import::Sheet::new(
                     path, &name, format, bytes, purpose,
                 ));
@@ -978,6 +1089,139 @@ impl Shell {
                     StrKey::AppMessageImportFailed,
                     &[("name", &name), ("reason", &reason)],
                 ));
+            }
+        }
+    }
+
+    /// Opens the Add picture sheet on the picture at `path`, to add to the
+    /// project or, for `Purpose::New`, to make a new project round; or
+    /// says why not. The file is read here and decoded on a thread of
+    /// its own; the sheet opens when the picture lands
+    /// ([`Shell::poll_picture`]).
+    fn open_picture(&mut self, path: &Path, purpose: Purpose) {
+        let name = files::file_name(path);
+        let Some(FileKind::Picture(format)) = FileKind::of(&name) else {
+            self.message = Some(
+                self.strings()
+                    .fmt(StrKey::AppMessageNotAPicture, &[("name", &name)]),
+            );
+            return;
+        };
+        let bytes = match files::read(path) {
+            Ok(bytes) => bytes,
+            Err(reason) => {
+                self.message = Some(self.strings().fmt(
+                    StrKey::AppMessageImportFailed,
+                    &[("name", &name), ("reason", &reason)],
+                ));
+                return;
+            }
+        };
+        let (send, decoded) = mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("dreamcarve-picture".to_owned())
+            .spawn(move || {
+                // The window may have gone, or opened another file: then
+                // nobody is listening, and that is fine.
+                let _ = send.send(PictureImport::open(format, &name, &bytes, purpose));
+            });
+        match spawned {
+            Ok(_) => {
+                let reading = self.strings().fmt(
+                    StrKey::AppMessageReadingPicture,
+                    &[("name", &files::file_name(path))],
+                );
+                self.message = Some(reading.clone());
+                self.import = None;
+                self.picture = None;
+                self.picture_opening = Some(PictureOpening {
+                    path: path.to_path_buf(),
+                    decoded,
+                    reading,
+                });
+            }
+            Err(e) => self.message = Some(e.to_string()),
+        }
+    }
+
+    /// Opens the Add picture sheet once its picture is decoded; whether
+    /// one is still on its way.
+    fn poll_picture(&mut self) -> bool {
+        let Some(opening) = self.picture_opening.take() else {
+            return false;
+        };
+        match opening.decoded.try_recv() {
+            Ok(model) => {
+                if self.message.as_deref() == Some(opening.reading.as_str()) {
+                    self.message = None;
+                }
+                // A sheet opened meanwhile (the unsaved-changes one, the
+                // library) keeps the window: the picture is dropped.
+                if self.sheet.is_none() && self.library.is_none() && self.export.is_none() {
+                    self.import = None;
+                    self.picture = Some(panels::picture::Sheet::new(&opening.path, model));
+                }
+                false
+            }
+            Err(TryRecvError::Empty) => {
+                self.picture_opening = Some(opening);
+                true
+            }
+            // The thread ended without a picture, which decoding never
+            // does: nothing to open.
+            Err(TryRecvError::Disconnected) => false,
+        }
+    }
+
+    /// What the Add picture sheet asked for.
+    fn picture_request(&mut self, request: panels::picture::Request) {
+        let Some(sheet) = self.picture.take() else {
+            return;
+        };
+        match request {
+            panels::picture::Request::Close => {}
+            panels::picture::Request::Choose => {
+                let title = self.strings().get(StrKey::AppDialogPictureTitle).to_owned();
+                let purpose = sheet.model().purpose();
+                match self.dialogs.open_picture(&title) {
+                    Some(path) => {
+                        // The sheet stays until the new picture lands,
+                        // and if the file is no picture.
+                        self.open_picture(&path, purpose);
+                        self.picture = Some(sheet);
+                    }
+                    None => self.picture = Some(sheet),
+                }
+            }
+            panels::picture::Request::Confirm => {
+                let model = sheet.model();
+                let name = model.name().to_owned();
+                let result = match model.purpose() {
+                    Purpose::Import => self.app.import_picture(model).map(|_| {
+                        // The picture is on the Design step, selected.
+                        self.go_to(Step::Design);
+                        self.viewport.refit_if_fitted();
+                        self.strings()
+                            .fmt(StrKey::AppMessageImportedPicture, &[("name", &name)])
+                    }),
+                    Purpose::New => self.app.new_from_picture(model).map(|()| {
+                        self.import_warnings = 0;
+                        self.viewport.fit_on_next_frame();
+                        self.strings()
+                            .fmt(StrKey::AppMessageNewFromDrawing, &[("name", &name)])
+                    }),
+                };
+                match result {
+                    Ok(message) => self.message = Some(message),
+                    Err(e) => {
+                        let reason = e.to_string();
+                        self.message = Some(self.strings().fmt(
+                            StrKey::AppMessageImportFailed,
+                            &[("name", &name), ("reason", &reason)],
+                        ));
+                        self.picture = Some(sheet);
+                    }
+                }
             }
         }
     }
@@ -1059,22 +1303,28 @@ impl Shell {
                 .collect()
         });
         // A drop never opens a sheet above another: a project replaces the
-        // Import drawing sheet, and nothing is taken while the
-        // unsaved-changes sheet or the Tool Library is open.
+        // Import drawing sheet or the Add picture sheet, and nothing is
+        // taken while the unsaved-changes sheet or the Tool Library is
+        // open.
         let other_sheet = self.sheet.is_some() || self.library.is_some() || self.export.is_some();
         for path in dropped {
-            match files::kind(&path) {
-                _ if other_sheet => {}
-                Some(files::FileKind::Project) => {
+            if other_sheet {
+                continue;
+            }
+            match FileKind::of(&files::file_name(&path)) {
+                // A project replaces the open one: unsaved changes first.
+                Some(FileKind::Project) => {
                     self.import = None;
-                    self.request(ctx, Pending::OpenPath(path));
+                    self.picture = None;
+                    self.request(ctx, Pending::Dropped(path));
                 }
-                _ => self.open_import(&path, Purpose::Import),
+                _ => self.drop_file(&path),
             }
         }
         let sheet_open = self.sheet.is_some()
             || self.library.is_some()
             || self.import.is_some()
+            || self.picture.is_some()
             || self.export.is_some();
         focus::begin(ctx, sheet_open);
         if self.app.target_editing().is_some() {
@@ -1119,6 +1369,14 @@ impl Shell {
             }
             Action::NewFromDrawing => self.request(ctx, Pending::NewFromDrawing),
             Action::ImportSheet(request) => self.import_request(request),
+            Action::ImportPicture => {
+                let title = self.strings().get(StrKey::AppDialogPictureTitle).to_owned();
+                if let Some(path) = self.dialogs.open_picture(&title) {
+                    self.open_picture(&path, Purpose::Import);
+                }
+            }
+            Action::NewFromPicture => self.request(ctx, Pending::NewFromPicture),
+            Action::PictureSheet(request) => self.picture_request(request),
             Action::Undo => {
                 self.app.undo();
             }
@@ -1172,6 +1430,10 @@ impl Shell {
                 // shows.
                 self.go_to(Step::Design);
                 panels::tree::start_rename(ctx, self.app.project(), &id);
+            }
+            Action::RenamePicture(id) => {
+                self.go_to(Step::Design);
+                panels::tree::start_rename_picture(ctx, self.app.project(), &id);
             }
             Action::ShowProject => self.go_to(Step::Stock),
             Action::SetSection { name, open } => {
@@ -1229,7 +1491,13 @@ impl Shell {
             }
             Action::ZoomToSelection => {
                 let selected = self.app.selection().instances();
-                if let Some(bounds) = self.app.scene().bounds_of(selected) {
+                let pictures = self.app.selected_pictures();
+                let bounds = self
+                    .app
+                    .scene()
+                    .bounds_of(selected)
+                    .or_else(|| dc_app::pictures::bounds(self.app.project(), pictures));
+                if let Some(bounds) = bounds {
                     self.app.view_mut().camera.fit(bounds);
                     self.viewport.mark_fitted(false);
                     ctx.request_repaint();
@@ -1286,9 +1554,20 @@ impl Shell {
                 self.app.edit(Some(id));
                 self.go_to(Step::Operations);
             }
-            Action::AddOperation { kind, targets } => {
+            Action::AddOperation {
+                kind,
+                targets,
+                pictures,
+            } => {
                 let app = &self.app;
-                match dc_app::operations::add(app.project(), app.strings(), kind, &targets) {
+                let added = dc_app::operations::add(
+                    app.project(),
+                    app.strings(),
+                    kind,
+                    &targets,
+                    &pictures,
+                );
+                match added {
                     Some(command) => {
                         if let Err(e) = self.app.run(command) {
                             self.message = Some(e.to_string());
@@ -1521,7 +1800,7 @@ impl Shell {
 /// the drawing, the placeholder tool and the Profile, every feed and depth
 /// unset (the quick start fills them in; nothing is invented here).
 fn coaster() -> Result<dc_project::Project, String> {
-    let drawing = files::read_drawing(files::FileKind::Svg, COASTER_SVG)?;
+    let drawing = files::read_drawing(dc_app::import::DrawingFormat::Svg, COASTER_SVG)?;
     let post = dc_project::latest_definition("grblhal")
         .map_err(|e| e.to_string())?
         .default_ref();
@@ -1568,8 +1847,15 @@ fn modifier_count(modifiers: Modifiers) -> usize {
 pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
     let project = app.project();
     let selected = app.selection().instances();
+    // Pictures are selected on their own (capability 57): then the
+    // selection's commands are the Pictures rows'.
+    let pictures = app.selected_pictures();
     let on_selection = |item: dc_app::tree::MenuItem| {
-        dc_app::tree::menu_command(project, item, selected).map(Action::run)
+        if pictures.is_empty() {
+            dc_app::tree::menu_command(project, item, selected).map(Action::run)
+        } else {
+            dc_app::tree::bitmap_menu_command(project, item, pictures).map(Action::run)
+        }
     };
     // The Arrange group's own action on a selection; with every shape
     // locked it runs to say so in the status bar (acceptance 66).
@@ -1605,14 +1891,23 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         }
         Shortcut::Hide => on_selection(dc_app::tree::MenuItem::Hide),
         Shortcut::Show => on_selection(dc_app::tree::MenuItem::Show),
+        Shortcut::Lock if !pictures.is_empty() => {
+            dc_app::tree::toggle_bitmap_locked(project, pictures).map(Action::run)
+        }
         Shortcut::Lock => dc_app::tree::toggle_locked(project, selected).map(Action::run),
-        Shortcut::Rename => selected.first().cloned().map(Action::Rename),
+        Shortcut::Rename => selected
+            .first()
+            .cloned()
+            .map(Action::Rename)
+            .or_else(|| pictures.first().cloned().map(Action::RenamePicture)),
         Shortcut::RotateClockwise => arrange(dc_app::arrange::Action::RotateClockwise),
         Shortcut::RotateAnticlockwise => arrange(dc_app::arrange::Action::RotateAnticlockwise),
         Shortcut::FlipHorizontal => arrange(dc_app::arrange::Action::FlipHorizontal),
         Shortcut::FlipVertical => arrange(dc_app::arrange::Action::FlipVertical),
         Shortcut::FitView => Some(Action::FitView),
-        Shortcut::ZoomToSelection => (!selected.is_empty()).then_some(Action::ZoomToSelection),
+        Shortcut::ZoomToSelection => {
+            (!selected.is_empty() || !pictures.is_empty()).then_some(Action::ZoomToSelection)
+        }
         Shortcut::GoToDesign => Some(Action::GoTo(Step::Design)),
         Shortcut::GoToStock => Some(Action::GoTo(Step::Stock)),
         Shortcut::GoToTools => Some(Action::GoTo(Step::Tools)),
@@ -1690,6 +1985,11 @@ impl eframe::App for Shell {
         // What the worker finished since the last frame, before anything
         // reads the results.
         self.worker.tick(&mut self.app, Instant::now());
+        // The picture a sheet waits for, when it has landed; look again
+        // soon while it has not.
+        if self.poll_picture() {
+            ctx.request_repaint_after(worker::POLL);
+        }
         self.follow_project(&ctx);
         self.disarm_hidden_picks(&ctx);
         let mut actions = Vec::new();
@@ -1801,6 +2101,14 @@ impl eframe::App for Shell {
                 &ctx,
                 self.app.strings(),
                 self.app.project(),
+                sheet,
+                &mut actions,
+            );
+        } else if let Some(sheet) = self.picture.as_mut() {
+            panels::picture::show(
+                &ctx,
+                self.app.strings(),
+                self.app.project().display_units,
                 sheet,
                 &mut actions,
             );

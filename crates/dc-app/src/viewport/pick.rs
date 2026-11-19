@@ -36,7 +36,9 @@
 //!
 //! Pictures (slice 15, #544; DreamCarve's own, with no upstream
 //! counterpart): a click that lands on none of the above and inside a
-//! bitmap's footprint picks that picture ([`picture_under`]).
+//! bitmap's footprint picks that picture ([`Hit::Bitmap`], from
+//! [`picture_at`]); a marquee that touches no shape takes the pictures
+//! it touches ([`pictures_touching`]).
 //!
 //! Re-derived for Y-up: nothing here depends on direction. Distances and
 //! containment are taken in project millimetres, with the tolerance
@@ -76,6 +78,10 @@ pub enum Hit {
     /// A shape on the male inlay board (slice 14, #543): it selects its
     /// Inlay.
     MaleBoardShape(OperationId),
+    /// A picture's footprint, where nothing above takes the click
+    /// (slice 15, #544; capability 56): a picture is under the shapes,
+    /// the tabs, the toolpaths and the male board.
+    Bitmap(BitmapId),
     /// Empty stock or empty stage.
     Nothing,
 }
@@ -317,7 +323,8 @@ pub fn male_board_shape(
 /// What a click at pane point `at` picks among the shapes and tabs: a
 /// placed tab within the tolerance ([`tabs::tab_at`]), else the
 /// `cycle`-th of [`candidates`], wrapping; with none, the male board's
-/// shape there ([`male_board_shape`]); else [`Hit::Nothing`]. No
+/// shape there ([`male_board_shape`]); with none, the picture whose
+/// footprint holds the point ([`picture_at`]); else [`Hit::Nothing`]. No
 /// toolpath: [`pick_with_cuts`] picks those too.
 #[must_use]
 pub fn pick(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64, cycle: usize) -> Hit {
@@ -341,10 +348,20 @@ pub fn pick_with_cuts(
     }
     let found = hits(scene, camera, at, tolerance_px, cuts);
     match found.len() {
-        0 => male_board_shape(scene, camera, at, tolerance_px)
-            .map_or(Hit::Nothing, Hit::MaleBoardShape),
+        0 => under_everything(scene, camera, at, tolerance_px),
         n => found.into_iter().nth(cycle % n).unwrap_or(Hit::Nothing),
     }
+}
+
+/// What a click picks where no tab, shape or cut takes it: the male
+/// board's shape there, else the picture whose footprint holds the point,
+/// else nothing. A picture is drawn under all of them (capability 56:
+/// "under the shapes"), so it is picked last.
+fn under_everything(scene: &Scene, camera: &Camera, at: Pos, tolerance_px: f64) -> Hit {
+    male_board_shape(scene, camera, at, tolerance_px).map_or_else(
+        || picture_at(scene, camera, at).map_or(Hit::Nothing, Hit::Bitmap),
+        Hit::MaleBoardShape,
+    )
 }
 
 /// The picture whose footprint holds pane point `at` (functional spec,
@@ -365,23 +382,6 @@ pub fn picture_at(scene: &Scene, camera: &Camera, at: Pos) -> Option<BitmapId> {
             p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y
         })
         .map(|bitmap| bitmap.id.clone())
-}
-
-/// The picture a click at pane point `at` selects, given what [`pick`] or
-/// [`pick_with_cuts`] found there: [`picture_at`] when `hit` is
-/// [`Hit::Nothing`], and none otherwise. A picture is drawn under the
-/// shapes, the tabs, the toolpaths and the male board, so each of those
-/// takes the click first (capability 56: "under the shapes").
-///
-/// This stands beside [`Hit`], which the window matches exhaustively
-/// while it is being rebuilt; its place is a `Hit::Bitmap` that
-/// [`pick_with_cuts`] returns last.
-#[must_use]
-pub fn picture_under(scene: &Scene, camera: &Camera, at: Pos, hit: &Hit) -> Option<BitmapId> {
-    match hit {
-        Hit::Nothing => picture_at(scene, camera, at),
-        Hit::Instance(_) | Hit::Tab(_) | Hit::Toolpath(_) | Hit::MaleBoardShape(_) => None,
-    }
 }
 
 /// Whether segment `a`–`b` meets `rect` (Liang–Barsky clipping).
@@ -458,6 +458,26 @@ pub fn touching(scene: &Scene, rect: Rect) -> Vec<InstanceId> {
         .collect()
 }
 
+/// The pictures a marquee over `rect` (mm) touches: every visible picture
+/// whose footprint overlaps the rectangle, in file order. The Viewport
+/// selects them only when the marquee touches no shape ([`touching`]),
+/// since pictures are selected on their own (capability 57).
+#[must_use]
+pub fn pictures_touching(scene: &Scene, rect: Rect) -> Vec<BitmapId> {
+    scene
+        .bitmaps()
+        .iter()
+        .filter(|bitmap| {
+            let b = bitmap.footprint;
+            b.max.x >= rect.min.x
+                && b.min.x <= rect.max.x
+                && b.max.y >= rect.min.y
+                && b.min.y <= rect.max.y
+        })
+        .map(|bitmap| bitmap.id.clone())
+        .collect()
+}
+
 /// Repeated clicks in one place (capability 75: "a second click cycles"):
 /// a click within a few pixels of the last one, over the same candidates,
 /// takes the next candidate down; anywhere else starts again at the first.
@@ -495,8 +515,7 @@ impl ClickCycle {
             _ => 0,
         };
         let hit = match found.len() {
-            0 => male_board_shape(scene, camera, at, tolerance_px)
-                .map_or(Hit::Nothing, Hit::MaleBoardShape),
+            0 => under_everything(scene, camera, at, tolerance_px),
             n => found.get(index % n).cloned().unwrap_or(Hit::Nothing),
         };
         self.last = Some((at, found, index));

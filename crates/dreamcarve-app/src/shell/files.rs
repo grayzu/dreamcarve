@@ -4,13 +4,16 @@
 //! The shell's files (`docs/specs/phase-4/design.md`, "Architecture → The
 //! shell", "Files"; functional spec, capability 51): reading and writing a
 //! `.dcv` (the write staged, as the CLI's), the Recent list, `gui.toml`
-//! read into `dc-app`'s preferences and written back, and the kind of a
-//! dropped or chosen file. A drawing's bytes go to the Import drawing
-//! sheet (`panels::import`), which parses them with `dc-import`.
+//! read into `dc-app`'s preferences and written back. What a dropped or
+//! chosen file is, by its name, is `dc_app::import::FileKind`. A drawing's
+//! bytes go to the Import drawing sheet (`panels::import`), which parses
+//! them with `dc-import`; a picture's to the Add picture sheet
+//! (`panels::picture`).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use dc_app::import::DrawingFormat;
 use dc_app::{Prefs, Theme};
 use dc_import::{DxfImportOptions, SvgImportOptions};
 use dc_job::Drawing;
@@ -76,49 +79,21 @@ pub fn stem(path: &Path) -> String {
     )
 }
 
-/// What a dropped or chosen file is, by its extension.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FileKind {
-    /// A DreamCarve project.
-    Project,
-    /// An SVG drawing.
-    Svg,
-    /// A DXF drawing.
-    Dxf,
-    /// A PNG or JPEG picture (capability 56), which waits for phase 3.5.
-    Picture,
-}
-
-/// The kind of file at `path`; `None` for anything else.
-#[must_use]
-pub fn kind(path: &Path) -> Option<FileKind> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    match extension.as_str() {
-        "dcv" => Some(FileKind::Project),
-        "svg" => Some(FileKind::Svg),
-        "dxf" => Some(FileKind::Dxf),
-        "png" | "jpg" | "jpeg" => Some(FileKind::Picture),
-        _ => None,
-    }
-}
-
-/// The drawing in `bytes`, read as `kind` with the importer's default
+/// The drawing in `bytes`, read as `format` with the importer's default
 /// options, for the bundled coaster example; a user's drawing goes
 /// through the Import drawing sheet.
 ///
 /// # Errors
 ///
-/// The importer's message, for the status bar; also when `kind` is not a
-/// drawing.
-pub fn read_drawing(kind: FileKind, bytes: &[u8]) -> Result<Drawing, String> {
-    match kind {
-        FileKind::Svg => dc_import::import_svg(bytes, &SvgImportOptions::default())
+/// The importer's message, for the status bar.
+pub fn read_drawing(format: DrawingFormat, bytes: &[u8]) -> Result<Drawing, String> {
+    match format {
+        DrawingFormat::Svg => dc_import::import_svg(bytes, &SvgImportOptions::default())
             .map(|(import, _warnings)| Drawing::Svg(import))
             .map_err(|e| e.to_string()),
-        FileKind::Dxf => dc_import::import_dxf(bytes, &DxfImportOptions::default())
+        DrawingFormat::Dxf => dc_import::import_dxf(bytes, &DxfImportOptions::default())
             .map(|(import, _warnings)| Drawing::Dxf(import))
             .map_err(|e| e.to_string()),
-        FileKind::Project | FileKind::Picture => Err(String::new()),
     }
 }
 
@@ -283,12 +258,27 @@ mod tests {
 
     #[test]
     fn kinds_follow_the_extension_in_any_case() {
-        assert_eq!(kind(Path::new("a/b.DCV")), Some(FileKind::Project));
-        assert_eq!(kind(Path::new("plaque.svg")), Some(FileKind::Svg));
-        assert_eq!(kind(Path::new("plaque.Dxf")), Some(FileKind::Dxf));
-        assert_eq!(kind(Path::new("photo.png")), Some(FileKind::Picture));
-        assert_eq!(kind(Path::new("photo.JPEG")), Some(FileKind::Picture));
-        assert_eq!(kind(Path::new("notes.txt")), None);
-        assert_eq!(kind(Path::new("README")), None);
+        use dc_app::import::FileKind;
+        use dc_import::ImageFormat;
+
+        // What the window asks of a dropped or chosen file: its name, as
+        // `file_name` gives it, read by `dc_app::import::FileKind`.
+        let kind = |path: &str| FileKind::of(&file_name(Path::new(path)));
+        assert_eq!(kind("a/b.DCV"), Some(FileKind::Project));
+        assert_eq!(
+            kind("plaque.svg"),
+            Some(FileKind::Drawing(DrawingFormat::Svg))
+        );
+        assert_eq!(
+            kind("plaque.Dxf"),
+            Some(FileKind::Drawing(DrawingFormat::Dxf))
+        );
+        assert_eq!(kind("photo.png"), Some(FileKind::Picture(ImageFormat::Png)));
+        assert_eq!(
+            kind("photo.JPEG"),
+            Some(FileKind::Picture(ImageFormat::Jpeg))
+        );
+        assert_eq!(kind("notes.txt"), None);
+        assert_eq!(kind("README"), None);
     }
 }

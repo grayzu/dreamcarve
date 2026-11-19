@@ -8,7 +8,8 @@
 //! group; the stock and the output settings; the tools and the tool
 //! editor; the operations and the operation editor; the Export step's
 //! readiness card), the start screen, the Warnings drawer, and the
-//! sheets: unsaved changes, the Tool Library, Import drawing and export.
+//! sheets: unsaved changes, the Tool Library, Import drawing, Add picture
+//! and export.
 
 pub(crate) mod arrange;
 pub(crate) mod clearing;
@@ -19,6 +20,7 @@ pub(crate) mod export_step;
 pub(crate) mod import;
 pub(crate) mod library;
 pub(crate) mod operations;
+pub(crate) mod picture;
 pub(crate) mod project;
 pub(crate) mod properties;
 pub(crate) mod result;

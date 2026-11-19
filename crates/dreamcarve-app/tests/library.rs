@@ -463,3 +463,383 @@ fn no_choice_when_nothing_changed() {
     assert_eq!(library_text(&config), written);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+// Slice D6, area C (#685; capabilities 64, 64a and 64b): the tapered ball
+// nose in the Tool Library sheet.
+
+/// A tapered ball nose named `name` with the sample library's first end
+/// mill's rates: a 6.35 mm cutting diameter and the cutter values given.
+fn tapered(name: &str, tip_mm: Option<f64>, taper_deg: Option<f64>) -> dc_project::Tool {
+    let base = sample_library()
+        .tools
+        .into_iter()
+        .find(|t| matches!(t.tool.cutter, dc_project::ToolKind::EndMill))
+        .expect("the sample has an end mill")
+        .tool;
+    dc_project::Tool {
+        name: name.into(),
+        vendor: Some("IDC Woodcraft".into()),
+        product_id: None,
+        number: None,
+        cutter: dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: tip_mm,
+            taper_angle_deg: taper_deg,
+            flute_length_mm: taper_deg.map(|_| 19.05),
+        },
+        diameter_mm: 6.35,
+        flutes: 2,
+        feed_mm_min: Some(1524.0),
+        plunge_mm_min: Some(508.0),
+        rpm: Some(18000),
+        ..base
+    }
+}
+
+/// The sample library with two tapered ball noses under *IDC Woodcraft*:
+/// the bench's 0.762 mm tip one with every value set, and one with only
+/// its cutting diameter, as a catalogue page gives it, and no feed.
+fn tapered_library() -> Library {
+    let mut library = sample_library();
+    dc_library::add(
+        &mut library,
+        tapered("Ultra-High Detail", Some(0.762), Some(6.7)),
+        None,
+    )
+    .unwrap();
+    let mut bare = tapered("Unmeasured taper", None, None);
+    bare.feed_mm_min = None;
+    dc_library::add(&mut library, bare, None).unwrap();
+    library
+}
+
+/// What assistive tools read of library row `name`'s cells.
+fn row_cells(h: &Harness<'_, Shell>, name: &str) -> String {
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, name)
+        .value()
+        .unwrap_or_default()
+}
+
+/// Capability 64 (#685): the library's table has the model's ten columns
+/// (`Column::ALL`), a **Tip** column among them, in order. The Ø column
+/// is the cutting diameter for every type (6.35 for the tapered ball
+/// nose, never its tip), its tip has the column of its own, and the Angle
+/// column says which angle it holds: a tapered ball nose's per side
+/// (`6.7°/side`), a V-bit's included (`90°`). A value a tool still needs
+/// is the unset mark in its cell (*not set* to assistive tools), never a
+/// value; a cell a type has no value for is empty. In inches the lengths
+/// convert and the angle does not.
+#[test]
+fn table_has_a_tip_column_and_labels_each_angle() {
+    let dir = scratch("library-tip-column");
+    let (config, _) = config_with(&dir, &tapered_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+
+    let mut headings: Vec<(f32, String)> = h
+        .get_by_role(Role::Dialog)
+        .query_all_by_role(Role::ColumnHeader)
+        .map(|n| {
+            (
+                n.rect().min.x,
+                n.accesskit_node().label().unwrap_or_default(),
+            )
+        })
+        .collect();
+    headings.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let headings: Vec<&str> = headings.iter().map(|(_, label)| label.as_str()).collect();
+    assert_eq!(
+        headings,
+        [
+            "Name", "Type", "Ø", "Tip", "Angle", "Flutes", "Feed", "Plunge", "RPM", "Product"
+        ]
+    );
+    let strings = dc_app::Strings::english();
+    let model: Vec<&str> = dc_app::library::Column::ALL
+        .iter()
+        .map(|c| strings.get(c.heading()))
+        .collect();
+    assert_eq!(headings, model, "the model's columns");
+
+    assert_eq!(
+        row_cells(&h, "Ultra-High Detail"),
+        "Type Tapered ball nose, Ø 6.35, Tip 0.762, Angle 6.7°/side, Flutes 2, Feed 1524, \
+         Plunge 508, RPM 18000"
+    );
+    assert_eq!(
+        row_cells(&h, "Unmeasured taper"),
+        "Type Tapered ball nose, Ø 6.35, Tip not set, Angle not set, Flutes 2, Feed not set, \
+         Plunge 508, RPM 18000",
+        "what it still needs is marked, and the cutting diameter is always there"
+    );
+    let v_bit = row_cells(&h, "12 mm 90-Degree Chamfer Mill");
+    assert!(
+        v_bit.starts_with("Type V-bit, Ø 12, Angle 90°, Flutes "),
+        "an included angle, and no tip: {v_bit}"
+    );
+    let drill = row_cells(&h, "5 mm Drill");
+    assert!(
+        drill.starts_with("Type Drill, Ø 5, Flutes "),
+        "neither a tip nor an angle: {drill}"
+    );
+
+    // The library's own units convert the lengths, never the angle.
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::RadioButton, "in")
+        .click();
+    h.run();
+    assert_eq!(
+        row_cells(&h, "Ultra-High Detail"),
+        "Type Tapered ball nose, Ø 0.25, Tip 0.03, Angle 6.7°/side, Flutes 2, Feed 60, \
+         Plunge 20, RPM 18000"
+    );
+
+    // Selecting is editing (64a): the pane shows the tapered ball nose's
+    // own fields, each required while unset.
+    select_row(&mut h, "Unmeasured taper");
+    for label in ["Tip diameter", "Taper per side", "Flute length", "Feed"] {
+        assert_eq!(
+            h.get_by_role(Role::Dialog)
+                .get_by_role_and_label(Role::TextInput, label)
+                .accesskit_node()
+                .placeholder(),
+            Some("Required"),
+            "{label}"
+        );
+    }
+    type_into(&mut h, "Tip diameter", "0.03");
+    assert_eq!(field_value(&h, "Tip diameter"), "0.03");
+    assert!(
+        row_cells(&h, "Unmeasured taper").contains("Tip 0.03, Angle not set"),
+        "the typed tip, in the library's units: {}",
+        row_cells(&h, "Unmeasured taper")
+    );
+    let written = dreamcarve_shell::library::read(&Paths::in_dir(config.clone()))
+        .unwrap()
+        .unwrap();
+    let tool = &written
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "Unmeasured taper")
+        .unwrap()
+        .tool;
+    let dc_project::ToolKind::TaperedBallNose {
+        tip_diameter_mm, ..
+    } = tool.cutter
+    else {
+        panic!("still a tapered ball nose");
+    };
+    assert!(
+        (tip_diameter_mm.unwrap() - 0.762).abs() < 1e-9,
+        "stored in millimetres: {tip_diameter_mm:?}"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The library rows the open sheet lists, top to bottom.
+fn listed(h: &Harness<'_, Shell>) -> Vec<String> {
+    let mut rows: Vec<(f32, String)> = h
+        .get_by_role(Role::Dialog)
+        .query_all_by_role(Role::ListItem)
+        .map(|n| {
+            (
+                n.rect().min.y,
+                n.accesskit_node().label().unwrap_or_default(),
+            )
+        })
+        .collect();
+    rows.sort_by(|a, b| a.0.total_cmp(&b.0));
+    rows.into_iter().map(|(_, name)| name).collect()
+}
+
+/// Capability 64 (#685): the type filter has a *Tapered ball nose* entry,
+/// the last, and choosing it lists the tapered ball noses alone; the
+/// search then reads a tip as it reads a diameter.
+#[test]
+fn type_filter_lists_tapered_ball_noses() {
+    let dir = scratch("library-tapered-filter");
+    let (config, _) = config_with(&dir, &tapered_library());
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    // A row of another type, so the pane's own Type dropdown does not
+    // read *Tapered ball nose*.
+    select_row(&mut h, "5 mm Drill");
+    assert!(listed(&h).len() > 2, "every type to begin with");
+
+    // The filter is the upper of the sheet's two Type dropdowns.
+    let filter = |h: &Harness<'_, Shell>| {
+        h.get_by_role(Role::Dialog)
+            .query_all_by_role_and_label(Role::ComboBox, "Type")
+            .min_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y))
+            .expect("the type filter")
+            .value()
+            .unwrap_or_default()
+    };
+    assert_eq!(filter(&h), "All types");
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role_and_label(Role::ComboBox, "Type")
+        .min_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y))
+        .expect("the type filter")
+        .click();
+    h.run();
+    let strings = dc_app::Strings::english();
+    for kind in dc_app::library::KindFilter::ALL {
+        let label = strings.get(kind.label());
+        assert!(
+            h.query_all_by_label(label).next().is_some(),
+            "the filter offers {label}"
+        );
+    }
+    h.get_by_label("Tapered ball nose").click();
+    h.run();
+    assert_eq!(filter(&h), "Tapered ball nose");
+    assert_eq!(listed(&h), ["Ultra-High Detail", "Unmeasured taper"]);
+
+    // The search field is the one whose hint says what it searches.
+    let search = |h: &Harness<'_, Shell>| {
+        h.get_by_role(Role::Dialog)
+            .query_all_by_role(Role::TextInput)
+            .find(|n| {
+                n.accesskit_node().placeholder() == Some("Search name, vendor, product, diameter")
+            })
+            .expect("the search field")
+            .rect()
+            .center()
+    };
+    let at = search(&h);
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role(Role::TextInput)
+        .find(|n| n.rect().contains(at))
+        .expect("the search field")
+        .focus();
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .query_all_by_role(Role::TextInput)
+        .find(|n| n.rect().contains(at))
+        .expect("the search field")
+        .type_text("0.762");
+    h.run();
+    assert_eq!(
+        listed(&h),
+        ["Ultra-High Detail"],
+        "the search reads the tip"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A Fusion `tapered mill` in inches named `description`, with the
+/// geometry given: the bench's is a 0.03 in tip (`DC`, `RE` its radius),
+/// 6.7° per side (`TA`), 0.75 in of flute (`LCF`) and a 0.25 in shaft
+/// (`SFDM`).
+fn fusion_tapered_mill(description: &str, geometry: &str) -> String {
+    format!(
+        r#"{{ "type": "tapered mill", "unit": "inches", "description": "{description}",
+             "guid": "{description}", "geometry": {{ {geometry}, "NOF": 2, "OAL": 2.5 }},
+             "start-values": {{ "presets": [ {{ "name": "Hardwood",
+               "guid": "{description}-preset", "n": 18000, "v_f": 60, "v_f_plunge": 20 }} ] }} }}"#
+    )
+}
+
+/// Capability 64b (#685): the import review lists a tapered ball nose
+/// that comes in with values unset and names them by the editor's labels
+/// after its status, *Still to set: Taper per side, Flute length*; a
+/// Fusion tapered mill with no shaft diameter, or with a flat tip, is
+/// skipped with the reason `tools import` prints, never imported with a
+/// placeholder. The statuses and reasons are the model's
+/// (`review_status`, `review_unset`, `skipped`). After *Import* the table
+/// marks what the tool still needs.
+#[test]
+fn import_review_names_what_a_tapered_ball_nose_still_needs() {
+    let dir = scratch("library-tapered-review");
+    let (config, written) = config_with(&dir, &Library::default());
+    let file = dir.join("tapered.tools.json");
+    let items = [
+        fusion_tapered_mill(
+            "Whole",
+            r#""DC": 0.03, "RE": 0.015, "TA": 6.7, "LCF": 0.75, "SFDM": 0.25"#,
+        ),
+        fusion_tapered_mill(
+            "No taper or flutes",
+            r#""DC": 0.03, "RE": 0.015, "SFDM": 0.25"#,
+        ),
+        fusion_tapered_mill(
+            "No shaft",
+            r#""DC": 0.03, "RE": 0.015, "TA": 6.7, "LCF": 0.75"#,
+        ),
+        fusion_tapered_mill(
+            "Flat tip",
+            r#""DC": 0.03, "TA": 6.7, "LCF": 0.75, "SFDM": 0.25"#,
+        ),
+    ];
+    let bytes = format!(r#"{{ "version": 36, "data": [ {} ] }}"#, items.join(", "));
+    std::fs::write(&file, &bytes).unwrap();
+    let strings = dc_app::Strings::english();
+    let (_, review) = dc_app::library::review(&Library::default(), bytes.as_bytes()).unwrap();
+
+    let dialogs = QueuedDialogs::default();
+    let mut h = open_sheet(&config, &dialogs);
+    dialogs.answer(&file);
+    h.get_by_role(Role::Dialog)
+        .query_all_by_label("Import…")
+        .next()
+        .unwrap()
+        .click();
+    h.run();
+    assert!(shows(&h, "2 New"), "the two that can be read");
+    assert!(shows(&h, "2 Skipped"), "the two that cannot");
+    assert!(
+        shows(&h, "Whole · New"),
+        "every value there: nothing to name"
+    );
+    assert!(
+        shows(
+            &h,
+            "No taper or flutes · New · Still to set: Taper per side, Flute length"
+        ),
+        "the values it comes in without, by the editor's labels"
+    );
+    let reasons = dc_app::library::skipped(&review);
+    assert_eq!(reasons.len(), 2);
+    for (name, reason) in reasons {
+        assert!(
+            shows(&h, &format!("{name} · Skipped: {reason}")),
+            "{name} is skipped with `tools import`'s reason: {reason}"
+        );
+    }
+    assert!(
+        shows(
+            &h,
+            "No shaft · Skipped: a tapered ball nose needs its shaft diameter (`SFDM`), the \
+             cutting diameter"
+        ),
+        "never imported with a placeholder diameter"
+    );
+    // Each row's status is the model's.
+    for item in &review.items {
+        let status = dc_app::library::review_status(&strings, item, false);
+        let row = match dc_app::library::review_unset(&strings, item) {
+            Some(unset) => format!("{} · {status} · {unset}", item.name),
+            None => format!("{} · {status}", item.name),
+        };
+        assert!(shows(&h, &row), "{row}");
+    }
+    assert_eq!(library_text(&config), written, "nothing written yet");
+
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Import 2 tools")
+        .click();
+    h.run();
+    assert_eq!(listed(&h), ["Whole", "No taper or flutes"]);
+    assert!(
+        row_cells(&h, "Whole")
+            .starts_with("Type Tapered ball nose, Ø 6.35, Tip 0.762, Angle 6.7°/side"),
+        "the shaft diameter is the cutting diameter: {}",
+        row_cells(&h, "Whole")
+    );
+    assert!(
+        row_cells(&h, "No taper or flutes").contains("Tip 0.762, Angle not set"),
+        "{}",
+        row_cells(&h, "No taper or flutes")
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

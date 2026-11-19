@@ -17,7 +17,7 @@
 
 use dc_app::operations::{self, Kind, ListRow, Status};
 use dc_app::{Command, StrKey, Strings};
-use dc_project::{InstanceId, OperationId, Project};
+use dc_project::{BitmapId, InstanceId, OperationId, Project};
 use eframe::egui::{self, Id, Rect, Sense, Stroke, TextStyle, Ui};
 
 use crate::panels;
@@ -100,7 +100,10 @@ fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ui,
             strings,
             state.app.project(),
-            state.app.selection().instances(),
+            (
+                state.app.selection().instances(),
+                state.app.selected_pictures(),
+            ),
             out,
         );
     });
@@ -132,19 +135,21 @@ fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     }
 }
 
-/// The Add menu's items for the shapes `selected` (capability 65): the
-/// kinds they can take, a divider, then the rest each with its reason, or
-/// with nothing selected the sentence that says to select shapes. Also the
-/// Design Tree's *Add operation ▸*.
+/// The Add menu's items for the shapes `selected` and the pictures
+/// `pictures` selected (capability 65): the kinds they can take, a
+/// divider, then the rest each with its reason, or with no shape selected
+/// the sentence that says to select shapes. A Photo V-Carve carves the
+/// selected picture, or the project's only one. Also the Design Tree's
+/// *Add operation ▸*.
 pub(crate) fn add_menu(
     ui: &mut Ui,
     strings: &Strings,
     project: &Project,
-    selected: &[InstanceId],
+    (selected, pictures): (&[InstanceId], &[BitmapId]),
     out: &mut Vec<Action>,
 ) {
     let palette = Palette::current(ui);
-    let menu = operations::add_menu(project, strings, selected);
+    let menu = operations::add_menu(project, strings, selected, pictures);
     ui.set_min_width(MENU_PX);
     ui.set_max_width(MENU_PX);
     if let Some(prompt) = &menu.prompt {
@@ -162,6 +167,7 @@ pub(crate) fn add_menu(
             out.push(Action::AddOperation {
                 kind: *kind,
                 targets: selected.to_vec(),
+                pictures: pictures.to_vec(),
             });
             ui.close();
         }

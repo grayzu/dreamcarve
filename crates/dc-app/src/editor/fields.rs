@@ -308,6 +308,11 @@ pub enum FieldKind {
     Toggle(Template),
     /// A project tool, by id (a popover).
     ToolPicker,
+    /// One of the project's pictures, by id (a Photo V-Carve's `image`;
+    /// capability 67): a dropdown of [`super::offered_pictures`], the one
+    /// carved shown as chosen ([`super::picture_text`]), choosing one
+    /// written by [`super::set_picture`].
+    PicturePicker,
     /// Instances, by id: the Targets group.
     InstanceList,
     /// A Pocket's `rest_of`: none, or one of the earlier enabled Pockets
@@ -407,19 +412,10 @@ const IMAGE_KEY: &str = "image";
 impl Row {
     /// Whether it is a Photo V-Carve's Picture row (capability 67: "its
     /// Setup row is a **Picture** dropdown of the project's pictures, not
-    /// target editing"; slice 15, #544): a dropdown whose options are the
-    /// project's pictures ([`super::offered_pictures`]), the one carved
-    /// shown as chosen ([`super::picture_text`]), choosing one written by
-    /// [`super::set_picture`].
-    ///
-    /// Its [`Row::kind`] is a [`FieldKind::Choice`] of no fixed options,
-    /// since the table cannot list a project's pictures. That stands in
-    /// for a kind of its own, `FieldKind::PicturePicker`, which waits for
-    /// the window: its renderers match [`FieldKind`] exhaustively, and
-    /// the window is being rebuilt while this lands.
+    /// target editing"; slice 15, #544): a [`FieldKind::PicturePicker`].
     #[must_use]
-    pub fn picks_picture(&self) -> bool {
-        self.key == IMAGE_KEY && matches!(self.kind, FieldKind::Choice([]))
+    pub const fn picks_picture(&self) -> bool {
+        matches!(self.kind, FieldKind::PicturePicker)
     }
 
     /// What its value is measured in.
@@ -1588,7 +1584,7 @@ const PHOTO_V_CARVE: &[Row] = &[
     row(
         Group::Setup,
         IMAGE_KEY,
-        FieldKind::Choice(&[]),
+        FieldKind::PicturePicker,
         StrKey::EditorFieldPicture,
         StrKey::EditorFieldPictureHelp,
     ),

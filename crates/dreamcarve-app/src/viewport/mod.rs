@@ -40,6 +40,12 @@
 //! `MoveTab` on release; while the Tab tool is armed (its button, T) a
 //! click on an outline adds a tab there, until Escape; Delete removes the
 //! selected tabs ([`tab_tool`]).
+//! Pictures ([`pictures`]; capabilities 56 to 58): each visible bitmap
+//! draws as a textured quad under the shapes; a click inside one where
+//! nothing above takes it selects it, a marquee that touches no shape
+//! takes the pictures it touches, a drag moves the selected pictures, the
+//! one selected picture's corner handles resize it with its proportions
+//! kept, and the arrow keys nudge.
 //!
 //! The Viewport is a card. *Fit* and the *Tab tool* float over its top
 //! left corner in one `surface.raised` pill ([`tools_pill`];
@@ -50,6 +56,7 @@
 mod layers;
 mod legend;
 mod lod;
+mod pictures;
 pub(crate) mod renderer;
 pub(crate) mod tab_tool;
 
@@ -66,7 +73,7 @@ use dc_app::viewport::handles::{self, Grab, Handles};
 use dc_app::viewport::pick::{self, ClickCycle, Hit, PICK_TOLERANCE_PX};
 use dc_app::{App, ClickMode, Command, Selection, StrKey};
 use dc_geometry::{Point, Rect as MmRect, Transform};
-use dc_project::{InstanceId, OperationId, TabId};
+use dc_project::{BitmapId, InstanceId, OperationId, TabId};
 use eframe::egui::{
     self, Key, Modifiers, MouseWheelSource, MouseWheelUnit, PointerButton, Pos2, Rect, Stroke,
     TextStyle, Ui,
@@ -159,6 +166,11 @@ enum Target {
     /// A placed tab: a click on release, a drag along its outline once
     /// moved.
     Tab(TabId),
+    /// A picture: a click on release, a move once dragged.
+    Picture(BitmapId),
+    /// A corner handle of the one selected picture, by its place among
+    /// its corners: a resize once dragged.
+    PictureCorner(usize),
 }
 
 /// What the pointer is doing on the pane.
@@ -183,6 +195,13 @@ enum Drag {
     Refused,
     /// Dragging placed tab `id` along its outline, previewed until release.
     Tab { id: TabId },
+    /// Moving or resizing the pictures `ids` by `grip` from `start`,
+    /// previewed until release.
+    Picture {
+        start: Pos2,
+        ids: Vec<BitmapId>,
+        grip: pictures::Grip,
+    },
 }
 
 /// The selection drawn where the drag in progress will put it.
@@ -229,6 +248,12 @@ pub(crate) struct ViewportState {
     hover: Option<InstanceId>,
     /// The placed tab under the pointer.
     hover_tab: Option<TabId>,
+    /// The picture under the pointer, where nothing above it is.
+    hover_picture: Option<BitmapId>,
+    /// The pictures being dragged and where the release will put them.
+    picture_preview: Option<pictures::Preview>,
+    /// The pictures' mip chains, built once per stored picture.
+    picture_mips: pictures::Mips,
     /// The tab being dragged and where the release will put it, in
     /// definition space.
     tab_preview: Option<(TabId, f64, f64)>,
@@ -303,6 +328,14 @@ impl ViewportState {
         self.fitted = fitted;
     }
 
+    /// Fits again at the next frame when the camera is as Fit left it:
+    /// what was just added (a picture) may lie outside the view.
+    pub(crate) fn refit_if_fitted(&mut self) {
+        if self.fitted {
+            self.fit_pending = true;
+        }
+    }
+
     /// Forgets the click cycle (the selection changed elsewhere).
     pub(crate) fn reset_clicks(&mut self) {
         self.clicks.reset();
@@ -346,12 +379,22 @@ impl ViewportState {
             _ => None,
         };
         let hover_op;
-        (self.hover, self.hover_tab, hover_op) = match hit {
-            Hit::Instance(id) => (Some(id), None, None),
-            Hit::Tab(id) => (None, Some(id), None),
-            Hit::Toolpath(id) => (None, None, Some(id)),
-            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None, None),
+        (self.hover, self.hover_tab, hover_op, self.hover_picture) = match hit {
+            Hit::Instance(id) => (Some(id), None, None, None),
+            Hit::Tab(id) => (None, Some(id), None, None),
+            Hit::Toolpath(id) => (None, None, Some(id), None),
+            Hit::Bitmap(id) => (None, None, None, Some(id)),
+            Hit::MaleBoardShape(_) | Hit::Nothing => (None, None, None, None),
         };
+        // A picture under the pointer is named as one, since a shape may
+        // have its name.
+        let hover_picture = self.hover_picture.as_ref().and_then(|id| {
+            let bitmap = app.scene().bitmap(id)?;
+            let name = app
+                .strings()
+                .fmt(StrKey::PlacementPictureHover, &[("name", &bitmap.name)]);
+            Some((name, bitmap.locked))
+        });
         // A cut under the pointer names its operation, as a shape does.
         let hover_op = hover_op.and_then(|id| {
             let op = app.scene().operation(&id)?;
@@ -368,6 +411,7 @@ impl ViewportState {
                             Some((shape.name.clone(), shape.locked))
                         })
                         .or(hover_op)
+                        .or(hover_picture)
                 },
                 |op| {
                     let name = app
@@ -484,6 +528,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
     let arrows_free = focus::keys_free(ctx);
     let escape_left_widget = focus::escape_left_widget(ctx);
     let selected = app.selection().instances().to_vec();
+    let pictures = app.selected_pictures().to_vec();
     let park_picking = project::park_pick_armed(ctx);
     let point_picking = editor::point_pick(ctx).is_some();
     let tab_tool_armed = tab_tool::armed(ctx);
@@ -522,7 +567,7 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
                 actions.push(Action::ClearSelection);
             }
         }
-        if selected.is_empty() || popup_open || !arrows_free {
+        if (selected.is_empty() && pictures.is_empty()) || popup_open || !arrows_free {
             return;
         }
         for (command, step_mm) in [
@@ -538,10 +583,24 @@ pub(crate) fn keys(ctx: &egui::Context, app: &App) -> Vec<Action> {
             ] {
                 let presses = keyboard::consume_key(input, command, key);
                 for _ in 0..presses {
-                    actions.push(Action::Run(Box::new(Command::TransformInstances {
-                        ids: selected.clone(),
-                        delta: Transform::translate(dx * step_mm, dy * step_mm),
-                    })));
+                    if pictures.is_empty() {
+                        actions.push(Action::Run(Box::new(Command::TransformInstances {
+                            ids: selected.clone(),
+                            delta: Transform::translate(dx * step_mm, dy * step_mm),
+                        })));
+                        continue;
+                    }
+                    // A picture moves like a shape; a locked one says so.
+                    let nudge = dc_app::pictures::move_by(
+                        app.project(),
+                        &pictures,
+                        dx * step_mm,
+                        dy * step_mm,
+                    );
+                    actions.push(match nudge {
+                        Ok(command) => Action::run(command),
+                        Err(e) => Action::Refused(e.to_string()),
+                    });
                 }
             }
         }
@@ -633,9 +692,13 @@ fn press_target(state: &FrameState<'_>, camera: &Camera, pane: Rect, pos: Pos2) 
     {
         return Some(Target::Handle(grab));
     }
+    if let Some(corner) = pictures::corner_at(state, camera, at) {
+        return Some(Target::PictureCorner(corner));
+    }
     match pick::pick(app.scene(), camera, at, PICK_TOLERANCE_PX, 0) {
         Hit::Instance(id) => Some(Target::Shape(id)),
         Hit::Tab(id) => Some(Target::Tab(id)),
+        Hit::Bitmap(id) => Some(Target::Picture(id)),
         // A male board shape is no instance to move: a click on it selects
         // its Inlay on release. A cut is picked on release too (#576).
         Hit::Toolpath(_) | Hit::MaleBoardShape(_) | Hit::Nothing => None,
@@ -662,6 +725,23 @@ fn start_transform(
             }
             return Drag::Tab { id };
         }
+        // A picture moves with the pictures selected; one outside the
+        // selection is selected first and moves alone. A corner resizes
+        // the one selected.
+        Target::Picture(id) => {
+            let chosen = state.app.selected_pictures();
+            let ids = if chosen.contains(&id) {
+                chosen.to_vec()
+            } else {
+                out.push(Action::Select(Selection::Bitmaps(vec![id.clone()])));
+                vec![id]
+            };
+            return start_picture_drag(state, start, ids, pictures::Grip::Move, out);
+        }
+        Target::PictureCorner(corner) => {
+            let ids = state.app.selected_pictures().to_vec();
+            return start_picture_drag(state, start, ids, pictures::Grip::Corner(corner), out);
+        }
         Target::Shape(id) if selected.contains(&id) => (selected.to_vec(), Grab::Move),
         Target::Shape(id) => {
             out.push(Action::Select(Selection::Instances(vec![id.clone()])));
@@ -681,6 +761,26 @@ fn start_transform(
             grab,
         },
         None => Drag::Refused,
+    }
+}
+
+/// A drag of `grip` on the pictures `ids` begins, or is refused with the
+/// reason in the status bar when one of them is locked.
+fn start_picture_drag(
+    state: &FrameState<'_>,
+    start: Pos2,
+    ids: Vec<BitmapId>,
+    grip: pictures::Grip,
+    out: &mut Vec<Action>,
+) -> Drag {
+    // A move of no distance is refused for a lock before it is found to
+    // be nothing: the lock's refusal, by the command's own check.
+    match dc_app::pictures::move_by(state.app.project(), &ids, 0.0, 0.0) {
+        Err(e @ dc_app::CommandError::PictureLocked { .. }) => {
+            out.push(Action::Refused(e.to_string()));
+            Drag::Refused
+        }
+        _ => Drag::Picture { start, ids, grip },
     }
 }
 
@@ -772,6 +872,7 @@ fn gestures(
     let Some(pos) = pos else {
         view.drag = None;
         view.preview = None;
+        view.picture_preview = None;
         view.readout = None;
         return false;
     };
@@ -836,6 +937,14 @@ fn gestures(
         });
     }
 
+    if let Some(Drag::Picture { start, ids, grip }) = &view.drag {
+        let from = camera.to_world(pane_pos(pane, *start));
+        let to = camera.to_world(pane_pos(pane, pos));
+        let preview = pictures::dragged(state.app.project(), ids, *grip, from, to);
+        view.readout = Some(pictures::readout(state, &preview));
+        view.picture_preview = Some(preview);
+    }
+
     if let Some(Drag::Tab { id }) = &view.drag {
         let project = state.app.project();
         view.tab_preview = project.tabs.iter().find(|t| t.id == *id).map(|tab| {
@@ -852,6 +961,7 @@ fn gestures(
     let tab_preview = view.tab_preview.take();
     let selection = state.app.selection();
     let preview = view.preview.take();
+    let picture_preview = view.picture_preview.take();
     view.readout = None;
     match view.drag.take() {
         Some(Drag::Marquee { start }) if start.distance(pos) >= CLICK_SLOP_PX => {
@@ -870,8 +980,21 @@ fn gestures(
                     ids,
                     remove: modifiers.alt,
                 });
+            } else if ids.is_empty() {
+                // Pictures are selected on their own (capability 57): a
+                // marquee takes them where it touches no shape.
+                let pictures = pick::pictures_touching(state.app.scene(), rect);
+                out.push(Action::Select(selection.boxed_pictures(&pictures, mode)));
             } else {
                 out.push(Action::Select(selection.boxed(&ids, mode)));
+            }
+        }
+        // The release commits a picture's drag: one command, one step.
+        Some(Drag::Picture { .. }) => {
+            match picture_preview.map(|p| p.command(state.app.project())) {
+                Some(Ok(command)) => out.push(Action::run(command)),
+                Some(Err(dc_app::CommandError::NothingToDo)) | None => {}
+                Some(Err(e)) => out.push(Action::Refused(e.to_string())),
             }
         }
         // The release commits the drag: one command, one undo step.
@@ -1024,6 +1147,19 @@ fn frame(
             )
         },
     );
+    // The pictures, under the shapes: at 60 % while a shape is selected,
+    // so the selection reads over them (`viewport.picture`).
+    let strength = if selected.is_empty() {
+        1.0
+    } else {
+        theme::PICTURE_DIMMED
+    };
+    let picture_quads = pictures::quads(
+        scene.bitmaps(),
+        &view.picture_mips,
+        view.picture_preview.as_ref(),
+        strength,
+    );
     let derived = view.derived(app);
     let toolpaths = toolpath_layers(state, view, band, &derived);
     let arrows_layer = arrow_layer(state, view, camera, band);
@@ -1052,6 +1188,7 @@ fn frame(
             selection_layer,
         ],
         toolpaths,
+        pictures: picture_quads,
     }
 }
 
@@ -1342,6 +1479,17 @@ fn overlay(ui: &Ui, pane: Rect, state: &FrameState<'_>, view: &ViewportState, ca
         );
     }
 
+    pictures::overlay(
+        ui,
+        &painter,
+        pane,
+        state,
+        camera,
+        pictures::Marks {
+            hover: view.hover_picture.as_ref(),
+            preview: view.picture_preview.as_ref(),
+        },
+    );
     tab_tool::paint(
         &painter,
         palette,
@@ -1682,7 +1830,7 @@ pub(crate) fn show(
             }
             match view.drag {
                 Some(Drag::Refused) => ui.ctx().set_cursor_icon(egui::CursorIcon::NotAllowed),
-                Some(Drag::Transform { .. } | Drag::Tab { .. }) => {
+                Some(Drag::Transform { .. } | Drag::Tab { .. } | Drag::Picture { .. }) => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
                 }
                 // The pointing hand over a shape a click would toggle.
@@ -1717,6 +1865,11 @@ pub(crate) fn show(
                     window_pos(pane, &camera, board.frame.max),
                 );
                 painter.rect_filled(male, 0.0, palette.viewport_stock_fill);
+            }
+            // The pictures' mip chains: a large one's is built on its own
+            // thread, and the frame looks again until it lands.
+            if view.picture_mips.follow(app.scene().bitmaps()) {
+                ui.ctx().request_repaint_after(crate::shell::worker::POLL);
             }
             let frame = frame(state, view, &camera, palette);
             painter.add(renderer::callback(pane, frame));

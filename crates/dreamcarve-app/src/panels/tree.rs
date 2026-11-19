@@ -8,9 +8,12 @@
 //! does), the shape glyph (`square`, `circle` or `spline`: never the word
 //! "open"), its name, the `component` badge of a linked copy and the count
 //! of operations targeting it; then the Tabs section, a row per outline
-//! holding placed tabs with a row per tab under it (#546); then Pictures.
-//! An empty section is its header alone (slice 25, #617). Each header's
-//! eye and padlock act on every row in it.
+//! holding placed tabs with a row per tab under it (#546); then Pictures,
+//! a row per bitmap with its eye, its padlock, the `image` glyph, its
+//! name and the count of Photo V-Carves that carve it (capabilities 56
+//! and 57). An empty section is its header alone (slice 25, #617). The
+//! Shapes and Pictures headers' eye and padlock act on every row in the
+//! section.
 //!
 //! The rows come from `dc_app::tree`; a click, the context menu, an eye,
 //! a padlock or a rename only push actions, so every change is a command
@@ -20,11 +23,13 @@
 //! the selected shape or *Rename* in the context menu turns the name into
 //! a field in place with the name selected ([`start_rename`]); Enter or
 //! leaving it commits, Escape reverts. What is being renamed and where
-//! the range starts live in egui's memory, not the project.
+//! the range starts live in egui's memory, not the project. A picture's
+//! row answers the same way among the pictures, which are selected on
+//! their own ([`start_rename_picture`], `dc_app::tree::bitmap_menu`).
 
-use dc_app::tree::{Line, MenuItem, Section, ShapeGlyph, ShapeRow, TabRow, Tree};
+use dc_app::tree::{BitmapRow, MenuItem, Row, Section, ShapeGlyph, ShapeRow, TabRow, Tree};
 use dc_app::{ClickMode, Selection, StrKey, Strings};
-use dc_project::{InstanceId, Project};
+use dc_project::{BitmapId, InstanceId, Project};
 use eframe::egui::{self, Id, Rect, Sense, TextStyle, Ui};
 
 use crate::panels;
@@ -68,9 +73,37 @@ pub(crate) fn start_rename(ctx: &egui::Context, project: &Project, id: &Instance
     }
 }
 
+/// Where the next Shift-click's range starts among the pictures.
+fn picture_anchor_id() -> Id {
+    Id::unique("design_tree_picture_anchor")
+}
+
+/// The picture whose name is a field, and the text typed so far.
+fn renaming_picture_id() -> Id {
+    Id::unique("design_tree_renaming_picture")
+}
+
+/// Turns picture `id`'s name into a field in place, the name selected,
+/// on the tree's next frame (F2, its menu's *Rename*).
+pub(crate) fn start_rename_picture(ctx: &egui::Context, project: &Project, id: &BitmapId) {
+    if let Some(bitmap) = project.bitmaps.iter().find(|b| b.id == *id) {
+        ctx.data_mut(|d| {
+            d.insert_temp(
+                renaming_picture_id(),
+                (id.clone(), bitmap.name.clone(), true),
+            );
+        });
+    }
+}
+
 /// The selection the tree last drew, to tell when it changed.
 fn seen_id() -> Id {
     Id::unique("design_tree_seen_selection")
+}
+
+/// The pictures the tree last drew selected.
+fn seen_pictures_id() -> Id {
+    Id::unique("design_tree_seen_pictures")
 }
 
 /// The click mode of `modifiers` in the tree: Ctrl/⌘ toggles, Shift
@@ -158,13 +191,15 @@ fn truncated(
 /// A section header (`experience.md`, section 7, "Disclosure section
 /// header"): the title, then its eye and padlock at the right end, each
 /// acting on every row; `visible` and `locked` as `dc_app::tree` reads
-/// the rows, `None` for mixed. Returns which was clicked.
+/// the rows, `None` for mixed. `names` are what the two buttons are
+/// called: hide all, show all, unlock all, lock all. Returns which was
+/// clicked.
 fn section(
     ui: &mut Ui,
     strings: &Strings,
     title: &str,
     state: Option<dc_app::tree::SectionState>,
-    disabled_reason: Option<&str>,
+    (names, disabled_reason): ([StrKey; 4], Option<&str>),
 ) -> (bool, bool) {
     let palette = Palette::current(ui);
     let (rect, response) =
@@ -193,23 +228,25 @@ fn section(
     } else {
         palette.text_disabled
     };
+    let [hide_all, show_all, unlock_all, lock_all] = names;
     let (eye_icon, eye_name) = match visible {
-        Some(true) => (Icon::Eye, strings.get(StrKey::TreeHideAll)),
-        Some(false) => (Icon::EyeOff, strings.get(StrKey::TreeShowAll)),
-        None => (Icon::Eye, strings.get(StrKey::TreeShowAll)),
+        Some(true) => (Icon::Eye, strings.get(hide_all)),
+        Some(false) => (Icon::EyeOff, strings.get(show_all)),
+        None => (Icon::Eye, strings.get(show_all)),
     };
     let (lock_icon, lock_name) = match locked {
-        Some(true) => (Icon::Lock, strings.get(StrKey::TreeUnlockAll)),
-        _ => (Icon::LockOpen, strings.get(StrKey::TreeLockAll)),
+        Some(true) => (Icon::Lock, strings.get(unlock_all)),
+        _ => (Icon::LockOpen, strings.get(lock_all)),
     };
-    let reason = disabled_reason.unwrap_or_default();
+    // A section with no rows has nothing to act on: its buttons keep
+    // their names and are disabled; one that never has flags says why.
     let eye = icon_button(
         ui,
         eye_rect,
         ui.make_persistent_id((title, "eye")),
         eye_icon,
         colour,
-        if enabled { eye_name } else { reason },
+        disabled_reason.unwrap_or(eye_name),
         enabled,
     );
     let lock = icon_button(
@@ -218,11 +255,26 @@ fn section(
         ui.make_persistent_id((title, "lock")),
         lock_icon,
         colour,
-        if enabled { lock_name } else { reason },
+        disabled_reason.unwrap_or(lock_name),
         enabled,
     );
     (eye.clicked(), lock.clicked())
 }
+
+/// The Shapes header's buttons: hide all, show all, unlock all, lock all.
+const SHAPE_FLAGS: [StrKey; 4] = [
+    StrKey::TreeHideAll,
+    StrKey::TreeShowAll,
+    StrKey::TreeUnlockAll,
+    StrKey::TreeLockAll,
+];
+/// The Pictures header's, named apart from the Shapes header's.
+const PICTURE_FLAGS: [StrKey; 4] = [
+    StrKey::TreeHideAllPictures,
+    StrKey::TreeShowAllPictures,
+    StrKey::TreeUnlockAllPictures,
+    StrKey::TreeLockAllPictures,
+];
 
 /// Every instance id of `project`.
 fn every_instance(project: &Project) -> Vec<InstanceId> {
@@ -248,16 +300,22 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                 .then(|| current.first().cloned())
                 .flatten();
             ui.data_mut(|d| d.insert_temp(seen_id(), current));
+            let pictures = app.selected_pictures().to_vec();
+            let seen: Option<Vec<BitmapId>> = ui.data(|d| d.get_temp(seen_pictures_id()));
+            let reveal_picture = (seen.as_ref() != Some(&pictures))
+                .then(|| pictures.first().cloned())
+                .flatten();
+            ui.data_mut(|d| d.insert_temp(seen_pictures_id(), pictures));
             // An empty section is its header alone (capability 57).
-            for line in tree.lines() {
+            for line in tree.rows() {
                 match line {
-                    Line::Header(Section::Shapes) => {
+                    Row::Header(Section::Shapes) => {
                         let (eye, lock) = section(
                             ui,
                             strings,
                             strings.get(StrKey::TreeShapes),
                             (!tree.shapes.is_empty()).then(|| tree.shapes_header()),
-                            None,
+                            (SHAPE_FLAGS, None),
                         );
                         let all = every_instance(project);
                         if eye && let Some(command) = dc_app::tree::toggle_visible(project, &all) {
@@ -267,7 +325,7 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             out.push(Action::Run(Box::new(command)));
                         }
                     }
-                    Line::Shape(row) => {
+                    Row::Shape(row) => {
                         // A row out of view keeps its place and is not
                         // laid out, so 500 shapes cost a frame what a
                         // screenful does (acceptance 87); the row to
@@ -285,29 +343,104 @@ pub(crate) fn show(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                             response.scroll_to_me(None);
                         }
                     }
-                    Line::Header(Section::Tabs) => {
+                    Row::Header(Section::Tabs) => {
                         section(
                             ui,
                             strings,
                             strings.get(StrKey::TreeTabs),
                             None,
-                            Some(strings.get(StrKey::TreeTabsNoFlags)),
+                            (SHAPE_FLAGS, Some(strings.get(StrKey::TreeTabsNoFlags))),
                         );
                     }
-                    Line::Tab(row) => tab_row(ui, state, row, out),
-                    Line::Header(Section::Pictures) => {
-                        section(
+                    Row::Tab(row) => tab_row(ui, state, row, out),
+                    Row::Header(Section::Pictures) => {
+                        let (eye, lock) = section(
                             ui,
                             strings,
                             strings.get(StrKey::TreePictures),
-                            None,
-                            Some(strings.get(StrKey::TreePicturesNoFlags)),
+                            (!tree.bitmaps.is_empty()).then(|| tree.bitmaps_header()),
+                            (PICTURE_FLAGS, None),
                         );
+                        let all: Vec<BitmapId> =
+                            tree.bitmaps.iter().map(|row| row.id.clone()).collect();
+                        if eye
+                            && let Some(command) =
+                                dc_app::tree::toggle_bitmap_visible(project, &all)
+                        {
+                            out.push(Action::run(command));
+                        }
+                        if lock
+                            && let Some(command) = dc_app::tree::toggle_bitmap_locked(project, &all)
+                        {
+                            out.push(Action::run(command));
+                        }
                     }
-                    Line::Picture(picture) => match *picture {},
+                    Row::Bitmap(row) => {
+                        let response = bitmap_row(ui, state, &tree, row, out);
+                        if reveal_picture.as_ref() == Some(&row.id) {
+                            response.scroll_to_me(None);
+                        }
+                    }
                 }
             }
         });
+}
+
+/// What a row's rename field did this frame.
+enum Renamed {
+    /// Still typing: the text so far.
+    Typing(String),
+    /// Escape: the name stays as it was.
+    Reverted,
+    /// Enter or leaving the field: the name typed.
+    Committed(String),
+}
+
+/// A row's name as a field in place, at `name_rect`, holding `text`: on
+/// its first frame (`fresh`) it takes the focus with the text selected.
+/// Enter or leaving it commits and Escape reverts (`experience.md`,
+/// section 8).
+fn rename_field(
+    ui: &mut Ui,
+    name_rect: Rect,
+    field_id: Id,
+    label: &str,
+    mut text: String,
+    fresh: bool,
+) -> Renamed {
+    // The field fits the row: a stock field is a control tall.
+    let spacing = ui.spacing().clone();
+    ui.spacing_mut().interact_size.y = name_rect.height() - 4.0;
+    ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
+    let edit = ui.put(
+        name_rect.shrink2(egui::vec2(0.0, 2.0)),
+        egui::TextEdit::singleline(&mut text)
+            .id(field_id)
+            .font(TextStyle::Body)
+            .desired_width(name_rect.width()),
+    );
+    *ui.spacing_mut() = spacing;
+    let edit = edit.accessible_name(label);
+    if fresh {
+        edit.request_focus();
+        if let Some(mut s) = egui::text_edit::TextEditState::load(ui.ctx(), field_id) {
+            s.cursor
+                .set_char_range(Some(egui::text::CCursorRange::select_all_str(&text)));
+            s.store(ui.ctx(), field_id);
+        }
+    }
+    // Escape reverts. egui drops the focus as the frame begins and the
+    // Viewport's keys take the press, so the focus router says whether
+    // this frame's Escape left a widget.
+    let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape))
+        || crate::shell::focus::escape_left_widget(ui.ctx());
+    if escaped && !fresh {
+        Renamed::Reverted
+    } else if edit.lost_focus() && !fresh {
+        Renamed::Committed(text)
+    } else {
+        Renamed::Typing(text)
+    }
 }
 
 /// The selection a click on `row` with `modifiers` makes.
@@ -551,44 +684,22 @@ fn shape_row(
     );
     let renaming: Option<(InstanceId, String, bool)> = ui.data(|d| d.get_temp(renaming_id()));
     match renaming {
-        Some((id, mut text, fresh)) if id == row.id => {
+        Some((id, text, fresh)) if id == row.id => {
+            let label = strings.fmt(StrKey::TreeRename, &[("name", &row.name)]);
             let field_id = ui.make_persistent_id(("tree_rename", row.id.as_str()));
-            // The field fits the row: a stock field is a control tall.
-            let spacing = ui.spacing().clone();
-            ui.spacing_mut().interact_size.y = name_rect.height() - 4.0;
-            ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
-            let edit = ui.put(
-                name_rect.shrink2(egui::vec2(0.0, 2.0)),
-                egui::TextEdit::singleline(&mut text)
-                    .id(field_id)
-                    .font(TextStyle::Body)
-                    .desired_width(name_rect.width()),
-            );
-            *ui.spacing_mut() = spacing;
-            let edit =
-                edit.accessible_name(strings.fmt(StrKey::TreeRename, &[("name", &row.name)]));
-            if fresh {
-                edit.request_focus();
-                if let Some(mut s) = egui::text_edit::TextEditState::load(ui.ctx(), field_id) {
-                    s.cursor
-                        .set_char_range(Some(egui::text::CCursorRange::select_all_str(&text)));
-                    s.store(ui.ctx(), field_id);
+            match rename_field(ui, name_rect, field_id, &label, text, fresh) {
+                Renamed::Typing(text) => {
+                    ui.data_mut(|d| d.insert_temp(renaming_id(), (id, text, false)));
                 }
-            }
-            // Escape reverts. egui drops the focus as the frame begins and
-            // the Viewport's keys take the press, so the focus router says
-            // whether this frame's Escape left a widget.
-            let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape))
-                || crate::shell::focus::escape_left_widget(ui.ctx());
-            if escaped && !fresh {
-                ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
-            } else if edit.lost_focus() && !fresh {
-                ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
-                if let Some(command) = dc_app::tree::rename(project, &row.id, &text) {
-                    out.push(Action::Run(Box::new(command)));
+                Renamed::Reverted => {
+                    ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
                 }
-            } else {
-                ui.data_mut(|d| d.insert_temp(renaming_id(), (id, text, false)));
+                Renamed::Committed(text) => {
+                    ui.data_mut(|d| d.remove::<(InstanceId, String, bool)>(renaming_id()));
+                    if let Some(command) = dc_app::tree::rename(project, &row.id, &text) {
+                        out.push(Action::Run(Box::new(command)));
+                    }
+                }
             }
         }
         _ => {
@@ -686,7 +797,7 @@ fn context_menu(
             ui.separator();
             // The Operations step's Add menu, for these shapes (#539).
             ui.menu_button(strings.get(key), |ui| {
-                panels::operations::add_menu(ui, strings, project, ids, out);
+                panels::operations::add_menu(ui, strings, project, (ids, &[]), out);
             });
             continue;
         }
@@ -700,6 +811,292 @@ fn context_menu(
                 _ => {
                     if let Some(command) = dc_app::tree::menu_command(project, item, ids) {
                         out.push(Action::Run(Box::new(command)));
+                    }
+                }
+            }
+            ui.close();
+        }
+    }
+}
+
+/// The selection a click on picture `row` makes: it alone, the range
+/// from the last picture clicked with Shift, or it in or out with Ctrl/⌘.
+fn picture_clicked(ui: &Ui, state: &FrameState<'_>, tree: &Tree, row: &BitmapRow) -> Selection {
+    let modifiers = ui.input(|i| i.modifiers);
+    let selection = state.app.selection();
+    match mode(modifiers) {
+        ClickMode::Add => {
+            let anchor: Option<BitmapId> = ui.data(|d| d.get_temp(picture_anchor_id()));
+            let range =
+                anchor.map_or_else(|| vec![row.id.clone()], |a| tree.bitmap_range(&a, &row.id));
+            let mut ids = selection.bitmaps().to_vec();
+            for id in range {
+                if !ids.contains(&id) {
+                    ids.push(id);
+                }
+            }
+            Selection::Bitmaps(ids)
+        }
+        mode => selection.clicked(&dc_app::Hit::Bitmap(row.id.clone()), mode),
+    }
+}
+
+/// One picture's row (capabilities 56 and 57): its eye, its padlock, the
+/// `image` glyph, its name (a field while it is renamed) and the count of
+/// Photo V-Carves that carve it. A click selects it among the pictures, a
+/// double-click renames it, and its menu is `dc_app::tree::bitmap_menu`.
+fn bitmap_row(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    tree: &Tree,
+    row: &BitmapRow,
+    out: &mut Vec<Action>,
+) -> egui::Response {
+    let palette = Palette::current(ui);
+    let strings = state.app.strings();
+    let project = state.app.project();
+    let selected = state.app.selected_pictures().contains(&row.id);
+    // Target editing toggles shapes: a picture's row answers nothing.
+    let editing = state.app.target_editing().is_some();
+    let (slot, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
+    let name = row.name.clone();
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::Role::TreeItem, true, selected, &name));
+    let painter = ui.painter().clone();
+    let rect = surface_rect(slot);
+    surface(ui, rect, selected, response.hovered() && !editing);
+    // The picture the marked Photo V-Carve carves: its bar, as a target's.
+    if let Some(colour) = row.target {
+        let inset = rect.height() / 4.0;
+        painter.rect_filled(
+            Rect::from_min_max(
+                egui::pos2(rect.left(), rect.top() + inset),
+                egui::pos2(rect.left() + TARGET_BAR_PX, rect.bottom() - inset),
+            ),
+            theme::pill(TARGET_BAR_PX),
+            palette.operation(colour),
+        );
+    }
+
+    let eye_rect = Rect::from_center_size(
+        egui::pos2(rect.left() + 8.0 + ICON_BOX_PX / 2.0, rect.center().y),
+        egui::vec2(ICON_BOX_PX, ICON_BOX_PX),
+    );
+    let lock_rect = eye_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    let (eye_icon, eye_name, eye_colour) = if row.visible {
+        (
+            Icon::Eye,
+            strings.get(StrKey::TreeHide),
+            palette.text_secondary,
+        )
+    } else {
+        (
+            Icon::EyeOff,
+            strings.get(StrKey::TreeShow),
+            palette.text_disabled,
+        )
+    };
+    let ids = std::slice::from_ref(&row.id);
+    if icon_button(
+        ui,
+        eye_rect,
+        ui.make_persistent_id(("tree_picture_eye", row.id.as_str())),
+        eye_icon,
+        eye_colour,
+        eye_name,
+        !editing,
+    )
+    .clicked()
+        && let Some(command) = dc_app::tree::toggle_bitmap_visible(project, ids)
+    {
+        out.push(Action::run(command));
+    }
+    let row_hovered = ui.rect_contains_pointer(rect) && !editing;
+    let (lock_icon, lock_name, lock_colour) = if row.locked {
+        (
+            Icon::Lock,
+            strings.get(StrKey::TreeUnlock),
+            palette.viewport_shape_locked,
+        )
+    } else if row_hovered {
+        (
+            Icon::LockOpen,
+            strings.get(StrKey::TreeLock),
+            palette.text_disabled,
+        )
+    } else {
+        (Icon::LockOpen, strings.get(StrKey::TreeLock), theme::NONE)
+    };
+    if tipped_button(
+        ui,
+        lock_rect,
+        ui.make_persistent_id(("tree_picture_lock", row.id.as_str())),
+        (lock_icon, lock_colour),
+        lock_name,
+        strings.get(StrKey::TreeLockHelp),
+        !editing,
+    )
+    .clicked()
+        && let Some(command) = dc_app::tree::toggle_bitmap_locked(project, ids)
+    {
+        out.push(Action::run(command));
+    }
+
+    let glyph_rect = lock_rect.translate(egui::vec2(ICON_BOX_PX + 2.0, 0.0));
+    glyph(ui, glyph_rect, Icon::Image, palette.text_secondary);
+    ui.interact(
+        glyph_rect,
+        ui.make_persistent_id(("tree_picture_glyph", row.id.as_str())),
+        Sense::hover(),
+    )
+    .on_hover_text(strings.get(StrKey::TreeGlyphPicture));
+
+    // The count of Photo V-Carves that carve it, right.
+    let count = row.operations.len().to_string();
+    let count_galley = ui.painter().layout_no_wrap(
+        count,
+        TextStyle::Small.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let count_rect = Rect::from_min_max(
+        egui::pos2(
+            rect.right() - ROW_PADDING_PX - count_galley.size().x.max(ICON_BOX_PX),
+            rect.top(),
+        ),
+        egui::pos2(rect.right() - ROW_PADDING_PX, rect.bottom()),
+    );
+    painter.galley(
+        egui::pos2(
+            count_rect.right() - count_galley.size().x,
+            rect.center().y - count_galley.size().y / 2.0,
+        ),
+        count_galley,
+        palette.text_secondary,
+    );
+    let names: Vec<&str> = row.operations.iter().map(|o| o.name.as_str()).collect();
+    let hover = if names.is_empty() {
+        strings.get(StrKey::TreeNotCarved).to_owned()
+    } else {
+        strings.fmt(StrKey::TreeCarvedBy, &[("names", &names.join(", "))])
+    };
+    ui.interact(
+        count_rect,
+        ui.make_persistent_id(("tree_picture_count", row.id.as_str())),
+        Sense::hover(),
+    )
+    .on_hover_text(hover);
+
+    // The name, or the rename field.
+    let name_rect = Rect::from_min_max(
+        egui::pos2(glyph_rect.right() + 8.0, rect.top()),
+        egui::pos2(count_rect.left() - 8.0, rect.bottom()),
+    );
+    let renaming: Option<(BitmapId, String, bool)> = ui.data(|d| d.get_temp(renaming_picture_id()));
+    match renaming {
+        Some((id, text, fresh)) if id == row.id => {
+            let label = strings.fmt(StrKey::TreeRename, &[("name", &row.name)]);
+            let field_id = ui.make_persistent_id(("tree_picture_rename", row.id.as_str()));
+            match rename_field(ui, name_rect, field_id, &label, text, fresh) {
+                Renamed::Typing(text) => {
+                    ui.data_mut(|d| d.insert_temp(renaming_picture_id(), (id, text, false)));
+                }
+                Renamed::Reverted => {
+                    ui.data_mut(|d| d.remove::<(BitmapId, String, bool)>(renaming_picture_id()));
+                }
+                Renamed::Committed(text) => {
+                    ui.data_mut(|d| d.remove::<(BitmapId, String, bool)>(renaming_picture_id()));
+                    if let Some(command) = dc_app::tree::rename_bitmap(project, &row.id, &text) {
+                        out.push(Action::run(command));
+                    }
+                }
+            }
+        }
+        _ => {
+            let colour = if row.visible {
+                palette.text_primary
+            } else {
+                palette.text_secondary
+            };
+            let galley = truncated(ui, &row.name, &TextStyle::Body, colour, name_rect.width());
+            painter.galley(
+                egui::pos2(name_rect.left(), rect.center().y - galley.size().y / 2.0),
+                galley,
+                colour,
+            );
+        }
+    }
+
+    if editing {
+        return response;
+    }
+    if response.double_clicked() {
+        ui.data_mut(|d| {
+            d.insert_temp(
+                renaming_picture_id(),
+                (row.id.clone(), row.name.clone(), true),
+            );
+        });
+    } else if response.clicked() {
+        let next = picture_clicked(ui, state, tree, row);
+        ui.data_mut(|d| d.insert_temp(picture_anchor_id(), row.id.clone()));
+        out.push(Action::Select(next));
+    }
+    if response.secondary_clicked() && !selected {
+        out.push(Action::Select(Selection::Bitmaps(vec![row.id.clone()])));
+    }
+    response.context_menu(|ui| {
+        let chosen: Vec<BitmapId> = if selected {
+            state.app.selected_pictures().to_vec()
+        } else {
+            vec![row.id.clone()]
+        };
+        picture_menu(ui, state, (&row.id, &chosen), out);
+    });
+    response
+}
+
+/// The menu of picture row `on` for `ids`, the pictures it acts on
+/// (`dc_app::tree::bitmap_menu`): Rename, Hide or Show, Lock or Unlock,
+/// Delete, Zoom to and *Add operation ▸*, whose menu offers a Photo
+/// V-Carve on the picture.
+fn picture_menu(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    (on, ids): (&BitmapId, &[BitmapId]),
+    out: &mut Vec<Action>,
+) {
+    let (strings, project) = (state.app.strings(), state.app.project());
+    for item in dc_app::tree::bitmap_menu(project, ids) {
+        let key = match item {
+            MenuItem::Rename => StrKey::TreeRenameItem,
+            MenuItem::Hide => StrKey::TreeHide,
+            MenuItem::Show => StrKey::TreeShow,
+            MenuItem::Lock => StrKey::TreeLock,
+            MenuItem::Unlock => StrKey::TreeUnlock,
+            MenuItem::Delete => StrKey::TreeDelete,
+            MenuItem::ZoomTo => StrKey::TreeZoomTo,
+            MenuItem::AddOperation => StrKey::TreeAddOperation,
+            // A picture's menu has none of these.
+            MenuItem::Duplicate | MenuItem::AddTo | MenuItem::RemoveFrom => continue,
+        };
+        if item == MenuItem::AddOperation {
+            ui.separator();
+            ui.menu_button(strings.get(key), |ui| {
+                panels::operations::add_menu(ui, strings, project, (&[], ids), out);
+            });
+            continue;
+        }
+        if matches!(item, MenuItem::Delete | MenuItem::Hide | MenuItem::Show) {
+            ui.separator();
+        }
+        if ui.button(strings.get(key)).clicked() {
+            match item {
+                MenuItem::Rename => out.push(Action::RenamePicture(on.clone())),
+                MenuItem::ZoomTo => out.push(Action::ZoomToSelection),
+                _ => {
+                    if let Some(command) = dc_app::tree::bitmap_menu_command(project, item, ids) {
+                        out.push(Action::run(command));
                     }
                 }
             }

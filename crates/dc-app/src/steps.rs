@@ -324,7 +324,7 @@ pub fn opening(states: &States) -> Step {
 pub const fn owner(selection: &Selection) -> Option<Step> {
     match selection {
         Selection::Operation(_) => Some(Step::Operations),
-        Selection::Instances(_) | Selection::Tabs(_) => Some(Step::Design),
+        Selection::Instances(_) | Selection::Tabs(_) | Selection::Bitmaps(_) => Some(Step::Design),
         Selection::Nothing => None,
     }
 }

@@ -226,3 +226,135 @@ fn toolpaths_draw_in_operation_colours_and_by_depth() {
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Capability 56, rendered (slice D6): a picture draws at its footprint
+/// the right way up and unmirrored, in its own grays. The picture is
+/// four flat quarters, each a gray of its own (top-left 240, top-right
+/// 170, bottom-left 100, bottom-right 30), so a flip or a mirror moves a
+/// gray to the wrong quarter. In a Y-up project the picture's top row
+/// lies along the footprint's greatest y. With a shape selected the
+/// picture draws at 60 % over the stock (`experience.md`, section 5,
+/// `viewport.picture`); deselected it is back at full strength. Moving it
+/// moves the quad without another texture.
+#[test]
+fn picture_draws_the_right_way_up_under_the_shapes() {
+    let dir = scratch("renderer-picture");
+    let plaque = common::copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = wgpu_harness(
+        "picture_draws_the_right_way_up_under_the_shapes",
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    ) else {
+        std::fs::remove_dir_all(&dir).unwrap();
+        return;
+    };
+    // Sixteen samples a side, so the middle of a quarter is far from the
+    // next gray whatever the filtering.
+    let side = 16_u32;
+    let grays = [[240_u8, 170], [100, 30]];
+    let mut bytes = Vec::new();
+    for row in 0..side {
+        for column in 0..side {
+            bytes.push(grays[usize::from(row >= side / 2)][usize::from(column >= side / 2)]);
+        }
+    }
+    // The toolpaths and the grid would lie over the quarters' middles.
+    for op in h.state().app().project().operations.clone() {
+        h.state_mut().app_mut().toggle_hidden(op.id());
+    }
+    h.state_mut().app_mut().view_mut().visibility.grid = false;
+    // 40 × 40 mm with its corner at (100, 60): clear of every shape's
+    // outline at the four points sampled.
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::ImportPicture {
+            name: "quarters.png".to_owned(),
+            pixels: std::sync::Arc::new(dc_project::Grayscale {
+                width_px: side,
+                height_px: side,
+                bytes,
+            }),
+            size: dc_job::picture::PictureSize::Width { width_mm: 40.0 },
+        })
+        .expect("the picture imports");
+    let id = dc_project::BitmapId::new("b1");
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::MoveBitmaps {
+            ids: vec![id.clone()],
+            dx_mm: 124.0,
+            dy_mm: 74.0,
+        })
+        .expect("the picture moves");
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run();
+
+    let gray_at = |h: &mut Harness<'_, Shell>, p: Point| {
+        let at = on_screen(h, p);
+        let image = h.render().expect("a frame renders");
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a pixel inside a 1280 × 800 image"
+        )]
+        let pixel = image.get_pixel(at.x.round() as u32, at.y.round() as u32).0;
+        [pixel[0], pixel[1], pixel[2]]
+    };
+    let is_gray = |pixel: [u8; 3], want: u8| pixel.iter().all(|c| c.abs_diff(want) <= 3);
+    // The quarters' middles, in project space: the footprint is x 124 to
+    // 164, y 74 to 114.
+    let (left, right, low, high) = (139.0, 154.0, 84.0, 106.0);
+    let quarters = [
+        ("top-left", Point::new(left, high), 240_u8),
+        ("top-right", Point::new(right, high), 170),
+        ("bottom-left", Point::new(left, low), 100),
+        ("bottom-right", Point::new(right, low), 30),
+    ];
+    for (name, at, want) in quarters {
+        let got = gray_at(&mut h, at);
+        assert!(
+            is_gray(got, want),
+            "the picture's {name} quarter is at the footprint's {name}: {got:?}, not {want}"
+        );
+    }
+
+    // A shape selected: the picture at 60 % over the stock's fill.
+    let palette = theme::Palette::of(h.ctx.theme());
+    let stock = f32::from(palette.viewport_stock_fill.r());
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![InstanceId::new("i1")]));
+    h.run();
+    let [dimmed, ..] = gray_at(&mut h, Point::new(left, high));
+    // Blended in the framebuffer's own space, so between the two grays
+    // and well off both.
+    assert!(
+        f32::from(dimmed) < 240.0 - 20.0 && f32::from(dimmed) > stock + 20.0,
+        "dimmed while a shape is selected: {dimmed} between {stock} and 240"
+    );
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    h.run();
+    assert!(is_gray(gray_at(&mut h, Point::new(left, high)), 240));
+
+    // Moved: the same picture at its new footprint, the old one clear.
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::MoveBitmaps {
+            ids: vec![id],
+            dx_mm: -60.0,
+            dy_mm: 0.0,
+        })
+        .expect("the picture moves");
+    h.run();
+    assert!(
+        is_gray(gray_at(&mut h, Point::new(left - 60.0, high)), 240),
+        "the picture is where it was moved to"
+    );
+    assert!(
+        !is_gray(gray_at(&mut h, Point::new(left, high)), 240),
+        "and no longer where it was"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}

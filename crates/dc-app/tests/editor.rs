@@ -766,8 +766,14 @@ fn located_warning_matches_its_row() {
     let mut harness = dc_app::test_support::Harness::from_project(project());
     let strings = Strings::english();
     let targets = vec![harness.app.project().instances[0].id.clone()];
-    let command = operations::add(harness.app.project(), &strings, Kind::Profile, &targets)
-        .expect("a Profile can be added");
+    let command = operations::add(
+        harness.app.project(),
+        &strings,
+        Kind::Profile,
+        &targets,
+        &[],
+    )
+    .expect("a Profile can be added");
     harness.run(command).unwrap();
     let id = harness
         .app
@@ -1371,7 +1377,7 @@ fn drill_cycle_fields_follow_the_cycle() {
     let strings = Strings::english();
     let mut h = dc_app::test_support::Harness::from_project(project());
     let hole = vec![dc_project::InstanceId::new("i4")];
-    let command = operations::add(h.app.project(), &strings, Kind::Drill, &hole)
+    let command = operations::add(h.app.project(), &strings, Kind::Drill, &hole, &[])
         .expect("a circle takes a Drill");
     h.run(command).unwrap();
     let id = h
@@ -1608,7 +1614,7 @@ fn drill_cycle_fields_follow_the_cycle() {
     assert_eq!(saved.depth_mm, None);
 
     // The Bore's line.
-    let command = operations::add(h.app.project(), &strings, Kind::Bore, &hole)
+    let command = operations::add(h.app.project(), &strings, Kind::Bore, &hole, &[])
         .expect("a circle takes a Bore");
     h.run(command).unwrap();
     let bore = h.app.project().operations.last().unwrap().clone();
@@ -3280,7 +3286,7 @@ fn photo_needs_a_picture_target() {
     let sign = project();
     let letters = vec![dc_project::InstanceId::new("i6")];
     for selected in [letters.as_slice(), &[]] {
-        let menu = operations::add_menu(&sign, &strings, selected);
+        let menu = operations::add_menu(&sign, &strings, selected, &[]);
         assert!(!menu.available.contains(&Kind::PhotoVCarve), "{menu:?}");
         assert!(
             menu.unavailable
@@ -3288,7 +3294,7 @@ fn photo_needs_a_picture_target() {
             "{menu:?}"
         );
         assert_eq!(
-            operations::add(&sign, &strings, Kind::PhotoVCarve, selected),
+            operations::add(&sign, &strings, Kind::PhotoVCarve, selected, &[]),
             None
         );
     }
@@ -3309,14 +3315,14 @@ fn photo_needs_a_picture_target() {
     // One picture: offered with nothing selected, beside the sentence
     // that says what the other kinds need; the new operation carves it.
     let one = pictured();
-    let menu = operations::add_menu(&one, &strings, &[]);
+    let menu = operations::add_menu(&one, &strings, &[], &[]);
     assert_eq!(menu.available, [Kind::PhotoVCarve]);
     assert_eq!(
         menu.prompt.as_deref(),
         Some(strings.get(StrKey::OperationsAddSelectShapes))
     );
     assert_eq!(menu.unavailable.len(), Kind::ALL.len() - 1);
-    let with_shapes = operations::add_menu(&one, &strings, &letters);
+    let with_shapes = operations::add_menu(&one, &strings, &letters, &[]);
     assert!(with_shapes.available.contains(&Kind::PhotoVCarve));
     assert_eq!(with_shapes.prompt, None);
     assert_eq!(
@@ -3325,7 +3331,7 @@ fn photo_needs_a_picture_target() {
         "the only picture"
     );
     let mut h = dc_app::test_support::Harness::from_project(one);
-    let add = operations::add(h.app.project(), &strings, Kind::PhotoVCarve, &letters)
+    let add = operations::add(h.app.project(), &strings, Kind::PhotoVCarve, &letters, &[])
         .expect("a picture can take a Photo V-Carve");
     assert_eq!(h.run(add).expect("it adds"), "Add “Photo V-Carve 1”");
     let added = h.app.project().operations.last().cloned().expect("added");
@@ -3357,23 +3363,23 @@ fn photo_needs_a_picture_target() {
     let both = [BitmapId::new("b1"), BitmapId::new("b2")];
     let select_one = Some("Select the picture to carve".to_owned());
     for pictures in [&[][..], &both[..]] {
-        let menu = operations::add_menu_with(h.app.project(), &strings, &[], pictures);
+        let menu = operations::add_menu(h.app.project(), &strings, &[], pictures);
         assert!(
             menu.unavailable
                 .contains(&(Kind::PhotoVCarve, select_one.clone())),
             "{menu:?}"
         );
         assert_eq!(
-            operations::add_with(h.app.project(), &strings, Kind::PhotoVCarve, &[], pictures),
+            operations::add(h.app.project(), &strings, Kind::PhotoVCarve, &[], pictures),
             None
         );
     }
     let chosen = [BitmapId::new("b2")];
-    let menu = operations::add_menu_with(h.app.project(), &strings, &[], &chosen);
+    let menu = operations::add_menu(h.app.project(), &strings, &[], &chosen);
     assert_eq!(menu.available, [Kind::PhotoVCarve]);
     // The app's own selection of pictures is what the window passes.
     h.app.select_pictures(chosen.to_vec());
-    let add = operations::add_with(
+    let add = operations::add(
         h.app.project(),
         &strings,
         Kind::PhotoVCarve,

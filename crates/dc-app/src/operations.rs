@@ -21,8 +21,10 @@
 //! says to select the one to carve.
 //!
 //! A new operation targets the selection, takes the project's first tool
-//! whose type fits (a V-bit for V-Carve, Inlay and Photo V-Carve; an end
-//! mill or a drill for Drill; an end mill otherwise), or none, is named
+//! that fits ([`fitting_tool`]: for V-Carve, Inlay and Photo V-Carve the
+//! first their Tool row's picker offers, a V-bit or, for the first two, a
+//! tapered ball nose (#685); an end mill or a drill for Drill; an end mill
+//! otherwise), or none, is named
 //! `<Kind> <n>` with the first `n` no operation has, and gets the CLI's
 //! defaults: `init`'s Profile ([`dc_job::project_from::default_profile`]);
 //! for the other kinds the settings the chapters' JSON blocks give, with
@@ -109,12 +111,12 @@ impl Kind {
         }
     }
 
-    /// Whether `tool` fits the kind, for a new operation's tool.
+    /// Whether `tool`'s type fits the kind, for a new operation's tool. A
+    /// carve's is not decided by its type here: [`fitting_tool`] asks its
+    /// picker, and so validation.
     fn fits(self, tool: &Tool) -> bool {
         match self {
-            Self::VCarve | Self::Inlay | Self::PhotoVCarve => {
-                matches!(tool.cutter, ToolKind::VBit { .. })
-            }
+            Self::VCarve | Self::Inlay | Self::PhotoVCarve => false,
             Self::Drill => matches!(tool.cutter, ToolKind::EndMill | ToolKind::Drill),
             Self::Profile | Self::Pocket | Self::Bore | Self::Engrave => {
                 matches!(tool.cutter, ToolKind::EndMill)
@@ -206,14 +208,6 @@ fn refusal(kind: Kind, of: &[Outlines]) -> Option<StrKey> {
     }
 }
 
-/// The Add menu for the shapes `selected` with no picture selected
-/// (capability 65; acceptance 72): [`add_menu_with`], which the window
-/// calls once it holds a selection of pictures.
-#[must_use]
-pub fn add_menu(project: &Project, strings: &Strings, selected: &[InstanceId]) -> AddMenu {
-    add_menu_with(project, strings, selected, &[])
-}
-
 /// The Add menu for the shapes `selected` and the pictures `pictures`
 /// selected ([`crate::App::selected_pictures`]; capability 65). The kinds
 /// that cut shapes are offered when every selected shape can take them,
@@ -222,7 +216,7 @@ pub fn add_menu(project: &Project, strings: &Strings, selected: &[InstanceId]) -
 /// ([`photo_target`]), whatever shapes are selected, and listed with its
 /// reason otherwise.
 #[must_use]
-pub fn add_menu_with(
+pub fn add_menu(
     project: &Project,
     strings: &Strings,
     selected: &[InstanceId],
@@ -253,14 +247,35 @@ pub fn add_menu_with(
     menu
 }
 
-/// The project's first tool that fits `kind`, as a new operation takes it.
+/// The project's first tool that fits `kind`, as a new operation takes
+/// it. For a carve (V-Carve, Inlay, Photo V-Carve) that is the first tool
+/// its Tool row's picker offers ([`crate::editor::offered_tools`], which
+/// asks validation what the kind carves with), so a new carve never names
+/// a tool its picker would not list: a project whose only carving bit is
+/// a tapered ball nose gets it for a V-Carve or an Inlay (#685), and a
+/// Photo V-Carve takes a V-bit alone. For every other kind it is the
+/// first tool of a type that fits.
 #[must_use]
 pub fn fitting_tool(project: &Project, kind: Kind) -> Option<ToolId> {
-    project
-        .tools
-        .iter()
-        .find(|t| kind.fits(t))
-        .map(|t| t.id.clone())
+    let offered: Vec<&Tool> = match carve_probe(project, kind) {
+        Some(carve) => crate::editor::offered_tools(project, &carve),
+        None => project.tools.iter().filter(|t| kind.fits(t)).collect(),
+    };
+    offered.first().map(|t| t.id.clone())
+}
+
+/// A carve of `kind` with no tool and no targets, to ask its picker what
+/// it offers; `None` for a kind that is not a carve. It is never stored,
+/// so its name is not shown: the English table names it.
+fn carve_probe(project: &Project, kind: Kind) -> Option<Operation> {
+    let none = ToolId::new("");
+    match kind {
+        Kind::VCarve | Kind::Inlay => with_tool(project, &Strings::english(), kind, &[], none),
+        Kind::PhotoVCarve => Some(Operation::PhotoVCarve(
+            dc_job::project_from::default_photo_v_carve(BitmapId::new(""), none),
+        )),
+        Kind::Profile | Kind::Pocket | Kind::Drill | Kind::Bore | Kind::Engrave => None,
+    }
 }
 
 /// `<Kind> <n>` with the first `n` from 1 that no operation is named.
@@ -310,6 +325,18 @@ pub fn new_operation(
     targets: &[InstanceId],
 ) -> Option<Operation> {
     let tool = fitting_tool(project, kind).unwrap_or_else(|| ToolId::new(""));
+    with_tool(project, strings, kind, targets, tool)
+}
+
+/// [`new_operation`] with `tool` as its tool, whatever the project's
+/// tools are. A Photo V-Carve finds its own ([`new_photo_v_carve`]).
+fn with_tool(
+    project: &Project,
+    strings: &Strings,
+    kind: Kind,
+    targets: &[InstanceId],
+    tool: ToolId,
+) -> Option<Operation> {
     let id = next_id(project);
     let name = next_name(project, strings, kind);
     let targets = targets.to_vec();
@@ -426,31 +453,19 @@ pub fn new_operation(
     })
 }
 
-/// *Add ▸ `kind`* on the shapes `selected` with no picture selected:
-/// [`add_with`]. `None` when the menu does not offer the kind for them.
+/// *Add ▸ `kind`* on the shapes `selected` and the pictures `pictures`
+/// selected: `None` when [`add_menu`] does not offer the kind for
+/// them. A Photo V-Carve carves [`photo_target`]'s picture; every other
+/// kind targets the shapes.
 #[must_use]
 pub fn add(
     project: &Project,
     strings: &Strings,
     kind: Kind,
     selected: &[InstanceId],
-) -> Option<Command> {
-    add_with(project, strings, kind, selected, &[])
-}
-
-/// *Add ▸ `kind`* on the shapes `selected` and the pictures `pictures`
-/// selected: `None` when [`add_menu_with`] does not offer the kind for
-/// them. A Photo V-Carve carves [`photo_target`]'s picture; every other
-/// kind targets the shapes.
-#[must_use]
-pub fn add_with(
-    project: &Project,
-    strings: &Strings,
-    kind: Kind,
-    selected: &[InstanceId],
     pictures: &[BitmapId],
 ) -> Option<Command> {
-    if !add_menu_with(project, strings, selected, pictures)
+    if !add_menu(project, strings, selected, pictures)
         .available
         .contains(&kind)
     {

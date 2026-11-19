@@ -42,12 +42,6 @@ const UNTITLED: &str = "untitled";
 pub struct App {
     history: LabelledHistory,
     selection: Selection,
-    /// The selected pictures, in selection order (capability 57; slice
-    /// 15, #544). Pictures are selected alone, so this is empty unless
-    /// `selection` is [`Selection::Nothing`]. It is `Selection`'s
-    /// `Bitmaps` variant, kept here until the window, which matches
-    /// `Selection` exhaustively, is wired for it.
-    pictures: Vec<BitmapId>,
     /// The operation the editor shows: the Operations list's selection,
     /// independent of the shapes selected (`experience.md`, section 8,
     /// "Selection"), so *Add selection* can read the Viewport's.
@@ -119,7 +113,6 @@ impl App {
         let mut app = Self {
             history: LabelledHistory::new(project),
             selection: Selection::Nothing,
-            pictures: Vec::new(),
             editing: None,
             previewed: None,
             target_edit: None,
@@ -221,7 +214,6 @@ impl App {
         );
         self.history = LabelledHistory::new(project);
         self.selection = Selection::Nothing;
-        self.pictures.clear();
         self.editing = None;
         self.previewed = None;
         self.target_edit = None;
@@ -299,7 +291,8 @@ impl App {
     /// photo.png*): the bitmap `dreamcarve image add` adds (functional
     /// spec, capability 56, acceptance 65). What decoding converted (a
     /// colour picture's grayscale) becomes a note in the Warnings panel
-    /// ([`App::notes`]). The selection stays: a picture is not a shape.
+    /// ([`App::notes`]). The new picture becomes the selection, alone, so
+    /// it can be moved at once.
     ///
     /// # Errors
     ///
@@ -574,18 +567,23 @@ impl App {
             Command::AddTab(tab) => vec![tab.id.clone()],
             _ => Vec::new(),
         };
+        let new_bitmaps: Vec<BitmapId> = after
+            .bitmaps
+            .iter()
+            .filter(|b| !before.bitmaps.iter().any(|was| was.id == b.id))
+            .map(|b| b.id.clone())
+            .collect();
         self.history.push(after, label.clone());
         // What a command made becomes the selection, alone.
         if !new_tabs.is_empty() {
             self.selection = Selection::Tabs(new_tabs);
-            self.pictures.clear();
         } else if !new_instances.is_empty() {
             self.selection = Selection::Instances(new_instances);
-            self.pictures.clear();
         } else if let [id] = new_operations.as_slice() {
             self.selection = Selection::Operation(id.clone());
-            self.pictures.clear();
             self.editing = Some(id.clone());
+        } else if !new_bitmaps.is_empty() {
+            self.selection = Selection::Bitmaps(new_bitmaps);
         }
         self.snapshot_changed();
         label
@@ -662,8 +660,6 @@ impl App {
         let runnable = !self.validation.has_errors();
         self.generation.advance(project, runnable);
         self.selection.retain_existing(project);
-        self.pictures
-            .retain(|id| project.bitmaps.iter().any(|b| b.id == *id));
         if let Some(id) = &self.editing
             && !project.operations.iter().any(|o| o.id() == id)
         {
@@ -769,16 +765,14 @@ impl App {
         &self.selection
     }
 
-    /// Selects `selection`, less anything the project does not have, and
-    /// drops the pictures selected ([`App::selected_pictures`]): one kind
-    /// of thing is selected at a time. Not an undo step. Nothing while an
+    /// Selects `selection`, less anything the project does not have: one
+    /// kind of thing is selected at a time. Not an undo step. Nothing while an
     /// operation's targets are being edited: a click there toggles a
     /// target ([`App::toggle_target`]).
     pub fn select(&mut self, selection: Selection) {
         if self.target_edit.is_some() {
             return;
         }
-        self.pictures.clear();
         self.selection = selection;
         self.selection.retain_existing(self.history.current());
         if let Selection::Operation(id) = &self.selection {
@@ -790,11 +784,12 @@ impl App {
     /// The selected pictures, in selection order (capability 57; slice
     /// 15, #544): what the Pictures rows and the Viewport highlight, what
     /// Properties shows ([`crate::pictures::properties`]) and what *Add ▸
-    /// Photo V-Carve* carves ([`crate::operations::add_with`]). Empty
-    /// whenever shapes, tabs or an operation are selected.
+    /// Photo V-Carve* carves ([`crate::operations::add`]): the selection's
+    /// [`Selection::Bitmaps`]. Empty whenever shapes, tabs or an operation
+    /// are selected.
     #[must_use]
     pub fn selected_pictures(&self) -> &[BitmapId] {
-        &self.pictures
+        self.selection.bitmaps()
     }
 
     /// Selects the pictures `ids`, less any the project does not have,
@@ -802,24 +797,14 @@ impl App {
     /// dropped, while the editor keeps showing its operation. Not an undo
     /// step. Nothing while an operation's targets are being edited.
     pub fn select_pictures(&mut self, ids: Vec<BitmapId>) {
-        if self.target_edit.is_some() {
-            return;
-        }
-        let project = self.history.current();
-        self.pictures = ids
-            .into_iter()
-            .filter(|id| project.bitmaps.iter().any(|b| b.id == *id))
-            .collect();
-        self.selection = Selection::Nothing;
-        self.refresh_marks();
+        self.select(Selection::of_bitmaps(ids));
     }
 
     /// A click on picture `id`, on its row in the Design Tree or on the
-    /// Viewport ([`crate::viewport::pick::picture_under`]): it alone,
-    /// added with Shift, or in or out with Ctrl/⌘
-    /// ([`pictures_clicked`]).
+    /// Viewport ([`crate::viewport::pick::Hit::Bitmap`]): it alone, added
+    /// with Shift, or in or out with Ctrl/⌘ ([`pictures_clicked`]).
     pub fn click_picture(&mut self, id: &BitmapId, mode: ClickMode) {
-        let ids = pictures_clicked(&self.pictures, id, mode);
+        let ids = pictures_clicked(self.selection.bitmaps(), id, mode);
         self.select_pictures(ids);
     }
 

@@ -1105,3 +1105,33 @@ fn tapered_ball_nose_unset_fields_show_required() {
         "a tip wider than the cutting diameter is refused, as the file is"
     );
 }
+
+/// Capability 63 (#581, #685): while a tool's switch to V-bit is held for
+/// its angle, the editor draws a V-bit's rows over the tool the project
+/// still holds (`rows_for`): the *Angle* row empty, and none of a tapered
+/// ball nose's own rows, whatever the tool still is. For its own type the
+/// rows are `rows`'.
+#[test]
+fn a_held_switch_draws_the_v_bits_rows() {
+    let tbn = dc_project::test_support::tool_tbn_ultra();
+    assert_eq!(
+        tools::rows_for(&tbn, KindChoice::TaperedBallNose, Units::Mm),
+        tools::rows(&tbn, Units::Mm)
+    );
+    let held = tools::rows_for(&tbn, KindChoice::VBit, Units::Mm);
+    assert_eq!(
+        held.iter().map(|r| r.field).collect::<Vec<_>>(),
+        tools::fields_for(KindChoice::VBit)
+    );
+    let angle = held
+        .iter()
+        .find(|r| r.field == ToolField::Angle)
+        .expect("an Angle row");
+    assert_eq!((angle.text.as_str(), angle.unit), ("", "°"));
+    assert_eq!(angle.required, None, "the editor says what to type");
+    let diameter = held
+        .iter()
+        .find(|r| r.field == ToolField::Diameter)
+        .expect("a Diameter row");
+    assert_eq!(diameter.text, "6.35", "the tool's own values still show");
+}

@@ -1478,6 +1478,713 @@ fn new_from_drawing_through_the_sheet() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Types `text` into the text field named `label` and leaves it, so the
+/// field commits what was typed.
+fn type_in(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, label).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text(text.to_owned()));
+    h.run();
+    h.key_press(egui::Key::Tab);
+    h.run();
+}
+
+/// What the text field named `label` shows.
+fn field_value(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> String {
+    h.get_by_role_and_label(Role::TextInput, label)
+        .accesskit_node()
+        .value()
+        .unwrap_or_default()
+}
+
+/// The project's bitmap `id`.
+fn bitmap_of(h: &Harness<'_, dreamcarve_app::Shell>, id: &str) -> dc_project::Bitmap {
+    h.state()
+        .app()
+        .project()
+        .bitmaps
+        .iter()
+        .find(|b| b.id.as_str() == id)
+        .unwrap_or_else(|| panic!("no bitmap {id}"))
+        .clone()
+}
+
+/// Where the wide control named `label` is: a menu's item or a button
+/// with its text, not the 20-px glyph button of a tree row that shares
+/// the name (a row's eye is *Hide* and its padlock *Lock* or *Unlock*).
+fn wide_button(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> Option<egui::Pos2> {
+    h.query_all_by_label(label)
+        .find(|n| n.rect().width() > 40.0)
+        .map(|n| n.rect().center())
+}
+
+/// The ids of the selected pictures.
+fn selected_pictures(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<String> {
+    h.state()
+        .app()
+        .selected_pictures()
+        .iter()
+        .map(|id| id.as_str().to_owned())
+        .collect()
+}
+
+/// Capability 56 (slice D6): a dropped `.png` opens the Add picture
+/// sheet, which names the file and its size in pixels and asks for the
+/// width or the height; *Add picture* is disabled, saying why, until one
+/// is typed, and the other side follows the pixels (64 × 32, so 100 wide
+/// is 50 high). *Add picture* adds the bitmap `image add` adds, at the
+/// stock's corner, as one undo step, and selects it: its row is in the
+/// Design Tree and its Properties in the Inspector. A colour JPEG lists
+/// its conversion to grayscale; a file that is not a picture is refused
+/// in the sheet; a file of no known kind is refused in the status bar.
+#[test]
+fn drop_of_png_opens_the_picture_sheet() {
+    let dir = scratch("drop-picture");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    let gradient = common::fixture("photo/gradient.png");
+    drop_file(&mut h, &gradient);
+    common::settle_picture(&mut h);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label("Add picture to project").is_some(),
+        "the sheet's title"
+    );
+    assert!(
+        sheet.query_by_label_contains("gradient.png").is_some(),
+        "the sheet names the file"
+    );
+    assert!(
+        sheet.query_by_label("PNG · 64 × 32 px").is_some(),
+        "and its size in pixels"
+    );
+    assert!(
+        sheet
+            .get_by_label("Add picture")
+            .accesskit_node()
+            .is_disabled(),
+        "nothing to add until a size is typed"
+    );
+    assert!(
+        sheet
+            .query_by_label("Type the picture's width or its height")
+            .is_some(),
+        "and the sheet says so"
+    );
+    assert!(
+        h.state().app().project().bitmaps.is_empty(),
+        "nothing is added before Add picture"
+    );
+
+    // The width typed: the height follows the pixels.
+    type_in(&mut h, "Width", "100");
+    assert_eq!(field_value(&h, "Height"), "50");
+    // The height typed instead: the width follows.
+    type_in(&mut h, "Height", "20");
+    assert_eq!(field_value(&h, "Width"), "40");
+    // Not a length: refused under the field, and the size stays.
+    type_in(&mut h, "Width", "wide");
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label_contains("wide")
+            .is_some(),
+        "the refusal names what was typed"
+    );
+    type_in(&mut h, "Width", "100");
+    assert_eq!(field_value(&h, "Height"), "50");
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Add picture")
+        .click();
+    h.run();
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "Add picture closes the sheet"
+    );
+
+    let bitmap = bitmap_of(&h, "b1");
+    assert_eq!(bitmap.name, "gradient");
+    assert_eq!((bitmap.width_px, bitmap.height_px), (64, 32));
+    assert!(
+        bitmap.x_mm.abs() < 1e-9 && bitmap.y_mm.abs() < 1e-9,
+        "at the stock's corner: {bitmap:?}"
+    );
+    assert!((bitmap.width_mm - 100.0).abs() < 1e-9 && (bitmap.height_mm - 50.0).abs() < 1e-9);
+    let app = h.state().app();
+    assert_eq!(app.undo_label(), Some("Import gradient.png"));
+    assert_eq!(undo_steps(&h), 1, "one undo step");
+    assert_eq!(selected_pictures(&h), ["b1"], "the new picture is selected");
+    assert_eq!(h.state().step(), dc_app::steps::Step::Design);
+    let row = h.get_by_role_and_label(Role::TreeItem, "gradient");
+    assert_eq!(
+        row.accesskit_node().toggled(),
+        Some(egui::accesskit::Toggled::True),
+        "its row in the Design Tree, selected"
+    );
+    assert!(
+        h.query_by_label("Properties · gradient").is_some(),
+        "and its Properties in the Inspector"
+    );
+    assert!(
+        h.query_by_label("Start with a drawing").is_none(),
+        "a project with a picture is past the start screen"
+    );
+
+    // A colour JPEG: the sheet lists what decoding converted.
+    let colour = common::fixture("photo/colour.jpg");
+    drop_file(&mut h, &colour);
+    common::settle_picture(&mut h);
+    let (_, warnings) = dc_import::bitmap::import(
+        &std::fs::read(&colour).unwrap(),
+        dc_import::ImageFormat::Jpeg,
+    )
+    .unwrap();
+    let note = warnings.first().expect("a conversion note").to_string();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(sheet.query_by_label_contains("JPEG").is_some());
+    assert!(
+        sheet.query_by_label(&note).is_some(),
+        "the grayscale note: {note}"
+    );
+    sheet.get_by_label("Close").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(undo_steps(&h), 1, "Close adds nothing");
+
+    // Bytes that are no picture: the sheet says so and adds nothing.
+    let broken = dir.join("broken.png");
+    std::fs::write(&broken, b"not a picture").unwrap();
+    drop_file(&mut h, &broken);
+    common::settle_picture(&mut h);
+    let refusal = dc_import::bitmap::import(b"not a picture", dc_import::ImageFormat::Png)
+        .unwrap_err()
+        .to_string();
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(
+        sheet.query_by_label(&refusal).is_some(),
+        "the importer's message: {refusal}"
+    );
+    assert!(
+        sheet
+            .get_by_label("Add picture")
+            .accesskit_node()
+            .is_disabled()
+    );
+    sheet.get_by_label("Close").click();
+    h.run();
+
+    // A file of no kind DreamCarve reads: refused, naming it.
+    let notes = dir.join("notes.txt");
+    std::fs::write(&notes, b"hello").unwrap();
+    drop_file(&mut h, &notes);
+    common::settle_picture(&mut h);
+    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(
+        h.state().message(),
+        Some(
+            "notes.txt is not a project (.dcv), a drawing (.svg, .dxf) or a picture (.png, \
+             .jpg, .jpeg)"
+        )
+    );
+    assert_eq!(undo_steps(&h), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capabilities 56 and 57 (slice D6): the Design step's *Add picture*
+/// asks for a picture and shows it in the sheet; added, the picture is a
+/// row of the Design Tree's Pictures section with an eye, a padlock and
+/// its name. The eye hides it as one step, F2 renames it in place, the
+/// section header's eye acts on every picture, the row's menu offers a
+/// Photo V-Carve on it, and Delete deletes it. File ▸ Add Picture to
+/// Project… is the same command.
+#[test]
+fn add_picture_and_see_its_tree_row() {
+    let dir = scratch("add-picture");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let gradient = common::fixture("photo/gradient.png");
+    dialogs.answer(&gradient);
+    button_named(&h, "Add picture").click();
+    h.run();
+    common::settle_picture(&mut h);
+    assert_eq!(dialogs.asked(), ["open_picture"]);
+    assert!(
+        h.get_by_role(Role::Dialog)
+            .query_by_label("Add picture to project")
+            .is_some()
+    );
+    type_in(&mut h, "Height", "20");
+    click_in_sheet(&mut h, "Add picture");
+    let bitmap = bitmap_of(&h, "b1");
+    assert!((bitmap.width_mm - 40.0).abs() < 1e-9 && (bitmap.height_mm - 20.0).abs() < 1e-9);
+
+    // The Pictures section: its header, then the row.
+    let header = h.get_by_role_and_label(Role::Heading, "Pictures").rect();
+    let row = h.get_by_role_and_label(Role::TreeItem, "gradient").rect();
+    assert!(header.bottom() <= row.top() + 0.5, "the row is under it");
+    assert!(
+        h.query_by_label("No shapes yet.").is_none(),
+        "the tree shows once there is a picture"
+    );
+
+    // The row's eye: hidden as one step, and shown again.
+    h.get_by_label("Hide").click();
+    h.run();
+    assert!(!bitmap_of(&h, "b1").visible);
+    assert_eq!(h.state().app().undo_label(), Some("Hide “gradient”"));
+    assert!(
+        h.state().app().scene().bitmaps().is_empty(),
+        "a hidden picture is not drawn"
+    );
+    // The header's eye acts on every picture.
+    h.get_by_label("Show all pictures").click();
+    h.run();
+    assert!(bitmap_of(&h, "b1").visible);
+
+    // F2 renames the selected picture in its row.
+    h.get_by_role_and_label(Role::TreeItem, "gradient").click();
+    h.run();
+    assert_eq!(selected_pictures(&h), ["b1"]);
+    h.key_press(egui::Key::F2);
+    h.run();
+    let field = h.get_by_role_and_label(Role::TextInput, "Rename gradient");
+    assert_eq!(field.accesskit_node().value().as_deref(), Some("gradient"));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.event(egui::Event::Text("portrait".to_owned()));
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(bitmap_of(&h, "b1").name, "portrait");
+    assert!(
+        h.query_by_role_and_label(Role::TreeItem, "portrait")
+            .is_some()
+    );
+
+    // The row's menu: a picture's items, and a Photo V-Carve on it.
+    h.get_by_role_and_label(Role::TreeItem, "portrait")
+        .click_secondary();
+    h.run();
+    for item in [
+        "Rename",
+        "Hide",
+        "Lock",
+        "Delete",
+        "Zoom to",
+        "Add operation",
+    ] {
+        assert!(wide_button(&h, item).is_some(), "{item} in the row's menu");
+    }
+    assert!(
+        h.query_by_label("Duplicate").is_none(),
+        "a picture has no linked copy"
+    );
+    let lock = wide_button(&h, "Lock").expect("the menu's Lock");
+    common::click_at(&mut h, lock, egui::Modifiers::NONE);
+    assert!(bitmap_of(&h, "b1").locked);
+
+    // File ▸ Add Picture to Project… asks the same dialog.
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("Add Picture to Project…").click();
+    h.run();
+    assert_eq!(dialogs.asked(), ["open_picture", "open_picture"]);
+    assert!(
+        h.query_by_role(Role::Dialog).is_none(),
+        "the dialog was cancelled"
+    );
+
+    // Delete deletes the selected picture.
+    h.get_by_role_and_label(Role::TreeItem, "portrait").click();
+    h.run();
+    h.key_press(egui::Key::Delete);
+    h.run();
+    assert!(h.state().app().project().bitmaps.is_empty());
+    assert!(h.state().app().can_undo());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 51 (slice D6): the start screen's *New from picture…* (and
+/// File ▸ New Project from Picture…) asks for a picture, shows it in the
+/// same sheet titled for a new project, and *Create project* makes the
+/// project `dc_app::App::new_from_picture` makes: `init`'s stock round
+/// the picture, the bitmap, the V-bit and one Photo V-Carve, with no file
+/// yet and nothing to undo.
+#[test]
+fn new_from_picture_through_the_sheet() {
+    let dir = scratch("new-from-picture");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    let gradient = common::fixture("photo/gradient.png");
+    dialogs.answer(&gradient);
+    button_named(&h, "New from picture…").click();
+    h.run();
+    common::settle_picture(&mut h);
+    assert_eq!(dialogs.asked(), ["open_picture"]);
+    let sheet = h.get_by_role(Role::Dialog);
+    assert!(sheet.query_by_label("New project from picture").is_some());
+    assert!(
+        sheet
+            .get_by_label("Create project")
+            .accesskit_node()
+            .is_disabled(),
+        "a size first"
+    );
+    type_in(&mut h, "Width", "100");
+    click_in_sheet(&mut h, "Create project");
+    assert!(h.query_by_role(Role::Dialog).is_none());
+
+    let mut model = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "gradient.png",
+        &std::fs::read(&gradient).unwrap(),
+        dc_app::import::Purpose::New,
+    );
+    model.set_width_mm(100.0);
+    let mut expected = dc_app::App::new(
+        dc_app::App::new_project().unwrap(),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    expected.new_from_picture(&model).unwrap();
+    let app = h.state().app();
+    assert_eq!(app.project(), expected.project());
+    assert_eq!(app.project().bitmaps.len(), 1);
+    assert!(matches!(
+        app.project().operations.as_slice(),
+        [dc_project::Operation::PhotoVCarve(_)]
+    ));
+    assert_eq!(app.source(), None);
+    assert!(!app.can_undo());
+    assert!(
+        h.query_by_label("Start with a drawing").is_none(),
+        "the start screen is gone"
+    );
+
+    // The File menu's item asks the same dialog, after the unsaved sheet
+    // has had its say when there are changes (there are none here).
+    h.get_by_label("File").click();
+    h.run();
+    h.get_by_label("New Project from Picture…").click();
+    h.run();
+    assert_eq!(dialogs.asked(), ["open_picture", "open_picture"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// A project round the gradient picture, 100 mm wide (bitmap `b1`, 100 ×
+/// 50 mm at 10,10, with its Photo V-Carve `op1`), saved in `dir`.
+fn picture_project(dir: &std::path::Path) -> std::path::PathBuf {
+    let gradient = common::fixture("photo/gradient.png");
+    let mut model = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "gradient.png",
+        &std::fs::read(gradient).unwrap(),
+        dc_app::import::Purpose::New,
+    );
+    model.set_width_mm(100.0);
+    let mut app = dc_app::App::new(
+        dc_app::App::new_project().unwrap(),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    app.new_from_picture(&model).unwrap();
+    let path = dir.join("photo.dcv");
+    std::fs::write(&path, app.serialize().unwrap()).unwrap();
+    path
+}
+
+/// Capabilities 56 to 58 (slice D6): a picture is a thing to select and
+/// place. A click inside its footprint selects it and shows its
+/// Properties; a drag moves it, previewed until the release, as one undo
+/// step; the arrow keys nudge it; X typed in Properties moves it and W
+/// resizes it about its centre with the height following; a corner
+/// handle resizes it the same way; a marquee from empty stage takes it;
+/// locked, it refuses a drag with the reason in the status bar; Escape
+/// clears the selection.
+#[test]
+fn picture_is_selected_and_moved_on_the_viewport() {
+    let dir = scratch("picture-move");
+    let photo = picture_project(&dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(photo), &dialogs),
+        1280.0,
+        800.0,
+    );
+    go_to(&mut h, "Design");
+    let start = bitmap_of(&h, "b1");
+    assert!((start.x_mm - 10.0).abs() < 1e-9 && (start.y_mm - 10.0).abs() < 1e-9);
+    assert!(selected_pictures(&h).is_empty());
+    assert!(h.query_by_label("Properties · gradient").is_none());
+    let steps = undo_steps(&h);
+
+    // A click inside the footprint selects the picture.
+    let inside = common::on_screen(&h, dc_geometry::Point::new(60.0, 35.0));
+    common::click_at(&mut h, inside, egui::Modifiers::NONE);
+    assert_eq!(selected_pictures(&h), ["b1"]);
+    assert!(h.query_by_label("Properties · gradient").is_some());
+    assert_eq!(field_value(&h, "X"), "10");
+    assert_eq!(field_value(&h, "W"), "100");
+    assert_eq!(field_value(&h, "H"), "50");
+    assert_eq!(field_value(&h, "Pixels"), "64 × 32 px");
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "Pixels")
+            .accesskit_node()
+            .is_disabled(),
+        "the pixels are the picture: read-only"
+    );
+    assert_eq!(undo_steps(&h), steps, "selecting is no undo step");
+
+    // A drag moves it: a preview until the release, then one step. (The
+    // Inspector has opened, so the fitted view has a new scale.)
+    let px_per_mm = h.state().app().view().camera.px_per_mm;
+    let inside = common::on_screen(&h, dc_geometry::Point::new(60.0, 35.0));
+    let travel = egui::vec2(40.0, -24.0);
+    h.event(egui::Event::PointerMoved(inside));
+    h.event(egui::Event::PointerButton {
+        pos: inside,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    for k in 1..=4_u8 {
+        h.event(egui::Event::PointerMoved(
+            inside + travel * (f32::from(k) / 4.0),
+        ));
+        h.run();
+        assert_eq!(bitmap_of(&h, "b1"), start, "frame {k}: a preview only");
+    }
+    assert!(
+        h.query_by_label_contains("ΔX").is_some(),
+        "the status bar shows the travel"
+    );
+    h.event(egui::Event::PointerButton {
+        pos: inside + travel,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: egui::Modifiers::NONE,
+    });
+    h.run();
+    assert_eq!(undo_steps(&h), steps + 1, "the release is one undo step");
+    assert_eq!(h.state().app().undo_label(), Some("Move “gradient”"));
+    let moved = bitmap_of(&h, "b1");
+    let (dx, dy) = (
+        f64::from(travel.x) / px_per_mm,
+        -f64::from(travel.y) / px_per_mm,
+    );
+    assert!(
+        (moved.x_mm - start.x_mm - dx).abs() < 1e-3 && (moved.y_mm - start.y_mm - dy).abs() < 1e-3,
+        "moved by the pointer's travel, Y up: {moved:?}"
+    );
+    assert!(
+        (moved.width_mm - 100.0).abs() < 1e-9,
+        "a move keeps its size"
+    );
+
+    // The arrow keys nudge it, a step each.
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::SHIFT, egui::Key::ArrowUp);
+    h.run();
+    let nudged = bitmap_of(&h, "b1");
+    assert!((nudged.x_mm - moved.x_mm - 1.0).abs() < 1e-6);
+    assert!((nudged.y_mm - moved.y_mm - 10.0).abs() < 1e-6);
+    assert_eq!(undo_steps(&h), steps + 3);
+
+    // Properties: X moves it; W resizes it about its centre, H following.
+    type_in(&mut h, "X", "20");
+    assert!((bitmap_of(&h, "b1").x_mm - 20.0).abs() < 1e-9);
+    let before = bitmap_of(&h, "b1");
+    type_in(&mut h, "W", "60");
+    let resized = bitmap_of(&h, "b1");
+    assert!((resized.width_mm - 60.0).abs() < 1e-9 && (resized.height_mm - 30.0).abs() < 1e-9);
+    assert!(
+        (resized.x_mm + 30.0 - (before.x_mm + 50.0)).abs() < 1e-6
+            && (resized.y_mm + 15.0 - (before.y_mm + 25.0)).abs() < 1e-6,
+        "about its centre"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Resize “gradient”"));
+    assert_eq!(field_value(&h, "H"), "30");
+
+    // The top-right corner handle, dragged outward along the diagonal:
+    // a resize about the centre with the proportions kept.
+    let at = bitmap_of(&h, "b1");
+    let corner = dc_geometry::Point::new(at.x_mm + at.width_mm, at.y_mm + at.height_mm);
+    let from = common::on_screen(&h, corner);
+    let outward = egui::vec2(20.0, -10.0);
+    common::drag(&mut h, from, from + outward, egui::PointerButton::Primary);
+    let grown = bitmap_of(&h, "b1");
+    assert!(grown.width_mm > at.width_mm + 1.0, "it grew: {grown:?}");
+    assert!(
+        (grown.height_mm * 2.0 - grown.width_mm).abs() < 1e-3,
+        "two to one, as its pixels are"
+    );
+    assert!(
+        (grown.x_mm + grown.width_mm / 2.0 - (at.x_mm + at.width_mm / 2.0)).abs() < 1e-3,
+        "about its centre"
+    );
+    assert_eq!(h.state().app().undo_label(), Some("Resize “gradient”"));
+
+    // Escape clears the selection, and the Inspector goes. (The first
+    // press leaves the field the keyboard is still in.)
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(selected_pictures(&h).is_empty());
+    assert!(h.query_by_label("Properties · gradient").is_none());
+
+    // A marquee from the empty stage across the picture takes it.
+    let now = bitmap_of(&h, "b1");
+    let outside = common::on_screen(&h, dc_geometry::Point::new(-3.0, -3.0));
+    let across = common::on_screen(&h, dc_geometry::Point::new(now.x_mm + 5.0, now.y_mm + 5.0));
+    common::drag(&mut h, outside, across, egui::PointerButton::Primary);
+    assert_eq!(selected_pictures(&h), ["b1"], "the marquee touched it");
+
+    // Locked, from its Properties: a drag is refused, and says why.
+    h.get_by_role_and_label(Role::Switch, "Locked").click();
+    h.run();
+    assert!(bitmap_of(&h, "b1").locked);
+    let locked = bitmap_of(&h, "b1");
+    let steps = undo_steps(&h);
+    let centre = common::on_screen(
+        &h,
+        dc_geometry::Point::new(
+            locked.x_mm + locked.width_mm / 2.0,
+            locked.y_mm + locked.height_mm / 2.0,
+        ),
+    );
+    common::drag(
+        &mut h,
+        centre,
+        centre + egui::vec2(30.0, 30.0),
+        egui::PointerButton::Primary,
+    );
+    assert_eq!(bitmap_of(&h, "b1"), locked, "a locked picture stays");
+    assert_eq!(undo_steps(&h), steps);
+    assert_eq!(h.state().message(), Some("picture “gradient” is locked"));
+    assert!(
+        h.get_by_role_and_label(Role::TextInput, "X")
+            .accesskit_node()
+            .is_disabled(),
+        "and its fields are read-only"
+    );
+    let unlock = wide_button(&h, "Unlock").expect("the locked note's Unlock");
+    common::click_at(&mut h, unlock, egui::Modifiers::NONE);
+    assert!(!bitmap_of(&h, "b1").locked);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capabilities 65, 67 and 68 (slice D6): with a picture in the project,
+/// the Operations step's *Add* offers *Photo V-Carve*; added, it carves
+/// the picture and opens in the editor, whose Setup shows the Picture
+/// dropdown (the project's pictures, the one carved chosen), the Tool and
+/// the max depth, required until typed. With a second picture, the
+/// dropdown changes which one it carves, one undo step. Without a
+/// picture the menu lists the kind with its reason.
+#[test]
+fn photo_v_carve_is_added_and_its_editor_shows_its_rows() {
+    let dir = scratch("photo-v-carve");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    // No picture yet: the kind is listed with why it cannot be added.
+    go_to(&mut h, "Operations");
+    button_named(&h, "Add").click();
+    h.run();
+    let item = h.get_by_role_and_label(Role::MenuItem, "Photo V-Carve");
+    assert!(
+        item.accesskit_node().is_disabled(),
+        "a Photo V-Carve needs a picture"
+    );
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Two pictures, added as the sheet adds them.
+    for (name, width_mm) in [("gradient.png", 60.0), ("ramp.png", 30.0)] {
+        let mut model = dc_app::import::PictureImport::open(
+            dc_import::ImageFormat::Png,
+            name,
+            &std::fs::read(common::fixture(&format!("photo/{name}"))).unwrap(),
+            dc_app::import::Purpose::Import,
+        );
+        model.set_width_mm(width_mm);
+        h.state_mut().app_mut().import_picture(&model).unwrap();
+    }
+    h.state_mut()
+        .app_mut()
+        .select_pictures(vec![dc_project::BitmapId::new("b1")]);
+    h.run();
+    let operations = h.state().app().project().operations.len();
+
+    // Add ▸ Photo V-Carve carves the selected picture.
+    button_named(&h, "Add").click();
+    h.run();
+    let item = h.get_by_role_and_label(Role::MenuItem, "Photo V-Carve");
+    assert!(!item.accesskit_node().is_disabled());
+    item.click();
+    h.run();
+    let app = h.state().app();
+    assert_eq!(app.project().operations.len(), operations + 1);
+    let Some(dc_project::Operation::PhotoVCarve(photo)) = app.project().operations.last() else {
+        panic!("a Photo V-Carve was added");
+    };
+    assert_eq!(photo.image.as_str(), "b1");
+    assert_eq!(app.undo_label(), Some("Add “Photo V-Carve 1”"));
+    assert_eq!(app.editing(), Some(&photo.id), "open in the editor");
+    assert_eq!(h.state().step(), dc_app::steps::Step::Operations);
+    let id = photo.id.as_str().to_owned();
+
+    // The editor's Setup: the Picture dropdown, the Tool, the max depth.
+    let picture = h.get_by_role_and_label(Role::ComboBox, "Picture");
+    assert_eq!(
+        picture.accesskit_node().value().as_deref(),
+        Some("gradient"),
+        "the picture carved is the one chosen"
+    );
+    assert!(h.query_by_role_and_label(Role::Label, "Tool").is_some());
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Max depth")
+            .is_some()
+    );
+    assert!(
+        h.query_by_label("Targets").is_none(),
+        "a Photo V-Carve has a picture, not targets"
+    );
+
+    // The dropdown lists the project's pictures; choosing one is a step.
+    h.get_by_role_and_label(Role::ComboBox, "Picture").click();
+    h.run();
+    h.get_by_label("ramp").click();
+    h.run();
+    let dc_project::Operation::PhotoVCarve(photo) = operation_of(&h, &id) else {
+        panic!("still a Photo V-Carve");
+    };
+    assert_eq!(photo.image.as_str(), "b2");
+    assert_eq!(
+        h.state().app().undo_label(),
+        Some("Set image of “Photo V-Carve 1”")
+    );
+
+    // On the Design step the picture's row has its own menu, with *Add
+    // operation* for a Photo V-Carve on it.
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::TreeItem, "ramp")
+        .click_secondary();
+    h.run();
+    assert!(h.query_by_label("Rename").is_some());
+    assert!(h.query_by_label("Add operation").is_some());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Capability 76 on the window: once the version 14 plaque (whose Drill
 /// predates `allow_tool_wider_than_hole`, so its holes are too small for
 /// its bit) has generated, the status bar's counts open the Warnings
@@ -5756,10 +6463,10 @@ fn start_screen_offers_a_drawing_the_examples_and_recent_files() {
     }
     assert!(heading.bottom() <= actions[0].top());
     assert!(
-        button_named(&h, "New from picture…")
+        !button_named(&h, "New from picture…")
             .accesskit_node()
             .is_disabled(),
-        "picture import is not in this build"
+        "a picture starts a project too (`new_from_picture_through_the_sheet`)"
     );
 
     // The examples: three cards in a row under their heading.
@@ -6196,5 +6903,382 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
             Ask::NewFromDrawing => assert_eq!(last, "open_drawing"),
         }
     }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+// Slice D6, area C (#685; capabilities 63, 66b, 68, 68a): the tapered ball
+// nose in the window.
+
+/// Types `text` into the Inspector's field `label` and leaves it with
+/// Enter.
+fn type_in_field(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, label).focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, label)
+        .type_text(text);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+}
+
+/// A 90° V-bit `id` named `name`, with the rates of the project's second
+/// tool and no number.
+fn v_bit_90(h: &Harness<'_, dreamcarve_app::Shell>, id: &str, name: &str) -> dc_project::Tool {
+    dc_project::Tool {
+        id: dc_project::ToolId::new(id),
+        name: name.into(),
+        number: None,
+        cutter: dc_project::ToolKind::VBit {
+            included_angle_deg: 90.0,
+        },
+        ..h.state().app().project().tools[1].clone()
+    }
+}
+
+/// How many rows of the Tools list show the red dot, as assistive tools
+/// read it.
+fn rows_lacking_a_value(h: &Harness<'_, dreamcarve_app::Shell>) -> usize {
+    h.query_all_by_label("Has a value still to set").count()
+}
+
+/// Capability 63 and 66b (#685): choosing *Tapered ball nose* in the type
+/// dropdown, the sixth type, writes the cutter with none of its three
+/// values set, one undo step, and the editor draws *Tip diameter*, *Taper
+/// per side* and *Flute length* between the type and *Diameter*, each
+/// with the required-field look and the file's message as its tooltip.
+/// The row keeps its red dot until the last is typed; each value typed is
+/// one more step, nothing is invented, and the row's second line then
+/// names the tip and the taper per side.
+#[test]
+fn tapered_ball_nose_fields_are_required_until_typed() {
+    let dir = scratch("tapered-fields");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options(&dir.join("config"), Some(plaque), &dialogs))
+                .expect("the shell starts")
+        });
+    h.run();
+    go_to(&mut h, "Tools");
+    let own = ["Tip diameter", "Taper per side", "Flute length"];
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    for label in own {
+        assert!(
+            h.query_by_role_and_label(Role::TextInput, label).is_none(),
+            "an end mill has no {label}"
+        );
+    }
+    let lacking = rows_lacking_a_value(&h);
+    let steps = undo_steps(&h);
+
+    // The dropdown lists the six types; the last is the tapered ball nose.
+    h.get_by_label("Type").click();
+    h.run();
+    for kind in [
+        "End mill",
+        "Ball nose",
+        "V-bit",
+        "Engraver",
+        "Drill",
+        "Tapered ball nose",
+    ] {
+        assert!(h.query_all_by_label(kind).next().is_some(), "{kind}");
+    }
+    h.get_by_label("Tapered ball nose").click();
+    h.run();
+    let tool = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .project()
+            .tools
+            .iter()
+            .find(|t| t.name == "1/4 end mill")
+            .expect("the tool")
+            .clone()
+    };
+    assert_eq!(
+        tool(&h).cutter,
+        dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: None,
+            taper_angle_deg: None,
+            flute_length_mm: None,
+        },
+        "nothing is invented"
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "the switch is one step");
+    assert_eq!(
+        rows_lacking_a_value(&h),
+        lacking + 1,
+        "the row takes the red dot"
+    );
+
+    // The three fields, in order, between the type and the diameter.
+    let top = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::TextInput, label).rect().min.y
+    };
+    let order = ["Name", own[0], own[1], own[2], "Diameter", "Flutes", "Feed"];
+    for pair in order.windows(2) {
+        assert!(
+            top(&h, pair[0]) < top(&h, pair[1]),
+            "{} is above {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Angle")
+            .is_none(),
+        "the included angle is a V-bit's"
+    );
+    // Each is required, with the file's message as its tooltip.
+    for (label, field) in own.into_iter().zip([
+        dc_app::tools::ToolField::TipDiameter,
+        dc_app::tools::ToolField::Taper,
+        dc_app::tools::ToolField::FluteLength,
+    ]) {
+        let message = dc_app::tools::required(&tool(&h), field).expect("it is required");
+        assert!(
+            message.contains(field.file_name()),
+            "the file names it: {message}"
+        );
+        assert_required(&mut h, label, &message);
+    }
+    assert_eq!(
+        h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+            .value()
+            .as_deref(),
+        Some("6.35 mm · T1"),
+        "an unset value is the row's red dot, not a made-up figure"
+    );
+
+    // Typed, one step each: the marks go, and the row names what it is.
+    for (n, (label, text)) in own.into_iter().zip(["0.762", "6.7", "19.05"]).enumerate() {
+        assert_eq!(rows_lacking_a_value(&h), lacking + 1, "before {label}");
+        type_in_field(&mut h, label, text);
+        assert_eq!(undo_steps(&h), steps + 2 + n, "{label} is one step");
+        let field = h.get_by_role_and_label(Role::TextInput, label);
+        assert_eq!(field.value().as_deref(), Some(text), "{label}");
+        assert_ne!(
+            field.accesskit_node().placeholder(),
+            Some("Required"),
+            "{label} is no longer required"
+        );
+    }
+    assert_eq!(
+        tool(&h).cutter,
+        dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(0.762),
+            taper_angle_deg: Some(6.7),
+            flute_length_mm: Some(19.05),
+        }
+    );
+    assert_eq!(rows_lacking_a_value(&h), lacking, "the red dot goes");
+    assert_eq!(
+        h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+            .value()
+            .as_deref(),
+        Some("6.35 mm · tip 0.762 mm · 6.7°/side · T1"),
+        "the cutting diameter, the tip, the taper per side, the number"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Capability 63 (#685): the Tools list's second line is
+/// `tools::row_detail`'s. On the tapered ball nose test part a tapered
+/// ball nose's row names its cutting diameter, its tip and its angle per
+/// side; an end mill's its diameter alone; and a V-bit's included angle
+/// stands unlabelled by *side*, so the two cannot be mixed up.
+#[test]
+fn tools_list_names_the_tip_and_the_angle_per_side() {
+    let dir = scratch("tapered-rows");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let v_bit = v_bit_90(&h, "t9", "90 V");
+    h.state_mut()
+        .app_mut()
+        .run(Command::AddTools(vec![v_bit]))
+        .unwrap();
+    go_to(&mut h, "Tools");
+    let detail = |name: &str| {
+        h.get_by_role_and_label(Role::ListItem, name)
+            .value()
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        detail("0.762 mm tip tapered ball nose"),
+        "6.35 mm · tip 0.762 mm · 6.7°/side · T2"
+    );
+    assert_eq!(
+        detail("2.286 mm tip tapered ball nose"),
+        "6.35 mm · tip 2.286 mm · 6.7°/side · T1"
+    );
+    assert_eq!(detail("1/8 end mill"), "3.175 mm · T3");
+    assert_eq!(detail("90 V"), "6.35 mm · 90°");
+    // Every line is the model's.
+    let app = h.state().app();
+    for tool in &app.project().tools {
+        assert_eq!(
+            detail(&tool.name),
+            dc_app::tools::row_detail(app.strings(), tool, dc_project::Units::Mm),
+            "{}",
+            tool.name
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Capabilities 68 and 68a (#685): cut with a tapered ball nose, a
+/// V-Carve's Tool row shows the bit's cutting height under its picker and
+/// an Inlay's says one bit cuts both boards; the Inlay's derived lines
+/// under Depth compare the flank's engagement with that cutting height
+/// and end with the seat line, `check`'s figures, in millimetres. The
+/// lines are the model's (`editor::notes`, `tool_note`, `seat_line`).
+#[test]
+fn carve_editors_show_the_cutting_height_and_the_seat_line() {
+    let dir = scratch("tapered-notes");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        900.0,
+    );
+    let op = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| operation_of(h, id);
+    let tool_of = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| {
+        let app = h.state().app();
+        let tool = op(h, id).tool().clone();
+        let tool = app.project().tools.iter().find(|t| t.id == tool).unwrap();
+        dc_app::editor::tool_note(app.project(), app.strings(), tool).expect("a cutting height")
+    };
+
+    // The V-Carve, cut with the 2.286 mm tip: its cone reaches the
+    // cutting diameter below the flutes' top.
+    open_operation(&mut h, "DC carve");
+    let carve_note = tool_of(&h, "op1");
+    assert!(
+        carve_note.starts_with("cutting height 18.3") && carve_note.ends_with(" mm"),
+        "{carve_note}"
+    );
+    assert!(h.query_by_label(&carve_note).is_some(), "{carve_note}");
+
+    // The Inlay, cut with the 0.762 mm tip, whose flutes end first.
+    open_operation(&mut h, "DC inlay");
+    let inlay_note = tool_of(&h, "op2");
+    assert_eq!(inlay_note, "cutting height 19.05 mm");
+    assert!(
+        h.query_by_label("one bit for both boards · cutting height 19.05 mm")
+            .is_some(),
+        "under the Inlay's Tool picker"
+    );
+    assert!(
+        h.query_by_label_contains("seat: moves").is_none(),
+        "the derived lines are Depth's, closed until opened"
+    );
+    open_group(&mut h, "Depth");
+    let app = h.state().app();
+    let seat = dc_app::editor::seat_line(app.project(), app.strings(), &op(&h, "op2"))
+        .expect("an Inlay cut with a tapered ball nose has a seat line");
+    assert!(
+        seat.starts_with("seat: moves ")
+            && seat.contains(" mm per 0.5° of taper, ")
+            && seat.ends_with(" mm per 0.05 mm of tip radius; test-fit before gluing"),
+        "{seat}"
+    );
+    assert!(h.query_by_label(&seat).is_some(), "{seat}");
+    assert!(
+        h.query_by_label_contains("of the tapered ball nose's 19.05 mm cutting height")
+            .is_some(),
+        "the engagement is compared with the cutting height"
+    );
+    // The seat line is the third of the derived lines.
+    let engagement = h
+        .get_by_label_contains("of the tapered ball nose's 19.05 mm cutting height")
+        .rect();
+    let seat_at = h.get_by_label(&seat).rect();
+    assert!(engagement.min.y < seat_at.min.y, "the seat line is last");
+    assert!(
+        seat_at.max.x <= h.state().layout().inspector.unwrap().max.x,
+        "the seat line wraps inside the Inspector"
+    );
+    // A V-bit has no seat line.
+    let v_bit = v_bit_90(&h, "t9", "90 V");
+    h.state_mut()
+        .app_mut()
+        .run(Command::AddTools(vec![v_bit]))
+        .unwrap();
+    let dc_project::Operation::Inlay(mut inlay) = op(&h, "op2") else {
+        panic!("op2 is an Inlay");
+    };
+    inlay.tool = dc_project::ToolId::new("t9");
+    h.state_mut()
+        .app_mut()
+        .run(Command::UpdateOperation(dc_project::Operation::Inlay(
+            inlay,
+        )))
+        .unwrap();
+    h.run();
+    assert!(
+        h.query_by_label_contains("seat: moves").is_none(),
+        "a V-bit's Inlay has no seat line"
+    );
+    assert!(
+        h.query_by_label_contains("one bit for both boards · cone height")
+            .is_some(),
+        "a V-bit shows its cone height"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The open item of #685, in the window: on a project whose only carving
+/// bit is a tapered ball nose, *Add ▸ V-Carve* makes a V-Carve that cuts
+/// with it (the first tool its picker offers), not one with no tool.
+#[test]
+fn a_new_carve_takes_the_tapered_ball_nose() {
+    let dir = scratch("tapered-new-carve");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new("i1"),
+        ]));
+    go_to(&mut h, "Operations");
+    let before = h.state().app().project().operations.len();
+    h.get_by_role_and_label(Role::Button, "Add").click();
+    h.run();
+    h.get_by_role_and_label(Role::MenuItem, "V-Carve").click();
+    h.run();
+    let project = h.state().app().project();
+    assert_eq!(project.operations.len(), before + 1);
+    let added = project.operations.last().unwrap();
+    assert!(matches!(added, dc_project::Operation::VCarve(_)));
+    assert_eq!(
+        added.tool().as_str(),
+        "t2",
+        "the first tapered ball nose, as its picker offers"
+    );
+    assert!(
+        !h.state()
+            .app()
+            .warnings()
+            .iter()
+            .any(|f| f.code.as_deref() == Some("dangling_tool")),
+        "the new carve names a tool"
+    );
     std::fs::remove_dir_all(&dir).ok();
 }

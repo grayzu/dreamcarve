@@ -125,7 +125,9 @@ impl Cx<'_> {
     fn phrase(&self, row: &Row, rows: &[&'static Row]) -> Option<String> {
         let value = fields::get(self.record, row.key)?;
         match row.kind {
+            // A picture is a Setup row, which is never folded to a summary.
             FieldKind::InstanceList
+            | FieldKind::PicturePicker
             | FieldKind::PointPick
             | FieldKind::InlayDerived
             | FieldKind::CountersinkDepth => None,
