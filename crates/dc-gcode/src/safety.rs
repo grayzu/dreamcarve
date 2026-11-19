@@ -276,9 +276,8 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
     let (Some(sx), Some(sy), Some(ex), Some(ey)) = (mv.from.x, mv.from.y, mv.to.x, mv.to.y) else {
         return Vec::new();
     };
-    let centre = match mv.arc.r {
-        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
-        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
+    let Some(centre) = mv.arc_centre() else {
+        return Vec::new();
     };
     let mut arc = Arc::from_ends(Point::new(sx, sy), Point::new(ex, ey), centre, !machine_cw);
     // Fail-closed: an arc that ends where it starts is a full circle to
@@ -287,24 +286,6 @@ fn arc_extremes(mv: &MachineMove) -> Vec<Point> {
         arc.sweep_rad = TAU;
     }
     arc.axis_extremes().collect()
-}
-
-/// The centre GRBL and grblHAL compute for an R-format arc from
-/// (`sx`, `sy`) to (`ex`, `ey`) (`gcode.c`, radius format): on the right
-/// of the chord for G2 and the left for G3, the other side for a negative
-/// R.
-pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
-    let (dx, dy) = (ex - sx, ey - sy);
-    let chord = dx.hypot(dy);
-    if chord <= 0.0 {
-        return Point::new(sx, sy);
-    }
-    let h = (r * r - chord * chord / 4.0).max(0.0).sqrt();
-    let side = if machine_cw { 1.0 } else { -1.0 } * r.signum();
-    Point::new(
-        (sx + ex) / 2.0 + side * h * dy / chord,
-        (sy + ey) / 2.0 - side * h * dx / chord,
-    )
 }
 
 /// S7 (#62): every cutting move, widened by its operation's tool radius,
@@ -1384,10 +1365,7 @@ pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform
         MotionKind::Linear => (tx - fx).hypot(ty - fy) * scale,
         MotionKind::ArcCw | MotionKind::ArcCcw => {
             let machine_cw = mv.kind == MotionKind::ArcCw;
-            let centre = match mv.arc.r {
-                Some(r) => r_centre(fx, fy, tx, ty, r, machine_cw),
-                None => Point::new(fx + mv.arc.i.unwrap_or(0.0), fy + mv.arc.j.unwrap_or(0.0)),
-            };
+            let centre = mv.arc_centre()?;
             let arc = Arc::from_ends(Point::new(fx, fy), Point::new(tx, ty), centre, !machine_cw);
             arc.radius_mm * arc.sweep_rad.abs() * scale
         }
@@ -1423,7 +1401,9 @@ fn is_full_circle(mv: &MachineMove, post: &PostProcessor) -> bool {
 }
 
 /// An arc the controller will accept: I/J radii agree, or R spans the
-/// chord.
+/// chord. This judges the words as written, so it reads them itself and
+/// not through [`MachineMove::arc_centre`], which places a centre for any
+/// words.
 fn check_arc(mv: &MachineMove) -> Result<(), ExportError> {
     if !matches!(mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw) {
         return Ok(());
@@ -2451,11 +2431,7 @@ fn chain_end(pieces: &[ToolpathArc]) -> Option<Point3> {
 fn read_arc_centre(read: &ReadMove<'_>, transform: &MachineTransform) -> Option<(Point, bool)> {
     let mv = read.mv;
     let machine_cw = mv.kind == MotionKind::ArcCw;
-    let (sx, sy, ex, ey) = (mv.from.x?, mv.from.y?, mv.to.x?, mv.to.y?);
-    let machine_centre = match mv.arc.r {
-        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
-        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
-    };
+    let machine_centre = mv.arc_centre()?;
     let centre = transform
         .to_project(
             Point3::new(machine_centre.x, machine_centre.y, 0.0),
@@ -2490,13 +2466,16 @@ fn arc_follows(
     if (end.x - start.x).abs() < tolerance / 2.0 && (end.y - start.y).abs() < tolerance / 2.0 {
         return false;
     }
-    let Some(r) = mv.arc.r else {
-        let (i, j) = (mv.arc.i.unwrap_or(0.0), mv.arc.j.unwrap_or(0.0));
-        let centre = to_project(sx + i, sy + j);
+    let Some(Point { x: cx, y: cy }) = mv.arc_centre() else {
+        return false;
+    };
+    // I and J say where the centre is, so it is compared; R says only how
+    // far away, so the arc's midpoint is.
+    if mv.arc.r.is_none() {
+        let centre = to_project(cx, cy);
         return approx_eq(centre.x, arc.centre.x, tolerance)
             && approx_eq(centre.y, arc.centre.y, tolerance);
-    };
-    let Point { x: cx, y: cy } = r_centre(sx, sy, ex, ey, r, machine_cw);
+    }
     let start_rad = (sy - cy).atan2(sx - cx);
     let end_rad = (ey - cy).atan2(ex - cx);
     let sweep_rad = if machine_cw {

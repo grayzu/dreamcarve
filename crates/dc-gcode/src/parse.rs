@@ -13,7 +13,7 @@
 //! not know, or a number it cannot read (an exponent, for example), makes
 //! the line unparseable, which `emit` reports as an error.
 
-use dc_geometry::approx_eq;
+use dc_geometry::{Point, approx_eq};
 use dc_project::{PostProcessor, Units};
 
 use crate::ExportError;
@@ -90,6 +90,42 @@ pub struct MachineMove {
     pub units: Units,
     /// Centre words, for arcs.
     pub arc: ArcWords,
+}
+
+impl MachineMove {
+    /// The centre the controller turns this arc move about, machine XY,
+    /// program units: its start plus `I` and `J`, a word not written
+    /// being 0, or for an `R` arc the centre [`r_centre`] gives. `None`
+    /// when a start or end coordinate is not known. A move that is not
+    /// `G2` is taken as `G3`; the caller asks only of arcs.
+    pub(crate) fn arc_centre(&self) -> Option<Point> {
+        let (sx, sy, ex, ey) = (self.from.x?, self.from.y?, self.to.x?, self.to.y?);
+        Some(match self.arc.r {
+            Some(r) => r_centre(sx, sy, ex, ey, r, self.kind == MotionKind::ArcCw),
+            None => Point::new(
+                sx + self.arc.i.unwrap_or(0.0),
+                sy + self.arc.j.unwrap_or(0.0),
+            ),
+        })
+    }
+}
+
+/// The centre GRBL and grblHAL compute for an R-format arc from
+/// (`sx`, `sy`) to (`ex`, `ey`) (`gcode.c`, radius format): on the right
+/// of the chord for G2 and the left for G3, the other side for a negative
+/// R.
+pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: bool) -> Point {
+    let (dx, dy) = (ex - sx, ey - sy);
+    let chord = dx.hypot(dy);
+    if chord <= 0.0 {
+        return Point::new(sx, sy);
+    }
+    let h = (r * r - chord * chord / 4.0).max(0.0).sqrt();
+    let side = if machine_cw { 1.0 } else { -1.0 } * r.signum();
+    Point::new(
+        (sx + ex) / 2.0 + side * h * dy / chord,
+        (sy + ey) / 2.0 - side * h * dx / chord,
+    )
 }
 
 /// One non-empty line of a parsed program, or one move the controller makes

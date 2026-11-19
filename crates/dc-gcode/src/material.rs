@@ -371,7 +371,7 @@ use photo::Picture;
 
 use crate::ExportError;
 use crate::parse::{Block, MachineMove, MotionKind};
-use crate::safety::{OpSpan, Tolerances, quantum_mm, r_centre};
+use crate::safety::{OpSpan, Tolerances, quantum_mm};
 use crate::transform::MachineTransform;
 
 /// The material one operation may cut, worked out from the project.
@@ -3219,10 +3219,7 @@ pub(crate) fn project_path(mv: &MachineMove, transform: &MachineTransform) -> Op
             });
         }
     };
-    let machine_centre = match mv.arc.r {
-        Some(r) => r_centre(sx, sy, ex, ey, r, machine_cw),
-        None => Point::new(sx + mv.arc.i.unwrap_or(0.0), sy + mv.arc.j.unwrap_or(0.0)),
-    };
+    let machine_centre = mv.arc_centre()?;
     let centre = to_project(machine_centre.x, machine_centre.y);
     let ccw = machine_cw == transform.mirrors_xy();
     let sweep_rad = Arc::from_ends(start, end, centre, ccw).sweep_rad;

@@ -143,7 +143,9 @@ fn straight_length(m: &MachineMove) -> f64 {
 /// DreamCarve writes), with its Z change as a helix: `sqrt((r θ)² + dz²)`,
 /// program units. A centre-format arc whose end is its start is a full
 /// circle, as the controller reads it; an `R` arc sweeps at most 180°, or
-/// more with a negative `R`.
+/// more with a negative `R`. It reads the words itself and not through
+/// [`MachineMove::arc_centre`]: an arc with no radius is an error here,
+/// and an `R` arc's length needs no centre.
 fn arc_length(m: &MachineMove) -> Result<f64, ExportError> {
     let unparseable = |reason: &str| ExportError::Unparseable {
         line: m.line,

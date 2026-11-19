@@ -1134,7 +1134,7 @@ fn written_centre(
 ) -> Option<Point> {
     if opts.arc_format == ArcFormat::R {
         let radius = (opts.format)(emitted.radius)?;
-        return Some(crate::safety::r_centre(
+        return Some(crate::parse::r_centre(
             start.x, start.y, target.x, target.y, radius, clockwise,
         ));
     }
