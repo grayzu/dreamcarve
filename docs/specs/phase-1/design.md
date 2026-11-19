@@ -578,6 +578,16 @@ Inputs: project, op. Output: toolpath in project space.
    anywhere in the program whose end is its start within half a unit in
    the last written place is a full circle to the controller and fails
    as `ExportError::FullCircleArc`, so S7 and the extents never see one.
+   Every cut belongs to an operation (code review 1.10): a `G1`, `G2` or
+   `G3` on a line outside every operation's lines fails as
+   `ExportError::CutOutsideOperation { line }`. S3's tool rates, S6, S7's
+   tool radius, S9 and S10 hold a cut by the operation whose lines it is
+   on, so such a cut was held only to S1, S4 and a positive feed. The
+   emitter writes none; only a definition's header or footer line could
+   (`emit::a_cut_outside_every_operation_is_refused`: a footer that
+   plunged into the stock at five times the tool's feed before its `M5`
+   exported). A rapid there is still held to S2 at the highest safe Z of
+   the program.
    `M6` and `M61` are accepted only from a definition whose tool change has
    `M6` and whose tool-change mode is `"m6"`. A violation is
    `ExportError`, never a warning.

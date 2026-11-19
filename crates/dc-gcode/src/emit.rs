@@ -5123,6 +5123,42 @@ mod tests {
         }
     }
 
+    /// Review 1.10: a `G1`, `G2` or `G3` outside every operation's lines
+    /// has no toolpath to be read back against (S6), no material (S9) and
+    /// no tool whose rates and radius hold it (S3, S7, S10), so it is
+    /// refused wherever it is. Only a definition's header or footer can
+    /// write one. Here grblHAL's footer, which stops the spindle itself,
+    /// first plunges 1 mm into the stock at five times the tool's feed
+    /// where the Profile ended, then cuts across; with the spindle still
+    /// running, every other rule let both through.
+    #[test]
+    fn a_cut_outside_every_operation_is_refused() {
+        let project = project_with("grblhal");
+        let bundled = post_of(&project);
+        assert_eq!(bundled.program.footer, ["M5"]);
+        let ops = ops_for(&project);
+        let lines = emit_with(&project, &bundled, &ops, DATE)
+            .unwrap()
+            .0
+            .text
+            .lines()
+            .count();
+        for cut in ["G1 Z-1 F5000", "G1 X50 F5000", "G2 X50 Y50 I10 J0 F5000"] {
+            let mut definition = bundled.clone();
+            definition.program.footer.insert(0, cut.to_owned());
+            let err = emit_with(&project, &definition, &ops, DATE).unwrap_err();
+            // The footer's first line: the bundled program's `M5`.
+            assert!(
+                matches!(err, ExportError::CutOutsideOperation { line } if line == lines - 1),
+                "{cut}: {err:?}"
+            );
+        }
+        // A rapid there is still held to S2 only.
+        let mut definition = bundled;
+        definition.program.footer.insert(0, "G0 Z20".to_owned());
+        emit_with(&project, &definition, &ops, DATE).unwrap();
+    }
+
     /// #57: the user fits the first tool and sets work zero before starting
     /// the program, so nothing stops the program before its first cut but,
     /// with manual spindle control, the pause to turn the router on.

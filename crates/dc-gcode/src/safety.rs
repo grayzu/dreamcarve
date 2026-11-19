@@ -13,6 +13,12 @@
 //! with its toolpath move for move, arc direction and centre included; see
 //! [`check_reproduces`] for exactly what it accepts.
 //!
+//! Every cut belongs to an operation (review 1.10): S3's rates, S6, S7's
+//! tool radius, S9 and S10 all hold a cut by the operation whose lines it
+//! is on, so a `G1`, `G2` or `G3` on a line of no operation is
+//! [`ExportError::CutOutsideOperation`]. DreamCarve writes none; only a
+//! definition's header or footer line could be one.
+//!
 //! S11 (`docs/specs/phase-2/functional.md`): a canned-cycle line is checked
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
@@ -290,7 +296,9 @@ pub(crate) fn r_centre(sx: f64, sy: f64, ex: f64, ey: f64, r: f64, machine_cw: b
 /// S7 (#62): every cutting move, widened by its operation's tool radius,
 /// stays inside the stock rectangle `[0, width] × [0, height]`, within one
 /// unit in the last written place. Arcs count to their bulge. A cut
-/// outside every operation is checked as a point. A Photo V-Carve's cut
+/// outside every operation has no tool radius to be widened by, and is
+/// refused ([`ExportError::CutOutsideOperation`]; [`check_rules`] refuses
+/// it first). A Photo V-Carve's cut
 /// (#646) is widened at each end by its groove's half-width at the stock
 /// top there, `(thickness − z) · tan(α/2)`, from 0 above the stock to the
 /// tool's radius ([`groove_radius_mm`]): its grooves may run past the
@@ -307,11 +315,15 @@ fn check_on_stock(
         if !mv.kind.is_cut() {
             continue;
         }
-        let limits = Limits::for_line(mv.line, spans, stock_thickness_mm);
-        let full_mm = limits.tool.map_or(0.0, dc_project::Tool::cut_radius_mm);
+        let Some(span) = spans.iter().find(|s| s.lines.contains(&mv.line)) else {
+            return Err(ExportError::CutOutsideOperation { line: mv.line });
+        };
+        let (op, tool) = (span.op, span.tool);
+        let full_mm = tool.cut_radius_mm();
         let radius_at = |z: Option<f64>| {
             groove_radius_mm(
-                &limits,
+                op,
+                tool,
                 stock_thickness_mm,
                 z.map(|z| transform.project_z(z, mv.units)),
             )
@@ -335,7 +347,7 @@ fn check_on_stock(
             ];
             if let Some((side, overhang_mm)) = sides.into_iter().find(|(_, o)| *o > tolerance_mm) {
                 return Err(ExportError::OffStock {
-                    op: limits.op.map(|op| op.id().clone()),
+                    op: Some(op.id().clone()),
                     line: mv.line,
                     side,
                     overhang_mm,
@@ -352,11 +364,12 @@ fn check_on_stock(
 /// operation, a tool that is not a V-bit of a usable angle, or an unknown
 /// Z, where the full radius holds.
 fn groove_radius_mm(
-    limits: &Limits<'_>,
+    op: &Operation,
+    tool: &Tool,
     stock_thickness_mm: f64,
     z_mm: Option<f64>,
 ) -> Option<f64> {
-    let (Some(Operation::PhotoVCarve(_)), Some(tool)) = (limits.op, limits.tool) else {
+    let Operation::PhotoVCarve(_) = op else {
         return None;
     };
     // The Photo's groove follows a V-bit's angle (S19), so a tapered ball
@@ -586,8 +599,13 @@ fn check_rules(
         };
         check_depth(mv, &limits, transform, tolerance_mm)?;
         if mv.kind.is_cut() {
+            // Review 1.10: a cut is some operation's, or no rule below,
+            // nor S6, S7 or S9, has a tool or a toolpath to hold it by.
+            let Some((op, tool)) = limits.op.zip(limits.tool) else {
+                return Err(ExportError::CutOutsideOperation { line });
+            };
             if manual {
-                router.cut(line, limits.tool.map(|t| &t.id))?;
+                router.cut(line, &tool.id)?;
             } else {
                 if !spindle_on || rpm.is_none_or(|s| s <= 0.0) {
                     return Err(ExportError::SpindleNotRunning { line });
@@ -596,8 +614,8 @@ fn check_rules(
                     return Err(ExportError::SpindleNotUpToSpeed { line });
                 }
             }
-            check_feed(mv, &limits, 2.0 * feed_quantum_mm_min(post, mv.units))?;
-            check_descent_rate(mv, &limits, transform)?;
+            check_feed(mv, op, tool, 2.0 * feed_quantum_mm_min(post, mv.units))?;
+            check_descent_rate(mv, op, tool, transform)?;
             check_arc(mv)?;
             check_not_full_circle(mv, post)?;
             floors.cut(mv, transform, router.z_mm, z_after);
@@ -717,12 +735,12 @@ impl<'a> RouterPauses<'a> {
 
     /// A cut on `line` with `tool`. A tool's first cut needs a pause at
     /// safe Z since the previous cut, for the user to switch the router on.
-    fn cut(&mut self, line: usize, tool: Option<&'a ToolId>) -> Result<(), ExportError> {
-        let first_of_tool = self.tool.is_none() || self.tool != tool;
+    fn cut(&mut self, line: usize, tool: &'a ToolId) -> Result<(), ExportError> {
+        let first_of_tool = self.tool != Some(tool);
         if first_of_tool && !self.paused_at_safe_z {
             return Err(ExportError::RouterNotStarted { line });
         }
-        self.tool = tool.or(self.tool);
+        self.tool = Some(tool);
         self.paused_at_safe_z = false;
         self.cut_since_pause = true;
         Ok(())
@@ -954,7 +972,9 @@ struct Limits<'a> {
 
 impl<'a> Limits<'a> {
     /// The limits of the operation that owns `line`; outside every
-    /// operation, the strictest of them all.
+    /// operation, the strictest of them all, with no operation and no
+    /// tool: only a rapid may be there
+    /// ([`ExportError::CutOutsideOperation`]).
     fn for_line(line: usize, spans: &[OpSpan<'a>], stock_thickness_mm: f64) -> Self {
         if let Some(span) = spans.iter().find(|s| s.lines.contains(&line)) {
             return Self {
@@ -1223,7 +1243,8 @@ pub(crate) fn differs(a: Option<f64>, b: Option<f64>) -> bool {
 /// or their chords, slowed so the cutting edge moves at the feed (#335).
 fn check_feed(
     mv: &MachineMove,
-    limits: &Limits<'_>,
+    op: &Operation,
+    tool: &Tool,
     tolerance_mm_min: f64,
 ) -> Result<(), ExportError> {
     let line = mv.line;
@@ -1231,33 +1252,30 @@ fn check_feed(
         return Err(ExportError::CutWithoutFeed { line });
     };
     let feed_mm_min = feed * mm_per_unit(mv.units);
-    if let Some(tool) = limits.tool {
-        let on_a_rate = [tool.feed_mm_min, tool.plunge_mm_min]
-            .into_iter()
-            .flatten()
-            .any(|rate| approx_eq(rate, feed_mm_min, tolerance_mm_min));
-        let scaled_descent = is_descent(mv)
-            && tool
-                .plunge_mm_min
-                .zip(tool.feed_mm_min)
-                .is_some_and(|(plunge, cut)| {
-                    feed_mm_min >= plunge - tolerance_mm_min
-                        && feed_mm_min <= cut + tolerance_mm_min
-                });
-        // #335: a Profile's last pass runs its inside arcs at the feed
-        // scaled by `ρ / (ρ + r)`, so its cutting edge moves at the feed,
-        // and never slower than the edge needs in the smallest hole the
-        // last pass cuts, `a / (a + r)`; flattened, their chords too.
-        let edge_scaled = is_level_cut(mv)
-            && last_pass_floor_mm_min(limits)
-                .zip(tool.feed_mm_min)
-                .is_some_and(|(floor, cut)| {
-                    feed_mm_min >= floor - tolerance_mm_min && feed_mm_min <= cut + tolerance_mm_min
-                });
-        let matches = on_a_rate || scaled_descent || edge_scaled;
-        if !matches {
-            return Err(ExportError::FeedNotFromTool { line, feed_mm_min });
-        }
+    let on_a_rate = [tool.feed_mm_min, tool.plunge_mm_min]
+        .into_iter()
+        .flatten()
+        .any(|rate| approx_eq(rate, feed_mm_min, tolerance_mm_min));
+    let scaled_descent = is_descent(mv)
+        && tool
+            .plunge_mm_min
+            .zip(tool.feed_mm_min)
+            .is_some_and(|(plunge, cut)| {
+                feed_mm_min >= plunge - tolerance_mm_min && feed_mm_min <= cut + tolerance_mm_min
+            });
+    // #335: a Profile's last pass runs its inside arcs at the feed
+    // scaled by `ρ / (ρ + r)`, so its cutting edge moves at the feed,
+    // and never slower than the edge needs in the smallest hole the
+    // last pass cuts, `a / (a + r)`; flattened, their chords too.
+    let edge_scaled = is_level_cut(mv)
+        && last_pass_floor_mm_min(op, tool)
+            .zip(tool.feed_mm_min)
+            .is_some_and(|(floor, cut)| {
+                feed_mm_min >= floor - tolerance_mm_min && feed_mm_min <= cut + tolerance_mm_min
+            });
+    let matches = on_a_rate || scaled_descent || edge_scaled;
+    if !matches {
+        return Err(ExportError::FeedNotFromTool { line, feed_mm_min });
     }
     Ok(())
 }
@@ -1278,8 +1296,8 @@ fn is_level_cut(mv: &MachineMove) -> bool {
 /// carry (#335): its tool's feed times `a / (a + r)`, the stock to leave over
 /// the stock to leave plus the tool radius, as slow as the generator runs the
 /// last pass's tightest inside arc. `None` for any other operation.
-fn last_pass_floor_mm_min(limits: &Limits<'_>) -> Option<f64> {
-    let (Some(Operation::Profile(op)), Some(tool)) = (limits.op, limits.tool) else {
+fn last_pass_floor_mm_min(op: &Operation, tool: &Tool) -> Option<f64> {
+    let Operation::Profile(op) = op else {
         return None;
     };
     let stock_to_leave_mm = op.last_pass.as_ref()?.stock_to_leave_mm;
@@ -1312,12 +1330,10 @@ fn is_descent(mv: &MachineMove) -> bool {
 /// program from cutting from an unknown position.
 fn check_descent_rate(
     mv: &MachineMove,
-    limits: &Limits<'_>,
+    op: &Operation,
+    tool: &Tool,
     transform: &MachineTransform,
 ) -> Result<(), ExportError> {
-    let (Some(op), Some(tool)) = (limits.op, limits.tool) else {
-        return Ok(());
-    };
     let Some(rate_mm_min) = descent_rate_mm_min(mv, transform) else {
         return Ok(());
     };

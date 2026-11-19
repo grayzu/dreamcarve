@@ -331,6 +331,19 @@ pub enum ExportError {
         /// The active feed, mm/min.
         feed_mm_min: f64,
     },
+    /// A cutting move (`G1`, `G2` or `G3`) is on a line of no operation
+    /// (review 1.10): there is no toolpath to read it back against (S6),
+    /// no material to hold it to (S9), and no tool whose rates and radius
+    /// S3, S7 and S10 could check it by. DreamCarve writes every cut
+    /// inside its operation's lines, so only a post-processor
+    /// definition's header or footer line can be one.
+    #[error(
+        "emitted line {line} cuts outside every operation, so no rule can hold it to a toolpath, a material or a tool"
+    )]
+    CutOutsideOperation {
+        /// 1-based line number in the program.
+        line: usize,
+    },
     /// S4: a cutting move happens while the spindle is off or without a
     /// speed.
     #[error("emitted line {line} cuts while the spindle is not running")]
