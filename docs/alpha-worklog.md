@@ -96,7 +96,7 @@ Notes from the fixes:
 | Slice | What | Status |
 | --- | --- | --- |
 | C1 | Import drawings and pictures (#535): the headless half is done; the window half (picture sheet, tree rows, textured quads, drop) is slice D6 | doing |
-| C2 | Photo V-Carve editor and bitmaps (#544) | todo |
+| C2 | Photo V-Carve editor and bitmaps (#544): the headless half is done, with selecting, picking, moving and resizing a picture; the window half is slice D6 | doing |
 | C3 | Tapered ball nose in the app (#685): the headless half is done; the window half is slice D6 | doing |
 
 ### D. UI redesign
@@ -159,6 +159,33 @@ Notes from the fixes:
 - **Import review:** `library::review_status`, `review_unset`, `skipped`.
 - Still open: `operations::new_operation` defaults a new carve to the
   first V-bit even when a tapered ball nose is the only carving tool.
+
+#### What the window must draw for slice C2 (Photo V-Carve, pictures as objects)
+
+- **Editor rows** come from the fields table like every kind. The Picture
+  row is `Row::picks_picture()`: a dropdown from
+  `editor::offered_pictures`, shown text `editor::picture_text`, commit
+  `editor::set_picture`. Replace its placeholder
+  `FieldKind::Choice(&[])` with a `FieldKind::PicturePicker`.
+- **Add menu:** `operations::add_menu_with(project, strings, shapes,
+  app.selected_pictures())` and `add_with`; fold the pictures parameter
+  into `add_menu`/`add`.
+- **Selection:** `App::selected_pictures`, `select_pictures`,
+  `click_picture(&id, ClickMode)`; `Tree::bitmap_range`;
+  `BitmapRow.target`. Fold `App.pictures` into `Selection::Bitmaps`.
+- **Picking:** `pick::picture_under(scene, camera, at, &hit)` after
+  `pick`; fold into `Hit::Bitmap`.
+- **Properties:** `pictures::properties` gives `PictureProperties {
+  placement, name, pixels }`, drawn with `properties::{FIELDS, field_text,
+  parse}`; also `pictures::{title, PIXELS_LABEL, pixels_text, read_only,
+  unlock, bounds}`.
+- **Move and resize:** `pictures::edit`, `move_by`, `resize` return
+  `Command::MoveBitmaps` or `ResizeBitmap`.
+- **A spec change made here, for the maintainer to confirm:** capability
+  56 said a picture does not scale. A picture can now be resized, aspect
+  kept, about its centre (commit `2ddb4837`; reverting it restores the
+  old rule).
+- Importing a picture does not select it yet; it should.
 
 ### E. Docs and release preparation
 
