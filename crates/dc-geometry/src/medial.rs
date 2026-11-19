@@ -840,6 +840,11 @@ fn medial_axis_of_loops(loops: &[Vec<Point>], step_mm: f64, reach: CornerReach) 
         step_mm,
         reach != CornerReach::Upstream,
     );
+    // #713: a node pruning took that reaches a wall nothing left does is
+    // axis, however short its dead end.
+    if reach != CornerReach::Upstream {
+        restore_wall_reach(&mut graph, &pruned, &grid, &boundary, reach);
+    }
     drop_small_components(&mut graph, step_mm * 4.0);
     // Every sharp corner gets a tip; on a loop `reach` reaches, so does
     // every other convex corner no medial disc, nor the floor's trace,
@@ -1003,6 +1008,18 @@ fn restore_pruned(
         }
     }
     let (start, _) = best?;
+    restore_branch(graph, pruned, start)
+}
+
+/// Puts back the branch of the pruned node `start`: the node and each node
+/// it was unlinked from in turn (`pruned`, from [`prune_spurs`]), up to a
+/// node still in the graph. The nodes put back; `None`, and nothing put
+/// back, when the branch no longer leads to the graph.
+fn restore_branch(
+    graph: &mut Graph,
+    pruned: &BTreeMap<usize, usize>,
+    start: usize,
+) -> Option<Vec<usize>> {
     let mut path = vec![start];
     let mut current = start;
     loop {
@@ -1026,6 +1043,119 @@ fn restore_pruned(
     // The last node was in the graph already.
     path.pop();
     Some(path)
+}
+
+/// How far `q` lies outside the discs of the edge from `a` to `b`, mm: the
+/// two nodes' and those between, whose clearance runs straight from the
+/// one's to the other's, as a carve cuts the edge; 0 or less when one
+/// reaches it. The gap is convex along the edge, least where the line from
+/// `q` meets the edge at the angle the clearance's rate asks.
+fn edge_gap_mm(a: MedialNode, b: MedialNode, q: Point) -> f64 {
+    let d = b.p - a.p;
+    let len = d.length();
+    let gap_at = |along_mm: f64| {
+        let t = if len > 0.0 { along_mm / len } else { 0.0 };
+        (a.p + d * t).distance_to(q) - (a.clearance_mm + (b.clearance_mm - a.clearance_mm) * t)
+    };
+    let ends = gap_at(0.0).min(gap_at(len));
+    if len < 1e-12 {
+        return ends;
+    }
+    let rate = (b.clearance_mm - a.clearance_mm) / len;
+    if rate.abs() >= 1.0 {
+        return ends;
+    }
+    let u = d * (1.0 / len);
+    let w = q - a.p;
+    let along_mm = w.dot(u) + rate * w.cross(u).abs() / (1.0 - rate * rate).sqrt();
+    if along_mm > 0.0 && along_mm < len {
+        ends.min(gap_at(along_mm))
+    } else {
+        ends
+    }
+}
+
+/// Every edge of `graph`, as its two nodes.
+fn joined_edges(graph: &Graph) -> Vec<(MedialNode, MedialNode)> {
+    graph
+        .adjacency
+        .iter()
+        .enumerate()
+        .flat_map(|(i, adjacent)| adjacent.range(i + 1..).map(move |&j| (i, j)))
+        .filter_map(|(i, j)| Some((graph.node(i)?, graph.node(j)?)))
+        .collect()
+}
+
+/// Puts back each branch spur pruning took off (`pruned`, from
+/// [`prune_spurs`]) that reaches a wall nothing left does (#713): a pruned
+/// node whose disc comes within `reach`'s slack of a point of a loop
+/// `reach` reaches (its contacts, [`SegmentDistanceGrid::contacts`]), when
+/// every edge left ([`edge_gap_mm`]) stands more than the slack farther
+/// from that point than the node's own disc does; with the nodes between
+/// it and the graph ([`restore_branch`]). Each node is judged against the
+/// graph as the branches before it left it, so what stays pruned leaves
+/// every such wall within the slack of where it was reached, however many
+/// nodes a branch lost.
+///
+/// Spur pruning reads a spur from its leaf's edge alone: shorter than
+/// [`PRUNE_FACTOR`] steps, its clearance not falling. The axis down a
+/// channel of even width is that all along, and [`long_dead_ends`] spares
+/// it only when it is longer than [`DEAD_END_STEPS`] steps; the step
+/// follows the region's size, not the channel's, so a male Inlay's channel
+/// 0.44 mm wide and 0.6 mm long between two serif feet was axis in the
+/// band its margin makes (a step of 0.079 mm) and a spur in a drawn
+/// boundary twice that across (0.150 mm): its last 0.3 mm was not cut, and
+/// the plug stood 0.182 mm proud on it. A spur a curve's flattening leaves
+/// touches its wall where the axis beside it does, and stays pruned.
+fn restore_wall_reach(
+    graph: &mut Graph,
+    pruned: &BTreeMap<usize, usize>,
+    grid: &SegmentDistanceGrid,
+    boundary: &Boundary,
+    reach: CornerReach,
+) {
+    if pruned.is_empty() {
+        return;
+    }
+    let slack_mm = reach.slack_mm();
+    let mut edges = joined_edges(graph);
+    for &k in pruned.keys() {
+        // Put back already, with a branch through it.
+        if graph.degree(k) > 0 {
+            continue;
+        }
+        let Some(node) = graph.node(k) else {
+            continue;
+        };
+        let (contacts, _) = grid.contacts(node.p, node.clearance_mm, slack_mm / node.clearance_mm);
+        // An edge reaches a contact only from within its own discs and
+        // the node's, and three times the slack, of the node.
+        let within_mm = node.clearance_mm + 3.0 * slack_mm;
+        let near: Vec<(MedialNode, MedialNode)> = edges
+            .iter()
+            .copied()
+            .filter(|(a, b)| {
+                a.p.distance_to(node.p)
+                    <= a.clearance_mm.max(b.clearance_mm) + a.p.distance_to(b.p) + within_mm
+            })
+            .collect();
+        let unreached = contacts
+            .iter()
+            .filter(|c| {
+                boundary
+                    .loop_of(c)
+                    .is_some_and(|index| reach.reaches(index > 0))
+            })
+            .any(|c| {
+                let own_mm = c.d - node.clearance_mm;
+                !near
+                    .iter()
+                    .any(|&(a, b)| edge_gap_mm(a, b, c.q) <= own_mm + slack_mm)
+            });
+        if unreached && restore_branch(graph, pruned, k).is_some() {
+            edges = joined_edges(graph);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,7 +1252,9 @@ fn contract_micro_clusters(
 /// branch back where its disc reaches a corner nothing else does). With
 /// `keep_dead_ends` (`CornerReach::Every`), no node of a chain longer than
 /// [`DEAD_END_STEPS`] from a leaf to a junction is pruned
-/// ([`long_dead_ends`], #511); upstream unzips it.
+/// ([`long_dead_ends`], #511); upstream unzips it. A shorter dead end that
+/// reaches a wall nothing else does is put back afterwards
+/// ([`restore_wall_reach`], #713).
 fn prune_spurs(
     graph: &mut Graph,
     max_len_mm: f64,

@@ -2027,6 +2027,30 @@ pub fn neck_step_mm(region: &Region, resolved: &Resolution, tolerance_mm: f64) -
    into a wedge narrower than the step either side of a pinch, where a
    hole comes within 3 µm of the outline (`inlay::pinched_design_seats_flush`);
    and a strip's round end (step 11, below, puts that back too).
+   **Wall reach (#713).** Five steps is a length in steps, and the step
+   follows the region's size (step 2), not the dead end's: the same
+   channel between two serif feet, 0.44 mm wide and 0.60 mm long, is
+   eight steps long in the band its margin makes (19 × 13 mm, step
+   0.079 mm) and four in a drawn boundary 31 × 24 mm (step 0.150 mm),
+   where pruning took the two nodes nearest its mouth, the male cut
+   nothing in its last 0.3 mm and the plug stood 0.182 mm proud
+   (lettering `0x47`,
+   `stress::lettering_males_in_a_drawn_boundary_cut_the_channel_between_two_feet`).
+   So with `CornerReach::Every`, after the passes, a pruned node is put
+   back, with the nodes between it and the graph, when it reaches a wall
+   nothing left does: its disc comes within the reach's slack
+   `reach_slack_mm` of a point of a loop the reach reaches (step 11: the
+   holes, and the outer when `outer`), and every edge left lies more
+   than the slack farther from that point than the node's own disc does.
+   An edge's discs are its two nodes' and those between, their clearance
+   linear along it, as the carve cuts it
+   (`medial::edge_gap_is_the_least_over_the_edge`). Each node is judged
+   against the graph as the branches before it left it, so what stays
+   pruned leaves every such wall within the slack of where it was
+   reached. A spoke's node touches its wall where the axis beside it
+   does, and stays pruned
+   (`medial::short_dead_end_down_a_slot_reaches_its_mouth`; the outline
+   text fixtures' counts and every expected program are unchanged).
 10. **Small components** (`dropSmallComponents`): components with total
     length under `4 · step` are dropped, unless none is longer, in which
     case the one holding the deepest node stays.
@@ -4431,6 +4455,7 @@ for V operations.
 - `medial::winding_does_not_change_the_graph` (a CW outer gives the same nodes and edges as CCW; DreamCarve's Y-up note).
 - `medial::same_region_twice_is_identical` (determinism).
 - Property (`proptest`, small): `medial::every_node_is_inside_its_region`, `medial::every_clearance_equals_the_exact_distance` on random convex polygons.
+- `medial::short_dead_end_down_a_slot_reaches_its_mouth` (#713: a 30 × 24 mm band, step 0.15 mm, round a block whose keyhole opens through a slot 0.44 mm wide and 0.35 mm long, and a square 2.3 mm off: the slot's walls, sampled every 0.0175 mm, lie within 0.02 mm of a medial disc, 0.080 mm before, with every loop reached and with the holes alone; upstream's reach is unchanged), `medial::edge_gap_is_the_least_over_the_edge` (the gap from a point to the discs along an edge, against 4,000 samples of it).
 
 **dc-project**
 - `migrate::v19_to_v22_steps_bump_the_version_only`, `migrate::v26_to_v27_adds_an_empty_bitmap_list`, `migrate::v26_with_bitmaps_already_present_fails` (a `photo_v_carve` operation in a version 26 file is refused the same way), each version's `migrate::version_<n>_fixture_loads` from 19 to 26 (they were one `version_19_to_22_fixtures_load` in the draft), `migrate::version_27_fixtures_load`, `cli::v19_project_exports_the_same_program`. (The Photo names said `v22` while Photo V-Carve was format 23; it is 27, #644.)

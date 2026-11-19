@@ -931,6 +931,38 @@ fn board_between_two_bands_is_not_plug() {
     }
 }
 
+/// #713 (found by the boundary sweep): the males of lettering seed `0x47`
+/// ("mm", 60° bit, millimetre program) in a drawn boundary, an oval
+/// 5.26 mm clear and a rounded rectangle 10.50 mm clear, seat within
+/// 0.05 mm: with a V wall, with an open edge and with a cut-out. The
+/// channel 0.44 mm wide between two serif feet is #511's
+/// (`lettering_male_cuts_the_channel_between_two_feet`), whose axis is a
+/// dead end 0.60 mm long. The computed band, 19 by 13 mm, is sampled every
+/// 0.079 mm, so the dead end is longer than the five steps that keep it
+/// from spur pruning; the drawn band, 31 by 24 mm, is sampled every
+/// 0.150 mm, so it is four steps long, and pruning took its two nodes
+/// nearest the channel's mouth. The male cut nothing in the last 0.3 mm of
+/// the channel, and the plug stood 0.182 mm proud on the wood left there,
+/// at (21.788, 18.888). A node spur pruning takes is now put back when it
+/// reaches a wall nothing left does.
+#[test]
+fn lettering_males_in_a_drawn_boundary_cut_the_channel_between_two_feet() {
+    let c = case("lettering", 0x47, lettering::lettering(0x47));
+    let outcome = carve(&boundary::boundary_case(&c), Seats::All, true);
+    assert!(
+        outcome.failures.is_empty() && outcome.known.is_empty(),
+        "{:?} {:?}",
+        outcome.failures,
+        outcome.known
+    );
+    assert_eq!(
+        (outcome.carved, outcome.seated),
+        (3, 3),
+        "the V wall, the open edge and the cut-out: {:?}",
+        outcome.explained
+    );
+}
+
 /// #565 (found by the confirmation sweep on #438, behind #554): the males
 /// of line-art seed `0x63` (15° bit, millimetre program) with the end
 /// mill's clearing pass, an open edge or rounding, seat within 0.05 mm,

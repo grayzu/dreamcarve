@@ -1544,3 +1544,138 @@ fn neck_mm_ignores_corners_and_wide_shapes() {
     let resolved = resolution(&notch).expect("a resolution");
     assert_eq!(neck_mm(&notch, resolved.step_mm, TOL), None, "notch");
 }
+
+// ---------------------------------------------------------------------------
+// Short dead ends (#713)
+// ---------------------------------------------------------------------------
+
+/// A 30 × 24 mm band round two islands, as a male Inlay's drawn boundary
+/// round two letters. The first is a block with a keyhole: a counter 0.8 mm
+/// wide and 3 mm tall, open at the block's foot through a slot 0.44 mm wide
+/// and 0.35 mm long between two feet, whose undersides slope up and away
+/// from the slot's mouth at y = 10. The second, a 2 mm square, hangs
+/// 0.7 mm lower, 2.3 mm to the left.
+fn band_round_a_slot() -> Region {
+    let top = 10.35;
+    let keyhole = vec![
+        Point::new(14.78, 10.0),
+        Point::new(13.0, 10.3),
+        Point::new(13.0, 15.0),
+        Point::new(17.0, 15.0),
+        Point::new(17.0, 10.3),
+        Point::new(15.22, 10.0),
+        Point::new(15.22, top),
+        Point::new(15.4, top),
+        Point::new(15.4, top + 3.0),
+        Point::new(14.6, top + 3.0),
+        Point::new(14.6, top),
+        Point::new(14.78, top),
+    ];
+    region(
+        &rect_loop(0.0, 0.0, 30.0, 24.0),
+        &[keyhole, rect_loop(10.5, 9.3, 2.0, 2.0)],
+    )
+}
+
+/// #713: with [`CornerReach::Every`] the axis down a slot shorter than five
+/// steps reaches the slot's mouth. The band of [`band_round_a_slot`] is
+/// sampled every 0.15 mm, its short side over 160, though its slot is
+/// 0.35 mm long. Out of the mouth the axis is equidistant from the two
+/// feet's corners and, 4.8 mm on, the square's; those three lie within 35°
+/// as seen from there, so the contact-spread filter drops that node and the
+/// slot's axis is a dead end 0.67 mm long, under the five steps that keep a
+/// dead end from spur pruning (#511). Its two nodes in the slot, 0.12 mm
+/// apart with the slot's clearance, 0.22 mm, were pruned as spurs, and the
+/// slot's walls stood up to 0.080 mm beyond every medial disc: a male
+/// Inlay left the wood there, and its plug stood proud on it (lettering
+/// `0x47` in a drawn boundary, 0.182 mm). The walls, sampled every
+/// 0.0175 mm, are now reached within 0.02 mm by the nodes themselves,
+/// with every loop's corners reached and with the holes' alone, as a
+/// male's band is carved. Upstream's reach ([`medial_axis`]) is unchanged.
+#[test]
+fn short_dead_end_down_a_slot_reaches_its_mouth() {
+    let r = band_round_a_slot();
+    let step_mm = resolution(&r).expect("a resolution").step_mm;
+    assert_approx_eq!(step_mm, 0.15, 1e-12);
+    let holes_only = CornerReach::Every {
+        outer: false,
+        floor_inset_mm: None,
+        reach_slack_mm: REACH_SLACK_MM,
+    };
+    for (name, reach) in [("every loop", EVERY), ("the holes", holes_only)] {
+        let graph = medial_axis_with(&r, step_mm, TOL, reach);
+        let mut worst = (f64::NEG_INFINITY, Point::new(0.0, 0.0));
+        for k in 0..=20 {
+            let y = 10.0 + 0.35 * f64::from(k) / 20.0;
+            for x in [14.78, 15.22] {
+                let p = Point::new(x, y);
+                let gap_mm = reach_gap_of(&graph, p);
+                if gap_mm > worst.0 {
+                    worst = (gap_mm, p);
+                }
+            }
+        }
+        assert!(
+            worst.0 <= 0.02,
+            "{name}: the slot's wall at {:?} is {:.4} mm beyond every medial disc",
+            worst.1,
+            worst.0
+        );
+    }
+    assert_eq!(
+        medial_axis(&r, step_mm, TOL),
+        medial_axis_with(&r, step_mm, TOL, CornerReach::Upstream),
+        "upstream's reach is upstream's"
+    );
+}
+
+/// #713: [`edge_gap_mm`] is the least gap from a point to the discs along
+/// an edge, their clearance linear between its nodes: equal to the least
+/// over 4,000 points of the edge within 1e-6 mm, for a point beside the
+/// edge, beyond either end, and on its line, and for clearances level,
+/// rising, falling, and rising as fast as the edge is long (where an end's
+/// disc holds every other). A point 1.5 mm off the middle of a level edge
+/// of clearance 1 is 0.5 mm outside it.
+#[test]
+fn edge_gap_is_the_least_over_the_edge() {
+    let node = |x: f64, y: f64, clearance_mm: f64| MedialNode {
+        p: Point::new(x, y),
+        clearance_mm,
+    };
+    let level = (node(0.0, 0.0, 1.0), node(4.0, 0.0, 1.0));
+    assert_approx_eq!(
+        edge_gap_mm(level.0, level.1, Point::new(2.0, 1.5)),
+        0.5,
+        1e-12
+    );
+    let edges = [
+        level,
+        (node(0.0, 0.0, 1.0), node(4.0, 0.0, 3.0)),
+        (node(1.0, 2.0, 2.5), node(3.0, -1.0, 0.25)),
+        (node(0.0, 0.0, 0.5), node(0.0, 2.0, 2.5)),
+        (node(1.0, 1.0, 0.75), node(1.0, 1.0, 0.75)),
+    ];
+    let points = [
+        Point::new(2.0, 3.0),
+        Point::new(-3.0, 0.5),
+        Point::new(7.0, -2.0),
+        Point::new(1.0, 0.0),
+        Point::new(0.0, 5.0),
+    ];
+    for (a, b) in edges {
+        for q in points {
+            let sampled = (0..=4000)
+                .map(|k| {
+                    let t = f64::from(k) / 4000.0;
+                    (a.p + (b.p - a.p) * t).distance_to(q)
+                        - (a.clearance_mm + (b.clearance_mm - a.clearance_mm) * t)
+                })
+                .fold(f64::INFINITY, f64::min);
+            let gap_mm = edge_gap_mm(a, b, q);
+            assert!(
+                gap_mm <= sampled + 1e-12 && sampled - gap_mm <= 1e-6,
+                "{a:?} to {b:?} from {q:?}: {gap_mm} against {sampled} sampled"
+            );
+        }
+    }
+}
