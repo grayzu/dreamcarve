@@ -26,11 +26,11 @@ use dc_app::{Command, JobResult};
 use dc_geometry::{Point, Polyline, Transform};
 use dc_job::Generated;
 use dc_project::test_support::{
-    sample_bore, sample_engrave, sample_inlay, sample_pocket, sample_project, sample_tab,
-    sample_v_carve, tool_v_bit_90,
+    gray_png_base64, photo_project, sample_bitmap, sample_bore, sample_engrave, sample_inlay,
+    sample_pocket, sample_project, sample_tab, sample_v_carve, tool_v_bit_90,
 };
 use dc_project::{
-    DefinitionId, DrillCycle, FeatureDefinition, FeatureInstance, InstanceId, Operation,
+    BitmapId, DefinitionId, DrillCycle, FeatureDefinition, FeatureInstance, InstanceId, Operation,
     OperationId, Project, ToolId,
 };
 use serde_json::Value;
@@ -170,6 +170,22 @@ pub fn every_kind() -> Project {
     project
 }
 
+/// A Photo V-Carve and the picture it reads: the sample project with the
+/// 90° V-bit `t2`, the 4 × 2 pixel ramp `b1` and the Photo V-Carve `o8` of
+/// it after the Profile `o1` (`photo_project`), plus a second bitmap `b2`
+/// that no operation names: the ramp's footprint and size with its rows
+/// swapped and its ramp reversed. The digest walk sets each picture to
+/// the other, the one edit of `b1`'s pixels validation accepts.
+fn photo() -> Project {
+    let mut project = photo_project();
+    let mut other = sample_bitmap();
+    other.id = BitmapId::new("b2");
+    other.name = "ramp reversed".into();
+    other.png_base64 = gray_png_base64(4, 2, &[192, 128, 64, 0, 255, 170, 85, 0]);
+    project.bitmaps.push(other);
+    project
+}
+
 /// The ids of the operations `jobs` name, in order.
 fn ops(jobs: &[dc_app::Job]) -> Vec<String> {
     jobs.iter().map(|j| j.op.to_string()).collect()
@@ -228,13 +244,14 @@ fn key_of(pointer: &str) -> &str {
 
 /// The keys whose string values name other records: changing one breaks
 /// a reference, which validation rejects, so they are not mutated.
-const REFERENCES: [&str; 7] = [
+const REFERENCES: [&str; 8] = [
     "id",
     "targets",
     "tool",
     "rest_of",
     "definition",
     "instance",
+    "image",
     "version",
 ];
 
@@ -307,14 +324,16 @@ fn string_values(projects: &[Value]) -> BTreeMap<String, BTreeSet<String>> {
 /// The design's rule (`docs/specs/phase-4/design.md`, "Digest and
 /// staleness"): the digest covers everything an operation's generator
 /// reads, so a result whose digest is current is the result the
-/// generator would give now. Each leaf of the every-kind project and of a
-/// rest-machining golden case is mutated in turn (every number, flag,
-/// name, unset value and enum, a definition's first vertex); for each
-/// mutation validation accepts, each operation whose digest did not
-/// change must generate exactly what it generated before. A missing
-/// input (a tool, a target's definition, the post-processor's decimal
-/// places, an earlier operation it reads) fails here, naming the leaf.
-/// Over-invalidation is allowed, so a changed digest asserts nothing.
+/// generator would give now. Each leaf of the every-kind project, of a
+/// rest-machining golden case and of the Photo V-Carve project is mutated
+/// in turn (every number, flag, name, unset value and enum, a
+/// definition's first vertex, a bitmap's picture); for each mutation
+/// validation accepts, each operation whose digest did not change must
+/// generate exactly what it generated before. A missing input (a tool, a
+/// target's definition, the post-processor's decimal places, an earlier
+/// operation it reads, the bitmap a Photo V-Carve names) fails here,
+/// naming the leaf. Over-invalidation is allowed, so a changed digest
+/// asserts nothing.
 #[test]
 fn digest_covers_every_generator_input() {
     let mut corpus: Vec<Value> = quick_start_projects()
@@ -327,7 +346,11 @@ fn digest_covers_every_generator_input() {
         .find(|(name, _)| name == "pocket-rough-then-rest")
         .map(|(_, path)| load_dcv(&path))
         .expect("the rest-machining golden case");
-    let fixtures = [("every-kind", every_kind()), ("rough-then-rest", rest_case)];
+    let fixtures = [
+        ("every-kind", every_kind()),
+        ("rough-then-rest", rest_case),
+        ("photo", photo()),
+    ];
     corpus.extend(
         fixtures
             .iter()
@@ -398,6 +421,40 @@ fn digest_covers_every_generator_input() {
         "{regenerated} unchanged digests compared"
     );
     assert_eq!(changed, 0);
+}
+
+/// The design's rule for bitmaps (code review 1.4): a Photo V-Carve reads
+/// the bitmap its `image` names, its pixels and its footprint, so an edit
+/// of either changes the carve's digest. The digest stays targeted: the
+/// Profile, which reads no bitmap, keeps its digest, and so does the
+/// carve when the edited bitmap is one it does not name.
+#[test]
+fn a_bitmap_edit_changes_only_the_digest_of_the_carve_that_reads_it() {
+    let base = photo();
+    let (profile, carve) = (op("o1"), op("o8"));
+    let mut repainted = base.clone();
+    repainted.bitmaps[0].png_base64 = base.bitmaps[1].png_base64.clone();
+    let mut moved = base.clone();
+    moved.bitmaps[0].x_mm += 1.0;
+    for (edit, edited) in [("repainted", &repainted), ("moved", &moved)] {
+        assert_ne!(
+            generation::digest(edited, &carve),
+            generation::digest(&base, &carve),
+            "b1 {edit}: the carve reads it"
+        );
+        assert_eq!(
+            generation::digest(edited, &profile),
+            generation::digest(&base, &profile),
+            "b1 {edit}: the Profile reads no bitmap"
+        );
+    }
+    let mut unread = base.clone();
+    unread.bitmaps[1].x_mm += 1.0;
+    assert_eq!(
+        generation::digest(&unread, &carve),
+        generation::digest(&base, &carve),
+        "b2 moved: the carve does not name it"
+    );
 }
 
 /// Acceptance 87 and the design's dependency rule: after an edit only the
