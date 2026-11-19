@@ -235,6 +235,38 @@ no_tools = "No tools yet."
 show_left = "Show the Design Tree"
 show_right = "Show the CAM panel"
 
+# The five steps (`redesign.md`, "The steps"; functional spec, capability
+# 50): the rail's labels and the step panel's titles, in the workflow's
+# order.
+[steps]
+design = "Design"
+stock = "Stock"
+tools = "Tools"
+operations = "Operations"
+export = "Export"
+
+# The one line under a step's title: what the step holds.
+[steps.summary]
+design_empty = "Bring in a drawing or a picture to cut."
+shape = "1 shape"
+shapes = "{count} shapes"
+picture = "1 picture"
+pictures = "{count} pictures"
+stock = "{width} × {height} × {thickness} {unit}"
+stock_no_thickness = "{width} × {height} {unit} · thickness not set"
+stock_off = "A shape reaches past the stock. Fit to shapes sizes it round them."
+tools_empty = "The cutters this job uses."
+tool = "1 tool"
+tools = "{count} tools"
+operations_empty = "What to cut, in cut order."
+operation = "1 operation"
+operations = "{count} operations"
+export_nothing = "Nothing to export yet."
+export_blocked = "1 error blocks export."
+export_blocked_many = "{count} errors block export."
+export_ready = "Ready to export."
+export_done = "Exported. Nothing has changed since."
+
 # The status bar (slice 24, #616; functional spec, capability 50b): the
 # units button and its menu, the counts, and the Toolpaths button.
 [app.status]
