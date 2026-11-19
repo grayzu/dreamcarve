@@ -11,27 +11,48 @@
 //! shell read. Feed, plunge rate and RPM are never filled in: an unset
 //! one shows empty, with the file's message ([`unset_rates`]), until the
 //! user types it (principle 5; S20).
+//!
+//! A tapered ball nose (format 28; #685) is a type of its own in the
+//! dropdown, with three fields after the type: tip diameter, taper per
+//! side and flute length ([`fields_for`]). `diameter_mm` keeps its label
+//! and is its cutting diameter. Choosing the type writes the cutter with
+//! nothing set, and each value it still needs is flagged at its field
+//! ([`required`], from [`Tool::unset_values`]) as an unset rate is. A
+//! row's second line ([`row_detail`]) and the library's table say which
+//! angle they show: a V-bit's included, a tapered ball nose's per side
+//! ([`angle_text`]).
 
 use std::collections::BTreeSet;
 
 use dc_job::Finding;
 use dc_library::{AddOutcome, Library, LibraryError, LibraryToolId};
-use dc_project::{Problem, Project, Tool, ToolId, ToolKind, Units};
+use dc_project::{
+    MAX_TAPER_ANGLE_DEG, Problem, Project, TBN_FLUTES, TBN_TAPER, TBN_TIP, Tool, ToolId, ToolKind,
+    Units, UnsetValue,
+};
 
 use crate::command::{Command, copy_name};
 use crate::error::CommandError;
 use crate::library::trimmed;
+use crate::strings::{StrKey, Strings};
 use crate::units;
 
-/// The tool fields the editor shows, in its order (capability 63).
+/// The tool fields the editor shows (capability 63); [`fields_for`] gives
+/// a type's, in the editor's order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolField {
     /// `name`.
     Name,
-    /// `diameter_mm`.
+    /// `diameter_mm`: the cutting diameter, for every type.
     Diameter,
     /// A V-bit's `included_angle_deg`.
     Angle,
+    /// A tapered ball nose's `tip_diameter_mm`.
+    TipDiameter,
+    /// A tapered ball nose's `taper_angle_deg`, per side.
+    Taper,
+    /// A tapered ball nose's `flute_length_mm`.
+    FluteLength,
     /// `flutes`.
     Flutes,
     /// `feed_mm_min`.
@@ -53,13 +74,19 @@ pub enum ToolField {
 }
 
 impl ToolField {
-    /// The field's name in the file, for the label's help line.
+    /// The field's name in the file, for the label's help line. A tapered
+    /// ball nose's values are named where validation and
+    /// [`Tool::unset_values`] locate them
+    /// (`cutter.tapered_ball_nose.tip_diameter_mm`).
     #[must_use]
     pub const fn file_name(self) -> &'static str {
         match self {
             Self::Name => "name",
             Self::Diameter => "diameter_mm",
             Self::Angle => "included_angle_deg",
+            Self::TipDiameter => TBN_TIP,
+            Self::Taper => TBN_TAPER,
+            Self::FluteLength => TBN_FLUTES,
             Self::Flutes => "flutes",
             Self::Feed => "feed_mm_min",
             Self::Plunge => "plunge_mm_min",
@@ -70,6 +97,45 @@ impl ToolField {
             Self::Vendor => "vendor",
             Self::ProductId => "product_id",
         }
+    }
+
+    /// The field's label in the editor. *Diameter* is every type's: a
+    /// tapered ball nose's is its cutting diameter, and its taper says
+    /// *per side*, since a V-bit's angle is included.
+    #[must_use]
+    pub const fn label(self) -> StrKey {
+        match self {
+            Self::Name => StrKey::AppToolsName,
+            Self::Diameter => StrKey::AppToolsDiameter,
+            Self::Angle => StrKey::AppToolsAngle,
+            Self::TipDiameter => StrKey::AppToolsTipDiameter,
+            Self::Taper => StrKey::AppToolsTaper,
+            Self::FluteLength => StrKey::AppToolsFluteLength,
+            Self::Flutes => StrKey::AppToolsFlutes,
+            Self::Feed => StrKey::AppToolsFeed,
+            Self::Plunge => StrKey::AppToolsPlunge,
+            Self::Rpm => StrKey::AppToolsRpm,
+            Self::StepDown => StrKey::AppToolsStepDown,
+            Self::StepOver => StrKey::AppToolsStepOver,
+            Self::Number => StrKey::AppToolsToolNumber,
+            Self::Vendor => StrKey::AppToolsVendor,
+            Self::ProductId => StrKey::AppToolsProductId,
+        }
+    }
+
+    /// The field [`Tool::unset_values`] names `file_name`, when it is one
+    /// a tool may still need: a tapered ball nose's values and the rates.
+    fn of_unset(file_name: &str) -> Option<Self> {
+        [
+            Self::TipDiameter,
+            Self::Taper,
+            Self::FluteLength,
+            Self::Feed,
+            Self::Plunge,
+            Self::Rpm,
+        ]
+        .into_iter()
+        .find(|field| field.file_name() == file_name)
     }
 }
 
@@ -86,21 +152,34 @@ pub enum KindChoice {
     Engraver,
     /// A drill.
     Drill,
-    /// A tapered ball nose (format 28). Shown for such a tool but not
-    /// offered in the dropdown ([`Self::ALL`]) until the editor has its
-    /// fields (#685).
+    /// A tapered ball nose (format 28; #685), with its tip diameter,
+    /// taper per side and flute length.
     TaperedBallNose,
 }
 
 impl KindChoice {
     /// The choices, in the dropdown's order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::EndMill,
         Self::BallNose,
         Self::VBit,
         Self::Engraver,
         Self::Drill,
+        Self::TaperedBallNose,
     ];
+
+    /// The type's name, in the dropdown and the tables.
+    #[must_use]
+    pub const fn label(self) -> StrKey {
+        match self {
+            Self::EndMill => StrKey::AppKindEndMill,
+            Self::BallNose => StrKey::AppKindBallNose,
+            Self::VBit => StrKey::AppKindVBit,
+            Self::Engraver => StrKey::AppKindEngraver,
+            Self::Drill => StrKey::AppKindDrill,
+            Self::TaperedBallNose => StrKey::AppKindTaperedBallNose,
+        }
+    }
 
     /// The choice `kind` is.
     #[must_use]
@@ -132,16 +211,24 @@ pub enum KindSwitch {
 
 /// What choosing `choice` in the type dropdown does to `tool`. A V-bit
 /// keeps its angle; any other tool turned into one is held until its
-/// angle is typed. Choosing *Tapered ball nose* changes nothing: the
-/// dropdown does not offer it until the editor has its fields (#685), and
-/// its values are never invented.
+/// angle is typed. A tapered ball nose keeps its values; any other tool
+/// turned into one gets the cutter with its tip, taper and flute length
+/// unset (#685): the file holds `null` for each, so nothing is invented
+/// and nothing is held, and each shows as required ([`required`]) until
+/// it is typed.
 #[must_use]
 pub fn set_kind(tool: &Tool, choice: KindChoice) -> KindSwitch {
     let cutter = match (choice, &tool.cutter) {
-        (KindChoice::VBit, ToolKind::VBit { .. }) | (KindChoice::TaperedBallNose, _) => {
+        (KindChoice::VBit, ToolKind::VBit { .. })
+        | (KindChoice::TaperedBallNose, ToolKind::TaperedBallNose { .. }) => {
             return KindSwitch::Unchanged;
         }
         (KindChoice::VBit, _) => return KindSwitch::HoldForAngle,
+        (KindChoice::TaperedBallNose, _) => ToolKind::TaperedBallNose {
+            tip_diameter_mm: None,
+            taper_angle_deg: None,
+            flute_length_mm: None,
+        },
         (KindChoice::EndMill, _) => ToolKind::EndMill,
         (KindChoice::BallNose, _) => ToolKind::BallNose,
         (KindChoice::Engraver, _) => ToolKind::Engraver,
@@ -190,6 +277,103 @@ fn included_angle(text: &str) -> Result<f64, CommandError> {
     }
 }
 
+/// A tapered ball nose's taper as typed, degrees per side, with or
+/// without `°`, `deg` or `/side`: more than 0° and at most
+/// [`MAX_TAPER_ANGLE_DEG`], as the file takes it.
+fn taper_angle(text: &str) -> Result<f64, CommandError> {
+    let angle = decimal(without(without(without(text, "/side"), "°"), "deg"))?;
+    if angle > 0.0 && angle <= MAX_TAPER_ANGLE_DEG {
+        Ok(angle)
+    } else {
+        Err(refused(
+            text,
+            format!("a taper per side is more than 0° and at most {MAX_TAPER_ANGLE_DEG}°"),
+        ))
+    }
+}
+
+/// The rows every type has after its own, in the editor's order.
+const COMMON_FIELDS: [ToolField; 10] = [
+    ToolField::Diameter,
+    ToolField::Flutes,
+    ToolField::Feed,
+    ToolField::Plunge,
+    ToolField::Rpm,
+    ToolField::StepDown,
+    ToolField::StepOver,
+    ToolField::Number,
+    ToolField::Vendor,
+    ToolField::ProductId,
+];
+
+/// The editor's rows for a tool of type `choice`, in order (capability
+/// 63): the name, the type's own values (a V-bit's angle; a tapered ball
+/// nose's tip diameter, taper and flute length), then the rows every type
+/// has. The type dropdown sits after the name; the editor draws it.
+#[must_use]
+pub fn fields_for(choice: KindChoice) -> Vec<ToolField> {
+    let own: &[ToolField] = match choice {
+        KindChoice::VBit => &[ToolField::Angle],
+        KindChoice::TaperedBallNose => &[
+            ToolField::TipDiameter,
+            ToolField::Taper,
+            ToolField::FluteLength,
+        ],
+        KindChoice::EndMill | KindChoice::BallNose | KindChoice::Engraver | KindChoice::Drill => {
+            &[]
+        }
+    };
+    std::iter::once(ToolField::Name)
+        .chain(own.iter().copied())
+        .chain(COMMON_FIELDS)
+        .collect()
+}
+
+/// The editor's rows for `tool` ([`fields_for`] its type). While a switch
+/// to V-bit is held ([`KindSwitch::HoldForAngle`]) the editor draws
+/// `fields_for(KindChoice::VBit)` instead.
+#[must_use]
+pub fn fields(tool: &Tool) -> Vec<ToolField> {
+    fields_for(KindChoice::of(&tool.cutter))
+}
+
+/// One row of the tool editor, ready to draw: the project's Tools tab and
+/// the library's editing pane show the same rows (capabilities 63, 64a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldRow {
+    /// The field.
+    pub field: ToolField,
+    /// Its label.
+    pub label: StrKey,
+    /// What the field shows, without its unit: empty for `null`.
+    pub text: String,
+    /// The unit drawn after the value ([`field_unit`]).
+    pub unit: &'static str,
+    /// The file's message when the tool still needs this value
+    /// ([`required`]): the field takes the required-field look.
+    pub required: Option<String>,
+}
+
+/// `tool`'s editor rows in `units` ([`fields`]), each with its label, its
+/// text and unit, and whether it is still required.
+#[must_use]
+pub fn rows(tool: &Tool, units: Units) -> Vec<FieldRow> {
+    let unset = unset_values(tool);
+    fields(tool)
+        .into_iter()
+        .map(|field| FieldRow {
+            field,
+            label: field.label(),
+            text: field_text(tool, field, units),
+            unit: field_unit(field, units),
+            required: unset
+                .iter()
+                .find(|(name, _)| *name == field.file_name())
+                .map(|(_, message)| message.clone()),
+        })
+        .collect()
+}
+
 /// Decimals a length or rate shows in a field: enough for a thousandth
 /// of an inch in mm and a tenth of a thou in inches; trailing zeros go.
 const FIELD_DECIMALS: usize = 4;
@@ -204,6 +388,7 @@ fn display(value_mm: f64, units: Units) -> String {
 #[must_use]
 pub fn field_text(tool: &Tool, field: ToolField, units: Units) -> String {
     let length = |v: Option<f64>| v.map_or_else(String::new, |mm| display(mm, units));
+    let (tip_mm, taper_deg, flute_length_mm) = tapered_values(tool);
     match field {
         ToolField::Name => tool.name.clone(),
         ToolField::Diameter => display(tool.diameter_mm, units),
@@ -211,6 +396,9 @@ pub fn field_text(tool: &Tool, field: ToolField, units: Units) -> String {
             ToolKind::VBit { included_angle_deg } => trimmed(included_angle_deg, 2),
             _ => String::new(),
         },
+        ToolField::TipDiameter => length(tip_mm),
+        ToolField::Taper => taper_deg.map_or_else(String::new, |deg| trimmed(deg, FIELD_DECIMALS)),
+        ToolField::FluteLength => length(flute_length_mm),
         ToolField::Flutes => tool.flutes.to_string(),
         ToolField::Feed => length(tool.feed_mm_min),
         ToolField::Plunge => length(tool.plunge_mm_min),
@@ -230,11 +418,14 @@ pub fn field_text(tool: &Tool, field: ToolField, units: Units) -> String {
 #[must_use]
 pub const fn field_unit(field: ToolField, units: Units) -> &'static str {
     match field {
-        ToolField::Diameter | ToolField::StepDown => units::suffix(units),
+        ToolField::Diameter
+        | ToolField::StepDown
+        | ToolField::TipDiameter
+        | ToolField::FluteLength => units::suffix(units),
         ToolField::Feed | ToolField::Plunge => units::rate_suffix(units),
         ToolField::Rpm => "RPM",
         ToolField::StepOver => "%",
-        ToolField::Angle => "°",
+        ToolField::Angle | ToolField::Taper => "°",
         ToolField::Name
         | ToolField::Flutes
         | ToolField::Number
@@ -303,13 +494,16 @@ fn optional<T>(
 /// `tool` with `field` set from `text`, typed in a project whose display
 /// units are `units` (capability 53): a length or rate with a unit means
 /// what it means in a file, a bare one is in `units`; a step-over is a
-/// percentage; blank text clears an optional field to `null`.
+/// percentage; blank text clears an optional field to `null`. A tapered
+/// ball nose's tip diameter, taper and flute length are optional in the
+/// file, so blank clears each; on any other type they change nothing, as
+/// the angle does on a tool that is not a V-bit.
 ///
 /// # Errors
 ///
 /// [`CommandError::NotAQuantity`] when the text is not a value of the
-/// field's kind, or is blank for a field the file requires (name,
-/// diameter, flutes, angle).
+/// field's kind (a taper outside (0°, 45°] among them), or is blank for a
+/// field the file requires (name, diameter, flutes, angle).
 pub fn set_field(
     tool: &Tool,
     field: ToolField,
@@ -331,6 +525,30 @@ pub fn set_field(
                 next.cutter = ToolKind::VBit {
                     included_angle_deg: included_angle(text)?,
                 };
+            }
+        }
+        ToolField::TipDiameter => {
+            if let ToolKind::TaperedBallNose {
+                tip_diameter_mm, ..
+            } = &mut next.cutter
+            {
+                *tip_diameter_mm = optional(text, |t| units::parse_length_mm(t, units))?;
+            }
+        }
+        ToolField::Taper => {
+            if let ToolKind::TaperedBallNose {
+                taper_angle_deg, ..
+            } = &mut next.cutter
+            {
+                *taper_angle_deg = optional(text, taper_angle)?;
+            }
+        }
+        ToolField::FluteLength => {
+            if let ToolKind::TaperedBallNose {
+                flute_length_mm, ..
+            } = &mut next.cutter
+            {
+                *flute_length_mm = optional(text, |t| units::parse_length_mm(t, units))?;
             }
         }
         ToolField::Flutes => next.flutes = whole(text)?,
@@ -360,29 +578,141 @@ pub fn set_field(
 /// feed, plunge rate, RPM, in that order. Empty when all three are set.
 #[must_use]
 pub fn unset_rates(tool: &Tool) -> Vec<(&'static str, String)> {
-    [
-        ("feed_mm_min", tool.feed_mm_min.is_none()),
-        ("plunge_mm_min", tool.plunge_mm_min.is_none()),
-        ("rpm", tool.rpm.is_none()),
-    ]
-    .into_iter()
-    .filter(|(_, unset)| *unset)
-    .map(|(field, _)| {
-        let problem = Problem::ToolValueUnset {
-            tool: tool.id.clone(),
-            name: tool.name.clone(),
-            field,
-        };
-        (field, problem.to_string())
-    })
-    .collect()
+    unset_with_messages(tool, |unset| !unset.is_cutter())
 }
 
-/// Whether `tool` lacks a feed, plunge rate or RPM: the row's red mark
-/// (capability 63).
+/// Whether `tool` lacks a feed, plunge rate or RPM.
 #[must_use]
 pub fn lacks_rate(tool: &Tool) -> bool {
     tool.feed_mm_min.is_none() || tool.plunge_mm_min.is_none() || tool.rpm.is_none()
+}
+
+/// The values of `tool` that pass `keep`, of those it still needs
+/// ([`Tool::unset_values`]), each with the file's message.
+fn unset_with_messages(
+    tool: &Tool,
+    keep: impl Fn(&UnsetValue) -> bool,
+) -> Vec<(&'static str, String)> {
+    tool.unset_values()
+        .into_iter()
+        .filter(keep)
+        .map(|unset| {
+            let problem = Problem::ToolValueUnset {
+                tool: tool.id.clone(),
+                name: tool.name.clone(),
+                field: unset.field,
+            };
+            (unset.field, problem.to_string())
+        })
+        .collect()
+}
+
+/// Every value `tool` still needs before an enabled operation may use it
+/// ([`Tool::unset_values`]; capability 66b; #685), in the file's order, a
+/// tapered ball nose's tip, taper and flute length and then the rates:
+/// each by its name in the file ([`ToolField::file_name`]) with the
+/// file's message (`tools[t3].cutter.tapered_ball_nose.flute_length_mm is
+/// not set (mm) for tool …`, the line `check` prints once an operation
+/// uses the tool). Listed whether or not one does yet, so the field is
+/// marked from the moment the tool is made. `diameter_mm` is never among
+/// them: the file always holds it.
+#[must_use]
+pub fn unset_values(tool: &Tool) -> Vec<(&'static str, String)> {
+    unset_with_messages(tool, |_| true)
+}
+
+/// The file's message for `field` of `tool` when the tool still needs it
+/// ([`unset_values`]): the field shows the required-field look with this
+/// message. `None` for a value that is set, and for a field that is
+/// never required (the diameter, which is always present, among them).
+#[must_use]
+pub fn required(tool: &Tool, field: ToolField) -> Option<String> {
+    unset_values(tool)
+        .into_iter()
+        .find(|(name, _)| *name == field.file_name())
+        .map(|(_, message)| message)
+}
+
+/// The editor's fields `tool` still needs ([`unset_values`]), in the
+/// file's order.
+#[must_use]
+pub fn unset_fields(tool: &Tool) -> Vec<ToolField> {
+    tool.unset_values()
+        .iter()
+        .filter_map(|unset| ToolField::of_unset(unset.field))
+        .collect()
+}
+
+/// Whether `tool` still needs a value ([`unset_values`]): a rate, or a
+/// tapered ball nose's tip, taper or flute length. The row's red mark
+/// (capability 63).
+#[must_use]
+pub fn lacks_value(tool: &Tool) -> bool {
+    !tool.unset_values().is_empty()
+}
+
+/// A tapered ball nose's tip diameter, taper per side and flute length;
+/// each `None` while unset, and all three for any other cutter.
+const fn tapered_values(tool: &Tool) -> (Option<f64>, Option<f64>, Option<f64>) {
+    match tool.cutter {
+        ToolKind::TaperedBallNose {
+            tip_diameter_mm,
+            taper_angle_deg,
+            flute_length_mm,
+        } => (tip_diameter_mm, taper_angle_deg, flute_length_mm),
+        _ => (None, None, None),
+    }
+}
+
+/// Decimals an angle shows in a row or a table cell: a glance, not the
+/// field.
+const ANGLE_DECIMALS: usize = 2;
+
+/// A tapered ball nose's tip diameter as a row or a table cell shows it
+/// in `units`, with no unit (`0.762`); `None` for any other cutter, and
+/// while the tip is unset.
+#[must_use]
+pub fn tip_text(tool: &Tool, units: Units) -> Option<String> {
+    tapered_values(tool).0.map(|mm| display(mm, units))
+}
+
+/// The angle of `tool` as a row or a table cell shows it, saying which
+/// angle it is (#685): a V-bit's included angle, `90°`; a tapered ball
+/// nose's taper, per side, `6.7°/side`. One column holding 90° and 6.7°
+/// unlabelled is the mix-up phase 3's research warns of. `None` for a
+/// cutter with no angle, and while a taper is unset.
+#[must_use]
+pub fn angle_text(strings: &Strings, tool: &Tool) -> Option<String> {
+    let (key, angle_deg) = match tool.cutter {
+        ToolKind::VBit { included_angle_deg } => {
+            (StrKey::AppToolsAngleIncluded, included_angle_deg)
+        }
+        ToolKind::TaperedBallNose {
+            taper_angle_deg, ..
+        } => (StrKey::AppToolsAnglePerSide, taper_angle_deg?),
+        _ => return None,
+    };
+    Some(strings.fmt(key, &[("angle", &trimmed(angle_deg, ANGLE_DECIMALS))]))
+}
+
+/// The second line of `tool`'s row in the Tools tab (capability 63), in
+/// `units`: its diameter, which is the cutting diameter for every type; a
+/// tapered ball nose's tip; its angle, labelled ([`angle_text`]); its
+/// number. `6.35 mm · tip 0.762 mm · 6.7°/side · T2`. An unset value is
+/// left out: the row's red mark says it is missing ([`lacks_value`]).
+#[must_use]
+pub fn row_detail(strings: &Strings, tool: &Tool, units: Units) -> String {
+    let suffix = units::suffix(units);
+    let mut parts = vec![format!("{} {suffix}", display(tool.diameter_mm, units))];
+    if let Some(tip) = tip_text(tool, units) {
+        let value = format!("{tip} {suffix}");
+        parts.push(strings.fmt(StrKey::AppToolsDetailTip, &[("value", &value)]));
+    }
+    parts.extend(angle_text(strings, tool));
+    if let Some(number) = tool.number {
+        parts.push(strings.fmt(StrKey::AppToolsNumber, &[("number", &number.to_string())]));
+    }
+    parts.join(" · ")
 }
 
 /// The names of the operations that cut with tool `id` (their own tool, a

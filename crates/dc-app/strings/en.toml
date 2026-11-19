@@ -450,6 +450,15 @@ tool_number = "Tool number"
 vendor = "Vendor"
 product_id = "Product id"
 number_unset = "Its place in the list"
+# #685: a tapered ball nose's own fields (Diameter is its cutting
+# diameter), and how a row and a table cell word a tip and an angle: a
+# V-bit's included, a tapered ball nose's per side.
+tip_diameter = "Tip diameter"
+taper = "Taper per side"
+flute_length = "Flute length"
+detail_tip = "tip {value}"
+angle_included = "{angle}°"
+angle_per_side = "{angle}°/side"
 saved = "Saved “{name}” to the library as {id}"
 already_saved = "“{name}” is already in the library as {id}"
 save_failed = "Cannot save “{name}” to the library: {reason}"
@@ -483,6 +492,7 @@ delete = "Delete"
 column_name = "Name"
 column_kind = "Type"
 column_diameter = "Ø"
+column_tip = "Tip"
 column_angle = "Angle"
 column_flutes = "Flutes"
 column_feed = "Feed"
@@ -536,6 +546,9 @@ status_same = "Same"
 status_kept = "Changed: added as {name}"
 status_replaced = "Changed: replaces yours"
 status_skipped = "Skipped: {reason}"
+# #685: a tapered ball nose imported with values unset, named by the
+# editor's labels.
+review_unset = "Still to set: {fields}"
 review_row = "{name} · {status}"
 import_one = "Import 1 tool"
 import_many = "Import {count} tools"
@@ -631,6 +644,9 @@ derived_needs_mouth = "A countersink's depth follows its mouth; set a mouth diam
 # Slice 13 (#542): a V-bit's cone under the tool picker and the
 # clearing-pass list.
 tool_cone = "cone height {value}"
+# #685: a tapered ball nose's line under the picker, the lower of its
+# flutes and where its cone reaches the cutting diameter.
+tool_cutting_height = "cutting height {value}"
 clearing_intro = "Cut before the V-bit, largest tool first; each is its own tool run."
 clearing_empty = "No clearing passes: the V-bit clears the floor itself."
 clearing_pass = "Pass {n}"
@@ -665,6 +681,12 @@ inlay_engagement = "flank engagement {engagement} of the {angle}° bit's {cone} 
 inlay_engagement_no_cone = "flank engagement {engagement}; pick a V-bit to compare it with its cone"
 inlay_planes_unset = "set the inlay depth, glue gap and plug depth to see the male's planes"
 inlay_base = "base under the band {base} (at least {least})"
+# #685: an Inlay cut with a tapered ball nose. The engagement is compared
+# with the bit's cutting height, and the seat line is `check`'s, in
+# millimetres whatever the display units, as its steps are.
+inlay_engagement_tapered = "flank engagement {engagement} of the tapered ball nose's {height} cutting height"
+inlay_engagement_tapered_unset = "flank engagement {engagement}; set the tapered ball nose's tip, taper and flute length to compare it with its cutting height"
+inlay_seat = "seat: moves {taper} mm per {taper_step}° of taper, {tip} mm per {tip_step} mm of tip radius; test-fit before gluing"
 
 # The editor's groups, in capability 66's order.
 [editor.group]

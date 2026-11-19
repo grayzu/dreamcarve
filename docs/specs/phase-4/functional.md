@@ -357,14 +357,31 @@ folder are app preferences, kept outside the project.
 63. **Project tools** (`16-tools-tab.svg`, right panel, Tools tab, the
     first tab). The
     tools the project embeds, one row each with type icon, name, diameter
-    (and angle for a V-bit), number, and a red dot when the tool lacks a
-    feed, plunge rate or RPM. Selecting a row edits it below, in place
+    (the **cutting diameter** for every type: 6.35 mm for a 1/4 in
+    tapered ball nose, never its tip), a tapered ball nose's tip, the
+    angle labelled for what it is (a V-bit's included, `90°`; a tapered
+    ball nose's per side, `6.7°/side`, since the two unlabelled side by
+    side are the mix-up phase 3's research warns of), number, and a red
+    dot when the tool lacks a value an operation needs: a feed, plunge
+    rate or RPM, or a tapered ball nose's tip, taper or flute length.
+    Selecting a row edits it below, in place
     (selecting *is* editing; there is no Edit button): name, type
-    (end mill, ball nose, V-bit with included angle, engraver, drill),
+    (end mill, ball nose, V-bit with included angle, engraver, drill,
+    tapered ball nose with tip diameter, taper per side and flute length;
+    its diameter is the cutting diameter),
     diameter, flutes, feed, plunge rate, RPM, step-down, stepover, tool
-    number, vendor and product id. Feed, plunge and RPM fields are empty,
+    number, vendor and product id. A type's own fields follow the type:
+    a V-bit's *Angle*; a tapered ball nose's *Tip diameter*, *Taper per
+    side* and *Flute length*. *Diameter* keeps its label for every type.
+    Choosing *Tapered ball nose* writes the cutter with none of its three
+    values set, one undo step, and each value typed is one more; nothing
+    is invented, as no V-bit angle is (a V-bit's switch is held until its
+    angle is typed because the file requires one; a tapered ball nose's
+    values may be `null` in the file, so nothing is held). Feed, plunge
+    and RPM fields are empty,
     never prefilled: the app invents no feed (principle 5). An unset feed,
-    plunge rate or RPM shows the required-field look (66b), not a
+    plunge rate or RPM, and an unset tip, taper or flute length of a
+    tapered ball nose, shows the required-field look (66b), not a
     paragraph under the field. The list's actions, in this order:
     - **New tool** makes a tool from scratch, for a bit that is in no
       library: an end mill named `tool<n>`, where `<n>` is the number the
@@ -393,8 +410,15 @@ folder are app preferences, kept outside the project.
     a type filter, and the library's tools **grouped by vendor** (one
     collapsible group header per vendor, `IDC Woodcraft · 6`, sorted by
     name, with *No vendor* last; a search hides groups with no match),
-    each row with name, type, diameter, angle, flutes, feed, plunge, RPM
-    and product; vendor is the group, not a column. Rows already in the
+    each row with name, type, diameter, tip, angle, flutes, feed, plunge,
+    RPM and product; vendor is the group, not a column. The Ø column is
+    the **cutting diameter** for every type (6.35 for a 1/4 in tapered
+    ball nose); a tapered ball nose's tip has the column of its own, and
+    the search reads it with the diameter; the Angle column says which
+    angle it holds, a V-bit's included (`90°`) or a tapered ball nose's
+    per side (`6.7°/side`). A value the tool still needs (a rate, a
+    tapered ball nose's tip or taper) is a red dash in its cell, never a
+    value. Rows already in the
     project are marked. The right pane edits the selected tool in place
     (64a). The header holds the library's **display units**, a `mm` /
     `in` segmented control separate from the project's (53): an app
@@ -416,7 +440,11 @@ folder are app preferences, kept outside the project.
 64a. **Editing a library tool** (review 2026-11-10; was phase 5).
     Selecting a library row shows its fields in the right pane, the same
     fields, order, units and required-field look as a project tool's
-    editor (63), in the library's display units. A field commits on leave
+    editor (63), in the library's display units: a tapered ball nose's
+    tip diameter, taper per side and flute length among them, each marked
+    required while unset (an unset value is not a fault in the library,
+    so the file is written; the mark says what an operation will need).
+    A field commits on leave
     and writes the library file at once, through the same staged write
     the CLI uses; a write that fails leaves the field marked with the
     reason. Library edits are not project changes: they are not in the
@@ -446,7 +474,14 @@ folder are app preferences, kept outside the project.
     (its count follows the choice). Import writes the library and returns
     to the table with a banner, *Imported 21 tools from club.tools. 2
     skipped.*, whose *Details* reopens the review read-only. The review is
-    the report `tools import` prints, computed without writing.
+    the report `tools import` prints, computed without writing. A tapered
+    ball nose that comes in with values unset is imported and listed with
+    them named, *Still to set: Taper per side, Flute length* (the
+    report's own note names the same fields as the file does, `set
+    cutter.tapered_ball_nose.taper_angle_deg, …`); a Fusion tapered mill
+    with no shaft diameter, which is the cutting diameter, or with a flat
+    or bull tip is in the skipped list with that reason, never imported
+    with a placeholder.
 
 ### Operations
 
@@ -527,12 +562,19 @@ folder are app preferences, kept outside the project.
     marks which rows are Setup rows, and acceptance 73 still checks every
     field of 68 is present exactly once.
 66b. **Required values.** A value the file needs before export (a
-    tool's feed, plunge rate and RPM; the stock thickness; an Inlay's male
+    tool's feed, plunge rate and RPM; a tapered ball nose's tip diameter,
+    taper and flute length; the stock thickness; an Inlay's male
     board thickness) shows, while unset: the field's error outline, the
     `circle-x` glyph inside the field before the unit, and *Required* as
     its placeholder text. The file's message (*tools[t1].feed_mm_min is
-    not set…*) is the field's tooltip and a row in the Warnings drawer; it
-    is not written under the field. Every other validation error (a
+    not set…*, *tools[t3].cutter.tapered_ball_nose.flute_length_mm is not
+    set…*) is the field's tooltip and a row in the Warnings drawer; it
+    is not written under the field, and no dialog asks for it. A tool's
+    values are marked from `Tool::unset_values()`, in the tool editor (63)
+    and the library's pane (64a) alike, from the moment the tool is made;
+    the drawer lists them once an enabled operation uses the tool, as
+    `check` does. A tool's `diameter_mm` is always in the file, so it is
+    never marked. Every other validation error (a
     value out of range, a depth past the thickness) keeps its message
     under the field, as 66 says.
 67. **Targets** (`15-targets.svg`; reworked by the review, 2026-11-10).
@@ -588,6 +630,17 @@ folder are app preferences, kept outside the project.
     Photo V-Carve lands with phase 3.5 (format v27); its editor is a slice
     of this phase that waits for it, and nothing else in the phase does
     (open question 10, decided 2026-11-02).
+
+    **The carving kinds' tool pickers** (phase 3.6, #685). A V-Carve's
+    and an Inlay's Tool row offers the project's V-bits and its tapered
+    ball noses; a Photo V-Carve's offers the V-bits alone, since its
+    depth follows a V-bit's angle. The picker offers what validation
+    takes as the kind's carving bit (`v_carve_needs_v_bit`), so the two
+    cannot differ. A tapered ball nose with a value still unset is
+    offered, as a tool with no feed is, and its fields say what it needs
+    (66b). Under the picker a V-bit shows its cone height and a tapered
+    ball nose its cutting height, the lower of its flutes and where its
+    cone reaches the cutting diameter (`cutting height 19.05 mm`).
 68a. **Inlay: both boards from one project** (`06-operation-vcarve.svg`;
     maintainer decision 2026-11-02, engine and format change #498, which
     lands before this editor's slice). An inlay is one design cut into two
@@ -604,7 +657,12 @@ folder are app preferences, kept outside the project.
     red below 6 mm (`inlay_plug_base_thin`). Under Depth a read-only line
     shows what the bench needs to see: the male's start plane, its band
     floor, and the flank's engagement against the V-bit's cone height, red
-    when it exceeds it (phase 3's 90° bit caps it at 3.175 mm). One tool,
+    when it exceeds it (phase 3's 90° bit caps it at 3.175 mm). Cut with
+    a tapered ball nose (phase 3.6, #685), the engagement is compared
+    with the bit's cutting height, and a third line is the **seat line**
+    with `check`'s figures: `seat: moves 0.55 mm per 0.5° of taper,
+    0.76 mm per 0.05 mm of tip radius; test-fit before gluing`, in
+    millimetres whatever the display units, as its steps are. One tool,
     one clearing list and one cut-out serve both boards, so the same bit
     angle on both sides is enforced by construction. The Viewport draws the
     male board beside the stock (72). Export writes both boards' programs

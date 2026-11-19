@@ -500,6 +500,51 @@ what either choice writes and *Import* writes the chosen one. The
 library's display units are `Prefs::library_units`; the editing pane
 reuses the project tool editor's rows with those units.
 
+**The tapered ball nose** (phase 3.6's model in the app, #685). The
+headless half is `dc-app`'s, so the window only draws it:
+
+- **The editor's rows** are `tools::rows(tool, units) -> Vec<FieldRow>`
+  (field, label key, text, unit, and the file's message while the value
+  is required), from `tools::fields_for(KindChoice)`: the name, the
+  type's own fields (`Angle` for a V-bit; `TipDiameter`, `Taper`,
+  `FluteLength` for a tapered ball nose), then the rows every type has.
+  `KindChoice::ALL` offers the type; `set_kind` writes the cutter with
+  its three values `None`, and `set_field` types each (a taper in
+  (0°, 45°], blank clears to `null`).
+- **Required values** come from `Tool::unset_values()` and nowhere else:
+  `tools::unset_values(tool)` (file name and message), `required(tool,
+  field)`, `unset_fields(tool)` and `lacks_value(tool)`, the row's mark.
+  The message is `Problem::ToolValueUnset`'s, the line `check` prints.
+- **The table** is `library::Column::ALL` (Name, Type, Ø, Tip, Angle,
+  Flutes, Feed, Plunge, RPM, Product) and `library::row(strings, tool,
+  units) -> Vec<Cell>`, a `Cell` being `Text`, `Empty` (the type has no
+  such value) or `Unset` (a value the tool still needs: the red dash).
+  Ø is `diameter_mm` for every type. `tools::angle_text` labels the
+  angle (`90°`, `6.7°/side`) and `tools::row_detail` is the Tools tab's
+  second line (`6.35 mm · tip 0.762 mm · 6.7°/side · T2`).
+- **The pickers** ask validation: `editor::offered_tools` keeps the
+  tools for which a probe (a project holding only that tool and the
+  carve, enabled, with no shapes) raises no `v_carve_needs_v_bit`
+  (`editor::carving_bit_refused`). There is no second rule in the app to
+  drift from the file's: a V-Carve and an Inlay take V-bits and tapered
+  ball noses, a Photo V-Carve V-bits. The probe has no geometry, so its
+  cost does not grow with the project.
+- **The Inlay's lines**: `editor::tool_note` reads
+  `Tool::cutting_height_mm` for both bits (*cone height*, *cutting
+  height*); `editor::seat_line` words `dc_project::inlay_seat_sensitivity`
+  as `check` does, and `editor::notes` adds it under the derived row.
+- **The import review**: `library::review_status` (the status column,
+  a skipped item's reason in it), `library::review_unset` (*Still to
+  set: Taper per side, Flute length*, from `Tool::unset_values()`) and
+  `library::skipped`.
+
+The library's type filter (`KindFilter`) has no tapered ball nose entry
+yet: the window matches it exhaustively, so the variant lands with the
+window's slice (`KindFilter::label` is there for it to switch to).
+`operations::new_operation` still gives a new V-Carve or Inlay the
+project's first V-bit; a project with only a tapered ball nose gets no
+tool there, and the picker offers it.
+
 ### Test harness
 
 `dc-app`'s `test_support::Harness` builds an `App` from fixture bytes, runs
@@ -638,6 +683,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 **Tools and library (slice 8)**
 - `tools::add_from_library_equals_tools_add`, `tools::missing_rate_is_an_error_and_blocks_export`, `tools::remove_in_use_is_refused_naming_operations`, `tools::save_to_library` (acc 71).
 - `library::filter_and_search` (port: `toolLibraryDialogModel.test.ts`), `library::fusion_import_report_equals_tools_import` (acc 71), `library::in_project_marking`.
+- The tapered ball nose (#685, slice 31a): `tools::tapered_ball_nose_editor_fields`, `tools::tapered_ball_nose_unset_fields_show_required`, `library::tapered_ball_nose_row_shows_cutting_diameter_tip_and_angle_per_side`, `library::import_review_names_unset_tapered_values_and_skipped_tapered_mills`, `editor::v_carve_and_inlay_pickers_offer_tapered_ball_noses`, `editor::photo_picker_does_not`, `editor::inlay_with_a_tapered_ball_nose_shows_the_seat_line`.
 
 **Generation and warnings (slice 9)**
 - `generation::digest_covers_every_generator_input`, `generation::editing_one_operation_regenerates_only_dependents`, `generation::results_from_an_old_snapshot_are_dropped`, `generation::stop_clears_pending` (acc 87).
@@ -976,6 +1022,35 @@ rebases, and none waits for another to start.
     - `library::no_choice_when_nothing_changed`.
     - `kittest::import_review_replaces_the_panes_in_place`: no second
       sheet opens; *Back* returns to the table unchanged.
+
+31a. **Tapered ball nose in the app** (#685; phase 3.6's model;
+    functional 63, 64, 64a, 64b, 66b, 68, 68a). The type in the tool
+    editor with its three fields; the tables' cutting diameter, tip
+    column and labelled angle; the V-Carve and Inlay pickers offering
+    it and the Photo V-Carve's not; the Inlay's seat line; the required
+    marks from `Tool::unset_values()`; the import review's unset values
+    and skipped tapered mills ("The Tool Library → The tapered ball
+    nose"). The headless half (`dc-app`) lands first; the window draws
+    it in its own slice. The mock-ups (`mockups/render.py`, `04` and
+    `16`) are superseded by `redesign.md` and are not re-rendered.
+    [29–31; phase 3.6]
+
+    Tests:
+    - `tools::tapered_ball_nose_editor_fields`: the type list offers it;
+      its tip, taper (labelled per side) and flute length edit the
+      cutter's values, each one undo step; choosing the type invents
+      nothing.
+    - `tools::tapered_ball_nose_unset_fields_show_required`: each `null`
+      value is required at its field with the file's message, on a tool
+      in use, on an unused one and in the library; `diameter_mm` never.
+    - `library::tapered_ball_nose_row_shows_cutting_diameter_tip_and_angle_per_side`:
+      Ø 6.35, tip 0.762, `6.7°/side`; a V-bit's stays `90°`.
+    - `library::import_review_names_unset_tapered_values_and_skipped_tapered_mills`.
+    - `editor::v_carve_and_inlay_pickers_offer_tapered_ball_noses`: the
+      offered tools are those validation does not refuse.
+    - `editor::photo_picker_does_not`.
+    - `editor::inlay_with_a_tapered_ball_nose_shows_the_seat_line`: the
+      figures of `dc_job::summary::seat_lines`.
 
 ### Export, its result and the setup sheet
 

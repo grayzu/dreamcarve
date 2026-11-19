@@ -4974,6 +4974,12 @@ with the required-field look (66b) and the message in its tooltip, no
 dialog; and a library import's review lists a TBN imported with values
 unset, naming them.
 
+#685 carries these: phase 4's functional spec says them now
+(capabilities 63, 64, 64a, 64b, 66b, 68 and 68a) and its design spec
+names the `dc-app` functions the window draws ("The Tool Library → The
+tapered ball nose", slice 31a). The mock-up is not re-rendered: the
+phase 4 mock-ups are superseded by `docs/specs/phase-4/redesign.md`.
+
 ### 3.7 Release
 
 28. **Docs sweep.** `CONTEXT.md` terms (Flat Depth, Start Depth, Clearing,
