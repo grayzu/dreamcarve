@@ -510,7 +510,7 @@ contour does:
 | Field | Meaning |
 | --- | --- |
 | `tool` | A flat end mill, long enough to go through the male board (see **Flute length** below). Its feed, plunge rate, speed and `step_down_mm` are used; each pass goes one step-down deeper. |
-| `tabs` | Holding tabs, as a [Profile's tab request](tabs.md): how many or where, their width along the cut, their top above the bottom of the male board, and their shape. `null` cuts the plug free on the last pass: hold it down another way, with double-sided tape under it. |
+| `tabs` | Holding tabs, as a [Profile's tab request](tabs.md): how many or where, their width along the cut, their top above the bottom of the male board, and their shape. The count is for each plug's cut-out as a whole (see **How its tabs are counted** below). `null` cuts the plug free on the last pass: hold it down another way, with double-sided tape under it. |
 | `through_cut_allowance_mm` | How far below the male board the last pass goes, into the spoilboard: 0.2 mm is usual. |
 
 The cut-out is the male's last tool run, after its V-bit, so the
@@ -553,6 +553,22 @@ its centre its radius inside the edge at each end, so its cut reaches
 the edge and the bit never leaves the board. Its tabs go only on those
 stretches. With a V-walled edge the band stops short of the board's edge
 and the cut-out goes all the way round, as above.
+
+**How its tabs are counted.** A tab request is for the cut-out of one
+plug, however many stretches the board's edge leaves of it. `count: 4`
+puts four tabs on a cut-out that goes all the way round, evenly spaced,
+and four on one clipped into three stretches: the stretches share the
+count by length, so a long one gets more than a short one, and each
+spaces its share evenly, clear of its ends. Where the lengths do not
+divide the count evenly, the stretches with the largest remainders get
+the odd tabs. A stretch too short for its share (tabs may cover half of
+it at most) keeps what it can hold and the others take the rest; when
+they cannot hold them all, `check` says so,
+`tabs_cover_most_of_contour`, and fewer are cut. Tabs at distances
+(`at_distances`) count along the stretches laid end to end, one tab for
+each distance. A design of several plugs, each with its own band, has a
+cut-out round each, and each gets the count, as each outline of a
+Profile does.
 
 **Room.** The floor ring must be at least the end mill's diameter wide,
 so the cutter running along its outer edge stays clear of the plug's

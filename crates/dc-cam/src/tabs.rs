@@ -498,6 +498,173 @@ impl Request {
             on_corners_mm: on_corners,
         }
     }
+
+    /// This request as each piece of one outline takes it (#710), the
+    /// pieces `lengths_mm` long, in the outline's order: where the board's
+    /// edge leaves a male Inlay's cut-out as several open paths, the
+    /// request is for the cut-out, not for each of them. One request for
+    /// each piece, to lay on it as on any path ([`Request::fit`]).
+    ///
+    /// `count` tabs are shared among the pieces by length ([`shares`]), no
+    /// piece asked for more than cover half of it ([`Request::most`]) while
+    /// another has room. Tabs `at_distances` go where their distances fall
+    /// along the pieces laid end to end, each taken modulo their whole
+    /// length and counted on its piece from that piece's first vertex.
+    pub(crate) fn shared(&self, lengths_mm: &[f64]) -> Vec<Self> {
+        let placements: Vec<TabPlacement> = match &self.placement {
+            TabPlacement::Count { count } => {
+                let most: Vec<u32> = lengths_mm.iter().map(|&l| self.most(l)).collect();
+                shares(u32::from(*count), lengths_mm, &most)
+                    .into_iter()
+                    .map(|share| TabPlacement::Count {
+                        // No share is more than the count shared.
+                        count: u8::try_from(share).unwrap_or(*count),
+                    })
+                    .collect()
+            }
+            TabPlacement::AtDistances { distances_mm } => {
+                let total_mm: f64 = lengths_mm.iter().sum();
+                let mut on: Vec<Vec<f64>> = vec![Vec::new(); lengths_mm.len()];
+                let last = lengths_mm.len().saturating_sub(1);
+                // Pieces with no length between them hold no tab.
+                let distances_mm: &[f64] = if total_mm > EPS_MM { distances_mm } else { &[] };
+                for d in distances_mm {
+                    let mut along_mm = d.rem_euclid(total_mm);
+                    for (i, (piece, &length_mm)) in on.iter_mut().zip(lengths_mm).enumerate() {
+                        // Rounding may leave a distance just past the
+                        // last piece: it stays on that piece, which
+                        // takes it modulo its own length.
+                        if along_mm < length_mm || i == last {
+                            piece.push(along_mm.min(length_mm));
+                            break;
+                        }
+                        along_mm -= length_mm;
+                    }
+                }
+                on.into_iter()
+                    .map(|distances_mm| TabPlacement::AtDistances { distances_mm })
+                    .collect()
+            }
+        };
+        placements
+            .into_iter()
+            .map(|placement| Self {
+                placement,
+                ..self.clone()
+            })
+            .collect()
+    }
+
+    /// The most tabs of this request whose spans cover at most half of a
+    /// path `length_mm` long: what [`Request::fit`] cuts a larger count
+    /// down to on a path that may get none.
+    fn most(&self, length_mm: f64) -> u32 {
+        let half_mm = length_mm / 2.0 + EPS_MM;
+        let fits = |n: u32| f64::from(n) * self.span_mm <= half_mm;
+        let about = whole(half_mm / self.span_mm);
+        // The division may round across a whole number; `fit`'s own test
+        // settles it.
+        if !fits(about) {
+            about.saturating_sub(1)
+        } else if about < u32::MAX && fits(about + 1) {
+            about + 1
+        } else {
+            about
+        }
+    }
+}
+
+/// How many of `count` tabs each piece of one outline takes (#710), the
+/// pieces `lengths_mm` long and each able to hold `most` of them: shared by
+/// length, the largest remainders rounded up so the shares add up to
+/// `count` ([`by_length`]). A piece whose share is more than it holds
+/// takes what it holds, and the others share the rest the same way, so the
+/// whole count is placed whenever the pieces can hold it. When they
+/// cannot, the tabs left over are asked of them all by length, and each
+/// piece cuts its own down as any path does, with its coverage warning.
+pub(crate) fn shares(count: u32, lengths_mm: &[f64], most: &[u32]) -> Vec<u32> {
+    let room = |i: usize| most.get(i).copied().unwrap_or(0);
+    let mut given = vec![0_u32; lengths_mm.len()];
+    // The pieces not yet full, and the tabs not yet given.
+    let mut open: Vec<usize> = (0..lengths_mm.len()).collect();
+    let mut left = count;
+    while left > 0 && !open.is_empty() {
+        let lengths: Vec<f64> = open
+            .iter()
+            .map(|&i| lengths_mm.get(i).copied().unwrap_or(0.0))
+            .collect();
+        let round = by_length(left, &lengths);
+        let full: Vec<usize> = open
+            .iter()
+            .zip(&round)
+            .filter(|&(&i, &n)| n > room(i))
+            .map(|(&i, _)| i)
+            .collect();
+        if full.is_empty() {
+            for (&i, &n) in open.iter().zip(&round) {
+                if let Some(share) = given.get_mut(i) {
+                    *share = n;
+                }
+            }
+            return given;
+        }
+        for &i in &full {
+            if let Some(share) = given.get_mut(i) {
+                *share = room(i);
+            }
+            left = left.saturating_sub(room(i));
+        }
+        open.retain(|i| !full.contains(i));
+    }
+    for (share, extra) in given.iter_mut().zip(by_length(left, lengths_mm)) {
+        *share = share.saturating_add(extra);
+    }
+    given
+}
+
+/// `count` shared among pieces `lengths_mm` long in proportion to their
+/// lengths, by the largest remainder method: each piece takes the whole
+/// part of its share, and the tabs then left go one each to the pieces
+/// with the largest fractions, the earlier piece first where two are
+/// equal to a millionth. The shares add up to `count`; pieces with no
+/// length take none, and all zeros when none has any.
+fn by_length(count: u32, lengths_mm: &[f64]) -> Vec<u32> {
+    let usable = |l: f64| if l.is_finite() && l > 0.0 { l } else { 0.0 };
+    let total_mm: f64 = lengths_mm.iter().map(|&l| usable(l)).sum();
+    if total_mm <= EPS_MM {
+        return vec![0; lengths_mm.len()];
+    }
+    let exact: Vec<f64> = lengths_mm
+        .iter()
+        .map(|&l| f64::from(count) * usable(l) / total_mm)
+        .collect();
+    let mut shares: Vec<u32> = exact.iter().map(|&share| whole(share)).collect();
+    // Fractions are compared to a millionth, so pieces equal but for
+    // rounding keep their order on every machine.
+    let fraction = |i: usize| {
+        exact
+            .get(i)
+            .map_or(0.0, |share| ((share - share.floor()) * 1e6).round())
+    };
+    let mut order: Vec<usize> = (0..exact.len()).collect();
+    order.sort_by(|&a, &b| fraction(b).total_cmp(&fraction(a)));
+    let given = shares.iter().fold(0_u32, |sum, &n| sum.saturating_add(n));
+    // Fewer than one tab for each piece is left: every whole part is
+    // less than one short of its share.
+    let short = usize::try_from(count.saturating_sub(given)).unwrap_or(usize::MAX);
+    for &i in order.iter().take(short) {
+        if let Some(share) = shares.get_mut(i) {
+            *share = share.saturating_add(1);
+        }
+    }
+    shares
+}
+
+/// `x` rounded down to a whole number: 0 for a negative `x` or NaN, and
+/// `u32::MAX` for one past it (a float cast saturates).
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn whole(x: f64) -> u32 {
+    x.floor() as u32
 }
 
 /// One raised stretch of a path, after merging.
@@ -1696,6 +1863,102 @@ mod tests {
             let centre = run.start_mm + run.length_mm / 2.0;
             assert_approx_eq!(centre, l * (2.0 * k as f64 + 1.0) / 8.0, TOL);
         }
+    }
+
+    /// #710: a count is shared among the pieces of one outline by length,
+    /// the largest remainders rounded up, so the shares add up to it; the
+    /// earlier piece takes the odd tab where two are the same length.
+    #[test]
+    fn shares_split_a_count_by_length() {
+        let room = [9, 9, 9];
+        assert_eq!(shares(4, &[40.0, 40.0, 100.0], &room), [1, 1, 2]);
+        assert_eq!(shares(4, &[50.0, 150.0], &room), [1, 3]);
+        assert_eq!(shares(4, &[10.0, 10.0], &room), [2, 2]);
+        assert_eq!(shares(5, &[10.0, 10.0, 10.0], &room), [2, 2, 1]);
+        assert_eq!(shares(1, &[10.0, 30.0, 20.0], &room), [0, 1, 0]);
+        assert_eq!(shares(0, &[10.0, 30.0], &room), [0, 0]);
+        // Lengths equal but for rounding share as equal ones do.
+        assert_eq!(shares(3, &[10.0, 10.0 + 1e-12], &room), [2, 1]);
+        for count in 0..=12 {
+            let split = shares(count, &[13.0, 7.5, 61.0, 0.2], &[99; 4]);
+            assert_eq!(split.iter().sum::<u32>(), count, "{split:?}");
+        }
+    }
+
+    /// #710: no piece is asked for more than it holds while another has
+    /// room, so the whole count is placed whenever the pieces can hold it.
+    /// When they cannot, the tabs left over are asked of them by length,
+    /// for each piece to cut down with its coverage warning.
+    #[test]
+    fn shares_keep_to_what_each_piece_holds() {
+        // By length the short piece's share is 1, which it cannot hold.
+        assert_eq!(shares(5, &[19.0, 100.0], &[0, 5]), [0, 5]);
+        // The long piece is full at 2: the others take the rest by length.
+        assert_eq!(shares(6, &[100.0, 30.0, 20.0], &[2, 9, 9]), [2, 2, 2]);
+        assert_eq!(shares(7, &[100.0, 30.0, 20.0], &[2, 9, 9]), [2, 3, 2]);
+        // Three pieces that hold one each cannot hold four: the fourth is
+        // asked of the first, which cuts it down.
+        assert_eq!(shares(4, &[10.0, 10.0, 10.0], &[1, 1, 1]), [2, 1, 1]);
+        // Pieces with no length take none, and no pieces none.
+        assert_eq!(shares(3, &[0.0, 0.0], &[5, 5]), [0, 0]);
+        assert_eq!(shares(3, &[0.0, 10.0], &[5, 5]), [0, 3]);
+        assert!(shares(3, &[], &[]).is_empty());
+    }
+
+    /// #710: a request shared among the pieces of one outline. A piece
+    /// holds as many tabs as cover at most half of it, the test `fit`
+    /// cuts a count down by: with the 8 mm tab and a 6 mm bit a tab keeps
+    /// 14 mm raised, so 56 mm holds two and 55.9 mm one.
+    /// Distances count along the pieces end to end, modulo their whole
+    /// length, each on its piece from that piece's start.
+    #[test]
+    fn request_is_shared_among_the_pieces_of_an_outline() {
+        let op = OperationId::new("op1");
+        let diameter_mm = 6.0;
+        let request = |placement| {
+            Request::new(&op, &tab_spec(placement, TabShape::Rect), diameter_mm).expect("a request")
+        };
+        let span_mm = TAB_WIDTH_MM + diameter_mm;
+        let counted = request(TabPlacement::Count { count: 4 });
+        assert_eq!(counted.most(4.0 * span_mm), 2);
+        assert_eq!(counted.most(4.0 * span_mm - 0.1), 1);
+        assert_eq!(counted.most(1.0), 0);
+        let placements = |shared: Vec<Request>| -> Vec<TabPlacement> {
+            shared.into_iter().map(|r| r.placement).collect()
+        };
+        assert_eq!(
+            placements(counted.shared(&[40.0, 40.0, 100.0])),
+            [1, 1, 2].map(|count| TabPlacement::Count { count })
+        );
+        // The first piece holds none: the second, which holds four, takes
+        // them all.
+        assert_eq!(
+            placements(counted.shared(&[20.0, 8.0 * span_mm])),
+            [0, 4].map(|count| TabPlacement::Count { count })
+        );
+        let at = request(TabPlacement::AtDistances {
+            distances_mm: vec![5.0, 45.0, 130.0, 40.0],
+        });
+        let shared = placements(at.shared(&[40.0, 60.0]));
+        let [
+            TabPlacement::AtDistances {
+                distances_mm: first,
+            },
+            TabPlacement::AtDistances {
+                distances_mm: second,
+            },
+        ] = &shared[..]
+        else {
+            panic!("{shared:?}");
+        };
+        // 130 mm is 30 mm round again; 40 mm is the second piece's start.
+        for (got, want) in first.iter().zip([5.0, 30.0]) {
+            assert_approx_eq!(*got, want, TOL);
+        }
+        for (got, want) in second.iter().zip([5.0, 0.0]) {
+            assert_approx_eq!(*got, want, TOL);
+        }
+        assert_eq!((first.len(), second.len()), (2, 2));
     }
 
     #[test]

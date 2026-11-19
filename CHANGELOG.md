@@ -424,6 +424,18 @@ phases bump the patch number.
 
 ### Fixed
 
+- **A clipped Inlay cut-out places the tabs it was asked for (#710).**
+  Where a male's band runs past the board, its cut-out is cut in several
+  stretches, from the board's edge to the board's edge, and each stretch
+  took the whole tab request: a cut-out asked for four tabs and clipped
+  into three stretches was cut with up to twelve. The request is now for
+  the cut-out as a whole. The stretches share a count by length, the
+  largest remainders rounded up, and tabs at distances count along the
+  stretches end to end. A stretch too short for its share still gets
+  fewer, with `tabs_cover_most_of_contour`. The cut-out's tabs are now
+  placed before it is cut, and the safety pass places the same ones. A
+  cut-out the board does not clip is cut as before; no committed program
+  changes.
 - **The safety pass sees a cut cross an arc past a half turn (#686,
   #694).** A wall drawn as an arc of more than 180°, a 270° D-shaped hole
   or island for example, was read as farther from a cut than it is, so S9

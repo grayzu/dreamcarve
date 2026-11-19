@@ -128,7 +128,10 @@
 //!   laps, which cut to their floor. The tabs are the project's placed tabs
 //!   on the Profile's targets and those its tab request places
 //!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
-//!   toolpath). So a lap that starts on a tab and plunges there, below
+//!   toolpath); a male Inlay's cut-out's are those its request places on
+//!   the path this pass derives, the open pieces of one outline taking
+//!   the request between them (`dc_cam::placed_tabs::place_shared`,
+//!   #710). So a lap that starts on a tab and plunges there, below
 //!   its top, is refused, wherever on the tab it starts.
 //! - **Trenches** (#352): an inside or outside Profile cuts only a trench,
 //!   its kerf, and the lines its entries ramp on; the waste beside them
@@ -1298,6 +1301,10 @@ struct CutOutGeometry {
     /// same ([`without_rect_sides`]), so open from the board's edge to the
     /// board's edge.
     paths: Vec<Polyline>,
+    /// For each outline the board's edge leaves as open paths, where its
+    /// pieces are in `paths` (#710): they are one cut, and take the
+    /// cut-out's tab request between them.
+    pieces: Vec<Range<usize>>,
 }
 
 /// [`CutOutGeometry`] of Inlay `inlay`'s cut-out run with `tool`; `None`
@@ -1332,6 +1339,7 @@ fn cut_out_geometry(
     let inset_mm = male.band.cut_out_inset_mm(tool.diameter_mm);
     let (edge, clipped) = male_band_on_board(project, inlay, &male.band, male.mirror, &male.design);
     let outlines = inset_outers(&edge, inset_mm, tolerance_mm);
+    let mut pieces = Vec::new();
     let paths = if clipped && male.band.is_open() {
         // #495: the board's edge frees the plug where the band is clipped
         // to it.
@@ -1340,11 +1348,25 @@ fn cut_out_geometry(
             min: Point::new(board.min.x + inset_mm, board.min.y + inset_mm),
             max: Point::new(board.max.x - inset_mm, board.max.y - inset_mm),
         };
-        without_rect_sides(&outlines, within, tolerance_mm)
+        let mut paths = Vec::new();
+        for outline in &outlines {
+            let from = paths.len();
+            paths.extend(without_rect_sides(
+                std::slice::from_ref(outline),
+                within,
+                tolerance_mm,
+            ));
+            pieces.push(from..paths.len());
+        }
+        paths
     } else {
         outlines.into_iter().map(Contour::into_polyline).collect()
     };
-    Some(CutOutGeometry { rings, paths })
+    Some(CutOutGeometry {
+        rings,
+        paths,
+        pieces,
+    })
 }
 
 /// The material of Inlay `inlay`'s cut-out run with `tool` (#443): its
@@ -1792,8 +1814,8 @@ const TAB_SEARCH_CELLS: usize = 200_000;
 /// cut-out's (#443). The cut-out is held as the On line Profile it is
 /// ([`dc_cam::inlay::cut_out_profile`]) on the paths this pass derives
 /// itself ([`cut_out_geometry`]), so its tabs are those its tab request
-/// places there, by the documented layout rule. Empty for every other
-/// run, or when the cut-out does not resolve.
+/// places there, by the documented layout rule ([`cut_out_placed`]).
+/// Empty for every other run, or when the cut-out does not resolve.
 pub(crate) fn run_tab_spines(
     project: &Project,
     op: &Operation,
@@ -1804,32 +1826,53 @@ pub(crate) fn run_tab_spines(
     match (op, label) {
         (_, RunLabel::Main) => tab_spines(project, op),
         (Operation::Inlay(inlay), RunLabel::CutOut(_)) => {
-            let (Some(geometry), Some(cut_out), Some(thickness_mm)) = (
-                cut_out_geometry(project, inlay, tool, board),
-                inlay.cut_out.as_ref(),
-                project.stock.thickness_mm,
-            ) else {
-                return Vec::new();
-            };
-            let copy = cut_out_profile(project, inlay, cut_out, &geometry.paths, thickness_mm);
-            copy.operations
-                .first()
-                .map(|op| tab_spines(&copy, op))
+            cut_out_placed(project, inlay, tool, board)
+                .and_then(|copy| copy.operations.first().map(|op| tab_spines(&copy, op)))
                 .unwrap_or_default()
         }
         _ => Vec::new(),
     }
 }
 
+/// `project` as S9 holds Inlay `inlay`'s cut-out run with `tool` (#443,
+/// #710): the On line Profile the cut-out is, on the paths this pass
+/// derives itself ([`cut_out_geometry`], [`cut_out_profile`]), with the
+/// cut-out's tab request placed on them as placed tabs, as the generator
+/// places it before it cuts (ADR-0005). The request is for each outline;
+/// the open paths the board's edge leaves of one outline take it between
+/// them, by the documented layout rule
+/// ([`dc_cam::placed_tabs::place_shared`]), so a cut-out asked for four
+/// tabs is held to four however many pieces it is cut in. No tab is
+/// placed when the request cannot be. `None` when the cut-out does not
+/// resolve.
+pub(crate) fn cut_out_placed(
+    project: &Project,
+    inlay: &InlayOp,
+    tool: &Tool,
+    board: Board,
+) -> Option<Project> {
+    let geometry = cut_out_geometry(project, inlay, tool, board)?;
+    let cut_out = inlay.cut_out.as_ref()?;
+    let thickness_mm = project.stock.thickness_mm?;
+    let mut copy = cut_out_profile(project, inlay, cut_out, &geometry.paths, thickness_mm);
+    let placed = cut_out.tabs.as_ref().and_then(|spec| {
+        dc_cam::placed_tabs::place_shared(&copy, &inlay.id, spec, &geometry.pieces).ok()
+    });
+    if let Some(placement) = placed {
+        copy.tabs.extend(placement.tabs);
+    }
+    Some(copy)
+}
+
 /// `project` holding the On line Profile a male Inlay's cut-out is
-/// (#443), as its only operation: `paths` (closed, project space) as the
+/// (#443), as its only operation: `paths` (project space; closed, or
+/// open where the board's edge frees the plug) as the
 /// profiles of one definition placed in place, which the Profile targets
-/// with the cut-out's tool, tabs and through-cut allowance, through the
+/// with the cut-out's tool and through-cut allowance, through the
 /// stock `thickness_mm` thick, climb, plunging, its start where the
-/// paths start, with the Inlay's id. So the tabs its request places are
-/// placed by the documented layout rule ([`dc_cam::placed_tabs::place`])
-/// on the paths S9 derives itself, as `docs/book`'s Inlay chapter
-/// documents the cut-out.
+/// paths start, with the Inlay's id. It carries no tab request: the
+/// cut-out's is placed on these paths ([`cut_out_placed`]), as
+/// `docs/book`'s Inlay chapter documents the cut-out.
 fn cut_out_profile(
     project: &Project,
     inlay: &InlayOp,
@@ -1876,7 +1919,7 @@ fn cut_out_profile(
         direction: CutDirection::Climb,
         through_cut_allowance_mm: cut_out.through_cut_allowance_mm,
         safe_z_mm: inlay.safe_z_mm,
-        tabs: cut_out.tabs.clone(),
+        tabs: None,
         machining_order: inlay.machining_order,
         entry: Entry::Plunge,
         lead: None,

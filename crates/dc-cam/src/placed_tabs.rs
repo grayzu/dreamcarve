@@ -18,13 +18,16 @@
 //! along a line are the same under the flip.
 
 use std::collections::BTreeMap;
+use std::ops::Range;
 
 use dc_geometry::{EPS_MM, Point, Polyline, approx_eq, nearest_point};
-use dc_project::{Operation, OperationId, PlacedTab, ProfileOp, Project, TabId, TabShape, TabSpec};
+use dc_project::{
+    InstanceId, Operation, OperationId, PlacedTab, ProfileOp, Project, TabId, TabShape, TabSpec,
+};
 
 use crate::error::{CamError, ShapeRef};
 use crate::profile::{OpTabs, op_tabs};
-use crate::tabs::{PathEnds, check_size, coverage_warning, overlap_warning};
+use crate::tabs::{Fit, Least, PathEnds, Request, check_size, coverage_warning, overlap_warning};
 use crate::toolpath::Toolpath;
 use crate::warning::Warning;
 
@@ -71,54 +74,90 @@ pub struct TabSize {
 /// or a distance that is not finite, and as [`crate::generate_profile`]
 /// does when the tool or the targets cannot be cut.
 pub fn place(project: &Project, op: &OperationId, spec: &TabSpec) -> Result<Placement, CamError> {
+    place_shared(project, op, spec, &[])
+}
+
+/// [`place`] for a Profile that cuts an outline in pieces (#710): a male
+/// Inlay's cut-out, where the board's edge frees the plug and leaves its
+/// outline as several open paths ([`crate::inlay::cut_out_paths`]). Each
+/// of `pieces` is the profiles, in the definition of a target of `op`,
+/// that one outline was left as, in its order. They take the request
+/// between them, not each for itself: `count` tabs shared by length, with
+/// the largest remainders rounded up, and `at_distances` counted along the
+/// pieces end to end (`Request::shared`). Each piece then lays its share
+/// by the rules of any open path: off its ends, and fewer, with
+/// [`Warning::TabsCoverMostOfContour`], when it is too short for them.
+///
+/// Every other profile is laid as [`place`] lays it, and so is an outline
+/// left as one piece; with no `pieces` this is [`place`]. A request for
+/// tabs per outline is still per outline (phase 2 functional spec,
+/// capability 26): the pieces are one outline.
+///
+/// Fails as [`place`] does.
+pub fn place_shared(
+    project: &Project,
+    op: &OperationId,
+    spec: &TabSpec,
+    pieces: &[Range<usize>],
+) -> Result<Placement, CamError> {
     let profile = profile_op(project, op)?;
     let asking = ProfileOp {
         tabs: Some(spec.clone()),
         ..profile.clone()
     };
     let cut = op_tabs(project, &asking)?;
+    // What the request lays on each tool path: for itself, then anew on
+    // the pieces that share it.
+    let mut fits: Vec<Fit> = (0..cut.paths.len())
+        .map(|j| Fit {
+            cuts: cut.plan.requested.get(j).cloned().unwrap_or_default(),
+            reduced: cut
+                .plan
+                .request_reductions
+                .get(j)
+                .and_then(|r| r.as_ref().map(|(reduced, _)| *reduced)),
+            on_corners_mm: cut.plan.on_corners_mm.get(j).cloned().unwrap_or_default(),
+        })
+        .collect();
+    share(op, spec, &cut, &profile.targets, pieces, &mut fits)?;
     let mut placement = Placement::default();
     let mut next = next_number(project);
-    for (j, (path, shape)) in cut.paths.iter().enumerate() {
-        let Some(asked) = cut.plan.requested.get(j) else {
-            continue;
-        };
+    for (j, ((path, shape), fit)) in cut.paths.iter().zip(&fits).enumerate() {
         let length_mm = path.length_mm();
         // #302: a tab the request puts on a hole, which it does only with
         // `on_holes`, is there to hold the slug.
         let holds_slug = spec.on_holes && cut.holes.get(j).copied().unwrap_or(false);
-        if let Some(Some((reduced, widths_mm))) = cut.plan.request_reductions.get(j) {
+        if let Some(reduced) = fit.reduced {
             placement.warnings.push(coverage_warning(
                 op,
                 j,
                 Some(shape),
-                (cut.diameter_mm, widths_mm),
+                (cut.diameter_mm, &vec![spec.width_mm; reduced.asked]),
                 length_mm,
-                *reduced,
+                reduced,
             ));
         }
         if let Some(tabs) = &cut.plan.tabs
-            && tabs.layout(asked, length_mm, ends(path, &cut)).1
+            && tabs.layout(&fit.cuts, length_mm, ends(path, &cut)).1
         {
             placement
                 .warnings
                 .push(overlap_warning(op, j, Some(shape), length_mm));
         }
         // #285: a tab left on a corner is placed there, warned.
-        if let Some(on) = cut.plan.on_corners_mm.get(j) {
-            placement
-                .warnings
-                .extend(
-                    on.iter()
-                        .map(|&(distance_mm, reason)| Warning::TabOnCorner {
-                            op: op.clone(),
-                            shape: shape.clone(),
-                            distance_mm,
-                            reason,
-                        }),
-                );
-        }
-        for tab_cut in asked {
+        placement
+            .warnings
+            .extend(
+                fit.on_corners_mm
+                    .iter()
+                    .map(|&(distance_mm, reason)| Warning::TabOnCorner {
+                        op: op.clone(),
+                        shape: shape.clone(),
+                        distance_mm,
+                        reason,
+                    }),
+            );
+        for tab_cut in &fit.cuts {
             // Centres on an open path are measured from its first vertex
             // as drawn.
             let along_mm = if path.is_closed() || !cut.reversed_open {
@@ -531,6 +570,58 @@ fn profile_op<'p>(project: &'p Project, op: &OperationId) -> Result<&'p ProfileO
         }),
         None => Err(CamError::UnknownOperation { op: op.clone() }),
     }
+}
+
+/// Lays `spec` anew on the tool paths of every outline `pieces` names
+/// among the profiles of each of `targets` (#710, [`place_shared`]), in
+/// `fits`, one for each path of `cut`: the paths of one outline take the
+/// request between them (`Request::shared`), and each lays its share as
+/// [`place`] lays a request on a path. A hole's path takes none without
+/// `on_holes`, as in [`place`]; an outline with one path keeps what it
+/// has.
+fn share(
+    op: &OperationId,
+    spec: &TabSpec,
+    cut: &OpTabs,
+    targets: &[InstanceId],
+    pieces: &[Range<usize>],
+    fits: &mut [Fit],
+) -> Result<(), CamError> {
+    let Some(tabs) = &cut.plan.tabs else {
+        return Ok(());
+    };
+    let request = Request::new(op, spec, cut.diameter_mm)?;
+    for (target, outline) in targets
+        .iter()
+        .flat_map(|t| pieces.iter().map(move |p| (t, p)))
+    {
+        // The outline's tool paths, in its order: drawing order.
+        let of: Vec<(&Polyline, bool, &mut Fit)> = cut
+            .paths
+            .iter()
+            .zip(&cut.holes)
+            .zip(fits.iter_mut())
+            .filter(|(((_, shape), _), _)| {
+                shape.instance == *target && outline.contains(&shape.profile)
+            })
+            .filter(|((_, hole), _)| spec.on_holes || !**hole)
+            .map(|(((path, _), hole), fit)| (path, *hole, fit))
+            .collect();
+        if of.len() < 2 {
+            continue;
+        }
+        let lengths_mm: Vec<f64> = of.iter().map(|(path, _, _)| path.length_mm()).collect();
+        for ((path, hole, fit), request) in of.into_iter().zip(request.shared(&lengths_mm)) {
+            // #109: a part keeps a tab; a hole or an open path may not.
+            let least = if hole || !path.is_closed() {
+                Least::Zero
+            } else {
+                Least::One
+            };
+            *fit = request.fit(tabs, path, ends(path, cut), least);
+        }
+    }
+    Ok(())
 }
 
 /// How `path` of `op_tabs` runs, for laying tabs on it.
@@ -1549,6 +1640,101 @@ mod tests {
             vec![WarningCode::TabOnCorner],
             "{:?}",
             placed.warnings
+        );
+    }
+
+    /// #710: the paths one outline is left as take a request between
+    /// them; every other path takes it for itself, as each outline of a
+    /// Profile does (capability 26). Three lines cut On line, 40, 80 and
+    /// 80 mm long, and four tabs 1 mm wide (7.35 mm of path each under the
+    /// 6.35 mm bit, so 40 mm holds two). Each for itself: two, with the
+    /// coverage warning, four and four. With the first two named as one
+    /// outline's pieces they take four between them, by length one and
+    /// three, each spaced evenly on its own line, and the third still
+    /// takes four. With no pieces named, `place_shared` is `place`.
+    #[test]
+    fn pieces_of_one_outline_share_a_request() {
+        let line = |y_mm: f64, length_mm: f64| {
+            Polyline::new(
+                vec![
+                    dc_geometry::Vertex::line(0.0, y_mm),
+                    dc_geometry::Vertex::line(length_mm, y_mm),
+                ],
+                false,
+            )
+        };
+        let mut p = with_profiles(vec![line(0.0, 40.0), line(20.0, 80.0), line(40.0, 80.0)]);
+        profile_mut(&mut p).side = Side::OnLine;
+        let op = OperationId::new("o1");
+        let spec = TabSpec {
+            width_mm: 1.0,
+            ..four_tabs(false)
+        };
+        let per_line = |placement: &Placement| -> Vec<Vec<f64>> {
+            (0..3)
+                .map(|profile| {
+                    let mut at: Vec<f64> = placement
+                        .tabs
+                        .iter()
+                        .filter(|t| t.profile == profile)
+                        .map(|t| t.x_mm)
+                        .collect();
+                    at.sort_by(f64::total_cmp);
+                    at
+                })
+                .collect()
+        };
+        let assert_at = |got: &[Vec<f64>], want: [&[f64]; 3], case: &str| {
+            for (line, (got, want)) in got.iter().zip(want).enumerate() {
+                assert_eq!(got.len(), want.len(), "{case}, line {line}: {got:?}");
+                for (g, w) in got.iter().zip(want) {
+                    assert_approx_eq!(*g, *w, 1e-9);
+                }
+            }
+        };
+        let quarters = [10.0, 30.0, 50.0, 70.0];
+
+        let own = place(&p, &op, &spec).unwrap();
+        assert_at(
+            &per_line(&own),
+            [&[10.0, 30.0], &quarters, &quarters],
+            "each for itself",
+        );
+        assert_eq!(
+            codes(&own.warnings),
+            vec![WarningCode::TabsCoverMostOfContour],
+            "{:?}",
+            own.warnings
+        );
+        assert_eq!(place_shared(&p, &op, &spec, &[]).unwrap(), own);
+        // An outline left as one piece takes the request for itself.
+        assert_eq!(place_shared(&p, &op, &spec, &[0..1, 1..2]).unwrap(), own);
+
+        // One outline whose pieces are the first two profiles.
+        let first_two = std::slice::from_ref(&(0..2));
+        let shared = place_shared(&p, &op, &spec, first_two).unwrap();
+        let thirds = [80.0 / 6.0, 40.0, 400.0 / 6.0];
+        assert_at(
+            &per_line(&shared),
+            [&[20.0], &thirds, &quarters],
+            "the first two as one outline",
+        );
+        assert!(shared.warnings.is_empty(), "{:?}", shared.warnings);
+
+        // Distances count along the pieces end to end, 120 mm in all: 50 mm
+        // is 10 mm along the second line, and 135 mm is 15 mm round again.
+        // The third line takes each distance for itself, modulo its 80 mm.
+        let at = TabSpec {
+            placement: TabPlacement::AtDistances {
+                distances_mm: vec![5.0, 50.0, 135.0],
+            },
+            ..spec
+        };
+        let shared = place_shared(&p, &op, &at, first_two).unwrap();
+        assert_at(
+            &per_line(&shared),
+            [&[5.0, 15.0], &[10.0], &[5.0, 50.0, 55.0]],
+            "at distances",
         );
     }
 }
