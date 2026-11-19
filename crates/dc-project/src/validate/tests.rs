@@ -4,6 +4,8 @@
 //! Tests of project validation: the problems [`validate`] reports, with
 //! their codes, severities and field paths, and the projects it accepts.
 
+mod problem_snapshot;
+
 use super::*;
 use crate::model::{
     ClearanceStrategy, CornerRelief, DrillCycle, Entry, LastPass, Lead, Operation, PeckRetract,
