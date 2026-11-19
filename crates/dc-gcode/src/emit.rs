@@ -890,19 +890,19 @@ fn emit_enabled(
         let written = match canned_plan(
             &w,
             op,
-            tool,
+            rates,
             toolpath,
             holes,
             safe_z_mm,
             heights.clearance_z_mm,
         )? {
-            CannedPlan::NotAsked => w.toolpath(op, tool, toolpath)?,
+            CannedPlan::NotAsked => w.toolpath(op, tool, rates, toolpath)?,
             CannedPlan::Expand(reason) => {
                 warnings.push(ExportWarning::CannedCycleExpanded {
                     op: op.id().clone(),
                     reason,
                 });
-                w.toolpath(op, tool, toolpath)?
+                w.toolpath(op, tool, rates, toolpath)?
             }
             CannedPlan::Cycles(lines) => {
                 w.cycles(&lines)?;
@@ -1357,7 +1357,7 @@ fn command_of(cycles: &CannedCycles, cycle: Cycle) -> Option<&str> {
 fn canned_plan(
     w: &Writer<'_>,
     op: &Operation,
-    tool: &Tool,
+    rates: Rates,
     toolpath: &Toolpath,
     holes: Option<&[DrillHole]>,
     safe_z_mm: f64,
@@ -1404,8 +1404,7 @@ fn canned_plan(
     if pecks && gap_mm.is_none() {
         return expand(Why::NoReentryGap);
     }
-    // Validated by `Rates::of` before anything was written.
-    let plunge_mm_min = tool.plunge_mm_min.unwrap_or_default();
+    let plunge_mm_min = rates.plunge_mm_min;
 
     let transform = w.transform;
     let mut lines = Vec::with_capacity(holes.len());
@@ -1780,12 +1779,19 @@ const ARC_RADIUS_RELATIVE: f64 = 0.0008;
 /// See [`ARC_RADIUS_ABSOLUTE_MM`].
 const ARC_RADIUS_GROSS_MM: f64 = 0.4;
 
-/// A tool whose feed and plunge rate the user has set, and its spindle
-/// speed: always set with automatic spindle control, optional with manual.
+/// A tool's rates as the user set them, read once, here, after they are
+/// checked (review 1.7): no emitter code reads a tool's optional rate
+/// again, so none can stand a default in for one. "Never invent a feed"
+/// holds by this type, not by the order of the checks. The spindle speed
+/// is always set with automatic spindle control, optional with manual.
 /// The moves carry the feeds; the safety pass checks them against the
 /// tool's.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Rates {
+    /// The cutting feed, mm/min: finite and above 0.
+    feed_mm_min: f64,
+    /// The plunge rate, mm/min: finite and above 0.
+    plunge_mm_min: f64,
     rpm: Option<u32>,
 }
 
@@ -1793,18 +1799,16 @@ impl Rates {
     /// The tool's rates, or the first one that is missing. A placeholder 0
     /// counts as missing.
     fn of(tool: &Tool, control: SpindleControl) -> Result<Self, ExportError> {
-        for (rate, field) in [
-            (tool.feed_mm_min, FeedField::Feed),
-            (tool.plunge_mm_min, FeedField::Plunge),
-        ] {
-            if !rate.is_some_and(|r| r.is_finite() && r > 0.0) {
-                return Err(ExportError::MissingFeed {
+        let set = |rate: Option<f64>, field| {
+            rate.filter(|r| r.is_finite() && *r > 0.0)
+                .ok_or_else(|| ExportError::MissingFeed {
                     tool: tool.name.clone(),
                     tool_id: tool.id.clone(),
                     field,
-                });
-            }
-        }
+                })
+        };
+        let feed_mm_min = set(tool.feed_mm_min, FeedField::Feed)?;
+        let plunge_mm_min = set(tool.plunge_mm_min, FeedField::Plunge)?;
         let rpm = tool.rpm.filter(|r| *r > 0);
         if rpm.is_none() && control == SpindleControl::Automatic {
             return Err(ExportError::MissingRpm {
@@ -1812,7 +1816,35 @@ impl Rates {
                 tool_id: tool.id.clone(),
             });
         }
-        Ok(Self { rpm })
+        Ok(Self {
+            feed_mm_min,
+            plunge_mm_min,
+            rpm,
+        })
+    }
+
+    /// Whether the toolpath holds a cut at `feed_mm_min`, `run_mm` across
+    /// as it falls `drop_mm`, to the tool's plunge rate: it falls, and no
+    /// faster than that rate (S10; within [`HELD_TO_PLUNGE_RELATIVE`]). A
+    /// generator derives such a cut's feed from its unrounded ends
+    /// (#157), and plunges straight down at the plunge rate. A cut that
+    /// falls faster is not held, and S10 refuses it.
+    fn holds_to_plunge(self, feed_mm_min: f64, run_mm: f64, drop_mm: f64) -> bool {
+        drop_mm > 0.0
+            && feed_mm_min * (drop_mm / run_mm.hypot(drop_mm))
+                <= self.plunge_mm_min * (1.0 + HELD_TO_PLUNGE_RELATIVE)
+    }
+
+    /// Whether the toolpath holds `arc` at `feed_mm_min` to the plunge
+    /// rate ([`Self::holds_to_plunge`]), its length along the arc. Its
+    /// chords, should it be flattened, are held with it: the emitter, not
+    /// the toolpath, made them steeper than the arc.
+    fn holds_arc_to_plunge(self, arc: &ArcGeometry, feed_mm_min: f64) -> bool {
+        self.holds_to_plunge(
+            feed_mm_min,
+            arc.radius_mm * arc.sweep_rad,
+            arc.start.z - arc.end.z,
+        )
     }
 }
 
@@ -2209,14 +2241,6 @@ struct Writer<'a> {
     position: Option<Point3>,
     spindle_rpm: Option<u32>,
     tool: Option<ToolId>,
-    /// The plunge rate, mm/min, of the tool whose toolpath is being
-    /// written: no cut the toolpath holds to it may fall faster, as
-    /// written (S10, #325).
-    plunge_mm_min: Option<f64>,
-    /// The cutting feed, mm/min, of that tool: a level cut slower than
-    /// it, a last pass's inside arc (#335), is written rounded down, so
-    /// its cutting edge moves no faster than the generator held it to.
-    cut_feed_mm_min: Option<f64>,
     /// The lines that set the controller's modal state, written again after
     /// a pause.
     setup: Vec<String>,
@@ -2254,8 +2278,6 @@ impl<'a> Writer<'a> {
             position: None,
             spindle_rpm: None,
             tool: None,
-            plunge_mm_min: None,
-            cut_feed_mm_min: None,
             setup: Vec::new(),
             lifted: false,
             retracted_z_mm: None,
@@ -2420,16 +2442,18 @@ impl<'a> Writer<'a> {
     /// in project space; each fitted run is then judged on its rounded
     /// machine numbers and reverts to its moves if the controller would
     /// reject any of its arcs. Every cut the toolpath holds to `tool`'s
-    /// plunge rate is written so it falls no faster, its numbers rounded
-    /// (#325).
+    /// plunge rate, `rates.plunge_mm_min`, is written so it falls no
+    /// faster, its numbers rounded (S10, #325), and a level cut slower
+    /// than its cutting feed, `rates.feed_mm_min`, a last pass's inside
+    /// arc, is written rounded down, so its cutting edge moves no faster
+    /// than the generator held it to (#335).
     fn toolpath(
         &mut self,
         op: &Operation,
         tool: &Tool,
+        rates: Rates,
         toolpath: &Toolpath,
     ) -> Result<Written, ExportError> {
-        self.plunge_mm_min = tool.plunge_mm_min;
-        self.cut_feed_mm_min = tool.feed_mm_min;
         // Every cut carries a feed, checked before fitting so the error
         // names the move whatever the fitting does.
         for (index, mv) in toolpath.moves.iter().enumerate() {
@@ -2487,7 +2511,7 @@ impl<'a> Writer<'a> {
         for item in fitted {
             match item {
                 Fitted::Move(mv) => {
-                    written.flattened += self.write_move(op, index, &mv)?;
+                    written.flattened += self.write_move(op, rates, index, &mv)?;
                     index += 1;
                 }
                 Fitted::Arc(run) => {
@@ -2585,6 +2609,7 @@ impl<'a> Writer<'a> {
     fn write_move(
         &mut self,
         op: &Operation,
+        rates: Rates,
         index: usize,
         mv: &Move,
     ) -> Result<usize, ExportError> {
@@ -2614,7 +2639,7 @@ impl<'a> Writer<'a> {
         let (centre, clockwise) = match mv.kind {
             // Rapids and dwells are written above.
             MoveKind::Rapid | MoveKind::Linear | MoveKind::Dwell { .. } => {
-                self.linear(mv.to, feed)?;
+                self.linear(mv.to, feed, rates)?;
                 return Ok(0);
             }
             MoveKind::ArcCw { centre } => (centre, true),
@@ -2624,7 +2649,7 @@ impl<'a> Writer<'a> {
             op: op.id().clone(),
             index,
         })?;
-        self.arc(start, mv.to, centre, clockwise, feed)
+        self.arc(start, mv.to, centre, clockwise, feed, rates)
     }
 
     /// Writes fitted sub-arc `arc` with the words [`arcfit::resolve_emitted_arc`]
@@ -2702,27 +2727,39 @@ impl<'a> Writer<'a> {
     }
 
     /// A straight cut to `to`, held to the plunge rate when the toolpath
-    /// holds it there ([`Self::holds_to_plunge`]).
-    fn linear(&mut self, to: Point3, feed_mm_min: f64) -> Result<(), ExportError> {
+    /// holds it there ([`Rates::holds_to_plunge`]).
+    fn linear(&mut self, to: Point3, feed_mm_min: f64, rates: Rates) -> Result<(), ExportError> {
         let held = self.position.is_some_and(|from| {
-            self.holds_to_plunge(feed_mm_min, from.xy().distance_to(to.xy()), from.z - to.z)
+            rates.holds_to_plunge(feed_mm_min, from.xy().distance_to(to.xy()), from.z - to.z)
         });
-        self.linear_held(to, feed_mm_min, held)
+        self.linear_held(to, feed_mm_min, rates, held)
     }
 
     /// A straight cut to `to`; with `held`, its feed is lowered as far as
     /// the rounding of its numbers needs to keep it from falling faster
     /// than the plunge rate ([`Self::written_feed_mm_min`]).
-    fn linear_held(&mut self, to: Point3, feed_mm_min: f64, held: bool) -> Result<(), ExportError> {
+    fn linear_held(
+        &mut self,
+        to: Point3,
+        feed_mm_min: f64,
+        rates: Rates,
+        held: bool,
+    ) -> Result<(), ExportError> {
         let m = self.transform.to_machine(to);
         let post = self.post;
         let level = self
             .position
             .is_some_and(|from| (from.z - to.z).abs() <= EPS_MM);
         let feed_mm_min = if held {
-            self.written_feed_mm_min(MotionKind::Linear, m, ArcWords::default(), feed_mm_min)?
+            self.written_feed_mm_min(
+                MotionKind::Linear,
+                m,
+                ArcWords::default(),
+                feed_mm_min,
+                rates,
+            )?
         } else if level {
-            self.level_feed_mm_min(feed_mm_min)?
+            self.level_feed_mm_min(feed_mm_min, rates)?
         } else {
             feed_mm_min
         };
@@ -2735,32 +2772,6 @@ impl<'a> Writer<'a> {
         )?;
         self.position = Some(to);
         Ok(())
-    }
-
-    /// Whether the toolpath holds a cut at `feed_mm_min`, `run_mm` across
-    /// as it falls `drop_mm`, to the tool's plunge rate: it falls, and no
-    /// faster than that rate (S10; within [`HELD_TO_PLUNGE_RELATIVE`]). A
-    /// generator derives such a cut's feed from its unrounded ends
-    /// (#157), and plunges straight down at the plunge rate. A cut that
-    /// falls faster is not held, and S10 refuses it.
-    fn holds_to_plunge(&self, feed_mm_min: f64, run_mm: f64, drop_mm: f64) -> bool {
-        self.plunge_mm_min.is_some_and(|plunge_mm_min| {
-            drop_mm > 0.0
-                && feed_mm_min * (drop_mm / run_mm.hypot(drop_mm))
-                    <= plunge_mm_min * (1.0 + HELD_TO_PLUNGE_RELATIVE)
-        })
-    }
-
-    /// Whether the toolpath holds `arc` at `feed_mm_min` to the plunge
-    /// rate ([`Self::holds_to_plunge`]), its length along the arc. Its
-    /// chords, should it be flattened, are held with it: the emitter, not
-    /// the toolpath, made them steeper than the arc.
-    fn holds_arc_to_plunge(&self, arc: &ArcGeometry, feed_mm_min: f64) -> bool {
-        self.holds_to_plunge(
-            feed_mm_min,
-            arc.radius_mm * arc.sweep_rad,
-            arc.start.z - arc.end.z,
-        )
     }
 
     /// The feed, mm/min, to write for a cut held to the plunge rate from
@@ -2782,17 +2793,17 @@ impl<'a> Writer<'a> {
         to: Point3,
         arc: ArcWords,
         feed_mm_min: f64,
+        rates: Rates,
     ) -> Result<f64, ExportError> {
-        let (Some(plunge_mm_min), [Some(x), Some(y), Some(z)]) = (
-            self.plunge_mm_min,
-            self.axes.each_ref().map(|a| a.as_ref().map(|e| e.value)),
-        ) else {
+        let plunge_mm_min = rates.plunge_mm_min;
+        let [Some(x), Some(y), Some(z)] = self.axes.each_ref().map(|a| a.as_ref().map(|e| e.value))
+        else {
             return Ok(feed_mm_min);
         };
         // The line writes no Z word, as `motion_line` decides it.
         let z_text = self.number(to.z)?;
         if self.axes[2].as_ref().is_some_and(|e| e.text == z_text) {
-            return self.written_level_feed_mm_min(feed_mm_min, plunge_mm_min);
+            return self.written_level_feed_mm_min(feed_mm_min, rates);
         }
         let from = MachinePosition {
             x: Some(x),
@@ -2860,13 +2871,10 @@ impl<'a> Writer<'a> {
     /// controller never runs it faster than the toolpath holds it;
     /// otherwise as it is, rounded as every feed is. A toolpath without
     /// such cuts is written as before.
-    fn level_feed_mm_min(&self, feed_mm_min: f64) -> Result<f64, ExportError> {
-        let slower = self
-            .cut_feed_mm_min
-            .is_some_and(|cut| feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE));
-        let plunge = self
-            .plunge_mm_min
-            .is_some_and(|p| (feed_mm_min - p).abs() <= p * HELD_TO_PLUNGE_RELATIVE);
+    fn level_feed_mm_min(&self, feed_mm_min: f64, rates: Rates) -> Result<f64, ExportError> {
+        let (cut, p) = (rates.feed_mm_min, rates.plunge_mm_min);
+        let slower = feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE);
+        let plunge = (feed_mm_min - p).abs() <= p * HELD_TO_PLUNGE_RELATIVE;
         if !slower || plunge {
             return Ok(feed_mm_min);
         }
@@ -2881,7 +2889,7 @@ impl<'a> Writer<'a> {
     }
 
     /// The feed, mm/min, of a cut the toolpath holds to the plunge rate
-    /// `plunge_mm_min` but that is written at the Z the controller holds
+    /// `rates.plunge_mm_min` but that is written at the Z the controller holds
     /// (#467: a V-Carve chain's step falling 0.0007 mm, written to three
     /// decimals). As written it does not fall, so S3 takes it as a level
     /// cut, and S10 does not judge it; the next falling cut starts from
@@ -2895,16 +2903,15 @@ impl<'a> Writer<'a> {
     fn written_level_feed_mm_min(
         &self,
         feed_mm_min: f64,
-        plunge_mm_min: f64,
+        rates: Rates,
     ) -> Result<f64, ExportError> {
+        let plunge_mm_min = rates.plunge_mm_min;
         let scaled = feed_mm_min > plunge_mm_min * (1.0 + HELD_TO_PLUNGE_RELATIVE)
-            && self
-                .cut_feed_mm_min
-                .is_some_and(|cut| feed_mm_min < cut * (1.0 - HELD_TO_PLUNGE_RELATIVE));
+            && feed_mm_min < rates.feed_mm_min * (1.0 - HELD_TO_PLUNGE_RELATIVE);
         if scaled {
             return Ok(plunge_mm_min);
         }
-        self.level_feed_mm_min(feed_mm_min)
+        self.level_feed_mm_min(feed_mm_min, rates)
     }
 
     /// `value`, output units, as the controller reads it once written.
@@ -2923,20 +2930,21 @@ impl<'a> Writer<'a> {
         centre: Point,
         clockwise: bool,
         feed_mm_min: f64,
+        rates: Rates,
     ) -> Result<usize, ExportError> {
         let Some(arc) = ArcGeometry::new(start, to, centre, clockwise) else {
-            self.linear(to, feed_mm_min)?;
+            self.linear(to, feed_mm_min, rates)?;
             return Ok(0);
         };
         if !self.post.motion.arc_interpolation {
-            self.flatten(&arc, feed_mm_min)?;
+            self.flatten(&arc, feed_mm_min, rates)?;
             return Ok(0);
         }
         let mut flattened = 0;
         match self.post.motion.arc_format {
             ArcFormat::Ij => {
-                if !self.arc_ij(&arc, feed_mm_min)? {
-                    self.flatten(&arc, feed_mm_min)?;
+                if !self.arc_ij(&arc, feed_mm_min, rates)? {
+                    self.flatten(&arc, feed_mm_min, rates)?;
                     flattened += 1;
                 }
             }
@@ -2944,8 +2952,8 @@ impl<'a> Writer<'a> {
                 let parts = segment_count(arc.sweep_rad / MAX_R_ARC_SWEEP_RAD);
                 for k in 0..parts {
                     let part = arc.part(k, parts);
-                    if !self.arc_r(&part, feed_mm_min)? {
-                        self.flatten(&part, feed_mm_min)?;
+                    if !self.arc_r(&part, feed_mm_min, rates)? {
+                        self.flatten(&part, feed_mm_min, rates)?;
                         flattened += 1;
                     }
                 }
@@ -2996,7 +3004,12 @@ impl<'a> Writer<'a> {
     /// Writes `arc` with I and J taken from the start the controller holds.
     /// Returns false, writing nothing, if the controller would reject the
     /// rounded arc or read it as a full circle.
-    fn arc_ij(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<bool, ExportError> {
+    fn arc_ij(
+        &mut self,
+        arc: &ArcGeometry,
+        feed_mm_min: f64,
+        rates: Rates,
+    ) -> Result<bool, ExportError> {
         let Some((sx, sy)) = self.emitted_xy() else {
             return Ok(false);
         };
@@ -3030,7 +3043,7 @@ impl<'a> Writer<'a> {
             j: Some(j),
             r: None,
         };
-        let feed_mm_min = self.arc_feed_mm_min(arc, command, end, words, feed_mm_min)?;
+        let feed_mm_min = self.arc_feed_mm_min(arc, command, end, words, feed_mm_min, rates)?;
         self.motion_line(
             command,
             [Some(end.x), Some(end.y), Some(end.z)],
@@ -3043,7 +3056,12 @@ impl<'a> Writer<'a> {
 
     /// Writes `arc`, at most a quarter turn, with R. Returns false, writing
     /// nothing, if the rounded radius cannot span the rounded chord.
-    fn arc_r(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<bool, ExportError> {
+    fn arc_r(
+        &mut self,
+        arc: &ArcGeometry,
+        feed_mm_min: f64,
+        rates: Rates,
+    ) -> Result<bool, ExportError> {
         let Some((sx, sy)) = self.emitted_xy() else {
             return Ok(false);
         };
@@ -3064,7 +3082,7 @@ impl<'a> Writer<'a> {
             j: None,
             r: Some(r),
         };
-        let feed_mm_min = self.arc_feed_mm_min(arc, command, end, words, feed_mm_min)?;
+        let feed_mm_min = self.arc_feed_mm_min(arc, command, end, words, feed_mm_min, rates)?;
         self.motion_line(
             command,
             [Some(end.x), Some(end.y), Some(end.z)],
@@ -3086,10 +3104,11 @@ impl<'a> Writer<'a> {
         end: Point3,
         words: ArcWords,
         feed_mm_min: f64,
+        rates: Rates,
     ) -> Result<f64, ExportError> {
-        if !self.holds_arc_to_plunge(arc, feed_mm_min) {
+        if !rates.holds_arc_to_plunge(arc, feed_mm_min) {
             return if (arc.start.z - arc.end.z).abs() <= EPS_MM {
-                self.level_feed_mm_min(feed_mm_min)
+                self.level_feed_mm_min(feed_mm_min, rates)
             } else {
                 Ok(feed_mm_min)
             };
@@ -3099,11 +3118,16 @@ impl<'a> Writer<'a> {
         } else {
             MotionKind::ArcCcw
         };
-        self.written_feed_mm_min(kind, end, words, feed_mm_min)
+        self.written_feed_mm_min(kind, end, words, feed_mm_min, rates)
     }
 
     /// `arc` as straight moves within the project's flatten tolerance.
-    fn flatten(&mut self, arc: &ArcGeometry, feed_mm_min: f64) -> Result<(), ExportError> {
+    fn flatten(
+        &mut self,
+        arc: &ArcGeometry,
+        feed_mm_min: f64,
+        rates: Rates,
+    ) -> Result<(), ExportError> {
         let tolerance = self.flatten_tolerance_mm;
         let max_step_rad = if tolerance >= arc.radius_mm {
             FRAC_PI_2
@@ -3111,14 +3135,14 @@ impl<'a> Writer<'a> {
             (2.0 * (1.0 - tolerance / arc.radius_mm).acos()).min(FRAC_PI_2)
         };
         let n = segment_count(arc.sweep_rad / max_step_rad);
-        let held = self.holds_arc_to_plunge(arc, feed_mm_min);
+        let held = rates.holds_arc_to_plunge(arc, feed_mm_min);
         for k in 1..=n {
             #[allow(
                 clippy::cast_precision_loss,
                 reason = "k <= n <= MAX_ARC_SEGMENTS, exact in f64"
             )]
             let fraction = k as f64 / n as f64;
-            self.linear_held(arc.point_at(fraction), feed_mm_min, held)?;
+            self.linear_held(arc.point_at(fraction), feed_mm_min, rates, held)?;
         }
         Ok(())
     }
@@ -3298,6 +3322,49 @@ mod tests {
 
     fn is_cut(line: &str) -> bool {
         ["G1", "G2", "G3"].iter().any(|w| has_word(line, w))
+    }
+
+    /// Review 1.7: the rates are read once, after they are checked, and
+    /// carried as plain numbers, so nothing later stands a default in for
+    /// one. A rate that is unset, 0, negative or not finite gives no
+    /// `Rates` at all.
+    #[test]
+    fn rates_carry_the_validated_feed_and_plunge() {
+        let tool = Tool {
+            feed_mm_min: Some(900.0),
+            plunge_mm_min: Some(250.0),
+            rpm: Some(18_000),
+            ..sample_project().tools[0].clone()
+        };
+        let rates = Rates::of(&tool, SpindleControl::Automatic).unwrap();
+        assert_eq!(
+            rates,
+            Rates {
+                feed_mm_min: 900.0,
+                plunge_mm_min: 250.0,
+                rpm: Some(18_000),
+            }
+        );
+        for bad in [
+            None,
+            Some(0.0),
+            Some(-1.0),
+            Some(f64::NAN),
+            Some(f64::INFINITY),
+        ] {
+            for field in [FeedField::Feed, FeedField::Plunge] {
+                let mut tool = tool.clone();
+                match field {
+                    FeedField::Feed => tool.feed_mm_min = bad,
+                    FeedField::Plunge => tool.plunge_mm_min = bad,
+                }
+                let err = Rates::of(&tool, SpindleControl::Automatic).unwrap_err();
+                assert!(
+                    matches!(&err, ExportError::MissingFeed { field: f, .. } if *f == field),
+                    "{bad:?} {field:?}: {err:?}"
+                );
+            }
+        }
     }
 
     #[test]
