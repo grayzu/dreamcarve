@@ -973,14 +973,28 @@ impl<'a> Walker<'a> {
         self.count_vertices(chords.saturating_add(1))
     }
 
+    /// Takes `added` vertices from the vertex limit; a count that would
+    /// pass it is refused and not taken, so the count kept is of work
+    /// that was let through.
     fn count_vertices(&mut self, added: usize) -> Result<(), ImportError> {
-        self.vertex_count = self.vertex_count.saturating_add(added);
-        if self.vertex_count > self.max_vertices {
+        let total = self.vertex_count.saturating_add(added);
+        if total > self.max_vertices {
             return Err(ImportError::TooManyVertices {
                 limit: self.max_vertices,
             });
         }
+        self.vertex_count = total;
         Ok(())
+    }
+
+    /// Block entities placed so far by INSERT and MINSERT expansion.
+    pub(super) fn placements(&self) -> usize {
+        self.visits
+    }
+
+    /// Vertices taken from the vertex limit so far.
+    pub(super) fn vertices(&self) -> usize {
+        self.vertex_count
     }
 }
 

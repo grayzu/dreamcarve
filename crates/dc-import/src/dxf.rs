@@ -345,14 +345,40 @@ pub fn import_dxf(
     bytes: &[u8],
     options: &DxfImportOptions,
 ) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
-    import_within(bytes, options, &mut stitch::JoinBudget::new())
+    import_within(bytes, options, &mut Work::new())
 }
 
-/// [`import_dxf`], its dedupe and stitching charged to `joins`.
+/// The work one import did, kept whether it succeeds or is refused. The
+/// tests bound an import by it, where a clock would only say how fast the
+/// machine was that day (review 1.11).
+#[derive(Debug)]
+struct Work {
+    /// The comparisons of the dedupe and the stitch, and their limit.
+    joins: stitch::JoinBudget,
+    /// Block entities placed by INSERT and MINSERT expansion.
+    #[cfg_attr(not(test), allow(dead_code, reason = "read by the tests"))]
+    placements: usize,
+    /// Vertices taken from the vertex limit: those made, and every count
+    /// a file declares, taken before the items it counts are read.
+    #[cfg_attr(not(test), allow(dead_code, reason = "read by the tests"))]
+    vertices: usize,
+}
+
+impl Work {
+    fn new() -> Self {
+        Self {
+            joins: stitch::JoinBudget::new(),
+            placements: 0,
+            vertices: 0,
+        }
+    }
+}
+
+/// [`import_dxf`], which records in `work` what it did.
 fn import_within(
     bytes: &[u8],
     options: &DxfImportOptions,
-    joins: &mut stitch::JoinBudget,
+    work: &mut Work,
 ) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
     let tolerance_mm = options.flatten_tolerance_mm;
     if !(tolerance_mm.is_finite() && tolerance_mm >= MIN_FLATTEN_TOLERANCE_MM) {
@@ -387,12 +413,14 @@ fn import_within(
         join_mm,
         options.max_vertices,
     );
-    for entity in &document.entities {
-        if entity.in_paper_space() {
-            continue;
-        }
-        walker.walk(entity, scale, None, 0)?;
-    }
+    let walked = document
+        .entities
+        .iter()
+        .filter(|entity| !entity.in_paper_space())
+        .try_for_each(|entity| walker.walk(entity, scale, None, 0));
+    work.placements = walker.placements();
+    work.vertices = walker.vertices();
+    walked?;
 
     let skipped = walker.skipped;
     let skipped_per_layer = walker.skipped_per_layer;
@@ -435,6 +463,7 @@ fn import_within(
             .as_ref()
             .is_none_or(|layers| layers.iter().any(|l| l == layer))
     };
+    let joins = &mut work.joins;
     let shapes = stitch::stitch(stitch::dedupe(walker.shapes, joins)?, join_mm, joins)?;
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
@@ -2043,33 +2072,42 @@ mod tests {
     /// A zero-length LINE: read, but it yields no vertices.
     const DOT: &str = "0\nLINE\n8\n0\n10\n0.0\n20\n0.0\n11\n0.0\n21\n0.0\n";
 
-    fn assert_fails_fast(dxf: &str) {
-        let start = std::time::Instant::now();
-        let result = import_dxf(dxf.as_bytes(), &DxfImportOptions::new());
-        let elapsed = start.elapsed();
+    /// The placement limit of an import with the default options.
+    const MAX_PLACEMENTS: usize = MAX_IMPORT_VERTICES / 10;
+
+    /// Imports `dxf`, which must be refused for the block entities it
+    /// would place, and returns how many it had placed by then: the work
+    /// the refusal cost, whatever the machine's speed.
+    fn placements_when_refused(dxf: &str) -> usize {
+        let mut work = Work::new();
+        let result = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut work);
         assert!(
-            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_IMPORT_VERTICES / 10),
+            matches!(result, Err(ImportError::TooMuchWork { limit }) if limit == MAX_PLACEMENTS),
             "{result:?}"
         );
-        assert!(elapsed.as_secs_f64() < 2.0, "took {elapsed:?}");
+        work.placements
     }
 
     /// A 1000 × 1000 MINSERT of a block that yields no vertices would walk
     /// a million cells while the vertex limit never trips; it is refused
-    /// before the first cell. A block with nothing readable at all is
-    /// never expanded (upstream's rule), so it costs nothing.
+    /// before the first cell: nothing was placed. A block with nothing
+    /// readable at all is never expanded (upstream's rule), so its million
+    /// cells place nothing either.
     #[test]
     fn huge_minsert_of_empty_block_fails_fast() {
-        assert_fails_fast(&dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000)));
+        let dots = dxf_with_blocks(&[("DOT", DOT)], &minsert("DOT", 1000));
+        assert_eq!(placements_when_refused(&dots), 0);
         let empty = dxf_with_blocks(&[("EMPTY", "")], &minsert("EMPTY", 1000));
-        let start = std::time::Instant::now();
-        let (result, _) = import(empty.as_bytes());
+        let mut work = Work::new();
+        let (result, _) = import_within(empty.as_bytes(), &DxfImportOptions::new(), &mut work)
+            .expect("import succeeds");
         assert!(result.definitions.is_empty());
-        assert!(start.elapsed().as_secs_f64() < 1.0);
+        assert_eq!(work.placements, 0);
     }
 
     /// Three nested 100 × 100 MINSERTs are 10¹² visits of the innermost
-    /// block; the per-visit count stops the walk at the limit.
+    /// block; the per-visit count stops the walk at the limit, one
+    /// placement past it.
     #[test]
     fn nested_minserts_fail_fast() {
         let inner = minsert("C", 100);
@@ -2078,7 +2116,11 @@ mod tests {
             &[("C", DOT), ("B", &inner), ("A", &middle)],
             &minsert("A", 100),
         );
-        assert_fails_fast(&dxf);
+        let placed = placements_when_refused(&dxf);
+        assert!(
+            (1..=MAX_PLACEMENTS + 1).contains(&placed),
+            "{placed} placements"
+        );
     }
 
     /// An INSERT's attributes (ATTRIB, after `66 = 1`, up to SEQEND) are
@@ -2715,24 +2757,23 @@ mod tests {
 
     /// Counts the file declares are capped before anything is read for
     /// them: a hatch claiming two billion boundaries, or more edges than
-    /// one hatch may hold (in one path or across several), fails at once
-    /// with a typed error, though the file holds none of them. Within the
-    /// caps, every declared edge is charged to the import's vertex limit.
+    /// one hatch may hold (in one path or across several), fails with a
+    /// typed error, though the file holds none of them. Within the caps,
+    /// every declared edge is charged to the import's vertex limit.
+    ///
+    /// A declared count is taken from the vertex limit before the loop
+    /// over it runs, so what an import had taken when it was refused
+    /// bounds the items it read: none for the boundary count, the one
+    /// boundary for an edge count past the cap, and no more than the caps
+    /// or the limit in any case.
     #[test]
     fn hatch_loop_and_edge_caps_are_enforced() {
-        let fails_fast = |entities: &str, options: &DxfImportOptions| {
-            let start = std::time::Instant::now();
-            let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
-            assert!(
-                start.elapsed().as_secs_f64() < 1.0,
-                "took {:?}",
-                start.elapsed()
-            );
-            err
+        let fails_fast = |entities: &str, options: &DxfImportOptions, most_vertices: usize| {
+            refused(entities, options, most_vertices)
         };
         let defaults = DxfImportOptions::new();
         let loops = "0\nHATCH\n5\nE1\n8\n0\n91\n2000000000\n92\n2\n93\n0\n";
-        match fails_fast(loops, &defaults) {
+        match fails_fast(loops, &defaults, 0) {
             ImportError::DxfHatchTooLarge {
                 hatch,
                 what,
@@ -2751,7 +2792,7 @@ mod tests {
             MAX_HATCH_EDGES + 1
         );
         assert!(matches!(
-            fails_fast(&edges, &defaults),
+            fails_fast(&edges, &defaults, 1),
             ImportError::DxfHatchTooLarge { limit, .. } if limit == MAX_HATCH_EDGES
         ));
         // Two paths of 60 000 edges: each within the cap, together past it.
@@ -2760,8 +2801,9 @@ mod tests {
             "0\nHATCH\n5\nE3\n8\n0\n91\n2\n92\n0\n93\n{half}\n{}97\n0\n92\n0\n93\n{half}\n",
             "72\n1\n10\n0.0\n20\n0.0\n11\n1.0\n21\n0.0\n".repeat(half)
         );
+        // The two boundaries and the first path's edges were taken.
         assert!(matches!(
-            fails_fast(&two, &defaults),
+            fails_fast(&two, &defaults, 2 + half),
             ImportError::DxfHatchTooLarge { hatch, .. } if hatch == "E3"
         ));
         // A small vertex limit: the declared edges are charged to it.
@@ -2771,7 +2813,7 @@ mod tests {
         };
         let charged = "0\nHATCH\n5\nE4\n8\n0\n91\n1\n92\n0\n93\n500\n";
         assert!(matches!(
-            fails_fast(charged, &small),
+            fails_fast(charged, &small, 1),
             ImportError::TooManyVertices { limit: 100 }
         ));
     }
@@ -2795,14 +2837,19 @@ mod tests {
 
     // ── curve caps (#668 security review) ────────────────────────────────
 
-    /// Runs an import that must fail fast, returning its error.
-    fn refused(entities: &str, options: &DxfImportOptions) -> ImportError {
-        let start = std::time::Instant::now();
-        let err = import_dxf(dxf_entities(entities).as_bytes(), options).unwrap_err();
+    /// Runs an import that must be refused before it does the work its
+    /// file asks for, and returns its error. The work is what it had taken
+    /// from the vertex limit by then, at most `most_vertices`: every count
+    /// is taken before the items it counts are read or made, and a count
+    /// that is refused is not taken.
+    fn refused(entities: &str, options: &DxfImportOptions, most_vertices: usize) -> ImportError {
+        let mut work = Work::new();
+        let err = import_within(dxf_entities(entities).as_bytes(), options, &mut work)
+            .expect_err("the import is refused");
         assert!(
-            start.elapsed().as_secs_f64() < 1.0,
-            "took {:?}",
-            start.elapsed()
+            work.vertices <= most_vertices,
+            "{} vertices taken before {err:?}, more than {most_vertices}",
+            work.vertices
         );
         err
     }
@@ -2912,13 +2959,13 @@ mod tests {
             spline_edge(degree, &knots, &control),
             line_edge(last, (0.0, 0.0)),
         ];
-        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small);
+        let err = refused(&hatch("G2", "0", UP, &[edge_path(&edges)]), &small, 300);
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 300 }),
             "{err:?}"
         );
         let entity = spline_entity("zigzag", degree, &knots, &control);
-        let err = refused(&entity, &small);
+        let err = refused(&entity, &small, 300);
         assert!(
             matches!(err, ImportError::TooManyVertices { limit: 300 }),
             "{err:?}"
@@ -2937,7 +2984,8 @@ mod tests {
         let defaults = DxfImportOptions::new();
         for (major, centre) in [((1e300, 0.0), (0.0, 0.0)), ((4000.0, 0.0), (3000.0, 0.0))] {
             let edges = [ellipse_edge(centre, major, 0.5, 0.0, 360.0)];
-            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults);
+            // Its one boundary and one edge, and nothing of the curve.
+            let err = refused(&hatch("H1", "big", UP, &[edge_path(&edges)]), &defaults, 2);
             assert!(
                 matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
                 "{err:?}"
@@ -2946,7 +2994,7 @@ mod tests {
                 "0\nELLIPSE\n8\nbig\n10\n{:?}\n20\n{:?}\n11\n{:?}\n21\n{:?}\n40\n0.5\n41\n0.0\n42\n6.283185307179586\n",
                 centre.0, centre.1, major.0, major.1
             );
-            let err = refused(&entity, &defaults);
+            let err = refused(&entity, &defaults, 0);
             assert!(
                 matches!(&err, ImportError::CoordinateOutOfRange { path, .. } if path == "big"),
                 "{err:?}"
@@ -3040,18 +3088,18 @@ mod tests {
             );
             if j % 3 == 0 { (b, a) } else { (a, b) }
         });
-        let mut joins = stitch::JoinBudget::new();
+        let mut work = Work::new();
         let (result, warnings) = import_within(
             lines_dxf(lines).as_bytes(),
             &DxfImportOptions::new(),
-            &mut joins,
+            &mut work,
         )
         .expect("import succeeds");
         assert!(warnings.is_empty(), "{warnings:?}");
         assert!(
-            joins.comparisons() <= 4 * n,
+            work.joins.comparisons() <= 4 * n,
             "{} comparisons for {n} lines",
-            joins.comparisons()
+            work.joins.comparisons()
         );
         assert_eq!(result.definitions.len(), chains);
         for definition in &result.definitions {
@@ -3084,8 +3132,11 @@ mod tests {
     #[test]
     fn lines_crowded_on_one_point_past_the_join_budget_are_refused() {
         let dxf = star_dxf(2000);
-        let mut joins = stitch::JoinBudget::with_limit(200_000);
-        let error = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut joins)
+        let mut work = Work {
+            joins: stitch::JoinBudget::with_limit(200_000),
+            ..Work::new()
+        };
+        let error = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut work)
             .expect_err("past the budget");
         assert!(
             matches!(error, ImportError::DxfJoinTooMuchWork { limit: 200_000 }),

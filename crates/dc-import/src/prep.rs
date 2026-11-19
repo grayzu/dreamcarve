@@ -58,7 +58,6 @@ mod tests {
 
     use super::{PrepOptions, prepare};
     use std::fmt::Write as _;
-    use std::time::{Duration, Instant};
 
     /// Art as a trace leaves it: 100 000 vertices in fifty jittered
     /// outlines, and a fringe of specks.
@@ -105,19 +104,37 @@ mod tests {
         )
     }
 
-    /// A traced picture's worth of vertices prepares in seconds (a loose
-    /// bound, as `s17_check_is_fast_on_the_sign` is: about 4 s locally, 11 s on
-    /// a shared Windows runner, so 60 s catches only a blow-up).
+    /// The vertices [`traced_scale_art`] draws its fifty outlines with.
+    const TRACED_VERTICES: usize = 100_000;
+
+    /// A traced picture's worth of vertices prepares within a vertex
+    /// budget of two and a half times its size: the input is charged to
+    /// `max_vertices` as it is flattened (about twice its vertices, by the
+    /// flattener's estimate) and the pieces are held to it, so a clean-up
+    /// step that multiplied vertices would be refused here. What comes out
+    /// is the fifty outlines, without the 77 specks that lie clear of
+    /// them, smoothed to under a tenth of the vertices that went in.
+    /// (This was a 60 s wall-clock bound, review 1.11; a size is the same
+    /// on every machine.)
     #[test]
-    fn runs_in_seconds_on_traced_scale_art() {
+    fn traced_scale_art_prepares_within_its_own_size() {
         let art = traced_scale_art();
-        let started = Instant::now();
-        let (prepared, _) = prepare(art.as_bytes(), &PrepOptions::default()).unwrap();
-        let elapsed = started.elapsed();
-        assert!(!prepared.pieces.is_empty());
+        let options = PrepOptions {
+            max_vertices: 5 * TRACED_VERTICES / 2,
+            ..PrepOptions::default()
+        };
+        let (prepared, _) = prepare(art.as_bytes(), &options).unwrap();
+        assert_eq!(prepared.pieces.len(), 50);
+        assert_eq!(prepared.report.dropped_pieces, 77);
+        let vertices: usize = prepared
+            .pieces
+            .iter()
+            .flat_map(|r| std::iter::once(r.outer()).chain(r.holes()))
+            .map(|c| c.polyline().vertices().len())
+            .sum();
         assert!(
-            elapsed < Duration::from_secs(60),
-            "100 000 vertices took {elapsed:?}"
+            (TRACED_VERTICES / 1000..=TRACED_VERTICES / 10).contains(&vertices),
+            "{vertices} vertices out of {TRACED_VERTICES} in"
         );
     }
 

@@ -3269,8 +3269,10 @@ document order, with bounds, and the counts the report prints.
 randomness; `i_overlay`, `cavalier_contours` and `delaunator` are as
 deterministic as the rest of the engine. The vertex cap is the importer's
 (`MAX_IMPORT_VERTICES`, 5 000 000, on the flattened input) with the output
-bounded by it too; `prep::runs_in_seconds_on_traced_scale_art` is a
-loose bound on 100 000 vertices, as `s17_check_is_fast_on_the_sign` is.
+bounded by it too; `prep::traced_scale_art_prepares_within_its_own_size`
+holds 100 000 traced vertices to a budget of two and a half times them
+and to under a tenth as many vertices out (a size, not a time: review
+1.11).
 
 **Import checks** (`prep::findings`, `design_findings`; 49a). Each is one
 measure over the walk's painted paths (or, for `design_findings`, a
@@ -4452,7 +4454,7 @@ and committed as SVG; the numbers in the assertions are acceptance 61a to
 - Run (49c, 49d; 61d to 61f): `prep::run::overlapping_squares_are_one_piece`, `prep::run::an_island_path_becomes_a_hole`, `prep::run::fill_rule_is_per_path`, `prep::run::a_stroke_over_a_fill_is_one_piece_not_a_hole`, `prep::run::a_stroked_ring_round_a_filled_dot_keeps_both`, `prep::run::shapes_mode_of_the_ring_and_cross_is_one_piece_with_four_holes` (584.3 ± 1 mm²), `prep::run::regions_mode_of_the_ring_and_cross` (four pieces, 2243 ± 1, ink and pieces together the 30 mm disc within 1), `prep::run::regions_mode_with_a_floating_cross_warns_open_ink`, `prep::run::regions_mode_output_never_overlaps_ink`, `prep::run::specks_and_hairlines_are_dropped`, `prep::run::small_holes_are_filled`, `prep::run::pieces_at_the_threshold_are_kept`, `prep::run::zero_min_detail_keeps_everything`, `prep::run::narrow_necks_in_big_pieces_are_not_repaired`, `prep::run::smooth_removes_a_staircase_and_keeps_corners`, `prep::run::smooth_that_would_cross_is_skipped_with_a_warning`, `prep::run::smooth_zero_leaves_the_staircase`, `prep::run::threshold_out_of_range_is_an_error`, `prep::run::smooth_above_half_the_detail_warns`, `prep::run::nothing_visible_is_an_error`, `prep::run::everything_dropped_is_an_error`, `prep::run::background_shape_is_flagged`, `prep::run::regions_suggested_for_thin_ink_and_not_for_thick`, `prep::run::flatten_tolerance_scales_with_the_height`, `prep::run::vertex_cap_is_enforced`, `prep::run::output_is_independent_of_document_order`, `prep::run::same_input_twice_is_identical`, `prep::run::crlf_input_gives_the_same_bytes`.
 - Report (49e, 61h): `prep::report::design_height_and_counts`, `prep::report::widths_scale_to_100_200_300` (3.33 / 6.67 / 10.00), `prep::report::reaching_height_for_the_guide_width` (45 mm), `prep::report::ridge_is_the_narrowest_gap_in_regions_mode`, `prep::report::thinnest_piece_is_the_least_median`, `prep::report::unmeasurable_widths_are_none`, `prep_report::render_matches_the_example` (dc-job: the text of 49e, line for line), `prep_report::omits_lines_with_nothing_to_say`.
 - Write (49b, 61g): `prep::write::declares_millimetres_and_the_input_page`, `prep::write::paths_are_filled_and_never_stroked`, `prep::write::y_is_flipped_back_so_an_f_is_an_f`, `prep::write::a_lone_rectangle_round_trips`, `prep::write::numbers_are_normalised` (no `-0`), `prep::write::no_version_time_or_metadata`, `prep::write::output_reads_back_through_the_importer_and_nest` (every fixture), `prep::write::unreadable_output_is_an_error_and_nothing_is_returned` (a corrupted `Prepared`), `prep::write::init_on_the_output_prints_no_findings`.
-- `prep::defaults::fixtures_keep_their_intent_at_the_defaults` (the calibration's scoring, slice 21f), `prep::runs_in_seconds_on_traced_scale_art` (100 000 vertices, a loose bound).
+- `prep::defaults::fixtures_keep_their_intent_at_the_defaults` (the calibration's scoring, slice 21f), `prep::traced_scale_art_prepares_within_its_own_size` (100 000 vertices, within a vertex budget of two and a half times them).
 
 *dc-project and dc-cam — the boundary (format 26)*
 - `migrate::v25_to_v26_adds_an_empty_boundary`, `migrate::v26_to_v27_adds_an_empty_bitmap_list` (was `v25_to_v26_…`; the Photo slice owns it), `migrate::version_25_fixture_loads`, `migrate::a_v25_project_exports_the_same_programs`, `serialize::inlay_boundary_round_trips`, `serialize::boundary_is_an_array_after_outline_rounding`, `serialize::photo_v_carve_is_format_27` (the renamed `…_format_26`).
@@ -4725,7 +4727,7 @@ and 21i start at once.
     defaults", `speckled-dc.svg`, `jagged-dc.svg`, the README table, the
     constants, the maintainer's check on their own art reported on the
     issue. Tests: `prep::defaults::fixtures_keep_their_intent_at_the_defaults`,
-    `prep::runs_in_seconds_on_traced_scale_art`. [21e] The maintainer
+    `prep::traced_scale_art_prepares_within_its_own_size`. [21e] The maintainer
     confirms the two values here (open questions 16, 17).
 21g. **The writer and `image-prep`.** `prep::write_svg` with its
     read-back check, `dc_job::prep_report`, the CLI command. Tests: the
