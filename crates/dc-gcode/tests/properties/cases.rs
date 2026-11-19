@@ -2117,3 +2117,81 @@ fn open_line_smooth_tab_at_its_first_vertex(side: Side, entry: Entry) -> Project
     );
     project
 }
+
+/// Worklog A9 (the Profile property, `PROPTEST_RNG_SEED=37`, seed
+/// `cc 67e54832…`), reduced to one shape: a 10 × 8 mm rectangle cut
+/// Inside, or as the hole of a 30 × 20 mm part cut Outside, 1 mm deep
+/// with dogbones by a 1 mm bit, a 0.05 helix at 30° and arc fitting at
+/// 0.01 mm. The helix is 0.05 mm across and sits by the corner the lap
+/// starts at, so its last chords (0.003 mm each), its handoff to that
+/// corner and the corner's notch lie within the tolerance of one circle,
+/// and the program writes them as one arc from clear stock to the notch's
+/// end. S9's notch rule took straight cuts only and refused the arc.
+#[test]
+fn helix_handoff_fitted_into_a_dogbone_notch_exports() {
+    for side in [Side::Inside, Side::Outside] {
+        let project = helix_beside_a_dogbone_corner(side);
+        exports(&project);
+        // The case is still the one this test is for: an arc ends nearer
+        // a wall of the rectangle than the bit's radius, in a notch.
+        let post = project.post_processor.resolve().expect("bundled");
+        let transform = MachineTransform::new(&project, &post).expect("a valid mapping");
+        let op = generate(&project).expect("generates");
+        let (program, _) = emit(&project, &[op], DATE).expect("exports");
+        let arcs_into_a_notch = parse_motion(&program.text)
+            .expect("the program parses")
+            .into_iter()
+            .filter(|mv| matches!(mv.kind, MotionKind::ArcCw | MotionKind::ArcCcw))
+            .filter_map(|mv| Some((mv.to.x?, mv.to.y?, mv.to.z?, mv.units)))
+            .map(|(x, y, z, units)| transform.to_project(Point3::new(x, y, z), units))
+            .filter(|end| {
+                let to_wall_mm = (5.0 - (end.x - 40.0).abs()).min(4.0 - (end.y - 40.0).abs());
+                to_wall_mm < 0.4
+            })
+            .count();
+        assert!(arcs_into_a_notch > 0, "{side:?}: no arc ends in a notch");
+    }
+}
+
+/// The 10 × 8 mm rectangle of
+/// [`helix_handoff_fitted_into_a_dogbone_notch_exports`] centred on
+/// (40, 40) in 6 mm stock, cut on `side`; Outside it is the hole of a
+/// 30 × 20 mm part.
+fn helix_beside_a_dogbone_corner(side: Side) -> Project {
+    let Operation::Profile(op) = sample_project().operations[0].clone() else {
+        unreachable!("the sample's operation is a Profile");
+    };
+    let op = ProfileOp {
+        side,
+        depth_mm: Some(1.0),
+        step_down_mm: None,
+        tabs: None,
+        entry: Entry::Helix {
+            diameter_fraction: 0.05,
+            angle_deg: 30.0,
+        },
+        lead: None,
+        corner_relief: CornerRelief::Dogbone,
+        last_pass: None,
+        start: StartAt::Auto,
+        ..op
+    };
+    let hole = straight([(-5.0, -4.0), (5.0, -4.0), (5.0, 4.0), (-5.0, 4.0)]);
+    let profiles = match side {
+        Side::Outside => vec![
+            straight([(-15.0, -10.0), (15.0, -10.0), (15.0, 10.0), (-15.0, 10.0)]),
+            hole,
+        ],
+        _ => vec![hole],
+    };
+    let mut project = case(
+        profiles,
+        Transform::translate(40.0, 40.0),
+        6.0,
+        Operation::Profile(op),
+    );
+    project.display_units = Units::Mm;
+    project.arc_fit_tolerance_mm = Some(0.01);
+    project.tools[0].diameter_mm = 1.0;
+    project
+}
