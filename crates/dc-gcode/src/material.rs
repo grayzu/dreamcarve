@@ -1,347 +1,34 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! S9 on the parsed program: every operation's cuts stay in its own
-//! material (`docs/specs/phase-2/functional.md`, S9;
-//! `docs/specs/phase-2/design.md`, "Data model → dc-gcode",
-//! [`ExportError::OffMaterial`]).
+//! The material rules of the safety pass, on the parsed program: every
+//! operation's cuts stay in its own material (S9), a V-bit cuts only its
+//! own (S17, [`cone`]), a countersink's depth is derived (S18,
+//! [`countersink`]) and a Photo V-Carve's grooves stay in the picture
+//! (S19, [`photo`]).
 //!
-//! The material comes from the project, found the way the generators find
-//! their targets, and never from the generator: dc-gcode uses only
-//! dc-cam's toolpath types and trusts none of its callers
-//! (`docs/rust-guidelines.md`, "Export preconditions"). Per operation:
+//! [`Material`] is what one run may cut. It is worked out from the
+//! project, the way the generators find their targets, and never from a
+//! generator or a toolpath: dc-gcode uses only dc-cam's toolpath types
+//! and trusts none of its callers. [`check`] holds every cutting move of
+//! a run to it, within the slack the program may already differ from the
+//! toolpath by ([`slack_mm`]): one unit in the last written place, the
+//! flatten tolerance and, when arc fitting is on, the arc-fit tolerance.
 //!
-//! - **Pocket:** the tool, swept along every cutting move, stays inside
-//!   the Pocket's regions (its targets' closed profiles, nested) shrunk by
-//!   its stock to leave, and outside their islands. For a round tool of radius
-//!   `r` that is exactly: the move's tool-centre path lies inside a region
-//!   and at least `r + stock to leave` from its outline and from every island's.
-//!   The check measures that distance segment against segment, arcs as
-//!   arcs ([`dc_geometry::segment_distance_mm`]), against only the outline
-//!   segments whose bounds come near the move. A helix of a thousand chords
-//!   costs a thousand such tests, not the union of a thousand swept
-//!   capsules that `dc_cam::footprint` builds (#158). Rest machining is
-//!   held to its own region the same way (S14).
-//! - **Corner relief, the notch rule** (slice 12; Profile since #177): a
-//!   Pocket or an inside or outside Profile with `corner_relief` cuts
-//!   dogbone or T-bone notches past its walls on purpose, so a straight cut
-//!   that fails the clearance above is still in the material when it lies
-//!   in a corner's relief zone. A corner is a vertex of a target outline
-//!   where the outline turns toward the waste by more than 15° between two
-//!   edges at least the tool's diameter long (`dc_cam`'s corner test,
-//!   re-derived here from the project). The zone is the corner's wedge,
-//!   between its two edge lines, at least `r` from the corner (the cutter
-//!   at most touches it) and at most `(r + stock to leave) / sin(θ/2)` from it
-//!   (the tool-centre path's miter point, where a notch starts); the cut
-//!   must also keep its clearance from every other edge. So a notch can
-//!   bite at most `r` past one of its corner's two walls, and nowhere else.
-//!   An arc is held to the same material point by point: every piece of
-//!   it keeps the clearance above or lies in one corner's zone, so it may
-//!   run from clear stock into a notch and nowhere a straight cut may
-//!   not. Arc fitting writes such an arc for an entry's handoff to a
-//!   corner and the notch that starts there when they lie within the
-//!   tolerance of one circle, as they do after a helix a few hundredths
-//!   of a millimetre across (2026-11-18, the Profile property's seed
-//!   `cc 67e54832…`: the rule took straight cuts only and refused it).
-//! - **Profile** (#177): the waste the Profile removes, from its targets'
-//!   closed profiles nested as `dc_cam::generate_profile` nests them, and
-//!   every cutting move is held to it: laps, tab rises, ramp and helix
-//!   descents, lead arcs and overcuts, and notches.
-//!   - **Inside:** as a Pocket with no stock to leave: the tool centre stays in
-//!     a target region (the hole being cut, outside its islands), at least
-//!     `r` from its walls, so no cut enters the part around the hole or an
-//!     island left in it.
-//!   - **Outside:** the reverse: the tool centre stays outside every
-//!     target region (the parts; a part's own holes are waste), at least
-//!     `r` from every outline, so a ramp, helix or lead arc enters neither
-//!     its own part nor a neighbour. The stock edge is S7's.
-//!   - **On line:** as an Engrave, the tool centre stays on a target's
-//!     line, and also at least the tool's diameter from every other line
-//!     of that line's region (the targets nested as for Inside): the bit
-//!     cuts `r` of the part beside each line, so two lines of one region
-//!     closer than the diameter would cut through the ring or web between
-//!     them, which dc-cam refuses (`CamError::BandNarrowerThanTool`,
-//!     #199). Lines of different regions are not looked at: a gouge there
-//!     is the overlap check's warning, as for a lap. The On line ramp runs
-//!     along the line; there is no lead or notch. A cut on one of the
-//!     targets' open paths (#175) stays on that path, as an Engrave's.
-//!     When a region's material holds the path (every vertex and segment
-//!     middle, lines included), the cut also keeps the diameter from
-//!     every line of that region and from every other open path it holds,
-//!     the stretches of both within `√2·d` of a point where the two meet
-//!     (touch, cross, or come within the flatten tolerance) set aside: so
-//!     a slot drawn from the edge passes and one beside a wall fails, as
-//!     dc-cam refuses it (`BandNarrowerThanTool`, #210).
-//!     A cut also keeps the diameter from the stretches of its own line
-//!     that lie more than `√2·d` along it from where it runs (#221,
-//!     [`dc_geometry::SelfBand`]): a loop of a region, or an open path a
-//!     region holds. The stretches within `√2·d` of a point where the line
-//!     meets itself (a corner sharper than 90°, or where it touches or
-//!     crosses itself) are set aside, and a loop counts only the pairs with
-//!     the region's material between them, so a cut along a hairpin, a
-//!     tight spiral or an outline's narrow neck fails and one along a
-//!     narrow notch passes, as dc-cam decides. No cut may run on a loop
-//!     of a region the cut removes whole (#223): its outline shrunk by the
-//!     radius, less the slack, is empty, as for a small circle or a strip
-//!     narrower than the bit (`CamError::PartNarrowerThanTool`).
-//!   - **Left and Right** (#207): the tool centre stays on one of the
-//!     targets' open paths offset by the tool radius to that side
-//!     ([`dc_geometry::offset_open`], looking from each path's first vertex
-//!     to its last), its ends and middle within the slack of it, and the
-//!     whole cut keeps the radius from every open path of the targets and
-//!     from every path's kept edge (the path offset by the radius to its
-//!     other side) and from the strip's two ends, the normals through the
-//!     path's end vertices one radius long, each cut short at the first
-//!     line it meets ([`dc_geometry::strip_ends`], #342): the cutter never
-//!     crosses a line nor reaches the strip one radius wide that a line
-//!     keeps, past an end included, wherever the offset runs, as `dc_cam`
-//!     refuses (`CamError::CutsIntoKeptSide`). Closed targets are not cut. The
-//!     ramp and the tabs run along the offset path; there is no lead or
-//!     notch. With a last pass (#311) the path offset by the radius plus
-//!     the stock to leave is a tool-centre path too, for the passes before the
-//!     last; the kept edges stay one radius off.
-//!     The last pass's level step across the stock to leave from the earlier
-//!     passes' path onto its own (#339) runs between the two paths, or
-//!     between one segment's two offsets taken whole (#358): where an
-//!     end vertex comes back beside another segment, the two paths stop
-//!     on circles of `r` and `r + a` round it rather than on one normal.
-//!   - **A lap** of one outline, a cut that runs at the tool radius from
-//!     it on its waste side, passes even where an outline of another
-//!     region comes nearer than the radius. That cut is the outline's
-//!     offset, which S6 holds the program to, and the gouge into the other
-//!     shape is the one `dc_cam`'s overlap check warns about
-//!     (`toolpaths_overlap`): the project asked for two shapes closer than
-//!     the bit, and phase 1 decided to warn there, not to refuse. The lap
-//!     must still keep its clearance from every outline of its own region
-//!     (#192): within one region the overlap check never warns, and a lap
-//!     that comes nearer another line of it, an island's lap in a band
-//!     narrower than the bit, is a gouge dc-cam refuses
-//!     (`CamError::BandNarrowerThanTool`). Entries, leads and notches never
-//!     run along an outline at the radius, so the lap rule never lets one
-//!     through. dc-cam's waste domain also keeps entries out of other
-//!     shapes' kerfs; that is waste too, so S9 does not hold the program
-//!     to it.
-//! - **Tabs** (#337): a Profile leaves its tabs standing. A straight
-//!   plunge (Z falls, XY stays) that ends below a tab's top is refused
-//!   when it lies on the bit's path round the tab's outline (the outline
-//!   offset by the tool radius either way, within the slack) less than
-//!   half the tab's width plus the radius from the tab's centre along
-//!   that path, the stretch a lap rises over (ADR-0005), less a tenth of
-//!   the radius for a rect tab's step at its end. On the path of the
-//!   passes before a last pass (the radius plus its stock to leave, #353),
-//!   which run beside the tab rather than over it, it is refused when its
-//!   cutter reaches into the tab material the laps leave: within the
-//!   radius of a lap held above the plunge's Z by that stretch (without
-//!   the tenth) and at least the radius from the rest of the outline's
-//!   laps, which cut to their floor. The tabs are the project's placed tabs
-//!   on the Profile's targets and those its tab request places
-//!   (`dc_cam::placed_tabs::place`, the documented layout rule, not the
-//!   toolpath); a male Inlay's cut-out's are those its request places on
-//!   the path this pass derives, the open pieces of one outline taking
-//!   the request between them (`dc_cam::placed_tabs::place_shared`,
-//!   #710). So a lap that starts on a tab and plunges there, below
-//!   its top, is refused, wherever on the tab it starts. A tab on an
-//!   open outline an On line Profile cuts (#175) is held the same way
-//!   along that outline and its open offsets, its span never wrapping
-//!   from one end to the other: each open piece of a clipped cut-out
-//!   holds its own tabs. A tab on an open path of a Left or Right Profile
-//!   (#207) is held along that path's offset to the cut side alone, where
-//!   its request centres it and the bit runs ([`tab_spine`]).
-//! - **Trenches** (#352): an inside or outside Profile cuts only a trench,
-//!   its kerf, and the lines its entries ramp on; the waste beside them
-//!   stands full height. So a ramp below the stock top must run where
-//!   the operation's earlier cuts ran. A cut that falls while it runs in
-//!   XY (a ramp leg, a helix chord), in a run of such cuts that started
-//!   below the stock top, is refused at the first point below the stock
-//!   top, checked a tenth of the tool radius apart, that lies neither on
-//!   the ring the laps cut (within the tool radius, plus a last pass's
-//!   stock to leave and the slack, of a target outline) nor within twice the
-//!   slack of the tool-centre path of an earlier cut of the operation
-//!   where it ran below the stock top: the stock top itself, with no
-//!   slack, so a ramp leg that dips below it only at its end cut a trench
-//!   only there (#356). A run that starts at or above the stock top (a
-//!   first pass's ramp or helix, a helix that starts again from above the
-//!   stock) clears its own way and is not held to it, and a straight
-//!   plunge is the tab rule's. A level move too short to fall a unit in
-//!   the last place does not end a run. Pockets clear their whole region
-//!   and are not held to it.
-//! - **Drill:** every cut stays inside one of the Drill's holes, the
-//!   closed targets that are circles ([`dc_geometry::as_circle`], as
-//!   `dc_cam::generate_drill` finds them): its ends and middle lie within
-//!   the hole's radius of its centre. A Drill only plunges, so that is the
-//!   hole it drills.
-//! - **Photo V-Carve, S19** (format 27, #646; [`photo`] has the rule):
-//!   every line of its span. Every cut a `G1`; one that ends at or below
-//!   the start plane inside the picture's footprint, no deeper than its
-//!   maximum depth, its flanks engaged no deeper than the cone (S17's tip,
-//!   depth and shank rules with the footprint as the region; the picture's
-//!   edge is no wall, so no disc test); one that moves across above the
-//!   start plane at the link height, fed; no rapid across below safe Z.
-//!   The groove's width is S7's, which widens each cut by its width at
-//!   the stock top.
-//! - **Countersink Drill, S18** (format 21, #427; [`countersink`] has the
-//!   rule): every line of its span, not only its cuts. No canned cycle;
-//!   every cut a `G1` straight down at the centre of one of its holes
-//!   (the target circles less those the mouth rule skips), from no higher
-//!   than the retract plane to exactly the start plane less the depth its
-//!   mouth and its V-bit's angle derive, within rounding; every rapid at
-//!   or above the retract plane; and the flank engaged no deeper than the
-//!   cone, from the start plane when the stock top is it or an enabled
-//!   earlier Pocket or V-Carve floor at the start depth cleared it
-//!   ([`dc_project::cleared_start_plane`]), else from the stock top. The
-//!   tool must be the operation's, a V-bit; anything else is unresolved.
-//! - **Bore** (format 18; maintainer decision 2026-10-24): every cut stays
-//!   in one of the Bore's holes, the closed targets that are circles, as
-//!   for a Drill: its ends and middle lie within `ρ − r − stock to leave` of the
-//!   hole's centre (radius `ρ`, tool radius `r`), all three in the same
-//!   hole. That is the helix's own circle, so a helix, circle or move to
-//!   the centre that reaches wider would cut the wall beyond its drawn
-//!   size; a hole narrower than the tool allows no cut at all.
-//! - **Engrave:** the tool centre stays on the line: every cut's ends and
-//!   middle lie on one of the Engrave's target paths.
-//! - **V-Carve, the V-bit's run: S17** (format 20, #404, exact since #408;
-//!   `docs/specs/phase-3/design.md`, "Safety pass"; [`cone`] has the
-//!   geometry). The regions are the targets' closed profiles nested as for
-//!   a Pocket, the start plane is `start_depth_mm` below the stock top, and
-//!   the flank is engaged from the stock top unless an earlier floor at
-//!   the start depth holds the targets, an enabled Pocket's or an enabled
-//!   V-Carve's flat floor ([`dc_project::cleared_start_plane`], #426, as
-//!   the generator and validation decide it; security review H4). Every
-//!   cutting move:
-//!   - its tip (the tool-centre path) stays in the regions: its ends and
-//!     middle inside or within the slack of an outline, and it meets no
-//!     outline away from its ends;
-//!   - a straight descent (no XY motion beyond the slack) that stays above
-//!     the start plane runs through the air over the carve and is held
-//!     only to that; any other descent is held at its lowest point, where
-//!     its cone is widest, as a cut (H3, see below);
-//!   - any other cut runs no higher than the start plane;
-//!   - nothing reaches below the flat depth (`ConeOffMaterial`), nor
-//!     engages the flank deeper than the cone is tall
-//!     (`ConeHeightExceeded`; a tip below the cone height is this too);
-//!   - the cone's disc at the start plane stays inside the regions all
-//!     along the move, measured exactly ([`cone`]): segment against
-//!     segment, arcs as arcs, at constant Z; in closed form for a straight
-//!     move whose Z varies. No sampling.
+//! **Fail closed.** A check that cannot be finished has not passed.
+//! Project data that does not resolve is [`Material::Unresolved`], which
+//! no cut is in, and a move whose position is not known is refused by
+//! each rule that needs the position.
 //!
-//!   **H3.** The design's exemption skips S17 for a straight descent from
-//!   the stock top plus the entry clearance that ends no lower than a
-//!   later cut through its XY, relying on that later cut. This pass skips
-//!   nothing below the start plane: every descent's lowest point is held
-//!   to the tip, depth, shank and cone tests directly. A cone at one XY
-//!   contains every cone above it there, so that point is the whole of
-//!   what the descent cuts, and the rule is the stricter of the two. It
-//!   also accepts a descent that starts lower, where S2 lets the rapid
-//!   stop above an earlier cut (#214), which the design's literal form
-//!   would refuse in generated programs: with a 0.5 mm flat depth the
-//!   floor rings are re-entered from 0.5 mm above the start plane.
+//! The rules themselves are in the specs:
 //!
-//!   The tool must be the operation's, a V-bit with an angle in (0°,
-//!   180°) or a tapered ball nose with every value set and usable
-//!   ([`Tool::carve_profile`]); the rule is the same for the medial and
-//!   the offset strategy, floors and links included. Anything else is
-//!   unresolved.
-//!
-//!   **A tapered ball nose** (3.6, #680) is held to the same rule on its
-//!   profile: the disc at the start plane is `w(d)` across, ball, cone or
-//!   cylinder, measured exactly by the shared
-//!   [`dc_geometry::profile::least_room`] ([`cone`]); the shank's limit is
-//!   its cutting height `min(flute_length_mm, h_R)`
-//!   ([`Tool::cutting_height_mm`]), named in `ConeHeightExceeded`; its
-//!   floor inset is `w(F)`. S7 widens its cuts by its cut radius
-//!   `min(w(flute_length_mm), R)` ([`Tool::cut_radius_mm`]). An Inlay
-//!   side cut with one (slice 27e, #681) is held the same way to its
-//!   design rounded for the bit ([`dc_project::rounded_for_bit`]), on
-//!   either board, as the generator rounds it; a design the rounding
-//!   refuses is unresolved.
-//! - **V-Carve, a clearing run** (#406, security review M3): the run
-//!   labelled with one of the carve's passes and cut with that pass's flat
-//!   end mill is held as a Pocket of the carve's floor regions with no
-//!   stock to leave: the end mill's centre stays inside one, at least its
-//!   radius from its outline and islands, and no lower than the floor. The
-//!   floor regions are re-derived from the project: the targets' regions
-//!   inset by `w(F)`, `F · tan(α/2)` for a V-bit
-//!   ([`dc_geometry::floor_regions`]), less those
-//!   too thin to cut (area at most the flatten tolerance times the
-//!   perimeter), as the generator's floor drops them. The earlier passes'
-//!   reach does not bound the run: a rest pass's footprint runs into what
-//!   they cleared, and only its centres must touch what they left.
-//!
-//! - **Inlay** (format 22, #436): each side is held as a V-Carve, its
-//!   V-bit's run to S17 and its clearing runs to its floor, with its
-//!   regions, start plane and floor re-derived from the project. On
-//!   either side the design's parts that come closer than
-//!   [`INLAY_MERGE_MM`] are one shape ([`merge_near_parts`], #479), as the
-//!   generator merges them. The
-//!   female carves the targets' regions from the stock top, flat at
-//!   `depth_mm` `D`. The male carves the **surround** of its design: the
-//!   targets' closed outlines mirrored about the centre line of their
-//!   joint bounding box (`Transform::mirror_x_about`), nested, and
-//!   [`dc_geometry::surround_within`] `margin_mm` wide, the band's edge at
-//!   the project's flatten tolerance and the plug's outline at the V-bit's
-//!   [`dc_geometry::wall_tolerance_mm`] (#478), the generator's
-//!   construction, never the generator; where the band runs past the
-//!   board it is clipped to [`MaleBand::board`] of the project's stock
-//!   (#495, [`dc_geometry::band_on_board`]) and the surround is the
-//!   clipped band less the design. Its
-//!   start plane is `D − G` below the stock top (`glue_gap_mm` `G`), its
-//!   floor `plug_depth_mm` below that. Either side's flank is engaged from
-//!   the stock top (security review H4): the plug above the male's start
-//!   plane is never cleared. A cut inside the plug, or sideways above the
-//!   male's start plane, fails as it would for a V-Carve. Each board is
-//!   its own (#498): a run tagged [`dc_project::Board::Male`] is held
-//!   against the project on the Inlay's male board
-//!   ([`Project::on_male_board`], which the emitter hands this pass), so
-//!   "the stock" above, its top, its rectangle and its bottom, is the
-//!   male board's for the male, and the female's design and the male's
-//!   surround each follow from the board the run is tagged with.
-//! - **Inlay cut-out** (format 23, #443): a male's run labelled with its
-//!   cut-out's flat end mill, and cut with it, is held to the band's flat
-//!   floor rings: the floor regions of its surround (the surround inset
-//!   by `P·tan(α/2)`, less noise, as its clearing runs are held), less
-//!   those inside a design outline (the floors of the design's holes,
-//!   which stay in the plug). The tool centre stays inside a ring, at
-//!   least its radius from both its edges, at every depth: above the
-//!   floor the carve has cleared the ring to the top, and below it the
-//!   cut-out cuts the board's base, which S1 bounds with the cut-out's own
-//!   through-cut allowance ([`Material::floor_mm`]). And it stays on the
-//!   cut-out's path (#461), derived here: the band's edge round the
-//!   mirrored design ([`dc_geometry::rounded_band`]) inset by the tool's radius with
-//!   an open edge, or by `P·tan(α/2)` plus it with a V wall
-//!   ([`dc_geometry::inset_outers`], [`MaleBand::cut_out_inset_mm`]), on
-//!   the band clipped to the board where it runs past it, less, with an
-//!   open edge, the stretches along the board's edge, which frees the
-//!   plug there (#495, [`dc_geometry::without_rect_sides`]). S7 still
-//!   holds every cut, its tool's full radius, on the stock. Its
-//!   tabs are held as an On line Profile's: the Profile the cut-out is,
-//!   built here on that path, and its tab request placed by the
-//!   documented layout rule. Nothing comes from the generator.
-//!
-//! A move is allowed to depart from where the toolpath put it by what the
-//! program may already differ by: one unit in the last written place (the
-//! numbers' rounding), the flatten tolerance (arcs written as chords, and
-//! the tool-centre outlines and raster ends the generator flattens), and
-//! the arc-fit tolerance when arc fitting is on (a run of chords written
-//! as an arc, S12).
-//!
-//! **Fail closed** (code review 1.1, #711). A check that cannot be
-//! finished has not passed. Project data that does not resolve (targets,
-//! a tool, a stock top, a tab's outline, a tab request the layout rule
-//! cannot place) is [`Material::Unresolved`]: the run has no material, so
-//! every cut of it is off it ([`Material::held_run`]). A move whose
-//! position is not known is refused by each rule that needs the position.
-//! The rules read their own data without a lookup that could miss: a loop
-//! owns its edges, and a wall test takes its whole area. Where the pass
-//! must still look into data it built itself, in S6's matching
-//! (`crate::safety`), a miss is [`ExportError::SafetyCheckDefect`], which
-//! stops export. The audit of every fallback in the pass, site by site,
-//! is in `docs/specs/phase-1/design.md`, "The safety pass fails closed".
-//!
-//! **Cost.** Every move is tested only against the outline segments whose
-//! bounds come within the clearance of its own, and for an outside
-//! Profile only against the parts whose bounds do; the lap rule runs only
-//! for a move the plain rule rejects. A 20-part outside Profile with
-//! ramps, leads and tabs checks in a few milliseconds (#177).
+//! - S9 for a Pocket, Profile, Drill, Bore and Engrave, with the notch,
+//!   lap, tab and trench rules: `docs/specs/phase-2/design.md`, "S9 on
+//!   the parsed program"; `docs/specs/phase-2/functional.md`, S9.
+//! - S17 to S19, a carve's clearing runs, an Inlay and its cut-out:
+//!   `docs/specs/phase-3/design.md`, "Safety pass".
+//! - Failing closed, site by site: `docs/specs/phase-1/design.md`, "The
+//!   safety pass fails closed".
 
 use std::collections::BTreeMap;
 use std::ops::Range;
@@ -448,12 +135,11 @@ pub(crate) enum Material {
         edges: Vec<Edge>,
     },
     /// The V-bit's run of a V-Carve (format 20) or of an Inlay side
-    /// (format 22): S17 (module docs, [`cone`]).
+    /// (format 22): S17 ([`cone`]).
     VBit(Cone),
-    /// A countersink Drill (format 21): S18 (module docs,
-    /// [`countersink`]).
+    /// A countersink Drill (format 21): S18 ([`countersink`]).
     Countersink(Sink),
-    /// A Photo V-Carve (format 27, #646): S19 (module docs, [`photo`]).
+    /// A Photo V-Carve (format 27): S19 ([`photo`]).
     Photo(Picture),
     /// A clearing run of a V-Carve or an Inlay side (#406, #436; security
     /// review M3): the end
@@ -620,12 +306,12 @@ const NOTCH_PIECE_SLACKS: f64 = 0.125;
 
 impl Notch {
     /// Whether tool-centre path `path`, which comes nearer a wall of
-    /// `area` than `clearance_mm`, is a relief notch (module docs). A
+    /// `area` than `clearance_mm`, is a relief notch (the spec's notch rule). A
     /// straight path is one when it lies in the relief zone of one of the
     /// area's corners, clear of the area's other edges. An arc is one
     /// when every piece of it is clear of the area's walls or in one
     /// corner's zone: the fitted arc that stands for a handoff and the
-    /// notch after it (module docs).
+    /// notch after it.
     fn allows(self, area: &Area, path: Segment, clearance_mm: f64) -> bool {
         if path.is_line() {
             return area
@@ -1121,7 +807,7 @@ impl Material {
     }
 }
 
-/// The carving bit's material of V-Carve `carve` (module docs, [`cone`]):
+/// The carving bit's material of V-Carve `carve` ([`cone`]):
 /// its regions, start plane, bit profile, flat-depth floor, engagement
 /// and cutting height, all from the project; [`Material::Unresolved`]
 /// when its tool is not a usable V-bit or tapered ball nose, its start or
@@ -1191,13 +877,13 @@ fn cone_of(project: &Project, carve: &VCarveOp) -> Option<Cone> {
     })
 }
 
-/// The V-bit material of Inlay side `inlay` (#436; module docs, [`cone`]):
+/// The V-bit material of Inlay side `inlay` ([`cone`]):
 /// [`Material::Unresolved`] when [`inlay_cone`] is.
 fn inlay_material(project: &Project, inlay: &InlayOp, board: Board) -> Material {
     inlay_cone(project, inlay, board).map_or(Material::Unresolved, |(cone, _)| Material::VBit(cone))
 }
 
-/// A male Inlay's band as the safety pass derives it (#448; module docs):
+/// A male Inlay's band as the safety pass derives it:
 /// the band's edge rule from [`dc_project::male_band`], the geometry from
 /// `dc_geometry`, never the generator.
 struct MaleGeometry {
@@ -1419,7 +1105,7 @@ fn merged_design(project: &Project, inlay: &InlayOp, design: Vec<Region>) -> Opt
         .map(|rounded| rounded.regions)
 }
 
-/// What a male Inlay's cut-out run is held to (#443, #448; module docs):
+/// What a male Inlay's cut-out run is held to:
 /// the rings of the band's flat floor round the outer outlines of the
 /// mirrored design, re-derived from the project with `dc_geometry` and
 /// [`dc_project::male_band`] alone, and the cut-out's paths, for its tabs.
@@ -1530,7 +1216,7 @@ fn cut_out_material(project: &Project, inlay: &InlayOp, tool: &Tool, board: Boar
 }
 
 /// The material of carve `carve`'s clearing run with end mill `pass`
-/// (#406, security review M3; module docs): the floor regions re-derived
+/// (the spec's "S9, clearing runs"): the floor regions re-derived
 /// from the targets, the V-bit's angle and the flat depth
 /// ([`floor_regions`], less noise as the generator drops it), at the
 /// floor's Z. [`Material::Unresolved`] when `pass` is none of the carve's
@@ -2633,7 +2319,7 @@ impl<'a> Trench<'a> {
 }
 
 /// How far a move may depart from where the toolpath put it, rounding
-/// aside (module docs): the flatten tolerance, and the arc-fit tolerance
+/// aside: the flatten tolerance, and the arc-fit tolerance
 /// when arc fitting is on, mm.
 fn departure_mm(tolerances: Tolerances) -> f64 {
     tolerances.flatten_mm + tolerances.arc_fit_mm.unwrap_or(0.0) + EPS_MM
@@ -2936,7 +2622,7 @@ fn outside_regions(areas: &[Area], path: Segment, clearance_mm: f64, notch: Opti
         .all(|a| !a.region.contains_point(side) && walls_allow(a, path, clearance_mm, notch))
 }
 
-/// The lap rule (module docs): whether tool-centre path `path` runs along
+/// The lap rule (the spec's S9): whether tool-centre path `path` runs along
 /// one loop of `areas`, its ends and middle within `reach_mm` of it, on
 /// its waste side (judged at [`side_point`]), and clear of every loop of that loop's own area (or a
 /// notch at one of their corners). Other areas' outlines are not looked
@@ -2968,7 +2654,7 @@ fn is_lap(
         })
 }
 
-/// The On line Profile rule (module docs): whether tool-centre path
+/// The On line Profile rule (the spec's S9): whether tool-centre path
 /// `path` lies on one loop of `areas`, its ends and middle within the
 /// slack of it, at least the band from every other loop of that loop's
 /// area (#199), and from the stretches of its own loop far along it
@@ -3013,7 +2699,7 @@ fn on_own_line(
         })
 }
 
-/// The On line rule for open paths (module docs, #210): whether tool-centre
+/// The On line rule for open paths (the spec's S9): whether tool-centre
 /// path `path` lies on one of `open`, its ends and middle within the
 /// slack of it, and keeps the band from every line beside that path once
 /// the stretches of both within the reach of a point where they meet are

@@ -12,10 +12,10 @@
 //! DreamCarve's (`arcfit`); canned cycles are written as upstream's block
 //! does, but only when the controller's motion for them is the toolpath
 //! (`docs/specs/phase-2/design.md`, "Canned cycles"; see [`EmitOp`] and
-//! [`CannedExpansion`]). Re-derived for Y-up: toolpaths are
-//! Y-up and so is the machine, so arc direction carries over unchanged
-//! unless the definition's axis map mirrors the plane. Changes from
-//! upstream, from the controller facts in `dc-project/src/definitions/README.md`
+//! [`CannedExpansion`]). Re-derived for Y-up: toolpaths are Y-up and so
+//! is the machine, so arc direction carries over unchanged unless the
+//! definition's axis map mirrors the plane. Changes from upstream, from
+//! the controller facts in `dc-project/src/definitions/README.md`
 //! ("Verification"):
 //!
 //! - Missing feed, plunge, or RPM is an error; nothing is defaulted. With
@@ -31,39 +31,36 @@
 //!   `M0` and a `(MSG, ...)` comment for the user to switch the router on
 //!   before each tool's first cut, and off before a tool change and at the
 //!   end. Z is unknown after the router-on pause, so the program retracts
-//!   to safe Z again before it moves in XY (#68).
+//!   to safe Z again before it moves in XY.
 //! - There is no stop for the first tool: the user fits it and sets work
-//!   zero with it before starting the program (#57). By default a program
-//!   has one tool: [`emit_programs`] writes one program per tool run, which
-//!   every sender and controller stops between (#95). Only with the
-//!   post-processor's `tool_change.mode` `"m6"` (or `export --one-program`,
-//!   [`ProgramSplit::OneProgram`]) and a definition whose tool change has
-//!   `M6` (grblHAL) does one program change tools; otherwise
-//!   [`emit`] refuses a second tool. The change retracts to safe Z and
-//!   stops the spindle, then
-//!   writes DreamCarve's own `T<n> M6 (MSG, Fit T<n> <name>. Set Z zero,
-//!   then resume.)` in place of the definition's `M6` line, leaving out
-//!   lines that only pause and `pause_after_change`: one stop per change.
-//!   The user may jog or set Z zero there, so the position is then unknown
-//!   and the program retracts to safe Z again before the spindle starts or
-//!   the router-on pause (#43). A program that changes tools first sets the
-//!   controller's current tool with `M61 Q<n>`, because grblHAL skips an
-//!   `M6` for the tool it holds. `<n>`, here and in `{toolNumber}`, is the
-//!   tool's `number` when set, otherwise its 1-based place in the
-//!   project's tool list (#120); two tools of one program with the same
-//!   number, or a number of 0, fail the export.
+//!   zero with it before starting. By default a program has one tool:
+//!   [`emit_programs`] writes one program per tool run, which every sender
+//!   and controller stops between. Only with the post-processor's
+//!   `tool_change.mode` `"m6"` (or [`ProgramSplit::OneProgram`]) and a
+//!   definition whose tool change has `M6` (grblHAL) does one program change
+//!   tools; otherwise [`emit`] refuses a second tool. The change retracts to
+//!   safe Z and stops the spindle, then writes DreamCarve's own `T<n> M6
+//!   (MSG, Fit T<n> <name>. Set Z zero, then resume.)` in place of the
+//!   definition's `M6` line, leaving out lines that only pause and
+//!   `pause_after_change`: one stop per change. The user may jog or set Z
+//!   zero there, so the position is then unknown and the program retracts to
+//!   safe Z again before the spindle starts or the router-on pause. A
+//!   program that changes tools first sets the controller's current tool
+//!   with `M61 Q<n>`, because grblHAL skips an `M6` for the tool it holds.
+//!   `<n>`, here and in `{toolNumber}`, is the tool's `number` when set,
+//!   otherwise its place in the project's tool list, from 1; two tools of
+//!   one program with the same number, or a number of 0, fail the export.
 //! - Before the first move the program sets absolute distance mode (`G90`)
 //!   as well as units and work coordinates, adding any the header leaves
 //!   out. After every pause that more motion follows, it sets them again,
 //!   with the header's other lines that only set modal state (`G17`,
-//!   `G94`): the user may change any of them at the controller (#55).
-//! - The project's heights (#283; `docs/specs/phase-2/design.md`, "Phase 2
-//!   addendum (#73)", A7): with a clearance height, each operation starts
-//!   and ends at it, and a tool change rises to it; with a tool-change
-//!   machine Z, the program lifts to it with `G53 G0 Z` before each
-//!   tool-change stop and before the footer (S16); with a park point, it
-//!   rapids there at the clearance height before that last lift. Unset,
-//!   the program is as before.
+//!   `G94`): the user may change any of them at the controller.
+//! - The project's heights (`docs/specs/phase-2/design.md`, A7): with a
+//!   clearance height, each operation starts and ends at it, and a tool
+//!   change rises to it; with a tool-change machine Z, the program lifts
+//!   to it with `G53 G0 Z` before each tool-change stop and before the
+//!   footer (S16); with a park point, it rapids there at the clearance
+//!   height before that last lift. Unset, the program is as before.
 //! - A rapid lowers Z only after its XY move.
 //! - I and J are taken from the rounded start the controller holds; an arc
 //!   the controller would reject, or read as a full circle, is flattened.

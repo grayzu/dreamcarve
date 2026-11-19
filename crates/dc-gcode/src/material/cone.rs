@@ -110,7 +110,7 @@ impl Cone {
     ///   start plane is the stock top, or a Pocket or the user cleared it.
     ///   Any other descent is held at its lowest point, the one point
     ///   where its cone is widest, which is stricter than H3's exemption
-    ///   (module docs of `material`).
+    ///   (`docs/specs/phase-3/design.md`, "Safety pass", "Descents").
     /// - **Any other cut** runs no higher than the start plane.
     /// - No cut reaches below the flat depth, nor engages the flank deeper
     ///   than the cone (the shank, H4).

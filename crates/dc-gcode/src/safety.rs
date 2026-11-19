@@ -1,50 +1,66 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The safety pass: parse the emitted program and check the phase 1 safety
-//! rules on what the controller will read (`docs/specs/phase-1/design.md`,
+//! The safety pass: parse the emitted program and check the safety rules
+//! on what the controller will read (`docs/specs/phase-1/design.md`,
 //! "Emission", step 7; `docs/specs/phase-1/functional.md`, S1–S7). Every
 //! violation is an [`ExportError`]; there are no safety warnings.
 //!
 //! Checks run in project space: each parsed point is mapped back through
-//! the [`MachineTransform`] using the units the program itself selected, so
-//! a wrong origin, a mirror, or a missing units command shows up as a
-//! violation instead of being trusted. S6 compares each operation's moves
-//! with its toolpath move for move, arc direction and centre included; see
-//! [`check_reproduces`] for exactly what it accepts.
+//! the [`MachineTransform`] using the units the program itself selected,
+//! so a program that departs from the transform, or sets no units, shows
+//! up as a violation instead of being trusted. S6 compares each
+//! operation's moves with its toolpath move for move, arc direction and
+//! centre included; see [`check_reproduces`] for exactly what it accepts.
 //!
-//! Every cut belongs to an operation (review 1.10): S3's rates, S6, S7's
-//! tool radius, S9 and S10 all hold a cut by the operation whose lines it
-//! is on, so a `G1`, `G2` or `G3` on a line of no operation is
+//! **What the pass shares with the emitter.** It reads the text, not the
+//! emitter's state, but an error in a piece both use passes both:
+//!
+//! - the machine transform: the emitter builds one [`MachineTransform`]
+//!   and hands it to the pass, so a wrong origin or axis map in the
+//!   transform itself is not caught here;
+//! - the canned-cycle model: the reader expands a cycle line with
+//!   [`crate::canned`], by which the emitter decides that a cycle's
+//!   motion is the toolpath;
+//! - the arc helpers: [`crate::arcfit`]'s chord and shallow-arc measures,
+//!   the centre an `R` arc is read with ([`crate::parse::r_centre`]), and
+//!   [`descent_rate_mm_min`], by which the emitter writes the feeds S10
+//!   then checks;
+//! - how the definition is read: [`changes_tools_in_program`],
+//!   [`controller_sets_units`], [`code_words`].
+//!
+//! Its own: the reader ([`crate::parse`], standard G-code whatever the
+//! definition says), the modal rules (safe Z, depth, feeds, spindle,
+//! setup), S6's matching, S7, and the material each operation may cut
+//! ([`crate::material`], from the project). The simulator tools
+//! (`tools/rs274-motion`, `tools/grbl-sim-motion`, `tools/linuxcnc-sim`)
+//! are the check that shares none of this.
+//!
+//! Every cut belongs to an operation: S3's rates, S6, S7's tool radius,
+//! S9 and S10 all hold a cut by the operation whose lines it is on, so a
+//! `G1`, `G2` or `G3` on a line of no operation is
 //! [`ExportError::CutOutsideOperation`]. DreamCarve writes none; only a
 //! definition's header or footer line could be one.
 //!
-//! The pass fails closed (review 1.1, #711; [`crate::material`]'s module
-//! docs, "Fail closed"): a lookup into its own data that misses is
-//! [`ExportError::SafetyCheckDefect`], never an empty answer that an
-//! `all(..)` would read as a pass.
+//! The pass fails closed ([`crate::material`], "Fail closed"): a lookup
+//! into its own data that misses is [`ExportError::SafetyCheckDefect`],
+//! never an empty answer that an `all(..)` would read as a pass.
 //!
-//! S11 (`docs/specs/phase-2/functional.md`): a canned-cycle line is checked
-//! as the moves the controller makes for it. The parser expands each one
-//! ([`crate::canned`]) into synthetic blocks that every rule here reads like
-//! written moves, so S1, S2 (with S15's Drill allowance), S6 and S7 hold for
-//! the motion the machine makes. A series of cycles must end with `G80`
-//! before any other motion (#314): the parser models `G98`'s return level
-//! only from one `G80` to the next.
+//! The later rules (`docs/specs/phase-2/functional.md`, S9 to S16;
+//! `docs/specs/phase-3/functional.md`, S17 to S19):
 //!
-//! S16 (#283; `docs/specs/phase-2/functional.md`, "Safety (addendum)"):
-//! the parser reads `G53 G0 Z` lines as machine-coordinate lifts and
-//! refuses any other `G53`; a lift goes to the project's tool-change
-//! machine Z, from at or above safe Z, on a definition that documents
-//! `G53`, and only right before a stop or the end; work Z is unknown after
-//! it.
-//!
-//! S10 (`docs/specs/phase-2/functional.md`): every descending cut falls no
-//! faster than its tool's plunge rate, its slope recomputed from the
-//! written numbers, with nothing allowed for rounding
-//! ([`check_descent_rate`]). S9: every cut stays in its
-//! operation's own material, worked out from the project
-//! ([`crate::material`]).
+//! - S9, S17 to S19: every cut stays in its operation's own material,
+//!   worked out from the project ([`crate::material`]).
+//! - S10: every descending cut falls no faster than its tool's plunge
+//!   rate, its slope recomputed from the written numbers, with nothing
+//!   allowed for rounding ([`check_descent_rate`]).
+//! - S11: a canned-cycle line is checked as the moves the controller
+//!   makes for it, which the parser writes as synthetic blocks. A series
+//!   of cycles must end with `G80` before any other motion: the parser
+//!   models `G98`'s return level only from one `G80` to the next.
+//! - S16: a `G53 G0 Z` line is a machine-coordinate lift, to the
+//!   project's tool-change machine Z from at or above safe Z, right
+//!   before a stop or the end; work Z is unknown after it.
 
 use std::collections::HashSet;
 use std::f64::consts::{FRAC_PI_2, PI, TAU};

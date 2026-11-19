@@ -4132,6 +4132,14 @@ against the male board.
     for every cut, else `ConeHeightExceeded` (a tip below the cone height
     is this too); for a male Inlay `engaged_from` is always the male
     board's top.
+  - **An Inlay's planes** (#436): the female carves the targets' regions
+    from the stock top, flat at `depth_mm` `D`. The male carves the
+    surround of its mirrored design from a start plane `D − G` below its
+    board's top (`glue_gap_mm` `G`), flat `plug_depth_mm` below that.
+    Either side's flank is engaged from the board's top: the plug above
+    the male's start plane is never cleared. A cut inside the plug, or
+    sideways above the male's start plane, fails as it would for a
+    V-Carve.
   - **Open band edge** (#448): for a male Inlay whose edge is open, the
     board beyond `B` stands to the male board's top, so the same tests
     hold against `B` with that top as the plane: a V-bit move whose disc
@@ -4148,12 +4156,19 @@ against the male board.
   concave arc lie up to that far beyond the true wall, #407; the floor's
   chords where grown islands touch are within it, #405), plus the
   arc-fit tolerance when arcs are fitted (S12), plus `EPS_MM` (the floor
-  trace runs exactly at `F · slope` from the walls).
+  trace runs exactly at `F · slope` from the walls). The tool must be
+  the operation's, a V-bit with an angle in (0°, 180°) or a tapered ball
+  nose with every value set and usable (`Tool::carve_profile`); the rule
+  is the same for the medial and the offset strategy, floors and links
+  included. Anything else is unresolved: the run has no material, so
+  every cut of it fails.
 - **S9, clearing runs** (security review M3): a carve's clearing run
   (an `EmitOp` labelled `Clearing(tool)`) is held to the carve's floor
   regions, re-derived in the pass from the carve's targets (or the
   male's surround), the carve's V-bit angle and its flat depth through
-  `dc_geometry::floor_regions` (less noise; for a male whose edge is open,
+  `dc_geometry::floor_regions` (less noise, a region whose area is at
+  most the flatten tolerance times its perimeter, as the generator's
+  floor drops it; for a male whose edge is open,
   `surround_floor_regions`, out to `B`, #448), and to the floor's depth
   below the start plane. The reach of the passes before it in the
   carve's `clearing` list (their tools' radii, as `rest_of` is
@@ -4305,7 +4320,8 @@ sampling; the cylinder above the cap is the end mill's constant
 radius; the shank's limit is the cutting height `min(L, h_R)`; an Inlay's
 regions are
 the design after `rounded_for_bit`, re-derived from the project with the
-same pure function, never a generator; the band's floor ring and the
+same pure function, never a generator, on either board, and a design the
+rounding refuses is unresolved; the band's floor ring and the
 cut-out's path read `w(P)` and `w(D − G + P)`. S7 holds every cut of a
 TBN to its cut radius `min(w(L), R)`, which is `diameter_mm / 2` or less.
 A Photo's or a countersink's TBN never
