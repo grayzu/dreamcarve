@@ -1,228 +1,210 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The empty state (functional spec, capability 79; mock-up
-//! `12-empty-state.svg`; `experience.md`, section 8, "Empty states"): a
-//! 640-px raised card centred on the Viewport while the project has no
-//! shapes. Under its heading and one line are two paths side by side,
-//! each in its own well so they cannot be read as one list: **Your
-//! drawing** (Import a drawing, Import a picture, Open a project) and
-//! **Examples** (the three quick starts' projects, each a card with a
-//! thumbnail drawn from the example's own shapes). The card goes when a
-//! shape arrives or on its close button.
+//! The start screen (functional spec, capability 79;
+//! `docs/specs/phase-4/redesign.md`, "The start screen"): what the
+//! Viewport's card shows, in place of an empty stock, while the project
+//! has no shapes, pictures or operations and the Design step is open. A
+//! heading and one sentence; **New from drawing…** (the one primary
+//! button), **New from picture…** and a quiet *Open…*; the three quick
+//! starts' projects, each a card with a thumbnail drawn from the
+//! example's own shapes; and the recent files. It goes when a shape
+//! arrives or another step is opened, where the stock shows.
 //!
-//! *Import a drawing* starts a new project from the chosen file, so the
-//! stock is sized round the drawing. *Import a picture* waits for picture
-//! import, as the toolbar's *Add picture* does.
+//! *New from drawing…* starts a new project from the chosen file, so the
+//! stock is sized round the drawing. *New from picture…* waits for
+//! picture import, as the Design step's *Add picture* does.
+
+use std::path::Path;
 
 use dc_app::StrKey;
 use dc_app::onboarding::{THUMBNAIL_HEIGHT_PX, THUMBNAIL_WIDTH_PX, Thumbnail};
 use eframe::egui::{self, Key, Modifiers, Rect, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
+use crate::shell::files;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, Example, FrameState, shortcut_text};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring, text};
 use crate::widgets::icon::Icon;
 
-/// The card's width, px.
-const WIDTH_PX: f32 = 640.0;
-/// Its padding, px.
-const PADDING_PX: f32 = 24.0;
-/// The height the card takes, px, to centre it before it is laid out.
-const HEIGHT_PX: f32 = 436.0;
-/// The gap between the card's copy and the wells, px.
+/// The screen's content width, px.
+const WIDTH_PX: f32 = 624.0;
+/// The room kept clear round the content, px.
+const MARGIN_PX: f32 = 24.0;
+/// The gap between the screen's blocks, px.
 const BLOCK_GAP_PX: f32 = 32.0;
-/// The gap between the two wells, px.
-const WELL_GAP_PX: f32 = 16.0;
-/// A well's padding, px.
-const WELL_PADDING_PX: f32 = 16.0;
-/// The gap under a well's heading, px.
-const HEADING_GAP_PX: f32 = 12.0;
-/// The gap between a well's rows, px.
-const ROW_GAP_PX: f32 = 8.0;
-/// The primary action's height, px.
-const PRIMARY_PX: f32 = 40.0;
-/// A secondary action's height, px.
-const SECONDARY_PX: f32 = 32.0;
-/// An example card's height, px.
-const EXAMPLE_PX: f32 = 72.0;
-/// The room round an example card's thumbnail, px.
-const THUMBNAIL_MARGIN_PX: f32 = (EXAMPLE_PX - THUMBNAIL_HEIGHT_PX) / 2.0;
-/// The height of what a well holds, px: the Examples well's heading and
-/// three cards. Both wells take it, so they end level.
-const WELL_CONTENT_PX: f32 = 21.0 + HEADING_GAP_PX + 3.0 * EXAMPLE_PX + 2.0 * ROW_GAP_PX;
+/// The gap between the three example cards, px.
+const CARD_GAP_PX: f32 = 12.0;
+/// An example card's padding, px.
+const CARD_PADDING_PX: f32 = 12.0;
+/// The well an example card's thumbnail sits in, px high.
+const WELL_PX: f32 = THUMBNAIL_HEIGHT_PX + 16.0;
+/// An example card's height, px: the well, the name and one line.
+const CARD_PX: f32 = CARD_PADDING_PX + WELL_PX + 12.0 + 18.0 + 2.0 + 16.0 + CARD_PADDING_PX;
+/// The start screen's buttons, px high.
+const BUTTON_PX: f32 = 40.0;
+/// A block heading's height with the gap under it, px.
+const HEADING_PX: f32 = 20.0 + 10.0;
+/// A recent file's row, px high.
+const RECENT_PX: f32 = 32.0;
+/// How many recent files the screen lists.
+const RECENT_MAX: usize = 4;
 
-/// Draws the card centred on `pane`.
-pub(crate) fn card(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// Draws the start screen centred on `pane`, the Viewport's card.
+pub(crate) fn screen(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
-    let size = egui::vec2(WIDTH_PX.min(pane.width() - 16.0), HEIGHT_PX);
-    let rect = Rect::from_center_size(pane.center(), size).intersect(pane);
-    let mut card_ui = ui.new_child(
+    let recent: Vec<&Path> = state
+        .recent
+        .iter()
+        .take(RECENT_MAX)
+        .map(std::path::PathBuf::as_path)
+        .collect();
+    #[allow(clippy::cast_precision_loss, reason = "at most four rows")]
+    let recent_px = if recent.is_empty() {
+        0.0
+    } else {
+        BLOCK_GAP_PX + HEADING_PX + RECENT_PX * recent.len() as f32
+    };
+    let height =
+        24.0 + 6.0 + 20.0 + 24.0 + BUTTON_PX + BLOCK_GAP_PX + HEADING_PX + CARD_PX + recent_px;
+    let width = WIDTH_PX.min(pane.width() - 2.0 * MARGIN_PX).max(0.0);
+    let top = (pane.center().y - height / 2.0).max(pane.top() + MARGIN_PX);
+    let rect = Rect::from_min_size(
+        egui::pos2(pane.center().x - width / 2.0, top),
+        egui::vec2(width, height),
+    );
+    let mut column = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rect)
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    let ui = &mut card_ui;
-    theme::sheet(palette).show(ui, |ui| {
-        ui.set_width(rect.width() - 2.0 * PADDING_PX);
-        ui.horizontal(|ui| {
-            text(
-                ui,
-                strings.get(StrKey::AppEmptyHeading),
-                TextStyle::Name(theme::DISPLAY.into()),
-                palette.text_primary,
-            );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                let close = ButtonSpec::new(Kind::Quiet, "")
-                    .icon(Icon::X, theme::ICON_SMALL_PX)
-                    .tooltip(strings.get(StrKey::AppEmptyClose));
-                if button(ui, close).clicked() {
-                    out.push(Action::DismissEmpty);
-                }
-            });
-        });
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(strings.get(StrKey::AppEmptyIntro))
-                    .color(palette.text_secondary),
-            )
-            .wrap()
-            .selectable(false),
-        );
-        ui.add_space(BLOCK_GAP_PX);
-        let well_width = (ui.available_width() - WELL_GAP_PX) / 2.0;
-        ui.horizontal_top(|ui| {
-            ui.spacing_mut().item_spacing.x = WELL_GAP_PX;
-            well(ui, palette, well_width, |ui| your_drawing(ui, state, out));
-            well(ui, palette, well_width, |ui| examples(ui, state, out));
-        });
-    });
-}
-
-/// One of the card's two paths: a `surface.panel` well `width` wide.
-fn well(ui: &mut Ui, palette: &Palette, width: f32, contents: impl FnOnce(&mut Ui)) {
-    egui::Frame::NONE
-        .fill(palette.surface_panel)
-        .corner_radius(theme::INNER_CARD_RADIUS_PX)
-        .inner_margin(WELL_PADDING_PX)
-        .show(ui, |ui| {
-            ui.set_width(width - 2.0 * WELL_PADDING_PX);
-            ui.set_min_height(WELL_CONTENT_PX);
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 0.0;
-                contents(ui);
-            });
-        });
-}
-
-/// A well's heading.
-fn heading(ui: &mut Ui, label: &str) {
-    let palette = Palette::current(ui);
-    text(ui, label, TextStyle::Heading, palette.text_primary);
-    ui.add_space(HEADING_GAP_PX);
-}
-
-/// The first path: bring your own drawing, or open a project.
-fn your_drawing(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
-    let palette = Palette::current(ui);
-    let strings = state.app.strings();
-    heading(ui, strings.get(StrKey::AppEmptyYourDrawing));
-    let width = ui.available_width();
-    let import = ButtonSpec::new(Kind::Primary, strings.get(StrKey::AppEmptyImportDrawing))
-        .icon(Icon::FileInput, theme::ICON_SMALL_PX)
-        .height(PRIMARY_PX)
-        .width(width)
-        .leading();
-    if button(ui, import).clicked() {
-        // On a project with no shapes the drawing starts the project:
-        // the stock is sized round it (capability 79).
-        out.push(Action::NewFromDrawing);
-    }
+    column.set_clip_rect(pane.intersect(ui.clip_rect()));
+    let ui = &mut column;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.set_width(width);
+    text(
+        ui,
+        strings.get(StrKey::AppEmptyHeading),
+        TextStyle::Name(theme::DISPLAY.into()),
+        palette.text_primary,
+    );
     ui.add_space(6.0);
     text(
         ui,
-        strings.get(StrKey::AppEmptyImportDrawingHint),
-        TextStyle::Small,
+        strings.get(StrKey::AppEmptyIntro),
+        TextStyle::Body,
         palette.text_secondary,
     );
-    ui.add_space(HEADING_GAP_PX);
-    let secondary = |label: StrKey, icon: Icon| {
-        ButtonSpec::new(Kind::Secondary, strings.get(label))
-            .icon(icon, theme::ICON_SMALL_PX)
-            .height(SECONDARY_PX)
-            .width(width)
-            .leading()
-    };
-    button(
-        ui,
-        secondary(StrKey::AppEmptyImportPicture, Icon::ImagePlus)
-            .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable))
-            .enabled(false),
-    );
-    ui.add_space(ROW_GAP_PX);
-    let shortcut = shortcut_text(ui.ctx(), Modifiers::COMMAND, Key::O);
-    if button(
-        ui,
-        secondary(StrKey::AppEmptyOpenProject, Icon::FolderOpen).trailing(&shortcut),
-    )
-    .clicked()
-    {
-        out.push(Action::Open);
+    ui.add_space(24.0);
+    actions(ui, state, out);
+    ui.add_space(BLOCK_GAP_PX);
+    heading(ui, strings.get(StrKey::AppEmptyExamples));
+    examples(ui, state, out);
+    if !recent.is_empty() {
+        ui.add_space(BLOCK_GAP_PX);
+        heading(ui, strings.get(StrKey::AppEmptyRecent));
+        for path in recent {
+            recent_row(ui, path, out);
+        }
     }
 }
 
-/// The second path: start from a built-in example.
+/// A block's heading: 13-px SemiBold.
+fn heading(ui: &mut Ui, label: &str) {
+    let palette = Palette::current(ui);
+    text(
+        ui,
+        label,
+        TextStyle::Name(theme::TITLE.into()),
+        palette.text_primary,
+    );
+    ui.add_space(10.0);
+}
+
+/// The three ways in: a new project from a drawing, one from a picture,
+/// or an existing project.
+fn actions(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    let strings = state.app.strings();
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = theme::GAP_PX;
+        let drawing = ButtonSpec::new(Kind::Primary, strings.get(StrKey::AppEmptyImportDrawing))
+            .icon(Icon::FileInput, theme::ICON_SMALL_PX)
+            .height(BUTTON_PX)
+            .tooltip(strings.get(StrKey::AppEmptyImportDrawingHint));
+        if button(ui, drawing).clicked() {
+            // On a project with nothing in it the drawing starts the
+            // project: the stock is sized round it (capability 79).
+            out.push(Action::NewFromDrawing);
+        }
+        button(
+            ui,
+            ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppEmptyImportPicture))
+                .icon(Icon::ImagePlus, theme::ICON_SMALL_PX)
+                .height(BUTTON_PX)
+                .tooltip(strings.get(StrKey::AppEmptyPictureUnavailable))
+                .enabled(false),
+        );
+        let shortcut = shortcut_text(ui.ctx(), Modifiers::COMMAND, Key::O);
+        let open = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppEmptyOpenProject))
+            .icon(Icon::FolderOpen, theme::ICON_SMALL_PX)
+            .height(BUTTON_PX)
+            .tooltip(&shortcut);
+        if button(ui, open).clicked() {
+            out.push(Action::Open);
+        }
+    });
+}
+
+/// The quick starts' projects, three cards in a row.
 fn examples(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
-    heading(ui, strings.get(StrKey::AppEmptyExamples));
-    for (index, (example, thumbnail)) in state.examples.iter().enumerate() {
-        if index > 0 {
-            ui.add_space(ROW_GAP_PX);
+    #[allow(clippy::cast_precision_loss, reason = "three cards")]
+    let count = state.examples.len().max(1) as f32;
+    let width = ((ui.available_width() - CARD_GAP_PX * (count - 1.0)) / count).max(0.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = CARD_GAP_PX;
+        for (example, thumbnail) in state.examples {
+            let name = strings.get(example.name());
+            let teaches = strings.get(example.teaches());
+            if example_card(ui, *example, thumbnail, width, (name, teaches)).clicked() {
+                out.push(Action::OpenExample(*example));
+            }
         }
-        let name = strings.get(example.name());
-        let teaches = strings.get(example.teaches());
-        if example_card(ui, *example, thumbnail, name, teaches).clicked() {
-            out.push(Action::OpenExample(*example));
-        }
-    }
+    });
 }
 
-/// An example card (`experience.md`, section 7, "Example card"): the
-/// thumbnail, then `name` over the one line `teaches`. The whole card is
-/// the button, named `name`.
+/// An example card (`experience.md`, section 7, "Example card"): a card
+/// inside the card, `width` wide, with the thumbnail in a well over
+/// `name` and the one line `teaches`. The whole card is the button,
+/// named `name`.
 fn example_card(
     ui: &mut Ui,
     example: Example,
     thumbnail: &Thumbnail,
-    name: &str,
-    teaches: &str,
+    width: f32,
+    (name, teaches): (&str, &str),
 ) -> egui::Response {
     let palette = Palette::current(ui);
-    let (_, rect) = ui.allocate_space(egui::vec2(ui.available_width(), EXAMPLE_PX));
+    let (_, rect) = ui.allocate_space(egui::vec2(width, CARD_PX));
     // The card's fill goes under its text, and its hover wash is known
     // only once the card, the topmost widget here, has been added.
     let background = ui.painter().add(egui::Shape::Noop);
-
-    let picture = Rect::from_min_size(
-        rect.min + egui::Vec2::splat(THUMBNAIL_MARGIN_PX),
+    let inner = rect.shrink(CARD_PADDING_PX);
+    let well = Rect::from_min_size(inner.min, egui::vec2(inner.width(), WELL_PX));
+    let picture = Rect::from_center_size(
+        well.center(),
         egui::vec2(THUMBNAIL_WIDTH_PX, THUMBNAIL_HEIGHT_PX),
     );
-    let text_left = picture.right() + 12.0;
     let name_galley = ui.painter().layout_no_wrap(
         name.to_owned(),
         TextStyle::Name(theme::MEDIUM_STYLE.into()).resolve(ui.style()),
         palette.text_primary,
     );
-    let line_height = ui.text_style_height(&TextStyle::Small);
-    let line_gap = 2.0;
-    let top = rect.center().y - (name_galley.size().y + line_gap + line_height) / 2.0;
+    let name_top = well.bottom() + 12.0;
     let line = Rect::from_min_max(
-        egui::pos2(text_left, top + name_galley.size().y + line_gap),
-        egui::pos2(
-            rect.right() - THUMBNAIL_MARGIN_PX,
-            top + name_galley.size().y + line_gap + line_height,
-        ),
+        egui::pos2(inner.left(), name_top + 18.0 + 2.0),
+        egui::pos2(inner.right(), inner.bottom()),
     );
     // The line is a label, so assistive tools read it; the name is the
     // button's.
@@ -267,8 +249,8 @@ fn example_card(
         ui.painter().set(background, fill);
         let painter = ui.painter_at(rect);
         painter.rect(
-            picture,
-            theme::MARK_RADIUS_PX,
+            well,
+            theme::CONTROL_RADIUS_PX - 2.0,
             palette.viewport_stock_fill,
             border,
             StrokeKind::Inside,
@@ -287,11 +269,74 @@ fn example_card(
             });
         }
         painter.galley(
-            egui::pos2(text_left, top),
+            egui::pos2(inner.left(), name_top),
             name_galley,
             palette.text_primary,
         );
         focus_ring(ui, &response);
     }
     response
+}
+
+/// A recent file: its name, then the folder it is in, cut with an
+/// ellipsis; the whole path is the row's tooltip, as File ▸ Open Recent
+/// shows it. The row is the button, named for the file.
+fn recent_row(ui: &mut Ui, path: &Path, out: &mut Vec<Action>) {
+    let palette = Palette::current(ui);
+    let name = files::file_name(path);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), RECENT_PX), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+    if response.clicked() {
+        out.push(Action::OpenRecent(path.to_path_buf()));
+    }
+    let response = response.on_hover_text(path.display().to_string());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let wash = if response.is_pointer_button_down_on() {
+        palette.surface_active
+    } else if response.hovered() {
+        palette.surface_hover
+    } else {
+        theme::NONE
+    };
+    // The wash reaches 8 px past the text, so the names line up with the
+    // headings.
+    ui.painter().rect_filled(
+        rect.expand2(egui::vec2(8.0, 0.0))
+            .shrink2(egui::vec2(0.0, 1.0)),
+        theme::CONTROL_RADIUS_PX,
+        wash,
+    );
+    let name_galley = ui.painter().layout_no_wrap(
+        name,
+        TextStyle::Body.resolve(ui.style()),
+        palette.text_primary,
+    );
+    let name_width = name_galley.size().x;
+    ui.painter().galley(
+        egui::pos2(rect.left(), rect.center().y - name_galley.size().y / 2.0),
+        name_galley,
+        palette.text_primary,
+    );
+    let folder = path
+        .parent()
+        .and_then(Path::file_name)
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        folder,
+        TextStyle::Small.resolve(ui.style()),
+        palette.text_secondary,
+    );
+    let left = rect.left() + name_width + 12.0;
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.right() - left).max(0.0));
+    let folder_galley = ui.painter().layout_job(job);
+    ui.painter().galley(
+        egui::pos2(left, rect.center().y - folder_galley.size().y / 2.0),
+        folder_galley,
+        palette.text_secondary,
+    );
+    focus_ring(ui, &response);
 }

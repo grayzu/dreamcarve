@@ -3,25 +3,30 @@
 Status: draft, written 2026-11-02 for the phase 4 design spec; the design
 spec's "Visual design" section points here. Amended 2026-11-10 by the
 screenshot review of #549 (functional spec, "Review redesign"); section
-15 collects what the review added. Amended 2026-11-18 by slice D2 of the
-redesign (`redesign.md`): the tokens of section 5, the sizes of section
-3, the controls of section 7, their egui realisation in section 12, and
-the cards of section 2 are the redesign's; the layout of section 2 is
-still the old one, which slice D3 replaces. It designs how the app in
-`functional.md` looks and behaves, inside that spec's capabilities (50–80);
-it adds no feature and renames none. The wireframes in `mockups/` fix layout,
-labels and field names; this document fixes everything they leave grey.
+15 collects what the review added. Amended 2026-11-18 by the redesign
+(`redesign.md`): the principles of section 1, the window of section 2,
+the sizes of section 3, the tokens of section 5, the controls of section
+7 and their egui realisation in section 12 are the redesign's. It
+designs how the app in `functional.md` looks and behaves, inside that
+spec's capabilities (50–80); it adds no feature and renames none. The
+wireframes in `mockups/` show the window before the redesign and are
+kept for their labels and field names; this document and `redesign.md`
+fix the layout and everything the wireframes leave grey.
 Vocabulary is `CONTEXT.md`'s. Realised in egui + wgpu; the realisation notes
 (section 12) say how, and what egui cannot do.
 
 ## 1. Principles
 
-1. **A current desktop tool, not a dialog-box program.** Every panel edits
-   the project in place, applies as it is made, and is undone from Edit.
-   *Rules out:* bevelled or gradient buttons, nested modals, tabbed property
-   sheets, OK/Cancel/Apply rows, 16-px icons on a grey toolbar strip,
-   inconsistent spacing between panels, a "Properties" window that floats
-   apart from the thing it edits.
+1. **The app says what to do next.** The work is five steps in a fixed
+   order: Design, Stock, Tools, Operations, Export. The rail shows which
+   are done, which need attention and which is current; one accent
+   button in the header moves to the next step that needs something.
+   Nothing is locked, and every panel edits the project in place: a
+   change applies as it is made and is undone from Edit. *Rules out:* a
+   wizard that blocks, a blank window with a menu bar, a toolbar of
+   twelve equal buttons, nested modals, tabbed property sheets,
+   OK/Cancel/Apply rows, a "Properties" window that floats apart from
+   the thing it edits.
 2. **Numbers are the interface.** Every length and feed is a value, a unit
    and a validation state, aligned so columns of them read as a table.
    *Rules out:* proportional figures in value fields, units in the label
@@ -38,71 +43,130 @@ Vocabulary is `CONTEXT.md`'s. Realised in egui + wgpu; the realisation notes
    background that lets eight operation colours stay distinct. *Rules out:*
    decorated grids, drop shadows on geometry, 3D-looking stock, chart-like
    gradients, anything the CLI's SVG would not show.
-5. **Density of a working tool.** 13-px text, 26-px controls, 28-px rows,
-   8-px gutters: a Figma or Fusion density, not a phone app and not a
-   spreadsheet. *Rules out:* 36-px touch buttons on the desktop, 11-px text
-   in a status bar, padding that varies by panel.
-6. **Light and dark are one design.** Every token has two values chosen
-   together; the operation palette is checked on both backgrounds.
-   *Rules out:* a dark mode made by inverting, a white Viewport in dark mode,
-   colours that pass in one mode only.
+5. **Roomy, still a tool.** 13-px text, 32-px controls, cards 8 px
+   apart with 16 px of padding. A panel shows one job at a time, so
+   nothing needs to be small. *Rules out:* 26-px controls, text under
+   12 px (the rail's 11-px label under its icon is the one exception), a
+   second column of fields squeezed into a panel, padding that varies by
+   panel.
+6. **Dark first; light is the same design.** Every token has two values
+   chosen together and contrast-checked; the operation palette is
+   checked on both backgrounds. One accent marks the current step, the
+   selected row, focus and the one primary button on screen. *Rules
+   out:* a light mode made by inverting, a white Viewport in dark mode,
+   colours that pass in one mode only, two accent buttons in one view,
+   accent on a toolpath.
 
 ## 2. The workspace
 
-The window is three regions and a status bar, read as one surface with the
-Viewport sunk into it. Chrome is quiet so the stock and its toolpaths are
-the brightest thing on screen.
+The window is six regions (functional 50; `redesign.md`, "The window"):
+a header, a rail, the step panel, the Viewport, the Inspector and a
+status bar. Chrome is quiet so the stock and its toolpaths are the
+brightest thing on screen, and one accent says where the user is and
+what to press next.
 
-- **Surfaces.** Every region is a **card** on the window backdrop
-  (`surface.window`): `surface.panel`, a 14-px radius, no border and no
-  shadow. The backdrop shows as the 8-px gaps between the cards and the
-  8-px margin round them, and under the menu bar, the toolbar and the
-  status bar, which sit on it. The cards are the Design Tree, the panels
-  under it, the Viewport, the CAM panel's list, its editor, and the
-  Warnings drawer. The Viewport's card is `viewport.bg`: darker than the
-  cards in dark mode, a shade off white in light, so it reads as the
-  stage. Popovers, menus, the toolpath view popover and sheets are
-  `surface.raised` with the one soft shadow (popovers and menus also a
-  1-px `border.default`, since in light mode they are the card's own
-  white). Fields and lists are `surface.sunken`. Dark is the default
-  appearance; light is the same design.
-- **Hierarchy.** Three levels only: panel title (Design Tree, Project
-  Settings, Properties, CAM), section header (Shapes, Stock, Setup,
-  Depth, Strategy), row. No fourth. The CAM panel's tabs and the
-  operation editor's header sit at the panel-title level.
-  Titles are 13-px SemiBold; section headers are 13-px SemiBold with a
-  chevron and no band; rows are 13-px Regular.
-- **Panel chrome.** No panel has a border, a title band or a rule under
-  its title. A panel is a card: its title (40 px) and its content, 16 px
-  in from the card's edges. Every panel has a title, the CAM panel
-  included. Left column: the Design Tree's card over a card that holds
-  two **collapsible panels**, *Project Settings* (always there, on top)
-  and *Properties* (only while something is selected), split from the
-  tree's card by the gap between them, which drags. A collapsible
-  panel's title row has a `chevron-right`/`chevron-down` at its left,
-  like a section header but at panel-title weight; collapsed, it is
-  its 32-px row. When a selection appears, Properties opens and its
-  row scrolls to the top of the area, so it is never below the fold
-  under an open Project Settings. Right column: the CAM panel's card,
-  its title (*CAM*) over pill tabs (section 7) in workflow order
-  (**Tools**, **Operations**) and the tab's list; under it the editor
-  of what the list has selected, a card of its own.
-- **Dividers.** The 8-px gap between two cards is the divider: it drags,
-  and the cursor is the platform's resize cursor. Panels
-  collapse to a strip (a 32-px card: icon + vertical title) when dragged
-  below their minimum or from the panel menu, and reopen from the strip.
-- **Menu bar and toolbar.** A 32-px menu bar (egui's own; on macOS the
-  design spec may move it to the native bar later: nothing here depends on
-  it). Below it a 48-px toolbar, both on the backdrop: quiet 32-px
-  buttons with a
-  20-px icon and a 13-px label in groups, *Open, Save* | *Undo, Redo* |
-  *Add drawing, Add picture* | the **Arrange** group, icon-only (Rotate
-  as a split button, Flip horizontal, Flip vertical) | *Fit, Tab tool*,
-  a 16-px gap between the groups, and Export as the one primary button, a
-  34-px accent pill at
-  the right end. The toolbar shows no file name: the project's name is the
-  OS window title (`plaque — DreamCarve`, `plaque* — DreamCarve` when
-  unsaved), set with `ViewportCommand::Title`.
+- **Surfaces.** Every region but the header and the status bar is a
+  **card** on the window backdrop (`surface.window`): `surface.panel`, a
+  14-px radius, no border and no shadow. The backdrop shows as the 8-px
+  gaps between the cards and the 8-px margin round them, and under the
+  header and the status bar, which sit on it. The cards are the rail,
+  the step panel, the Viewport, the Inspector and the Warnings drawer.
+  The Viewport's card is `viewport.bg`: darker than the cards in dark
+  mode, a shade off white in light, so it reads as the stage. Popovers,
+  menus, the toolpath view popover, the Viewport's floating tools and
+  sheets are `surface.raised` with the one soft shadow (popovers and
+  menus also a 1-px `border.default`, since in light mode they are the
+  card's own white). A card inside a card (the Export step's readiness
+  card, a start-screen example) is `surface.raised` with a 10-px radius
+  and a hairline. Fields and lists are `surface.sunken`. Dark is the
+  default appearance; light is the same design.
+- **Header.** 48 px on the backdrop, across the window. At the left the
+  menus (File, Edit, Arrange, View, Project, Help), quiet text buttons
+  (egui's own menu bar; on macOS the design spec may move it to the
+  native bar later: nothing here depends on it). In the centre the
+  project's name, 13-px Medium, with a 6-px text.secondary dot before it
+  while there are unsaved changes; it is centred on the window while
+  the room between the menus and the right-hand group allows, and cut
+  with an ellipsis when it does not. The same name is the OS window
+  title (`plaque — DreamCarve`, `plaque* — DreamCarve` when unsaved), set
+  with `ViewportCommand::Title`. At the right: Undo and Redo, 32-px
+  quiet icon buttons whose tooltips name the step; the generation chip
+  while toolpaths regenerate (a 24-px pill: the spinner and *Generating
+  2 of 5…*, or *Stopped*; *Stop* and *Regenerate all* stay in the status
+  bar); and the one primary button, a 34-px accent pill. It reads
+  *Continue* with `arrow-right` after the label and opens the next step
+  that is not complete; on the Export step it reads *Export G-code* with
+  `download` and opens the export sheet, disabled (a sunken pill) with
+  the blocking error as its tooltip while export is refused.
+- **Rail.** A 64-px card at the left, full height. Five step buttons
+  from the top, 4 px apart, each 56 × 52 with a 10-px radius: a 24-px
+  icon over an 11-px label (Design `shapes`, Stock `box`, Tools `drill`,
+  Operations `route`, Export `file-output`). At rest icon and label are
+  text.secondary; under the pointer text.primary on `surface.hover`; the
+  current step is filled with `accent.soft` and its icon and label take
+  `accent`. The state mark sits at the icon's top right on a disc of the
+  surface under it: nothing while the step is empty, a 12-px `check` in
+  status.success when complete, an 8-px dot in status.warning or
+  status.error when it needs attention; the tooltip says it in words
+  (*Tools: has an error*) with the step's shortcut. Pinned to the
+  bottom, three 40-px quiet icon buttons: Warnings (`triangle-alert`,
+  with a 16-px badge counting the worst tier found, in that tier's
+  colour; pressed while the drawer is open), Appearance (`sun-moon`, a
+  menu of System, Light and Dark with the current one checked) and Help
+  (`circle-question-mark`, a menu of the Help menu's rows). The steps
+  are tabs to assistive tools, the current one selected.
+- **Step panel.** A card, 312 px wide by default and at least 280. Its
+  head, 16 px in: the step's name in 18-px SemiBold, and under it one
+  12-px text.secondary line saying what the step holds (*10 shapes*,
+  *170 × 120 × 11.8 mm*, *1 error blocks export.*) or, while it holds
+  nothing, what to do in it. Then the step's content, to the card's
+  foot:
+  - **Design**: *Add drawing* and *Add picture*, two equal secondary
+    buttons, over the Design Tree (Shapes, Tabs, Pictures).
+  - **Stock**: Units, the stock's width, height and thickness with
+    *Fit to shapes*, and the Origin section. The stock's own fields have
+    no section header: the step's title names them.
+  - **Tools**: *New tool* and *Add from library…*, the list, *Duplicate*
+    and *Delete* under it, and a quiet *Tool Library…* at the card's
+    foot.
+  - **Operations**: *Add*, *Duplicate*, *Delete*, then the list in cut
+    order.
+  - **Export**: the readiness card (the error, warning and hint counts
+    as status chips, or `circle-check` and *No problems*; *Estimated
+    time* as the 22-px summary number; *Z range, tool centre* once the
+    programs are built), *Review programs…* (a full-width secondary
+    button), then the Heights, Tolerances and Post-processor sections.
+
+  While an operation's targets are edited (section 8) the panel shows
+  the Design Tree, the one part of the window besides the Viewport that
+  stays live.
+- **Inspector.** A card at the right, 328 px wide by default and at
+  least 300, there only while the current step has something selected
+  that has an editor. Its 48-px header has a quiet `x` at its right
+  that deselects; with nothing selected there is no card and the
+  Viewport takes the room. On Design: *Properties · square* in 13-px
+  SemiBold, the Arrange group (section 7, "Split button") before the
+  close button, and the placement fields. On Tools: the tool's type
+  glyph and name, its fields, and *Save to library* in a footer that
+  stays in view. On Operations: the operation editor with its own
+  header (section 7, "Editor header").
+- **Hierarchy.** Three levels only: step title (18 px), section header
+  (Shapes, Origin, Setup, Depth, Strategy), row. No fourth. An
+  Inspector's header sits at the section-header size, 13-px SemiBold;
+  section headers are 13-px SemiBold with a chevron and no band; rows
+  are 13-px Regular.
+- **Dividers.** No card has a border, a title band or a rule under its
+  title. The 8-px gap at the inner edge of the step panel and of the
+  Inspector is the divider: it drags, the cursor is the platform's
+  resize cursor, and a 2-px `accent` line shows in it while the pointer
+  is on it. The widths are remembered. View ▸ *Step Panel* hides the
+  step panel, and choosing a step shows it again.
+- **Viewport.** *Fit* and the *Tab tool* float at its top left in one
+  36-px `surface.raised` pill with the one shadow, 12 px in from the
+  card's edges: two 28-px quiet icon buttons, the Tab tool pressed while
+  it is armed. While the project has nothing to cut and the Design step
+  is open, the card shows the start screen (section 8, "Empty states")
+  in place of the stock.
 - **Status bar.** 28 px on the backdrop, with a 6-px margin under it;
   each cell a quiet 24-px pill (`surface.panel`, a 1-px `border.default`
   outline). Cells
@@ -120,23 +184,29 @@ the brightest thing on screen.
   nothing to show is not drawn. Cells are 6 px apart with 10-px padding
   and no rules between them; cell text is 12 px. A cell that is a button
   takes `surface.hover` on its pill.
-  No stock size: Project Settings shows it.
+  No stock size: the Stock step's summary line shows it.
 - **Warnings drawer.** Slides up from the status bar over the Viewport's
   bottom 240 px (resizable, min 120), a card of its own under the
-  Viewport's; never a window.
-- **Persistent vs transient.** Persistent: the four regions, the status
-  bar, the depth legend while By depth is on (section 9), the
-  target-editing bar while target editing is on (section 8).
-  Transient: menus, the Add-operation menu, the tool picker popover, the
-  **toolpath view popover** (opened from the status bar), the Rotate
-  popover, tooltips, the help line, the marquee, insertion indicators,
-  toasts for Undo. Sheets (import, export, Tool Library,
-  unsaved-changes) are transient and modal; everything else is not.
-  Nothing floats over the Viewport's drawing area at rest except the
-  depth legend and the `0,0` label.
-- **Three side panels.** Open question 3 asks that a third side panel fit
-  without redesign: the right column is a tab strip over panels, so a
-  third tab is the seam; nothing in this document assumes two.
+  Viewport's; never a window. It opens from the rail's Warnings button
+  or the status bar's counts.
+- **Small windows.** 1280 × 768 holds the rail, the step panel (280),
+  the Viewport (520) and the Inspector (300) with their five 8-px gaps.
+  In a narrower window the Inspector lies over the Viewport's right
+  side, a card with a hairline and the one shadow, instead of beside it.
+- **Persistent vs transient.** Persistent: the header, the rail, the
+  step panel, the Viewport and its floating tools, the status bar, the
+  depth legend while By depth is on (section 9), the target-editing bar
+  while target editing is on (section 8). The Inspector comes and goes
+  with the selection. Transient: menus, the Add-operation menu, the tool
+  picker popover, the **toolpath view popover** (opened from the status
+  bar), the Rotate popover, tooltips, the help line, the marquee,
+  insertion indicators, toasts for Undo. Sheets (import, export, Tool
+  Library, unsaved-changes) are transient and modal; everything else is
+  not.
+- **A sixth step.** Open question 3 asks that another panel fit without
+  redesign: the rail is the seam. A step is a button on the rail, a
+  content for the step panel and, when it has an editor, a content for
+  the Inspector; nothing in this document assumes five.
 
 ## 3. Layout grid and spacing
 
@@ -153,10 +223,10 @@ from.)
 | 2 | 8 | Gap between cards and the margin round them, gap between a label and its field, a list row's inset from its card's edge and its own padding, gap between adjacent buttons |
 | 2.5 | 10 | Field and chip inner padding (horizontal), status-bar cell padding |
 | 3 | 12 | Secondary-button padding (horizontal), popover margin |
-| 4 | 16 | Card padding, primary-button padding (horizontal), gap between toolbar groups, gap between sections inside a sheet |
+| 4 | 16 | Card padding, primary-button padding (horizontal), gap between sections inside a sheet |
 | 5 | 20 | Gap between sections in a card: under an open section's body |
-| 6 | 24 | Sheet padding, empty-state card padding (inner) |
-| 8 | 32 | Control and header heights, empty-state card gap between blocks |
+| 6 | 24 | Sheet padding, the start screen's margin |
+| 8 | 32 | Control and header heights, the gap between the start screen's blocks |
 
 Corner radii:
 
@@ -174,15 +244,15 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 
 | Element | Height | Notes |
 | --- | --- | --- |
-| Menu bar | 32 | On the backdrop |
-| Toolbar | 48 | On the backdrop; buttons 32 tall inside, the primary one 34 |
-| Panel title | 40 | No band; also the Warnings drawer's header at 52 with its buttons |
-| Editor header | 48 | No band and no rule |
-| Collapsible panel's row | 32 | |
+| Header | 48 | On the backdrop; buttons 32 tall inside, the primary one 34 |
+| Rail button | 52 | 56 wide in the 64-px rail; its bottom buttons 40 square |
+| Step title | 24 | 18-px SemiBold, 14 px under the card's top; its 12-px summary line under it |
+| Inspector header, editor header | 48 | No band and no rule |
+| Warnings drawer's header | 52 | With its buttons |
 | Target-editing bar | 48 | Its two buttons are controls, 8 px in |
 | Section header | 32 | Full-width hit area, no band |
 | Control (field, dropdown, button, segmented, pill tabs) | 32 | Text baseline centred |
-| Primary button in the toolbar | 34 | The one taller control |
+| Primary button in the header | 34 | The one taller control |
 | Checkbox glyph | 16 | Inside a 32-px row |
 | Switch | 20 | 36 wide, inside a 32-px row |
 | Chip | 24 | 12-px text |
@@ -192,19 +262,19 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 | Menu row, dropdown row | 32 | |
 | Status bar | 28 | Cells 24, and a 6-px margin under it |
 | Toolpath popover row | 24 | The key; its checkbox rows are 32 |
-| Collapsed panel strip | 32 wide | A card |
+| Floating tools pill (Viewport) | 36 | Buttons 28 square inside |
 | Vendor group header (Tool Library) | 32 | Same as a section header, inside the table |
-| Example card (empty state) | 72 | 96 × 56 thumbnail, name, one line |
+| Example card (start screen) | 144 | A 72-px well with the 96 × 56 thumbnail, then the name and one line |
 | Toolpath view popover | auto | 240 wide |
 
-Widths are the cards': left column default 280, min 240; right column
-default 320, min 300; Viewport min 560 (so 1280 × 768 holds both panels
-at minimum with the four 8-px gaps, spec 50). Labels in editors take a
+Widths are the cards': the rail 64; the step panel default 312, min 280;
+the Inspector default 328, min 300; the Viewport min 520 (so 1280 × 768
+holds all four at minimum with the five 8-px gaps, spec 50). Labels in editors take a
 112-px column; the field fills the rest;
 the unit occupies the last 28 px inside the field. Tool-Library sheet
 960 × 640 default, min 800 × 520, its right (editing) pane 320 wide;
 Import and Export sheets 560 wide, the export result the same sheet;
-unsaved-changes sheet 420 wide; the empty-state card 640 wide.
+unsaved-changes sheet 420 wide; the start screen's content 624 wide.
 
 ## 4. Typography
 
@@ -234,9 +304,11 @@ Type scale (px at 1×; line height 1.4 unless noted):
 
 | Role | Face | Size | Weight | Colour | egui `TextStyle` |
 | --- | --- | --- | --- | --- | --- |
-| Empty-state heading, sheet title | Inter | 18 | SemiBold | text.primary | `Name("Display")` |
+| Step title, start-screen heading, sheet title | Inter | 18 | SemiBold | text.primary | `Name("Display")` |
+| Summary number (the Export step's estimate) | Inter | 22 | SemiBold | text.primary | `Name("Summary")` |
+| Rail label | Inter | 11 | Regular | as its icon | `Name("RailLabel")` |
 | Heading inside a sheet | Inter | 15 | SemiBold | text.primary | `Heading` |
-| Panel title, tab label (active) | Inter | 13 | SemiBold | text.primary | `Name("Title")` |
+| Inspector title, drawer title | Inter | 13 | SemiBold | text.primary | `Name("Title")` |
 | Section header | Inter | 13 | SemiBold | text.primary | `Name("Title")` |
 | Row name, body, button label | Inter | 13 | Regular | text.primary | `Body`, `Button` |
 | Emphasised row name (selected row) | Inter | 13 | Medium | text.primary | `Name("Medium")` |
@@ -404,8 +476,8 @@ Contributors, with the Feather-derived icons under MIT (Cole Bemis)
 and joins, 2-px corner radius, 1-px inner padding. Bundle the icon font
 `lucide.ttf` and its codepoint map from the `lucide-static` package, loaded
 as the egui font family `icons`; icons draw at **16 px** in rows, fields,
-section headers and the status bar, and **20 px** in the toolbar and sheet
-headers. Tint is the text colour of the context (text.primary, secondary,
+section headers and the status bar, **20 px** in the header and sheet
+headers, and **24 px** on the rail. Tint is the text colour of the context (text.primary, secondary,
 or a status colour); never a colour of their own. Add Lucide to `NOTICE`.
 
 Operation-kind glyphs are not in Lucide; they are DreamCarve's own, drawn
@@ -445,11 +517,15 @@ success `circle-check`, generating a 14-px arc spinner (section 10),
 stale a 35 % alpha wash with no glyph, unused-tool hint `info` in the
 row's status cell.
 
-Toolbar: Open `folder-open`, Save `save`, Undo `undo-2`, Redo `redo-2`,
-Add drawing `file-input`, Add picture `image-plus`, Rotate
+Header: Undo `undo-2`, Redo `redo-2`, Continue `arrow-right`, Export
+G-code `download`. Rail: Design `shapes`, Stock `box`, Tools `drill`,
+Operations `route`, Export `file-output`, Warnings `triangle-alert`,
+Appearance `sun-moon`, Help `circle-question-mark`. Design step: Add
+drawing `file-input`, Add picture `image-plus`. Arrange group: Rotate
 `rotate-cw-square` (its chevron `chevron-down`), Flip horizontal
-`flip-horizontal-2`, Flip vertical `flip-vertical-2`, Fit `maximize`,
-Tab tool `bookmark-plus`, Export `download`. Status bar: Toolpaths
+`flip-horizontal-2`, Flip vertical `flip-vertical-2`. Viewport's
+floating tools: Fit `maximize`, Tab tool `bookmark-plus`. Tools step:
+Tool Library `library-big`. Start screen: Open `folder-open`. Status bar: Toolpaths
 `layers`, units menu `chevron-down`. Toolpath popover: Show all `eye`,
 Hide all `eye-off`. Viewport: 1:1 `scan`, zoom to selection `focus`.
 Lists: New tool `plus`, Duplicate `copy`, Delete `trash-2`. Targets:
@@ -555,7 +631,8 @@ Controls:
   the middle of H's, with a 28 × 28 quiet toggle on it holding `link`
   (linked, text.primary) or `unlink` (broken, text.secondary). Tooltip
   *Keep proportions*. Nothing sits between W and H.
-- **Split button** (toolbar Rotate). One 32-px quiet button, icon
+- **Split button** (the Arrange group's Rotate, in the Inspector's
+  header). One 28-px quiet button, icon
   `rotate-cw-square`, and a 16-px chevron segment divided by a 1-px
   `border.default` rule; the chevron opens a 240-px popover with an
   *Angle* unit field and a secondary *Rotate* button.
@@ -588,14 +665,14 @@ Controls:
   alone, with no *None* row.
 - **Buttons.** 32 px. Primary: an `accent.fill` pill with text.on-accent
   and 16-px padding, `accent.hover` under the pointer (34 px in the
-  toolbar), used once per view (Export, Add to project, Import in a
-  sheet); disabled, a `surface.sunken` pill with a `border.default`
+  header), used once per view (Continue or Export G-code, Add to
+  project, Import in a sheet); disabled, a `surface.sunken` pill with a `border.default`
   outline and text.disabled. Secondary: `surface.raised`, a 1-px
   `border.default` outline (`border.strong` and a `surface.hover` wash
   under the pointer), 8-px radius, 12-px padding, text.primary
   (Duplicate, Place tabs, Add from library…). Quiet: no outline, text or
-  icon only, `surface.hover` on hover (toolbar, row actions, Show all /
-  Hide all). Destructive: a secondary button whose label and icon are
+  icon only, `surface.hover` on hover (the header's Undo and Redo, row
+  actions, Show all / Hide all). Destructive: a secondary button whose label and icon are
   status.error text, at rest too, and whose outline turns status.error
   under the pointer (Delete). Icon-only
   buttons are 32 × 32 with a tooltip after 500 ms.
@@ -617,11 +694,10 @@ Controls:
   the label's underline (1 px dotted, text.disabled) appears on hover to
   say it has help. `circle-help` is kept only in sheet headers as a link to
   the chapter.
-- **Tabs (CAM panel).** Pill tabs: the segmented control's track and
-  raised pill, 32 px, under the *CAM* title, two
-  equal segments in workflow order, **Tools** then **Operations**, label
-  13 px; active: text.primary Medium on the raised pill;
-  inactive: text.secondary; a count (`Tools · 3`) in the label.
+- **Rail button.** 56 × 52, a 10-px radius: a 24-px icon over an 11-px
+  label, the state mark at the icon's top right (section 2, "Rail").
+  The current step's is filled with `accent.soft`, icon and label in
+  `accent`. The window has no tab strip: the steps are the rail's.
 - **Search field.** A text field with a leading `search` glyph and a
   trailing `x` clear when non-empty; filters as typed, 150 ms debounce.
 - **Table rows (Tool Library, export programs, Warnings).** 34 px, striped
@@ -633,11 +709,12 @@ Controls:
 - **Vendor group header** (Tool Library). A 32-px header inside the
   table, with no band, chevron left, the vendor in 13-px SemiBold and the
   count after it in text.secondary (`Amana · 4`); *No vendor* last.
-- **Example card** (empty state). 72 px tall, `surface.raised`, 1-px
-  `border.default`, 10-px radius; a 96 × 56 thumbnail on
-  `viewport.stock.fill` with the example's shapes drawn in
-  `viewport.shape` at 1 px, fitted with 4-px inset; then the name 13-px
-  Medium and one 12-px text.secondary line. Hover: `surface.hover`;
+- **Example card** (start screen). 144 px tall, `surface.raised`, 1-px
+  `border.default`, 10-px radius, 12-px padding; a 72-px well of
+  `viewport.stock.fill` across its top with the 96 × 56 thumbnail
+  centred in it, the example's shapes drawn in `viewport.shape` at 1 px,
+  fitted with 4-px inset; under it the name 13-px Medium and one 12-px
+  text.secondary line. Hover: `surface.hover`;
   the whole card is the button.
 
 ## 8. Interaction patterns
@@ -702,22 +779,27 @@ Controls:
   *Done* (primary) on the right. The cursor over a shape is the pointing
   hand; a click toggles membership and the shape's highlight in the same
   frame; the editor's Targets row updates live. The rest of the window
-  stays visible but inert (lists, toolbar and editor are dimmed to
-  text.disabled and do not take clicks), so the mode is unmistakable.
+  stays visible but inert (the header, the rail and the editor are
+  dimmed to text.disabled and do not take clicks), so the mode is
+  unmistakable; the step panel shows the Design Tree, whose rows toggle
+  membership as the shapes do.
   Enter is Done, Escape is Cancel; Done commits one undo step.
-- **Empty states.** The first-run card (functional 79): 640 px wide,
-  centred in the Viewport, `surface.raised`, 24-px padding, the 18-px
-  heading *Start a project* and one 13-px text.secondary line; `x`
-  top-right. Below, two columns with a 16-px gap, each a
-  `surface.panel` well with 6-px radius and 16-px padding and its own
-  15-px heading: **Your drawing** (the primary *Import a drawing…*
-  button full width at 40 px with `file-input`, then *Import a
-  picture…* and *Open a project…* as 32-px secondary buttons, each with
-  its shortcut right-aligned in text.secondary) and **Examples** (three
-  example cards, section 7). The two wells read as two choices, not one
-  list. Empty lists show one 13-px text.secondary sentence centred in
-  the list area, and at most two secondary buttons under it (the Tools
-  list: *New tool*, *Add from library…*), never a graphic.
+- **Empty states.** The start screen (functional 79) is drawn on the
+  Viewport's card in place of the stock, a 624-px column centred in it:
+  the 18-px heading *Start with a drawing* and one 13-px text.secondary
+  sentence; 24 px under them a row of three 40-px buttons, the primary
+  *New from drawing…* with `file-input`, the secondary *New from
+  picture…* with `image-plus`, and the quiet *Open…* with `folder-open`
+  and its shortcut as the tooltip; 32 px under them **Examples** (13-px
+  SemiBold) over three example cards in a row, 12 px apart (section 7);
+  and, when there are any, **Recent** over up to four 32-px rows, each
+  the file's name in 13 px and its folder's name after it in 12-px
+  text.secondary, the whole path its tooltip, the row a quiet button. It has one
+  primary button, and the header's *Continue* is the window's other
+  accent: the two are never the same action. Empty lists show one 13-px
+  text.secondary sentence centred in the list area, and at most two
+  secondary buttons under it (the Tools list: *New tool*, *Add from
+  library…*), never a graphic.
 - **Destructive actions.** Delete and Duplicate never confirm; the
   toast names the undo. There are two confirmations. The first is unsaved
   changes on close, quit, open or new: a 420-px sheet titled *Save
@@ -744,9 +826,11 @@ Controls:
   replaces the export sheet's content. A sheet's notes are only those
   that change a decision: no footnote restating how files are written,
   no list the status bar already shows.
-- **Keyboard focus.** Tab walks top-left to bottom-right: toolbar, Design
-  Tree, Properties, Viewport, CAM list, editor, status bar; inside a sheet
-  it cycles within the sheet. Every focusable element shows the 2-px ring
+- **Keyboard focus.** Tab walks top-left to bottom-right: the header,
+  the rail (its five steps, then Warnings, Appearance and Help), the
+  step panel, the Viewport, the Warnings drawer, the Inspector, the
+  status bar; inside a sheet it cycles within the sheet. Ctrl/⌘ 1 to 5
+  open the five steps from anywhere. Every focusable element shows the 2-px ring
   (section 7). The ring shows for keyboard focus only, not after a mouse
   click (egui note in 12). Arrow keys move within lists; Enter activates;
   Space toggles; Delete deletes the selection; F1 opens the chapter.
@@ -834,8 +918,8 @@ Controls:
 
 ## 10. Motion
 
-- Disclosure sections, the collapsible panels, the Warnings drawer
-  and panel collapse to a strip: 150 ms ease-out on height; content clips.
+- Disclosure sections and the Warnings drawer: 150 ms ease-out on
+  height; content clips.
 - Hover washes and divider highlight: 100 ms ease-out; focus ring and
   pressed state: instant.
 - The Undo toast: 150 ms in, 150 ms out after 2 s; the row flash: 300 ms.
@@ -889,12 +973,16 @@ is a bug).
   backend, eframe/winit). Build both `Visuals` and install with
   `ctx.set_style_of(Theme::Light, light)` and
   `ctx.set_style_of(Theme::Dark, dark)`.
-- **Cards.** A side panel's own `Frame` is filled with `surface.window`
-  and carries the 8-px margin at the window's edge; the card is painted
-  inside it (`widgets::card`), so the backdrop shows in the gaps. A pane
-  under another card in a column (the panels under the Design Tree, the
-  operation editor) is a nested bottom panel whose frame has the 8-px gap
-  as its top margin, which makes the gap the resize handle. egui clips to
+- **Cards.** The rail, the step panel and the Inspector are `Panel`s
+  whose own `Frame` is `surface.window` and carries the margin at the
+  window's edge; the card is painted inside it (`widgets::card`), so the
+  backdrop shows in the gaps. A resizable panel keeps 3 px of the gap at
+  its inner edge as inner margin and 2 px as outer margin, and the
+  Viewport keeps the other 3: egui draws the panel's resize line in that
+  outer margin, and the shell gives it the accent at 2 px. In a window
+  under 1280 px wide the Inspector is an `Area` over the Viewport's
+  card (`card::floating`), with a surface under it that takes the
+  clicks. egui clips to
   rectangles, so after a card's content is drawn its four corners are
   painted back in `surface.window` (`card::mask_corners`): this is what
   rounds the Viewport's wgpu callback, a list row's wash and a scroll
@@ -1036,7 +1124,7 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
    outside `theme.rs` and the painter-glyph module.
 2. Both appearances were captured; nothing is white-on-white or
    dark-on-dark in either.
-3. Control heights are 32 px (34 for the toolbar's primary button); row
+3. Control heights are 32 px (34 for the header's primary button); row
    heights are 30, 52 or 34 as the table says.
 4. All horizontal and vertical gaps are on the 4-pt scale.
 5. Text is Inter at 12, 13, 15 or 18 px, or JetBrains Mono at 12; no other
@@ -1075,24 +1163,26 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
     project-level rows first, each row with tier glyph, mono code,
     message; a single group has no heading; carve notes are labelled
     facts with a grey `info`; there is no Regenerate button.
-21. The empty state is a centred raised card with two separate wells,
-    *Your drawing* and *Examples*, the examples as pictured cards, no
-    sentence about phases or unsaved copies; empty lists show one
-    sentence each.
+21. The start screen is on the Viewport's card: a heading and one
+    sentence, three buttons in a row with one primary, the examples as
+    three pictured cards, the recent files, no sentence about phases or
+    unsaved copies; empty lists show one sentence each.
 22. Nothing animates on the Viewport; a disclosure animates in 150 ms.
 23. Every string in the screenshot is in the string table (spot-check two).
-24. The window at 1280 × 768 shows both side panels at their minimum with
-    the Viewport at least 560 px wide.
+24. The window at 1280 × 768 shows the rail, the step panel and the
+    Inspector at no less than their minimum with the Viewport at least
+    520 px wide.
 25. The window title is the project name without extension (`*` when
-    unsaved); no file name appears in the toolbar or over a panel.
-26. Every panel has a title (the CAM panel's is *CAM*); the CAM tabs
-    read Tools, then Operations.
-27. Project Settings and Properties are separate collapsible panels,
-    Project Settings above; Units is Project Settings' first row.
+    unsaved); the header shows the same name, with a dot when unsaved,
+    and no file name with its extension appears anywhere.
+26. The rail's steps read Design, Stock, Tools, Operations, Export; the
+    step panel is titled for the current one, with its one-line summary.
+27. The Inspector is there only with a selection; Units is the Stock
+    step's first row.
 28. The status bar has no stock size, no dashes for an absent cursor and
     no *Idle*.
 29. Properties shows X, Y, W, H and the chain link to their right;
-    rotate and flip are in the toolbar's Arrange group.
+    rotate and flip are in the Arrange group in the Inspector's header.
 30. No row says "open": open paths carry the `spline` glyph.
 31. Every operation editor starts with its header name and the Setup
     block; there is no Identity group, no enabled checkbox and no *check
@@ -1115,7 +1205,7 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 | A modal over a modal | A popover inside the sheet, or the sheet's content replaced with a *Back* |
 | Tabbed property sheets (General / Advanced / Tabs…) | Disclosure sections in one scrolling editor |
 | A "?" button beside every field | Help on label hover, with the field name in mono |
-| 16-px pixel icons on a grey toolbar strip | 20-px Lucide icons with labels, quiet buttons, one primary |
+| 16-px pixel icons on a grey toolbar strip | No toolbar: a rail of five steps, each command in the step or the Inspector it belongs to, one primary button |
 | Status bar text at 11 px in sunken cells | 12 px in quiet pills on the backdrop |
 | Raised 3-D frames around panels and the canvas | Borderless cards on the backdrop, 8 px apart, no rule under a title |
 | Grid over the whole canvas, black background, crosshair cursor | Grid on the stock only, paper-coloured stage, arrow cursor, coordinates in the status bar |
@@ -1126,9 +1216,9 @@ A reviewer checks a PR's screenshots (light and dark, 1× and 2×) against:
 | Confirm dialogs on Delete | Delete, toast, Undo |
 | Dark mode by inverting the light palette | Two token columns designed together; the operation palette checked on both backgrounds |
 | Nested tree indentation with dotted connector lines | Flat rows under three section headers; no connectors |
-| A splash screen | The empty-state card in the window |
-| A file name repeated in a toolbar or a panel title | The project's name in the OS window title, once |
-| Rotate and mirror as fields in a property sheet | Arrange actions on the toolbar that act on the selection |
+| A splash screen | The start screen in the Viewport's card |
+| A file name repeated in a toolbar or a panel title | The project's name in the OS window title and the header's centre, without its extension |
+| Rotate and mirror as fields in a property sheet | Arrange actions in the Inspector's header that act on the selection |
 | A padlock between two fields for proportions | A chain link to the right of the pair, linked or broken |
 | A text badge where a glyph would do (`open`) | A shape glyph with a tooltip |
 | A list of target names with ✕ buttons | Targets highlighted on the drawing, edited in a mode on the drawing |
@@ -1147,8 +1237,8 @@ What the screenshot review of #549 added that has no home above.
   panel that edits a record leads with the few values that make it
   right, then folds the rest under headers that say what they hold. A
   user who never opens a section has still seen every value, as a
-  summary. The same rule shapes Project Settings (Units, Stock first)
-  and the tool editors (name, type, diameter, the three rates first).
+  summary. The same rule shapes the Stock step (Units, then the stock's
+  size) and the tool editors (name, type, diameter, the three rates first).
 - **Library units.** The Tool Library header's `mm` / `in` segmented
   control sits at the header's right, before *Import…* and *Export
   library…*. Every length and rate in the sheet follows it, including

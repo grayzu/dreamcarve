@@ -521,7 +521,7 @@ fn empty_library(ui: &mut Ui, strings: &Strings, out: &mut Vec<Action>) {
     });
 }
 
-/// *New tool*, the same command as the Tools tab's (capability 63).
+/// *New tool*, the same command as the Tools step's (capability 63).
 fn new_tool_button(ui: &mut Ui, strings: &Strings, out: &mut Vec<Action>) {
     let new = ButtonSpec::new(Kind::Secondary, strings.get(StrKey::AppLibraryNewTool))
         .icon(Icon::Plus, theme::ICON_SMALL_PX);
@@ -1961,7 +1961,7 @@ fn add(sheet: &mut Sheet, app: &mut App) -> Option<(String, bool)> {
     })
 }
 
-/// *Save to library* from the Tools tab: tool `id` of the project into
+/// *Save to library* from the tool's editor: tool `id` of the project into
 /// the library file, as `dc_library::add` stores it. Updates the open
 /// sheet's table. Returns the status bar's message.
 pub(crate) fn save_to_library(

@@ -119,7 +119,10 @@ impl Default for WindowGeometry {
     }
 }
 
-/// The side panels' widths and whether each is open, in logical pixels.
+/// The step panel's and the Inspector's widths, in logical pixels, and
+/// whether the step panel shows. `left` is the step panel and `right` the
+/// Inspector, which shows whenever its step has something selected
+/// (`redesign.md`, "The window").
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Panels {
     /// The left panel's width.
@@ -137,9 +140,9 @@ pub struct Panels {
 impl Default for Panels {
     fn default() -> Self {
         Self {
-            left_width: 280.0,
+            left_width: 312.0,
             left_open: true,
-            right_width: 320.0,
+            right_width: 328.0,
             right_open: true,
             warnings_open: false,
         }

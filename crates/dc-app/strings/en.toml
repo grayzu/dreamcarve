@@ -81,7 +81,6 @@ units_mm = "mm"
 units_in = "in"
 
 [project.stock]
-title = "Stock"
 width = "Width"
 width_help = "How wide the stock is, along X."
 height = "Height"
@@ -202,8 +201,12 @@ lock = "Lock"
 unlock = "Unlock"
 rename = "Rename"
 arrange = "Arrange"
-left_panel = "Design Tree and Properties"
-right_panel = "CAM panel"
+step_panel = "Step Panel"
+go_to_design = "Go to Design"
+go_to_stock = "Go to Stock"
+go_to_tools = "Go to Tools"
+go_to_operations = "Go to Operations"
+go_to_export = "Go to Export"
 appearance = "Appearance"
 theme_system = "System"
 theme_light = "Light"
@@ -214,29 +217,79 @@ tool_library = "Tool Library…"
 user_guide = "User Guide"
 about = "About DreamCarve"
 
-[app.toolbar]
-open = "Open"
-save = "Save"
+# The header (`redesign.md`, "The window"): Undo and Redo, the primary
+# button, and what the dot beside the project's name says.
+[header]
 undo = "Undo"
 redo = "Redo"
-add_drawing = "Add drawing"
-add_picture = "Add picture"
-fit = "Fit"
-tab_tool = "Tab tool"
-tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
-export = "Export"
+continue = "Continue"
+continue_to = "Go to {step}"
+export = "Export G-code"
+unsaved = "unsaved changes"
 
+# The rail's tooltips and its bottom buttons' names.
+[rail]
+complete = "{step}: complete"
+warning = "{step}: has a warning"
+error = "{step}: has an error"
+warnings = "Warnings: {counts}"
+appearance = "Appearance: {theme}"
+help = "Help and About"
+
+# The Inspector's close button.
+[inspector]
+close = "Close the Inspector"
+
+# A step's empty sentences (capability 79).
 [app.panel]
-design_tree = "Design Tree"
-project_settings = "Project Settings"
-cam = "CAM"
-operations = "Operations · {count}"
-tools = "Tools · {count}"
 no_shapes = "No shapes yet."
 no_operations = "Select shapes on the drawing, then Add an operation."
 no_tools = "No tools yet."
-show_left = "Show the Design Tree"
-show_right = "Show the CAM panel"
+
+# The five steps (`redesign.md`, "The steps"; functional spec, capability
+# 50): the rail's labels and the step panel's titles, in the workflow's
+# order.
+[steps.label]
+design = "Design"
+stock = "Stock"
+tools = "Tools"
+operations = "Operations"
+export = "Export"
+
+# The one line under a step's title: what the step holds.
+[steps.summary]
+design_empty = "Bring in a drawing or a picture to cut."
+shape = "1 shape"
+shapes = "{count} shapes"
+picture = "1 picture"
+pictures = "{count} pictures"
+stock = "{width} × {height} × {thickness} {unit}"
+stock_no_thickness = "{width} × {height} {unit} · thickness not set"
+stock_off = "A shape reaches past the stock. Fit to shapes sizes it round them."
+tools_empty = "The cutters this job uses."
+tool = "1 tool"
+tools = "{count} tools"
+operations_empty = "What to cut, in cut order."
+operation = "1 operation"
+operations = "{count} operations"
+export_nothing = "Nothing to export yet."
+export_blocked = "1 error blocks export."
+export_blocked_many = "{count} errors block export."
+export_ready = "Ready to export."
+export_done = "Exported. Nothing has changed since."
+
+# The Design step's buttons (capabilities 55 and 56).
+[steps.design]
+add_drawing = "Add drawing"
+add_picture = "Add picture"
+
+# The Export step's readiness card and its button.
+[steps.export]
+readiness = "Readiness: {counts}"
+estimate = "Estimated time"
+z_range = "Z range, tool centre"
+review = "Review programs…"
+review_help = "Choose the folder and see each program before it is written."
 
 # The status bar (slice 24, #616; functional spec, capability 50b): the
 # units button and its menu, the counts, and the Toolpaths button.
@@ -254,22 +307,21 @@ warning = "1 warning"
 warnings = "{count} warnings"
 
 [app.empty]
-heading = "Start a project"
-intro = "Bring in a drawing to make toolpaths from, or explore an example."
-your_drawing = "Your drawing"
-import_drawing = "Import a drawing…"
+heading = "Start with a drawing"
+intro = "Bring in an SVG or DXF drawing to make toolpaths from, or open an example to look round."
+import_drawing = "New from drawing…"
 import_drawing_hint = "SVG or DXF; the stock is sized round it."
-import_picture = "Import a picture…"
+import_picture = "New from picture…"
 picture_unavailable = "Pictures arrive with phase 3.5"
-open_project = "Open a project…"
+open_project = "Open…"
 examples = "Examples"
+recent = "Recent"
 coaster = "Coaster"
 coaster_teaches = "Profile with tabs"
 plaque = "Plaque"
 plaque_teaches = "Pockets and holes"
 sign = "Sign"
 sign_teaches = "V-carved lettering"
-close = "Close"
 
 [app.unsaved]
 title = "Save changes to “{name}”?"
@@ -314,6 +366,11 @@ hover_male_board = "Male board · {name}"
 fit_view = "Fit View"
 zoom_selection = "Zoom to Selection"
 name = "Viewport"
+# The floating tools at the Viewport's top left (`redesign.md`, "The
+# Viewport's floating controls").
+fit = "Fit"
+tab_tool = "Tab tool"
+tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
 
 # The toolpath display (slice 16, #545): the visibility card, the depth
 # legend, the program extents' caption and the status bar's Z range.
@@ -1103,7 +1160,7 @@ stem_help = "What each program's name starts with; the post-processor gives the 
 stem_empty = "Type a file name."
 names = "Writes {names}"
 post = "Post-processor"
-post_help = "The controller the programs are written for: the Project panel's setting."
+post_help = "The controller the programs are written for: the Export step's setting."
 post_note = "Changing it here changes the project (undoable) and keeps your settings."
 split = "Programs"
 split_help = "How a project with several tools is divided into programs. An override applies to this export only and is not saved."

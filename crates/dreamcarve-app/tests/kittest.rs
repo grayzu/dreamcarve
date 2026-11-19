@@ -20,11 +20,11 @@
 mod common;
 
 use common::{
-    QueuedDialogs, command_key, copy_fixture, harness, options, press_close, saved_form, scratch,
-    shift_command_key, wgpu_adapter_available, window_commands,
+    QueuedDialogs, command_key, copy_fixture, go_to, harness, open_operation, options, press_close,
+    saved_form, scratch, shift_command_key, wgpu_adapter_available, window_commands,
 };
 use dc_app::Command;
-use dreamcarve_app::{PanelShown, theme};
+use dreamcarve_app::theme;
 use dreamcarve_shell::{GuiPrefs, Paths, gui_prefs};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
@@ -71,8 +71,8 @@ fn opens_plaque_renders_and_exports() {
     assert!(!app.project().instances.is_empty(), "the plaque has shapes");
     assert!(!app.is_dirty(), "a project just opened is clean");
     assert!(
-        harness.query_by_label("Import a drawing…").is_none(),
-        "the empty state is not shown over a project with shapes"
+        harness.query_by_label("New from drawing…").is_none(),
+        "the start screen is not shown over a project with shapes"
     );
     let title = harness.state().title().to_owned();
     assert_eq!(
@@ -279,74 +279,108 @@ fn unsaved_changes_prompt() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Acceptance 50 (capability 50, open question 12): at 1280 × 768 both
-/// side panels are open at no less than their minimum (240 and 300 px,
-/// `experience.md` section 3) with the Viewport at least 560 px wide;
-/// below that size they collapse to strips instead of the window
-/// refusing, without forgetting that the user had them open; a strip
-/// reopens its panel; and the layout persists in `gui.toml`.
+/// Acceptance 50 (capability 50; `redesign.md`, "The window"): at
+/// 1280 × 768 the rail (64 px), the step panel (at least 280), the
+/// Viewport (at least 520) and the Inspector (at least 300) are side by
+/// side, 8 px apart and 8 px from the window's edge; in a narrower window
+/// the Inspector lies over the Viewport's right side instead of the
+/// window refusing, and the step panel keeps its place; with nothing
+/// selected there is no Inspector and the Viewport takes the room. Hiding
+/// the step panel from the View menu is a preference, kept in `gui.toml`;
+/// choosing a step shows it again.
 #[test]
-fn panels_collapse_below_the_minimum() {
+fn inspector_lies_over_the_viewport_below_the_minimum() {
     let dir = scratch("panels");
     let config = dir.join("config");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let dialogs = QueuedDialogs::default();
     let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 768.0);
+    go_to(&mut h, "Operations");
+    let wide = h.state().layout();
+    assert_eq!(wide.inspector, None, "nothing selected: no Inspector");
+    open_operation(&mut h, "Panel");
 
-    let open_at_minimum = |h: &Harness<'_, dreamcarve_app::Shell>| {
+    let near = |a: f32, b: f32| (a - b).abs() < 0.5;
+    let side_by_side = |h: &Harness<'_, dreamcarve_app::Shell>| {
         let layout = h.state().layout();
-        let PanelShown::Open { width: left } = layout.left else {
-            panic!("left panel open at 1280 × 768: {layout:?}");
-        };
-        let PanelShown::Open { width: right } = layout.right else {
-            panic!("right panel open at 1280 × 768: {layout:?}");
-        };
-        assert!(left >= 240.0 - 0.5, "left panel {left} px");
-        assert!(right >= 300.0 - 0.5, "right panel {right} px");
+        let step = layout.step_panel.expect("the step panel shows");
+        let inspector = layout.inspector.expect("the Inspector shows");
+        assert!(near(layout.rail.width(), 64.0), "rail {:?}", layout.rail);
+        assert!(step.width() >= 280.0 - 0.5, "step panel {step:?}");
+        assert!(inspector.width() >= 300.0 - 0.5, "Inspector {inspector:?}");
         assert!(
-            layout.viewport.width() >= 560.0 - 0.5,
-            "Viewport {} px wide",
-            layout.viewport.width()
+            layout.viewport.width() >= 520.0 - 0.5,
+            "Viewport {:?}",
+            layout.viewport
         );
+        for (what, gap) in [
+            ("window to rail", layout.rail.left()),
+            ("rail to step panel", step.left() - layout.rail.right()),
+            (
+                "step panel to Viewport",
+                layout.viewport.left() - step.right(),
+            ),
+            (
+                "Viewport to Inspector",
+                inspector.left() - layout.viewport.right(),
+            ),
+            ("Inspector to window", layout.window.x - inspector.right()),
+        ] {
+            assert!(near(gap, 8.0), "{what}: {gap} px in {layout:?}");
+        }
     };
-    open_at_minimum(&h);
+    side_by_side(&h);
+    assert!(
+        h.state().layout().viewport.width() < wide.viewport.width(),
+        "the Inspector takes its room from the Viewport"
+    );
 
-    for (width, height) in [(1279.0, 768.0), (1280.0, 767.0), (900.0, 600.0)] {
+    for (width, height) in [(1279.0, 768.0), (1024.0, 700.0)] {
         h.set_size(egui::vec2(width, height));
         h.run();
         let layout = h.state().layout();
-        assert_eq!(
-            (layout.left, layout.right),
-            (PanelShown::Strip, PanelShown::Strip),
-            "{width} × {height}"
-        );
-        let panels = h.state().app().prefs().panels;
+        let inspector = layout.inspector.expect("the Inspector still shows");
+        assert!(layout.step_panel.is_some(), "{width} × {height}");
         assert!(
-            panels.left_open && panels.right_open,
-            "collapsing for size keeps the preference"
+            near(layout.window.x - layout.viewport.right(), 8.0),
+            "the Viewport reaches the window's edge at {width} × {height}: {layout:?}"
         );
+        assert!(
+            near(inspector.right(), layout.viewport.right())
+                && inspector.left() > layout.viewport.left()
+                && near(inspector.top(), layout.viewport.top()),
+            "the Inspector lies over the Viewport's right side at {width} × {height}: {layout:?}"
+        );
+        assert!(inspector.width() >= 300.0 - 0.5, "{inspector:?}");
     }
+    // The editor works there: its fields are the Inspector's.
+    let depth = h.get_by_role_and_label(Role::TextInput, "Depth").rect();
+    assert!(
+        h.state()
+            .layout()
+            .inspector
+            .is_some_and(|i| i.contains_rect(depth)),
+        "the Depth field is in the Inspector"
+    );
 
-    // A strip reopens its panel, even in a small window.
-    h.get_by_label("Show the Design Tree").click();
-    h.run();
-    assert!(matches!(h.state().layout().left, PanelShown::Open { .. }));
-
-    // Back at full size both are open again.
+    // Back at full size they are side by side again.
     h.set_size(egui::vec2(1280.0, 768.0));
     h.run();
-    open_at_minimum(&h);
+    side_by_side(&h);
 
-    // Hiding a panel from the View menu is a preference, kept in gui.toml.
+    // Hiding the step panel from the View menu is a preference, kept in
+    // gui.toml; a step chosen from the rail shows it again.
     h.get_by_label("View").click();
     h.run();
-    h.get_by_label("CAM panel").click();
+    h.get_by_label("Step Panel").click();
     h.run();
-    assert_eq!(h.state().layout().right, PanelShown::Strip);
-    assert!(!h.state().app().prefs().panels.right_open);
+    assert_eq!(h.state().layout().step_panel, None);
+    assert!(!h.state().app().prefs().panels.left_open);
     let saved: GuiPrefs = gui_prefs::load(&Paths::in_dir(config.clone())).prefs;
-    assert!(!saved.panels.right_open, "gui.toml has the hidden panel");
-    assert!(saved.panels.left_open);
+    assert!(!saved.panels.left_open, "gui.toml has the hidden panel");
+    go_to(&mut h, "Design");
+    assert!(h.state().layout().step_panel.is_some());
+    assert!(h.state().app().prefs().panels.left_open);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -687,7 +721,7 @@ fn assert_near(got: dc_geometry::Point, want: dc_geometry::Point, what: &str) {
 /// 9): the camera is fitted to the stock and shapes when a project opens;
 /// a middle-button drag, a Space-drag and a two-finger scroll pan it, the
 /// content following the pointer; the wheel and a pinch zoom about the
-/// cursor; F fits again, the toolbar's Fit too, and Shift F frames the
+/// cursor; F fits again, the Viewport's Fit too, and Shift F frames the
 /// selection. The status bar shows the cursor in project units.
 #[test]
 fn pan_zoom_fit_reach_the_camera() {
@@ -811,7 +845,7 @@ fn pan_zoom_fit_reach_the_camera() {
         .expect("the square has bounds");
     assert_same_view(camera(&h), fitted(&h, bounds), "Shift F");
 
-    // The toolbar's Fit.
+    // The Viewport's Fit.
     h.get_by_label("Fit").click();
     h.run();
     assert_same_view(camera(&h), fit_view, "the Fit button");
@@ -1105,6 +1139,9 @@ fn design_tree_rows_select_hide_and_rename() {
             .collect()
     };
 
+    // The Design step, by its key: no click yet.
+    command_key(&h, egui::Key::Num1);
+    h.run();
     // Double-click renames in place; Enter commits one step. Done first,
     // so no earlier click in the harness counts toward the double-click.
     let at = h.get_by_label("border").rect().center();
@@ -1179,9 +1216,9 @@ fn design_tree_rows_select_hide_and_rename() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Capability 60 and acceptance 69 (#536): with nothing selected the
-/// Properties area is the Project panel, and the park point is typed or
-/// clicked on the Viewport. *Click on the view* arms the Viewport; the next
+/// Capability 60 and acceptance 69 (#536): the park point is among the
+/// Export step's Heights, typed or clicked on the Viewport. *Click on the
+/// view* arms the Viewport; the next
 /// click there sets `heights.park` to the project point the camera puts
 /// under the cursor (`Camera::to_world`, the one Y flip), one undo step,
 /// disarms it, and selects nothing. Typing `20, 30` into the field and
@@ -1197,9 +1234,10 @@ fn park_point_click_on_the_viewport() {
         800.0,
     );
     assert!(h.state().app().selection().is_empty());
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
     assert!(
-        h.query_by_label("Project Settings").is_some(),
-        "the left column has Project Settings"
+        h.query_by_role_and_label(Role::Button, "Heights").is_some(),
+        "the Export step has the Heights"
     );
     assert_eq!(h.state().app().project().heights.park, None);
 
@@ -2163,6 +2201,9 @@ fn window_answers_input_while_generating() {
     );
     assert_eq!(h.state().app().project().instances.len(), 500);
     let mut frames = FrameTimes::default();
+    // The Operations step, for its rows: by its key, one frame.
+    command_key(&h, egui::Key::Num4);
+    frames.step(&mut h);
 
     // The change settles and the worker takes the first job. The frame
     // that posts it does so at its end, after drawing, and a result is
@@ -2289,8 +2330,7 @@ fn field_commits_on_blur_not_per_keystroke() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
-    h.run();
+    open_operation(&mut h, "Cut out");
     assert_eq!(
         h.state()
             .app()
@@ -2393,8 +2433,7 @@ fn target_editing_bar_enter_is_done_escape_is_cancel() {
         800.0,
     );
     select_only(&mut h, "i1");
-    h.get_by_role_and_label(Role::ListItem, "Panel").click();
-    h.run();
+    open_operation(&mut h, "Panel");
     assert_eq!(targets_of(&h, "op1"), ["i2", "i3"]);
     assert!(h.query_by_label(EDITING_PANEL).is_none(), "no bar yet");
     // The row says how many and which; there is no list of names.
@@ -2427,10 +2466,16 @@ fn target_editing_bar_enter_is_done_escape_is_cancel() {
     assert_eq!(h.state().app().project(), &start, "nothing moved");
     assert_eq!(h.state().app().selection(), &selection);
     assert_eq!(undo_steps(&h), 0);
-    // The rest of the window is inert: another operation's row, Undo's
-    // shortcut and Delete do nothing.
-    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
+    // The rest of the window is inert: the rail's steps and Delete do
+    // nothing, and the step panel shows the Design Tree, not the list.
+    assert!(
+        h.query_by_role_and_label(Role::ListItem, "Cut out")
+            .is_none(),
+        "the Operations list makes way for the Design Tree"
+    );
+    h.get_by_role_and_label(Role::Tab, "Tools").click();
     h.run();
+    assert_eq!(h.state().step(), dc_app::steps::Step::Operations);
     h.key_press(egui::Key::Delete);
     h.run();
     assert_eq!(
@@ -2508,9 +2553,7 @@ fn target_marquee_and_the_selection_shortcuts() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Square recess")
-        .click();
-    h.run();
+    open_operation(&mut h, "Square recess");
     assert_eq!(targets_of(&h, "op2"), ["i4"]);
 
     // A box round the four screw holes' first, from empty stock.
@@ -2598,8 +2641,7 @@ fn hovering_an_operation_row_previews_its_targets() {
             .map(|m| (m.op.as_str().to_owned(), m.targets.len()))
     };
     assert_eq!(marked(&h), None, "no operation is selected");
-    h.get_by_role_and_label(Role::ListItem, "Panel").click();
-    h.run();
+    open_operation(&mut h, "Panel");
     assert_eq!(marked(&h), Some(("op1".to_owned(), 2)));
 
     let row = h
@@ -2642,6 +2684,7 @@ fn tree_context_menu_adds_and_removes_targets() {
     let (add, remove) = ("Add to “Panel”", "Remove from “Panel”");
 
     // No operation selected: neither.
+    go_to(&mut h, "Design");
     h.get_by_role_and_label(Role::TreeItem, "square")
         .click_secondary();
     h.run();
@@ -2650,8 +2693,10 @@ fn tree_context_menu_adds_and_removes_targets() {
     h.key_press(egui::Key::Escape);
     h.run();
 
-    h.get_by_role_and_label(Role::ListItem, "Panel").click();
-    h.run();
+    // The Panel in the editor, then back to the tree: it is still the
+    // operation the menu names.
+    open_operation(&mut h, "Panel");
+    go_to(&mut h, "Design");
     h.get_by_role_and_label(Role::TreeItem, "square")
         .click_secondary();
     h.run();
@@ -2718,6 +2763,11 @@ fn warnings_row_focuses_its_field() {
             .map(dc_project::OperationId::as_str),
         Some("op4"),
         "the row opens the operation in the editor"
+    );
+    assert_eq!(
+        h.state().step(),
+        dc_app::steps::Step::Operations,
+        "on the step that owns it"
     );
     h.event(egui::Event::Text("7".to_owned()));
     h.run();
@@ -2821,6 +2871,7 @@ fn eye_hides_one_operation_show_all_restores() {
 
     // The Panel pocket's eye in the Operations list (#539).
     let panel = dc_project::OperationId::new("op1");
+    go_to(&mut h, "Operations");
     h.get_by_label("Hide the toolpath of Panel").click();
     h.run();
     assert!(h.state().app().view().hidden_ops.contains(&panel));
@@ -2887,9 +2938,7 @@ fn clearing_list_adds_and_drags() {
         1280.0,
         2400.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Background")
-        .click();
-    h.run();
+    open_operation(&mut h, "Background");
     assert_eq!(clearing_tools(&h, "op2"), ["t2"]);
     let steps = undo_steps(&h);
 
@@ -2955,8 +3004,7 @@ fn start_point_click_on_the_viewport() {
         ))
         .expect("the start is set");
     h.run();
-    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
-    h.run();
+    open_operation(&mut h, "Cut out");
     assert!(
         !h.get_by_label("Place tabs").accesskit_node().is_disabled(),
         "the Profile's tab request can be placed (#546)"
@@ -3015,9 +3063,7 @@ fn countersink_depth_shows_derived_read_only() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Countersinks")
-        .click();
-    h.run();
+    open_operation(&mut h, "Countersinks");
     let before = operation_of(&h, "op5");
     let depth = h.get_by_role_and_label(Role::TextInput, "Depth");
     let node = depth.accesskit_node();
@@ -3055,8 +3101,7 @@ fn inlay_editor_shows_the_male_board() {
         1280.0,
         900.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "DC").click();
-    h.run();
+    open_operation(&mut h, "DC");
     // The derived line and the margin are Depth's, closed until opened;
     // the values and the board thickness are Setup's (#618).
     assert!(
@@ -3105,7 +3150,7 @@ fn inlay_editor_shows_the_male_board() {
 }
 
 /// #581, decision 1, in the window: choosing *V-bit* for an end mill in
-/// the Tools tab changes nothing in the project and shows an empty,
+/// the Tools step changes nothing in the project and shows an empty,
 /// required *Angle* field; typing an angle makes the switch, one undo
 /// step; leaving the field empty discards it.
 #[test]
@@ -3127,8 +3172,7 @@ fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
         h.get_by_label("V-bit").click();
         h.run();
     };
-    h.get_by_label("Tools · 3").click();
-    h.run();
+    go_to(&mut h, "Tools");
     let before = h.state().app().project().clone();
     let steps = undo_steps(&h);
 
@@ -3180,7 +3224,7 @@ fn tools_tab_holds_v_bit_until_an_angle_is_typed() {
 }
 
 /// Slice 29 (#621; functional 63, 79; acceptance 100): an empty
-/// project's Tools tab says *No tools yet* with *New tool* and *Add from
+/// project's Tools step says *No tools yet* with *New tool* and *Add from
 /// library…*. *New tool* adds `tool1`, selected, with its Name field
 /// focused and the name selected, so typing replaces it; its rates show
 /// *Required*. *Delete* is in the list's actions and deletes it.
@@ -3189,8 +3233,7 @@ fn new_tool_focuses_its_name() {
     let dir = scratch("new-tool");
     let dialogs = QueuedDialogs::default();
     let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
-    h.get_by_label("Tools · 0").click();
-    h.run();
+    go_to(&mut h, "Tools");
     assert!(
         h.query_by_label("No tools yet.").is_some(),
         "the empty list"
@@ -3699,6 +3742,32 @@ fn keyboard_shortcuts_reach_their_commands() {
         h.run();
     }
 
+    // Ctrl 1 to 5 open the five steps, in order.
+    for (key, command, step) in [
+        (
+            egui::Key::Num1,
+            Key::GoToDesign,
+            dc_app::steps::Step::Design,
+        ),
+        (egui::Key::Num2, Key::GoToStock, dc_app::steps::Step::Stock),
+        (egui::Key::Num3, Key::GoToTools, dc_app::steps::Step::Tools),
+        (
+            egui::Key::Num4,
+            Key::GoToOperations,
+            dc_app::steps::Step::Operations,
+        ),
+        (
+            egui::Key::Num5,
+            Key::GoToExport,
+            dc_app::steps::Step::Export,
+        ),
+    ] {
+        command_key(&h, key);
+        h.run();
+        assert_eq!(h.state().step(), step, "{command:?} opens its step");
+        reached.insert(command);
+    }
+
     // Selection and placement.
     command_key(&h, egui::Key::A);
     h.run();
@@ -3919,10 +3988,11 @@ fn keyboard_shortcuts_reach_their_commands() {
 }
 
 /// `experience.md`, section 8, "Keyboard focus", and section 11: Tab walks
-/// the window top-left to bottom-right (menu bar, toolbar, Design Tree,
-/// Properties, Viewport, CAM panel, status bar) and wraps; Shift Tab walks
-/// back. The 2-px ring shows for keyboard focus only: a click into a
-/// field focuses it with no ring, and Tab from there draws it again.
+/// the window top-left to bottom-right (header, rail, step panel,
+/// Viewport, Inspector, status bar) and wraps; Shift Tab walks back. The
+/// five steps are stops of the walk, in order. The 2-px ring shows for
+/// keyboard focus only: a click into a field focuses it with no ring, and
+/// Tab from there draws it again.
 #[test]
 fn focus_order_and_visible_ring() {
     use dreamcarve_app::FocusRegion as R;
@@ -3935,9 +4005,15 @@ fn focus_order_and_visible_ring() {
         1280.0,
         800.0,
     );
+    // The Operations step with an operation in the Inspector: every
+    // region is there.
+    open_operation(&mut h, "Panel");
+    h.event(egui::Event::PointerGone);
+    h.run();
     assert_eq!(h.state().focus(), None, "nothing has the focus at first");
 
-    // Tab until the walk comes back to the menu bar.
+    // Tab until the walk comes back to the header.
+    let mut steps: Vec<String> = Vec::new();
     let mut walked: Vec<R> = Vec::new();
     for _ in 0..1000 {
         h.key_press(egui::Key::Tab);
@@ -3952,23 +4028,35 @@ fn focus_order_and_visible_ring() {
         if walked.last() != Some(&region) {
             walked.push(region);
         }
-        if walked.len() > 1 && region == R::Menu {
+        if walked.len() > 1 && region == R::Header {
             break;
+        }
+        // The rail's step buttons, as Tab reaches them.
+        if region == R::Rail
+            && let Some(tab) = h
+                .query_all_by_role(Role::Tab)
+                .find(|node| node.accesskit_node().is_focused())
+        {
+            steps.push(tab.accesskit_node().label().unwrap_or_default());
         }
     }
     assert_eq!(
         walked,
         [
-            R::Menu,
-            R::Toolbar,
-            R::Tree,
-            R::Properties,
+            R::Header,
+            R::Rail,
+            R::Step,
             R::Viewport,
-            R::Cam,
+            R::Inspector,
             R::Status,
-            R::Menu
+            R::Header
         ],
-        "Tab walks the panels in order and wraps"
+        "Tab walks the regions in order and wraps"
+    );
+    assert_eq!(
+        steps,
+        ["Design", "Stock", "Tools", "Operations", "Export"],
+        "the five steps are in the focus order"
     );
 
     // Shift Tab from the first stop goes back to the status bar.
@@ -3977,11 +4065,12 @@ fn focus_order_and_visible_ring() {
     assert_eq!(h.state().focus(), Some(R::Status), "Shift Tab walks back");
 
     // A click into a field focuses it with no ring.
+    go_to(&mut h, "Stock");
     let width = h.get_by_role_and_label(Role::TextInput, "Width").rect();
     common::click_at(&mut h, width.center(), egui::Modifiers::NONE);
     assert_eq!(
         h.state().focus(),
-        Some(R::Properties),
+        Some(R::Step),
         "the click focuses the field"
     );
     assert_eq!(h.state().focus_ring(), None, "a click shows no ring");
@@ -3995,7 +4084,7 @@ fn focus_order_and_visible_ring() {
 }
 
 /// Acceptance 78 (functional capability 69; `experience.md`, section 8,
-/// "Tab dragging"; #546): the toolbar's Tab tool arms the Viewport; a
+/// "Tab dragging"; #546): the Viewport's Tab tool arms the Viewport; a
 /// click on the square's outline adds a tab there, in the square's
 /// definition space, with the last-used size from the preferences, as one
 /// undo step. The tool stays armed until Escape; after it a click on the
@@ -4070,8 +4159,7 @@ fn place_drag_and_delete_tabs() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
-    h.run();
+    open_operation(&mut h, "Cut out");
     h.get_by_label("Place tabs").scroll_to_me();
     h.run();
     h.get_by_label("Place tabs").click();
@@ -4206,11 +4294,21 @@ fn clicking_a_cut_opens_its_operation() {
     h.run();
     assert_eq!(named(&h), before + 1, "the status bar names the Panel");
 
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
     common::click_at(&mut h, at, egui::Modifiers::NONE);
     assert_eq!(
         h.state().app().editing(),
         Some(&panel),
         "the click opens the Panel in the editor"
+    );
+    assert_eq!(
+        h.state().step(),
+        dc_app::steps::Step::Operations,
+        "and the step that owns it"
+    );
+    assert!(
+        h.query_by_role_and_label(Role::ListItem, "Panel").is_some(),
+        "its row is in the step panel"
     );
     assert_eq!(
         h.state().app().selection(),
@@ -4224,9 +4322,145 @@ fn clicking_a_cut_opens_its_operation() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// Capability 76 (`redesign.md`, "The window"): a Warnings row opens the
+/// step that edits what it names. A row about a tool's field opens the
+/// Tools step with that tool in the Inspector; a row about the stock
+/// opens the Stock step.
+#[test]
+fn warnings_row_opens_the_step_that_owns_it() {
+    use dc_app::steps::Step;
+    let dir = scratch("warnings-step");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    // The stock loses its thickness and a used tool its feed: two errors.
+    let project = h.state().app().project().clone();
+    let mut stock = project.stock.clone();
+    stock.thickness_mm = None;
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    for command in [Command::SetStock(stock), Command::UpdateTool(tool.clone())] {
+        h.state_mut().app_mut().run(command).unwrap();
+    }
+    h.run();
+    assert_eq!(h.state().step(), Step::Export);
+
+    let row_about = |h: &Harness<'_, dreamcarve_app::Shell>, field: &str| {
+        dc_app::warnings::panel(h.state().app())
+            .into_iter()
+            .flat_map(|g| g.rows)
+            .find(|r| r.field.as_deref() == Some(field))
+            .unwrap_or_else(|| panic!("a row about {field}"))
+            .line
+    };
+    // The rail's Warnings button opens the drawer.
+    h.get_by_label_contains("Warnings: 2 errors").click();
+    h.run();
+    assert!(h.state().warnings_open());
+
+    let feed = format!("tools[{used}].feed_mm_min");
+    let line = row_about(&h, &feed);
+    h.get_by_label(&line).click();
+    h.run();
+    assert_eq!(h.state().step(), Step::Tools);
+    assert!(
+        h.state().layout().inspector.is_some(),
+        "the tool is in the Inspector"
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Name")
+            .value()
+            .as_deref(),
+        Some(tool.name.as_str())
+    );
+
+    let line = row_about(&h, "stock.thickness_mm");
+    h.get_by_label(&line).click();
+    h.run();
+    assert_eq!(h.state().step(), Step::Stock);
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Thickness")
+            .is_some()
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 50 (`redesign.md`, "The window"): pinned to the rail's
+/// bottom are Warnings, which names the counts and opens the drawer;
+/// Appearance, a menu of the three choices with the current one checked,
+/// which sets the preference; and Help, the Help menu's rows.
+#[test]
+fn rail_bottom_has_warnings_appearance_and_help() {
+    let dir = scratch("rail-bottom");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let rail = h.state().layout().rail;
+    let steps = rail_steps(&h);
+    let last_step = steps.last().expect("five steps").2;
+    let names = ["Warnings: 1 hint", "Appearance: Dark", "Help and About"];
+    let mut top = last_step.bottom();
+    for name in names {
+        let rect = h.get_by_role_and_label(Role::Button, name).rect();
+        assert!(rail.contains_rect(rect), "{name} is on the rail");
+        assert!(rect.top() >= top, "{name} is under what comes before it");
+        top = rect.bottom();
+    }
+    assert!(
+        rail.bottom() - top < 16.0,
+        "the three are pinned to the rail's bottom"
+    );
+
+    assert!(!h.state().warnings_open());
+    h.get_by_label("Warnings: 1 hint").click();
+    h.run();
+    assert!(h.state().warnings_open(), "Warnings opens the drawer");
+    h.get_by_label("Warnings: 1 hint").click();
+    h.run();
+    assert!(!h.state().warnings_open(), "and closes it");
+
+    h.get_by_label("Appearance: Dark").click();
+    h.run();
+    let checked = |h: &Harness<'_, dreamcarve_app::Shell>, name: &str| {
+        h.get_by_role_and_label(Role::Button, name)
+            .accesskit_node()
+            .toggled()
+            == Some(egui::accesskit::Toggled::True)
+    };
+    assert!(checked(&h, "Dark") && !checked(&h, "Light") && !checked(&h, "System"));
+    h.get_by_role_and_label(Role::Button, "Light").click();
+    h.run();
+    assert_eq!(h.state().app().prefs().theme, dc_app::Theme::Light);
+    assert_eq!(h.ctx.theme(), egui::Theme::Light);
+    assert!(h.query_by_label("Appearance: Light").is_some());
+
+    h.get_by_label("Help and About").click();
+    h.run();
+    assert!(h.query_by_label("User Guide").is_some());
+    h.get_by_label("About DreamCarve").click();
+    h.run();
+    assert!(
+        h.state()
+            .message()
+            .is_some_and(|m| m.starts_with("DreamCarve ")),
+        "About says the version"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// `experience.md` section 13 and design question 2 (#549): the plaque's
-/// workspace, generated, with its Panel pocket open in the editor, in a
-/// 1280 × 800 window, compared with the committed pair
+/// workspace, generated, on the Operations step with its Panel pocket
+/// open in the Inspector, in a 1280 × 800 window, compared with the
+/// committed pair
 /// `tests/snapshots/workspace_light.png` and `workspace_dark.png` under
 /// `kittest.toml`'s thresholds. Linux only: font rasterisation differs per
 /// OS, so the other two run the behaviour tests without image comparison.
@@ -4262,8 +4496,7 @@ fn snapshot_workspace_light_and_dark() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     h.run();
-    h.get_by_role_and_label(Role::ListItem, "Panel").click();
-    h.run();
+    open_operation(&mut h, "Panel");
     assert!(h.query_by_label("Panel · Pocket").is_some(), "the editor");
 
     let mut failures = Vec::new();
@@ -4320,7 +4553,7 @@ fn depth_legend_paints_under_a_sheet() {
     h.run();
     settle_export(&mut h);
     let legend = painted_at(&h, "stock top").expect("the legend is still drawn");
-    let sheet = painted_at(&h, "Export G-code").expect("the sheet's title");
+    let sheet = painted_at(&h, "Export G-code ·").expect("the sheet's title");
     assert!(
         legend < sheet,
         "the legend ({legend}) paints under the sheet ({sheet})"
@@ -4394,8 +4627,7 @@ fn editor_header_renames_in_place() {
         1280.0,
         800.0,
     );
-    h.get_by_role_and_label(Role::ListItem, "Cut out").click();
-    h.run();
+    open_operation(&mut h, "Cut out");
     assert!(
         h.query_by_role_and_label(Role::CheckBox, "Enabled")
             .is_none(),
@@ -4480,7 +4712,7 @@ fn assert_required(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, mess
 
 /// Functional 66b and acceptance 97 (slice 26, #618): a tool with no feed
 /// shows *Required* in its Feed field, not a paragraph under it, and the
-/// file's message as the field's tooltip; Project Settings' thickness on a
+/// file's message as the field's tooltip; the Stock step's thickness on a
 /// new project the same.
 #[test]
 fn required_field_shows_required_not_a_message() {
@@ -4495,8 +4727,7 @@ fn required_field_shows_required_not_a_message() {
             dreamcarve_app::Shell::new(cc, options_for(Some(plaque))).expect("the shell starts")
         });
     h.run();
-    h.get_by_label("Tools · 3").click();
-    h.run();
+    go_to(&mut h, "Tools");
     h.get_by_label("Set me").click();
     h.run();
     let tool = h.state().app().project().tools[0].clone();
@@ -4519,6 +4750,7 @@ fn required_field_shows_required_not_a_message() {
             dreamcarve_app::Shell::new(cc, options_for(None)).expect("the shell starts")
         });
     h.run();
+    go_to(&mut h, "Stock");
     assert_eq!(h.state().app().project().stock.thickness_mm, None);
     let message = h
         .state()
@@ -4566,8 +4798,7 @@ fn editor_has_no_check_says_box() {
         }
         h.run();
         for name in names {
-            h.get_by_role_and_label(Role::ListItem, name).click();
-            h.run();
+            open_operation(&mut h, name);
             let id = h
                 .state()
                 .app()
@@ -4611,8 +4842,7 @@ fn message_cell_opens_the_drawer_at_the_note() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     h.run();
-    h.get_by_role_and_label(Role::ListItem, "Lettering").click();
-    h.run();
+    open_operation(&mut h, "Lettering");
     assert!(!h.state().warnings_open());
     h.get_by_role_and_label(
         Role::Button,
@@ -4632,7 +4862,8 @@ fn message_cell_opens_the_drawer_at_the_note() {
 }
 
 /// No node of the accessibility tree names the file with its extension:
-/// the project's name is the OS window title only (capability 50).
+/// the project's name is its stem, in the OS window title and the header
+/// (capability 50).
 fn assert_no_file_name(h: &Harness<'_, dreamcarve_app::Shell>, what: &str) {
     let found: Vec<String> = h
         .query_all_by_label_contains("plaque.dcv")
@@ -4648,9 +4879,10 @@ fn assert_no_file_name(h: &Harness<'_, dreamcarve_app::Shell>, what: &str) {
     assert!(found.is_empty(), "{what}: {found:?}");
 }
 
-/// Slice 23 (#615), acceptance 93: the window title is the project's
-/// name without its extension, `*` while unsaved, `Untitled` before the
-/// first save; no widget shows `plaque.dcv`.
+/// Slice 23 (#615), acceptance 93, and capability 50: the window title
+/// is the project's name without its extension, `*` while unsaved,
+/// `Untitled` before the first save; the header shows the same name in
+/// its centre, with a dot while unsaved; no widget shows `plaque.dcv`.
 #[test]
 fn window_title_is_the_project_name_without_extension() {
     let dir = scratch("title-name");
@@ -4663,26 +4895,37 @@ fn window_title_is_the_project_name_without_extension() {
     );
     assert_eq!(h.state().title(), "plaque — DreamCarve");
     assert_no_file_name(&h, "the plaque, clean");
+    let name = h.get_by_role_and_label(Role::Label, "plaque").rect();
+    assert!(
+        name.max.y <= 48.0 && (name.center().x - 640.0).abs() < 1.0,
+        "the header names the project in its centre: {name:?}"
+    );
 
     widen_stock(&mut h);
     assert_eq!(h.state().title(), "plaque* — DreamCarve");
     assert_no_file_name(&h, "the plaque, edited");
+    assert!(
+        h.query_by_label("plaque · unsaved changes").is_some(),
+        "the header marks the unsaved changes"
+    );
 
     command_key(&h, egui::Key::S);
     h.run();
     assert!(!h.state().app().is_dirty(), "Save wrote the file");
     assert_eq!(h.state().title(), "plaque — DreamCarve");
+    assert!(h.query_by_role_and_label(Role::Label, "plaque").is_some());
 
     command_key(&h, egui::Key::N);
     h.run();
     assert!(h.state().app().source().is_none(), "New has no file");
     assert_eq!(h.state().title(), "Untitled — DreamCarve");
+    assert!(h.query_by_role_and_label(Role::Label, "Untitled").is_some());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The CAM panel's tabs, left to right: label, whether active, rect.
-fn cam_tabs(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<(String, bool, egui::Rect)> {
-    let mut tabs: Vec<(String, bool, egui::Rect)> = h
+/// The rail's steps, top to bottom: label, whether current, rect.
+fn rail_steps(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<(String, bool, egui::Rect)> {
+    let mut steps: Vec<(String, bool, egui::Rect)> = h
         .query_all_by_role(Role::Tab)
         .map(|n| {
             (
@@ -4692,203 +4935,310 @@ fn cam_tabs(h: &Harness<'_, dreamcarve_app::Shell>) -> Vec<(String, bool, egui::
             )
         })
         .collect();
-    tabs.sort_by(|a, b| a.2.min.x.total_cmp(&b.2.min.x));
-    tabs
+    steps.sort_by(|a, b| a.2.min.y.total_cmp(&b.2.min.y));
+    steps
 }
 
-/// Slice 23 (#615), capabilities 50 and 50a: the CAM panel has the title
-/// *CAM* above its tab strip, the tabs read Tools then Operations, and it
-/// opens on Tools for a project with no tools and on Operations
-/// otherwise; the tab picked stays until the next project.
+/// The step whose rail button is current.
+fn current_step(h: &Harness<'_, dreamcarve_app::Shell>) -> String {
+    let current: Vec<String> = rail_steps(h)
+        .into_iter()
+        .filter(|step| step.1)
+        .map(|step| step.0)
+        .collect();
+    assert_eq!(current.len(), 1, "one step is current: {current:?}");
+    current[0].clone()
+}
+
+/// Capabilities 50 and 50a (`redesign.md`, "The steps"): the rail has the
+/// five steps in the workflow's order, each a 56 × 52 button in the 64-px
+/// card; the step panel is titled for the current one. A new project
+/// opens on Design and the finished plaque on Export; the step picked
+/// stays, through an edit, until the next project is opened.
 #[test]
-fn cam_panel_has_a_title_and_tools_first() {
-    let dir = scratch("cam-title");
+fn rail_has_five_steps_and_a_project_opens_on_its_first_incomplete_one() {
+    use dc_app::steps::Step;
+    let dir = scratch("rail-steps");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let dialogs = QueuedDialogs::default();
 
-    // A new project: no tools, so Tools.
+    // A new project: nothing in it, so Design.
     let h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
-    let tabs = cam_tabs(&h);
-    let labels: Vec<&str> = tabs.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(labels, ["Tools · 0", "Operations · 0"]);
-    assert!(tabs[0].1 && !tabs[1].1, "a new project opens on Tools");
+    let steps = rail_steps(&h);
+    let labels: Vec<&str> = steps.iter().map(|t| t.0.as_str()).collect();
+    assert_eq!(labels, ["Design", "Stock", "Tools", "Operations", "Export"]);
+    assert_eq!(current_step(&h), "Design", "a new project opens on Design");
+    assert_eq!(h.state().step(), Step::Design);
+    let rail = h.state().layout().rail;
+    for (label, _, rect) in &steps {
+        assert!(rail.contains_rect(*rect), "{label} is on the rail");
+        assert_eq!(
+            (rect.width(), rect.height()),
+            (56.0, 52.0),
+            "{label}'s button"
+        );
+    }
     drop(h);
 
-    // The plaque: three tools and five operations, on Operations.
+    // The plaque: every step done but the export.
     let mut h = harness(
         options(&dir.join("config"), Some(plaque), &dialogs),
         1280.0,
         800.0,
     );
-    let tabs = cam_tabs(&h);
-    let labels: Vec<&str> = tabs.iter().map(|t| t.0.as_str()).collect();
-    assert_eq!(labels, ["Tools · 3", "Operations · 5"]);
-    assert!(!tabs[0].1 && tabs[1].1, "the plaque opens on Operations");
-    let title = h.get_by_label("CAM").rect();
+    assert_eq!(current_step(&h), "Export", "the plaque opens on Export");
+    let panel = h.state().layout().step_panel.expect("the step panel");
+    let title = h.get_by_role_and_label(Role::Heading, "Export").rect();
     assert!(
-        title.max.y <= tabs[0].2.min.y + 0.5,
-        "the title band {title:?} is above the tab strip {:?}",
-        tabs[0].2
+        panel.contains_rect(title),
+        "the step panel is titled Export"
     );
-    // The title runs the card's width; the pill tabs sit inside it, the
-    // card's padding in from each edge.
     assert!(
-        title.min.x <= tabs[0].2.min.x + 0.5 && title.max.x >= tabs[1].2.max.x - 0.5,
-        "the title {title:?} and the tabs are one card's"
+        h.query_by_label("Ready to export.").is_some(),
+        "and says what the step holds"
     );
 
-    // The tab picked stays until the next project: New opens on Tools.
-    h.get_by_label("Tools · 3").click();
-    h.run();
-    assert!(cam_tabs(&h)[0].1);
-    h.get_by_label("Operations · 5").click();
-    h.run();
-    assert!(cam_tabs(&h)[1].1, "the user's pick stays");
+    // The step picked stays until the next project: New opens on Design.
+    go_to(&mut h, "Tools");
+    assert_eq!(current_step(&h), "Tools");
+    assert!(h.query_by_role_and_label(Role::Heading, "Tools").is_some());
+    widen_stock(&mut h);
+    assert_eq!(current_step(&h), "Tools", "an edit keeps the user's pick");
     command_key(&h, egui::Key::N);
     h.run();
-    assert!(cam_tabs(&h)[0].1, "New opens on Tools");
+    click_in_sheet(&mut h, "Don't Save");
+    assert_eq!(current_step(&h), "Design", "New opens on Design");
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// The Project Settings band.
-fn settings_band(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {
-    h.get_by_label("Project Settings").rect()
-}
-
-/// The Properties band, when there is one.
-fn properties_band(h: &Harness<'_, dreamcarve_app::Shell>) -> Option<egui::Rect> {
-    h.query_by_label_contains("Properties ·").map(|n| n.rect())
-}
-
-/// Whether Project Settings' body is drawn: its stock width field.
-fn settings_body_shown(h: &Harness<'_, dreamcarve_app::Shell>) -> bool {
-    h.query_by_role_and_label(Role::TextInput, "Width")
-        .is_some()
-}
-
-/// Slice 23 (#615), capability 50 and `experience.md` section 2: the
-/// left column's lower half is Project Settings, always there, over
-/// Properties, there only with a selection and scrolled into view; each
-/// title collapses its panel to its 32-px band, and the open state
-/// outlives a restart.
+/// Capability 50 (`redesign.md`, "The window"): the header's one primary
+/// button is *Continue*, which opens the next step that is not complete,
+/// and on the Export step *Export G-code*, the export command, disabled
+/// while an error blocks export. The rail marks the steps: a finished
+/// plaque's are complete, and a tool without its feed marks Tools and
+/// Export with an error.
 #[test]
-fn left_column_is_project_settings_then_properties() {
-    let dir = scratch("left-column");
+fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
+    use dc_app::steps::{Severity, State, Step};
+    let dir = scratch("continue");
     let plaque = copy_fixture("plaque.dcv", &dir);
-    let config = dir.join("config");
     let dialogs = QueuedDialogs::default();
+
+    // A new project: Continue walks on from Design.
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    for step in Step::ALL {
+        assert_eq!(h.state().step_states().of(step), State::Empty, "{step:?}");
+    }
+    h.get_by_role_and_label(Role::Button, "Continue").click();
+    h.run();
+    assert_eq!(current_step(&h), "Stock");
+    drop(h);
+
     let mut h = harness(
-        options(&config, Some(plaque.clone()), &dialogs),
+        options(&dir.join("config"), Some(plaque), &dialogs),
         1280.0,
         800.0,
     );
-    assert!(h.query_by_label("Project Settings").is_some());
+    for step in [Step::Design, Step::Stock, Step::Tools, Step::Operations] {
+        assert_eq!(
+            h.state().step_states().of(step),
+            State::Complete,
+            "{step:?}"
+        );
+    }
+    assert_eq!(h.state().step_states().of(Step::Export), State::Empty);
+    go_to(&mut h, "Design");
+    h.get_by_role_and_label(Role::Button, "Continue").click();
+    h.run();
+    assert_eq!(current_step(&h), "Export", "every step between is complete");
     assert!(
-        h.query_all_by_label_contains("Properties").next().is_none(),
-        "no Properties with nothing selected"
+        h.query_by_role_and_label(Role::Button, "Continue")
+            .is_none(),
+        "one primary button"
     );
-    assert!(settings_body_shown(&h), "Project Settings starts open");
-
-    select_only(&mut h, "i4");
-    let properties = properties_band(&h).expect("Properties with the square selected");
-    assert!(
-        h.query_by_label("Project Settings").is_some(),
-        "still there"
-    );
-    let settings = settings_band(&h);
-    assert!(
-        settings.max.y <= properties.min.y,
-        "Project Settings {settings:?} above Properties {properties:?}"
-    );
-    let x = h.get_by_role_and_label(Role::TextInput, "X").rect();
-    assert!(
-        x.max.y <= 800.0 - 24.0,
-        "Properties scrolled into view: {x:?}"
-    );
-
-    // Each title collapses its panel to its band.
-    h.get_by_label_contains("Properties ·").click();
+    let export = h.get_by_role_and_label(Role::Button, "Export G-code");
+    assert!(!export.accesskit_node().is_disabled());
+    export.click();
     h.run();
     assert!(
-        h.query_by_role_and_label(Role::TextInput, "X").is_none(),
-        "Properties collapsed"
+        h.query_by_role(Role::Dialog).is_some(),
+        "Export G-code opens the export sheet"
     );
-    h.get_by_label("Project Settings").scroll_to_me();
+    h.get_by_role(Role::Dialog).get_by_label("Close").click();
     h.run();
-    h.get_by_label("Project Settings").click();
-    h.run();
-    assert!(!settings_body_shown(&h), "Project Settings collapsed");
-    let settings = settings_band(&h);
-    let properties = properties_band(&h).expect("still selected");
-    assert_eq!(settings.height(), 32.0, "a 32-px band");
-    assert_eq!(properties.height(), 32.0, "a 32-px band");
-    assert!(
-        (properties.min.y - settings.max.y).abs() <= 1.0,
-        "collapsed, the bands stack: {settings:?} {properties:?}"
-    );
-    let sections = h.state().app().prefs().sections.clone();
-    assert_eq!(sections.get("panel.project_settings"), Some(&false));
-    assert_eq!(sections.get("panel.properties"), Some(&false));
 
-    // After a restart, both stay closed.
-    eframe::App::on_exit(h.state_mut());
-    drop(h);
-    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
-    let sections = h.state().app().prefs().sections.clone();
-    assert_eq!(sections.get("panel.project_settings"), Some(&false));
-    assert_eq!(sections.get("panel.properties"), Some(&false));
-    assert!(!settings_body_shown(&h), "closed after the restart");
-    select_only(&mut h, "i4");
-    assert!(properties_band(&h).is_some());
-    assert!(h.query_by_role_and_label(Role::TextInput, "X").is_none());
+    // A tool an operation cuts with loses its feed: export is blocked.
+    let project = h.state().app().project();
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    h.state_mut()
+        .app_mut()
+        .run(Command::UpdateTool(tool))
+        .unwrap();
+    h.run();
+    let failed = State::Attention(Severity::Error);
+    assert_eq!(h.state().step_states().of(Step::Tools), failed);
+    assert_eq!(h.state().step_states().of(Step::Export), failed);
+    assert_eq!(h.state().step_states().of(Step::Design), State::Complete);
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
+        "disabled while an error blocks export"
+    );
+    assert!(
+        h.query_by_label("1 error blocks export.").is_some(),
+        "the step says why"
+    );
+    // The sheet still opens from the step, to show what blocks it.
+    h.get_by_label("Review programs…").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_some());
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Slice 23 (#615), capability 60: Project Settings is open on a new
-/// project (thickness unset, a project-level error) whatever `gui.toml`
-/// says, and follows it on the plaque.
+/// The Inspector's title for a selection of shapes, when it shows.
+fn properties_title(h: &Harness<'_, dreamcarve_app::Shell>) -> Option<egui::Rect> {
+    h.query_by_label_contains("Properties ·").map(|n| n.rect())
+}
+
+/// Capability 50 (`redesign.md`, "The window" and "The steps"): the
+/// Inspector is there only while the step has something selected. On
+/// Design it is the selection's Properties, with the Arrange group in
+/// its header; its close button deselects, and the Viewport takes the
+/// room. The same selection on another step shows no Inspector. The
+/// panels' widths are `gui.toml`'s.
 #[test]
-fn project_settings_opens_on_a_project_error() {
-    let dir = scratch("settings-error");
+fn inspector_shows_properties_only_with_a_selection() {
+    let dir = scratch("inspector");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let config = dir.join("config");
     let mut file = GuiPrefs::default();
-    file.sections
-        .insert("panel.project_settings".to_owned(), false);
+    file.panels.left_width = 340.0;
+    file.panels.right_width = 310.0;
     gui_prefs::save(&Paths::in_dir(config.clone()), &file).unwrap();
     let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    go_to(&mut h, "Design");
+    let empty = h.state().layout();
+    assert_eq!(empty.inspector, None, "nothing selected: no Inspector");
+    assert!(properties_title(&h).is_none());
+    assert!(
+        (empty.step_panel.unwrap().width() - 340.0).abs() < 0.5,
+        "the step panel's width is the preference's: {empty:?}"
+    );
 
-    let h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
+    select_only(&mut h, "i4");
+    let layout = h.state().layout();
+    let inspector = layout
+        .inspector
+        .expect("the Inspector, with a shape selected");
+    assert!(
+        (inspector.width() - 310.0).abs() < 0.5,
+        "the Inspector's width is the preference's: {inspector:?}"
+    );
+    assert!(
+        layout.viewport.width() < empty.viewport.width(),
+        "the Inspector takes its room from the Viewport"
+    );
+    let title = properties_title(&h).expect("Properties with the square selected");
+    let x = h.get_by_role_and_label(Role::TextInput, "X").rect();
+    assert!(inspector.contains_rect(title) && inspector.contains_rect(x));
+    // The Arrange group is in the header, above the fields.
+    for name in ["Rotate 90° clockwise", "Flip horizontal", "Flip vertical"] {
+        let button = h.get_by_role_and_label(Role::Button, name).rect();
+        assert!(
+            inspector.contains_rect(button) && button.max.y <= x.min.y,
+            "{name} is in the Inspector's header: {button:?}"
+        );
+    }
+
+    // The same selection on another step: no Inspector.
+    go_to(&mut h, "Stock");
+    assert_eq!(h.state().layout().inspector, None);
+    assert!(properties_title(&h).is_none());
+    let width = h.get_by_role_and_label(Role::TextInput, "Width").rect();
+    assert!(
+        h.state()
+            .layout()
+            .step_panel
+            .is_some_and(|panel| panel.contains_rect(width)),
+        "the stock's fields are the step panel's"
+    );
+
+    // Its close button deselects.
+    go_to(&mut h, "Design");
+    assert!(h.state().layout().inspector.is_some());
+    h.get_by_label("Close the Inspector").click();
+    h.run();
+    assert!(h.state().app().selection().is_empty());
+    assert_eq!(h.state().layout().inspector, None);
+    assert_eq!(
+        h.state().layout().viewport.width(),
+        empty.viewport.width(),
+        "the Viewport takes the room back"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 60 (`redesign.md`, "The steps"): a project whose stock has
+/// no thickness under a drawing (the Coaster as `init` makes it) opens on
+/// the Stock step, which the rail marks with an error; its Thickness
+/// field says *Required*. Project ▸ Project Settings… opens that step.
+#[test]
+fn a_project_without_a_thickness_opens_on_stock() {
+    use dc_app::steps::{Severity, State, Step};
+    let dir = scratch("stock-error");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let config = dir.join("config");
+    let dialogs = QueuedDialogs::default();
+
+    let mut h = harness(options(&config, None, &dialogs), 1280.0, 800.0);
     assert_eq!(
         h.state().app().project().stock.thickness_mm,
         None,
         "a new project has no thickness"
     );
-    assert!(settings_body_shown(&h), "open on the error");
     assert_eq!(
-        h.state()
-            .app()
-            .prefs()
-            .sections
-            .get("panel.project_settings"),
-        Some(&false),
-        "the preference stays the user's"
+        h.state().step_states().of(Step::Stock),
+        State::Empty,
+        "which is no error while there is nothing to cut"
+    );
+    h.get_by_role_and_label(Role::Button, "Coaster").click();
+    h.run();
+    assert_eq!(current_step(&h), "Stock", "the Coaster opens on Stock");
+    assert_eq!(
+        h.state().step_states().of(Step::Stock),
+        State::Attention(Severity::Error)
+    );
+    assert_eq!(
+        h.get_by_role_and_label(Role::TextInput, "Thickness")
+            .accesskit_node()
+            .placeholder(),
+        Some("Required")
     );
     drop(h);
 
-    let h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
-    assert!(
-        !settings_body_shown(&h),
-        "the plaque follows the preference"
+    let mut h = harness(options(&config, Some(plaque), &dialogs), 1280.0, 800.0);
+    assert_eq!(current_step(&h), "Export");
+    h.get_by_label("Project").click();
+    h.run();
+    h.get_by_label("Project Settings…").click();
+    h.run();
+    assert_eq!(
+        current_step(&h),
+        "Stock",
+        "Project Settings… opens the Stock step"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Slice 23 (#615), capability 53: Units is Project Settings' first row,
+/// Slice 23 (#615), capability 53: Units is the Stock step's first row,
 /// a `mm` / `in` segmented control; choosing `in` is one undo step and
 /// changes no stored length.
 #[test]
-fn units_is_the_first_row_of_project_settings() {
+fn units_is_the_first_row_of_the_stock_step() {
     let dir = scratch("settings-units");
     let plaque = copy_fixture("plaque.dcv", &dir);
     let dialogs = QueuedDialogs::default();
@@ -4897,7 +5247,9 @@ fn units_is_the_first_row_of_project_settings() {
         1280.0,
         800.0,
     );
-    let band = settings_band(&h);
+    go_to(&mut h, "Stock");
+    let panel = h.state().layout().step_panel.expect("the step panel");
+    let title = h.get_by_role_and_label(Role::Heading, "Stock").rect();
     let mm = h.get_by_role_and_label(Role::RadioButton, "mm");
     assert_eq!(
         mm.accesskit_node().toggled(),
@@ -4906,7 +5258,7 @@ fn units_is_the_first_row_of_project_settings() {
     );
     let mm = mm.rect();
     let inch = h.get_by_role_and_label(Role::RadioButton, "in").rect();
-    assert!(band.max.y <= mm.min.y, "under the title");
+    assert!(title.max.y <= mm.min.y, "under the title");
     assert!((mm.min.y - inch.min.y).abs() < 0.5, "one row");
     // No field or button sits between the title and the control.
     let first = h
@@ -4914,13 +5266,12 @@ fn units_is_the_first_row_of_project_settings() {
         .chain(h.query_all_by_role(Role::Button))
         .chain(h.query_all_by_role(Role::ComboBox))
         .map(|n| n.rect())
-        .filter(|r| r.min.x >= band.min.x - 0.5 && r.max.x <= band.max.x + 0.5)
-        .filter(|r| r.min.y >= band.max.y - 0.5)
+        .filter(|r| panel.contains_rect(*r))
         .map(|r| r.min.y)
         .fold(f32::INFINITY, f32::min);
     assert!(mm.min.y <= first, "Units is the first row: {mm:?}, {first}");
-    let stock = h.get_by_role_and_label(Role::Button, "Stock").rect();
-    assert!(mm.max.y <= stock.min.y, "above Stock");
+    let width = h.get_by_role_and_label(Role::TextInput, "Width").rect();
+    assert!(mm.max.y <= width.min.y, "above the stock's size");
 
     let before = h.state().app().project().clone();
     let steps = undo_steps(&h);
@@ -5239,7 +5590,7 @@ fn f2_and_context_menu_rename_in_place() {
 }
 
 /// Slice 25 (#617; capabilities 54 and 58a): R, Shift R, Ctrl Shift H and
-/// Ctrl Shift V each do what the toolbar's Arrange group does: the same
+/// Ctrl Shift V each do what the Inspector's Arrange group does: the same
 /// transform and the same undo label. R is the Rotate button, Shift R its
 /// popover's angle 90, the flips their buttons. With nothing selected the
 /// group is disabled.
@@ -5253,21 +5604,30 @@ fn shortcuts_reach_the_arrange_commands() {
         1280.0,
         800.0,
     );
+    // The Arrange group is in the header of the Design step's Inspector,
+    // which comes with a selection.
+    go_to(&mut h, "Design");
     for name in ["Rotate 90° clockwise", "Flip horizontal", "Flip vertical"] {
         assert!(
-            h.get_by_label(name).accesskit_node().is_disabled(),
-            "{name} is disabled with nothing selected"
+            h.query_by_label(name).is_none(),
+            "{name} is not shown with nothing selected"
         );
     }
     select_only(&mut h, "i4");
+    for name in ["Rotate 90° clockwise", "Flip horizontal", "Flip vertical"] {
+        assert!(
+            !h.get_by_label(name).accesskit_node().is_disabled(),
+            "{name} is enabled with the square selected"
+        );
+    }
     let before = transform_of(&h, "i4");
 
-    type Toolbar = fn(&mut Harness<'_, dreamcarve_app::Shell>);
-    let rotate: Toolbar = |h| {
+    type Group = fn(&mut Harness<'_, dreamcarve_app::Shell>);
+    let rotate: Group = |h| {
         h.get_by_label("Rotate 90° clockwise").click();
         h.run();
     };
-    let popover_90: Toolbar = |h| {
+    let popover_90: Group = |h| {
         h.get_by_label("Rotate by an angle").click();
         h.run();
         h.get_by_label("Angle").click();
@@ -5277,15 +5637,15 @@ fn shortcuts_reach_the_arrange_commands() {
         h.key_press(egui::Key::Enter);
         h.run();
     };
-    let flip_h: Toolbar = |h| {
+    let flip_h: Group = |h| {
         h.get_by_label("Flip horizontal").click();
         h.run();
     };
-    let flip_v: Toolbar = |h| {
+    let flip_v: Group = |h| {
         h.get_by_label("Flip vertical").click();
         h.run();
     };
-    for (modifiers, key, toolbar, what) in [
+    for (modifiers, key, group, what) in [
         (egui::Modifiers::NONE, egui::Key::R, rotate, "R"),
         (egui::Modifiers::SHIFT, egui::Key::R, popover_90, "Shift R"),
         (
@@ -5302,11 +5662,11 @@ fn shortcuts_reach_the_arrange_commands() {
         ),
     ] {
         let steps = undo_steps(&h);
-        toolbar(&mut h);
-        assert_eq!(undo_steps(&h), steps + 1, "{what}: the toolbar's one step");
-        let by_toolbar = transform_of(&h, "i4");
+        group(&mut h);
+        assert_eq!(undo_steps(&h), steps + 1, "{what}: the group's one step");
+        let by_group = transform_of(&h, "i4");
         let label = h.state().app().undo_label().map(str::to_owned);
-        assert_ne!(by_toolbar, before, "{what}: the toolbar turned it");
+        assert_ne!(by_group, before, "{what}: the group turned it");
         h.state_mut().app_mut().undo();
         h.run();
         assert_eq!(transform_of(&h, "i4"), before);
@@ -5314,11 +5674,11 @@ fn shortcuts_reach_the_arrange_commands() {
         h.key_press_modifiers(modifiers, key);
         h.run();
         assert_eq!(undo_steps(&h), steps + 1, "{what}: one step");
-        assert_same_transform(transform_of(&h, "i4"), by_toolbar, what);
+        assert_same_transform(transform_of(&h, "i4"), by_group, what);
         assert_eq!(
             h.state().app().undo_label().map(str::to_owned),
             label,
-            "{what}: the toolbar's command"
+            "{what}: the group's command"
         );
         assert!(
             instance_of(&h, "i4").visible,
@@ -5330,7 +5690,7 @@ fn shortcuts_reach_the_arrange_commands() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// A window with no project open: the empty state.
+/// A window with no project open: the start screen.
 fn empty_window(
     dir: &std::path::Path,
     dialogs: &QueuedDialogs,
@@ -5348,36 +5708,63 @@ fn button_named<'h>(
         .unwrap_or_else(|| panic!("no button {label}"))
 }
 
-/// Slice 34 (#626), capability 79 and acceptance 103: the empty state
-/// offers two paths, each under its own heading, *Your drawing* with its
-/// three actions and *Examples* with three example buttons, each with a
-/// thumbnail of the example's own shapes; the copy is short and says
-/// nothing about phases or unsaved copies.
+/// Slice 34 (#626), capability 79 and acceptance 103 (`redesign.md`,
+/// "The start screen"): a project with nothing in it shows the start
+/// screen in the Viewport's card: a heading and one sentence; *New from
+/// drawing…*, *New from picture…* and *Open…* in a row; the three
+/// examples as cards in a row, each with its line and a thumbnail of the
+/// example's own shapes; and the recent files. The copy is short and says
+/// nothing about phases or unsaved copies. The step panel shows the
+/// Design step's empty sentence, and another step shows the stock.
 #[test]
-fn empty_state_offers_two_paths() {
+fn start_screen_offers_a_drawing_the_examples_and_recent_files() {
     let dir = scratch("empty-two-paths");
+    let config = dir.join("config");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let file = GuiPrefs {
+        recent: vec![plaque.clone(), dir.join("gone.dcv")],
+        ..GuiPrefs::default()
+    };
+    gui_prefs::save(&Paths::in_dir(config), &file).unwrap();
     let dialogs = QueuedDialogs::default();
-    let h = empty_window(&dir, &dialogs);
+    let mut h = empty_window(&dir, &dialogs);
+    let viewport = h.state().layout().viewport;
 
-    assert!(h.query_by_label("Start a project").is_some(), "the heading");
+    let heading = h.get_by_label("Start with a drawing").rect();
+    assert!(viewport.contains_rect(heading), "in the Viewport's card");
     assert!(
-        h.query_by_label("Bring in a drawing to make toolpaths from, or explore an example.")
-            .is_some(),
-        "the one line under it"
+        h.query_by_label(
+            "Bring in an SVG or DXF drawing to make toolpaths from, or open an example to look \
+             round."
+        )
+        .is_some(),
+        "the one sentence under it"
     );
-    let yours = h.get_by_label("Your drawing").rect();
-    let examples = h.get_by_label("Examples").rect();
-    assert_eq!(yours.top(), examples.top(), "the paths sit side by side");
-    assert!(yours.right() < examples.left());
+    assert!(
+        h.query_by_label("No shapes yet.").is_some(),
+        "the Design step's empty sentence"
+    );
 
-    // Your drawing's actions are in its column, the examples in theirs.
-    for label in ["Import a drawing…", "Import a picture…", "Open a project…"] {
-        let rect = button_named(&h, label).rect();
-        assert!(
-            rect.right() < examples.left(),
-            "{label}: under Your drawing"
-        );
+    // The three ways in, in one row, left to right.
+    let actions: Vec<egui::Rect> = ["New from drawing…", "New from picture…", "Open…"]
+        .into_iter()
+        .map(|label| button_named(&h, label).rect())
+        .collect();
+    for pair in actions.windows(2) {
+        assert!(pair[0].right() <= pair[1].left(), "{actions:?}");
+        assert_eq!(pair[0].center().y, pair[1].center().y, "one row");
     }
+    assert!(heading.bottom() <= actions[0].top());
+    assert!(
+        button_named(&h, "New from picture…")
+            .accesskit_node()
+            .is_disabled(),
+        "picture import is not in this build"
+    );
+
+    // The examples: three cards in a row under their heading.
+    let examples = h.get_by_label("Examples").rect();
+    assert!(actions[0].bottom() <= examples.top());
     let cards: Vec<egui::Rect> = ["Coaster", "Plaque", "Sign"]
         .into_iter()
         .map(|name| button_named(&h, name).rect())
@@ -5388,12 +5775,13 @@ fn empty_state_offers_two_paths() {
         "V-carved lettering",
     ];
     for (card, teaches) in cards.iter().zip(lines) {
-        assert!(card.left() >= examples.left(), "{teaches}: under Examples");
-        assert_eq!(card.height(), 72.0, "an example card is 72 px tall");
+        assert!(card.top() >= examples.bottom(), "{teaches}: under Examples");
+        assert_eq!(card.top(), cards[0].top(), "one row");
+        assert_eq!(card.size(), cards[0].size(), "three cards of one size");
         let line = h.get_by_label(teaches).rect();
         assert!(card.contains_rect(line), "{teaches} is on its card");
     }
-    assert!(cards[0].bottom() <= cards[1].top() && cards[1].bottom() <= cards[2].top());
+    assert!(cards[0].right() < cards[1].left() && cards[1].right() < cards[2].left());
 
     // Each card's thumbnail is the example's own shapes.
     let thumbnails = h.state().example_thumbnails();
@@ -5405,6 +5793,16 @@ fn empty_state_offers_two_paths() {
         );
     }
 
+    // The recent files that still exist, under the examples.
+    let recent = h.get_by_label("Recent").rect();
+    assert!(cards[0].bottom() <= recent.top());
+    let row = button_named(&h, "plaque.dcv").rect();
+    assert!(recent.bottom() <= row.top());
+    assert!(
+        h.query_by_label("gone.dcv").is_none(),
+        "a file that is gone is not listed"
+    );
+
     for word in ["phase", "Phase", "unsaved", "Unsaved"] {
         let found: Vec<String> = h
             .query_all_by_label_contains(word)
@@ -5412,6 +5810,18 @@ fn empty_state_offers_two_paths() {
             .collect();
         assert!(found.is_empty(), "no label says {word}: {found:?}");
     }
+
+    // Another step shows the stock in its place; Design brings it back.
+    go_to(&mut h, "Stock");
+    assert!(h.query_by_label("Start with a drawing").is_none());
+    go_to(&mut h, "Design");
+    assert!(h.query_by_label("Start with a drawing").is_some());
+
+    // A recent file opens.
+    button_named(&h, "plaque.dcv").click();
+    h.run();
+    assert_eq!(h.state().app().source(), Some(plaque.as_path()));
+    assert!(h.query_by_label("Start with a drawing").is_none());
     std::fs::remove_dir_all(&dir).ok();
 }
 
@@ -5432,8 +5842,8 @@ fn example_opens_untitled() {
         assert!(h.state().app().source().is_none(), "{example} has no file");
         assert_eq!(h.state().title(), "Untitled — DreamCarve", "{example}");
         assert!(
-            h.query_by_label("Start a project").is_none(),
-            "{example}: the card goes when shapes arrive"
+            h.query_by_label("Start with a drawing").is_none(),
+            "{example}: the start screen goes when shapes arrive"
         );
 
         command_key(&h, egui::Key::S);
@@ -5528,8 +5938,12 @@ fn file_menu_labels_in_order() {
         &h,
         "View",
         &[
-            "Design Tree and Properties",
-            "CAM panel",
+            "Step Panel",
+            "Go to Design",
+            "Go to Stock",
+            "Go to Tools",
+            "Go to Operations",
+            "Go to Export",
             "Toolpaths…",
             "Warnings",
             "Fit View",

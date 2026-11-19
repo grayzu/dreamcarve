@@ -14,13 +14,17 @@
 //! `DC_REVIEW_DIR` (default `target/review`). These are pictures for a
 //! person; the compared snapshots are `kittest::snapshot_workspace_light_and_dark`'s.
 //!
-//! `redesign_d2_screenshots` writes the redesign's slice D2 set
+//! `redesign_d3_screenshots` writes the redesign's slice D3 set
 //! (`docs/specs/phase-4/redesign.md`, "Slices") into
-//! `docs/specs/phase-4/review/d2/`, where it is committed:
+//! `docs/specs/phase-4/review/d3/`, where it is committed:
 //!
 //! ```sh
-//! cargo test -p dreamcarve-app --test review redesign_d2 -- --ignored
+//! cargo test -p dreamcarve-app --test review redesign_d3 -- --ignored
 //! ```
+//!
+//! The slice D2 set beside it, `review/d2/`, shows the tokens and the
+//! components in the layout before the steps; the test that wrote it was
+//! this one's earlier form.
 
 #![allow(
     clippy::panic,
@@ -34,7 +38,9 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use common::{QueuedDialogs, command_key, copy_fixture, fixture, options, scratch};
+use common::{
+    QueuedDialogs, command_key, copy_fixture, fixture, go_to, open_operation, options, scratch,
+};
 use eframe::egui;
 use eframe::egui::accesskit::Role;
 use egui_kittest::kittest::Queryable as _;
@@ -163,11 +169,6 @@ fn toolpath_view(h: &mut H, labels: &[&str]) {
     h.run();
 }
 
-fn open_operation(h: &mut H, name: &str) {
-    h.get_by_role_and_label(Role::ListItem, name).click();
-    h.run();
-}
-
 #[test]
 #[ignore = "writes review pictures; run by hand with DC_REVIEW_DIR"]
 fn review_screenshots() {
@@ -233,7 +234,9 @@ fn scenes(dir: &Path) -> bool {
     let plaque = fixture("plaque.dcv");
     let dialogs = QueuedDialogs::default();
     let mut h = window_with(dir, Some(plaque.clone()), 1280.0, 800.0, &dialogs).unwrap();
-    shoot(&mut h, "03-workspace-project-panel");
+    shoot(&mut h, "03-workspace-export-step");
+    go_to(&mut h, "Stock");
+    shoot(&mut h, "03b-stock-step");
     click(&mut h, "File");
     shoot(&mut h, "04-file-menu");
     h.key_press(egui::Key::Escape);
@@ -242,6 +245,7 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "05-view-menu");
     h.key_press(egui::Key::Escape);
     h.run();
+    go_to(&mut h, "Design");
     h.state_mut()
         .app_mut()
         .select(dc_app::Selection::Instances(vec![
@@ -250,10 +254,12 @@ fn scenes(dir: &Path) -> bool {
     h.run();
     shoot(&mut h, "06-shape-selected");
     // The Add menu: every operation kind's glyph.
+    go_to(&mut h, "Operations");
     click(&mut h, "Add");
     shoot(&mut h, "06b-add-menu");
     h.key_press(egui::Key::Escape);
     h.run();
+    go_to(&mut h, "Design");
     // The same shape locked: grey handles and the padlock.
     let lock = |locked: bool| dc_app::Command::SetInstanceFlags {
         ids: vec![dc_project::InstanceId::new("i4")],
@@ -305,11 +311,9 @@ fn scenes(dir: &Path) -> bool {
     shoot(&mut h, "11-warnings-drawer");
     h.get_by_label("Close the Warnings drawer").click();
     h.run();
-    h.get_by_label_contains("Tools ·").click();
-    h.run();
-    shoot(&mut h, "12-tools-tab");
-    h.get_by_label_contains("Operations ·").click();
-    h.run();
+    go_to(&mut h, "Tools");
+    shoot(&mut h, "12-tools-step");
+    go_to(&mut h, "Operations");
     h.get_by_role_and_label(Role::Button, "Toolpaths").click();
     h.run();
     shoot(&mut h, "13-toolpath-view");
@@ -438,94 +442,143 @@ fn park_pointer(h: &mut H) {
     h.run();
 }
 
-/// Where the redesign's slice D2 pictures are committed.
-fn d2_dir() -> PathBuf {
+/// Where the redesign's slice D3 pictures are committed.
+fn d3_dir() -> PathBuf {
     std::env::var_os("DC_REVIEW_DIR").map_or_else(
-        || common::repo_root().join("docs/specs/phase-4/review/d2"),
+        || common::repo_root().join("docs/specs/phase-4/review/d3"),
         PathBuf::from,
     )
 }
 
-/// The redesign's slice D2 set (`docs/specs/phase-4/redesign.md`,
-/// "Slices"): the workspace on the plaque, an operation's editor with its
-/// fields and segmented controls, a menu, the Warnings drawer, the Tools
-/// tab and two sheets, each in dark and light at 1×, and the first two in
-/// dark at 2×.
+/// The plaque's first tool that an operation cuts with, without its feed:
+/// an error that blocks export.
+fn delete_a_feed(h: &mut H) {
+    let project = h.state().app().project();
+    let used = project.operations[0].tool().clone();
+    let mut tool = project.tools.iter().find(|t| t.id == used).unwrap().clone();
+    tool.feed_mm_min = None;
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::UpdateTool(tool))
+        .unwrap();
+    settle(h);
+}
+
+/// The redesign's slice D3 set (`docs/specs/phase-4/redesign.md`,
+/// "Slices"): the start screen; each of the five steps on the plaque;
+/// the Inspector on a shape, a tool and an operation; Export with an
+/// error blocking it; the rail with steps that need attention; the
+/// Warnings drawer; the window at its minimum size; and a narrower one,
+/// where the Inspector lies over the Viewport. Each in dark and light at
+/// 1×, and the first two in dark at 2×.
 #[test]
-#[ignore = "writes the committed D2 review pictures; run by hand"]
-fn redesign_d2_screenshots() {
-    let out = d2_dir();
+#[ignore = "writes the committed D3 review pictures; run by hand"]
+fn redesign_d3_screenshots() {
+    let out = d3_dir();
     std::fs::create_dir_all(&out).unwrap();
     let both = [dc_app::Theme::Dark, dc_app::Theme::Light];
     for (ppp, looks, all) in [(1.0, &both[..], true), (2.0, &both[..1], false)] {
         SCALE.set(ppp);
-        let dir = scratch(&format!("review-d2-{ppp}"));
-        // A library to show in its sheet: the Fusion sample, as imported.
-        let bytes = std::fs::read(fixture("fusion/sample.tools")).unwrap();
-        let library = dc_app::library::import(&dc_library::Library::default(), &bytes, false)
-            .unwrap()
-            .library;
+        let dir = scratch(&format!("review-d3-{ppp}"));
+        // Recent files for the start screen to list.
         std::fs::create_dir_all(dir.join("config")).unwrap();
+        let recent: Vec<String> = ["plaque.dcv", "sign.dcv", "dc.dcv"]
+            .iter()
+            .map(|name| format!("{:?}", fixture(name).canonicalize().unwrap()))
+            .collect();
         std::fs::write(
-            dir.join("config/tools.json"),
-            dc_library::save(&library).unwrap(),
+            dir.join("config/gui.toml"),
+            format!("recent = [{}]\n", recent.join(", ")),
         )
         .unwrap();
-        let dialogs = QueuedDialogs::default();
-        let plaque = fixture("plaque.dcv");
-        let Some(mut h) = window_with(&dir, Some(plaque), 1280.0, 800.0, &dialogs) else {
+        let Some(mut h) = window(&dir, None, 1280.0, 800.0) else {
             return;
         };
         park_pointer(&mut h);
-        shoot_in(&mut h, &out, "01-workspace", looks);
+        shoot_in(&mut h, &out, "01-start-screen", looks);
+        drop(h);
 
-        // An operation's editor: its Setup block with its fields and its
-        // segmented control, then Depth opened, scrolled into view.
-        open_operation(&mut h, "Panel");
-        h.get_by_role_and_label(Role::Button, "Depth").click();
-        h.run();
-        h.get_by_role_and_label(Role::TextInput, "Stock to leave")
-            .scroll_to_me();
-        h.run();
+        let plaque = fixture("plaque.dcv");
+        let mut h = window(&dir, Some(plaque.clone()), 1280.0, 800.0).unwrap();
+        go_to(&mut h, "Design");
         park_pointer(&mut h);
-        shoot_in(&mut h, &out, "02-operation-editor", looks);
+        shoot_in(&mut h, &out, "02-design-step", looks);
         if !all {
             drop(h);
             std::fs::remove_dir_all(&dir).unwrap();
             continue;
         }
+        for (step, scene) in [
+            ("Stock", "03-stock-step"),
+            ("Tools", "04-tools-step"),
+            ("Operations", "05-operations-step"),
+            ("Export", "06-export-step"),
+        ] {
+            go_to(&mut h, step);
+            park_pointer(&mut h);
+            shoot_in(&mut h, &out, scene, looks);
+        }
 
-        click(&mut h, "File");
-        shoot_in(&mut h, &out, "03-file-menu", looks);
-        h.key_press(egui::Key::Escape);
-        h.run();
-
-        click(&mut h, "Warnings");
-        park_pointer(&mut h);
-        shoot_in(&mut h, &out, "04-warnings-drawer", looks);
-        h.get_by_label("Close the Warnings drawer").click();
-        h.run();
-
-        h.get_by_label_contains("Tools ·").click();
-        h.run();
-        park_pointer(&mut h);
-        shoot_in(&mut h, &out, "05-tools-tab", looks);
-        h.get_by_label_contains("Operations ·").click();
-        h.run();
-
-        click(&mut h, "Project");
-        click(&mut h, "Tool Library…");
-        park_pointer(&mut h);
-        shoot_in(&mut h, &out, "06-tool-library-sheet", looks);
-        h.key_press(egui::Key::Escape);
-        h.run();
-
-        h.input_mut()
-            .dropped_files
-            .push(std::sync::Arc::new(Dropped(fixture("sign.svg"))));
+        // The Inspector: a shape's Properties with the Arrange group, a
+        // tool's editor, an operation's editor.
+        go_to(&mut h, "Design");
+        h.get_by_role_and_label(Role::TreeItem, "square").click();
         h.run();
         park_pointer(&mut h);
-        shoot_in(&mut h, &out, "07-import-sheet", looks);
+        shoot_in(&mut h, &out, "07-design-shape-selected", looks);
+        h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+        go_to(&mut h, "Tools");
+        h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+            .click();
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "08-tools-tool-selected", looks);
+        open_operation(&mut h, "Panel");
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "09-operations-operation-selected", looks);
+
+        // An error that blocks export: the primary button is disabled,
+        // and Tools and Export are marked on the rail.
+        delete_a_feed(&mut h);
+        go_to(&mut h, "Export");
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "10-export-blocked", looks);
+        // The tool that lacks it, in the Inspector.
+        go_to(&mut h, "Tools");
+        let lacking = h.state().app().project().operations[0].tool().clone();
+        let name = h
+            .state()
+            .app()
+            .project()
+            .tools
+            .iter()
+            .find(|t| t.id == lacking)
+            .unwrap()
+            .name
+            .clone();
+        h.get_by_role_and_label(Role::ListItem, &name).click();
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "11-rail-needs-attention", looks);
+
+        // The Warnings drawer, opened from the rail.
+        h.get_by_label_contains("Warnings:").click();
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "12-warnings-drawer", looks);
+        drop(h);
+
+        // The minimum window, with all four regions.
+        let mut h = window(&dir, Some(plaque), 1280.0, 768.0).unwrap();
+        open_operation(&mut h, "Cut out");
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "13-minimum-window", looks);
+        // Narrower than the minimum: the Inspector lies over the
+        // Viewport.
+        h.set_size(egui::vec2(1100.0, 768.0));
+        h.run();
+        park_pointer(&mut h);
+        shoot_in(&mut h, &out, "14-narrow-window-inspector-over", looks);
         drop(h);
         std::fs::remove_dir_all(&dir).unwrap();
     }

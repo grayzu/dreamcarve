@@ -29,17 +29,6 @@ pub(crate) fn segmented(
     track(ui, id, options, selected, width_px, egui::Role::RadioButton)
 }
 
-/// [`segmented`] as a tab list: each option is a tab to assistive tools.
-pub(crate) fn tabs(
-    ui: &mut Ui,
-    id: Id,
-    options: &[&str],
-    selected: usize,
-    width_px: f32,
-) -> Option<usize> {
-    track(ui, id, options, selected, width_px, egui::Role::Tab)
-}
-
 /// The track and its segments, each heard as `role`.
 fn track(
     ui: &mut Ui,

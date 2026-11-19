@@ -36,6 +36,11 @@ except in an open sheet.
 | Ctrl+Shift+V | ⇧⌘V | Flip the selection top to bottom | Arrange ▸ Flip Vertical |
 | F | F | Fit the Viewport to the stock and shapes | View ▸ Fit View |
 | Shift+F | ⇧F | Fit the Viewport to the selection | View ▸ Zoom to Selection |
+| Ctrl+1 | ⌘1 | Open the Design step | View ▸ Go to Design |
+| Ctrl+2 | ⌘2 | Open the Stock step | View ▸ Go to Stock |
+| Ctrl+3 | ⌘3 | Open the Tools step | View ▸ Go to Tools |
+| Ctrl+4 | ⌘4 | Open the Operations step | View ▸ Go to Operations |
+| Ctrl+5 | ⌘5 | Open the Export step | View ▸ Go to Export |
 | T | T | Turn the Tab tool on or off: a click on a shape's outline adds a tab | — |
 | Arrow keys | Arrow keys | Nudge the selection 1 mm | — |
 | Shift+arrow keys | ⇧ arrow keys | Nudge the selection 10 mm | — |
@@ -49,12 +54,15 @@ matches the build it documents.
 ## Moving through the window
 
 Tab moves the keyboard focus through the window from top left to bottom
-right: the menu bar, the toolbar, the Design Tree, the Properties panel,
-the Viewport, the CAM panel (its list, then the operation editor), and
-the status bar, then back to the menu bar. Shift Tab goes the other way.
+right: the header (the menus, Undo, Redo and the primary button), the
+rail (the five steps, then Warnings, Appearance and Help), the step
+panel, the Viewport, the Inspector when something is selected, and the
+status bar, then back to the header. Shift Tab goes the other way.
+Ctrl 1 to Ctrl 5 (⌘1 to ⌘5 on macOS) open the Design, Stock, Tools,
+Operations and Export steps from anywhere.
 Inside an open sheet, such as the Tool Library, Tab stays in the sheet.
 
-The control with the focus has a blue ring around it. The ring shows only
+The control with the focus has a ring in the accent colour around it. The ring shows only
 when you moved there with the keyboard, not when you clicked.
 
 - **Enter** presses the focused button.

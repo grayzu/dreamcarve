@@ -14,8 +14,6 @@ use crate::shell::theme;
 pub enum Icon {
     /// `folder-open`: Open.
     FolderOpen,
-    /// `save`: Save.
-    Save,
     /// `undo-2`: Undo.
     Undo,
     /// `redo-2`: Redo.
@@ -36,10 +34,6 @@ pub enum Icon {
     CircleX,
     /// `triangle-alert`: a warning.
     TriangleAlert,
-    /// `panel-left-open`: reopen the left column.
-    PanelLeftOpen,
-    /// `panel-right-open`: reopen the CAM panel.
-    PanelRightOpen,
     /// `chevron-right`: a closed section.
     ChevronRight,
     /// `chevron-down`: an open section, a dropdown.
@@ -79,7 +73,7 @@ pub enum Icon {
     Circle,
     /// `spline`: an open path's row.
     Spline,
-    /// `rotate-cw-square`: the toolbar's Rotate.
+    /// `rotate-cw-square`: the Arrange group's Rotate.
     RotateCwSquare,
     /// `bookmark`: a tab row.
     Bookmark,
@@ -119,6 +113,24 @@ pub enum Icon {
     Pencil,
     /// `ellipsis`: a row's menu of further actions.
     Ellipsis,
+    /// `shapes`: the Design step.
+    Shapes,
+    /// `box`: the Stock step.
+    Box,
+    /// `drill`: the Tools step.
+    Drill,
+    /// `route`: the Operations step.
+    Route,
+    /// `file-output`: the Export step.
+    FileOutput,
+    /// `arrow-right`: Continue.
+    ArrowRight,
+    /// `sun-moon`: Appearance.
+    SunMoon,
+    /// `circle-question-mark`: Help.
+    CircleHelp,
+    /// `library-big`: the Tool Library.
+    LibraryBig,
 }
 
 impl Icon {
@@ -128,7 +140,6 @@ impl Icon {
     pub const fn name(self) -> &'static str {
         match self {
             Self::FolderOpen => "folder-open",
-            Self::Save => "save",
             Self::Undo => "undo-2",
             Self::Redo => "redo-2",
             Self::FileInput => "file-input",
@@ -139,8 +150,6 @@ impl Icon {
             Self::X => "x",
             Self::CircleX => "circle-x",
             Self::TriangleAlert => "triangle-alert",
-            Self::PanelLeftOpen => "panel-left-open",
-            Self::PanelRightOpen => "panel-right-open",
             Self::ChevronRight => "chevron-right",
             Self::ChevronDown => "chevron-down",
             Self::Crosshair => "crosshair",
@@ -178,6 +187,15 @@ impl Icon {
             Self::Pencil => "pencil",
             Self::Ellipsis => "ellipsis",
             Self::CircleCheck => "circle-check",
+            Self::Shapes => "shapes",
+            Self::Box => "box",
+            Self::Drill => "drill",
+            Self::Route => "route",
+            Self::FileOutput => "file-output",
+            Self::ArrowRight => "arrow-right",
+            Self::SunMoon => "sun-moon",
+            Self::CircleHelp => "circle-question-mark",
+            Self::LibraryBig => "library-big",
         }
     }
 
@@ -186,7 +204,6 @@ impl Icon {
     pub const fn codepoint(self) -> char {
         match self {
             Self::FolderOpen => '\u{e247}',
-            Self::Save => '\u{e14d}',
             Self::Undo => '\u{e2a1}',
             Self::Redo => '\u{e2a0}',
             Self::FileInput => '\u{e0c5}',
@@ -197,8 +214,6 @@ impl Icon {
             Self::X => '\u{e1b2}',
             Self::CircleX => '\u{e084}',
             Self::TriangleAlert => '\u{e193}',
-            Self::PanelLeftOpen => '\u{e21d}',
-            Self::PanelRightOpen => '\u{e434}',
             Self::ChevronRight => '\u{e06f}',
             Self::ChevronDown => '\u{e06d}',
             Self::Crosshair => '\u{e0ac}',
@@ -236,14 +251,22 @@ impl Icon {
             Self::Target => '\u{e180}',
             Self::Pencil => '\u{e1f9}',
             Self::Ellipsis => '\u{e0b6}',
+            Self::Shapes => '\u{e4b3}',
+            Self::Box => '\u{e061}',
+            Self::Drill => '\u{e58d}',
+            Self::Route => '\u{e53e}',
+            Self::FileOutput => '\u{e0c8}',
+            Self::ArrowRight => '\u{e049}',
+            Self::SunMoon => '\u{e2b2}',
+            Self::CircleHelp => '\u{e082}',
+            Self::LibraryBig => '\u{e54e}',
         }
     }
 
     /// Every icon, for checking the code points.
     #[cfg(test)]
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 57] = [
         Self::FolderOpen,
-        Self::Save,
         Self::Undo,
         Self::Redo,
         Self::FileInput,
@@ -254,8 +277,6 @@ impl Icon {
         Self::X,
         Self::CircleX,
         Self::TriangleAlert,
-        Self::PanelLeftOpen,
-        Self::PanelRightOpen,
         Self::ChevronRight,
         Self::ChevronDown,
         Self::Crosshair,
@@ -293,6 +314,15 @@ impl Icon {
         Self::Target,
         Self::Pencil,
         Self::Ellipsis,
+        Self::Shapes,
+        Self::Box,
+        Self::Drill,
+        Self::Route,
+        Self::FileOutput,
+        Self::ArrowRight,
+        Self::SunMoon,
+        Self::CircleHelp,
+        Self::LibraryBig,
     ];
 
     /// The glyph laid out at `size_px` in `colour`, ready to paint.

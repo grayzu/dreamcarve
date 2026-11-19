@@ -58,7 +58,17 @@ pub enum Command {
     FitView,
     /// View ▸ Zoom to Selection.
     ZoomToSelection,
-    /// The toolbar's Tab tool, on or off (#546).
+    /// View ▸ Go to Design: the first of the five steps.
+    GoToDesign,
+    /// View ▸ Go to Stock.
+    GoToStock,
+    /// View ▸ Go to Tools.
+    GoToTools,
+    /// View ▸ Go to Operations.
+    GoToOperations,
+    /// View ▸ Go to Export.
+    GoToExport,
+    /// The Viewport's Tab tool, on or off (#546).
     TabTool,
     /// Nudge the selection 1 mm.
     Nudge,
@@ -393,6 +403,51 @@ pub const SHORTCUTS: &[Shortcut] = &[
         StrKey::AppViewportZoomSelection,
         "Fit the Viewport to the selection",
         Scope::OutsideFields,
+    ),
+    menu_row(
+        Command::GoToDesign,
+        COMMAND,
+        &[Key::Num1],
+        Menu::View,
+        StrKey::AppMenuGoToDesign,
+        "Open the Design step",
+        Scope::Anywhere,
+    ),
+    menu_row(
+        Command::GoToStock,
+        COMMAND,
+        &[Key::Num2],
+        Menu::View,
+        StrKey::AppMenuGoToStock,
+        "Open the Stock step",
+        Scope::Anywhere,
+    ),
+    menu_row(
+        Command::GoToTools,
+        COMMAND,
+        &[Key::Num3],
+        Menu::View,
+        StrKey::AppMenuGoToTools,
+        "Open the Tools step",
+        Scope::Anywhere,
+    ),
+    menu_row(
+        Command::GoToOperations,
+        COMMAND,
+        &[Key::Num4],
+        Menu::View,
+        StrKey::AppMenuGoToOperations,
+        "Open the Operations step",
+        Scope::Anywhere,
+    ),
+    menu_row(
+        Command::GoToExport,
+        COMMAND,
+        &[Key::Num5],
+        Menu::View,
+        StrKey::AppMenuGoToExport,
+        "Open the Export step",
+        Scope::Anywhere,
     ),
     key_only(
         Command::TabTool,

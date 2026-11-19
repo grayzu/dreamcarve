@@ -293,7 +293,8 @@ fn header(ui: &mut Ui, cx: &Cx<'_>, index: usize, selected: bool, out: &mut Vec<
                 .iter()
                 .any(|f| f.op.as_ref() == Some(cx.op.id()) && f.tier == *tier)
         });
-    let mut right = rect.right() - f32::from(MARGIN_PX);
+    // The Inspector's close button is at the header's right end.
+    let mut right = rect.right() - crate::panels::side::CLOSE_RESERVE_PX;
     if let Some(tier) = worst {
         let (icon, colours) = match tier {
             Tier::Error => (Icon::CircleX, palette.status_error),

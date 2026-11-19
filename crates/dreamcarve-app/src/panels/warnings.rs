@@ -142,8 +142,14 @@ fn group_title(state: &FrameState<'_>, group: &Group) -> String {
     )
 }
 
-/// Draws the drawer.
-pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// Draws the drawer under the Viewport's card, `margins` from the cards
+/// beside it as the Viewport's are; its card's rectangle.
+pub(crate) fn drawer(
+    ui: &mut Ui,
+    state: &FrameState<'_>,
+    margins: crate::viewport::Margins,
+    out: &mut Vec<Action>,
+) -> egui::Rect {
     let palette = Palette::current(ui);
     let groups = warnings::panel(state.app);
     let counts = warnings::counts(state.app);
@@ -157,14 +163,10 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
         .frame(
             egui::Frame::NONE
                 .fill(palette.surface_window)
-                .inner_margin(egui::Margin {
-                    left: 8,
-                    right: 8,
-                    top: 2,
-                    bottom: 6,
-                }),
+                .inner_margin(margins.frame(2, 6)),
         )
         .show(ui, |ui| {
+            let rect = ui.available_rect_before_wrap();
             card(ui, |ui| {
                 if state.inert() {
                     ui.disable();
@@ -201,7 +203,9 @@ pub(crate) fn drawer(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>)
                         ui.add_space(INSET_PX);
                     });
             });
-        });
+            rect
+        })
+        .inner
 }
 
 /// The header: the title left; *Copy* and the close button right. No
@@ -376,17 +380,15 @@ fn draw_row(ui: &mut Ui, state: &FrameState<'_>, row: &Row, stripe: bool, out: &
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::click());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &row.line));
     row_surface(ui, rect, response.hovered(), stripe);
-    if response.clicked()
-        && let Some(selection) = row.selection()
-    {
-        out.push(Action::Select(selection));
-        // A row on an operation's field opens it in the editor there.
-        if let (Some(op), Some(field)) = (&row.op, &row.field) {
-            out.push(Action::FocusField {
-                op: op.clone(),
-                field: field.clone(),
-            });
-        }
+    // What the row names is selected, and the step that edits it opens:
+    // an operation's field in its editor, a shape on Design, a tool or a
+    // setting in its own step.
+    if response.clicked() {
+        out.push(Action::OpenRow {
+            selection: row.selection(),
+            op: row.op.clone(),
+            field: row.field.clone(),
+        });
     }
     response.on_hover_text(&row.message);
 

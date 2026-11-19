@@ -1,12 +1,12 @@
 // Copyright 2026 The DreamCarve Contributors
 // SPDX-License-Identifier: Apache-2.0
 
-//! The Operations tab (`docs/specs/phase-4/functional.md`, capability 65;
-//! mock-up `01-workspace.svg`; `experience.md`, sections 7 and 8): the
-//! toolbar (*Add ▾*, *Duplicate*, *Delete*), the list in cut order, and
-//! under it the editor of the operation the list has selected
-//! ([`crate::panels::editor`]), in a card of its own. Each row is 52 px
-//! on its own rounded surface: the drag grip, the
+//! The Operations step (`docs/specs/phase-4/functional.md`, capability
+//! 65; `experience.md`, sections 7 and 8; `redesign.md`, "The steps"):
+//! its buttons (*Add ▾*, *Duplicate*, *Delete*) and the list in cut
+//! order, in the step panel. The editor of the operation the list has
+//! selected ([`crate::panels::editor`]) is the Inspector's. Each row is
+//! 52 px on its own rounded surface: the drag grip, the
 //! enable checkbox, the kind's glyph in the operation's colour, the name
 //! over its kind and tool, the eye, and the status cell (the spinner
 //! while it generates, its warning count, the red mark of an error).
@@ -24,7 +24,6 @@ use crate::panels;
 use crate::shell::theme::{self, Palette};
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind as ButtonKind, button};
-use crate::widgets::card::card;
 use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::op_glyph::op_glyph;
@@ -33,7 +32,7 @@ use crate::widgets::spinner::spinner;
 
 /// A row's height, px (`experience.md`, section 3).
 const ROW_PX: f32 = theme::LIST_ROW_PX;
-/// The toolbar's height, px: a control and the gap under it.
+/// The button row's height, px: a control and the gap under it.
 const TOOLBAR_PX: f32 = theme::CONTROL_PX + theme::GAP_PX;
 /// A glyph's box, px.
 const ICON_PX: f32 = 16.0;
@@ -65,63 +64,20 @@ fn dragging_id() -> Id {
     Id::unique("dc.operations.dragging")
 }
 
-/// Draws the tab: the editor of the selected operation in a resizable
-/// card at the column's bottom, and above it the card that holds `head`
-/// (the CAM panel's title and tabs), the toolbar and the list.
-pub(crate) fn show(
-    ui: &mut Ui,
-    state: &FrameState<'_>,
-    head: impl FnOnce(&mut Ui),
-    out: &mut Vec<Action>,
-) {
-    let palette = Palette::current(ui);
+/// The step panel's content under its title: the buttons, then the list
+/// in cut order, or the sentence that says how to add the first one.
+pub(crate) fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+    toolbar(ui, state, out);
     let app = state.app;
-    let editing = app
-        .editing()
-        .and_then(|id| app.project().operations.iter().find(|o| o.id() == id));
-    if let Some((picking, _)) = panels::editor::point_pick(ui.ctx())
-        && editing.is_none_or(|op| *op.id() != picking)
-    {
-        panels::editor::arm_point_pick(ui.ctx(), None);
+    if app.project().operations.is_empty() {
+        panels::side::empty_sentence(ui, app.strings().get(StrKey::AppPanelNoOperations));
+        return;
     }
-    if let Some(op) = editing {
-        let height = (ui.available_height() * 0.5).max(160.0);
-        egui::Panel::bottom("operation_editor")
-            .resizable(true)
-            .show_separator_line(false)
-            .default_size(height)
-            .size_range(egui::Rangef::new(120.0, f32::INFINITY))
-            .frame(panels::side::lower_frame(palette))
-            .show(ui, |ui| {
-                card(ui, |ui| {
-                    ui.set_min_height(ui.available_height());
-                    panels::editor::show(ui, state, op, out);
-                });
-            });
-    }
-    card(ui, |ui| {
-        head(ui);
-        toolbar(ui, state, out);
-        if app.project().operations.is_empty() {
-            ui.add_space(24.0);
-            ui.vertical_centered(|ui| {
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(app.strings().get(StrKey::AppPanelNoOperations))
-                            .text_style(TextStyle::Body)
-                            .color(palette.text_secondary),
-                    )
-                    .wrap()
-                    .selectable(false),
-                );
-            });
-            return;
-        }
-        list(ui, state, out);
-    });
+    rows(ui, state, out);
 }
 
-/// *Add ▾*, *Duplicate*, *Delete*.
+/// *Add ▾*, *Duplicate*, *Delete*. Only *Add* has an icon: the three fit
+/// the step panel at its narrowest.
 fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     let editing = state.app.editing().cloned();
@@ -154,7 +110,6 @@ fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ButtonKind::Secondary,
             strings.get(StrKey::OperationsDuplicate),
         )
-        .icon(Icon::Copy, theme::ICON_SMALL_PX)
         .enabled(editing.is_some()),
     );
     if duplicate.clicked()
@@ -168,7 +123,6 @@ fn toolbar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             ButtonKind::Destructive,
             strings.get(StrKey::OperationsDelete),
         )
-        .icon(Icon::Trash2, theme::ICON_SMALL_PX)
         .enabled(editing.is_some()),
     );
     if delete.clicked()
@@ -286,7 +240,7 @@ pub(crate) fn reveal(ctx: &egui::Context, op: OperationId) {
 }
 
 /// The rows, with the drag that reorders them.
-fn list(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+fn rows(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let rows = operations::rows(state.app);
     let dragging: Option<OperationId> = ui.data(|d| d.get_temp(dragging_id()));

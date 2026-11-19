@@ -5,8 +5,8 @@
 //! `docs/specs/phase-4/experience.md`, section 7, "Buttons"): primary (an
 //! accent pill, once per view), secondary (raised, outlined, the control
 //! radius), quiet (text and icon, a wash on hover) and destructive (a
-//! secondary button in the error colour), with an optional Lucide icon and
-//! trailing text. Painted here rather than with egui's `Button` so the
+//! secondary button in the error colour), with an optional Lucide icon
+//! before or after the label. Painted here rather than with egui's `Button` so the
 //! accessible name is the label alone (not the icon's private-use code
 //! point), the heights are the spec's, and the focus ring is drawn.
 
@@ -60,6 +60,8 @@ pub struct ButtonSpec<'a> {
     pub icon: Option<Icon>,
     /// The icon's size, px.
     pub icon_px: f32,
+    /// Whether the icon follows the label: the arrow of *Continue*.
+    pub icon_after: bool,
     /// The label, and the accessible name. Empty for an icon-only button,
     /// whose name is `tooltip`.
     pub label: &'a str,
@@ -69,14 +71,8 @@ pub struct ButtonSpec<'a> {
     /// The accessible name of an icon-only button whose tooltip says
     /// something else (a disabled button's reason).
     pub name: Option<&'a str>,
-    /// Text at the right edge in text.secondary, such as the action's
-    /// shortcut; not part of the accessible name.
-    pub trailing: Option<&'a str>,
-    /// Whether the content starts at the left edge whatever the style: a
-    /// full-width button in a column of left-aligned ones.
-    pub leading: bool,
-    /// Height, px: 32 for a control, 34 for the toolbar's primary button,
-    /// 40 for the empty state's.
+    /// Height, px: 32 for a control, 34 for the header's primary button,
+    /// 40 for the start screen's.
     pub height_px: f32,
     /// Width, px; `None` fits the content.
     pub width_px: Option<f32>,
@@ -95,11 +91,10 @@ impl<'a> ButtonSpec<'a> {
             kind,
             icon: None,
             icon_px: theme::ICON_SMALL_PX,
+            icon_after: false,
             label,
             tooltip: None,
             name: None,
-            trailing: None,
-            leading: false,
             height_px: theme::CONTROL_PX,
             width_px: None,
             enabled: true,
@@ -115,6 +110,15 @@ impl<'a> ButtonSpec<'a> {
         self
     }
 
+    /// With `icon` at `px` after the label.
+    #[must_use]
+    pub const fn icon_after(mut self, icon: Icon, px: f32) -> Self {
+        self.icon = Some(icon);
+        self.icon_px = px;
+        self.icon_after = true;
+        self
+    }
+
     /// With a tooltip.
     #[must_use]
     pub const fn tooltip(mut self, tooltip: &'a str) -> Self {
@@ -126,20 +130,6 @@ impl<'a> ButtonSpec<'a> {
     #[must_use]
     pub const fn named(mut self, name: &'a str) -> Self {
         self.name = Some(name);
-        self
-    }
-
-    /// With `trailing` at the right edge.
-    #[must_use]
-    pub const fn trailing(mut self, trailing: &'a str) -> Self {
-        self.trailing = Some(trailing);
-        self
-    }
-
-    /// With the content starting at the left edge.
-    #[must_use]
-    pub const fn leading(mut self) -> Self {
-        self.leading = true;
         self
     }
 
@@ -243,7 +233,6 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
     let palette = Palette::current(ui);
     let gap = theme::GAP_PX;
     let body = TextStyle::Body.resolve(ui.style());
-    let small = TextStyle::Small.resolve(ui.style());
     let painter = ui.painter().clone();
     let label = (!spec.label.is_empty())
         .then(|| painter.layout_no_wrap(spec.label.to_owned(), body.clone(), theme::PAINT_TIME));
@@ -290,37 +279,29 @@ pub fn button(ui: &mut Ui, spec: ButtonSpec<'_>) -> Response {
         if wash != theme::NONE {
             painter.rect_filled(rect, radius, wash);
         }
-        let padding = spec.kind.padding_px();
-        let mut x = if spec.leading {
-            rect.left() + padding
-        } else {
-            rect.center().x - inner / 2.0
+        let mut x = rect.center().x - inner / 2.0;
+        let paint_icon = |x: f32| {
+            if let Some(icon) = spec.icon {
+                let glyph = icon.galley(ui, spec.icon_px, text);
+                let at = egui::pos2(
+                    x + (spec.icon_px - glyph.size().x) / 2.0,
+                    rect.center().y - glyph.size().y / 2.0,
+                );
+                painter.galley(at, glyph, text);
+            }
         };
-        if let Some(icon) = spec.icon {
-            let glyph = icon.galley(ui, spec.icon_px, text);
-            let at = egui::pos2(
-                x + (spec.icon_px - glyph.size().x) / 2.0,
-                rect.center().y - glyph.size().y / 2.0,
-            );
-            painter.galley(at, glyph, text);
+        if spec.icon.is_some() && !spec.icon_after {
+            paint_icon(x);
             x += spec.icon_px + gap;
         }
         if let Some(label) = label {
             let y = rect.center().y - label.size().y / 2.0;
+            let width = label.size().x;
             painter.galley(egui::pos2(x, y), label, text);
+            x += width + gap;
         }
-        if let Some(trailing) = spec.trailing {
-            let colour = if enabled {
-                palette.text_secondary
-            } else {
-                palette.text_disabled
-            };
-            let galley = painter.layout_no_wrap(trailing.to_owned(), small, theme::PAINT_TIME);
-            let at = egui::pos2(
-                rect.right() - spec.kind.padding_px() - galley.size().x,
-                rect.center().y - galley.size().y / 2.0,
-            );
-            painter.galley(at, galley, colour);
+        if spec.icon_after {
+            paint_icon(x);
         }
         focus_ring_at(ui, &response, radius);
     }

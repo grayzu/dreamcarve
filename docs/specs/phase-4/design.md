@@ -334,8 +334,9 @@ Warnings panel, never a refusal to start.
 
 `eframe` with the `wgpu` backend, one `App` struct implementing
 `eframe::App`. `update` does, in order: drain the worker channel into
-`dc_app::App::accept`; draw the menu bar, the toolbar, the left panel
-(`SidePanel::left`), the right panel, the status bar (`TopBottomPanel`),
+`dc_app::App::accept`; draw the header and the status bar (top and
+bottom `Panel`s), the rail and the current step's panel (left `Panel`s),
+the Inspector when the step has something selected (a right `Panel`),
 the Warnings drawer, then the Viewport in the `CentralPanel`; collect the
 commands the widgets produced this frame and run them; post `pending()` to
 the worker. Widgets never hold project data between frames: they read the
@@ -343,6 +344,23 @@ current snapshot and emit commands. Transient editing state (a field's
 text while focused, a drag in progress, a menu's open state) lives in the
 shell's per-widget state, and a drag's live preview is a `Transform`
 applied in the Viewport's draw, not a snapshot.
+
+Steps (`redesign.md`, "The steps"; functional 50): `dc_app::steps` is
+the model, with no window. `Step` is the five steps in order;
+`steps::states(&App, &Session)` gives each its `State` (`Empty`,
+`Complete`, or `Attention` with a `Severity`) from the project and its
+findings, a finding going to the step that edits its field
+(`steps::step_of`); `steps::next` is what *Continue* opens and
+`steps::opening` what a newly opened project starts on;
+`steps::summary` is the line under a step's title. `Session` is what
+the project does not hold: how many importer's warnings are still
+noted, and the snapshot the last export wrote. The shell holds the
+current step, the `Session`, and the states as shown, which
+`steps::settle` holds steady while toolpaths regenerate. Which tool the
+Tools step has selected is view state in egui's memory; the Design
+step's selection is `App::selection` and the Operations step's
+`App::editing`. `panels::side::inspecting` decides from those whether
+the Inspector shows and what it edits.
 
 Threads: one worker owning a receiver of `Job`s and a sender of
 `JobResult`s; it runs `dc_job::generate_operation` per job and
@@ -445,9 +463,9 @@ the operation selection, so the highlight costs no extra pass, and
 
 ### Arrange
 
-`dc-app::arrange` turns the toolbar's actions into
+`dc-app::arrange` turns the Arrange group's actions into
 `TransformInstances` about the selection's bounding-box centre:
-`rotate(deg)` (positive anticlockwise, Y-up; the toolbar's 90° clockwise
+`rotate(deg)` (positive anticlockwise, Y-up; the group's 90° clockwise
 is `rotate(-90)`) and `flip(Axis)` (scale −1 on one axis), filtering
 locked instances and returning the names it left out for the status
 bar, and `enabled(selection) -> Result<(), Reason>` for the disabled
@@ -604,8 +622,8 @@ before merge.
 
 ```
 crates/dc-job/src/{lib.rs, build.rs (build, generate_operation, finish, Findings, Tier), names.rs (program_names), summary.rs (extents, estimates, carve_facts, describe_carves), report.rs, setup_sheet.rs (review: render), preview.rs (render, marks; moved), project_from.rs (drawing, picture; moved from init.rs), import.rs (drawing_into), tabs.rs (place_request and re-exports)}
-crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, pictures.rs (a picture's Properties and moves), warnings.rs (merge, tiers, grouping), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
-crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, menu.rs, toolbar.rs, status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{tree.rs, properties.rs, project.rs, operations.rs, editor.rs (renderers per field kind), tools.rs, library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
+crates/dc-app/src/{lib.rs, app.rs (App, SnapshotId, dirty), command.rs (Command, apply, label, CommandError), history.rs (labels beside dc_project::History), selection.rs, view.rs (View, Visibility, ColourMode), generation.rs (digest, Job, JobResult, staleness), scene.rs (Scene, male board offset), viewport/{camera.rs, pick.rs, handles.rs, arrows.rs (port), tabs.rs (tab_drag)}, editor/{fields.rs (the capability 68 table), set.rs (key-path set/get), targets.rs, clearing.rs}, tree.rs, pictures.rs (a picture's Properties and moves), warnings.rs (merge, tiers, grouping), steps.rs (Step, State, states, next, opening; redesign), export.rs (plan), library.rs (filter; port), units.rs, strings.rs (+ build.rs, strings/en.toml), prefs.rs, test_support.rs (Harness)}
+crates/dreamcarve-app/src/{main.rs (eframe entry, --open), shell/{window.rs, header.rs (menus' bar, name, Undo and Redo, the primary button; redesign), menu.rs, rail.rs (the steps; redesign), status.rs, files.rs (open/save/recent/unsaved), worker.rs (thread, channels), theme.rs (tokens → Visuals), strings.rs (loader)}, panels/{side.rs (the step panel and the Inspector; redesign), tree.rs, properties.rs, arrange.rs (the Arrange group), project.rs (the Stock step, the Export step's settings), operations.rs, editor.rs (renderers per field kind), tools.rs, export_step.rs (the readiness card; redesign), library.rs (window), warnings.rs, export.rs (sheet), import.rs (sheet), empty.rs (the start screen)}, viewport/{mod.rs, renderer.rs (wgpu callback, buffers, shader.wgsl), lod.rs, handles.rs, cursor.rs}, widgets/{unit_field.rs, segmented.rs, section.rs, row.rs, icon.rs, tabs.rs}}
 crates/dreamcarve-app/assets/{fonts/, icons/, strings/ (symlink or include of dc-app's table)}
 crates/dreamcarve-shell/src/{lib.rs, staged.rs (StagedFile, commit_all; moved from cli.rs), config_dir.rs (moved from config.rs), config.rs (config.toml), gui_prefs.rs (gui.toml), read.rs (read_capped, MAX_FILE_BYTES)}
 crates/dreamcarve/src/{cli.rs, export.rs, check.rs, init.rs, tabs.rs, tools.rs, config.rs, image.rs}  — thin: argument parsing, printing, calls into dc-job and dreamcarve-shell
@@ -624,7 +642,10 @@ depth legend's ticks in `view.rs`, `result` in `export.rs`;
 `dreamcarve-app/src/{viewport/popover.rs (the toolpath view, replacing
 card.rs), viewport/legend.rs, viewport/target_bar.rs, panels/result.rs,
 widgets/split_button.rs, widgets/link.rs}`. `Prefs` gains
-`library_units` and the left column's panel open states.
+`library_units` and the left column's panel open states (since the
+redesign there are no such panels: `panels.left_width` and
+`panels.left_open` are the step panel's, `panels.right_width` the
+Inspector's).
 
 Dependencies, all `[workspace.dependencies]`, versions re-checked at slice
 time: `eframe`/`egui`/`egui_wgpu`/`egui_extras` (MIT/Apache-2.0; `wgpu`
@@ -721,7 +742,7 @@ carries. The CLI's existing tests are the regression net for slice 1.
 - `gui_equality::app_export_equals_cli_export_on_six_posts` (acc 83, `crates/dreamcarve/tests/`), `gui_equality::quick_start_parts_from_the_app` (acc 90).
 
 **Shell (slices 3, 19, 20, 22)**
-- `kittest::opens_plaque_renders_and_exports` (acc 92, three OSes), `kittest::unsaved_changes_prompt` (acc 88), `kittest::keyboard_shortcuts_reach_their_commands` (acc 54), `kittest::field_commits_on_blur_not_per_keystroke` (acc 86), `kittest::panels_collapse_below_the_minimum` (acc 50), `kittest::theme_follows_system_and_both_palettes_apply` (50a), `kittest::snapshot_workspace_light_and_dark` (Linux only, `experience.md` review).
+- `kittest::opens_plaque_renders_and_exports` (acc 92, three OSes), `kittest::unsaved_changes_prompt` (acc 88), `kittest::keyboard_shortcuts_reach_their_commands` (acc 54), `kittest::field_commits_on_blur_not_per_keystroke` (acc 86), `kittest::inspector_lies_over_the_viewport_below_the_minimum` (acc 50; before the redesign, `panels_collapse_below_the_minimum`), `kittest::theme_follows_system_and_both_palettes_apply` (50a), `kittest::snapshot_workspace_light_and_dark` (Linux only, `experience.md` review).
 
 ## Slices
 
@@ -765,7 +786,10 @@ on a second set, is now slice 36, and slices 21 and 22 wait for it.
 
 The screenshot review of slice 20 (#549, 2026-11-10) changed the
 functional spec in place ("Review redesign" there) and `experience.md`
-(its section 15 and the amended sections). These slices carry it. Each
+(its section 15 and the amended sections). These slices carry it. They
+are written for the window as it was then: a toolbar, a left column
+with Project Settings, and a CAM panel with two tabs. "Redesign slices"
+below says where each of those went and which tests moved. Each
 is one GitHub issue, opened after this spec merges, with the tests
 below as its Tests section and #549 as its parent; the process is the
 phase's (test first, the full gate, PR into `main`). Every slice's
@@ -1173,6 +1197,82 @@ rebases, and none waits for another to start.
     - `theme::no_colour_literal_outside_theme` still green.
     - A checklist comment on #549 with every item ticked and every
       screenshot captioned.
+
+## Redesign slices
+
+The redesign of 2026-11-18 (`redesign.md`) is carried by slices D2 to
+D5 of `docs/alpha-worklog.md`. D2 changed tokens and components only.
+D3 replaces the layout the slices above built; no capability goes, and
+each moves as follows.
+
+| Before | Since D3 |
+| --- | --- |
+| Menu bar | The header's left |
+| Toolbar: Open, Save | The File menu (and the start screen's *Open…*) |
+| Toolbar: Undo, Redo | The header's right |
+| Toolbar: Add drawing, Add picture | The Design step |
+| Toolbar: the Arrange group | The header of the Inspector's Properties, on Design |
+| Toolbar: Fit, Tab tool | A floating pill at the Viewport's top left |
+| Toolbar: Export | The header's primary button on the Export step, *Export G-code*; the step's *Review programs…* |
+| Left column: Design Tree | The Design step |
+| Left column: Project Settings | The Stock step (Units, stock, Origin) and the Export step (Heights, Tolerances, Post-processor) |
+| Left column: Properties | The Inspector, on Design |
+| CAM panel: Tools tab, its editor | The Tools step; the Inspector, on Tools |
+| CAM panel: Operations tab, its editor | The Operations step; the Inspector, on Operations |
+| Empty-state card | The start screen, in the Viewport's card |
+| Panels collapsing to strips | View ▸ *Step Panel*; the Inspector comes and goes with the selection, and lies over the Viewport under 1280 px |
+
+D3. **The steps, the header, the rail, the step panel, the Inspector
+    and the start screen** (functional 50, 50a, 60, 79; acceptance 50,
+    93, 103).
+
+    Tests:
+    - `dc_app::steps` (`crates/dc-app/tests/steps.rs`), each named for
+      the rule it pins: the order; a new project's steps all empty; each
+      step's complete and needs-attention rules; a finding's step by its
+      field; *Continue*'s next step, forward then round; the opening
+      step; a mark held while toolpaths regenerate; a selection's step;
+      each step's summary line.
+    - `kittest::rail_has_five_steps_and_a_project_opens_on_its_first_incomplete_one`
+      (was `cam_panel_has_a_title_and_tools_first`): the rail's tabs in
+      order, 56 × 52; a new project on Design, the plaque on Export; the
+      pick stays through an edit; *New* opens on Design.
+    - `kittest::continue_goes_to_the_next_step_and_export_is_the_primary_on_export`:
+      *Continue* from Design; *Export G-code* on Export opens the sheet,
+      and is disabled once a used tool has no feed, when Tools and
+      Export are marked with an error.
+    - `kittest::inspector_shows_properties_only_with_a_selection` (was
+      `left_column_is_project_settings_then_properties`): no Inspector
+      with nothing selected; Properties and the Arrange group in it with
+      a shape selected on Design; none on another step; the close
+      button deselects; the panels' widths are `gui.toml`'s.
+    - `kittest::a_project_without_a_thickness_opens_on_stock` (was
+      `project_settings_opens_on_a_project_error`): the Coaster opens on
+      Stock, marked with an error, its Thickness *Required*; Project ▸
+      Project Settings… opens the Stock step.
+    - `kittest::units_is_the_first_row_of_the_stock_step` (was
+      `units_is_the_first_row_of_project_settings`).
+    - `kittest::inspector_lies_over_the_viewport_below_the_minimum` (was
+      `panels_collapse_below_the_minimum`): the four regions and their
+      8-px gaps at 1280 × 768; the Inspector over the Viewport in a
+      narrower window; View ▸ *Step Panel*.
+    - `kittest::start_screen_offers_a_drawing_the_examples_and_recent_files`
+      (was `empty_state_offers_two_paths`): the heading, the three
+      actions in a row, three example cards in a row with thumbnails,
+      the recent files that exist; another step shows the stock.
+    - `kittest::warnings_row_opens_the_step_that_owns_it`: a row about a
+      tool opens Tools with the tool in the Inspector; a row about the
+      stock opens Stock.
+    - `kittest::rail_bottom_has_warnings_appearance_and_help`.
+    - `kittest::focus_order_and_visible_ring`: Tab walks header, rail,
+      step panel, Viewport, Inspector, status bar, and the five steps in
+      order.
+    - `kittest::keyboard_shortcuts_reach_their_commands`: Ctrl 1 to 5.
+    - Every other window test of slices 3 to 35 opens the step that has
+      what it tests (`common::go_to`, `common::open_operation`) and
+      asserts what it did before.
+    - `review::redesign_d3_screenshots` writes
+      `docs/specs/phase-4/review/d3/`.
 
 ## Open questions
 

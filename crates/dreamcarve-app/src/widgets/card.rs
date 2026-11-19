@@ -35,22 +35,27 @@ pub(crate) fn card<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
     out
 }
 
-/// Draws `body` in a card as tall as what it holds, across the width `ui`
-/// has left, and masks its corners afterwards.
-pub(crate) fn fitted<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
+/// Draws `body` in a card that floats over another (the Inspector over
+/// the Viewport in a narrow window): `surface.panel` with a hairline and
+/// the one shadow, filling the space `ui` has left. Its corners are not
+/// masked, since what shows round them is the card under it.
+pub(crate) fn floating<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
     let palette = Palette::current(ui);
-    let background = ui.painter().add(Shape::Noop);
-    let inner = ui.scope(|ui| {
-        ui.set_width(ui.available_width());
-        body(ui)
-    });
-    let rect = inner.response.rect;
-    ui.painter().set(
-        background,
-        egui::epaint::RectShape::filled(rect, theme::CARD_RADIUS_PX, palette.surface_panel),
+    let rect = ui.available_rect_before_wrap();
+    ui.painter()
+        .add(theme::shadow(palette).as_shape(rect, theme::CARD_RADIUS_PX));
+    ui.painter().rect(
+        rect,
+        theme::CARD_RADIUS_PX,
+        palette.surface_panel,
+        Stroke::new(1.0, palette.border_default),
+        egui::StrokeKind::Inside,
     );
-    mask_corners(ui.painter(), rect, theme::CARD_RADIUS_PX, palette);
-    inner.inner
+    let mut child = ui.new_child(UiBuilder::new().max_rect(rect));
+    child.set_clip_rect(rect.intersect(ui.clip_rect()));
+    let out = body(&mut child);
+    ui.allocate_rect(rect, Sense::hover());
+    out
 }
 
 /// The frame of a card inside a card: `surface.raised` at the inner

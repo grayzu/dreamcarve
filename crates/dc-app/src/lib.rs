@@ -23,6 +23,7 @@ pub mod properties;
 pub mod scene;
 pub mod selection;
 pub mod status;
+pub mod steps;
 pub mod strings;
 pub mod tools;
 pub mod tree;

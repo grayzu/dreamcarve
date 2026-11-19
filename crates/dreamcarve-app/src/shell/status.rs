@@ -11,9 +11,9 @@
 //! *Stopped* and *Regenerate all*), the counts (the button that opens the
 //! Warnings drawer), the estimate, the Z range, a drag, the shape under
 //! the pointer and the last message. A cell with nothing to say is not
-//! drawn. No stock size: Project Settings shows it.
+//! drawn. No stock size: the Stock step shows it.
 
-use dc_app::status::{self, CountsCell, GenerationAction, GenerationCell, Inputs};
+use dc_app::status::{CountsCell, GenerationAction, GenerationCell};
 use dc_app::warnings::Level;
 use dc_app::{Command, StrKey};
 use dc_project::Units;
@@ -28,8 +28,8 @@ use crate::widgets::spinner::spinner;
 
 /// The status bar's height, px.
 const HEIGHT_PX: f32 = theme::STATUS_BAR_PX;
-/// The margin under the bar, px: with the 2 px a pill stands off the
-/// bar's edge, the gap round the cards.
+/// The margin under the bar and under the cards above it, px: with the
+/// 2 px a pill stands off the bar's edge, the gap round the cards.
 pub(crate) const BOTTOM_PX: i8 = 6;
 /// A cell's pill, px high.
 const CELL_PX: f32 = theme::CHIP_PX;
@@ -138,7 +138,7 @@ fn glyph(ui: &mut Ui, icon: Icon, colour: egui::Color32) {
 
 /// The units cell: a button reading `mm` or `in` with a `chevron-down`,
 /// whose two-row menu switches the project's display units (capability
-/// 53) as Project Settings' switch does: one undo step.
+/// 53) as the Stock step's switch does: one undo step.
 fn units(ui: &mut Ui, state: &FrameState<'_>, label: &str, current: Units, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     let strings = state.app.strings();
@@ -218,8 +218,8 @@ fn counts(ui: &mut Ui, state: &FrameState<'_>, cell: &CountsCell, out: &mut Vec<
     }
 }
 
-/// Draws the status bar.
-pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
+/// Draws the status bar; its rectangle.
+pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) -> Rect {
     let palette = Palette::current(ui);
     #[allow(clippy::cast_possible_truncation, reason = "the window gap, 8 px")]
     let side = theme::GAP_PX as i8;
@@ -241,18 +241,7 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
             if state.inert() {
                 ui.disable();
             }
-            let inputs = Inputs {
-                cursor_mm: state.pointer.cursor_mm,
-                drag: state.pointer.drag.as_deref(),
-                hover: state
-                    .pointer
-                    .hover
-                    .as_ref()
-                    .map(|(name, locked)| (name.as_str(), *locked)),
-                message: state.message,
-                estimate: state.estimate,
-            };
-            let cells = status::cells(state.app, &inputs);
+            let cells = &state.cells;
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = CELL_GAP_PX;
                 let secondary = palette.text_secondary;
@@ -301,7 +290,9 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
                     message(ui, state, label, cells.message_op.as_ref(), out);
                 }
             });
-        });
+        })
+        .response
+        .rect
 }
 
 /// The message cell: the last message, or the selected operation's carve

@@ -28,7 +28,10 @@ Where VCarve Pro and PureCutCNC differ in how a workflow is presented, this
 spec follows PureCutCNC's layout (its CAM panel, design tree, export dialog
 and canvas are the reference: `src/components/cam/`, `feature-tree/`,
 `export/`, `canvas/`) and VCarve's vocabulary, as phases 2 and 3 did for the
-operations. The GUI toolkit and the architecture are the design spec's.
+operations. What each panel holds follows that reference; how the window
+arranges the panels (a rail of five steps, a step panel, an Inspector) is
+`redesign.md`'s (capability 50). The GUI toolkit and the architecture are
+the design spec's.
 
 ## Users and scenarios
 
@@ -70,7 +73,7 @@ operations. The GUI toolkit and the architecture are the design spec's.
   dialog, and re-cuts the male alone.
 - **Jo** imports a DXF of six small parts drawn on three layers and takes
   only the `CUT` layer. The parts come in as drawn; Jo selects two, moves
-  them off the clamps by dragging, rotates one 90° with the toolbar's
+  them off the clamps by dragging, rotates one 90° with the Inspector's
   Rotate button, and duplicates a third as a linked copy. One Outside Profile targets all
   six. The program extents overlay shows where the bit's edge reaches, so
   Jo knows the clamps are clear before leaving the desk.
@@ -87,52 +90,110 @@ folder are app preferences, kept outside the project.
 
 ### The workspace
 
-50. **One window, four regions** (mock-up `01-workspace.svg`). A menu
-    bar and toolbar across the top (File, Edit, Arrange, View, Project,
-    Help; the toolbar holds Open, Save, Undo, Redo, Add drawing, Add
-    picture, the Arrange group of 58a, Fit, the Tab tool, and Export). The
-    **window title** is the project's name without its extension and the
-    app's name, `plaque — DreamCarve`, with `*` after the name while there
-    are unsaved changes (`plaque* — DreamCarve`) and `Untitled` before the
-    first save; the name appears nowhere else in the chrome (no file name
-    in the toolbar, none above the CAM panel). On the left the **Design
-    Tree** over two collapsible sections, **Project Settings** on top (60)
-    and **Properties** below it (58), present only while something is
-    selected. In the centre the **Viewport**. On the right the **CAM
-    panel**, titled *CAM* like the other panels, with two tabs in workflow
-    order, **Tools** then **Operations**, each a list over an editor. A
-    status bar along the bottom (50b), whose warning and error counts open
-    the **Warnings** panel as a drawer above it. Side panels resize by
-    dragging their dividers and collapse
-    to a strip; the layout is remembered between sessions in the app's
-    preferences file, `gui.toml` beside `config.toml` in the user config
-    directory (open question 11). The window is dark until the user
-    chooses Light or System (following the OS) from View ▸ Appearance,
-    so both palettes ship (open question 9). Minimum usable
-    window: 1280 × 768 with both side panels open at their minimum; below
-    that the side panels collapse to strips rather than the window
-    refusing (open question 12).
+50. **One window, six regions** (`redesign.md`, "The window"). Every
+    region is a card on the window's backdrop, 8 px from its neighbours.
+    - A **header** across the top. At its left the menus (File, Edit,
+      Arrange, View, Project, Help; 79a). In its centre the project's
+      name, with a dot before it while there are unsaved changes. At its
+      right Undo and Redo, the generation state while toolpaths
+      regenerate (71), and the window's one primary button. It reads
+      **Continue** and opens the next step that is not complete; on the
+      Export step it reads **Export G-code** and is the export command
+      (77), disabled with the reason in its tooltip while an error blocks
+      export.
+    - The **rail** at the left: the five **steps** of the work in their
+      fixed order, **Design**, **Stock**, **Tools**, **Operations**,
+      **Export**, each a button with a mark of its state (below). Nothing
+      is locked: any step opens at any time, from the rail, from View ▸
+      *Go to …*, or with Ctrl/⌘ 1 to 5 (54). Pinned to the rail's bottom:
+      **Warnings**, with the count of the worst tier found, which opens
+      the Warnings drawer (76); **Appearance**; and **Help** (79).
+    - The **step panel** beside it shows the current step: its title, one
+      line saying what it holds, then its content. Design: *Add drawing*
+      and *Add picture* (55, 56) over the **Design Tree** (57). Stock:
+      the units, the stock and the origin (60). Tools: the project's
+      tools (63). Operations: the operations list (65). Export: a
+      readiness card (the error, warning and hint counts, the estimated
+      time, the Z range), *Review programs…*, which opens the export
+      sheet (77) whatever the counts say, and the output settings (60,
+      62).
+    - The **Viewport** in the centre, with *Fit* and the *Tab tool* (69)
+      floating at its top left.
+    - The **Inspector** at the right, there only while the current step
+      has something selected that has an editor: on Design the
+      **Properties** of the selected shapes or tabs (58) with the Arrange
+      group (58a) in its header; on Tools the selected tool's editor
+      (63); on Operations the selected operation's (66). Its close button
+      deselects, and with nothing selected the Viewport takes the room.
+    - A status bar along the bottom (50b), whose warning and error counts
+      also open the **Warnings** panel, a drawer over the Viewport's
+      bottom.
+
+    A step's state is computed from the project and its findings, never
+    stored:
+
+    | Step | Complete when | Needs attention when |
+    | --- | --- | --- |
+    | Design | The project has a shape or a picture | A finding is about a shape, or an importer's warning about a drawing is still in the Warnings panel |
+    | Stock | The thickness is set and every shape is on the stock | A stock or origin field has a problem, or a shape reaches past the stock |
+    | Tools | The project has a tool | A finding is about a tool (one an enabled operation uses lacks a feed, plunge rate or RPM) |
+    | Operations | An enabled operation exists | A finding is about an operation |
+    | Export | The last export wrote the project as it stands | An error blocks the export of an enabled operation, or an output setting has a problem |
+
+    A step that is neither is **empty** and has no mark; a complete one
+    has a check; one that needs attention has a dot in the error colour
+    when any of its findings is an error, else in the warning colour.
+    Hints never mark a step. A project with no shape, picture or
+    operation has no marks at all: its unset thickness becomes the Stock
+    step's error once there is something to cut. While toolpaths
+    regenerate, the marks of Operations and Export hold until the results
+    are back, so they do not blink.
+
+    Selecting an operation by clicking its cut on the Viewport (72), or
+    clicking a row of the Warnings drawer (76), opens the step that owns
+    what is named: an operation's field in its editor, a shape on Design,
+    a tool in the Tools step's Inspector, a stock or output setting in
+    its step.
+
+    The **window title** is the project's name without its extension and
+    the app's name, `plaque — DreamCarve`, with `*` after the name while
+    there are unsaved changes (`plaque* — DreamCarve`) and `Untitled`
+    before the first save; the header shows the same name, and no widget
+    shows the file's extension. The step panel and the Inspector resize
+    by dragging the gap at their inner edge; their widths, and whether
+    the step panel shows (View ▸ *Step Panel*), are remembered between
+    sessions in the app's preferences file, `gui.toml` beside
+    `config.toml` in the user config directory (open question 11). The
+    window is dark until the user chooses Light or System (following the
+    OS) from View ▸ Appearance or the rail, so both palettes ship (open
+    question 9). Minimum usable window: 1280 × 768, which holds the rail,
+    the step panel, the Viewport and the Inspector at their minimum
+    widths; in a narrower window the Inspector lies over the Viewport's
+    right side rather than the window refusing (open question 12).
 50a. **Look and feel.** The app is a current desktop application, not a
-    dialog-box program (maintainer, 2026-11-02). Panels edit the project in
-    place: a change applies as it is made and is undone from the Edit menu,
-    never through OK/Cancel forms. Validation is inline, under the field
-    (60, 66). Modal windows are kept for the few things that are modal
-    (open, save, import, export, the Tool Library) and use the same panel
-    idiom inside. Flat controls with one icon set, a consistent spacing and
-    type scale, and light and dark palettes designed together, so the
+    dialog-box program (maintainer, 2026-11-02), and it says what to do
+    next (`redesign.md`, principle 1): the rail shows which steps are
+    done and which need attention, and one accent button moves on.
+    Panels edit the project in place: a change applies as it is made and
+    is undone from the Edit menu, never through OK/Cancel forms.
+    Validation is inline, under the field (60, 66). Modal windows are
+    kept for the few things that are modal (open, save, import, export,
+    the Tool Library) and use the same panel idiom inside. Rounded cards
+    on a dark backdrop, one accent, one icon set, a consistent spacing
+    and type scale, and dark and light palettes designed together, so the
     toolpath colours read on both. No bevelled buttons, no tabbed
-    property sheets, no nested dialogs. The wireframes in `mockups/` fix
-    layout, labels and field names only; the visual design (palette, type,
-    icons, spacing, control styling) is the design spec's, settled before
-    the first GUI slice merges, with PureCutCNC's own interface as the
-    reference for the level of finish. Acceptance test 92's screenshots are
-    reviewed against it, and the quick start's screenshots come from the
-    shipped build. The CAM panel opens on **Tools** for a project with no
-    tools and on **Operations** otherwise; after that the tab the user
-    picks stays until the next project is opened.
-50b. **Status bar** (`01-workspace.svg`, `09-preview-legend.svg`; review
-    2026-11-10). Cells left to right, each shown only when it has
-    something to say:
+    property sheets, no nested dialogs, no wizard that blocks. The
+    wireframes in `mockups/` show the layout before the redesign and are
+    kept for their labels and field names only; the visual design
+    (palette, type, icons, spacing, control styling) is `experience.md`'s
+    and `redesign.md`'s. Acceptance test 92's screenshots are reviewed
+    against it, and the quick start's screenshots come from the shipped
+    build. Opening a project (Open, New, either New Project from, an
+    example) selects its first step that is not complete, so an empty
+    project opens on Design and a finished one on Export; after that the
+    step the user picks stays until the next project is opened.
+50b. **Status bar** (`09-preview-legend.svg`; review 2026-11-10). Cells
+    left to right, each shown only when it has something to say:
     - **Units**, `mm` or `in`, a quiet button whose menu switches the
       project's display units (53).
     - **Cursor**, `X 64.2  Y 51.8` from the origin while the pointer is
@@ -153,7 +214,8 @@ folder are app preferences, kept outside the project.
       been said, that operation's carve summary in one line (76a);
       clicking it opens the drawer at that operation.
 
-    The stock size is not in the status bar: Project Settings shows it.
+    The stock size is not in the status bar: the Stock step's summary
+    line shows it.
 51. **Project lifecycle.** *New* makes an empty project with the phase 1
     defaults (100 × 100 mm stock, thickness unset, origin bottom-left and
     Z zero at the stock top, grblHAL at its latest version, no tools, no
@@ -198,8 +260,8 @@ folder are app preferences, kept outside the project.
     file accepts (capability 32): `0.5 in` and `1 1/4 in` in a mm project
     convert on entry; a bare number is in the project's units. The stored
     value stays millimetres and the file is unchanged by the display.
-    The switch is the first row of Project Settings (**Units**, a `mm` /
-    `in` segmented control above Stock) and the status bar's units menu
+    The switch is the first row of the Stock step (**Units**, a `mm` /
+    `in` segmented control above the stock's size) and the status bar's units menu
     (50b); both set the same field, convert the display only, and are
     undoable. The Tool Library has its own display units (64), which are
     an app preference, not a project field.
@@ -218,7 +280,7 @@ folder are app preferences, kept outside the project.
 ### Bringing geometry in
 
 55. **Add a drawing to the project** (`02-import-dialog.svg`; File ▸
-    *Add Drawing to Project…*, Ctrl I, the toolbar's *Add drawing*, or
+    *Add Drawing to Project…*, Ctrl I, the Design step's *Add drawing*, or
     drop an `.svg` or `.dxf` on the window) adds the file's shapes to
     the open project as new feature instances, placed as drawn, with the
     drawing's origin at the stock's bottom-left corner, then selects them so
@@ -236,7 +298,7 @@ folder are app preferences, kept outside the project.
     appear in the Warnings panel after the import, once, under the import's
     name. One import is one undo step.
 56. **Add a picture to the project** (File ▸ *Add Picture to Project…*,
-    the toolbar's *Add picture*, or drop a `.png`, `.jpg`
+    the Design step's *Add picture*, or drop a `.png`, `.jpg`
     or `.jpeg`) adds a bitmap (capability 46) at the origin, asking for its
     width *or* height in project units with the other following the
     pixels, and reporting a colour-to-grayscale conversion as `image add`
@@ -283,7 +345,7 @@ folder are app preferences, kept outside the project.
     operation is selected, *Add to "Panel"* or *Remove from "Panel"*. Rows
     cannot be reordered or grouped in this phase (folders are phase 5).
 58. **Placement** (`01-workspace.svg`, Properties). With one or more
-    instances selected the Properties section shows, in project units, the
+    instances selected on the Design step, the Inspector's Properties show, in project units, the
     selection's **X** and **Y** (bottom-left of its bounding box), and
     **W** and **H** with a **proportion link** to their right: one
     chain glyph spanning both rows, linked (the default) or broken.
@@ -296,14 +358,14 @@ folder are app preferences, kept outside the project.
     Every transform is a change to the instances' `transform`; the
     definitions are never touched, so a linked copy's sibling does not
     move. A locked instance shows its handles greyed and refuses every
-    transform, and the status bar says why; the Properties section of a
-    locked selection shows its fields read-only with the line *Locked:
+    transform, and the status bar says why; the Properties of a
+    locked selection show their fields read-only with the line *Locked:
     cannot be moved or resized. Operations still cut it.* and an
     *Unlock* button. Lock never removes a shape from an operation and
     never stops it being selected. *Fit stock to shapes* (61) is in the
     Project menu. No snapping, no alignment and no distribution: phase 5.
-58a. **Arrange** (`01-workspace.svg`, toolbar; review 2026-11-10). The
-    toolbar's Arrange group acts on the selection: **Rotate** (a split
+58a. **Arrange** (review 2026-11-10). The Arrange group, in the header
+    of the Inspector's Properties (50), acts on the selection: **Rotate** (a split
     button: the button turns the selection 90° clockwise; its chevron
     opens a popover with an **Angle** field, positive anticlockwise as
     the Y-up file is, and a *Rotate* button, Enter applying it), **Flip
@@ -312,8 +374,8 @@ folder are app preferences, kept outside the project.
     with their shortcuts (54), *Rotate 90° anticlockwise*, *Rotate…* (the
     angle popover), and *Centre on stock* (61). Each is one undo step named for the selection
     (*Rotate "square" 90°*). The group is disabled, with the reason in
-    its tooltip, when nothing is selected or every selected instance is
-    locked; with some locked, the unlocked ones turn and the status bar
+    its tooltip, when every selected instance is locked, and the Arrange
+    menu's rows when nothing is selected; with some locked, the unlocked ones turn and the status bar
     names the rest. A picture cannot rotate or flip (56), so a selection
     of pictures only disables the group with that reason.
 59. **Duplicate and delete.** *Duplicate* makes a linked copy (CONTEXT:
@@ -328,14 +390,15 @@ folder are app preferences, kept outside the project.
 
 ### Stock, origin and output setup
 
-60. **Project Settings** (`03-stock-origin.svg`; the upper collapsible
-    section of the left column's lower half (50), always present, and
-    Project ▸ Project Settings… opens and scrolls to it). It is open by
-    default on a new project and whenever a project-level field has an
-    error (thickness unset); otherwise it keeps the open state the user
-    last gave it. **Units** first (53). **Stock**:
-    width, height, thickness (marked required until set (66b); export
-    refuses without it, as today). **Origin**: XY at one of the four
+60. **Project settings** (`03-stock-origin.svg`). The project's own
+    settings are in the two steps that own them (50). The **Stock** step,
+    which Project ▸ Project Settings… opens: **Units** first (53); the
+    stock's width, height and thickness (marked required until set (66b);
+    export refuses without it, as today) with *Fit to shapes* (61); and
+    **Origin**. The **Export** step, under its readiness card:
+    **Heights**, **Tolerances** and the **Post-processor** (62). A
+    project whose thickness is unset under a drawing opens on the Stock
+    step, which the rail marks with an error. **Origin**: XY at one of the four
     corners or the centre, or
     custom X/Y, and Z zero at the stock top or bottom. Changing XY zero
     moves the origin marker (the `0,0` crosshair and the axis lines
@@ -353,7 +416,7 @@ folder are app preferences, kept outside the project.
     margin the user types (default `init`'s), keeping the origin preset;
     shapes do not move relative to each other. **Centre on stock** moves
     the selection so its bounding box is centred on the stock.
-62. **Post-processor** (in Project Settings; `03-stock-origin.svg`).
+62. **Post-processor** (on the Export step; `03-stock-origin.svg`).
     A list of the six bundled definitions with their latest version and a
     note when the project is on an older version. Picking another keeps
     the user's settings the new one can use, as `export --post` does
@@ -368,8 +431,7 @@ folder are app preferences, kept outside the project.
 
 ### Tools
 
-63. **Project tools** (`16-tools-tab.svg`, right panel, Tools tab, the
-    first tab). The
+63. **Project tools** (`16-tools-tab.svg`; the Tools step). The
     tools the project embeds, one row each with type icon, name, diameter
     (the **cutting diameter** for every type: 6.35 mm for a 1/4 in
     tapered ball nose, never its tip), a tapered ball nose's tip, the
@@ -377,8 +439,9 @@ folder are app preferences, kept outside the project.
     ball nose's per side, `6.7°/side`, since the two unlabelled side by
     side are the mix-up phase 3's research warns of), number, and a red
     dot when the tool lacks a value an operation needs: a feed, plunge
-    rate or RPM, or a tapered ball nose's tip, taper or flute length.
-    Selecting a row edits it below, in place
+    rate or RPM, or a tapered ball nose's tip, taper or flute length. No
+    tool is selected until a row is clicked or a tool is added. Selecting
+    a row edits it in the Inspector, in place
     (selecting *is* editing; there is no Edit button): name, type
     (end mill, ball nose, V-bit with included angle, engraver, drill,
     tapered ball nose with tip diameter, taper per side and flute length;
@@ -409,12 +472,14 @@ folder are app preferences, kept outside the project.
     - **Duplicate** copies the selected tool below itself as `<name> (2)`.
     - **Delete** removes it; it is refused while an operation uses the
       tool (the button disables and its tooltip names the operations).
+    - **Tool Library…**, at the step panel's foot, opens the library
+      (64), as Project ▸ Tool Library… does.
 
     *Save to library* (in the editor's footer) copies a project tool into
     the library. A tool used by no operation shows an `unused_tool` hint,
     as `check` prints. *Duplicate* and *Delete* name the same actions in
     every list in the app (Operations, Tools, the Tool Library), and *New
-    tool* is the same command on the Tools tab and in the library;
+    tool* is the same command on the Tools step and in the library;
     *Remove* never labels a deletion (it is kept only for taking a shape
     out of an operation's targets, which deletes nothing).
 64. **Tool Library** (`04-tool-library.svg`; Project ▸ Tool Library…, and
@@ -499,7 +564,7 @@ folder are app preferences, kept outside the project.
 
 ### Operations
 
-65. **Operations list** (`01-workspace.svg`, right panel, Operations tab).
+65. **Operations list** (`01-workspace.svg`; the Operations step).
     The project's operations in cut order, one row each: a drag grip, an
     enable checkbox, the kind's icon, the name, the tool's name, an eye for
     the operation's toolpath visibility (73), and a status cell: a spinner
@@ -696,7 +761,7 @@ folder are app preferences, kept outside the project.
     Tabs in the Design Tree. A placed tab drags along its outline (it stays
     on the outline; its point is in definition space, so it follows its
     instance), has width, height and shape in the Properties panel, and
-    deletes with Delete. The **Tab tool** on the toolbar adds a tab where
+    deletes with Delete. The **Tab tool**, floating at the Viewport's top left, adds a tab where
     the user clicks an outline, with the last-used size. Every enabled
     Profile that cuts that outline rises over it; `tab_not_crossed`,
     `tab_on_hole` and the other tab codes appear as `check` gives them, and
@@ -842,7 +907,7 @@ folder are app preferences, kept outside the project.
     app's preferences), with the names it will write under the stem
     (*Writes plaque-1-T2.nc, plaque-2-T1.nc*); the post-processor with
     its version (changing it
-    here is Project Settings' switch (62) and a project change); the
+    here is the Export step's switch (62) and a project change); the
     program split, *as the project says* (the setting's value shown) or
     overridden for this export to one program per tool or one program with
     tool changes (`--programs-per-tool`, `--one-program`; the override is
@@ -906,36 +971,43 @@ folder are app preferences, kept outside the project.
 
 ### First run and help
 
-79. **Empty state** (`12-empty-state.svg`; reworked by the review,
-    2026-11-10). A project with no shapes shows a card over the Viewport
-    with the heading *Start a project* and one line, *Bring in a drawing
-    to make toolpaths from, or explore an example.* Below it, two paths
-    side by side, each its own panel so they cannot be read as one list:
-    - **Your drawing**: the primary *Import a drawing…* (SVG or DXF; on an
-      empty project it is *New Project from Drawing*, so the stock is
-      sized round the drawing), then the secondary *Import a picture…*
-      and *Open a project…*, each with its shortcut.
+79. **Start screen** (`redesign.md`, "The start screen"; reworked by
+    the review, 2026-11-10). While the project has no shape, picture or
+    operation and the Design step is open, the Viewport's card shows the
+    start screen in place of the empty stock: the heading *Start with a
+    drawing* and one sentence, *Bring in an SVG or DXF drawing to make
+    toolpaths from, or open an example to look round.* Under them:
+    - Three ways in, in a row: the primary **New from drawing…** (SVG or
+      DXF; it is *New Project from Drawing*, so the stock is sized round
+      the drawing), the secondary **New from picture…**, and a quiet
+      *Open…*.
     - **Examples**: the three quick-start projects (coaster, plaque,
-      sign), each a card with a **thumbnail** of its shapes drawn from the
-      example itself (not a stored image), its name and one line of what
-      it teaches (*Profile with tabs*, *Pockets and holes*, *V-carved
-      lettering*). Opening one opens an
-      untitled copy, so Save asks where; the card says nothing about it.
+      sign), three cards in a row, each with a **thumbnail** of its
+      shapes drawn from the example itself (not a stored image), its name
+      and one line of what it teaches (*Profile with tabs*, *Pockets and
+      holes*, *V-carved lettering*). Opening one opens an untitled copy,
+      so Save asks where; the card says nothing about it.
+    - **Recent**: the most recent files that still exist, each opening
+      on a click.
 
-    The card closes when a shape arrives or on its ✕. Neither path has
-    copy about phases or drawing tools. An empty Tools list says *No tools
+    A drawing, a picture or a `.dcv` dropped anywhere on the window does
+    what the matching button does (51, 55, 56). The screen goes when a
+    shape arrives, and another step shows the stock in its place. It has
+    no copy about phases or drawing tools. The step panel shows the
+    Design step with *No shapes yet*; an empty Tools list says *No tools
     yet* with *New tool* and *Add from library…* as buttons; an empty
     Operations list says *Select shapes on the drawing, then Add an
-    operation*. Help ▸ opens the
-    book's quick start for the app, the Keyboard chapter, and About
-    (version string as the CLI prints it).
+    operation*. Help ▸, and the rail's Help, open the book's quick start
+    for the app, the Keyboard chapter, and About (version string as the
+    CLI prints it).
 79a. **Menus** (`14-menus-and-sheets.svg`; review 2026-11-10). **File**:
     New; New Project from Drawing…; New Project from Picture…; Open…;
     Open Recent ▸ | Save; Save As… | Add Drawing to Project…; Add Picture
     to Project… | Export G-code…; Save Setup Sheet… (after an export in
     this session) | Quit. **Edit**: Undo *name*, Redo *name* | Duplicate,
     Delete, Rename | Select All. **Arrange** (58a).
-    **View**: the two side panels, Toolpaths…, Warnings, Fit, Zoom to
+    **View**: Step Panel | Go to Design, Go to Stock, Go to Tools, Go to
+    Operations, Go to Export | Toolpaths…, Warnings | Fit View, Zoom to
     Selection, and **Appearance ▸** with three checked choices, *System*
     (following the OS), *Light* and *Dark* (the default), kept in
     `gui.toml`. **Project**: Project Settings…, Tool Library…, Fit Stock
@@ -1139,24 +1211,31 @@ byte-identical output with the program's header date pinned (`--date`).
 Added by the review redesign (2026-11-10); the design spec's review
 slices carry them.
 
-93. **Window title and panels** (50). The plaque opens as `plaque —
-    DreamCarve`; an edit makes it `plaque* — DreamCarve`; a new project is
-    `Untitled — DreamCarve`; no other widget shows `plaque.dcv`. The CAM
-    panel has the title *CAM* and its tabs are Tools then Operations;
-    it opens on Tools for a project with no tools. With nothing selected
-    the left column shows Project Settings and no Properties; with a shape
-    selected it shows both, Project Settings first, each collapsible.
+93. **Window title, steps and Inspector** (50, 50a). The plaque opens
+    as `plaque — DreamCarve`; an edit makes it `plaque* — DreamCarve`; a
+    new project is `Untitled — DreamCarve`; the header shows the same
+    name, and no widget shows `plaque.dcv`. The rail's steps are Design,
+    Stock, Tools, Operations, Export; a new project opens on Design, the
+    Coaster on Stock with its error marked, and the plaque on Export
+    with the four steps before it complete; the step picked stays through
+    an edit. *Continue* opens the next step that is not complete; on
+    Export the primary button is *Export G-code*, disabled once a tool an
+    operation uses has no feed. With nothing selected there is no
+    Inspector; with a shape selected on Design it shows the Properties
+    and the Arrange group, and its close button deselects. At 1280 × 768
+    the four regions sit side by side at no less than their minimum
+    widths; in a narrower window the Inspector lies over the Viewport.
 94. **Status bar** (50b, 71, 73). The status bar never shows the stock
     size; the cursor cell is empty off the Viewport; the Toolpaths button
     is absent on a project with shapes and no operation and present once a
     toolpath exists; the generation cell is empty when idle; after Stop it
     shows *Regenerate all*, which no menu and no drawer offers; the units
     menu switches the display units as one undo step.
-95. **Arrange** (58, 58a). With the square selected, the toolbar's Rotate
+95. **Arrange** (58, 58a). With the square selected, the Inspector's Rotate
     turns it 90° clockwise, the popover's angle 30 rotates it 30°
     anticlockwise, and each flip mirrors it about its bounding-box centre,
     each one undo step equal to the transforms of 66; the Properties
-    section offers X, Y, W and H only; with the proportion link broken,
+    offer X, Y, W and H only; with the proportion link broken,
     W changes alone. With only a locked shape selected the group is
     disabled with the reason in its tooltip.
 96. **Design Tree** (57). The squiggle's row carries the open-path glyph
@@ -1184,7 +1263,7 @@ slices carry them.
     `check`'s text byte for byte; the inlay fixture's notes have a Female
     board and a Male board sub-heading. With a single group in the drawer,
     no group heading is shown.
-100. **New tool** (63). *New tool* on an empty project's Tools tab adds an
+100. **New tool** (63). *New tool* on an empty project's Tools step adds an
     end mill named `tool1`, 6.35 mm, 2 flutes, with no feed, plunge rate,
     RPM, step-down or stepover, selected, with its name field focused; a
     second is `tool2`; export is refused naming the unset rates, as the
@@ -1208,10 +1287,10 @@ slices carry them.
     sheet…* writes an HTML file with no `<script>`, no `http` reference and
     no `<img>`, whose programs, tools, step-before lines, extents and
     estimates equal the export's, deterministic with the date pinned.
-103. **Empty state and menus** (51, 79, 79a). The empty-state card shows
-    two paths with the actions of 79 and three example cards with
-    thumbnails, and no sentence about phases or unsaved copies; an example
-    opens untitled. The import sheet's preview has no stock outline. The
+103. **Start screen and menus** (51, 79, 79a). The start screen shows
+    the three actions of 79, three example cards with thumbnails and the
+    recent files that still exist, and no sentence about phases or
+    unsaved copies; an example opens untitled. The import sheet's preview has no stock outline. The
     File menu's labels are those of 79a; View ▸ Appearance has System,
     Light and Dark with one checked; the unsaved-changes sheet's buttons
     are Save, Don't Save and Cancel.
@@ -1278,7 +1357,7 @@ program on the bench grblHAL to close the loop. Record below.
   with a screenshot of its editor and the field names beside the file
   names and the Setup rows first, Tabs (placing and dragging), Tool
   library (the sheet, vendor groups, editing in place, library units, the
-  import review, the picker, *New tool*), Post-processors (Project Settings), Configuration (app
+  import review, the picker, *New tool*), Post-processors (the Export step), Configuration (app
   preferences and where they live), Warnings (the panel; "located at the
   field" now means the editor), Inlay (both boards from one project: the
   male board, the per-board export tick; the two-file workflow gone).
@@ -1313,7 +1392,11 @@ program on the bench grblHAL to close the loop. Record below.
 The maintainer reviewed screenshots of the working app on #549
 (2026-11-10, about 80 items keyed by screenshot) and recorded decisions
 the same day. The capabilities above are amended in place; this is the
-record of what changed and why.
+record of what changed and why. It speaks of the window as it was then
+(a toolbar, a left column with Project Settings, a CAM panel with two
+tabs); `redesign.md` has since replaced that layout (50), and what the
+review decided about a panel holds for the step or the Inspector that
+now has its content.
 
 - **Decisions.** Library tools are edited in phase 4 (64a), with vendor
   groups and their own display units. Autosave stays out. Appearance
@@ -1370,15 +1453,16 @@ day.
 | 9 | Appearance: must both light and dark ship in phase 4, or is following the OS with one palette enough? | Both, since following the OS implies both; the palette is the design spec's and the toolpath colours must read on both. |
 | 10 | Phase 3.5 (Photo V-Carve, format v27; it was 3.4 and v25 when this was asked) may land after phase 4 opens. Gate its editor as one slice on v27, or hold phase 4 for it? | Gate the slice. Everything else in this phase is independent of it. |
 | 11 | Where app preferences live (layout, recent files, visibility, export folders): beside `config.toml` in the user config directory? | Yes, as `gui.toml` beside it, documented in the Configuration chapter. Never in the `.dcv`. |
-| 12 | Window and panel minimums (50): is 1280 × 768 the floor, or must the app work on a 1366 × 768 laptop with panels collapsed? | 1280 × 768 with both side panels open at their minimum; below that the panels collapse to strips rather than the window refusing. |
+| 12 | Window and panel minimums (50): is 1280 × 768 the floor, or must the app work on a 1366 × 768 laptop with panels collapsed? | 1280 × 768 with the rail, the step panel, the Viewport and the Inspector at their minimum widths; in a narrower window the Inspector lies over the Viewport rather than the window refusing. |
 | 13 | Inlay sibling check: should the Warnings panel compare a `<stem>-male.dcv` beside the open female? | Withdrawn 2026-11-02: the maintainer asked why there was a side at all, and the answer was the file. #498 puts both boards in one project (68a), so there is nothing to compare. |
 
 ## Mock-ups
 
 Mock-ups, generated by `mockups/render.py`; `mockups/README.md` maps each
-to its capabilities. Since the review (2026-11-10) they are drawn with
-`experience.md`'s light tokens and control sizes, so they show the look as
-well as the layout, labels and field names; the egui build is still the
+to its capabilities. They show the window before the redesign
+(`redesign.md`): a toolbar, a left column and a CAM panel with tabs, in
+the earlier light tokens. They are kept for their labels and field
+names; the layout is capability 50's, and the egui build is the
 authority on pixels. The plaque from the phase 2 quick start is the project
 in most frames.
 

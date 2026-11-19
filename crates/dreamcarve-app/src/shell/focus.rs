@@ -8,9 +8,9 @@
 //!
 //! egui moves the focus to the next focusable widget in the order the
 //! frame creates them, and the frame cannot create the panels in the walk's
-//! order: egui lays out the status bar before the side panels so it spans
-//! the window, the Properties panel before the Design Tree above it, and
-//! the Viewport after the CAM panel because it takes the space left. So the
+//! order: egui lays out the status bar before the cards so it spans
+//! the window, and the Viewport after the Inspector because it takes the
+//! space left. So the
 //! shell lets egui walk inside each [`Region`] and corrects a step that
 //! crosses into the wrong one: [`mark`] is called as each region starts
 //! to draw, [`finish`] after the frame, and when Tab has landed in a
@@ -31,34 +31,31 @@ use crate::shell::theme::Palette;
 /// to bottom-right.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Region {
-    /// The menu bar.
-    Menu,
-    /// The toolbar.
-    Toolbar,
-    /// The Design Tree.
-    Tree,
-    /// The Properties panel.
-    Properties,
-    /// The Viewport, its cards included.
+    /// The header: the menus, Undo and Redo, the primary button.
+    Header,
+    /// The rail: the five steps, then Warnings, Appearance and Help.
+    Rail,
+    /// The step panel: the current step's content.
+    Step,
+    /// The Viewport, its floating controls included.
     Viewport,
     /// The Warnings drawer, over the Viewport's bottom.
     Drawer,
-    /// The CAM panel: the operations or tools list, then the editor.
-    Cam,
+    /// The Inspector: the editor of what the step has selected.
+    Inspector,
     /// The status bar.
     Status,
 }
 
 impl Region {
     /// Every region in Tab's order.
-    pub const ORDER: [Self; 8] = [
-        Self::Menu,
-        Self::Toolbar,
-        Self::Tree,
-        Self::Properties,
+    pub const ORDER: [Self; 7] = [
+        Self::Header,
+        Self::Rail,
+        Self::Step,
         Self::Viewport,
         Self::Drawer,
-        Self::Cam,
+        Self::Inspector,
         Self::Status,
     ];
 }
@@ -153,20 +150,20 @@ fn end(regions: &[(Region, Rect)], forward: bool) -> Option<Region> {
 fn region_of(ctx: &Context, id: Id, regions: &[(Region, Rect)]) -> Option<Region> {
     let rect = ctx.read_response(id)?.rect;
     let centre = rect.center();
-    // The bars first, then the side panels, then the Viewport between them.
+    // The bars first, then the cards beside the Viewport (the Inspector
+    // may lie over it), then the Viewport between them.
     for wanted in [
-        Region::Menu,
-        Region::Toolbar,
+        Region::Header,
         Region::Status,
-        Region::Properties,
-        Region::Tree,
-        Region::Cam,
+        Region::Rail,
+        Region::Step,
+        Region::Inspector,
         Region::Drawer,
         Region::Viewport,
     ] {
         if let Some((_, r)) = regions.iter().find(|(region, _)| *region == wanted) {
             let widened = match wanted {
-                Region::Menu | Region::Toolbar | Region::Status | Region::Viewport => *r,
+                Region::Header | Region::Status | Region::Viewport => *r,
                 _ => r.expand(EDGE_PX),
             };
             if widened.contains(centre) {
@@ -402,12 +399,16 @@ mod tests {
     #[test]
     fn steps_skip_regions_not_drawn_and_wrap() {
         use Region::*;
-        let regions = drawn(&[Menu, Toolbar, Status, Properties, Tree, Cam, Viewport]);
-        assert_eq!(step(&regions, Viewport, true), Cam, "the drawer is closed");
-        assert_eq!(step(&regions, Status, true), Menu);
-        assert_eq!(step(&regions, Menu, false), Status);
-        assert_eq!(step(&regions, Tree, true), Properties);
-        assert_eq!(end(&regions, true), Some(Menu));
+        let regions = drawn(&[Header, Status, Rail, Step, Inspector, Viewport]);
+        assert_eq!(
+            step(&regions, Viewport, true),
+            Inspector,
+            "the drawer is closed"
+        );
+        assert_eq!(step(&regions, Status, true), Header);
+        assert_eq!(step(&regions, Header, false), Status);
+        assert_eq!(step(&regions, Rail, true), Step);
+        assert_eq!(end(&regions, true), Some(Header));
         assert_eq!(end(&regions, false), Some(Status));
     }
 }
