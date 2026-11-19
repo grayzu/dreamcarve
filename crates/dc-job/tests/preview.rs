@@ -139,6 +139,128 @@ fn marks_equal_what_the_svg_draws() {
     );
 }
 
+/// The generated entries of committed project `stem`, with the project.
+fn generated(stem: &str) -> (Project, Vec<EmitOp>) {
+    let (_, path) = common::checked_projects()
+        .into_iter()
+        .find(|(name, _)| name == stem)
+        .unwrap_or_else(|| panic!("{stem} is a committed project"));
+    let project = load_dcv(&path);
+    let built = dc_job::build(&project, ProgramSplit::ProjectDefault, DATE);
+    let generated = built
+        .generated
+        .unwrap_or_else(|| panic!("{stem}: {:?}", built.findings));
+    (project, generated)
+}
+
+/// A Photo V-Carve's marks are its grooves' (slice D7): one start point
+/// where the bit plunges into each groove, and no tab mark, since it
+/// leaves no tab. A groove's depth follows the picture, and the bit goes
+/// from one groove to the next at feed above the stock (`dc_cam::photo`,
+/// "Moves"); read as level passes, every step deeper along a groove was a
+/// start circle and every rise a tab mark. The groove count is the one
+/// `check` prints (`Fact::Grooves`).
+#[test]
+fn a_photo_v_carve_has_one_start_point_per_groove_and_no_tab_mark() {
+    use dc_job::summary::{Fact, carve_facts};
+
+    for stem in ["photo-raster-metric", "photo-raster-inch"] {
+        let (project, generated) = generated(stem);
+        let grooves: usize = carve_facts(&project, &generated)
+            .iter()
+            .flat_map(|carve| &carve.boards)
+            .flat_map(|board| &board.facts)
+            .filter_map(|fact| match fact {
+                Fact::Grooves { count, .. } => Some(*count),
+                _ => None,
+            })
+            .sum();
+        assert!(grooves > 1, "{stem}: {grooves} grooves");
+        let photo: Vec<&EmitOp> = generated
+            .iter()
+            .filter(|e| matches!(e.op, dc_project::Operation::PhotoVCarve(_)))
+            .collect();
+        assert_eq!(photo.len(), 1, "{stem}: one Photo V-Carve run");
+        let entry = photo[0];
+        let marks = marks(&Run::from(entry));
+        assert!(
+            marks.tab_marks.is_empty(),
+            "{stem}: {} tab marks on a cut that leaves no tab",
+            marks.tab_marks.len()
+        );
+        assert_eq!(
+            marks.start_points.len(),
+            grooves,
+            "{stem}: a start point per groove"
+        );
+        // Each is where a groove's plunge starts: a cutting move straight
+        // down from there.
+        for start in &marks.start_points {
+            let plunges = entry.toolpath.moves.windows(2).any(|pair| {
+                let (from, m) = (pair[0].to, &pair[1]);
+                m.is_cut()
+                    && m.to.z < from.z
+                    && Point::new(from.x, from.y).distance_to(start.at) < 1e-9
+                    && Point::new(m.to.x, m.to.y).distance_to(start.at) < 1e-9
+            });
+            assert!(plunges, "{stem}: no plunge at {:?}", start.at);
+        }
+    }
+}
+
+/// Only a cut that leaves tabs draws tab marks: a Profile, and an Inlay's
+/// cut-out round its plug. A carve's depth follows its art, so its climbs
+/// are not tabs (the sign's Lettering drew 98); a Pocket, a Bore, an
+/// Engrave and a clearing pass leave none. And a V-Carve or an Inlay
+/// still has one start point per place the bit comes down from a rapid.
+#[test]
+fn only_a_cut_that_leaves_tabs_has_tab_marks() {
+    use dc_job::RunLabel;
+    use dc_project::Operation;
+
+    let mut tabbed = 0;
+    let mut carved = 0;
+    for (stem, path) in common::checked_projects() {
+        let project = load_dcv(&path);
+        let built = dc_job::build(&project, ProgramSplit::ProjectDefault, DATE);
+        let generated = built
+            .generated
+            .unwrap_or_else(|| panic!("{stem}: {:?}", built.findings));
+        for entry in &generated {
+            let case = format!("{stem} {}", entry.label.naming(entry.op.id().as_str()));
+            let marks = marks(&Run::from(entry));
+            let leaves_tabs = matches!(
+                (&entry.op, &entry.label),
+                (Operation::Profile(_), _) | (Operation::Inlay(_), RunLabel::CutOut(_))
+            );
+            if leaves_tabs {
+                tabbed += marks.tab_marks.len();
+            } else {
+                assert!(
+                    marks.tab_marks.is_empty(),
+                    "{case}: {} tab marks",
+                    marks.tab_marks.len()
+                );
+            }
+            let carve = matches!(
+                (&entry.op, &entry.label),
+                (Operation::VCarve(_) | Operation::Inlay(_), RunLabel::Main)
+            );
+            if carve {
+                // Each place the bit comes down: over at safe Z, down in
+                // the air, then the plunge.
+                let rapids = entry.toolpath.moves.iter().filter(|m| m.is_rapid()).count();
+                assert_eq!(marks.start_points.len(), rapids / 3, "{case}");
+                carved += marks.start_points.len();
+            }
+        }
+    }
+    assert!(
+        tabbed > 0 && carved > 0,
+        "{tabbed} tab marks, {carved} carve starts"
+    );
+}
+
 /// Where a run's board is drawn: the stock at X 0, the male board to its
 /// right (#498), both with Y flipped at the picture's height.
 struct Frame {
