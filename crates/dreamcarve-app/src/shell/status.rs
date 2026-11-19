@@ -5,13 +5,17 @@
 //! section 2, "Status bar"; slice 24, #616; `redesign.md`, "The window"):
 //! 28 px on the `surface.window` backdrop, each cell a quiet 24-px pill
 //! of 12-px text, 6 px apart, with no rules between them. The cells are
-//! `dc_app::status`'s, drawn left to right: the units button and its
-//! menu, the cursor's fixed cell, the *Toolpaths* button and its popover
-//! (`shell::toolpaths`), generation (*Generating k of n…* and Stop, or
-//! *Stopped* and *Regenerate all*), the counts (the button that opens the
-//! Warnings drawer), the estimate, the Z range, a drag, the shape under
-//! the pointer and the last message. A cell with nothing to say is not
-//! drawn. No stock size: the Stock step shows it.
+//! `dc_app::status`'s, in two groups, so that none moves when another
+//! comes or goes. From the left: the units button and its menu, the
+//! counts (the button that opens the Warnings drawer), and the last
+//! message, which takes the room that is left. From the right: one cell
+//! for the job, generation while it runs (*Generating k of n…* and Stop,
+//! or *Stopped* and *Regenerate all*) and the estimate when it is done;
+//! and, left of it, one cell for the pointer, a drag's travel or else the
+//! shape under it. A cell with nothing to say is not drawn. The cursor's
+//! position, the Z range and the toolpath view are the Viewport's
+//! floating controls (`viewport::controls`), and there is no stock size:
+//! the Stock step shows it.
 
 use dc_app::status::{CountsCell, GenerationAction, GenerationCell};
 use dc_app::warnings::Level;
@@ -20,7 +24,6 @@ use dc_project::Units;
 use eframe::egui::{self, Rect, Response, Sense, Stroke, StrokeKind, TextStyle, Ui};
 
 use crate::shell::theme::{self, Palette};
-use crate::shell::toolpaths;
 use crate::shell::window::{Action, FrameState};
 use crate::widgets::button::{ButtonSpec, Kind, button, focus_ring_at, text};
 use crate::widgets::icon::Icon;
@@ -37,8 +40,12 @@ const CELL_PX: f32 = theme::CHIP_PX;
 const CELL_GAP_PX: f32 = 6.0;
 /// The space left and right of a cell's content, px.
 const CELL_PADDING_PX: f32 = 10.0;
-/// The cursor cell's fixed width, px, so the cells after it hold still.
-const CURSOR_PX: f32 = 120.0;
+
+/// Where the right-hand group's width is kept between frames: the room
+/// the message, the last of the left-hand cells, stops short of.
+fn right_width_id() -> egui::Id {
+    egui::Id::unique("dc.status.right_width")
+}
 
 /// The pill of a cell in `rect`, with `wash` over it (a button cell's
 /// hover or pressed look).
@@ -86,6 +93,29 @@ fn cell<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
     let (rect, slot, out) = cell_body(ui, body);
     ui.painter().set(slot, pill(palette, rect, theme::NONE));
     out
+}
+
+/// [`cell`] in the right-hand group, which is laid out from the bar's
+/// right end: `body` adds its parts last first, and the cell ends where
+/// the layout stands, whatever its width.
+fn cell_from_right<R>(ui: &mut Ui, body: impl FnOnce(&mut Ui) -> R) -> R {
+    let palette = Palette::current(ui);
+    let slot = ui.painter().add(egui::Shape::Noop);
+    let inner = ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), CELL_PX),
+        egui::Layout::right_to_left(egui::Align::Center),
+        |ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            ui.add_space(CELL_PADDING_PX);
+            let out = body(ui);
+            ui.add_space(CELL_PADDING_PX);
+            out
+        },
+    );
+    let content = inner.response.rect;
+    let rect = Rect::from_center_size(content.center(), egui::vec2(content.width(), CELL_PX));
+    ui.painter().set(slot, pill(palette, rect, theme::NONE));
+    inner.inner
 }
 
 /// A cell that is a button named `name`, its id from `salt`: the pill
@@ -171,16 +201,8 @@ fn units(ui: &mut Ui, state: &FrameState<'_>, label: &str, current: Units, out: 
 /// The generation cell (capability 71; `experience.md`, section 8,
 /// "Progress"): the spinner while anything is pending, the text, and Stop
 /// or, after Stop, *Regenerate all*: the only place that command lives.
+/// It is one of the right-hand cells, so its parts are added last first.
 fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut Vec<Action>) {
-    if cell.spinner {
-        spinner(ui, "");
-    }
-    let colour = if cell.spinner {
-        palette.text_primary
-    } else {
-        palette.text_secondary
-    };
-    text(ui, &cell.text, TextStyle::Small, colour);
     if let Some(action) = &cell.action {
         let spec = ButtonSpec::new(Kind::Quiet, &action.label).height(CELL_PX - 4.0);
         if button(ui, spec).clicked() {
@@ -189,6 +211,15 @@ fn generation(ui: &mut Ui, cell: &GenerationCell, palette: &Palette, out: &mut V
                 GenerationAction::RegenerateAll => Action::RegenerateAll,
             });
         }
+    }
+    let colour = if cell.spinner {
+        palette.text_primary
+    } else {
+        palette.text_secondary
+    };
+    text(ui, &cell.text, TextStyle::Small, colour);
+    if cell.spinner {
+        spinner(ui, "");
     }
 }
 
@@ -242,54 +273,53 @@ pub(crate) fn bar(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) ->
                 ui.disable();
             }
             let cells = &state.cells;
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = CELL_GAP_PX;
-                let secondary = palette.text_secondary;
-                units(ui, state, &cells.units_label, cells.units, out);
-                // The cursor's fixed cell, blank off the Viewport: it
-                // keeps its width, and shows no pill while it is empty.
-                if cells.cursor.is_empty() {
-                    ui.allocate_exact_size(egui::vec2(CURSOR_PX, CELL_PX), Sense::hover());
-                } else {
-                    cell(ui, |ui| {
-                        ui.set_width(CURSOR_PX - 2.0 * CELL_PADDING_PX);
-                        text(ui, &cells.cursor, TextStyle::Small, secondary);
-                    });
-                }
-                if cells.toolpaths {
-                    let open = toolpaths::is_open(ui.ctx());
-                    let title = state.app.strings().get(StrKey::AppToolpathsTitle);
-                    let response = button_cell(ui, "status_toolpaths", title, open, |ui| {
-                        glyph(ui, Icon::Layers, secondary);
-                        painted(ui, title, secondary);
-                    });
-                    toolpaths::popover(ui, &response, state.app, out);
-                }
-                if let Some(generating) = &cells.generation {
-                    cell(ui, |ui| generation(ui, generating, palette, out));
-                }
-                counts(ui, state, &cells.counts, out);
-                let total_help = state.app.strings().get(StrKey::ExportStatusTotalHelp);
-                for (label, colour, help) in [
-                    // Capability 78: every program's estimated time.
-                    (&cells.estimate, secondary, Some(total_help)),
-                    // Capability 74: the program's Z range beside its boxes.
-                    (&cells.z_range, secondary, None),
-                    // A drag's travel, scale or angle (#534).
-                    (&cells.drag, palette.text_primary, None),
-                    (&cells.hover, palette.text_primary, None),
-                ] {
-                    if let Some(label) = label {
-                        let response = cell(ui, |ui| text(ui, label, TextStyle::Small, colour));
-                        if let Some(help) = help {
-                            response.on_hover_text(help);
-                        }
-                    }
-                }
-                if let Some(label) = &cells.message {
-                    message(ui, state, label, cells.message_op.as_ref(), out);
-                }
-            });
+            let full = ui.max_rect();
+            // The message stops short of the right-hand group as the last
+            // frame drew it.
+            let width: f32 = ui.data(|d| d.get_temp(right_width_id())).unwrap_or(0.0);
+            let gap = if width > 0.0 { CELL_GAP_PX } else { 0.0 };
+            let left_rect = full.with_max_x((full.right() - width - gap).max(full.left()));
+            let row = |ui: &mut Ui, rect: Rect, layout: egui::Layout| {
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+                child.spacing_mut().item_spacing.x = CELL_GAP_PX;
+                child
+            };
+            let centred = egui::Align::Center;
+
+            // From the left: what holds still.
+            let mut left = row(ui, left_rect, egui::Layout::left_to_right(centred));
+            units(&mut left, state, &cells.units_label, cells.units, out);
+            counts(&mut left, state, &cells.counts, out);
+            if let Some(label) = &cells.message {
+                message(&mut left, state, label, cells.message_op.as_ref(), out);
+            }
+
+            // From the right: what comes and goes. First the job:
+            // generation while it runs, its estimate after (capability
+            // 78: every program's estimated time).
+            let mut right = row(ui, full, egui::Layout::right_to_left(centred));
+            if let Some(generating) = &cells.generation {
+                cell_from_right(&mut right, |ui| generation(ui, generating, palette, out));
+            } else if let Some(estimate) = &cells.estimate {
+                let help = state.app.strings().get(StrKey::ExportStatusTotalHelp);
+                cell_from_right(&mut right, |ui| {
+                    text(ui, estimate, TextStyle::Small, palette.text_secondary)
+                })
+                .on_hover_text(help);
+            }
+            // Then the pointer: a drag's travel, scale or angle (#534),
+            // else the shape under it.
+            if let Some(label) = cells.drag.as_ref().or(cells.hover.as_ref()) {
+                cell_from_right(&mut right, |ui| {
+                    text(ui, label, TextStyle::Small, palette.text_primary)
+                });
+            }
+            let used = right.min_rect().width();
+            if (used - width).abs() > 0.5 {
+                ui.data_mut(|d| d.insert_temp(right_width_id(), used));
+                ui.ctx().request_repaint();
+            }
+            ui.allocate_rect(full, Sense::hover());
         })
         .response
         .rect

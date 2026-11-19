@@ -69,9 +69,9 @@ rotate_anticlockwise = "Rotate {subject} {angle}° anticlockwise"
 flip_horizontal = "Flip {subject} horizontally"
 flip_vertical = "Flip {subject} vertically"
 
-# Project Settings (slice 7, #536; slice 23, #615; functional spec,
-# capabilities 53, 60 and 62; mock-up 03): the upper collapsible panel of
-# the left column's lower half. Each field has a label and a one-sentence
+# The project's settings (slice 7, #536; slice 23, #615; functional spec,
+# capabilities 53, 60 and 62; mock-up 03): the Stock step's fields and the
+# Export step's output settings. Each field has a label and a one-sentence
 # `_help`, shown on the label's hover above the `.dcv` field it writes
 # (`experience.md`, section 7).
 [project]
@@ -79,6 +79,8 @@ units = "Units"
 units_help = "The units every length and feed is shown and typed in. The file stores millimetres either way."
 units_mm = "mm"
 units_in = "in"
+# Between the parts of a closed group's one-line summary.
+summary_separator = " · "
 
 [project.stock]
 width = "Width"
@@ -120,9 +122,16 @@ park = "Park point"
 park_help = "Where the program ends in XY, typed as X, Y. Empty ends where the last cut ends."
 pick = "Click on the view"
 picking = "Click the Viewport to set the park point. Esc cancels."
+# The group's header while it is closed, on the Export step.
+summary_clearance = "Clearance {clearance} {unit}"
+summary_safe_z = "Each operation's safe Z"
+summary_park = "park {park}"
 
 [project.tolerances]
 title = "Tolerances"
+summary_flatten = "Flatten {flatten} {unit}"
+summary_arcs = "arcs {arc} {unit}"
+summary_lines = "lines only"
 flatten = "Flatten"
 flatten_help = "How far a flattened curve may stray from the true curve."
 arc_fit = "Arc fitting"
@@ -130,6 +139,7 @@ arc_fit_help = "How far a fitted arc may stray from the lines it replaces. Off w
 
 [project.post]
 title = "Post-processor"
+summary = "{post} · .{extension}"
 controller = "Controller"
 controller_help = "The bundled post-processor that writes G-code for your controller."
 version = "{name} v{version}"
@@ -159,7 +169,7 @@ canned = "Canned drill cycles"
 canned_help = "Write Drill operations as the controller's canned cycles."
 no_canned = "Not offered: {name} has no canned cycles."
 
-# The app's window (slice 3, #532): title, menus, toolbar, panels, status
+# The app's window (slice 3, #532): title, menus, header, panels, status
 # bar, the empty state, the unsaved-changes sheet, file dialogs, and the
 # messages the status bar shows after a file action.
 [app]
@@ -283,16 +293,14 @@ export_done = "Exported. Nothing has changed since."
 add_drawing = "Add drawing"
 add_picture = "Add picture"
 
-# The Export step's readiness card and its button.
+# The Export step's readiness card.
 [steps.export]
 readiness = "Readiness: {counts}"
 estimate = "Estimated time"
 z_range = "Z range, tool centre"
-review = "Review programs…"
-review_help = "Choose the folder and see each program before it is written."
 
 # The status bar (slice 24, #616; functional spec, capability 50b): the
-# units button and its menu, the counts, and the Toolpaths button.
+# units button and its menu, and the counts.
 [app.status]
 mm = "mm"
 inch = "in"
@@ -372,11 +380,21 @@ hover_male_board = "Male board · {name}"
 fit_view = "Fit View"
 zoom_selection = "Zoom to Selection"
 name = "Viewport"
-# The floating tools at the Viewport's top left (`redesign.md`, "The
-# Viewport's floating controls").
+# The Viewport's floating controls (`redesign.md`, "The Viewport's
+# floating controls"): the tools and the zoom at its top left, the colour
+# mode and Layers at its top right.
+select = "Select"
+select_help = "Select, move and resize shapes"
 fit = "Fit"
 tab_tool = "Tab tool"
 tab_tool_help = "Click an outline to add a tab with the last-used size (T); Escape ends"
+zoom_out = "Zoom out"
+zoom_in = "Zoom in"
+zoom = "{percent} %"
+zoom_level = "Zoom level: {zoom}"
+zoom_reset = "Zoom to 100 %: an inch of the work on 96 pixels, about its real size"
+layers = "Layers"
+layers_help = "What the Viewport draws of the toolpaths"
 
 # The toolpath display (slice 16, #545): the visibility card, the depth
 # legend, the program extents' caption and the status bar's Z range.
@@ -489,8 +507,8 @@ summary_separator = ", "
 list_separator = ", "
 open_note = "Show this note in the Warnings drawer"
 
-# The CAM panel's Tools tab (slice 8, #537; functional spec, capability
-# 63): the toolbar, the rows, the editor's labels and the messages the
+# The Tools step (slice 8, #537; functional spec, capability 63): its
+# buttons, the rows, the editor's labels and the messages the
 # status bar shows after Save to library. Slice 29 (#621): *New tool*, and
 # *Delete*, never *Remove*, for deleting.
 [app.tools]
@@ -531,7 +549,7 @@ saved = "Saved “{name}” to the library as {id}"
 already_saved = "“{name}” is already in the library as {id}"
 save_failed = "Cannot save “{name}” to the library: {reason}"
 
-# Cutter types, in the Tools tab and the Tool Library.
+# Cutter types, in the Tools step and the Tool Library.
 [app.kind]
 all = "All types"
 end_mill = "End mill"
@@ -635,7 +653,7 @@ details = "Details"
 details_tooltip = "Show what this import did"
 
 # The Operations list (slice 10, #539; functional spec, capability 65;
-# experience.md, section 7, "List row"): its toolbar, the Add menu with the
+# experience.md, section 7, "List row"): its buttons, the Add menu with the
 # reasons a kind is below the divider, each row's second line and controls.
 [operations]
 add = "Add"
@@ -732,7 +750,7 @@ clearing_delete = "Delete pass {n}"
 clearing_add = "Add pass"
 clearing_add_hint = "picks the next smaller end mill"
 # Slice 26 (#618): the header's inline rename, the required-field look
-# (also the Project Settings' and the Tools tab's), and a closed group's
+# (also the Stock step's and the Tools step's), and a closed group's
 # summary: how a value, a switch off and a list read in it.
 rename = "Rename {name}"
 required = "Required"
@@ -1167,7 +1185,7 @@ picture_not_carved = "No Photo V-Carve carves the selection"
 picture_hover = "Picture “{name}”"
 
 # The Arrange actions (slice 25, #617; functional spec, capability 58a;
-# experience.md, section 7, "Split button"): the toolbar's group, its
+# experience.md, section 7, "Split button"): the Inspector's group, its
 # Rotate popover, the Arrange menu, why the group is disabled, and the
 # status bar's line naming locked shapes that stayed.
 [arrange]
@@ -1190,23 +1208,20 @@ disabled_pictures = "A picture cannot be rotated or flipped"
 locked_one = "“{name}” is locked, so it stayed where it was"
 locked_many = "{count} locked shapes stayed where they were: {names}"
 
-# Slice 18 (#547): the export sheet and its result (capability 77,
-# mock-up 11), and the estimates outside it (capability 78).
+# Slice 18 (#547), redesign slice D4: the Export step's plan and its
+# result (capability 77, mock-up 11), and the estimates outside it
+# (capability 78).
 [export]
-title = "Export G-code · {name}"
-close = "Close"
 destination = "Destination"
 destination_help = "The folder the programs are written to, remembered for this project. The project's own folder unless you choose another."
 choose = "Choose…"
 choose_title = "Export to folder"
 no_folder = "Choose a folder: the project has not been saved yet."
+no_folder_yet = "Not chosen yet"
 stem = "File name"
 stem_help = "What each program's name starts with; the post-processor gives the extension."
 stem_empty = "Type a file name."
 names = "Writes {names}"
-post = "Post-processor"
-post_help = "The controller the programs are written for: the Export step's setting."
-post_note = "Changing it here changes the project (undoable) and keeps your settings."
 split = "Programs"
 split_help = "How a project with several tools is divided into programs. An override applies to this export only and is not saved."
 split_project = "As the project says: {mode}"
@@ -1230,24 +1245,21 @@ blocked_one = "1 error blocks export"
 blocked_many = "{count} errors block export"
 show = "Show"
 show_help = "Open the Warnings drawer at the errors."
-export = "Export"
 waiting = "Waiting for the toolpaths to finish generating…"
 building = "Building the programs…"
 nothing = "Nothing to export."
 no_board = "Tick a board to export."
 failed = "Nothing was written: {reason}"
 over_project = "Refusing to write {name} over the project file."
-result_title = "Exported · {name}"
 show_in_folder = "Show in folder"
 written = "Exported {count} file(s) to {dir}"
 status_total = "Est. {time}"
 status_total_help = "The estimated time of every program, as export prints it (capability 30)"
 operation_estimate = "{name}: {time}"
 # The export result (functional spec, capability 77a): Status, Files and
-# Run instructions, in place of the sheet's content.
+# Run instructions, in the plan's place on the Export step.
 result_written_one = "1 program written"
 result_written_many = "{count} programs written"
-result_files = "Files"
 result_column_number = "#"
 result_column_file = "File"
 result_column_tool = "Tool"
@@ -1257,6 +1269,7 @@ result_copy_path = "Copy path"
 result_copied = "Copied {path}"
 result_instructions = "Run instructions"
 result_done = "Done"
+result_done_help = "Back to the plan, to export again or somewhere else."
 # The setup sheet (capability 77b): an HTML page printed from a browser.
 save_setup_sheet = "Save setup sheet…"
 save_setup_sheet_help = "Write a page with the setup and every program's tool, zero, extents and time, to open and print from a browser."

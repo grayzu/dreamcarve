@@ -3251,7 +3251,6 @@ fn photo_v_carve_fields() {
     let bar = dc_app::status::cells(
         &h.app,
         &dc_app::status::Inputs {
-            cursor_mm: None,
             drag: None,
             hover: None,
             message: None,

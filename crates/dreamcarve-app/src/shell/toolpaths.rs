@@ -3,14 +3,15 @@
 
 //! The toolpath view (functional spec, capability 73; `experience.md`,
 //! section 9, "Toolpath view popover"; mock-up `09-preview-legend.svg`;
-//! slice 24, #616): a popover above the status bar's *Toolpaths* button,
+//! slice 24, #616; redesign slice D4): a popover under the *Layers*
+//! button of the Viewport's floating controls (`viewport::controls`),
 //! 240 px wide on `surface.raised`, closed by a click elsewhere or
-//! Escape. It holds the colour mode with its key under it (each
-//! operation's swatch and name by operation, a line on the ramp by
-//! depth), the eight layer toggles, and *Show all* / *Hide all*. It takes
-//! no room on the Viewport. Everything here is view state: the popover
-//! emits actions the window turns into `dc_app` view settings and
-//! `gui.toml` preferences, never commands.
+//! Escape. It holds the key of the colour mode chosen beside the button
+//! (each operation's swatch and name by operation, a line on the ramp by
+//! depth), the eight layer toggles, and *Show all* / *Hide all*.
+//! Everything here is view state: the popover emits actions the window
+//! turns into `dc_app` view settings and `gui.toml` preferences, never
+//! commands.
 
 use dc_app::view::{ColourMode, Visibility, operation_key};
 use dc_app::{App, StrKey};
@@ -20,7 +21,6 @@ use crate::shell::theme::{self, Palette};
 use crate::shell::window::Action;
 use crate::widgets::button::{ButtonSpec, Kind, button, text};
 use crate::widgets::checkbox::checkbox;
-use crate::widgets::segmented::segmented;
 
 /// The popover's width, px.
 const WIDTH_PX: f32 = 240.0;
@@ -43,12 +43,13 @@ pub(crate) fn is_open(ctx: &egui::Context) -> bool {
     egui::Popup::is_id_open(ctx, popover_id())
 }
 
-/// The popover above `button` (drawn in `ui`), toggled by it.
+/// The popover under `button` (drawn in `ui`), its right edge on the
+/// button's, toggled by it.
 pub(crate) fn popover(ui: &Ui, button: &Response, app: &App, out: &mut Vec<Action>) {
     let palette = Palette::current(ui);
     egui::Popup::from_toggle_button_response(button)
         .id(popover_id())
-        .align(egui::RectAlign::TOP_START)
+        .align(egui::RectAlign::BOTTOM_END)
         .gap(8.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .width(WIDTH_PX)
@@ -72,19 +73,7 @@ fn body(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         TextStyle::Name(theme::TITLE.into()),
         palette.text_primary,
     );
-    let modes = [
-        strings.get(StrKey::AppToolpathsByOperation),
-        strings.get(StrKey::AppToolpathsByDepth),
-    ];
-    let selected = usize::from(view.colour == ColourMode::ByDepth);
-    let width = ui.available_width();
-    if let Some(chosen) = segmented(ui, Id::unique("toolpaths.colour"), &modes, selected, width) {
-        out.push(Action::SetColour(if chosen == 1 {
-            ColourMode::ByDepth
-        } else {
-            ColourMode::ByOperation
-        }));
-    }
+    // The key of the colour mode chosen on the Viewport, beside Layers.
     match view.colour {
         ColourMode::ByOperation => operation_rows(ui, app),
         ColourMode::ByDepth => {
@@ -107,13 +96,17 @@ fn body(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         (StrKey::AppToolpathsOnlySelected, |v| &mut v.only_selected),
         (StrKey::AppToolpathsExtents, |v| &mut v.extents),
     ];
-    for (key, flag) in toggles {
-        let mut next = view.visibility;
-        let value = flag(&mut next);
-        if checkbox(ui, key, value, strings.get(key)).changed() {
-            out.push(Action::SetVisibility(next));
+    // The rows stand a control apart, with nothing between them.
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (key, flag) in toggles {
+            let mut next = view.visibility;
+            let value = flag(&mut next);
+            if checkbox(ui, key, value, strings.get(key)).changed() {
+                out.push(Action::SetVisibility(next));
+            }
         }
-    }
+    });
     ui.add_space(4.0);
     ui.horizontal(|ui| {
         let show = ButtonSpec::new(Kind::Quiet, strings.get(StrKey::AppToolpathsShowAll));

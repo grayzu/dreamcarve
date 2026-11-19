@@ -96,8 +96,10 @@ what to press next.
   bar); and the one primary button, a 34-px accent pill. It reads
   *Continue* with `arrow-right` after the label and opens the next step
   that is not complete; on the Export step it reads *Export G-code* with
-  `download` and opens the export sheet, disabled (a sunken pill) with
-  the blocking error as its tooltip while export is refused.
+  `download` and writes the programs the step plans, asking for a folder
+  first when none is chosen; it is disabled (a sunken pill) with the
+  reason as its tooltip while an error blocks export or the programs are
+  still being built.
 - **Rail.** A 64-px card at the left, full height. Five step buttons
   from the top, 4 px apart, each 56 × 52 with a 10-px radius: a 24-px
   icon over an 11-px label (Design `shapes`, Stock `box`, Tools `drill`,
@@ -131,11 +133,29 @@ what to press next.
     foot.
   - **Operations**: *Add*, *Duplicate*, *Delete*, then the list in cut
     order.
-  - **Export**: the readiness card (the error, warning and hint counts
-    as status chips, or `circle-check` and *No problems*; *Estimated
-    time* as the 22-px summary number; *Z range, tool centre* once the
-    programs are built), *Review programs…* (a full-width secondary
-    button), then the Heights, Tolerances and Post-processor sections.
+  - **Export**: the whole export, top to bottom (functional 77), in a
+    panel 440 px wide: the step has no Inspector, and a program's name,
+    tool and time read on one line. First the readiness card (the error,
+    warning and hint counts as status chips, or `circle-check` and *No
+    problems*; *Estimated time* as the 22-px summary number; *Z range,
+    tool centre* once the programs are built). While an error blocks
+    export, a card in the status.error tint under it: `circle-x` and *1
+    error blocks export* in 13-px Medium with a quiet *Show* at its
+    right, then each finding as a row, its message wrapped over its
+    field in the mono face, the row a button with `surface.hover` under
+    the pointer. Then the Post-processor, Heights and Tolerances
+    sections, closed until wanted, each with one 12-px text.secondary
+    line of its values after its title (*grblHAL v4 (latest) · .nc*).
+    Then the plan: *Programs*, a full-width dropdown under its label
+    since its choices are sentences, where the project cuts with several
+    tools; the board ticks with an Inlay; *Program Details*, a
+    disclosure of striped rows, each a program's number in a gutter
+    beside three lines (its file name in the mono face with its time and
+    Z range at the right; its tool and operations; the step before it in
+    12-px text.secondary); and *Destination* (the folder in the mono
+    face, cut at its start, with *Choose…*) over *File name*. Once the
+    programs are written the result takes the plan's place (section 15,
+    "Export result").
 
   While an operation's targets are edited (section 8) the panel shows
   the Design Tree, the one part of the window besides the Viewport that
@@ -161,48 +181,55 @@ what to press next.
   resize cursor, and a 2-px `accent` line shows in it while the pointer
   is on it. The widths are remembered. View ▸ *Step Panel* hides the
   step panel, and choosing a step shows it again.
-- **Viewport.** *Fit* and the *Tab tool* float at its top left in one
-  36-px `surface.raised` pill with the one shadow, 12 px in from the
-  card's edges: two 28-px quiet icon buttons, the Tab tool pressed while
-  it is armed. While the project has nothing to cut and the Design step
-  is open, the card shows the start screen (section 8, "Empty states")
-  in place of the stock.
+- **Viewport.** Its controls float over it (section 9, "Floating
+  controls"): the tools, *Fit* and the zoom in one 36-px
+  `surface.raised` pill at its top left, the colour mode and *Layers* in
+  another at its top right, and the cursor's read-out in a 28-px pill at
+  its bottom left, each with a hairline and the one shadow, 12 px in
+  from the card's edges. While the project has nothing to cut and the
+  Design step is open, the card shows the start screen (section 8,
+  "Empty states") in place of the stock, and no control floats.
 - **Status bar.** 28 px on the backdrop, with a 6-px margin under it;
   each cell a quiet 24-px pill (`surface.panel`, a 1-px `border.default`
-  outline). Cells
-  left to right (functional 50b): units (a quiet button, `mm` with a
-  `chevron-down`, opening a two-row menu), cursor X Y (tabular, a fixed
-  120-px cell that is blank, not dashed, off the Viewport), **Toolpaths**
-  (a quiet button, `layers` + *Toolpaths*, present once a toolpath
-  exists; pressed look while its popover is open), generation (blank
-  when idle; spinner + *Generating 2 of 5…* + *Stop*; or *Stopped* +
-  *Regenerate all*), counts (errors, warnings, hints, each a glyph +
-  count in its status colour; one button that opens the Warnings drawer;
-  `circle-check` + *No problems* in text.secondary when all are zero),
-  estimated time, Z range when extents are on, then the message, which
-  takes the remaining width and truncates at the end. A cell with
-  nothing to show is not drawn. Cells are 6 px apart with 10-px padding
-  and no rules between them; cell text is 12 px. A cell that is a button
-  takes `surface.hover` on its pill.
-  No stock size: the Stock step's summary line shows it.
-- **Warnings drawer.** Slides up from the status bar over the Viewport's
-  bottom 240 px (resizable, min 120), a card of its own under the
-  Viewport's; never a window. It opens from the rail's Warnings button
-  or the status bar's counts.
+  outline). The cells are in two groups (functional 50b), so that none
+  moves when another comes or goes. From the left, what holds still:
+  units (a quiet button, `mm` with a `chevron-down`, opening a two-row
+  menu); counts (errors, warnings, hints, each a glyph + count in its
+  status colour; one button that opens the Warnings drawer;
+  `circle-check` + *No problems* in text.secondary when all are zero);
+  then the message, which takes the room that is left and truncates at
+  the end. From the right, what comes and goes: one cell for the job
+  (while toolpaths generate, the spinner + *Generating 2 of 5…* +
+  *Stop*, or *Stopped* + *Regenerate all*; when they are current, the
+  estimated time), and left of it one cell for the pointer (a drag's
+  travel, else the name of the shape under it, in text.primary). A cell
+  with nothing to show is not drawn. Cells are 6 px apart with 10-px
+  padding and no rules between them; cell text is 12 px. A cell that is
+  a button takes `surface.hover` on its pill.
+  No cursor, no Z range and no Toolpaths button: they float on the
+  Viewport. No stock size: the Stock step's summary line shows it.
+- **Warnings drawer.** A card over the bottom of the Viewport's card,
+  240 px high and 8 px in from its edges, `surface.panel` with a
+  hairline and the one shadow; never a window. The Viewport keeps its
+  size under it, and its read-out and Fit stand clear of it. A grab
+  handle, a 36 × 4 px pill in `border.strong` centred at its top
+  (`accent` under the pointer), drags it taller or shorter, from 120 px
+  to where the Viewport's top controls would be covered. It opens from
+  the rail's Warnings button or the status bar's counts.
 - **Small windows.** 1280 × 768 holds the rail, the step panel (280),
   the Viewport (520) and the Inspector (300) with their five 8-px gaps.
   In a narrower window the Inspector lies over the Viewport's right
   side, a card with a hairline and the one shadow, instead of beside it.
 - **Persistent vs transient.** Persistent: the header, the rail, the
-  step panel, the Viewport and its floating tools, the status bar, the
-  depth legend while By depth is on (section 9), the target-editing bar
-  while target editing is on (section 8). The Inspector comes and goes
-  with the selection. Transient: menus, the Add-operation menu, the tool
-  picker popover, the **toolpath view popover** (opened from the status
-  bar), the Rotate popover, tooltips, the help line, the marquee,
-  insertion indicators, toasts for Undo. Sheets (import, export, Tool
-  Library, unsaved-changes) are transient and modal; everything else is
-  not.
+  step panel, the Viewport and its floating controls, the status bar,
+  the depth legend while By depth is on (section 9), the target-editing
+  bar while target editing is on (section 8). The Inspector comes and
+  goes with the selection. Transient: menus, the Add-operation menu, the
+  tool picker popover, the **toolpath view popover** (opened from the
+  Viewport's *Layers*), the Rotate popover, tooltips, the help line, the
+  marquee, insertion indicators, toasts for Undo. Sheets (Import
+  drawing, Add picture, Tool Library, unsaved-changes) are transient and
+  modal; everything else is not. Export is a step, not a sheet.
 - **A sixth step.** Open question 3 asks that another panel fit without
   redesign: the rail is the seam. A step is a button on the rail, a
   content for the step panel and, when it has an editor, a content for
@@ -248,7 +275,7 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 | Rail button | 52 | 56 wide in the 64-px rail; its bottom buttons 40 square |
 | Step title | 24 | 18-px SemiBold, 14 px under the card's top; its 12-px summary line under it |
 | Inspector header, editor header | 48 | No band and no rule |
-| Warnings drawer's header | 52 | With its buttons |
+| Warnings drawer's header | 44 | With its buttons, under a 14-px grab strip |
 | Target-editing bar | 48 | Its two buttons are controls, 8 px in |
 | Section header | 32 | Full-width hit area, no band |
 | Control (field, dropdown, button, segmented, pill tabs) | 32 | Text baseline centred |
@@ -262,7 +289,7 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 | Menu row, dropdown row | 32 | |
 | Status bar | 28 | Cells 24, and a 6-px margin under it |
 | Toolpath popover row | 24 | The key; its checkbox rows are 32 |
-| Floating tools pill (Viewport) | 36 | Buttons 28 square inside |
+| Floating pills (Viewport) | 36 | Controls 28 inside; the read-out's pill is 28 |
 | Vendor group header (Tool Library) | 32 | Same as a section header, inside the table |
 | Example card (start screen) | 144 | A 72-px well with the 96 × 56 thumbnail, then the name and one line |
 | Toolpath view popover | auto | 240 wide |
@@ -275,8 +302,9 @@ the unit occupies the last 28 px inside the field. Tool-Library sheet
 1100 × 640 default (its table's ten columns, a type's name whole among
 them, leave the name 120 px), min 800 × 520, its right (editing) pane
 320 wide;
-Import and Export sheets 560 wide, the export result the same sheet;
-unsaved-changes sheet 420 wide; the start screen's content 624 wide.
+Import drawing and Add picture sheets 560 wide; unsaved-changes sheet
+420 wide; the Export step's panel 440 wide; the start screen's content
+624 wide.
 
 ## 4. Typography
 
@@ -526,10 +554,11 @@ Appearance `sun-moon`, Help `circle-question-mark`. Design step: Add
 drawing `file-input`, Add picture `image-plus`. Arrange group: Rotate
 `rotate-cw-square` (its chevron `chevron-down`), Flip horizontal
 `flip-horizontal-2`, Flip vertical `flip-vertical-2`. Viewport's
-floating tools: Fit `maximize`, Tab tool `bookmark-plus`. Tools step:
-Tool Library `library-big`. Start screen: Open `folder-open`. Status bar: Toolpaths
-`layers`, units menu `chevron-down`. Toolpath popover: Show all `eye`,
-Hide all `eye-off`. Viewport: 1:1 `scan`, zoom to selection `focus`.
+floating controls: Select `mouse-pointer-2`, Tab tool `bookmark-plus`,
+Fit `maximize`, Zoom out `zoom-out`, Zoom in `zoom-in`, Layers `layers`.
+Tools step: Tool Library `library-big`. Start screen: Open
+`folder-open`. Status bar: units menu `chevron-down`. Toolpath popover:
+Show all `eye`, Hide all `eye-off`. Viewport: zoom to selection `focus`.
 Lists: New tool `plus`, Duplicate `copy`, Delete `trash-2`. Targets:
 `target` (the Setup row and the tree's target mark), Edit `pencil`.
 Carve note `info` in **text.secondary** (not status.info: a note is not
@@ -767,13 +796,22 @@ Controls:
   last edit), the affected rows show the spinner and their old toolpaths
   drop to 35 % alpha; when a result lands, the new toolpath replaces it
   at full alpha with no fade. Nothing is hidden while waiting.
-- **Progress.** The status bar's generation cell reads *Generating 2 of 5…*
-  with the spinner; a *Stop* quiet button appears beside it while any
-  operation is pending. After Stop the cell reads *Stopped* with a
-  *Regenerate all* quiet button; that button exists nowhere else (not in
-  View, not in the Warnings drawer). When generation is current the cell
-  is blank. Import and export run inside their sheet with a 4-px
-  progress bar under the sheet header.
+- **Progress.** The status bar's generation cell, at the bar's right
+  end, reads *Generating 2 of 5…* with the spinner; a *Stop* quiet
+  button is beside it while any operation is pending. After Stop the
+  cell reads *Stopped* with a *Regenerate all* quiet button; that button
+  exists nowhere else (not in View, not in the Warnings drawer). When
+  generation is current the estimate is in its place. Import runs inside
+  its sheet with a 4-px progress bar under the sheet header. The Export
+  step says what its plan waits for, with the spinner, where the
+  programs will be listed (*Waiting for the toolpaths to finish
+  generating…*, *Building the programs…*), and *Export G-code* is
+  disabled with the same words until it is there.
+- **Floating controls fade.** While a drag is under way on the Viewport
+  (a pan, a marquee, a move, a resize, a tab) its floating controls and
+  the depth legend ease to 60 % and back, so the drawing shows through
+  where the pointer is working. A press that has not yet moved 4 px is
+  no drag.
 - **Target editing** (functional 67). Entering it draws a 48-px bar
   across the top of the Viewport, `accent.soft` fill and a 1-px `accent`
   rule under it: `target` + *Editing targets of "Panel": click shapes to
@@ -816,18 +854,20 @@ Controls:
   (destructive) and *Cancel* in the footer; Escape is Cancel. Delete on
   a project tool in use is refused inline: the button disables and its
   tooltip names the operations.
-- **Sheets (import, export, Tool Library, unsaved changes).** A
-  `surface.raised` panel centred over a scrim of black at 50 %, 16-px
-  radius, 24-px padding, the one soft shadow and no border,
+- **Sheets (Import drawing, Add picture, Tool Library, unsaved
+  changes).** A `surface.raised` panel centred over a scrim of black at
+  50 %, 16-px radius, 24-px padding, the one soft shadow and no border,
   32-px header with title and `x`, the same sections, fields and
-  validation as the panels, and a footer with the one primary action on
-  the right and secondary actions on the left. Never a second sheet above
-  a sheet: the tool picker from an editor is a popover, the import
-  review replaces the Tool Library's panes in place with a *Back*, so
-  does *Delete*'s question, with *Cancel*, and the export result
-  replaces the export sheet's content. A sheet's notes are only those
-  that change a decision: no footnote restating how files are written,
-  no list the status bar already shows.
+  validation as the panels, and a footer with the one primary action, a
+  pill, on the right and secondary actions on the left. A file's path
+  in a sheet is one mono line cut at its start, since its name is at
+  its end; the whole path is its tooltip. Never a second sheet above a
+  sheet: the tool picker from an editor is a popover, the import review
+  replaces the Tool Library's panes in place with a *Back*, and so does
+  *Delete*'s question, with *Cancel*. Export is not a sheet: it is the
+  Export step, and its result takes its plan's place there. A sheet's
+  notes are only those that change a decision: no footnote restating how
+  files are written, no list the status bar already shows.
 - **Keyboard focus.** Tab walks top-left to bottom-right: the header,
   the rail (its five steps, then Warnings, Appearance and Help), the
   step panel, the Viewport, the Warnings drawer, the Inspector, the
@@ -873,10 +913,37 @@ Controls:
   toolpath to the top and draws a 4-px halo in its colour at 25 % alpha
   beneath it; other toolpaths stay at full alpha unless *Only the selected
   operation* is on.
-- **Cursor coordinates.** The status bar's cell updates every frame in
-  tabular 12 px: `X 64.2  Y 51.8` (one decimal in mm, three in inch),
-  counting from the origin. No crosshair cursor and no floating readout:
-  the pane stays clean.
+- **Floating controls** (`redesign.md`, "The Viewport's floating
+  controls"; functional 72). Three groups over the card, each a
+  `surface.raised` pill with a 1-px `border.default` and the one shadow,
+  12 px in from the card's edges; a control in a pill is 28 px.
+  - *Top left*, a 36-px pill: *Select* (`mouse-pointer-2`) and the *Tab
+    tool* (`bookmark-plus`), the one in use on `surface.active`; a 1-px
+    rule; *Fit* (`maximize`), *Zoom out* (`zoom-out`), the zoom as a
+    percentage in a 56-px quiet button, and *Zoom in* (`zoom-in`). The
+    percentage is of 96 px to the inch, about the work's real size on
+    most displays; a click on it sets 100 %, and each zoom button steps
+    by a quarter about the pane's centre.
+  - *Top right*, a 36-px pill, once the project has a toolpath: the *By
+    operation / By depth* segmented control, 184 px wide, and *Layers*
+    (`layers` and its label), pressed while its popover is open.
+  - *Bottom left*, a 28-px pill: the cursor read-out, and the Z range
+    after it in text.secondary while the program extents are shown.
+    Neither showing, there is no pill.
+
+  They ease to 60 % while a drag is under way (section 8). Fit keeps the
+  stock clear of them: 60 px at the top, 52 px at the bottom and 40 px at
+  each side, more where the Warnings drawer or an Inspector lies over
+  the card. Where the pane is too narrow for both top pills, *Layers* is
+  its icon alone (the Viewport at its least width, 520 px), and in a
+  narrower one still the zoom controls go, leaving *Fit* and the wheel.
+  Under the target-editing bar the top pills sit below it, and the
+  drawing does not move when the mode starts.
+- **Cursor coordinates.** The read-out at the pane's bottom left updates
+  every frame in tabular 12 px: `X 64.2  Y 51.8` (one decimal in mm,
+  three in inch), counting from the origin, in a fixed 124-px slot so
+  the pill holds still. It is there only while the pointer is over the
+  Viewport. No crosshair cursor and no readout chasing the cursor.
 - **Male inlay board.** Drawn to the right of the stock with a gap of
   20 % of the stock's width (minimum 20 mm), as `--preview` places it:
   its own `viewport.male-board` outline, a smaller origin mark, the
@@ -885,21 +952,22 @@ Controls:
   shows `Male board · Inlay 1` in the status bar; a click selects the
   Inlay. A `Male board` caption (12 px, label pill) sits at its top-left.
   Fit includes it.
-- **Toolpath view popover.** Opened from the status bar's *Toolpaths*
-  button, anchored above it with an 8-px caret, 240 px wide,
-  `surface.raised`, 8-px radius, 1-px `border.default`, popover shadow;
-  title *Toolpaths* 13 px SemiBold; then the colour-mode segmented
-  control (By operation / By depth); under it the **key**: by operation,
-  one 24-px row per operation with a 10-px swatch and its name
-  (truncated), at most eight then *and n more*; by depth, one 12-px
-  text.secondary line *Pale is shallow, dark is deep; the legend is on
-  the Viewport*; then eight 24-px checkbox rows (Cuts, Rapids, Plunges,
-  Direction arrows, Start points, Tab marks, Only the selected
-  operation, Program extents) and *Show all* / *Hide all* quiet buttons.
-  Closes on a click elsewhere or Escape. Its state persists in
-  `gui.toml`. The Viewport's corner holds no card.
-- **Depth legend** (functional 73a). Shown only in By depth mode, in a
-  `viewport.label.bg` card at the pane's bottom-left, 12-px inset, title
+- **Toolpath view popover.** Opened from *Layers* in the Viewport's
+  top-right pill, 8 px under it with its right edge on the button's,
+  240 px wide, `surface.raised`, 12-px radius, 1-px `border.default`,
+  popover shadow; title *Toolpaths* 13 px SemiBold; then the **key** of
+  the colour mode chosen in the pill: by operation, one 24-px row per
+  operation with a 10-px swatch and its name (truncated), at most eight
+  then *and n more*; by depth, one 12-px text.secondary line *Pale is
+  shallow, dark is deep; the legend is on the Viewport*; then eight
+  32-px checkbox rows (Cuts, Rapids, Plunges, Direction arrows, Start
+  points, Tab marks, Only the selected operation, Program extents) and
+  *Show all* / *Hide all* quiet buttons. Closes on a click elsewhere or
+  Escape. Its state persists in `gui.toml`.
+- **Depth legend** (functional 73a). Shown only in By depth mode, on a
+  `surface.raised` card with a hairline and the one shadow, hung 8 px
+  under the top-right pill with its right edge on the pill's, 12-px
+  padding, title
   *Z* 12 px SemiBold with the unit once (`Z (mm)`). One vertical scale:
   a 12 × 40 px band of `viewport.rapid` with diagonal 1-px hatching for
   the non-cutting heights, ticks labelled `+10  clearance` and `+5  safe
@@ -908,10 +976,14 @@ Controls:
   operation's depth (`−6  Square recess`) and the deepest cut. Values
   are work-coordinate Z with a true minus and an explicit `+`. Labels
   that would overlap stack to the right. It never overlaps the stock at
-  fit: Fit leaves room for it on the left when it is on.
+  fit: Fit stands clear of it either beside it or under it, whichever
+  draws the stock larger, so a wide stock in a narrow pane sits under
+  the legend at nearly its full size and is not squeezed into a strip
+  beside it.
 - **Program extents.** The two boxes above; the caption names the edge box
-  as the cutter's reach: *Program extents (bit edge, dashed)*. The status
-  bar shows the Z range in the same tabular style.
+  as the cutter's reach: *Program extents (bit edge, dashed)*, and steps
+  under the box where a floating control or the legend would cover it.
+  The Viewport's read-out shows the Z range in the same tabular style.
 - **Not 1998.** No black background by default, no bevelled frame around
   the pane, no scroll bars (pan and zoom instead), no rulers, no
   coordinate readout chasing the cursor, no shadow under the stock, no
@@ -1246,14 +1318,20 @@ What the screenshot review of #549 added that has no home above.
   library…*. Every length and rate in the sheet follows it, including
   the table columns and the editing pane; the project behind the sheet
   keeps its own units.
-- **Export result.** Status is one 15-px SemiBold line with
-  `circle-check` in status.success (or `circle-x` in status.error and
-  the reason under it in 13 px); Files is a table of 28-px rows (number,
-  file name in JetBrains Mono, tool, time right-aligned), then the folder
-  as a 13-px mono line truncated at the end with *Show in folder* and a
-  `copy` icon button; *Run instructions* is a closed disclosure whose
-  steps are numbered 13-px lines and whose controller notes are callouts
-  (`surface.stripe` fill, 6-px radius, `info` glyph in text.secondary).
+- **Export result.** On the Export step, in the plan's place: a card
+  inside the step's card (`surface.raised`, 10-px radius, a hairline,
+  16-px padding). Status is one 15-px SemiBold line with `circle-check`
+  in status.success and a secondary *Done* at its right, the CLI's lines
+  under it in 12-px text.secondary; Files is a table of 30-px striped
+  rows under a 24-px header row (number, file name in JetBrains Mono,
+  tool, time right-aligned, the columns one width for every row), then
+  the totals; then *Folder* and the folder as a 12-px mono line cut at
+  its start with a `copy` icon button, over *Show in folder* and *Save
+  setup sheet…*, both secondary. Under the card, *Run instructions* is a
+  closed disclosure whose steps are numbered 13-px lines and whose
+  controller notes are callouts (`surface.stripe` fill, 10-px radius,
+  `info` glyph in text.secondary). A failure is one line in status.error
+  with `circle-x` under the readiness card, and the plan stays.
 - **Setup sheet (HTML).** Not egui, so not themed: black text on white,
   a system sans-serif stack (`-apple-system, "Segoe UI", Inter,
   sans-serif`; Inter is not embedded, to keep the file small and

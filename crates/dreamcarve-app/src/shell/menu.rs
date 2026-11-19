@@ -14,6 +14,7 @@
 //! three with a check. The rail's Appearance and Help buttons open the
 //! same rows ([`appearance_items`], [`help_items`]).
 
+use dc_app::steps::Step;
 use dc_app::{StrKey, Strings};
 use eframe::egui::{self, Button, Key, Modifiers, Ui};
 
@@ -294,7 +295,7 @@ fn file(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
         strings,
         StrKey::AppMenuExport,
         keyboard::binding(Shortcut::Export),
-        Action::OpenExport,
+        Action::GoTo(Step::Export),
         out,
     );
     // Capability 77b: once this project has been exported.

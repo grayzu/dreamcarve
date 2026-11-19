@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The project's tools (functional spec, capability 63; acceptance 71):
-//! what the CAM panel's Tools tab reads and the commands it makes. A
+//! what the Tools step reads and the commands it makes. A
 //! field edit is a whole tool through [`set_field`] and
 //! [`Command::UpdateTool`]; a tool from the library is the copy `tools
 //! add` writes ([`add_from_library`]); *Duplicate* is a copy under the
@@ -337,8 +337,9 @@ pub fn fields(tool: &Tool) -> Vec<ToolField> {
     fields_for(KindChoice::of(&tool.cutter))
 }
 
-/// One row of the tool editor, ready to draw: the project's Tools tab and
-/// the library's editing pane show the same rows (capabilities 63, 64a).
+/// One row of the tool editor, ready to draw: the Tools step's Inspector
+/// and the library's editing pane show the same rows (capabilities 63,
+/// 64a).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldRow {
     /// The field.
@@ -704,7 +705,7 @@ pub fn angle_text(strings: &Strings, tool: &Tool) -> Option<String> {
     Some(strings.fmt(key, &[("angle", &trimmed(angle_deg, ANGLE_DECIMALS))]))
 }
 
-/// The second line of `tool`'s row in the Tools tab (capability 63), in
+/// The second line of `tool`'s row in the Tools step (capability 63), in
 /// `units`: its diameter, which is the cutting diameter for every type; a
 /// tapered ball nose's tip; its angle, labelled ([`angle_text`]); its
 /// number. `6.35 mm · tip 0.762 mm · 6.7°/side · T2`. An unset value is

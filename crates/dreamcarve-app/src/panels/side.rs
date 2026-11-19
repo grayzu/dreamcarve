@@ -10,8 +10,10 @@
 //! its content. Design is *Add drawing* and *Add picture* over the Design
 //! Tree ([`panels::tree`]); Stock is the units, the stock and the origin
 //! ([`panels::project`]); Tools and Operations are their lists
-//! ([`panels::tools`], [`panels::operations`]); Export is the readiness
-//! card and the output settings ([`panels::export_step`]). While an
+//! ([`panels::tools`], [`panels::operations`]); Export is the whole
+//! export, from its readiness card to its result
+//! ([`panels::export_step`]), in a panel 440 px wide, since the step has
+//! no Inspector and its programs' names are long. While an
 //! operation's targets are edited it shows the Design Tree, the one part
 //! of the window besides the Viewport that stays live (capability 67).
 //!
@@ -73,6 +75,9 @@ pub(crate) struct Shown {
     pub card: Rect,
     /// The card's width, px: the preference.
     pub width: f32,
+    /// Whether it is the Export step's wider panel, whose width is its
+    /// own and not the step panel's preference.
+    pub export: bool,
 }
 
 /// `value` px as egui's `f32`. Panel widths are a few thousand pixels at
@@ -121,7 +126,17 @@ fn step_panel_max(window_px: f32) -> f32 {
         .max(theme::STEP_PANEL_MIN_PX)
 }
 
-/// The step panel, in a window of `window`.
+/// The widest the Export step's panel may be in a window `window_px`
+/// wide, px: the step has no Inspector, so only the Viewport's minimum
+/// width is kept.
+fn export_panel_max(window_px: f32) -> f32 {
+    (window_px - RAIL_SPAN_PX - GAP_PX - GAP_PX - theme::VIEWPORT_MIN_PX - GAP_PX)
+        .max(theme::STEP_PANEL_MIN_PX)
+}
+
+/// The step panel, in a window of `window`. The Export step's is wider
+/// by default ([`theme::EXPORT_PANEL_PX`]), a panel of its own, so its
+/// width and the other steps' do not follow each other.
 pub(crate) fn step_panel(
     ui: &mut Ui,
     state: &FrameState<'_>,
@@ -129,12 +144,26 @@ pub(crate) fn step_panel(
     out: &mut Vec<Action>,
 ) -> Shown {
     let palette = Palette::current(ui);
-    let max = step_panel_max(window.x);
-    let default = px(state.prefs.panels.left_width).clamp(theme::STEP_PANEL_MIN_PX, max);
+    let export = shown_step(state) == Step::Export;
+    let (id, max, default) = if export {
+        let max = export_panel_max(window.x);
+        (
+            "step_panel_export",
+            max,
+            theme::EXPORT_PANEL_PX.clamp(theme::STEP_PANEL_MIN_PX, max),
+        )
+    } else {
+        let max = step_panel_max(window.x);
+        (
+            "step_panel",
+            max,
+            px(state.prefs.panels.left_width).clamp(theme::STEP_PANEL_MIN_PX, max),
+        )
+    };
     // What the frame adds to the card: the gap to the rail, and this
     // panel's share of the gap to the Viewport.
     let chrome = GAP_PX + HALF_GAP_PX + f32::from(LINE);
-    let panel = egui::Panel::left("step_panel")
+    let panel = egui::Panel::left(id)
         .resizable(true)
         .show_separator_line(false)
         .size_range(Rangef::new(theme::STEP_PANEL_MIN_PX + chrome, max + chrome))
@@ -164,6 +193,7 @@ pub(crate) fn step_panel(
     Shown {
         card: card_rect,
         width: card_rect.width(),
+        export,
     }
 }
 
@@ -383,7 +413,15 @@ pub(crate) fn inspector(
     Shown {
         card: card_rect,
         width: card_rect.width(),
+        export: false,
     }
+}
+
+/// How wide the Inspector is when it lies over the Viewport, px, before
+/// the Viewport's own width caps it: what the Viewport's floating
+/// controls and Fit keep clear of.
+pub(crate) fn overlay_width(state: &FrameState<'_>) -> f32 {
+    px(state.prefs.panels.right_width).max(theme::INSPECTOR_MIN_PX)
 }
 
 /// The Inspector over the right side of the Viewport's card `viewport`,
@@ -396,9 +434,7 @@ pub(crate) fn inspector_over(
     viewport: Rect,
     out: &mut Vec<Action>,
 ) -> Rect {
-    let width = px(state.prefs.panels.right_width)
-        .max(theme::INSPECTOR_MIN_PX)
-        .min(viewport.width());
+    let width = overlay_width(state).min(viewport.width());
     let rect = Rect::from_min_max(
         egui::pos2(viewport.right() - width, viewport.top()),
         viewport.max,

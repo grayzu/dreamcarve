@@ -100,7 +100,7 @@ folder are app preferences, kept outside the project.
       **Continue** and opens the next step that is not complete; on the
       Export step it reads **Export G-code** and is the export command
       (77), disabled with the reason in its tooltip while an error blocks
-      export.
+      export or the programs are still being built.
     - The **rail** at the left: the five **steps** of the work in their
       fixed order, **Design**, **Stock**, **Tools**, **Operations**,
       **Export**, each a button with a mark of its state (below). Nothing
@@ -112,13 +112,20 @@ folder are app preferences, kept outside the project.
       line saying what it holds, then its content. Design: *Add drawing*
       and *Add picture* (55, 56) over the **Design Tree** (57). Stock:
       the units, the stock and the origin (60). Tools: the project's
-      tools (63). Operations: the operations list (65). Export: a
-      readiness card (the error, warning and hint counts, the estimated
-      time, the Z range), *Review programs…*, which opens the export
-      sheet (77) whatever the counts say, and the output settings (60,
-      62).
-    - The **Viewport** in the centre, with *Fit* and the *Tab tool* (69)
-      floating at its top left.
+      tools (63). Operations: the operations list (65). Export: the
+      whole export (77), top to bottom: a readiness card (the error,
+      warning and hint counts, the estimated time, the Z range); the
+      findings that block export, while any does; the output settings
+      (60, 62), three groups closed until they are wanted, each with its
+      values on its header; the programs and the destination; and, once
+      the programs are written, the result in their place (77a). The
+      Export step has no Inspector, so its panel is wider than the other
+      steps', 440 px, and a program's name, tool and time read on one
+      line.
+    - The **Viewport** in the centre, with its controls floating over it
+      (72): the tools, *Fit* and the zoom at its top left, the colour
+      mode and *Layers* (73) at its top right, and the cursor's read-out
+      at its bottom left.
     - The **Inspector** at the right, there only while the current step
       has something selected that has an editor: on Design the
       **Properties** of the selected shapes or tabs (58) with the Arrange
@@ -127,7 +134,8 @@ folder are app preferences, kept outside the project.
       deselects, and with nothing selected the Viewport takes the room.
     - A status bar along the bottom (50b), whose warning and error counts
       also open the **Warnings** panel, a drawer over the Viewport's
-      bottom.
+      bottom: a card on the Viewport's card, which keeps its size under
+      it, with a grab handle that drags it taller or shorter.
 
     A step's state is computed from the project and its findings, never
     stored:
@@ -145,7 +153,10 @@ folder are app preferences, kept outside the project.
     when any of its findings is an error, else in the warning colour.
     Hints never mark a step. A project with no shape, picture or
     operation has no marks at all: its unset thickness becomes the Stock
-    step's error once there is something to cut. While toolpaths
+    step's error once there is something to cut. The status bar's counts
+    and the count on the rail's Warnings button follow the same rule, so
+    a blank project shows *No problems*; the drawer still lists what
+    `check` reports. While toolpaths
     regenerate, the marks of Operations and Export hold until the results
     are back, so they do not blink.
 
@@ -192,30 +203,34 @@ folder are app preferences, kept outside the project.
     example) selects its first step that is not complete, so an empty
     project opens on Design and a finished one on Export; after that the
     step the user picks stays until the next project is opened.
-50b. **Status bar** (`09-preview-legend.svg`; review 2026-11-10). Cells
-    left to right, each shown only when it has something to say:
+50b. **Status bar** (`09-preview-legend.svg`; review 2026-11-10;
+    `redesign.md`, slice D4). Its cells are quiet pills in two groups, so
+    that none moves when another comes or goes; each is shown only when
+    it has something to say. From the left:
     - **Units**, `mm` or `in`, a quiet button whose menu switches the
       project's display units (53).
-    - **Cursor**, `X 64.2  Y 51.8` from the origin while the pointer is
-      over the Viewport; empty (no dashes) when it is not.
-    - **Toolpaths**, a button that opens the toolpath view popover (73).
-      Hidden until the project has at least one toolpath.
-    - **Generation**: empty when every toolpath is current; *Generating 2
-      of 5…* with a spinner and *Stop* while any is pending; after Stop,
-      *Stopped* and *Regenerate all*, the only place that command lives
-      (71).
     - **Counts**: errors, warnings and hints, each a glyph and a number,
       opening the Warnings drawer (76). *No problems* when all three are
-      zero.
-    - **Estimate**, the program's total time (78), and the **Z range**
-      while program extents are on (74).
+      zero, and for a blank project (50).
     - **Message**, the last status message (*Saved plaque*, *"square" is
       locked*), or, while an operation is selected and nothing newer has
       been said, that operation's carve summary in one line (76a);
-      clicking it opens the drawer at that operation.
+      clicking it opens the drawer at that operation. It takes the room
+      that is left.
 
-    The stock size is not in the status bar: the Stock step's summary
-    line shows it.
+    From the right:
+    - **The job**, one cell: while any toolpath is pending, *Generating 2
+      of 5…* with a spinner and *Stop*; after Stop, *Stopped* and
+      *Regenerate all*, the only place that command lives (71); and once
+      every toolpath is current, the **estimate**, the program's total
+      time (78).
+    - **The pointer**, one cell left of it: a drag's travel, scale or
+      angle while one is under way, else the name of the shape under the
+      pointer (75).
+
+    The cursor's position, the Z range and the toolpath view are not in
+    the status bar: they float on the Viewport (72, 73, 74). Nor is the
+    stock size: the Stock step's summary line shows it.
 51. **Project lifecycle.** *New* makes an empty project with the phase 1
     defaults (100 × 100 mm stock, thickness unset, origin bottom-left and
     Z zero at the stock top, grblHAL at its latest version, no tools, no
@@ -817,31 +832,56 @@ folder are app preferences, kept outside the project.
     arrows along cuts are a toggle. Pan with the middle button, Space-drag
     or a two-finger scroll on a trackpad (open question 8), zoom with the
     wheel or pinch about the cursor, *Fit* (F) to
-    the stock and shapes, *Zoom to selection* (Shift F), and a 1:1 button
-    where the display's size is known. Clicking a toolpath selects its
-    operation. The Viewport flips Y exactly once; every coordinate the
-    user sees is project coordinates.
+    the stock and shapes, and *Zoom to selection* (Shift F). Clicking a
+    toolpath selects its operation. The Viewport flips Y exactly once;
+    every coordinate the user sees is project coordinates.
+
+    The Viewport's controls float over it (`redesign.md`, "The
+    Viewport's floating controls"), in three groups:
+    - **Top left**: *Select* and the *Tab tool* (69), the one in use
+      shown pressed; then *Fit*, *Zoom out*, the zoom as a percentage,
+      and *Zoom in*. The percentage is of 96 pixels to the inch, about
+      the work's real size on most displays (the app does not know a
+      display's true size, so there is no 1:1 button); a click on it sets
+      the zoom to 100 %. *Zoom in* and *Zoom out* step by a quarter about
+      the Viewport's centre.
+    - **Top right**, once the project has a toolpath: the colour mode,
+      *By operation* or *By depth*, and *Layers*, which opens the
+      toolpath view (73). The depth legend (73a) hangs under them.
+    - **Bottom left**: the read-out, `X 64.2  Y 51.8` from the origin
+      while the pointer is over the Viewport, and the Z range while the
+      program extents are shown (74). Off the Viewport there is no cursor
+      part, and no dashes in its place.
+
+    They fade to 60 % while a drag is under way on the Viewport, and Fit
+    keeps the stock clear of them, of the Warnings drawer and of an
+    Inspector lying over the Viewport. In a Viewport too narrow for both
+    top groups, *Layers* is its icon alone, and in a narrower one still
+    the zoom controls go.
 73. **Toolpath view** (`09-preview-legend.svg`; reworked by the review,
-    2026-11-10). A filter on what the Viewport draws, opened from the
-    status bar's **Toolpaths** button (50b) as a popover above it, and
-    closed by a click elsewhere or Escape; it is not a panel and takes no
-    room on the Viewport. The button is hidden until the project has a
-    toolpath, so a project fresh from a drawing shows only the drawing.
-    The popover holds the colour mode, **By operation** (default; each
-    operation its own colour, repeating after eight, the same palette as
-    `--preview`) or **By depth** (every cutting move coloured from pale at
-    the stock top to dark at the deepest cut in the project), with, under
-    the control, the **key** for the mode chosen: by operation, each
-    operation's swatch and name; by depth, a line saying how the ramp
-    reads. Then toggles for *Cuts*, *Rapids*, *Plunges*, *Direction
-    arrows*, *Start points*, *Tab marks*, *Only the selected operation*
-    and *Program extents* (74), and *Show all* / *Hide all*. Each
-    operation's eye (65) hides or shows its toolpath. These are view
-    settings: not in the file, not undoable, remembered between sessions.
-    By operation is the default because it matches `--preview` and the
-    quick-start pictures (open question 6, decided 2026-11-02).
-73a. **Depth legend.** While By depth is on, a legend sits on the
-    Viewport's bottom-left corner, whether or not the popover is open. It
+    2026-11-10, and by `redesign.md`, slice D4). What the Viewport draws
+    of the toolpaths, set from the Viewport's top-right controls (72),
+    which are hidden until the project has a toolpath, so a project fresh
+    from a drawing shows only the drawing. The **colour mode** is the
+    control itself: **By operation** (default; each operation its own
+    colour, repeating after eight, the same palette as `--preview`) or
+    **By depth** (every cutting move coloured from pale at the stock top
+    to dark at the deepest cut in the project). **Layers**, beside it,
+    opens a popover under it, closed by a click elsewhere or Escape; View
+    ▸ Toolpaths… opens it too. The popover holds the **key** for the mode
+    chosen (by operation, each operation's swatch and name; by depth, a
+    line saying how the ramp reads), then toggles for *Cuts*, *Rapids*,
+    *Plunges*, *Direction arrows*, *Start points*, *Tab marks*, *Only the
+    selected operation* and *Program extents* (74), and *Show all* /
+    *Hide all*. Each operation's eye (65) hides or shows its toolpath.
+    These are view settings: not in the file, not undoable, remembered
+    between sessions. By operation is the default because it matches
+    `--preview` and the quick-start pictures (open question 6, decided
+    2026-11-02).
+73a. **Depth legend.** While By depth is on, a legend hangs under the
+    Viewport's top-right controls, whether or not the popover is open,
+    and Fit stands clear of it, beside it or under it, whichever draws
+    the stock larger. It
     is one vertical scale of Z in project units, from the clearance
     height at the top to the deepest cut at the bottom, labelled in work
     coordinates (so with Z zero at the stock bottom the stock top reads
@@ -855,8 +895,9 @@ folder are app preferences, kept outside the project.
 74. **Program extents.** A toggle draws the program's XY extents box in
     machine coordinates as `check` prints them (capability 4): the tool
     centre's box and, dashed outside it, the box widened by the largest
-    tool's radius, where the cutter's edge reaches. The status bar shows
-    the Z range. This is the box the user checks against their clamps.
+    tool's radius, where the cutter's edge reaches. The Viewport's
+    read-out (72) shows the Z range. This is the box the user checks
+    against their clamps.
 75. **Selection on the Viewport.** Click selects an instance (the topmost
     where several overlap; a second click cycles), Shift-click adds,
     Ctrl-click toggles, a drag on empty stock draws a marquee, Escape
@@ -904,54 +945,77 @@ folder are app preferences, kept outside the project.
     2.000 mm*) and opens the
     drawer at its note. *Copy* writes the notes as `check` prints them,
     so the text the CLI prints is unchanged.
-77. **Export** (`11-export-dialog.svg`; File ▸ Export G-code…, Ctrl E;
-    trimmed by the review, 2026-11-10).
-    The sheet shows: the destination folder and file stem (default the
-    project's name beside the project file, remembered per project in the
-    app's preferences), with the names it will write under the stem
-    (*Writes plaque-1-T2.nc, plaque-2-T1.nc*); the post-processor with
-    its version (changing it
-    here is the Export step's switch (62) and a project change); the
-    program split, *as the project says* (the setting's value shown) or
-    overridden for this export to one program per tool or one program with
-    tool changes (`--programs-per-tool`, `--one-program`; the override is
-    not saved, and *one program* is refused on a post without `M6` with
-    the CLI's message); with an Inlay, a tick per board, **Female board**
-    and **Male board**: unticking one exports the other alone for this
-    export (`--board`), not saved, which is how the male is re-cut after a
-    fit adjustment. Then **Program Details**, a disclosure **closed by
-    default**, which lists the programs it will write, one row per tool
-    run (capability 3): file name, tool, operations, estimated time
-    (capability 30) and extents (capability 4), with the step before each
-    (zero the tool, change to T2) as `export` prints them, grouped by
-    board with an Inlay. The sheet does not list warnings (the status bar
-    counts them), does not repeat the estimated total (the status bar
+77. **Export** (`11-export-dialog.svg`; trimmed by the review,
+    2026-11-10; made a step by `redesign.md`, slice D4). Export is the
+    Export step, not a sheet: File ▸ Export G-code… and Ctrl E open the
+    step, and the header's **Export G-code** (50) is the command. Under
+    the readiness card (50) the step shows, top to bottom:
+    - **What blocks export**, while an error does: a card in the error
+      colour that counts them (*1 error blocks export*), with *Show*
+      opening the drawer at them, and under it each finding, its message
+      and the field it is about. A click on one opens the step that fixes
+      it, as its row in the drawer does (76). *Export G-code* is disabled
+      with the same reason in its tooltip. Warnings are not listed here:
+      the status bar counts them.
+    - **The output settings** (60, 62): the Post-processor, Heights and
+      Tolerances groups, each closed until it is wanted, with one line of
+      its values on its header (*grblHAL v4 (latest) · .nc*); a group
+      holding a finding shows its count, and a finding's row opens it.
+      Switching the post-processor is the step's switch (62), an undoable
+      project change the user saves or not.
+    - **Programs**, where the enabled operations cut with two tools or
+      more: the program split, *as the project says* (the setting's value
+      shown) or overridden for this export to one program per tool or one
+      program with tool changes (`--programs-per-tool`, `--one-program`;
+      the override is not saved, and *one program* is refused on a post
+      without `M6` with the CLI's message). With an Inlay, a tick per
+      board, **Female board** and **Male board**: unticking one exports
+      the other alone for this export (`--board`), not saved, which is
+      how the male is re-cut after a fit adjustment.
+    - **Program Details**, a disclosure **closed until the user opens
+      it** (and then left as they left it), which lists the programs it
+      will write, one row per tool run (capability 3): file name, tool,
+      operations, estimated time (capability 30) and Z range (capability
+      4), with the step before each (zero the tool, change to T2) as
+      `export` prints them, grouped by board with an Inlay. Closed, it
+      says how many there are. While toolpaths generate or the programs
+      are built, it says which it waits for.
+    - **The destination**: the folder, with *Choose…* opening the native
+      folder dialog (default the project's own folder, remembered per
+      project in the app's preferences), and the file name, with the
+      names it will write under it (*Writes plaque-1-T2.nc,
+      plaque-2-T1.nc*).
+
+    The step does not repeat the estimated total (its readiness card
     shows it), does not offer the toolpath preview SVG (the Viewport is
     the preview; `export --preview` still writes it from the CLI), and
-    carries no note about how files are written. When an error blocks
-    export, one line above the footer says so (*1 error blocks export*)
-    with *Show* opening the drawer at it, and *Export* is disabled with
-    the same reason in its tooltip. *Export* writes every file
-    or none, as the CLI does (#71), then shows the result (77a). Export
-    never changes the project
-    file: switching the post-processor in the dialog is an undoable project
-    change the user saves or not.
+    carries no note about how files are written. *Export G-code* writes
+    every file or none, as the CLI does (#71), never over the project
+    file, then shows the result (77a); a project never saved has no
+    folder, so it asks for one first with the folder dialog, and writes
+    nothing when the dialog is cancelled. When nothing could be written
+    the step says why (*Nothing was written: …*) under the readiness
+    card. Export never changes the project file.
 77a. **Export result** (`13-export-result.svg`; review 2026-11-10). The
-    sheet's content is replaced in place by the result, in three parts:
-    - **Status**: a success glyph and *2 programs written* (or, on a
-      failure, an error glyph and the CLI's reason, nothing written).
+    result takes the plan's place on the step (the programs and the
+    destination), in three parts:
+    - **Status**: a success glyph and *2 programs written*, with **Done**
+      beside it, which brings the plan back, to export again or somewhere
+      else.
     - **Files**: one row per program in run order, number, file name in
       the monospace face, tool, estimated time; then the **folder** they
-      were written to, with *Show in folder* and *Copy path*.
+      were written to, with *Copy path*, *Show in folder* and **Save
+      setup sheet…** (77b).
     - **Run instructions**, a disclosure closed by default: per program,
       what to do before it runs (*Fit T2 1/8 end mill and set work zero X,
       Y and Z with it*), then the controller notes `export` prints (the
       `G43.1` and `G51` lines), each a separate callout, then the extents
       and Z range.
 
-    The footer has **Save setup sheet…** on the left and the primary
-    **Done** on the right. The CLI's report text is no longer shown as
-    one block; every fact in it is in one of the three parts.
+    The result stays until *Done*, or until the project changes, since it
+    is then no longer what the project would write. The CLI's report text
+    is not shown as one block; every fact in it is in one of the three
+    parts.
 77b. **Setup sheet** (`13-export-result.svg`; maintainer decision
     2026-11-10). *Save setup sheet…* writes one self-contained HTML file,
     default `<stem>-setup.html` beside the programs, that the user opens
@@ -968,7 +1032,7 @@ folder are app preferences, kept outside the project.
     text where the CLI has one (step-before lines, notes, warnings), and
     the rest comes from the string table (80). Writing it is not an
     export: it never writes a program and never changes the project.
-78. **Estimate and extents** appear outside the dialog too: each
+78. **Estimate and extents** appear outside the Export step too: each
     operation's row shows its estimated time on hover, and the status bar
     shows the program's total. The numbers are the CLI's (`[estimate]` in
     `config.toml` is read for the rapid rate, as today).
@@ -1007,8 +1071,8 @@ folder are app preferences, kept outside the project.
 79a. **Menus** (`14-menus-and-sheets.svg`; review 2026-11-10). **File**:
     New; New Project from Drawing…; New Project from Picture…; Open…;
     Open Recent ▸ | Save; Save As… | Add Drawing to Project…; Add Picture
-    to Project… | Export G-code…; Save Setup Sheet… (after an export in
-    this session) | Quit. **Edit**: Undo *name*, Redo *name* | Duplicate,
+    to Project… | Export G-code… (which opens the Export step, 77); Save
+    Setup Sheet… (after an export in this session) | Quit. **Edit**: Undo *name*, Redo *name* | Duplicate,
     Delete, Rename | Select All. **Arrange** (58a).
     **View**: Step Panel | Go to Design, Go to Stock, Go to Tools, Go to
     Operations, Go to Export | Toolpaths…, Warnings | Fit View, Zoom to
@@ -1142,7 +1206,7 @@ byte-identical output with the program's header date pinned (`--date`).
     and tabs as `--preview` draws them, `inlay_male_mirrored` lists the
     same X the CLI prints, the derived line shows the start plane, floor
     and engagement the design spec computes (red when the engagement
-    exceeds the cone height), and the export dialog lists both boards'
+    exceeds the cone height), and the Export step lists both boards'
     programs with the CLI's names. Unticking the female board exports the
     male programs alone and leaves the file unchanged. Exporting both
     gives the quick start's committed programs.
@@ -1180,8 +1244,9 @@ byte-identical output with the program's header date pinned (`--date`).
     of the six post-processors, with and without the program-split
     override; the Viewport's SVG dump equals `--preview`'s (79).
 84. **Export is blocked by errors only** (77). A project with a tool
-    lacking a feed shows the error and a disabled *Export*; a project with
-    only warnings exports and lists them.
+    lacking a feed shows the error on the Export step, where a click on
+    it opens the tool, and a disabled *Export G-code*; a project with
+    only warnings exports, and the status bar counts them.
 85. **Override not saved** (77). Exporting with *one program* overridden
     leaves `tool_change_mode` unchanged in the file.
 86. **Undo and redo** (52). Twenty mixed edits (move, field, reorder, add,
@@ -1223,18 +1288,26 @@ slices carry them.
     Coaster on Stock with its error marked, and the plaque on Export
     with the four steps before it complete; the step picked stays through
     an edit. *Continue* opens the next step that is not complete; on
-    Export the primary button is *Export G-code*, disabled once a tool an
-    operation uses has no feed. With nothing selected there is no
+    Export the primary button is *Export G-code*, which writes the
+    programs and is disabled once a tool an operation uses has no feed. With nothing selected there is no
     Inspector; with a shape selected on Design it shows the Properties
     and the Arrange group, and its close button deselects. At 1280 × 768
     the four regions sit side by side at no less than their minimum
     widths; in a narrower window the Inspector lies over the Viewport.
-94. **Status bar** (50b, 71, 73). The status bar never shows the stock
-    size; the cursor cell is empty off the Viewport; the Toolpaths button
-    is absent on a project with shapes and no operation and present once a
-    toolpath exists; the generation cell is empty when idle; after Stop it
-    shows *Regenerate all*, which no menu and no drawer offers; the units
-    menu switches the display units as one undo step.
+94. **Status bar and floating controls** (50b, 71, 72, 73). The status
+    bar never shows the stock size, the cursor or a Toolpaths button; the
+    Viewport's read-out has no cursor part off the Viewport; the colour
+    mode and *Layers* are absent on a project with shapes and no
+    operation and float at the Viewport's top right once a toolpath
+    exists; the generation cell is absent when idle, and the estimate is
+    in its place; after Stop it shows *Regenerate all*, which no menu and
+    no drawer offers; the units menu switches the display units as one
+    undo step. The units and the counts stay where they are when the
+    generation cell or the pointer's cell comes or goes. A blank project
+    shows *No problems* and no count on the rail's Warnings button. At
+    the minimum window with an operation in the Inspector, the stock as
+    Fit frames it is clear of every floating control, with By depth on
+    or off.
 95. **Arrange** (58, 58a). With the square selected, the Inspector's Rotate
     turns it 90° clockwise, the popover's angle 30 rotates it 30°
     anticlockwise, and each flip mirrors it about its bounding-box centre,
@@ -1282,12 +1355,16 @@ slices carry them.
     `fixtures/fusion/sample.tools` twice, the second time after editing one
     of its tools in the library, shows that tool as *Changed*, and *Replace
     with imported* gives the library `tools import --replace` gives.
-102. **Export sheet and result** (77, 77a, 77b). The export sheet has no
-    preview tick, no warning list, no estimated total and no footer note,
-    and its Program Details are closed; with an error it shows the one
-    blocking line and a disabled Export. After an export the result shows
-    the status, the files in run order and the folder; *Run instructions*
-    is closed and holds the CLI's step-before lines and notes. *Save setup
+102. **Export step and result** (77, 77a, 77b). The Export step has no
+    preview tick, no warning list, no estimated total and no note about
+    how files are written, and its Program Details are closed until they
+    are opened; with an error it shows the one blocking line over the
+    finding and a disabled *Export G-code*. A project never saved asks
+    for a folder first, and writes nothing when the dialog is cancelled.
+    After an export the result, in the plan's place, shows the status,
+    the files in run order and the folder; *Run instructions* is closed
+    and holds the CLI's step-before lines and notes; *Done* brings the
+    plan back. *Save setup
     sheet…* writes an HTML file with no `<script>`, no `http` reference and
     no `<img>`, whose programs, tools, step-before lines, extents and
     estimates equal the export's, deterministic with the date pinned.
@@ -1354,7 +1431,7 @@ program on the bench grblHAL to close the loop. Record below.
   (move, the Arrange group, linked copies, lock), **Stock, origin and
   heights**, **Toolpath preview** (colours, the toolpath view popover, the
   depth legend, extents, what the marks mean), **Checking and exporting**
-  (the Warnings panel and its notes, the export sheet, the result and
+  (the Warnings panel and its notes, the Export step, the result and
   the setup sheet), **Keyboard shortcuts**.
 - User guide, updated: Overview (no longer "a command line tool": the app
   first, the CLI as the same engine for scripts), every operation chapter

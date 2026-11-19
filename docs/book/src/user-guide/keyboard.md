@@ -19,7 +19,7 @@ except in an open sheet.
 | Ctrl+S | ⌘S | Save the project | File ▸ Save |
 | Ctrl+Shift+S | ⇧⌘S | Save the project under a new name | File ▸ Save As… |
 | Ctrl+I | ⌘I | Import an SVG or DXF drawing | File ▸ Add Drawing to Project… |
-| Ctrl+E | ⌘E | Export the G-code programs | File ▸ Export G-code… |
+| Ctrl+E | ⌘E | Open the Export step, to export the G-code programs | File ▸ Export G-code… |
 | Ctrl+Q | ⌘Q | Quit DreamCarve | File ▸ Quit |
 | Ctrl+Z | ⌘Z | Undo the last change | Edit ▸ Undo |
 | Ctrl+Shift+Z | ⇧⌘Z | Redo the change undone | Edit ▸ Redo |

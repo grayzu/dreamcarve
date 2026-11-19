@@ -111,11 +111,7 @@ fn opens_plaque_renders_and_exports() {
     command_key(&harness, egui::Key::E);
     harness.run();
     settle_export(&mut harness);
-    harness
-        .get_by_role(Role::Dialog)
-        .get_by_label("Export")
-        .click();
-    harness.run();
+    press_export(&mut harness);
     let options = dc_app::export::Options::new(
         &dreamcarve_shell::clock::today_utc(),
         dc_job::EstimateConfig::default(),
@@ -128,11 +124,6 @@ fn opens_plaque_renders_and_exports() {
         let written = std::fs::read_to_string(dir.join(&name)).expect("program written");
         assert!(written == text, "{name} is the plan's program");
     }
-    harness
-        .get_by_role(Role::Dialog)
-        .get_by_label("Close")
-        .click();
-    harness.run();
 
     // Closing a clean project closes at once and remembers the session.
     press_close(&mut harness);
@@ -689,10 +680,11 @@ fn camera(h: &Harness<'_, dreamcarve_app::Shell>) -> dc_app::Camera {
     h.state().app().view().camera
 }
 
-/// The camera fitted to `bounds` in the shell's pane.
+/// The camera fitted to `bounds` in the shell's pane, clear of the
+/// Viewport's floating controls.
 fn fitted(h: &Harness<'_, dreamcarve_app::Shell>, bounds: dc_geometry::Rect) -> dc_app::Camera {
     let mut want = camera(h);
-    want.fit(bounds);
+    want.fit_inside(bounds, dreamcarve_app::FIT_INSETS);
     want
 }
 
@@ -849,6 +841,245 @@ fn pan_zoom_fit_reach_the_camera() {
     h.get_by_label("Fit").click();
     h.run();
     assert_same_view(camera(&h), fit_view, "the Fit button");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The Viewport's floating controls" (slice D4), top
+/// left: *Select* and the *Tab tool* in one pill, the one in use pressed;
+/// then *Fit*, *Zoom out*, the zoom as a percentage and *Zoom in*. The
+/// zoom controls step the scale by a quarter about the pane's centre, and
+/// a click on the percentage sets it to 100 %, an inch of the work on 96
+/// pixels. Bottom left: the cursor's read-out, there while the pointer is
+/// over the Viewport. None of it is in the status bar.
+#[test]
+fn floating_tools_select_fit_and_zoom() {
+    use egui_kittest::kittest::NodeT as _;
+
+    let dir = scratch("floating-tools");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        800.0,
+    );
+    settle_export(&mut h);
+    let pane = h.state().layout().viewport;
+    let rect = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::Button, label).rect()
+    };
+    // One row at the pane's top left, in reading order.
+    let order = ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in"];
+    let rects: Vec<egui::Rect> = order.iter().map(|label| rect(&h, label)).collect();
+    for (label, r) in order.iter().zip(&rects) {
+        assert!(
+            pane.contains_rect(*r) && r.top() < pane.top() + 24.0 && r.left() < pane.center().x,
+            "{label} floats at the top left: {r:?}"
+        );
+    }
+    assert!(
+        rects
+            .windows(2)
+            .all(|pair| pair[0].right() <= pair[1].left()),
+        "in order: {rects:?}"
+    );
+    let level = h.get_by_label_contains("Zoom level").rect();
+    assert!(rects[3].right() <= level.left() && level.right() <= rects[4].left());
+    let status_top = 800.0 - STATUS_BAR_PX;
+    assert!(
+        h.query_all_by_label_contains("Zoom")
+            .all(|node| node.rect().bottom() <= status_top),
+        "no zoom in the status bar"
+    );
+
+    // Select is the tool in use; the Tab tool takes over and gives back.
+    let pressed = |h: &Harness<'_, dreamcarve_app::Shell>, at: egui::Rect| {
+        // The pressed wash is a filled rounded rectangle on the button.
+        h.output().shapes.iter().any(|clipped| {
+            matches!(&clipped.shape, egui::Shape::Rect(shape)
+                if shape.rect == at && shape.fill == theme::DARK.surface_active)
+        })
+    };
+    assert!(pressed(&h, rects[0]), "Select shows pressed");
+    assert!(!pressed(&h, rects[1]));
+    h.get_by_role_and_label(Role::Button, "Tab tool").click();
+    h.run();
+    assert!(pressed(&h, rects[1]), "the Tab tool shows pressed");
+    assert!(!pressed(&h, rects[0]));
+    h.get_by_role_and_label(Role::Button, "Select").click();
+    h.run();
+    assert!(pressed(&h, rects[0]), "Select takes the tool back");
+
+    // The zoom: a quarter in, a quarter out, about the pane's centre.
+    let fit_view = camera(&h);
+    let centre = world_at(&h, pane.center());
+    h.get_by_role_and_label(Role::Button, "Zoom in").click();
+    h.run();
+    assert!((camera(&h).px_per_mm / fit_view.px_per_mm - 1.25).abs() < 1e-9);
+    assert_near(world_at(&h, pane.center()), centre, "zoom in");
+    let percent = format!("Zoom level: {:.0} %", camera(&h).zoom_percent());
+    assert!(
+        h.query_by_label(&percent).is_some(),
+        "the read-out says {percent}"
+    );
+    h.get_by_role_and_label(Role::Button, "Zoom out").click();
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Zoom out").click();
+    h.run();
+    assert!((camera(&h).px_per_mm / fit_view.px_per_mm - 0.8).abs() < 1e-9);
+    assert_near(world_at(&h, pane.center()), centre, "zoom out");
+
+    // A click on the percentage: 100 %, 96 px to the inch.
+    h.get_by_label_contains("Zoom level").click();
+    h.run();
+    assert!((camera(&h).px_per_mm - 96.0 / 25.4).abs() < 1e-9);
+    assert!(h.query_by_label("Zoom level: 100 %").is_some());
+    assert_near(world_at(&h, pane.center()), centre, "100 %");
+    // The zoom is the user's now: a wider pane does not fit again.
+    go_to(&mut h, "Design");
+    assert!((camera(&h).px_per_mm - 96.0 / 25.4).abs() < 1e-9);
+    h.get_by_role_and_label(Role::Button, "Fit").click();
+    h.run();
+    let app = h.state().app();
+    let bounds = dc_app::viewport::camera::fit_bounds(app.project(), app.scene());
+    assert_same_view(camera(&h), fitted(&h, bounds), "Fit");
+    assert!(!h.state().app().is_dirty(), "none of it edits the project");
+
+    // The read-out: the cursor's position, at the pane's bottom left.
+    h.event(egui::Event::PointerGone);
+    h.run();
+    assert!(
+        h.query_by_label_contains("X ").is_none(),
+        "off the Viewport"
+    );
+    let pane = h.state().layout().viewport;
+    let at = common::on_screen(&h, dc_geometry::Point::new(64.2, 51.8));
+    h.event(egui::Event::PointerMoved(at));
+    h.run();
+    let readout = h.get_by_label("X 64.2  Y 51.8");
+    assert!(
+        pane.contains_rect(readout.rect())
+            && readout.rect().bottom() > pane.bottom() - 48.0
+            && readout.rect().left() < pane.left() + 24.0,
+        "the read-out floats at the bottom left: {:?}",
+        readout.rect()
+    );
+    assert!(!readout.accesskit_node().is_disabled());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The Viewport's floating controls": they never cover
+/// the stock at Fit. At the minimum window with an operation in the
+/// Inspector, the Viewport at its narrowest, the stock as Fit frames it
+/// is clear of the tools, the colour mode, *Layers* and the read-out; and
+/// with By depth on (the polish item of slice D4) it is clear of the
+/// legend too and still fills most of the pane's width, where a strip
+/// kept beside the legend left it small.
+#[test]
+fn floating_controls_never_cover_the_stock_at_fit() {
+    let dir = scratch("floating-fit");
+    let plaque = common::fixture("plaque.dcv");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(plaque), &dialogs),
+        1280.0,
+        768.0,
+    );
+    settle_export(&mut h);
+    open_operation(&mut h, "Cut out");
+    let stock_rect = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let stock = &h.state().app().project().stock;
+        egui::Rect::from_two_pos(
+            common::on_screen(h, dc_geometry::Point::new(0.0, 0.0)),
+            common::on_screen(h, dc_geometry::Point::new(stock.width_mm, stock.height_mm)),
+        )
+    };
+    let controls = |h: &Harness<'_, dreamcarve_app::Shell>| -> Vec<(String, egui::Rect)> {
+        ["Select", "Tab tool", "Fit", "Zoom out", "Zoom in", "Layers"]
+            .iter()
+            .map(|label| {
+                (
+                    (*label).to_owned(),
+                    h.get_by_role_and_label(Role::Button, label).rect(),
+                )
+            })
+            .chain(["By operation", "By depth"].iter().map(|label| {
+                (
+                    (*label).to_owned(),
+                    h.get_by_role_and_label(Role::RadioButton, label).rect(),
+                )
+            }))
+            .collect()
+    };
+    let pane = h.state().layout().viewport;
+    assert!(
+        pane.width() < 560.0,
+        "the Viewport is near its least width, 520 px: {pane:?}"
+    );
+
+    // The pointer over the stock, so the read-out shows.
+    let over = common::on_screen(&h, dc_geometry::Point::new(85.0, 60.0));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    let stock = stock_rect(&h);
+    let shown = controls(&h);
+    for (label, rect) in &shown {
+        assert!(
+            pane.contains_rect(*rect),
+            "{label} is on the pane: {rect:?}"
+        );
+        assert!(!rect.intersects(stock), "{label} {rect:?} covers {stock:?}");
+    }
+    // The two pills do not run into each other.
+    let zoom_in = &shown[4].1;
+    let by_operation = &shown[6].1;
+    assert!(
+        zoom_in.right() < by_operation.left(),
+        "the pills are apart: {zoom_in:?}, {by_operation:?}"
+    );
+    let readout = h.get_by_label_contains("X 85.0").rect();
+    assert!(!readout.intersects(stock), "the read-out {readout:?}");
+    let plain_width = stock.width();
+    assert!(
+        plain_width > 0.75 * pane.width(),
+        "the stock fills the pane's width: {plain_width} of {}",
+        pane.width()
+    );
+
+    // By depth: the legend hangs under the top-right pill, and Fit
+    // stands clear of it.
+    h.get_by_role_and_label(Role::RadioButton, "By depth")
+        .click();
+    h.run();
+    let stock = stock_rect(&h);
+    let legend = [
+        "Z (mm)",
+        "stock top",
+        "Screw holes, Cut out",
+        "Grey: rapids",
+    ]
+    .iter()
+    .flat_map(|label| text_rects(&h, label))
+    .reduce(|a, b| a.union(b))
+    .expect("the legend's labels");
+    let layers = h.get_by_role_and_label(Role::Button, "Layers").rect();
+    assert!(
+        legend.top() >= layers.bottom() && legend.right() <= pane.right(),
+        "the legend hangs under the top-right pill: {legend:?}"
+    );
+    assert!(
+        !legend.expand(8.0).intersects(stock),
+        "the legend {legend:?} covers the stock {stock:?}"
+    );
+    for (label, rect) in controls(&h) {
+        assert!(!rect.intersects(stock), "{label} {rect:?} covers {stock:?}");
+    }
+    assert!(
+        stock.width() > 0.7 * pane.width(),
+        "the stock is not squeezed beside the legend: {} of {}",
+        stock.width(),
+        pane.width()
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -1240,13 +1471,17 @@ fn park_point_click_on_the_viewport() {
         "the Export step has the Heights"
     );
     assert_eq!(h.state().app().project().heights.park, None);
+    // The group is closed until it is wanted.
+    assert!(h.query_by_label("Click on the view").is_none());
+    h.get_by_role_and_label(Role::Button, "Heights").click();
+    h.run();
 
     h.get_by_label("Click on the view").scroll_to_me();
     h.run();
     h.get_by_label("Click on the view").click();
     h.run();
     // Empty stock near the plaque's bottom-right corner (stock 170 × 120),
-    // clear of the depth legend at the pane's bottom-left (#616).
+    // clear of the read-out at the pane's bottom-left.
     let want = dc_geometry::Point::new(165.0, 5.0);
     let at = common::on_screen(&h, want);
     let under = world_at(&h, at);
@@ -2254,7 +2489,49 @@ fn warnings_drawer_selects_and_copies() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Waits until generation is over and the export sheet's plan is ready,
+/// The Export step's panel: the card the plan, the blocking findings and
+/// the result are drawn in.
+fn export_panel(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
+    h.state().layout().step_panel.expect("the step panel shows")
+}
+
+/// The nodes labelled exactly `label` in the Export step's panel.
+fn in_export_step(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> usize {
+    let panel = export_panel(h);
+    h.query_all_by_label(label)
+        .filter(|node| panel.contains_rect(node.rect()))
+        .count()
+}
+
+/// The nodes whose label contains `text` in the Export step's panel.
+fn in_export_step_containing(h: &Harness<'_, dreamcarve_app::Shell>, text: &str) -> usize {
+    let panel = export_panel(h);
+    h.query_all_by_label_contains(text)
+        .filter(|node| panel.contains_rect(node.rect()))
+        .count()
+}
+
+/// Clicks the Warnings drawer's row whose line is `line`. On the Export
+/// step a finding that blocks export is listed in the step's panel too,
+/// under the same name: the drawer's is the one outside the panel.
+fn click_drawer_row(h: &mut Harness<'_, dreamcarve_app::Shell>, line: &str) {
+    let panel = h.state().layout().step_panel;
+    h.query_all_by_label(line)
+        .find(|node| panel.is_none_or(|panel| !panel.contains_rect(node.rect())))
+        .expect("the drawer's row")
+        .click();
+    h.run();
+}
+
+/// Presses the header's *Export G-code*, the export command.
+fn press_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+}
+
+/// Waits until generation is over and the Export step's plan is ready,
 /// stepping the window.
 fn settle_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -2269,14 +2546,15 @@ fn settle_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     h.run();
 }
 
-/// Capability 77 and acceptance 84 in the window (#547): ⌘E opens the
-/// export sheet, which lists the programs `dc_app::export::plan` builds
-/// and writes them beside the project. A program whose destination
-/// cannot be replaced (a folder is in the way) stops the export with
-/// nothing written: every file or none. Cleared, *Export* writes them all,
-/// and the result sheet lists them with *Show in folder*; the project
-/// file is never written. A tool without a feed shows the CLI's error and
-/// a disabled *Export*.
+/// Capability 77 and acceptance 84 in the window (#547; redesign slice
+/// D4): ⌘E opens the Export step, which lists the programs
+/// `dc_app::export::plan` builds; the header's *Export G-code* writes
+/// them beside the project. A program whose destination cannot be
+/// replaced (a folder is in the way) stops the export with nothing
+/// written: every file or none. Cleared, *Export G-code* writes them
+/// all, and the result takes the plan's place, listing them with *Show in
+/// folder*; the project file is never written. A tool without a feed
+/// disables *Export G-code*, and the step lists the CLI's error.
 #[test]
 fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     use egui_kittest::kittest::NodeT as _;
@@ -2291,14 +2569,12 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         900.0,
     );
     settle_export(&mut h);
+    go_to(&mut h, "Design");
     command_key(&h, egui::Key::E);
     h.run();
     settle_export(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label_contains("Export G-code").is_some(),
-        "the title"
-    );
+    assert_eq!(current_step(&h), "Export", "⌘E opens the Export step");
+    assert!(h.query_by_role(Role::Dialog).is_none(), "and no sheet");
 
     let date = dreamcarve_shell::clock::today_utc();
     let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
@@ -2309,51 +2585,43 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     assert!(names.len() > 1, "the plaque writes a program per tool");
     open_program_details(&mut h);
     for name in &names {
-        assert!(
-            h.get_by_role(Role::Dialog).query_by_label(name).is_some(),
-            "the sheet lists {name}"
-        );
+        assert!(in_export_step(&h, name) > 0, "the step lists {name}");
     }
 
     // A folder where the last program goes: nothing is written.
     let blocker = dir.join(names.last().unwrap());
     std::fs::create_dir_all(blocker.join("keep")).unwrap();
     let naming = |h: &Harness<'_, dreamcarve_app::Shell>| {
-        h.get_by_role(Role::Dialog)
-            .query_all_by_label_contains(names.last().unwrap())
-            .count()
+        in_export_step_containing(h, names.last().unwrap())
     };
     let named = naming(&h);
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
     for name in &names[..names.len() - 1] {
         assert!(!dir.join(name).exists(), "{name} was not written");
     }
     assert!(blocker.join("keep").is_dir(), "the folder is untouched");
     assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Nothing was written")
-            .is_some(),
-        "the sheet says nothing was written"
+        in_export_step_containing(&h, "Nothing was written") > 0,
+        "the step says nothing was written"
     );
     assert_eq!(naming(&h), named + 1, "the failure names the file");
 
     std::fs::remove_dir_all(&blocker).unwrap();
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
     for ((name, text), program) in ready.files("plaque").iter().zip(&names) {
         assert_eq!(name, program);
         let written = std::fs::read_to_string(dir.join(name)).expect("program written");
         assert!(written == *text, "{name} is the plan's program");
     }
-    let result = h.get_by_role(Role::Dialog);
-    assert!(result.query_by_label("Show in folder").is_some());
+    assert!(in_export_step(&h, "Show in folder") > 0);
     assert!(
-        result
-            .query_all_by_label_contains(&names[0])
-            .next()
-            .is_some(),
+        in_export_step_containing(&h, &names[0]) > 0,
         "the result names the files"
+    );
+    assert_eq!(
+        in_export_step(&h, "Program Details"),
+        0,
+        "the result takes the plan's place"
     );
     assert_eq!(
         std::fs::read(&plaque).unwrap(),
@@ -2366,9 +2634,10 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         Some(&dir),
         "the folder is remembered for this project"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
+    h.get_by_label("Done").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(in_export_step(&h, "Show in folder"), 0, "Done lets it go");
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
 
     // A tool without a feed: the CLI's error, and Export disabled.
     // The first operation's tool: the plaque has one tool it never uses.
@@ -2381,9 +2650,6 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         .run(Command::UpdateTool(tool))
         .unwrap();
     settle_export(&mut h);
-    command_key(&h, egui::Key::E);
-    h.run();
-    settle_export(&mut h);
     let built = dc_job::build(
         h.state().app().project(),
         dc_job::ProgramSplit::ProjectDefault,
@@ -2391,43 +2657,121 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     );
     assert_eq!(built.findings.errors.len(), 1, "one tool lacks a feed");
     let error = built.findings.errors[0].message.clone();
-    // One line above the footer says so, and Export is disabled; the
-    // error itself is the drawer's (capability 77).
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label("1 error blocks export").is_some(),
+    // One line says so and Export G-code is disabled; the step lists the
+    // finding under the line, as the drawer does (redesign slice D4).
+    assert_eq!(
+        in_export_step(&h, "1 error blocks export"),
+        1,
         "the blocking line"
     );
-    assert!(
-        sheet.query_by_label_contains(&error).is_none(),
-        "the sheet lists no finding: {error}"
+    assert_eq!(
+        in_export_step_containing(&h, &error),
+        1,
+        "the step lists the finding: {error}"
     );
     assert!(
-        sheet.get_by_label("Export").accesskit_node().is_disabled(),
-        "Export is disabled"
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
+        "Export G-code is disabled"
     );
-    // Show closes the sheet and opens the drawer at the error.
+    // Show opens the drawer at the error.
     assert!(!h.state().warnings_open());
-    h.get_by_role(Role::Dialog).get_by_label("Show").click();
+    h.get_by_role_and_label(Role::Button, "Show").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
     assert!(h.state().warnings_open(), "the drawer is open");
     assert!(
-        h.query_all_by_label_contains(&error).next().is_some(),
-        "the drawer lists the error: {error}"
+        h.query_all_by_label_contains(&error).count() > 1,
+        "the drawer lists the error too: {error}"
+    );
+    // The finding in the step opens the step that fixes it: the tool's,
+    // with the tool in the Inspector.
+    let panel = export_panel(&h);
+    h.query_all_by_label_contains(&error)
+        .find(|node| panel.contains_rect(node.rect()))
+        .expect("the finding's row")
+        .click();
+    h.run();
+    assert_eq!(current_step(&h), "Tools", "the row opens the Tools step");
+    assert!(
+        h.state().layout().inspector.is_some(),
+        "with the tool in the Inspector"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Clicks the export sheet's *Program Details* disclosure.
+/// Redesign slice D4: a project never saved has no folder to export to,
+/// so *Export G-code* asks for one first with the folder dialog. With the
+/// dialog cancelled nothing is written and the step still shows the plan;
+/// with a folder picked the programs go there, under the project's name,
+/// and the step shows the folder. The step's *Choose…* asks the same
+/// dialog.
+#[test]
+fn export_asks_for_a_folder_when_none_is_chosen() {
+    let dir = scratch("export-folder");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 900.0);
+    // The plaque example opens untitled: no file, so no folder.
+    h.get_by_role_and_label(Role::Button, "Plaque").click();
+    h.run();
+    settle_export(&mut h);
+    assert_eq!(h.state().app().source(), None);
+    assert_eq!(current_step(&h), "Export", "a finished project opens here");
+    settle_export(&mut h);
+    assert_eq!(in_export_step(&h, "Not chosen yet"), 1, "no folder yet");
+
+    // Cancelled: asked, and nothing written.
+    press_export(&mut h);
+    assert_eq!(dialogs.asked(), ["export_folder"]);
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        0,
+        "nothing written"
+    );
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "still the plan");
+    assert_eq!(in_export_step_containing(&h, "written"), 0);
+
+    // A folder picked: the programs are written there.
+    dialogs.answer(&out);
+    press_export(&mut h);
+    assert_eq!(dialogs.asked(), ["export_folder", "export_folder"]);
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    let stem = h.state().app().project().name.clone();
+    let files = ready.files(&stem);
+    assert!(files.len() > 1, "a program per tool");
+    for (name, text) in &files {
+        let written = std::fs::read_to_string(out.join(name)).expect("program written");
+        assert!(written == *text, "{name} is the plan's program");
+    }
+    assert_eq!(in_export_step(&h, "2 programs written"), 1, "the result");
+    assert_eq!(in_export_step(&h, &out.display().to_string()), 1);
+
+    // Choose… asks the same dialog, and the plan shows the folder picked.
+    h.get_by_label("Done").click();
+    h.run();
+    let other = dir.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    dialogs.answer(&other);
+    h.get_by_role_and_label(Role::Button, "Choose…").click();
+    h.run();
+    assert_eq!(dialogs.asked().len(), 3);
+    assert_eq!(in_export_step(&h, &other.display().to_string()), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Clicks the Export step's *Program Details* disclosure.
 fn open_program_details(h: &mut Harness<'_, dreamcarve_app::Shell>) {
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Program Details")
-        .click();
+    h.get_by_label("Program Details").click();
     h.run();
 }
 
-/// Opens the export sheet on the plaque, generated and planned.
+/// Opens the Export step on the plaque, generated and planned.
 fn plaque_export_sheet(
     name: &str,
 ) -> (std::path::PathBuf, Harness<'static, dreamcarve_app::Shell>) {
@@ -2443,17 +2787,12 @@ fn plaque_export_sheet(
     command_key(&h, egui::Key::E);
     h.run();
     settle_export(&mut h);
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Export G-code")
-            .is_some(),
-        "the sheet is open"
-    );
+    assert_eq!(current_step(&h), "Export", "the step is open");
     (dir, h)
 }
 
-/// Capability 77 and acceptance 102 (#624): the trimmed export sheet has
-/// no toolpath preview tick, no warnings list, no estimated total and no
+/// Capability 77 and acceptance 102 (#624): the trimmed export has no
+/// toolpath preview tick, no warnings list, no estimated total and no
 /// note about how files are written; whatever warnings the plan found
 /// are the status bar's and the drawer's, not listed here.
 #[test]
@@ -2462,7 +2801,6 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
 
     let (dir, mut h) = plaque_export_sheet("export-trimmed");
     open_program_details(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
     for gone in [
         "toolpath preview",
         "preview.svg",
@@ -2470,8 +2808,9 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
         "Estimated total",
         "Every file is written",
     ] {
-        assert!(
-            sheet.query_all_by_label_contains(gone).next().is_none(),
+        assert_eq!(
+            in_export_step_containing(&h, gone),
+            0,
             "no node labelled with `{gone}`"
         );
     }
@@ -2481,35 +2820,29 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
         panic!("the plaque has generated");
     };
     for finding in &ready.findings.warnings {
-        assert!(
-            sheet
-                .query_all_by_label_contains(&finding.message)
-                .next()
-                .is_none(),
+        assert_eq!(
+            in_export_step_containing(&h, &finding.message),
+            0,
             "the warning is not listed: {}",
             finding.message
         );
     }
     assert!(
-        sheet
-            .query_all_by_label_contains("blocks export")
-            .next()
-            .is_none()
-            && sheet
-                .query_all_by_label_contains("block export")
-                .next()
-                .is_none(),
+        in_export_step_containing(&h, "blocks export") == 0
+            && in_export_step_containing(&h, "block export") == 0,
         "no error, no blocking line"
     );
     assert!(
-        !sheet.get_by_label("Export").accesskit_node().is_disabled(),
+        !h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
         "warnings do not block"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Capability 77 and acceptance 102 (#624): *Program Details* is closed
-/// when the sheet opens, its rows hidden; opened, its rows are the
+/// until the user opens it, its rows hidden; opened, its rows are the
 /// plan's, in run order: file name, estimate and the step before each.
 #[test]
 fn program_details_start_closed() {
@@ -2525,33 +2858,29 @@ fn program_details_start_closed() {
     let names = ready.names("plaque");
     assert!(names.len() > 1);
 
-    let header = h.get_by_role(Role::Dialog).get_by_label("Program Details");
+    let header = h.get_by_label("Program Details");
     assert_eq!(
         header.accesskit_node().toggled(),
         Some(Toggled::False),
         "closed"
     );
     for name in &names {
-        assert!(
-            h.get_by_role(Role::Dialog).query_by_label(name).is_none(),
+        assert_eq!(
+            in_export_step(&h, name),
+            0,
             "{name} is hidden while the disclosure is closed"
         );
     }
     let summary = format!("{} programs, run in this order", names.len());
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label(&summary)
-            .is_some(),
+    assert_eq!(
+        in_export_step(&h, &summary),
+        1,
         "the closed disclosure says how many: {summary}"
     );
 
     open_program_details(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
     assert_eq!(
-        sheet
-            .get_by_label("Program Details")
-            .accesskit_node()
-            .toggled(),
+        h.get_by_label("Program Details").accesskit_node().toggled(),
         Some(Toggled::True),
         "open"
     );
@@ -2559,7 +2888,7 @@ fn program_details_start_closed() {
     let mut tops: Vec<(f64, &String)> = names
         .iter()
         .map(|name| {
-            let node = sheet.get_by_label(name);
+            let node = h.get_by_label(name);
             let top = node.accesskit_node().bounding_box().expect("laid out").y0;
             (top, name)
         })
@@ -2570,30 +2899,35 @@ fn program_details_start_closed() {
     for (k, summary) in ready.programs.iter().enumerate() {
         let estimate = ready.estimate(k).expect("the plaque's programs estimate");
         assert!(
-            sheet.query_all_by_label(&estimate).next().is_some(),
+            in_export_step(&h, &estimate) > 0,
             "{}: its estimate {estimate}",
             names[k]
         );
         assert!(
-            sheet
-                .query_all_by_label_contains(&summary.before)
-                .next()
-                .is_some(),
+            in_export_step_containing(&h, &summary.before) > 0,
             "{}: the step before it",
             names[k]
         );
     }
+    // Opened, it stays open: the step is no sheet that opens anew.
+    go_to(&mut h, "Design");
+    go_to(&mut h, "Export");
+    assert_eq!(
+        h.get_by_label("Program Details").accesskit_node().toggled(),
+        Some(Toggled::True),
+        "still open on coming back"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Capabilities 77a and 77b, acceptance 102 (#625): after *Export* the
-/// sheet's content is the result: `2 programs written`, the files in run
-/// order and the folder with *Show in folder*, and *Run instructions*
-/// closed, whose steps and notes show once it is opened. *Save setup
-/// sheet…* asks where, suggesting `plaque-setup.html` beside the
-/// programs, and writes the page the plan renders; nothing else is
-/// written and the project is unchanged. *Done* closes the sheet, and the
-/// sheet can still be saved from the File menu.
+/// Capabilities 77a and 77b, acceptance 102 (#625): after *Export
+/// G-code* the result is in the plan's place: `2 programs written`, the
+/// files in run order and the folder with *Show in folder*, and *Run
+/// instructions* closed, whose steps and notes show once it is opened.
+/// *Save setup sheet…* asks where, suggesting `plaque-setup.html` beside
+/// the programs, and writes the page the plan renders; nothing else is
+/// written and the project is unchanged. *Done* brings the plan back, and
+/// the setup sheet can still be saved from the File menu.
 #[test]
 fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     use eframe::egui::accesskit::Toggled;
@@ -2603,10 +2937,11 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     let plaque = copy_fixture("plaque.dcv", &dir);
     let project_bytes = std::fs::read(&plaque).unwrap();
     let dialogs = QueuedDialogs::default();
+    // Tall, so the result with its instructions open shows whole.
     let mut h = harness(
         options(&dir.join("config"), Some(plaque.clone()), &dialogs),
         1280.0,
-        900.0,
+        1500.0,
     );
     settle_export(&mut h);
     command_key(&h, egui::Key::E);
@@ -2618,54 +2953,44 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
         panic!("the plaque has generated");
     };
     let names = ready.names("plaque");
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
 
     let strings = dc_app::Strings::english();
     let result = ready.result(&names, &dir, &strings);
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label("2 programs written").is_some(),
-        "Status"
-    );
+    assert_eq!(in_export_step(&h, "2 programs written"), 1, "Status");
     for name in &names {
-        assert!(sheet.query_by_label(name).is_some(), "Files lists {name}");
+        assert_eq!(in_export_step(&h, name), 1, "Files lists {name}");
     }
-    assert!(
-        sheet.query_by_label(&dir.display().to_string()).is_some(),
+    assert_eq!(
+        in_export_step(&h, &dir.display().to_string()),
+        1,
         "the folder"
     );
-    assert!(sheet.query_by_label("Show in folder").is_some());
-    assert!(sheet.query_by_label("Copy path").is_some());
-    let header = sheet.get_by_label("Run instructions");
+    assert_eq!(in_export_step(&h, "Show in folder"), 1);
+    assert_eq!(in_export_step(&h, "Copy path"), 1);
+    let header = h.get_by_label("Run instructions");
     assert_eq!(header.accesskit_node().toggled(), Some(Toggled::False));
     let first_step = &result.instructions.steps[0].before;
-    assert!(
-        sheet.query_by_label(first_step).is_none(),
+    assert_eq!(
+        in_export_step(&h, first_step),
+        0,
         "the steps are hidden while closed"
     );
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Run instructions")
-        .click();
+    h.get_by_label("Run instructions").click();
     h.run();
-    let sheet = h.get_by_role(Role::Dialog);
     for step in &result.instructions.steps {
-        assert!(
-            sheet.query_by_label(&step.before).is_some(),
-            "{}",
-            step.before
-        );
+        assert_eq!(in_export_step(&h, &step.before), 1, "{}", step.before);
     }
     for note in &result.instructions.notes {
-        assert!(sheet.query_by_label(note).is_some(), "the note {note}");
+        assert_eq!(in_export_step(&h, note), 1, "the note {note}");
     }
 
     // Save setup sheet…: the dialog suggests the page beside the programs.
     let page = dir.join("plaque-setup.html");
     dialogs.answer(&page);
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Save setup sheet…")
-        .click();
+    h.get_by_label("Save setup sheet…").scroll_to_me();
+    h.run();
+    h.get_by_label("Save setup sheet…").click();
     h.run();
     assert_eq!(
         dialogs.asked().last().cloned(),
@@ -2689,9 +3014,14 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     assert_eq!(std::fs::read(&plaque).unwrap(), project_bytes);
     assert!(!h.state().app().is_dirty(), "saving it changes nothing");
 
-    h.get_by_role(Role::Dialog).get_by_label("Done").click();
+    h.get_by_label("Done").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
+    assert_eq!(
+        in_export_step(&h, "2 programs written"),
+        0,
+        "Done lets the result go"
+    );
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
     h.get_by_label("File").click();
     h.run();
     assert!(
@@ -3461,8 +3791,7 @@ fn warnings_row_focuses_its_field() {
         .flat_map(|g| g.rows)
         .find(|r| r.field.as_deref() == Some("operations[op4].depth_mm"))
         .expect("validation locates the unset depth");
-    h.get_by_label(&row.line).click();
-    h.run();
+    click_drawer_row(&mut h, &row.line);
     assert_eq!(
         h.state()
             .app()
@@ -3517,11 +3846,11 @@ fn click_card_button(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str) {
     h.run();
 }
 
-/// Opens the toolpath view from the status bar's *Toolpaths* button
-/// (#616), unless it is open.
+/// Opens the toolpath view from the Viewport's *Layers* button
+/// (redesign slice D4), unless it is open.
 fn open_toolpath_view(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     if h.query_by_label("Cuts").is_none() {
-        h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+        h.get_by_role_and_label(Role::Button, "Layers").click();
         h.run();
     }
     assert!(
@@ -4663,17 +4992,20 @@ fn keyboard_shortcuts_reach_their_commands() {
         ["save_project plaque.dcv", "open_project", "open_drawing"],
         "Shift Ctrl S, Ctrl O and Ctrl I ask"
     );
+    assert_ne!(h.state().step(), dc_app::steps::Step::Export);
     command_key(&h, egui::Key::E);
     h.run();
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Export G-code")
-            .is_some(),
-        "Ctrl E opens the export sheet (#547)"
+    assert_eq!(
+        h.state().step(),
+        dc_app::steps::Step::Export,
+        "Ctrl E opens the Export step (#547)"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
-    h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Export G-code")
+            .is_some(),
+        "where Export G-code is the primary button"
+    );
+    assert!(h.query_by_role(Role::Dialog).is_none(), "and no sheet");
     reached.extend([Key::SaveAs, Key::Open, Key::Import, Key::Export]);
 
     command_key(&h, egui::Key::N);
@@ -5072,8 +5404,7 @@ fn warnings_row_opens_the_step_that_owns_it() {
 
     let feed = format!("tools[{used}].feed_mm_min");
     let line = row_about(&h, &feed);
-    h.get_by_label(&line).click();
-    h.run();
+    click_drawer_row(&mut h, &line);
     assert_eq!(h.state().step(), Step::Tools);
     assert!(
         h.state().layout().inspector.is_some(),
@@ -5087,8 +5418,7 @@ fn warnings_row_opens_the_step_that_owns_it() {
     );
 
     let line = row_about(&h, "stock.thickness_mm");
-    h.get_by_label(&line).click();
-    h.run();
+    click_drawer_row(&mut h, &line);
     assert_eq!(h.state().step(), Step::Stock);
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Thickness")
@@ -5238,8 +5568,8 @@ fn painted_at(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Option<us
 
 /// `experience.md` section 8, "Sheets" (#549 review): a sheet sits above
 /// everything on the Viewport, the depth legend included. In *By depth*,
-/// with the export sheet open, the legend's labels paint before (under)
-/// the sheet's title and its scrim.
+/// with the Tool Library sheet open, the legend's labels paint before
+/// (under) the sheet's title and its scrim.
 #[test]
 fn depth_legend_paints_under_a_sheet() {
     let dir = scratch("legend-under-sheet");
@@ -5251,16 +5581,16 @@ fn depth_legend_paints_under_a_sheet() {
         800.0,
     );
     settle_export(&mut h);
-    open_toolpath_view(&mut h);
     h.get_by_label("By depth").click();
     h.run();
-    close_toolpath_view(&mut h);
     assert!(painted_at(&h, "stock top").is_some(), "the legend is drawn");
-    command_key(&h, egui::Key::E);
+    h.get_by_label("Project").click();
     h.run();
-    settle_export(&mut h);
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_some(), "the sheet is open");
     let legend = painted_at(&h, "stock top").expect("the legend is still drawn");
-    let sheet = painted_at(&h, "Export G-code ·").expect("the sheet's title");
+    let sheet = painted_at(&h, "Tool Library").expect("the sheet's title");
     assert!(
         legend < sheet,
         "the legend ({legend}) paints under the sheet ({sheet})"
@@ -5299,9 +5629,9 @@ fn depth_legend_leaves_the_extents_caption_readable() {
         768.0,
     );
     settle_export(&mut h);
-    open_toolpath_view(&mut h);
     h.get_by_label("By depth").click();
     h.run();
+    open_toolpath_view(&mut h);
     h.get_by_label("Program extents").click();
     h.run();
     close_toolpath_view(&mut h);
@@ -5763,16 +6093,32 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
             .is_none(),
         "one primary button"
     );
+    // Export G-code is the export command: it waits for the programs to
+    // be built, then writes them beside the project, and the step shows
+    // what was written.
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled()
+            || !h.state().export_planning(),
+        "disabled while the programs are still being built"
+    );
+    settle_export(&mut h);
     let export = h.get_by_role_and_label(Role::Button, "Export G-code");
     assert!(!export.accesskit_node().is_disabled());
     export.click();
     h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "no sheet opens");
     assert!(
-        h.query_by_role(Role::Dialog).is_some(),
-        "Export G-code opens the export sheet"
+        h.query_by_label("2 programs written").is_some(),
+        "Export G-code writes the programs"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
-    h.run();
+    assert_eq!(h.state().step_states().of(Step::Export), State::Complete);
+    assert!(
+        h.query_by_label("Exported. Nothing has changed since.")
+            .is_some(),
+        "and the step says so"
+    );
 
     // A tool an operation cuts with loses its feed: export is blocked.
     let project = h.state().app().project();
@@ -5798,10 +6144,16 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
         h.query_by_label("1 error blocks export.").is_some(),
         "the step says why"
     );
-    // The sheet still opens from the step, to show what blocks it.
-    h.get_by_label("Review programs…").click();
-    h.run();
-    assert!(h.query_by_role(Role::Dialog).is_some());
+    // The step shows what blocks it: the finding, where the result was.
+    assert!(
+        h.query_by_label("2 programs written").is_none(),
+        "the result goes when the project changes"
+    );
+    assert_eq!(
+        in_export_step_containing(&h, "feed_mm_min is not set"),
+        1,
+        "the blocking finding is listed"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
@@ -6024,13 +6376,14 @@ fn generated_plaque(dir: &std::path::Path, copy: bool) -> Harness<'static, dream
     h
 }
 
-/// Capability 73, acceptance 94 (#549, row 03): the toolpath view is a
-/// popover from the status bar's *Toolpaths* button, not a card on the
-/// Viewport. The button is absent while the project has no toolpath (the
-/// plaque's shapes with no operation) and present on the generated
-/// plaque; a click shows the popover, titled *Toolpaths*, with the eight
-/// toggles, above the status bar; Escape closes it. Neither state has a
-/// card on the Viewport.
+/// Capability 73, acceptance 94 (#549, row 03; redesign slice D4): the
+/// toolpath view is a popover from the *Layers* button of the Viewport's
+/// floating controls, not a card on the Viewport. The colour mode and the
+/// button are absent while the project has no toolpath (the plaque's
+/// shapes with no operation) and float at the Viewport's top right on the
+/// generated plaque; a click shows the popover, titled *Toolpaths*, with
+/// the eight toggles, under the button; Escape closes it. The status bar
+/// has no Toolpaths button.
 #[test]
 fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
     let dir = scratch("toolpaths-popover");
@@ -6046,49 +6399,66 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
         800.0,
     );
     settle_export(&mut h);
-    assert!(
-        h.query_by_label("Toolpaths").is_none(),
-        "no Toolpaths button without a toolpath"
-    );
+    for absent in ["Layers", "By operation", "By depth", "Toolpaths"] {
+        assert!(
+            h.query_by_label(absent).is_none(),
+            "no {absent} without a toolpath"
+        );
+    }
     assert!(h.query_by_label("Cuts").is_none(), "and no card");
+    assert!(h.query_by_label("Fit").is_some(), "the tools still float");
 
     let mut h = generated_plaque(&dir.join("plaque"), false);
-    let button = h.get_by_role_and_label(Role::Button, "Toolpaths").rect();
     assert!(
-        button.min.y >= 800.0 - STATUS_BAR_PX,
-        "in the status bar: {button:?}"
+        h.query_by_label("Toolpaths").is_none(),
+        "no Toolpaths button in the status bar"
     );
-    assert_eq!(
-        h.query_all_by_label("Toolpaths").count(),
-        1,
-        "the button only"
+    let pane = h.state().layout().viewport;
+    let button = h.get_by_role_and_label(Role::Button, "Layers").rect();
+    assert!(
+        pane.contains_rect(button)
+            && button.center().x > pane.center().x
+            && button.center().y < pane.top() + 48.0,
+        "Layers floats at the Viewport's top right: {button:?} in {pane:?}"
     );
+    // The colour mode is beside it, one control of two.
+    for mode in ["By operation", "By depth"] {
+        let rect = h.get_by_role_and_label(Role::RadioButton, mode).rect();
+        assert!(
+            pane.contains_rect(rect) && rect.right() <= button.left(),
+            "{mode} is left of Layers: {rect:?}"
+        );
+    }
     for toggle in TOOLPATH_TOGGLES {
         assert!(h.query_by_label(toggle).is_none(), "no card: {toggle}");
     }
 
-    h.get_by_role_and_label(Role::Button, "Toolpaths").click();
+    h.get_by_role_and_label(Role::Button, "Layers").click();
     h.run();
-    let titled: Vec<_> = h
-        .query_all_by_label("Toolpaths")
-        .filter(|n| n.accesskit_node().role() != Role::Button)
-        .map(|n| n.rect())
-        .collect();
-    assert_eq!(titled.len(), 1, "the popover's title");
+    assert_eq!(
+        h.query_all_by_label("Toolpaths").count(),
+        1,
+        "the popover's title"
+    );
     for toggle in TOOLPATH_TOGGLES {
         let rect = h.get_by_label(toggle).rect();
         assert!(
-            rect.max.y <= button.min.y,
-            "{toggle} is in the popover above the button: {rect:?}"
+            rect.min.y >= button.max.y && rect.right() <= button.right() + 1.0,
+            "{toggle} is in the popover under the button: {rect:?}"
         );
     }
+    assert_eq!(
+        h.query_all_by_label("By depth").count(),
+        1,
+        "the colour mode is the Viewport's control only"
+    );
 
     h.key_press(egui::Key::Escape);
     h.run();
-    assert_eq!(h.query_all_by_label("Toolpaths").count(), 1, "closed");
     for toggle in TOOLPATH_TOGGLES {
         assert!(h.query_by_label(toggle).is_none(), "closed: {toggle}");
     }
+    assert!(h.query_by_label("Toolpaths").is_none(), "closed");
 
     // Slice 35 (#627), capability 79a: View ▸ Toolpaths… opens it too.
     h.get_by_label("View").click();
@@ -6097,8 +6467,241 @@ fn toolpaths_button_opens_the_popover_and_escape_closes_it() {
     h.run();
     for toggle in TOOLPATH_TOGGLES {
         let rect = h.get_by_label(toggle).rect();
-        assert!(rect.max.y <= button.min.y, "from the menu: {toggle}");
+        assert!(rect.min.y >= button.max.y, "from the menu: {toggle}");
     }
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Capability 50b (redesign slice D4): the status bar's cells are quiet
+/// pills in two groups, so that none moves when another comes or goes.
+/// The units and the counts are at the bar's left; the estimate ends at
+/// its right. Hovering a shape adds the pointer's cell left of the
+/// estimate, and an edit puts the generation cell where the estimate
+/// was: through both, the units and the counts stay where they are and
+/// the right-hand cell still ends at the bar's right.
+#[test]
+fn status_bar_cells_hold_still() {
+    let dir = scratch("status-still");
+    let mut h = generated_plaque(&dir, true);
+    let status_top = 800.0 - STATUS_BAR_PX;
+    let in_bar = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.query_all_by_label(label)
+            .map(|node| node.rect())
+            .find(|rect| rect.top() >= status_top)
+            .unwrap_or_else(|| panic!("{label} is in the status bar"))
+    };
+    let units = in_bar(&h, "mm");
+    let counts = in_bar(&h, "Warnings");
+    let estimate = h.get_by_label_contains("Est. ").rect();
+    assert!(units.left() < counts.left() && counts.right() < estimate.left());
+    // 8 px of window margin and 10 px of pill padding from the right.
+    let right_end = 1280.0 - 8.0 - 10.0;
+    assert!(
+        (estimate.right() - right_end).abs() < 6.0,
+        "the estimate ends at the bar's right: {estimate:?}"
+    );
+    for gone in ["Toolpaths", "X "] {
+        assert!(
+            h.query_all_by_label_contains(gone)
+                .all(|node| node.rect().top() < status_top),
+            "no {gone} cell in the status bar"
+        );
+    }
+
+    // Hovering the square names it, left of the estimate.
+    go_to(&mut h, "Design");
+    let square = h
+        .state()
+        .app()
+        .scene()
+        .shape(&dc_project::InstanceId::new("i4"))
+        .expect("drawn")
+        .bounds
+        .expect("a box");
+    let on_outline = common::on_screen(
+        &h,
+        dc_geometry::Point::new(square.min.x, (square.min.y + square.max.y) / 2.0),
+    );
+    h.event(egui::Event::PointerMoved(on_outline));
+    h.run();
+    let hover = in_bar(&h, "square");
+    assert!(hover.right() < h.get_by_label_contains("Est. ").rect().left());
+    assert_eq!(in_bar(&h, "mm"), units, "the units hold still");
+    assert_eq!(in_bar(&h, "Warnings"), counts, "the counts hold still");
+    assert_eq!(h.get_by_label_contains("Est. ").rect(), estimate);
+    h.event(egui::Event::PointerGone);
+    h.run();
+
+    // An edit: generation takes the estimate's place at the right.
+    let mut stock = h.state().app().project().stock.clone();
+    stock.thickness_mm = Some(12.5);
+    h.state_mut()
+        .app_mut()
+        .run(Command::SetStock(stock))
+        .unwrap();
+    h.step();
+    assert!(h.query_by_label_contains("Est. ").is_none());
+    let stop = in_bar(&h, "Stop");
+    assert!(
+        (stop.right() - (1280.0 - 8.0 - 10.0)).abs() < 6.0,
+        "generation ends at the bar's right: {stop:?}"
+    );
+    assert_eq!(in_bar(&h, "mm"), units, "the units hold still");
+    assert_eq!(in_bar(&h, "Warnings").left(), counts.left());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The polish item of slice D4: a blank, untitled project has nothing to
+/// cut, so nothing is counted against it. The status bar says *No
+/// problems*, the rail's Warnings button has no count, and no step is
+/// marked; `check`'s one error, the unset thickness, is still in the
+/// drawer. Once a drawing is in the project it counts.
+#[test]
+fn a_blank_project_shows_no_problem() {
+    let dir = scratch("blank-no-problem");
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 800.0);
+    assert!(
+        h.query_all_by_label_contains("1 error").next().is_none(),
+        "no error count anywhere"
+    );
+    assert!(h.query_by_label("No problems").is_some(), "the status bar");
+    assert!(
+        h.query_by_label("Warnings: No problems").is_some(),
+        "the rail's button counts nothing"
+    );
+    // The drawer still lists what check reports.
+    h.get_by_label("Warnings: No problems").click();
+    h.run();
+    assert!(h.state().warnings_open());
+    assert!(
+        h.query_all_by_label_contains("stock.thickness_mm is not set")
+            .next()
+            .is_some(),
+        "the drawer lists check's error"
+    );
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+
+    // The coaster, as its drawing makes it: now it is a problem.
+    h.get_by_role_and_label(Role::Button, "Coaster").click();
+    h.run();
+    assert!(
+        h.query_all_by_label_contains("error").next().is_some(),
+        "the unset thickness counts once there is something to cut"
+    );
+    assert!(h.query_by_label("No problems").is_none());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `redesign.md`, "The window" (slice D4): the Warnings drawer is a card
+/// over the bottom of the Viewport's card, 240 px high and 8 px in from
+/// its edges, not a panel under it: the Viewport's card keeps its size
+/// when the drawer opens. The stock as Fit frames it, and the cursor's
+/// read-out, stand clear of it. The grab handle at its top drags it
+/// taller, and no further than leaves the Viewport's controls in view.
+/// The pointer over the drawer is the drawer's: it names no shape under
+/// it.
+#[test]
+fn warnings_drawer_is_a_card_over_the_viewport() {
+    let dir = scratch("drawer-over");
+    let mut h = generated_plaque(&dir, true);
+    go_to(&mut h, "Design");
+    let before = h.state().layout().viewport;
+    assert_eq!(h.state().layout().drawer, None);
+    let stock_rect = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        let stock = &h.state().app().project().stock;
+        egui::Rect::from_two_pos(
+            common::on_screen(h, dc_geometry::Point::new(0.0, 0.0)),
+            common::on_screen(h, dc_geometry::Point::new(stock.width_mm, stock.height_mm)),
+        )
+    };
+    let fitted_before = stock_rect(&h);
+
+    h.get_by_label_contains("Warnings: ").click();
+    h.run();
+    let pane = h.state().layout().viewport;
+    assert_eq!(pane, before, "the Viewport's card keeps its size");
+    let drawer = h.state().layout().drawer.expect("the drawer is open");
+    assert!(pane.contains_rect(drawer), "{drawer:?} is over {pane:?}");
+    for (edge, gap) in [
+        ("left", drawer.left() - pane.left()),
+        ("right", pane.right() - drawer.right()),
+        ("bottom", pane.bottom() - drawer.bottom()),
+    ] {
+        assert!((gap - 8.0).abs() < 0.5, "8 px in at the {edge}: {gap}");
+    }
+    assert!((drawer.height() - 240.0).abs() < 0.5, "{drawer:?}");
+    let copy = h.get_by_label("Copy").rect();
+    assert!(drawer.contains_rect(copy), "its header is on it: {copy:?}");
+
+    // Fit stands clear of it, and so does the read-out.
+    let stock = stock_rect(&h);
+    assert!(
+        stock.bottom() < drawer.top(),
+        "the stock {stock:?} is clear of the drawer {drawer:?}"
+    );
+    assert!(
+        stock.height() < fitted_before.height(),
+        "it was fitted again"
+    );
+    let over = common::on_screen(&h, dc_geometry::Point::new(85.0, 60.0));
+    h.event(egui::Event::PointerMoved(over));
+    h.run();
+    let readout = h.get_by_label_contains("X 85.0").rect();
+    assert!(
+        readout.bottom() < drawer.top(),
+        "the read-out {readout:?} is above the drawer"
+    );
+
+    // The pointer on the drawer is not on the drawing under it.
+    h.event(egui::Event::PointerMoved(
+        drawer.center() + egui::vec2(0.0, 60.0),
+    ));
+    h.run();
+    assert!(
+        h.query_by_label_contains("X ").is_none(),
+        "no cursor read-out under the drawer"
+    );
+
+    // The grab handle: 60 px up is 60 px taller.
+    let handle = egui::pos2(drawer.center().x, drawer.top() + 6.0);
+    common::drag(
+        &mut h,
+        handle,
+        handle - egui::vec2(0.0, 60.0),
+        egui::PointerButton::Primary,
+    );
+    let taller = h.state().layout().drawer.expect("still open");
+    assert!(
+        (taller.height() - 300.0).abs() < 1.0,
+        "dragged 60 px taller: {taller:?}"
+    );
+    assert_eq!(h.state().layout().viewport, before);
+    // And no taller than leaves the floating controls in view.
+    let handle = egui::pos2(taller.center().x, taller.top() + 6.0);
+    common::drag(
+        &mut h,
+        handle,
+        handle - egui::vec2(0.0, 2000.0),
+        egui::PointerButton::Primary,
+    );
+    let tallest = h.state().layout().drawer.expect("still open");
+    let fit = h.get_by_role_and_label(Role::Button, "Fit").rect();
+    assert!(
+        tallest.top() > fit.bottom(),
+        "the tools stay in view: {tallest:?}"
+    );
+    assert!(
+        h.state().app().selection().is_empty(),
+        "nothing was selected"
+    );
+    assert!(!h.state().app().is_dirty(), "and nothing edited");
+
+    h.get_by_label("Close the Warnings drawer").click();
+    h.run();
+    assert_eq!(h.state().layout().drawer, None);
+    assert_eq!(h.state().layout().viewport, before);
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
