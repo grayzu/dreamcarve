@@ -274,15 +274,12 @@ impl TurnScorer {
             .filter_map(|e| tangents(&e.segment).map(|t| (e, t)))
             .collect();
         let mut vertices = Vec::with_capacity(live.len());
-        for (k, (edge, (start, _))) in live.iter().enumerate() {
-            let previous = live
-                .get((k + live.len() - 1) % live.len().max(1))
-                .map(|(_, (_, end))| *end);
-            if let Some(incoming) = previous {
-                let turn = incoming.cross(*start).atan2(incoming.dot(*start)).abs();
-                if turn > LEAD_EPS {
-                    vertices.push((edge.start_mm, turn));
-                }
+        // Each live edge with the one before it, round the path.
+        let before = live.iter().cycle().skip(live.len().saturating_sub(1));
+        for ((edge, (start, _)), (_, (_, incoming))) in live.iter().zip(before) {
+            let turn = incoming.cross(*start).atan2(incoming.dot(*start)).abs();
+            if turn > LEAD_EPS {
+                vertices.push((edge.start_mm, turn));
             }
         }
         let arcs = live
