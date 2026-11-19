@@ -99,7 +99,7 @@ const CROSSHAIR_GAP_PX: f32 = 3.0;
 const MALE_CROSSHAIR_ARM_PX: f32 = 8.0;
 const MALE_CROSSHAIR_GAP_PX: f32 = 2.0;
 /// The target-editing bar's height, px (`experience.md`, section 3).
-const TARGET_BAR_PX: f32 = 32.0;
+const TARGET_BAR_PX: f32 = 48.0;
 /// The park point's radius, px.
 const PARK_RADIUS_PX: f32 = 6.0;
 /// A transform handle's square and circle, px (`experience.md`, section 8).
@@ -1421,7 +1421,7 @@ fn target_bar(ui: &mut Ui, pane: Rect, state: &FrameState<'_>, out: &mut Vec<Act
     );
     let mut bar = ui.new_child(
         egui::UiBuilder::new()
-            .max_rect(rect.shrink2(egui::vec2(12.0, 3.0)))
+            .max_rect(rect.shrink2(egui::vec2(16.0, 8.0)))
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
     );
     bar.spacing_mut().item_spacing.x = 8.0;

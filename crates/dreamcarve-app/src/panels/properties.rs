@@ -177,15 +177,13 @@ fn proportion_link(ui: &mut Ui, state: &FrameState<'_>, (w_y, h_y): (f32, f32), 
         .height(LINK_TOGGLE_PX)
         .tooltip(strings.get(StrKey::PlacementKeepProportions))
         .enabled(enabled);
-    let clicked = ui
-        .scope_builder(UiBuilder::new().max_rect(toggle), |ui| {
-            let response = button(ui, spec);
-            let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
-            ui.painter()
-                .galley(toggle.center() - glyph.size() / 2.0, glyph, colour);
-            response.clicked()
-        })
-        .inner;
+    // A child of its own, placed over the rows: it takes no room in the
+    // column, so what follows the H row starts under it.
+    let mut over = ui.new_child(UiBuilder::new().max_rect(toggle));
+    let clicked = button(&mut over, spec).clicked();
+    let glyph = icon.galley(ui, theme::ICON_SMALL_PX, colour);
+    ui.painter()
+        .galley(toggle.center() - glyph.size() / 2.0, glyph, colour);
     if clicked {
         ui.data_mut(|d| d.insert_temp(link_id(), !free));
     }

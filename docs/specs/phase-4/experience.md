@@ -178,7 +178,8 @@ Heights (all at 1× scale; egui multiplies by `pixels_per_point`):
 | Toolbar | 48 | On the backdrop; buttons 32 tall inside, the primary one 34 |
 | Panel title | 40 | No band; also the Warnings drawer's header at 52 with its buttons |
 | Editor header | 48 | No band and no rule |
-| Collapsible panel's row, target-editing bar | 32 | |
+| Collapsible panel's row | 32 | |
+| Target-editing bar | 48 | Its two buttons are controls, 8 px in |
 | Section header | 32 | Full-width hit area, no band |
 | Control (field, dropdown, button, segmented, pill tabs) | 32 | Text baseline centred |
 | Primary button in the toolbar | 34 | The one taller control |
@@ -200,7 +201,7 @@ Widths are the cards': left column default 280, min 240; right column
 default 320, min 300; Viewport min 560 (so 1280 × 768 holds both panels
 at minimum with the four 8-px gaps, spec 50). Labels in editors take a
 112-px column; the field fills the rest;
-the unit occupies the last 32 px inside the field. Tool-Library sheet
+the unit occupies the last 28 px inside the field. Tool-Library sheet
 960 × 640 default, min 800 × 520, its right (editing) pane 320 wide;
 Import and Export sheets 560 wide, the export result the same sheet;
 unsaved-changes sheet 420 wide; the empty-state card 640 wide.
@@ -695,7 +696,7 @@ Controls:
   View, not in the Warnings drawer). When generation is current the cell
   is blank. Import and export run inside their sheet with a 4-px
   progress bar under the sheet header.
-- **Target editing** (functional 67). Entering it draws a 32-px bar
+- **Target editing** (functional 67). Entering it draws a 48-px bar
   across the top of the Viewport, `accent.soft` fill and a 1-px `accent`
   rule under it: `target` + *Editing targets of "Panel": click shapes to
   add or remove them* (13 px) on the left, *Cancel* (secondary) and

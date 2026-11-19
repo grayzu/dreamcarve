@@ -432,6 +432,12 @@ fn scenes(dir: &Path) -> bool {
     true
 }
 
+/// Takes the pointer off the window, so no control shows its hover.
+fn park_pointer(h: &mut H) {
+    h.event(egui::Event::PointerGone);
+    h.run();
+}
+
 /// Where the redesign's slice D2 pictures are committed.
 fn d2_dir() -> PathBuf {
     std::env::var_os("DC_REVIEW_DIR").map_or_else(
@@ -470,21 +476,18 @@ fn redesign_d2_screenshots() {
         let Some(mut h) = window_with(&dir, Some(plaque), 1280.0, 800.0, &dialogs) else {
             return;
         };
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "01-workspace", looks);
 
-        // An operation's editor: its Setup block, then Depth and Strategy
-        // opened, scrolled so the fields and the segmented controls show.
+        // An operation's editor: its Setup block with its fields and its
+        // segmented control, then Depth opened, scrolled into view.
         open_operation(&mut h, "Panel");
-        for section in ["Depth", "Strategy"] {
-            h.get_by_role_and_label(Role::Button, section)
-                .scroll_to_me();
-            h.run();
-            h.get_by_role_and_label(Role::Button, section).click();
-            h.run();
-        }
-        h.get_by_role_and_label(Role::RadioButton, "Raster")
+        h.get_by_role_and_label(Role::Button, "Depth").click();
+        h.run();
+        h.get_by_role_and_label(Role::TextInput, "Stock to leave")
             .scroll_to_me();
         h.run();
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "02-operation-editor", looks);
         if !all {
             drop(h);
@@ -498,18 +501,21 @@ fn redesign_d2_screenshots() {
         h.run();
 
         click(&mut h, "Warnings");
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "04-warnings-drawer", looks);
         h.get_by_label("Close the Warnings drawer").click();
         h.run();
 
         h.get_by_label_contains("Tools ·").click();
         h.run();
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "05-tools-tab", looks);
         h.get_by_label_contains("Operations ·").click();
         h.run();
 
         click(&mut h, "Project");
         click(&mut h, "Tool Library…");
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "06-tool-library-sheet", looks);
         h.key_press(egui::Key::Escape);
         h.run();
@@ -518,6 +524,7 @@ fn redesign_d2_screenshots() {
             .dropped_files
             .push(std::sync::Arc::new(Dropped(fixture("sign.svg"))));
         h.run();
+        park_pointer(&mut h);
         shoot_in(&mut h, &out, "07-import-sheet", looks);
         drop(h);
         std::fs::remove_dir_all(&dir).unwrap();

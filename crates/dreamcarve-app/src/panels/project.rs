@@ -348,8 +348,8 @@ fn fit_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
             });
         }
     });
-    ui.horizontal(|ui| {
-        ui.add_space(LABEL_PX);
+    // An action under its field ends where the field does.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
         if button(ui, ButtonSpec::new(Kind::Secondary, fit)).clicked() {
             match project::fit_stock(cx.project, &margin) {
                 Ok(command) => out.push(Action::run(command)),
@@ -455,15 +455,12 @@ fn heights(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
 fn park_pick(ui: &mut Ui, cx: &Cx<'_>) {
     let armed = park_pick_armed(ui.ctx());
     let picking = cx.strings.get(StrKey::ProjectHeightsPicking);
-    ui.horizontal(|ui| {
-        ui.add_space(LABEL_PX);
-        let kind = if armed {
-            Kind::Primary
-        } else {
-            Kind::Secondary
-        };
-        let spec = ButtonSpec::new(kind, cx.strings.get(StrKey::ProjectHeightsPick))
+    // Ends where the field above it does; armed, it shows pressed (the
+    // accent pill is the view's one primary button, not a mode's mark).
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+        let spec = ButtonSpec::new(Kind::Secondary, cx.strings.get(StrKey::ProjectHeightsPick))
             .icon(Icon::Crosshair, theme::ICON_SMALL_PX)
+            .pressed(armed)
             .tooltip(picking);
         if button(ui, spec).clicked() {
             arm_park_pick(ui.ctx(), !armed);
@@ -487,7 +484,7 @@ fn tolerances(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
             let on = cx.project.arc_fit_tolerance_mm.is_some();
             let name = cx.strings.get(Field::ArcFitTolerance.label());
             ui.horizontal(|ui| {
-                ui.add_space(LABEL_PX);
+                ui.add_space(LABEL_PX + GAP_PX);
                 if toggle(ui, on, name).clicked() {
                     out.extend(project::set_arc_fit(cx.project, !on).map(Action::run));
                 }

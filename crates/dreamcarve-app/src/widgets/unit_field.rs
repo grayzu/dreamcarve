@@ -38,7 +38,7 @@ use crate::widgets::icon::Icon;
 /// A control's height, px (section 3).
 pub(crate) const HEIGHT_PX: f32 = theme::CONTROL_PX;
 /// The unit's share of the field's right end, px (section 3).
-const UNIT_PX: f32 = 32.0;
+const UNIT_PX: f32 = 28.0;
 /// The reset button's square, px.
 const RESET_PX: f32 = 22.0;
 /// Inner padding, px.
@@ -149,7 +149,7 @@ pub(crate) fn field(ui: &mut Ui, spec: UnitField<'_>) -> FieldOutput {
     let reset_px = if spec.reset.is_some() { RESET_PX } else { 0.0 };
     // The required look's glyph, before the unit (section 7).
     let glyph_px = if spec.required.is_some() {
-        theme::ICON_SMALL_PX + 4.0
+        theme::ICON_SMALL_PX + 2.0
     } else {
         0.0
     };
