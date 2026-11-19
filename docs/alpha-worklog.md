@@ -103,9 +103,9 @@ Notes from the fixes:
 
 | Slice | What | Status |
 | --- | --- | --- |
-| C1 | Import drawings and pictures (#535): the headless half is done; the window half (picture sheet, tree rows, textured quads, drop) is slice D6 | doing |
-| C2 | Photo V-Carve editor and bitmaps (#544): the headless half is done, with selecting, picking, moving and resizing a picture; the window half is slice D6 | doing |
-| C3 | Tapered ball nose in the app (#685): the headless half is done; the window half is slice D6 | doing |
+| C1 | Import drawings and pictures (#535), headless and in the window | done |
+| C2 | Photo V-Carve editor and bitmaps (#544), headless and in the window; a picture is selected, moved and resized on the Viewport | done |
+| C3 | Tapered ball nose in the app (#685), headless and in the window | done |
 
 ### D. UI redesign
 
@@ -117,97 +117,18 @@ Notes from the fixes:
 | D4 | Export inlined into its step, the Viewport's floating controls, the drawer and sheets restyled. Also from the D3 review: a blank project shows "1 error" in the status bar and on the Warnings badge; with By depth on and the Inspector open at 1280 px the fitted stock is small; stale comments in dc-app still name the toolbar and the CAM panel; the snapshot pair needs re-rendering on Linux | todo |
 | D5 | Window tests and snapshots for the new shell | todo |
 
-| D6 | Wire the features built headless into the new window (contracts below) | doing |
+| D6 | The three features wired into the new window: the Add picture sheet, pictures as textured quads under the shapes, Photo V-Carve's editor, the tapered ball nose's fields, the library's Tip column | done |
+| D7 | From the D6 review: a Photo V-Carve's toolpath draws 453 start circles and 88 tab marks for 48 grooves, in the window and the CLI preview (dc-job's marks); importing a 12 MP picture holds the UI thread about 214 ms in dc-app (the PNG encode and the Scene's decode), and each later command about 10 ms | todo |
 
-Where things plug in after D3: the step panel is `panels/side.rs`
-`step()`, matching on `Step`; the Inspector is `inspecting()` returning
-`Inspecting::{Shapes, Tabs, Tool, Operation}` and `body()` drawing it (a
-picture's Properties is a new variant on Design); the Export step is
-`panels/export_step.rs` and `panels::project::output`; tool fields are
-`tools::tool_fields`; the floating pill is `viewport::tools_pill`.
+Decisions made while wiring, for the maintainer to confirm:
 
-D3 changed these step rules from the brief, all for good reason: a blank
-project has no marks; Export needs attention only when an operation is
-enabled; an unused tool without rates leaves Tools complete; marks hold
-still while toolpaths regenerate; rail buttons are 56 px wide so
-"Operations" fits; panels no longer collapse to strips (View ▸ Step Panel
-hides the step panel).
-
-#### What the window must draw for slice C1 (pictures)
-
-- **Add picture sheet:** `PictureImport::open(ImageFormat, name, &bytes,
-  Purpose)`; read `size_px()`, `pixels()`, `warnings()`, `notes(&Strings)`,
-  `side()`, `size()`, `footprint_mm()`, `blocked(&Strings)`; write
-  `set_width_mm`, `set_height_mm`, `clear_size` (mm; parse typed text with
-  `units::parse_length_mm`); run `App::import_picture(&sheet)`.
-- **New from…:** open either sheet with `Purpose::New`, then
-  `App::new_from_drawing(&sheet)` or `App::new_from_picture(&sheet)`.
-- **A dropped file:** `FileKind::of(name)`; `App::drop_file(&path, bytes)`
-  returns `Dropped::Project`, `Drawing(sheet)` or `Picture(sheet)`. Run
-  the unsaved-changes sheet before passing a `.dcv`.
-- **Tree:** `Tree::rows()`, `Tree::bitmaps`, `bitmaps_header()`,
-  `bitmap(&id)`; row actions `tree::bitmap_menu`, `bitmap_menu_command`,
-  `toggle_bitmap_visible`, `toggle_bitmap_locked`, `rename_bitmap`. The
-  legacy `PictureRow`, `Line` and `Tree::lines()` are deleted once the
-  window uses `rows()`.
-- **Viewport:** `Scene::bitmaps() -> &[SceneBitmap]` (`id`, `name`,
-  `locked`, `footprint`, `width_px`, `height_px`, `pixels`, and `picture`,
-  the texture cache key). The Scene decodes a picture on the UI thread
-  when it first appears; move that to the worker if it stutters.
-- **Not built yet:** selecting, picking and moving a picture (new
-  `Selection` and `Hit` variants); *Add ▸ Photo V-Carve* is still disabled.
-  Both belong to C2.
-
-#### What the window must draw for slice C3 (tapered ball nose)
-
-- **Tool editor:** draw `tools::rows(tool, units)` (`FieldRow { field,
-  label, text, unit, required }`), ordered by `tools::fields_for(kind)`,
-  in place of the hard-coded field list. Until then the type dropdown
-  offers Tapered ball nose but its three fields (`ToolField::TipDiameter`,
-  `Taper`, `FluteLength`) are not drawn. `KindChoice::ALL` has six
-  entries.
-- **Required marks:** `FieldRow.required`; `tools::lacks_value(tool)` is
-  the row's red dot. The message goes in the tooltip (capability 66b).
-- **Tables:** `library::Column::ALL` (Name, Type, Ø, Tip, Angle, Flutes,
-  Feed, Plunge, RPM, Product) with `heading()` and `numeric()`;
-  `library::row`/`cell` return `Cell::{Text, Empty, Unset}`. The Tools
-  list's second line is `tools::row_detail`.
-- **`KindFilter`** has no tapered ball nose entry yet: the window matches
-  it exhaustively. Switch the window to `KindFilter::label()`, then add
-  the variant.
-- **Pickers:** `editor::offered_for` and `offered_tools`, unchanged
-  signatures. **Notes:** `editor::tool_note`, `editor::notes` on the
-  Inlay's `male_board` row, `editor::seat_line`.
-- **Import review:** `library::review_status`, `review_unset`, `skipped`.
-- Still open: `operations::new_operation` defaults a new carve to the
-  first V-bit even when a tapered ball nose is the only carving tool.
-
-#### What the window must draw for slice C2 (Photo V-Carve, pictures as objects)
-
-- **Editor rows** come from the fields table like every kind. The Picture
-  row is `Row::picks_picture()`: a dropdown from
-  `editor::offered_pictures`, shown text `editor::picture_text`, commit
-  `editor::set_picture`. Replace its placeholder
-  `FieldKind::Choice(&[])` with a `FieldKind::PicturePicker`.
-- **Add menu:** `operations::add_menu_with(project, strings, shapes,
-  app.selected_pictures())` and `add_with`; fold the pictures parameter
-  into `add_menu`/`add`.
-- **Selection:** `App::selected_pictures`, `select_pictures`,
-  `click_picture(&id, ClickMode)`; `Tree::bitmap_range`;
-  `BitmapRow.target`. Fold `App.pictures` into `Selection::Bitmaps`.
-- **Picking:** `pick::picture_under(scene, camera, at, &hit)` after
-  `pick`; fold into `Hit::Bitmap`.
-- **Properties:** `pictures::properties` gives `PictureProperties {
-  placement, name, pixels }`, drawn with `properties::{FIELDS, field_text,
-  parse}`; also `pictures::{title, PIXELS_LABEL, pixels_text, read_only,
-  unlock, bounds}`.
-- **Move and resize:** `pictures::edit`, `move_by`, `resize` return
-  `Command::MoveBitmaps` or `ResizeBitmap`.
-- **A spec change made here, for the maintainer to confirm:** capability
-  56 said a picture does not scale. A picture can now be resized, aspect
-  kept, about its centre (commit `2ddb4837`; reverting it restores the
-  old rule).
-- Importing a picture does not select it yet; it should.
+- A picture can be resized, aspect kept, about its centre, by its
+  Properties or its corner handles. Capability 56 said a picture does not
+  scale; it now says it does (commit `2ddb4837` in dc-app, and the
+  window's handles).
+- The Tool Library sheet is 1100 px wide (was 960) so its ten columns fit.
+- A new carve takes the first tool its picker offers, so a project whose
+  only carving tool is a tapered ball nose gets it.
 
 ### E. Docs and release preparation
 
