@@ -51,7 +51,8 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 | A6 | `Rates` keeps feed and plunge; a cut outside every operation is refused; the digest hashes bitmaps; wall-clock assertions removed from dc-import and photo (review 1.4, 1.7, 1.10, 1.11). Still open: dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` assert time | done |
 | A7 | A generator's lookup miss is an internal-defect error, `CamError::Internal`, not a skipped pass (review 1.2). Done for the 2.5D generators (about 100 lookups now error, 55 removed). Still to do: `pocket/rings.rs` `RingTree`, `vcarve*`, `inlay.rs`, `relief.rs`, `photo.rs`, dc-geometry | doing |
 
-| A8 | A tab at the end of an open path on a Left or Right Profile: the safety pass's tab spine there fails a property seed (kept in `crates/dc-gcode/proptest-regressions/properties.txt`). Either the generator plunges into a tab at an open path's end or the spine measures the span differently; `docs/specs/phase-3/design.md` has the seed | todo |
+| A8 | A smooth tab at the end of an open path was cut away: the generator laid the tab's slope inside the clamped span and plunged at the tab's centre. Fixed in `dc-cam/src/tabs.rs`; the safety pass's tab spine now covers Left and Right open paths | done |
+| A9 | `PROPTEST_RNG_SEED=37` fails `random_valid_profiles_never_panic_and_pass_safety`: an Outside Profile, no tabs, helix 0.05, a 0.94 mm bit, `OffMaterial`. The shrunk case is in `docs/alpha-notes/profile-seed-37.txt` | todo |
 
 Notes from the fixes:
 
@@ -79,6 +80,13 @@ Notes from the fixes:
   can gain short extra cuts; no program in the suite moved.
   `drop_small_components` uses the same kind of step-relative threshold
   and could drop a short channel open at both ends; not hit, not changed.
+- A8: the verdict was the generator, not the check. Reduced case: a
+  15 mm line, Right, a 2.578 mm bit, one smooth tab 1 mm wide asked for at
+  distance 0. The last two passes plunged at the tab's centre, about 1 mm
+  below its top, so the tab was cut away. Cut from the other end the lap
+  sloped down to depth at the tab's centre, which the safety pass did not
+  catch because it checks straight plunges only. No expected program
+  changed.
 - A7: no golden or expected program changed, and no test met the new
   error, so no dropped pass was found in the 2.5D generators.
 
