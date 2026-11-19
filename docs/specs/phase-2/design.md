@@ -602,7 +602,7 @@ pub fn remove(lib: &mut Library, key: &str) -> Result<LibraryTool, LibraryError>
 pub fn validate_tool(id: &LibraryToolId, tool: &Tool) -> Result<(), LibraryError>;
 pub mod fusion {
     pub const MIN_FUSION_VERSION: u64 = 11;
-    pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;   // unpacked document cap (zip bombs)
+    pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;   // document cap, unpacked (zip bombs) or plain JSON
     pub fn is_fusion_library(bytes: &[u8]) -> bool;          // zip signature, or a JSON object with a `data` array
     pub fn import(bytes: &[u8]) -> Result<FusionImport, LibraryError>;    // .tools (zip) or .json
     pub struct FusionImport { pub tools: Vec<ImportedTool>, pub skipped: Vec<Skipped> }
@@ -2815,7 +2815,9 @@ Mapping:
    the document, capped at `MAX_DOCUMENT_BYTES` (64 MiB) unpacked against
    zip bombs. An archive that cannot be read, or holds no JSON document,
    is `LibraryError::FusionArchive { message }`. Otherwise the bytes are
-   the document.
+   the document, under the same cap: more is
+   `LibraryError::FusionDocumentTooLarge { size_bytes, limit_bytes }`,
+   before any of it is parsed (review 1.6).
 2. **Per tool, by `type`:** `"flat end mill"`, `"bull nose end mill"`
    (corner radius `RE` ignored; the tool name gets ` (bull nose r<RE>)`),
    `"slot mill"` → `EndMill`; `"ball end mill"` → `BallNose`; `"chamfer

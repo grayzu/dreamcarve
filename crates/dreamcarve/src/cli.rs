@@ -550,9 +550,13 @@ pub fn switch_post(
     }
 }
 
-/// Reads `path`, naming it in the error.
+/// Reads `path`, naming it in the error. A file past
+/// [`dreamcarve_shell::MAX_FILE_BYTES`] is refused unread (review 1.6).
 pub fn read_file(path: &Path) -> Result<Vec<u8>, Failure> {
-    std::fs::read(path).map_err(|e| Failure::error(format!("cannot read {}: {e}", path.display())))
+    Ok(dreamcarve_shell::read_capped(
+        path,
+        dreamcarve_shell::MAX_FILE_BYTES,
+    )?)
 }
 
 /// Today's date in UTC as `YYYY-MM-DD`, for the program header.

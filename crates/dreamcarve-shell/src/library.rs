@@ -16,25 +16,24 @@ use dc_library::Library;
 
 use crate::config_dir::Paths;
 use crate::error::ShellError;
+use crate::read::{MAX_FILE_BYTES, read_capped};
 use crate::staged::StagedFile;
 
 /// The library at `paths`, or `None` when its file does not exist.
 ///
 /// # Errors
 ///
-/// [`ShellError::Read`] when the file cannot be read, and
+/// [`ShellError::Read`] when the file cannot be read,
+/// [`ShellError::FileTooLarge`] when it is past [`MAX_FILE_BYTES`], and
 /// [`ShellError::LoadLibrary`] when it is not a library.
 pub fn read(paths: &Paths) -> Result<Option<Library>, ShellError> {
     let path = &paths.library_file;
-    let bytes = match std::fs::read(path) {
+    let bytes = match read_capped(path, MAX_FILE_BYTES) {
         Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(ShellError::Read {
-                path: path.clone(),
-                source,
-            });
+        Err(ShellError::Read { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(None);
         }
+        Err(e) => return Err(e),
     };
     dc_library::load(&bytes)
         .map(Some)
@@ -107,6 +106,28 @@ mod tests {
         assert_eq!(
             std::fs::read(&out).unwrap(),
             std::fs::read(&paths.library_file).unwrap()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Review 1.6: a library file past the read limit is refused by name
+    /// and size before it is read (a sparse file, which costs no disk).
+    #[test]
+    fn a_library_file_past_the_read_limit_is_refused() {
+        let dir = scratch("too-large");
+        let paths = Paths::in_dir(dir.clone());
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = std::fs::File::create(&paths.library_file).unwrap();
+        file.set_len(crate::MAX_FILE_BYTES + 1).unwrap();
+        drop(file);
+        let error = read(&paths).unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                ShellError::FileTooLarge { path, limit_bytes: crate::MAX_FILE_BYTES, .. }
+                    if *path == paths.library_file
+            ),
+            "{error:?}"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -23,6 +23,22 @@ pub enum ShellError {
         /// What the file system said.
         source: std::io::Error,
     },
+    /// A file holds more than the shell reads into memory
+    /// ([`crate::read_capped`]; review 1.6).
+    #[error(
+        "cannot read {}: it is {size_bytes} bytes, more than the limit of {limit_bytes} bytes",
+        path.display()
+    )]
+    FileTooLarge {
+        /// The file.
+        path: PathBuf,
+        /// Its size, bytes; for a file whose size is not known before it
+        /// is read (a pipe, a device), the bytes read when it passed the
+        /// limit.
+        size_bytes: u64,
+        /// The most it may hold, bytes.
+        limit_bytes: u64,
+    },
     /// A file could not be written, or moved into place.
     #[error("cannot write {}: {source}", path.display())]
     Write {

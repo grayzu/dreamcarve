@@ -5844,6 +5844,41 @@ fn init_prints_no_control_characters_from_a_dxf() {
     }
 }
 
+/// Review 1.6: every file a command reads whole is read under
+/// `dreamcarve_shell::MAX_FILE_BYTES`. A drawing, a project and a tool
+/// library one byte past it (sparse files, which cost no disk) are each
+/// refused with an error naming the file, its size and the limit, before
+/// anything is read or written.
+#[test]
+fn a_file_past_the_read_limit_is_refused_by_name_and_size() {
+    let dir = work_dir("a_file_past_the_read_limit_is_refused_by_name_and_size");
+    let size = dreamcarve_shell::MAX_FILE_BYTES + 1;
+    for (name, args) in [
+        ("huge.dxf", vec!["init", "huge.dxf"]),
+        ("huge.svg", vec!["init", "huge.svg"]),
+        ("huge.png", vec!["init", "huge.png", "--width", "100"]),
+        ("huge.dcv", vec!["check", "huge.dcv"]),
+        ("huge.tools", vec!["tools", "import", "huge.tools"]),
+    ] {
+        let file = std::fs::File::create(dir.join(name)).expect("file created");
+        file.set_len(size).expect("file sized");
+        drop(file);
+        let out = run(&dir, &args);
+        assert_eq!(out.status.code(), Some(1), "{name}: {}", stderr(&out));
+        assert_eq!(
+            stderr(&out),
+            format!(
+                "error: cannot read {name}: it is {size} bytes, more than the limit of {} bytes\n",
+                dreamcarve_shell::MAX_FILE_BYTES
+            ),
+            "{name}"
+        );
+        std::fs::remove_file(dir.join(name)).expect("file removed");
+    }
+    assert!(!dir.join("huge.dcv").exists(), "init wrote a project");
+    assert!(!config_dir(&dir).join("tools.json").exists());
+}
+
 /// A closed LWPOLYLINE on layer `0` through `(x, y)`, as DXF group text.
 fn organiser_lwpolyline(points: &[(f64, f64)]) -> String {
     let mut e = format!("0\nLWPOLYLINE\n8\n0\n90\n{}\n70\n1\n", points.len());

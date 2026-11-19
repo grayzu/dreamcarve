@@ -112,9 +112,10 @@ use crate::{LibraryError, LibraryToolId};
 /// schema's minimum).
 pub const MIN_FUSION_VERSION: u64 = 11;
 
-/// The largest `tools.json` the importer unpacks from a `.tools` archive,
-/// in bytes, so a hostile archive cannot exhaust memory. Real libraries
-/// are a few megabytes.
+/// The largest JSON document the importer reads, in bytes: the
+/// `tools.json` it unpacks from a `.tools` archive, so a hostile archive
+/// cannot exhaust memory, and a library given as plain JSON, whose parsed
+/// form is several times its size. Real libraries are a few megabytes.
 pub const MAX_DOCUMENT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Millimetres per inch.
@@ -302,8 +303,8 @@ fn is_zip(bytes: &[u8]) -> bool {
 
 /// Imports a Fusion 360 library: a `.tools` archive or its JSON document
 /// (module docs). Fails only when the file as a whole cannot be read (a
-/// damaged archive, invalid JSON, no `data` array, a `version` below
-/// [`MIN_FUSION_VERSION`]); an item that cannot be imported is
+/// damaged archive, a document past [`MAX_DOCUMENT_BYTES`], invalid JSON,
+/// no `data` array, a `version` below [`MIN_FUSION_VERSION`]); an item that cannot be imported is
 /// [`Skipped`] and the rest still import.
 pub fn import(bytes: &[u8]) -> Result<FusionImport, LibraryError> {
     let document = document(bytes)?;
@@ -341,7 +342,15 @@ pub fn import(bytes: &[u8]) -> Result<FusionImport, LibraryError> {
 /// entry named `tools.json`, else its only `.json` entry.
 fn document(bytes: &[u8]) -> Result<Cow<'_, [u8]>, LibraryError> {
     if !is_zip(bytes) {
-        return Ok(Cow::Borrowed(bytes));
+        // The same cap as an archive's document, on the bytes handed in:
+        // this crate reads no file, so it cannot stop the read itself.
+        return match u64::try_from(bytes.len()) {
+            Ok(size_bytes) if size_bytes <= MAX_DOCUMENT_BYTES => Ok(Cow::Borrowed(bytes)),
+            size_bytes => Err(LibraryError::FusionDocumentTooLarge {
+                size_bytes: size_bytes.unwrap_or(u64::MAX),
+                limit_bytes: MAX_DOCUMENT_BYTES,
+            }),
+        };
     }
     let error = |message: String| LibraryError::FusionArchive { message };
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
@@ -907,6 +916,31 @@ mod tests {
         assert!(
             inner == SAMPLE_JSON,
             "sample.tools is out of date; see the fixture README"
+        );
+    }
+
+    /// Review 1.6: the JSON document is capped whether it comes in an
+    /// archive or as it is. The sample library padded with spaces to
+    /// [`MAX_DOCUMENT_BYTES`] still imports; one byte more is refused by
+    /// its size, before it is parsed.
+    #[test]
+    fn plain_json_past_the_document_cap_is_refused() {
+        let cap = usize::try_from(MAX_DOCUMENT_BYTES).expect("the cap fits a usize");
+        let mut padded = SAMPLE_JSON.to_vec();
+        padded.resize(cap, b' ');
+        assert_eq!(import(&padded), import(SAMPLE_JSON));
+        padded.push(b' ');
+        let error = import(&padded).expect_err("past the cap");
+        assert_eq!(
+            error,
+            LibraryError::FusionDocumentTooLarge {
+                size_bytes: MAX_DOCUMENT_BYTES + 1,
+                limit_bytes: MAX_DOCUMENT_BYTES,
+            }
+        );
+        assert_eq!(
+            error.to_string(),
+            "Fusion tool library is 67108865 bytes, more than the limit of 67108864 bytes"
         );
     }
 

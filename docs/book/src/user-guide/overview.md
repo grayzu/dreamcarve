@@ -282,6 +282,13 @@ project has errors. Any other failure to print, such as a full disk when
 the output goes to a file, exits 1 with `error: cannot write to standard
 output: …`.
 
+No command, and nothing in the app, reads a file larger than 256 MiB: a
+drawing, a project, a picture or a tool library that size is not one, and
+reading it would only fill the computer's memory. It is refused with its
+size, as in `error: cannot read backup.img: it is 4294967296 bytes, more
+than the limit of 268435456 bytes`. A Fusion 360 tool library is at most
+64 MiB, zipped or not.
+
 ## Chapters
 
 - [The project file](project-file.md): every field of `.dcv`.
