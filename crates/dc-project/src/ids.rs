@@ -80,7 +80,7 @@ id_type!(
     OperationId
 );
 id_type!(
-    /// Identifies a [`crate::PlacedTab`] (#105).
+    /// Identifies a [`crate::PlacedTab`].
     TabId
 );
 id_type!(

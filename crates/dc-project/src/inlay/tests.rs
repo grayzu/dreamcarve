@@ -49,11 +49,11 @@ fn male(tools: &[&str]) -> (Project, InlayOp) {
     (p, op)
 }
 
-/// #448: the edge pass is the first clearing pass whose end mill fits
+/// The edge pass is the first clearing pass whose end mill fits
 /// the floor ring, `M − P·tan(α/2) ≥ 2r`: of the 6.35 mm and 3.175 mm
 /// passes in a 4.5 mm ring, the second, though a 1 mm pass follows;
 /// a 4.5 mm end mill just fits. With only the 6.35 mm pass, or none,
-/// there is no edge pass; the male board does not change it (#498).
+/// there is no edge pass; the male board does not change it.
 #[test]
 fn edge_pass_is_the_first_clearing_pass_that_fits() {
     let (p, op) = male(&["t1", "t3", "t4"]);
@@ -78,11 +78,11 @@ fn edge_pass_is_the_first_clearing_pass_that_fits() {
     assert_eq!(edge_pass(&p, &unmeasured), edge_pass(&p, &op));
 }
 
-/// #448: the band's outer edge is open when an edge pass fits and the
+/// The band's outer edge is open when an edge pass fits and the
 /// V-bit's flank at the plug's foot, `(D − G + P)·s` wide at the stock
 /// top, stays inside the band: `M ≥ (D − G + 2P)·s`, 5.25 mm here.
 /// Open, its rounding is `max(R, r)` and a cut-out's centre runs its
-/// radius inside the edge (#461); with a V wall the rounding is `R` and
+/// radius inside the edge; with a V wall the rounding is `R` and
 /// the centre runs `P·s` farther in, inside the slope's foot. A
 /// margin of 5 has room for the pass but not the flank: a V wall,
 /// naming the 5.25 mm needed; with no pass that fits, the margin that
@@ -320,7 +320,7 @@ fn male_band_reads_the_drawn_band_for_its_margin() {
     );
 }
 
-/// #495: an open band is clipped to the stock itself, a V wall the
+/// An open band is clipped to the stock itself, a V wall the
 /// V-bit's radius inside it (the 90° bit `t2`, 6.35 mm across). The
 /// room a clipping edge needs: the V-bit along the plug's foot with
 /// its radius, `1.5 + 3.175`; with an open edge also the edge pass's

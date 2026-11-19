@@ -17,7 +17,7 @@ use crate::test_support::{
 };
 use dc_geometry::{MAX_COORDINATE_MM, Polyline, Transform, Vertex, approx_eq};
 
-/// #105: a placed tab must name an instance and one of its
+/// A placed tab must name an instance and one of its
 /// definition's profiles, and its id must be its own.
 #[test]
 fn placed_tab_on_a_missing_outline_is_an_error() {
@@ -70,7 +70,7 @@ fn placed_tab_on_a_missing_outline_is_an_error() {
     );
 }
 
-/// #105: a placed tab's size must be positive and its point a finite
+/// A placed tab's size must be positive and its point a finite
 /// coordinate within the limit.
 #[test]
 fn placed_tab_size_and_point_are_checked() {
@@ -134,7 +134,7 @@ fn dangling_tool_id_is_error() {
     assert_eq!(problems[1].severity(), Severity::Error);
 }
 
-/// #76: an unset feed is an error, so `check` lists it with the other
+/// An unset feed is an error, so `check` lists it with the other
 /// unset values in one run instead of failing later in export.
 #[test]
 fn unset_feed_is_an_error() {
@@ -170,7 +170,7 @@ fn unset_plunge_and_rpm_are_errors() {
     );
 }
 
-/// #34, S3 (manual): with the router switched by hand, the speed is
+/// S3 (manual): with the router switched by hand, the speed is
 /// only a hint in the pause message, so an unset one is not reported.
 /// Feed and plunge still are.
 #[test]
@@ -232,7 +232,7 @@ fn non_positive_stock_dimension_is_error() {
     assert!(problems[0].is_error());
 }
 
-/// #64: thickness drives depth, tab Z and, with the origin at the stock
+/// Thickness drives depth, tab Z and, with the origin at the stock
 /// bottom, safe Z itself, so an unset one is an error like a missing
 /// feed is at export, never a default. The message says export refuses.
 #[test]
@@ -248,7 +248,7 @@ fn missing_thickness_is_an_error() {
     );
 }
 
-/// #64: an unset Profile depth is an error naming the operation.
+/// An unset Profile depth is an error naming the operation.
 #[test]
 fn missing_depth_is_an_error() {
     let mut p = sample_project();
@@ -270,7 +270,7 @@ fn missing_depth_is_an_error() {
     );
 }
 
-/// #64: one run reports the unset thickness, depth and tool rates
+/// One run reports the unset thickness, depth and tool rates
 /// together, so the user fixes them in one edit.
 #[test]
 fn missing_thickness_depth_and_feeds_are_reported_together() {
@@ -294,7 +294,7 @@ fn missing_thickness_depth_and_feeds_are_reported_together() {
     );
 }
 
-/// #76: every unset value is listed, in the order the file holds them,
+/// Every unset value is listed, in the order the file holds them,
 /// each with the field that locates it.
 #[test]
 fn unset_values_are_listed_in_file_order_with_fields() {
@@ -321,7 +321,7 @@ fn unset_values_are_listed_in_file_order_with_fields() {
     );
 }
 
-/// #76: a problem's field is where it sits in the saved file.
+/// A problem's field is where it sits in the saved file.
 #[test]
 fn problem_fields_locate_in_the_saved_file() {
     let mut p = sample_project();
@@ -364,7 +364,7 @@ fn unset_tool(id: &str) -> Tool {
     }
 }
 
-/// PR #84: a tool nothing cuts with is one warning, located at the
+/// A tool nothing cuts with is one warning, located at the
 /// tool; its unset rates are not errors, and nothing defaults them.
 #[test]
 fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
@@ -392,7 +392,7 @@ fn unused_tool_with_unset_values_is_a_warning_not_an_error() {
     assert_eq!(next.trim(), "\"id\": \"t2\",");
 }
 
-/// PR #84: a tool only disabled operations use is unused, like the
+/// A tool only disabled operations use is unused, like the
 /// operations themselves; enabling one brings its errors back.
 #[test]
 fn tool_used_only_by_disabled_operation_is_unused() {
@@ -418,7 +418,7 @@ fn tool_used_only_by_disabled_operation_is_unused() {
     );
 }
 
-/// PR #84: a tool an enabled operation uses still reports every unset
+/// A tool an enabled operation uses still reports every unset
 /// rate as an error, beside an unused tool's warning.
 #[test]
 fn used_tool_with_unset_values_is_still_an_error() {
@@ -518,7 +518,7 @@ fn non_finite_value_is_error() {
             Problem::NonFinite {
                 field: "tools[t1].cutter.v_bit.included_angle_deg".into()
             },
-            // #67: a V-bit of any angle cannot cut a Profile.
+            // A V-bit of any angle cannot cut a Profile.
             Problem::CutterNotFlat {
                 operation: OperationId::new("o1"),
                 name: "Cut out".into(),
@@ -597,7 +597,7 @@ fn zero_spindle_dwell_is_allowed() {
     assert!(validate(&p).is_empty());
 }
 
-/// Functional spec acceptance test 2 (#40): a tool problem names the
+/// Functional spec acceptance test 2: a tool problem names the
 /// tool as the user sees it, not only by id.
 #[test]
 fn tool_problems_name_the_tool() {
@@ -614,7 +614,7 @@ fn tool_problems_name_the_tool() {
     }
 }
 
-/// Functional spec capability 8 (#40): open paths are imported but
+/// Functional spec capability 8: open paths are imported but
 /// Profile never cuts them, and `check` reports each one.
 #[test]
 fn open_profile_is_warning_naming_the_definition() {
@@ -650,7 +650,7 @@ fn open_profile_is_warning_naming_the_definition() {
     );
 }
 
-/// Capability 15 (#135): Engrave cuts open paths, so an open profile of
+/// Capability 15: Engrave cuts open paths, so an open profile of
 /// a definition an enabled Engrave targets is not reported as never
 /// cut. A disabled Engrave cuts nothing, so the warning stays.
 #[test]
@@ -677,7 +677,7 @@ fn open_profile_engraved_is_not_reported() {
     assert!(open(&p), "a disabled Engrave cuts nothing");
 }
 
-/// #175: an On line Profile cuts open paths too, so an open profile of
+/// An On line Profile cuts open paths too, so an open profile of
 /// a definition an enabled On line Profile targets is not reported.
 /// Inside and Outside skip open paths, so the warning stays for them,
 /// and its message names what does cut an open path.
@@ -704,7 +704,7 @@ fn open_profile_cut_on_line_is_not_reported() {
     );
     profile_mut(&mut p).side = Side::OnLine;
     assert!(open(&p).is_none(), "{:?}", validate(&p));
-    // #207: Left and Right cut open paths too.
+    // Left and Right cut open paths too.
     for side in [Side::Left, Side::Right] {
         profile_mut(&mut p).side = side;
         assert!(open(&p).is_none(), "{side:?}: {:?}", validate(&p));
@@ -725,7 +725,7 @@ fn error_fields(problems: &[Problem]) -> Vec<String> {
         .collect()
 }
 
-/// #59: a finite but huge transform passed validation and then
+/// A finite but huge transform passed validation and then
 /// panicked `cavalier_contours`. Scale and translation are each
 /// rejected, naming the instance's transform.
 #[test]
@@ -748,7 +748,7 @@ fn huge_transform_is_rejected() {
     }
 }
 
-/// #59: an instance whose placed shape reaches just past the limit is
+/// An instance whose placed shape reaches just past the limit is
 /// rejected even though each coefficient is in range; one that reaches
 /// exactly the limit is accepted. The sample rectangle is 50 × 30 mm.
 #[test]
@@ -767,7 +767,7 @@ fn placement_past_coordinate_limit_is_rejected() {
     );
 }
 
-/// #99: phase 1 does not use the instance depths, so leaving them unset
+/// Phase 1 does not use the instance depths, so leaving them unset
 /// is neither an error nor a warning.
 #[test]
 fn unset_instance_depths_are_valid() {
@@ -777,7 +777,7 @@ fn unset_instance_depths_are_valid() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #71: an instance's bottom may not lie above its top; equal is a
+/// An instance's bottom may not lie above its top; equal is a
 /// flat feature and allowed. Nothing reads them yet, so the order is
 /// all there is to check.
 #[test]
@@ -802,7 +802,7 @@ fn instance_z_bottom_above_z_top_is_error() {
     assert_eq!(validate(&p), vec![], "one unset is not compared");
 }
 
-/// #99: a set instance depth is still checked against the coordinate
+/// A set instance depth is still checked against the coordinate
 /// limit.
 #[test]
 fn instance_z_top_out_of_range_is_error() {
@@ -823,7 +823,7 @@ fn instance_z_top_out_of_range_is_error() {
     assert_eq!(validate(&p), vec![], "the limit is inclusive");
 }
 
-/// #59: vertex coordinates are bounded by the limit, inclusive.
+/// Vertex coordinates are bounded by the limit, inclusive.
 #[test]
 fn huge_vertex_is_rejected() {
     let mut p = sample_project();
@@ -862,7 +862,7 @@ fn huge_vertex_is_rejected() {
     );
 }
 
-/// #59: an arc whose vertices are in range can still bow past the
+/// An arc whose vertices are in range can still bow past the
 /// limit; the profile is reported.
 #[test]
 fn arc_bulging_past_coordinate_limit_is_rejected() {
@@ -883,7 +883,7 @@ fn arc_bulging_past_coordinate_limit_is_rejected() {
     );
 }
 
-/// #59: stock sides are bounded by the same limit, inclusive.
+/// Stock sides are bounded by the same limit, inclusive.
 #[test]
 fn huge_stock_is_rejected() {
     let mut p = sample_project();
@@ -909,7 +909,7 @@ fn limit_phrases_match_the_constant() {
     }
 }
 
-/// #59: the message states the limit, so the user knows what to aim for.
+/// The message states the limit, so the user knows what to aim for.
 #[test]
 fn limit_messages_state_the_limit() {
     let mut p = sample_project();
@@ -924,7 +924,7 @@ fn limit_messages_state_the_limit() {
     }
 }
 
-/// #36 security review (#40): a shared `.dcv` chooses its output
+/// A shared `.dcv` chooses its output
 /// extension, so it must not name the project file or a path.
 #[test]
 fn unsafe_file_extension_is_error() {
@@ -979,7 +979,7 @@ fn m6_mode_without_m6_command_is_an_error() {
     assert_eq!(validate(&p), vec![]);
 }
 
-// #67: sanity checks on dangerous but valid values.
+// Sanity checks on dangerous but valid values.
 
 fn op_mut(p: &mut Project) -> &mut crate::model::ProfileOp {
     profile_mut(p)
@@ -997,7 +997,7 @@ fn only_located(p: &Project, problems: &[Problem], severity: Severity) -> String
     problems[0].to_string()
 }
 
-/// #67: a 50 mm step-down with a 6.35 mm end mill is one full-depth
+/// A 50 mm step-down with a 6.35 mm end mill is one full-depth
 /// pass; it is a warning naming the operation and the tool, located at
 /// the step-down in effect.
 #[test]
@@ -1025,7 +1025,7 @@ fn step_down_above_diameter_warns() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #67: Profile offsets by half the diameter, which is right only for
+/// Profile offsets by half the diameter, which is right only for
 /// a flat end mill; any other cutter makes the part the wrong size.
 #[test]
 fn v_bit_in_profile_is_an_error() {
@@ -1059,7 +1059,7 @@ fn ball_nose_and_engraver_in_profile_are_errors() {
     }
 }
 
-/// #207: Left and Right offset the path by half the diameter, as
+/// Left and Right offset the path by half the diameter, as
 /// Inside and Outside do, so they need a flat end mill too.
 #[test]
 fn v_bit_left_or_right_is_an_error() {
@@ -1079,7 +1079,7 @@ fn v_bit_left_or_right_is_an_error() {
     }
 }
 
-/// #67 (maintainer, PR #96): on the line the tool centre follows the
+/// On the line the tool centre follows the
 /// line itself, so the cut does not depend on the cutter's shape.
 #[test]
 fn v_bit_on_line_is_allowed() {
@@ -1101,7 +1101,7 @@ fn ball_nose_and_engraver_on_line_are_allowed() {
     }
 }
 
-/// #67 (maintainer comment): a feed over the limit fails export. The
+/// A feed over the limit fails export. The
 /// error names the tool, the field and the limit.
 #[test]
 fn feed_above_limit_is_an_error() {
@@ -1186,7 +1186,7 @@ fn diameter_above_limit_warns() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #67: an enabled operation with no targets would write a program
+/// An enabled operation with no targets would write a program
 /// that starts the spindle and stops it without moving.
 #[test]
 fn empty_operation_is_an_error() {
@@ -1204,7 +1204,7 @@ fn empty_operation_is_an_error() {
     assert!(errors(&validate(&p)).is_empty());
 }
 
-/// #67: only tools an enabled operation uses are checked; an unused
+/// Only tools an enabled operation uses are checked; an unused
 /// tool is already a warning of its own.
 #[test]
 fn unused_tool_gets_no_sanity_findings() {
@@ -1231,7 +1231,7 @@ fn unused_tool_gets_no_sanity_findings() {
     );
 }
 
-/// #67: every sanity problem is reported in one run, in file order.
+/// Every sanity problem is reported in one run, in file order.
 #[test]
 fn sanity_problems_are_reported_together() {
     let mut p = sample_project();
@@ -1255,7 +1255,7 @@ fn sanity_problems_are_reported_together() {
     assert_eq!(errors(&problems).len(), 3, "{problems:?}");
 }
 
-/// #98: with neither the operation nor its tool giving a step-down,
+/// With neither the operation nor its tool giving a step-down,
 /// the passes are unknown, so it is an error located at the tool, the
 /// one value every operation using it falls back on.
 #[test]
@@ -1281,7 +1281,7 @@ fn step_down_unset_on_operation_and_tool_is_error() {
     );
 }
 
-/// #98: the operation's own step-down is enough.
+/// The operation's own step-down is enough.
 #[test]
 fn step_down_on_operation_only_is_valid() {
     let mut p = sample_project();
@@ -1290,7 +1290,7 @@ fn step_down_on_operation_only_is_valid() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #98: the tool's step-down applies when the operation sets none.
+/// The tool's step-down applies when the operation sets none.
 #[test]
 fn step_down_on_tool_only_is_valid() {
     let mut p = sample_project();
@@ -1299,7 +1299,7 @@ fn step_down_on_tool_only_is_valid() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #98: two operations falling back on the same unset tool value give
+/// Two operations falling back on the same unset tool value give
 /// one error, not one per operation.
 #[test]
 fn step_down_unset_reported_once_per_tool() {
@@ -1320,7 +1320,7 @@ fn step_down_unset_reported_once_per_tool() {
     );
 }
 
-/// #98: a disabled operation cuts nothing, so it needs no step-down.
+/// A disabled operation cuts nothing, so it needs no step-down.
 #[test]
 fn disabled_operation_needs_no_step_down() {
     let mut p = sample_project();
@@ -1338,7 +1338,7 @@ fn disabled_operation_needs_no_step_down() {
     );
 }
 
-/// #67: the quick start's coaster, as the chapter fills it in (feed
+/// The quick start's coaster, as the chapter fills it in (feed
 /// 1500, plunge 500, 18000 RPM, 4 mm step-down, 6.35 mm end mill),
 /// draws no sanity finding. `dreamcarve`'s CLI test
 /// `quick_start_project_has_no_sanity_warnings` checks the real file.
@@ -1361,7 +1361,7 @@ fn quick_start_values_have_no_sanity_findings() {
     assert_eq!(validate(&p), vec![]);
 }
 
-// Phase 2, #117: tool numbers and the new operations' rules
+// Phase 2: tool numbers and the new operations' rules
 // (`docs/specs/phase-2/design.md`, "Tool numbers", "Validation").
 
 /// The sample project with `ops` after its Profile.
@@ -1592,7 +1592,7 @@ fn step_over_fraction_outside_unit_interval_is_error() {
 
 /// A Pocket or Engrave has no single-pass form: with no step-down on
 /// the operation or its tool nothing says how deep each pass is, and
-/// nothing defaults it (#98). Reported once, at the tool, as Profile
+/// nothing defaults it. Reported once, at the tool, as Profile
 /// reports it.
 #[test]
 fn pocket_without_step_down_is_error() {
@@ -1683,7 +1683,7 @@ fn helix_on_on_line_profile_is_error() {
     );
     assert_eq!(problems[0].severity(), Severity::Error);
     assert_eq!(problems[0].field().as_deref(), Some("operations[o1].entry"));
-    // #207: Left and Right ramp along the offset path and have no
+    // Left and Right ramp along the offset path and have no
     // waste area for a helix either.
     for side in [Side::Left, Side::Right] {
         let mut p = sample_project();
@@ -1779,7 +1779,7 @@ fn lead_radius_must_be_positive() {
 }
 
 /// The last pass acceptance 46 asks for, on the sample's Outside
-/// Profile (#284).
+/// Profile.
 fn last_pass(stock_to_leave_mm: f64) -> LastPass {
     LastPass {
         stock_to_leave_mm,
@@ -1788,7 +1788,7 @@ fn last_pass(stock_to_leave_mm: f64) -> LastPass {
     }
 }
 
-/// #284 (capability 34, acceptance 46): the stock to leave is more than 0
+/// Capability 34, acceptance 46: the stock to leave is more than 0
 /// and at most a third of the bit's diameter, as VCarve advises. 0, a
 /// negative value and 2.2 mm with the 6.35 mm bit are errors naming the
 /// diameter and the limit; 0.5 and exactly a third are valid.
@@ -1835,8 +1835,8 @@ fn last_pass_stock_to_leave_limit() {
     );
 }
 
-/// #284: On line has no wall to leave material on: it cuts with both
-/// flanks. (changed in #311: Left and Right, which cut one flank
+/// On line has no wall to leave material on: it cuts with both
+/// flanks. (Left and Right, which cut one flank
 /// against the part, take a last pass too.)
 #[test]
 fn last_pass_on_line_is_error() {
@@ -1871,7 +1871,7 @@ fn last_pass_on_line_is_error() {
     }
 }
 
-/// #311: a Left or Right Profile cuts one flank of the bit against the
+/// A Left or Right Profile cuts one flank of the bit against the
 /// part, as Inside and Outside do, so it takes a last pass: no
 /// `LastPassNeedsSide`, and the stock to leave and thickness are checked
 /// as on Inside and Outside. On line still errors.
@@ -1911,7 +1911,7 @@ fn last_pass_left_right_is_valid() {
     );
 }
 
-/// #284: `thickness_mm`, the last pass's depth, is more than 0 and at
+/// `thickness_mm`, the last pass's depth, is more than 0 and at
 /// most the operation's `depth_mm`.
 #[test]
 fn last_pass_thickness_range() {
@@ -1954,7 +1954,7 @@ fn last_pass_thickness_range() {
     );
 }
 
-/// #310 review: the last pass is at most one step-down thick, the
+/// The last pass is at most one step-down thick, the
 /// operation's when it sets one, else the tool's: the sample's 2 mm
 /// tool step-down allows 2 mm and refuses 2.5 and 6, at the thickness;
 /// with the operation's 4 mm, 3 is fine.
@@ -2493,7 +2493,7 @@ fn phase_2_problem_fields_locate_in_the_saved_file() {
     }
 }
 
-// #283: the clearance, tool-change and park heights.
+// The clearance, tool-change and park heights.
 
 /// Design addendum A7: the clearance height is for links between
 /// parts, so it may not be below an enabled operation's retract
@@ -2563,7 +2563,7 @@ fn machine_z_must_be_below_zero() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #304 review: the program writes the machine Z to its decimal places
+/// The program writes the machine Z to its decimal places
 /// (3 in mm, 4 in inches), so one that rounds to 0 there is the same
 /// lift past the limit switch: −0.0004 mm is refused in a mm program,
 /// −0.001 mm in an inch program (under half of 0.0001 in, 0.00127
@@ -2650,8 +2650,8 @@ fn machine_z_accepted_on_linuxcnc() {
     }
 }
 
-/// #283: the park point is a coordinate, within the 6000 mm limit
-/// (#75); the clearance height is positive.
+/// The park point is a coordinate, within the 6000 mm limit; the clearance
+/// height is positive.
 #[test]
 fn park_and_clearance_are_in_range() {
     let mut p = sample_project();
@@ -3127,7 +3127,7 @@ fn negative_start_depth_is_error() {
     );
 }
 
-/// Capability 41, security review M2: a carve below the stock top
+/// Capability 41: a carve below the stock top
 /// needs an enabled earlier Pocket containing its targets, or the
 /// user's word that another program cleared the start plane. A
 /// disabled Pocket, or one after the carve, does not count.
@@ -3239,7 +3239,7 @@ fn uncleared_start_depth_is_an_error_unless_acknowledged() {
     assert_eq!(uncleared(&unknown).len(), 1, "{:?}", validate(&unknown));
 }
 
-/// Security review H4: with the start plane only vouched for, the bit's
+/// With the start plane only vouched for, the bit's
 /// flanks engage from the stock top, so the start depth counts toward
 /// the cone: 4 + 1 mm with the 90° bit's 3.175 mm cone fails, while
 /// a Pocket of the start depth makes it 1 mm and passes.
@@ -3281,7 +3281,7 @@ fn acknowledged_start_depth_counts_toward_the_cone() {
     assert_eq!(field.as_deref(), Some("operations[o6].start_depth_mm"));
 }
 
-/// Security review L6: the flatten tolerance is at most 0.1 mm.
+/// The flatten tolerance is at most 0.1 mm.
 #[test]
 fn flatten_tolerance_above_0_1_mm_is_error() {
     let mut p = sample_project();
@@ -3422,7 +3422,7 @@ fn countersink_mouth_wider_than_tool_is_error() {
     );
 }
 
-/// Capabilities 41 and 44, security review H4: the flanks engage
+/// Capabilities 41 and 44: the flanks engage
 /// from the stock top unless an enabled earlier Pocket at the start
 /// depth contains the bit at every hole, so a 6 mm mouth (3 mm deep
 /// with the 90° bit) 2 mm down a start plane only vouched for engages
@@ -3465,7 +3465,7 @@ fn countersink_depth_beyond_cone_is_error() {
     assert_eq!(validate(&countersink_project(|_| {})), vec![]);
 }
 
-/// Capability 44, security review M2: a countersink below the stock
+/// Capability 44: a countersink below the stock
 /// top needs an earlier Pocket that holds its whole bit at every
 /// hole, or the user's word, as a V-Carve does; located at its own
 /// start depth. A negative start depth is an error there too.
@@ -3537,7 +3537,7 @@ fn rectangle_v_carve() -> Operation {
     Operation::VCarve(carve)
 }
 
-/// Issue #426: the countersink's hole at (35, 25) sits on the 2.5 mm
+/// The countersink's hole at (35, 25) sits on the 2.5 mm
 /// floor of a V-Carve before it, which holds the whole 6.35 mm bit,
 /// so a countersink 2.5 mm down is neither uncleared nor past its
 /// cone: the flanks engage its own 3 mm depth from the floor. At
@@ -3661,7 +3661,7 @@ fn inlay_project(edit: impl FnOnce(&mut crate::model::InlayOp)) -> Project {
 }
 
 /// Gives `inlay` a male board the size of [`inlay_project`]'s 19 mm
-/// stock, so its male is cut and checked too (#498).
+/// stock, so its male is cut and checked too.
 fn on_male_board(inlay: &mut crate::model::InlayOp) {
     inlay.male_board = crate::model::MaleBoard {
         width_mm: None,
@@ -3670,7 +3670,7 @@ fn on_male_board(inlay: &mut crate::model::InlayOp) {
     };
 }
 
-/// Sets which boards `inlay` cuts in a test of one board (#498): on
+/// Sets which boards `inlay` cuts in a test of one board: on
 /// [`Board::Female`] its male board is unset, so only the female is
 /// cut and checked; on [`Board::Male`] it is measured
 /// ([`on_male_board`]), so the male's rules apply too.
@@ -3875,7 +3875,7 @@ fn inlay_male_needs_margin() {
 /// Design spec, "Inlay" step 4: a male leaving less than 6 mm of
 /// board under its surround's floor warns. The star's values put the
 /// floor 4 − 1 + 2 = 5 mm down: 5 mm left on a 10 mm male board, 6 on
-/// an 11 mm one, 7 on 12, whatever the 19 mm stock (#498: the male
+/// an 11 mm one, 7 on 12, whatever the 19 mm stock (the male
 /// board's thickness). With the male board unset only the female is
 /// cut, which leaves no plug base.
 #[test]
@@ -3916,7 +3916,7 @@ fn thin_plug_base_warns() {
     assert_eq!(validate(&female), vec![]);
 }
 
-/// Security review H4: the male's flank engages from the stock top,
+/// The male's flank engages from the stock top,
 /// `(D − G) + P`, since the plug above its start plane is never
 /// cleared. Corbin's `D 2.5, G 0.25, P 1.5` engages 3.75 mm, past the
 /// 90° 6.35 mm bit's 3.175 mm cone, though `P` alone fits; the star's
@@ -3951,7 +3951,7 @@ fn male_inlay_engagement_beyond_the_cone_is_error() {
     v_bit_angle(&mut p, 60.0);
     assert_eq!(validate(&p), vec![]);
     // The star on the 90° bit engages 5 mm on the male board, past its
-    // 3.175 mm cone, and 4 mm on the female's (#498: each board is
+    // 3.175 mm cone, and 4 mm on the female's (each board is
     // checked, at its own field).
     let p = inlay_project(|inlay| star(inlay, Board::Male));
     let problems = validate(&p);
@@ -4044,7 +4044,7 @@ fn inlay_with_end_mill_is_error() {
     }
 }
 
-// Format 23 (#443): a male Inlay's cut-out.
+// Format 23: a male Inlay's cut-out.
 
 /// [`inlay_project`] with the 3.175 mm end mill `t3` added and a
 /// cut-out with it, four 6 mm tabs 3 mm tall, 0.2 mm through, as
@@ -4083,7 +4083,7 @@ fn cut_out_on_a_male_is_valid() {
     assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
 }
 
-/// #498: every Inlay has a male, so a cut-out needs no side: an Inlay
+/// Every Inlay has a male, so a cut-out needs no side: an Inlay
 /// with a cut-out whose male board is not measured yet is valid (its
 /// male is not cut until it is, and the female ignores the cut-out),
 /// and so is one with a measured board. `inlay_cut_out_needs_male` is
@@ -4097,7 +4097,7 @@ fn cut_out_no_longer_needs_a_side() {
     assert_eq!(validate(&cut_out_project(|_| {})), vec![]);
 }
 
-/// #498: a male board's width and height, when set, are its size,
+/// A male board's width and height, when set, are its size,
 /// above 0; `inlay_male_board_size`, an error, at the field. `null`
 /// is the stock's.
 #[test]
@@ -4142,7 +4142,7 @@ fn male_board_size_must_be_positive() {
     }
 }
 
-/// #498: a male board's thickness, when set, is above 0;
+/// A male board's thickness, when set, is above 0;
 /// `inlay_male_board_thickness`, an error, at the field. Unset, the
 /// male is not cut (the generator's `inlay_male_board_unset`), and the
 /// project is valid.
@@ -4177,7 +4177,7 @@ fn male_board_thickness_must_be_positive() {
     );
 }
 
-/// #498: two enabled Inlays of one project cut their males on the one
+/// Two enabled Inlays of one project cut their males on the one
 /// male board, so their boards must agree; a later one whose board
 /// differs is `inlay_male_boards_differ`, an error, at its
 /// `male_board`. A disabled Inlay cuts nothing and does not count.
@@ -4222,7 +4222,7 @@ fn inlays_share_one_male_board() {
     );
 }
 
-/// #443: the cut-out's tool runs On line round the plug and through
+/// The cut-out's tool runs On line round the plug and through
 /// the board; it must be a flat end mill, `cutter_not_flat` at
 /// `cut_out.tool` otherwise.
 #[test]
@@ -4262,7 +4262,7 @@ fn cut_out_needs_a_flat_end_mill() {
     }
 }
 
-/// #443, #461: with a V wall the floor ring, `M − 2·P·tan(α/2)` wide,
+/// With a V wall the floor ring, `M − 2·P·tan(α/2)` wide,
 /// must hold the tool's diameter. The star
 /// with `margin_mm: 4` on the 60° bit (`P·s = 1.155`) leaves 1.69 mm
 /// for the 3.175 mm end mill: `inlay_cut_out_no_room`, at
@@ -4308,9 +4308,9 @@ fn cut_out_with_no_room_in_the_floor_ring_is_an_error() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// #448: with an open band edge the floor ring runs from the plug's
+/// With an open band edge the floor ring runs from the plug's
 /// foot, `P·tan(α/2)` out, to the band's edge, `M` out, and the cut-out
-/// runs along its outer edge (#461), so it needs `M ≥ P·tan(α/2) + d`.
+/// runs along its outer edge, so it needs `M ≥ P·tan(α/2) + d`.
 /// The star's
 /// values on the 60° bit (`P·s` = 1.155) with a 3.175 mm clearing pass
 /// `t3`, which opens the edge, and a 6.35 mm cut-out `t1`: an 8 mm
@@ -4352,7 +4352,7 @@ fn cut_out_room_follows_the_open_edge() {
     dc_geometry::assert_approx_eq!(needed(open(8.0, false)), 4.0 * s + 6.35, 1e-9);
 }
 
-/// #448: `outline_rounding_mm` is the radius the male's band is closed
+/// `outline_rounding_mm` is the radius the male's band is closed
 /// by; set, it must be a number above 0. 0, −1 and NaN are each
 /// `inlay_outline_rounding`, an error at the field, on either side
 /// (the female ignores the value, but a pair shares it); `null` and 5
@@ -4402,7 +4402,7 @@ fn outline_rounding_must_be_positive() {
     }
 }
 
-/// #443: the cut-out's tool is a used tool: its feed, plunge rate and
+/// The cut-out's tool is a used tool: its feed, plunge rate and
 /// RPM are required, and so is its step-down, which sets the passes.
 #[test]
 fn cut_out_tool_needs_its_rates() {
@@ -4427,7 +4427,7 @@ fn cut_out_tool_needs_its_rates() {
     }
 }
 
-/// #443: the cut-out's fields follow their Profile counterparts': its
+/// The cut-out's fields follow their Profile counterparts': its
 /// tool must exist, its allowance be 0 or more, and its tabs as a
 /// Profile's tab request.
 #[test]
@@ -4527,8 +4527,8 @@ fn inlay_clearing_rules_match_v_carve() {
     assert!(!codes.contains(&"clearing_needs_flat_depth"), "{codes:?}");
 }
 
-// Format 26: the drawn boundary (#449, #602; `docs/specs/phase-3/
-// design.md`, "Validation" and "Drawn boundary").
+// Format 26: the drawn boundary (`docs/specs/phase-3/ design.md`,
+// "Validation" and "Drawn boundary").
 
 /// Adds instance `id` of a `w` × `h` mm rectangle with its corner at
 /// (`x`, `y`) to `p`, with `holes` more rectangles (corner, size) in
@@ -4894,9 +4894,9 @@ fn boundary_with_no_design_inside_warns() {
     );
 }
 
-/// A hole in a boundary shape is ignored (board standing in the band
-/// would hold the plug off the female, #484): a warning naming the
-/// instance and the hole's profile; the hole may be anywhere.
+/// A hole in a boundary shape is ignored (board standing in the band would
+/// hold the plug off the female): a warning naming the instance and the
+/// hole's profile; the hole may be anywhere.
 #[test]
 fn boundary_hole_warns() {
     let p = boundary_project(&["i3"], |p| {
@@ -5014,7 +5014,7 @@ fn cut_out_room_reads_the_narrowest_band() {
 }
 
 // Format 27: bitmaps and the Photo V-Carve (`docs/specs/phase-3/
-// design.md`, "Validation"; security review M4).
+// design.md`, "Validation").
 
 /// The Photo V-Carve `o8` of [`photo_project`], to edit.
 fn photo_mut(p: &mut Project) -> &mut crate::model::PhotoVCarveOp {
@@ -5085,7 +5085,7 @@ fn photo_max_depth_beyond_cone_is_error() {
     assert!(approx_eq(engagement_mm, 3.5, 1e-9), "{engagement_mm}");
     assert!(from_stock_top);
     assert_eq!(field.as_deref(), Some("operations[o8].max_depth_mm"));
-    // #648: a Photo has no flat depth; the message names its own field.
+    // A Photo has no flat depth; the message names its own field.
     let message = validate(&vouched)[0].to_string();
     assert!(
         message.contains("plus its max_depth_mm)") && !message.contains("flat depth"),
@@ -5382,7 +5382,7 @@ fn bitmap_aspect_must_match_pixels() {
     assert_eq!(validate(&p), vec![]);
 }
 
-/// Security review M4: a footprint has a width and a height above 0,
+/// A footprint has a width and a height above 0,
 /// and both its corners are on the coordinate range, 6000 mm from the
 /// origin, as every coordinate of a project is.
 #[test]
@@ -5602,7 +5602,7 @@ fn bitmap_with_no_pixels_is_error() {
     only_error(&p, "bitmap_empty", "bitmaps[b1].width_px");
 }
 
-/// Security review M4: a side above `MAX_BITMAP_SIDE_PX`, 8192, is an
+/// A side above `MAX_BITMAP_SIDE_PX`, 8192, is an
 /// error from the bitmap's own numbers, before anything is decoded.
 #[test]
 fn bitmap_above_the_side_limit_is_error() {
@@ -5676,7 +5676,7 @@ fn bitmap_that_cannot_be_read_is_error() {
     }
 }
 
-/// Security review M4: validation reads a picture's header and never
+/// Validation reads a picture's header and never
 /// its image data, so a shared file costs nothing per pixel to check.
 /// A PNG that is a valid header followed by bytes that are no image
 /// data validates clean; `pixels` is where it fails.
@@ -5816,7 +5816,7 @@ fn bitmap_and_photo_problems_have_their_own_codes() {
     }
 }
 
-// Format 28 (sub-phase 3.6, #677): the tapered ball nose.
+// Format 28 (sub-phase 3.6): the tapered ball nose.
 
 /// The sample project with [`crate::test_support::tool_tbn_ultra`]
 /// (`t2`) edited by `edit`, used by no operation.
@@ -6016,7 +6016,7 @@ fn tapered_ball_nose_countersink_is_error() {
     );
 }
 
-/// Slice 27c (#679): a V-Carve and an Inlay accept a tapered ball
+/// A V-Carve and an Inlay accept a tapered ball
 /// nose, with no problem at all; any other cutter that is not a V-bit
 /// is still `v_carve_needs_v_bit`, its message naming both bits that
 /// carve.
@@ -6025,7 +6025,7 @@ fn tapered_ball_nose_is_accepted_by_v_carve_and_inlay() {
     let mut carve = carve_project(|_| {});
     carve.tools[1] = crate::test_support::tool_tbn_ultra();
     // A glue gap at or above the Ultra bit's 0.337 mm tangent height
-    // (#681: below it, `inlay_glue_gap_below_ball` warns).
+    // (below it, `inlay_glue_gap_below_ball` warns).
     let mut inlay = inlay_project(|inlay| inlay.glue_gap_mm = Some(0.5));
     inlay.tools[1] = crate::test_support::tool_tbn_ultra();
     for p in [carve, inlay] {
@@ -6042,7 +6042,7 @@ fn tapered_ball_nose_is_accepted_by_v_carve_and_inlay() {
     );
 }
 
-/// Slice 27c (#679): a tapered ball nose's limit is its cutting
+/// A tapered ball nose's limit is its cutting
 /// height, `min(flute_length_mm, h_R)`, and `v_bit_cone_exceeded` says
 /// which: the Ultra bit's 19.05 mm flutes, or the Fine bit's cone
 /// reaching its 6.35 mm cutting diameter 18.374 mm up.
@@ -6082,7 +6082,7 @@ fn tapered_ball_nose_cone_exceeded_names_its_limit() {
     assert_eq!(deep(crate::test_support::tool_tbn_fine(), 18.3), vec![]);
 }
 
-/// Slice 27e (#681, question 32): a male Inlay's engagement from its
+/// Question 32: a male Inlay's engagement from its
 /// board's top, `D − G + P`, past a tapered ball nose's cutting height
 /// is `v_bit_cone_exceeded` at `plug_depth_mm`, an error naming the
 /// flutes (Ultra, 19.05 mm) or the cutting diameter (Fine, 18.374 mm).
@@ -6130,7 +6130,7 @@ fn tapered_inlay_engagement_beyond_the_flute_is_error() {
     assert_eq!(deep(crate::test_support::tool_tbn_fine(), 7.0), vec![]);
 }
 
-/// Slice 27e (#681; functional 49k): an Inlay cut with a tapered ball
+/// Functional 49k: an Inlay cut with a tapered ball
 /// nose warns `inlay_glue_gap_below_ball` at `glue_gap_mm` and
 /// `inlay_plug_depth_below_ball` at `plug_depth_mm` when either is
 /// below the bit's tangent height (the Fine bit's 1.010 mm), naming

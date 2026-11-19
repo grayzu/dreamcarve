@@ -177,7 +177,7 @@ fn countersink(targets: &[&str]) -> Operation {
     })
 }
 
-/// The issue #425 decision: a countersink's footprint is the disc of
+/// A countersink's footprint is the disc of
 /// its tool's radius at each hole, the bit's widest section above
 /// the start plane, not the hole circle. A Pocket that holds the
 /// 3.175 mm hole but not the 6.35 mm bit round it would let the
@@ -243,7 +243,7 @@ fn countersink_containment_needs_the_whole_bit_inside_the_pocket() {
     assert_eq!(found(&p), None, "a simple Drill");
 }
 
-// #426: a V-Carve's flat floor clears a start plane.
+// A V-Carve's flat floor clears a start plane.
 
 /// A V-Carve `v1` of `targets` with the 90° V-bit `t2` (slope 1),
 /// `flat_mm` flat depth and `start_mm` start depth.
@@ -272,7 +272,7 @@ fn with_hole(x: f64, y: f64) -> Project {
     p
 }
 
-/// Issue #426: an enabled earlier V-Carve with a flat depth `F`
+/// An enabled earlier V-Carve with a flat depth `F`
 /// clears the plane `s0 + F` down for a footprint inside its floor
 /// regions, the targets inset by `F · tan(α/2)` with its own V-bit.
 /// The sample rectangle `i1` (x 10..60, y 10..40) carved 2.5 mm flat
@@ -340,7 +340,7 @@ fn v_carve_floor_clears_its_start_plane() {
     assert_eq!(plane(&p), None, "an outline over the slope");
 }
 
-/// Slice 27c (#679): a V-Carve cut with a tapered ball nose has its
+/// A V-Carve cut with a tapered ball nose has its
 /// floor at the bit's half-width at the flat depth, `w(F)`, not `F ·
 /// tan β`. The Fine bit carving the sample rectangle `i1` (x 10..60)
 /// 2.5 mm flat has its floor from x 10 + `w(2.5)` = 11.310: a 5 mm
@@ -369,7 +369,7 @@ fn tapered_v_carve_floor_clears_its_start_plane() {
     }
 }
 
-/// Issue #426: like a Pocket, a disabled V-Carve and one after the
+/// Like a Pocket, a disabled V-Carve and one after the
 /// operation clear nothing; of an earlier Pocket and V-Carve that
 /// both hold the footprint, the later one is the plane.
 #[test]
@@ -403,7 +403,7 @@ fn disabled_or_later_v_carve_does_not_clear() {
     assert_eq!(plane(&p), Some(("p1", Some(2.0))), "the Pocket is later");
 }
 
-/// Issue #426: a V-Carve with no flat depth has no floor, so it
+/// A V-Carve with no flat depth has no floor, so it
 /// clears no plane; nor does one whose floor does not resolve (no
 /// V-bit to give its slope).
 #[test]

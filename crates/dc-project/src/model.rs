@@ -31,8 +31,8 @@ use std::collections::BTreeMap;
 /// A DreamCarve project: stock, features, tools, operations and machine
 /// setup. The root of a `.dcv` file.
 ///
-/// Fields are declared, and so saved, in the order a person edits them
-/// (#76): the settings first, the geometry last. Readers accept any order.
+/// Fields are declared, and so saved, in the order a person edits them: the
+/// settings first, the geometry last. Readers accept any order.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Project {
@@ -50,23 +50,23 @@ pub struct Project {
     pub flatten_tolerance_mm: f64,
     /// Fit arcs to straight runs at export within this deviation,
     /// millimetres (functional spec, capability 24). `None` turns fitting
-    /// off. `init` writes 0.01. Read by the arc fitter once it lands
-    /// (#117 lists the follow-ups).
+    /// off. `init` writes 0.01. `dc-gcode`'s arc fitter reads it at
+    /// export.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub arc_fit_tolerance_mm: Option<f64>,
     /// The material block.
     pub stock: Stock,
     /// Where the machine's work zero sits relative to the stock.
     pub origin: MachineOrigin,
-    /// The clearance, tool-change and park heights (#283; functional
-    /// spec, capability 33). Each is optional; unset, the program is as
-    /// before format version 12.
+    /// The clearance, tool-change and park heights (functional spec,
+    /// capability 33). Each is optional; unset, the program is as before
+    /// format version 12.
     pub heights: Heights,
     /// Tools embedded in the project (ADR-0002).
     pub tools: Vec<Tool>,
     /// Machining operations, in cutting order.
     pub operations: Vec<Operation>,
-    /// Holding tabs placed on the outlines of instances (#105, ADR-0005).
+    /// Holding tabs placed on the outlines of instances (ADR-0005).
     /// Every enabled Profile that cuts a tab's outline rises over it.
     pub tabs: Vec<PlacedTab>,
     /// Placed copies of definitions.
@@ -84,7 +84,7 @@ pub struct Project {
 }
 
 /// Heights the program moves to between parts, at a tool change and at
-/// the end (#283; `docs/specs/phase-2/design.md`, "Phase 2 addendum
+/// the end (`docs/specs/phase-2/design.md`, "Phase 2 addendum
 /// (#73)", A7). After VCarve's Material Setup ("Rapid Z Gaps above
 /// Material", "Home / Start Position") and Fusion's clearance and retract
 /// heights. Every field is `None` until the user sets it, and a project
@@ -161,7 +161,7 @@ pub struct Stock {
     pub height_mm: f64,
     /// Extent along Z, millimetres. The material bottom is Z = 0. `None`
     /// until the user measures the material; like a feed, it is never
-    /// defaulted, and validation reports it as an error until set (#64).
+    /// defaulted, and validation reports it as an error until set.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub thickness_mm: Option<f64>,
 }
@@ -254,15 +254,15 @@ pub struct FeatureInstance {
     pub name: String,
     /// Shown in previews. Reserved for the GUI (phase 4): saved and
     /// loaded, but nothing reads it yet, and export cuts a hidden instance
-    /// like any other (#71).
+    /// like any other.
     pub visible: bool,
     /// Protected from edits. Reserved for the GUI (phase 4), like
     /// `visible`.
     pub locked: bool,
     /// Top of the feature, millimetres above the material bottom. `None`
     /// until the user sets it; nothing reads it yet, so it is never
-    /// guessed (#99). Reserved: validation checks only its range and that
-    /// it is not below `z_bottom_mm` (#71).
+    /// guessed. Reserved: validation checks only its range and that
+    /// it is not below `z_bottom_mm`.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub z_top_mm: Option<f64>,
     /// Bottom of the feature, millimetres above the material bottom. `None`
@@ -396,7 +396,7 @@ pub enum ToolKind {
     /// Twist drill. Phase 2 drills with any cutter; the kind drives
     /// warnings and Fusion import only.
     Drill,
-    /// A tapered ball nose (format 28, #445): a cone of half-angle
+    /// A tapered ball nose (format 28): a cone of half-angle
     /// `taper_angle_deg` capped by a ball of diameter `tip_diameter_mm`,
     /// its width capped by the tool's `diameter_mm`, the cutting diameter.
     /// Saved as `{ "tapered_ball_nose": { "tip_diameter_mm": 0.762,
@@ -424,7 +424,7 @@ pub enum ToolKind {
 impl ToolKind {
     /// Whether the cutter cuts its full diameter at every depth, as a flat
     /// end mill does. Profile and Pocket offset the path by half the
-    /// diameter, which is right only for such a cutter (#67). An engraving
+    /// diameter, which is right only for such a cutter. An engraving
     /// bit usually narrows to a point, and its kind carries no shape, so it
     /// is not; nor is a drill, whose tip is a cone.
     #[must_use]
@@ -466,9 +466,9 @@ pub enum Operation {
     /// Carve closed outlines along their medial lines with a V-bit
     /// (format 20).
     VCarve(VCarveOp),
-    /// Cut a V-bit inlay of closed outlines: the female pocket on the
-    /// stock and the male plug on its own board (format 22; both boards
-    /// since format 25, #498).
+    /// Cut a V-bit inlay of closed outlines: the female pocket on the stock
+    /// and the male plug on its own board (format 22; both boards since
+    /// format 25).
     Inlay(InlayOp),
     /// Carve a picture as parallel V-bit grooves whose depth follows its
     /// darkness (format 27).
@@ -517,7 +517,7 @@ impl Operation {
     /// The tools the operation cuts with, in the order it cuts with them
     /// (format 20, capability 40): a V-Carve's or an Inlay's clearing
     /// passes' tools, in list order, then its own; every other operation's
-    /// one tool. An Inlay's cut-out tool comes last (format 23, #443); it
+    /// one tool. An Inlay's cut-out tool comes last (format 23); it
     /// cuts on the male board ([`Self::board_run_tools`]).
     pub fn run_tools(&self) -> Vec<&ToolId> {
         let clearing = match self {
@@ -543,7 +543,7 @@ impl Operation {
     }
 
     /// The tools the operation cuts with on `board`, in the order it cuts
-    /// with them there (#498): on the female board (the stock) every
+    /// with them there: on the female board (the stock) every
     /// operation's [`Self::run_tools`] but an Inlay's cut-out; on the male
     /// board an Inlay's clearing passes, its V-bit and its cut-out, when
     /// its male is cut ([`InlayOp::cuts_male`]), and nothing else.
@@ -585,15 +585,14 @@ impl Operation {
     /// Final depth below the stock top, millimetres; `None` until set. A
     /// V-Carve has no depth of its own: with a flat depth it is the start
     /// depth plus the flat depth, the deepest it cuts; without one, its
-    /// depth follows from the shapes, so `None`, which is not an unset value.
-    /// A countersink Drill's depth follows from its tool's angle, so it is
-    /// `None` too, whatever its `depth_mm` holds (format 21; see
+    /// depth follows from the shapes, so `None`, which is not an unset
+    /// value. A countersink Drill's depth follows from its tool's angle, so
+    /// it is `None` too, whatever its `depth_mm` holds (format 21; see
     /// [`crate::countersink_depth_mm`]). An Inlay's is the deepest it cuts
-    /// below the stock top, its female's `depth_mm` (format 22; the male
-    /// is cut on its own board, #498, [`InlayOp::engagement_mm`]), `None`
-    /// until set. A Photo V-Carve's is its start depth plus its
-    /// `max_depth_mm`, where its darkest pixels are carved (format 27),
-    /// `None` until that is set.
+    /// below the stock top, its female's `depth_mm` (format 22; the male is
+    /// cut on its own board, [`InlayOp::engagement_mm`]), `None` until set.
+    /// A Photo V-Carve's is its start depth plus its `max_depth_mm`, where
+    /// its darkest pixels are carved (format 27), `None` until that is set.
     pub fn depth_mm(&self) -> Option<f64> {
         match self {
             Self::Profile(op) => op.depth_mm,
@@ -783,7 +782,7 @@ pub struct ProfileOp {
     /// Which side of the outline the cutter runs on.
     pub side: Side,
     /// Final depth below the stock top, millimetres. `None` until the user
-    /// sets it; never defaulted, and an error in validation until set (#64).
+    /// sets it; never defaulted, and an error in validation until set.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub depth_mm: Option<f64>,
     /// Depth per pass, millimetres; overrides [`Tool::step_down_mm`].
@@ -799,7 +798,7 @@ pub struct ProfileOp {
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
     /// A tab request: tabs still to be placed on this operation's
-    /// targets, as a format 10 file set them (#105, ADR-0005). Placed
+    /// targets, as a format 10 file set them (ADR-0005). Placed
     /// tabs are [`Project::tabs`]; a request is not cut data. Generation
     /// places a request before it cuts, as `dreamcarve tabs place` does,
     /// so an older file cuts the same; every `tabs` command that saves the
@@ -819,25 +818,23 @@ pub struct ProfileOp {
     /// an Inside cut, the part's concave corners on an Outside cut.
     /// Migration: none.
     pub corner_relief: CornerRelief,
-    /// A finishing pass (#284): every pass but the last leaves
+    /// A finishing pass: every pass but the last leaves
     /// [`LastPass::stock_to_leave_mm`] on the wall and the last cuts it to
     /// size. Inside and Outside only. `init` and migration: none.
     #[serde(deserialize_with = "Option::deserialize")]
     pub last_pass: Option<LastPass>,
-    /// Where each closed outline's cut starts (#285, functional spec
-    /// capability 36). `init` and migration: [`StartAt::Auto`], as
-    /// before.
+    /// Where each closed outline's cut starts (functional spec capability
+    /// 36). `init` and migration: [`StartAt::Auto`], as before.
     pub start: StartAt,
 }
 
-/// Where a Profile's cut starts on each closed outline (#285; VCarve's 2D
-/// Profile "Use vector start point" and "Start At", Fusion's "Entry
-/// Positions"). Saved as `"auto"`, `"first_vertex"`, or `{ "near": {
-/// "x_mm": 0.0, "y_mm": 0.0 } }`. With an explicit start the tabs a
-/// request places are measured from it, a lead arrives there or is
-/// dropped, and an entry with no room there falls back instead of moving.
-/// Open paths ignore it: their start is the end the cut direction sets
-/// (#242).
+/// Where a Profile's cut starts on each closed outline (VCarve's 2D Profile
+/// "Use vector start point" and "Start At", Fusion's "Entry Positions").
+/// Saved as `"auto"`, `"first_vertex"`, or `{ "near": { "x_mm": 0.0,
+/// "y_mm": 0.0 } }`. With an explicit start the tabs a request places are
+/// measured from it, a lead arrives there or is dropped, and an entry with
+/// no room there falls back instead of moving. Open paths ignore it: their
+/// start is the end the cut direction sets.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub enum StartAt {
@@ -859,11 +856,12 @@ pub enum StartAt {
     },
 }
 
-/// A Profile's last pass stock to leave (#284, functional spec capability 34;
+/// A Profile's last pass stock to leave (functional spec capability 34;
 /// VCarve's 2D Profile "Last Pass Allowance", Fusion's 2D Contour stock to
-/// leave and finishing pass): every pass but the last runs `stock_to_leave_mm`
-/// farther from the part, and the last pass cuts on the part's path, so
-/// it takes an even skin off the whole wall and leaves no step marks.
+/// leave and finishing pass): every pass but the last runs
+/// `stock_to_leave_mm` farther from the part, and the last pass cuts on the
+/// part's path, so it takes an even skin off the whole wall and leaves no
+/// step marks.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LastPass {
@@ -1053,7 +1051,7 @@ pub struct DrillOp {
     /// Height above the hole top to return to between pecks and between
     /// holes, millimetres, 0 or more. `init` writes 1. A countersink
     /// measures it from the stock top, not from its start plane, so the
-    /// rapid down to it never ends in the stock (security review H3).
+    /// rapid down to it never ends in the stock.
     #[serde(deserialize_with = "units_input::mm")]
     pub retract_mm: f64,
     /// How far below the stock bottom the cut may go, millimetres.
@@ -1063,17 +1061,17 @@ pub struct DrillOp {
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
     /// Drill a hole narrower than the tool anyway, at the tool's diameter
-    /// (format 16; maintainer decision 2026-10-24). `false`, the default,
+    /// (format 16). `false`, the default,
     /// skips such a hole with a warning: a Drill never moves sideways, so
     /// it would come out larger than drawn. `true` suits a clearance hole
     /// drawn at the screw's size.
     pub allow_tool_wider_than_hole: bool,
 }
 
-/// A bore operation (format 18; maintainer decision 2026-10-24;
-/// functional spec, capability 14a): cuts each circular target bigger than
-/// the tool to its drawn size, spiralling down a helix inside the hole to
-/// the depth and cutting one full circle there, as Fusion's "2D Bore".
+/// A bore operation (format 18; functional spec, capability 14a): cuts each
+/// circular target bigger than the tool to its drawn size, spiralling down
+/// a helix inside the hole to the depth and cutting one full circle there,
+/// as Fusion's "2D Bore".
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BoreOp {
@@ -1197,14 +1195,14 @@ pub struct ClearingPass {
 
 /// A V-bit inlay, both its boards (format 22; `docs/specs/phase-3/
 /// functional.md`, capability 45, after Corbin's Workshop's method; one
-/// operation for both boards since format 25, #498). The **female**
-/// V-carves the design into the project's stock to `depth_mm` with a flat
-/// floor; the **male** carves the band round the mirrored design out of
-/// the Inlay's [`MaleBoard`], leaving a plug whose V-sloped walls seat in
-/// the female's. The same values describe both boards, so they cannot
-/// drift apart. An Inlay has no start depth: the female starts at the
-/// stock top, and the male at `depth_mm − glue_gap_mm` below its board's
-/// top, with the plug above kept on purpose.
+/// operation for both boards since format 25). The **female** V-carves the
+/// design into the project's stock to `depth_mm` with a flat floor; the
+/// **male** carves the band round the mirrored design out of the Inlay's
+/// [`MaleBoard`], leaving a plug whose V-sloped walls seat in the female's.
+/// The same values describe both boards, so they cannot drift apart. An
+/// Inlay has no start depth: the female starts at the stock top, and the
+/// male at `depth_mm − glue_gap_mm` below its board's top, with the plug
+/// above kept on purpose.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InlayOp {
@@ -1219,7 +1217,7 @@ pub struct InlayOp {
     pub targets: Vec<InstanceId>,
     /// The tool to carve with: a V-bit.
     pub tool: ToolId,
-    /// The board the male is cut from (format 25, #498). Until its
+    /// The board the male is cut from (format 25). Until its
     /// thickness is set the male is not cut.
     pub male_board: MaleBoard,
     /// How deep the female pocket is, millimetres below the stock top
@@ -1244,14 +1242,14 @@ pub struct InlayOp {
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub margin_mm: Option<f64>,
     /// How far the male's band is rounded, millimetres, above 0 (format
-    /// 24, #448): the band's outer edge is the design grown by
-    /// `margin_mm` and closed by this radius, so its inward curves are no
-    /// tighter and notches and gaps narrower than about twice it fill; the
-    /// cut-out follows it. `None` (`init` and migration) rounds by nothing
-    /// but the edge pass's radius when the edge is open. Used by the male.
+    /// 24): the band's outer edge is the design grown by `margin_mm` and
+    /// closed by this radius, so its inward curves are no tighter and
+    /// notches and gaps narrower than about twice it fill; the cut-out
+    /// follows it. `None` (`init` and migration) rounds by nothing but the
+    /// edge pass's radius when the edge is open. Used by the male.
     #[serde(deserialize_with = "units_input::opt_mm")]
     pub outline_rounding_mm: Option<f64>,
-    /// A drawn edge for the male's band (format 26, #449): instances whose
+    /// A drawn edge for the male's band (format 26): instances whose
     /// closed outlines, united, are the band's outer edge, in place of
     /// `margin_mm` and `outline_rounding_mm`. Saved as `"boundary": []` or
     /// `["i3"]`; empty (`init` and migration) leaves the band the design
@@ -1279,20 +1277,20 @@ pub struct InlayOp {
     /// Retract height above the stock top, millimetres.
     #[serde(deserialize_with = "units_input::mm")]
     pub safe_z_mm: f64,
-    /// The male's (format 23, #443): an end-mill pass that frees the plug
+    /// The male's (format 23): an end-mill pass that frees the plug
     /// from its board, run last, in the band's flat floor. `None` (`init`
     /// and migration) leaves the plug to be sawn free.
     #[serde(deserialize_with = "Option::deserialize")]
     pub cut_out: Option<InlayCutOut>,
 }
 
-/// A male Inlay's cut-out (format 23, #443; Corbin's "Plug Cutout"): a
-/// closed On line pass of a flat end mill round the plug, along the outer
-/// edge of the band's flat floor (the band's edge inset by
+/// A male Inlay's cut-out (format 23; Corbin's "Plug Cutout"): a closed On
+/// line pass of a flat end mill round the plug, along the outer edge of the
+/// band's flat floor (the band's edge inset by
 /// [`crate::MaleBand::cut_out_inset_mm`]: the tool's radius with an open
-/// edge, the V wall's foot plus the radius otherwise; #448, #461), from
-/// the floor down through the board, with tabs as a Profile's. The freed
-/// piece is the plug on a rim at floor height.
+/// edge, the V wall's foot plus the radius otherwise), from the floor down
+/// through the board, with tabs as a Profile's. The freed piece is the plug
+/// on a rim at floor height.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct InlayCutOut {
@@ -1310,7 +1308,7 @@ pub struct InlayCutOut {
 impl InlayOp {
     /// How deep the V-bit's flank engages on `board`, millimetres below
     /// that board's top, which is also the deepest the carve cuts there
-    /// (design spec, "Algorithms → Inlay", step 1; security review H4):
+    /// (design spec, "Algorithms → Inlay", step 1):
     /// `depth_mm` on the female, and `(depth_mm − glue_gap_mm) +
     /// plug_depth_mm` on the male, whose board above its start plane is
     /// the plug and is never cleared. `None` until the values it needs are
@@ -1332,7 +1330,7 @@ impl InlayOp {
         Some(self.depth_mm? - self.glue_gap_mm?)
     }
 
-    /// Whether the male is cut (#498): its board's thickness is set.
+    /// Whether the male is cut: its board's thickness is set.
     /// Until then only the female is, and the male's own rules (its
     /// margin, its cone, its cut-out, its plug base) wait too.
     #[must_use]
@@ -1340,7 +1338,7 @@ impl InlayOp {
         self.male_board.thickness_mm.is_some()
     }
 
-    /// Whether the male's band edge is drawn (format 26, #449):
+    /// Whether the male's band edge is drawn (format 26):
     /// `boundary` is not empty.
     #[must_use]
     pub const fn has_boundary(&self) -> bool {
@@ -1348,12 +1346,12 @@ impl InlayOp {
     }
 }
 
-/// The board an Inlay's male is cut from (format 25, #498; capability
-/// 45): a second board beside the stock, sharing its bottom-left corner,
-/// so the male's design is mirrored in place on it as it was on a male
-/// project's stock. The project's origin preset applies to it as to the
-/// stock. Saved as `{ "width_mm", "height_mm", "thickness_mm" }`, each a
-/// length or `null`.
+/// The board an Inlay's male is cut from (format 25; capability 45): a
+/// second board beside the stock, sharing its bottom-left corner, so the
+/// male's design is mirrored in place on it as it was on a male project's
+/// stock. The project's origin preset applies to it as to the stock. Saved
+/// as `{ "width_mm", "height_mm", "thickness_mm" }`, each a length or
+/// `null`.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MaleBoard {
@@ -1384,7 +1382,7 @@ impl MaleBoard {
     }
 }
 
-/// The board a program cuts (#498): the project's stock, which is the
+/// The board a program cuts: the project's stock, which is the
 /// female board of an Inlay and the board of every other operation, or
 /// an Inlay's male board. Not saved: each tool run carries it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -1441,10 +1439,10 @@ pub struct EngraveOp {
     pub safe_z_mm: f64,
 }
 
-/// Which side of an outline a profile cuts on. Inside, Outside and On
-/// line cut closed outlines; On line also cuts open paths along them, and
-/// Left and Right cut open paths beside them (#207, as VCarve's Profile of
-/// an open vector), skipping closed outlines.
+/// Which side of an outline a profile cuts on. Inside, Outside and On line
+/// cut closed outlines; On line also cuts open paths along them, and Left
+/// and Right cut open paths beside them (as VCarve's Profile of an open
+/// vector), skipping closed outlines.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Side {
@@ -1487,7 +1485,7 @@ impl Side {
     }
 
     /// True for the sides that cut one flank of the bit against the part,
-    /// leaving a wall a last pass can take a stock to leave off (#284, #311):
+    /// leaving a wall a last pass can take a stock to leave off:
     /// Inside, Outside, Left and Right. On line cuts with both flanks.
     #[must_use]
     pub const fn has_wall(self) -> bool {
@@ -1505,7 +1503,7 @@ pub enum CutDirection {
     Conventional,
 }
 
-/// A holding tab placed on one outline of one instance (#105, ADR-0005):
+/// A holding tab placed on one outline of one instance (ADR-0005):
 /// material a Profile that cuts the outline leaves standing, up to
 /// `height_mm`. Its place is a point in definition space, so it follows
 /// the instance when the instance moves, rotates, mirrors or scales; a
@@ -1532,21 +1530,20 @@ pub struct PlacedTab {
     pub height_mm: f64,
     /// Tab cross-section.
     pub shape: TabShape,
-    /// Whether the tab is meant to hold the slug of the hole it is on
-    /// (#302). It changes no cut, only whether `check` and `export` warn
-    /// `tab_on_hole` for it. `Some(true)`: the user asked for it, so they
-    /// do not; `tabs place --on-holes` and a request with `on_holes`
-    /// write it for each tab they put on a hole. `Some(false)`: they do;
-    /// every other placing writes it. `None`: not recorded, as the
-    /// version 15 migration writes it for every tab: they warn as format
-    /// 14 did, except for a tab on the tool path round the hole of the
-    /// Profile that cuts it, where only placing with `on_holes` puts one
-    /// (#300).
+    /// Whether the tab is meant to hold the slug of the hole it is on. It
+    /// changes no cut, only whether `check` and `export` warn `tab_on_hole`
+    /// for it. `Some(true)`: the user asked for it, so they do not; `tabs
+    /// place --on-holes` and a request with `on_holes` write it for each
+    /// tab they put on a hole. `Some(false)`: they do; every other placing
+    /// writes it. `None`: not recorded, as the version 15 migration writes
+    /// it for every tab: they warn as format 14 did, except for a tab on
+    /// the tool path round the hole of the Profile that cuts it, where only
+    /// placing with `on_holes` puts one.
     #[serde(deserialize_with = "Option::deserialize")]
     pub holds_slug: Option<bool>,
 }
 
-/// Holding tabs to place on every outline a Profile cuts (#105, ADR-0005):
+/// Holding tabs to place on every outline a Profile cuts (ADR-0005):
 /// a generator of [`PlacedTab`]s with the phase 2 layout rules, as
 /// `dreamcarve tabs place` and `init` use it, and the format 10 tab
 /// setting a format 11 file may still hold as [`ProfileOp::tabs`].
@@ -1565,10 +1562,10 @@ pub struct TabSpec {
     pub shape: TabShape,
     /// Whether holes get tabs too: the outlines nested in another of the
     /// operation's outlines as holes. Without, a hole is cut free, since
-    /// its slug is waste (#109). `init` writes `false`; the version 9
+    /// its slug is waste. `init` writes `false`; the version 9
     /// migration writes `true`, as every outline had tabs before.
     pub on_holes: bool,
-    /// Tabs slide off corners (#285, functional spec capability 35): a
+    /// Tabs slide off corners (functional spec capability 35): a
     /// tab whose stretch would lie where the bit's path turns 30° or more
     /// within one bit diameter moves along the path to the nearest place
     /// where it does not. `init` writes `true`; the version 14 migration

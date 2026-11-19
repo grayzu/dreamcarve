@@ -3,7 +3,7 @@
 
 //! Reading a [`Bitmap`]'s stored picture (format 27;
 //! `docs/specs/phase-3/design.md`, "Data model → dc-project" and "Bitmap
-//! import and storage", steps 4 and 5; security review M4).
+//! import and storage", steps 4 and 5).
 //!
 //! A `.dcv` file is untrusted input, and a bitmap's `png_base64` is the one
 //! field of it that is decompressed, so every reader here checks before it
@@ -35,7 +35,7 @@ use std::io::Cursor;
 
 /// The largest picture a project may hold, per side, in pixels. It lives
 /// here, not in `dc-import`, because a hand-edited `.dcv` reaches
-/// [`Bitmap::pixels`] without passing an importer (security review M4).
+/// [`Bitmap::pixels`] without passing an importer.
 pub const MAX_BITMAP_SIDE_PX: u32 = 8192;
 
 /// The bytes of a PNG's signature and `IHDR` chunk: 8 of signature, then
@@ -204,12 +204,15 @@ impl Bitmap {
     /// header against them and against 8-bit grayscale. It then decodes
     /// under an explicit `png::Limits` of `MAX_BITMAP_SIDE_PX² + one row`
     /// bytes with text and colour-profile chunks ignored, into a buffer
-    /// whose size is computed with `checked_mul` (security review M4). Every failure is
+    /// whose size is computed with `checked_mul`. Every failure is
     /// a [`LoadError::Bitmap`]; nothing panics and nothing is allocated
     /// for a picture past the limit.
     ///
-    /// Decodes on each call: the model holds no cache, so `Clone` stays
-    /// cheap and correct. Only generation and the preview call it.
+    /// Decodes on each call: the model holds no cache of the pixels, so a
+    /// clone copies the stored `png_base64` and never a decoded picture.
+    /// That text is still as large as the PNG, so a clone of a project
+    /// with pictures is not cheap. Only generation and the preview call
+    /// this.
     pub fn pixels(&self) -> Result<Grayscale, LoadError> {
         self.read_pixels().map_err(|reason| self.load_error(reason))
     }
@@ -367,7 +370,7 @@ fn check_size(width_px: u32, height_px: u32) -> Result<(), BitmapError> {
 
 /// The most the PNG decoder may allocate for one picture, beside the
 /// pixel buffer [`Bitmap::pixels`] hands it: `MAX_BITMAP_SIDE_PX² + one
-/// row` bytes (security review M4), the size of the largest picture's
+/// row` bytes, the size of the largest picture's
 /// image data with its filter bytes. The decoder's own buffers are a row
 /// or two; the rest bounds what it may hold of an ancillary chunk. With
 /// `png` 0.18 nothing a `.dcv` can hold reaches it, since

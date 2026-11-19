@@ -62,7 +62,7 @@ fn save_writes_numbers_after_unit_input() {
     assert_eq!(save(&reloaded).unwrap(), saved);
 }
 
-/// #105: placed tabs save after the operations, every field in
+/// Placed tabs save after the operations, every field in
 /// declaration order, and load back equal.
 #[test]
 fn placed_tabs_round_trip() {
@@ -148,7 +148,7 @@ fn missing_option_field_is_rejected() {
     );
 }
 
-/// #95, #65: a current-version file without `tool_change_mode` is
+/// A current-version file without `tool_change_mode` is
 /// rejected, naming the field. Only an older file gets it, from the
 /// migration.
 #[test]
@@ -164,7 +164,7 @@ fn missing_tool_change_mode_is_rejected() {
     );
 }
 
-/// #99: an instance whose depths are unset saves both as `null` and
+/// An instance whose depths are unset saves both as `null` and
 /// loads back equal.
 #[test]
 fn instance_depths_round_trip_as_null() {
@@ -178,7 +178,7 @@ fn instance_depths_round_trip_as_null() {
     assert_eq!(loaded.project, p);
 }
 
-/// #99, #65: the instance depths may be `null`, but the keys stay
+/// The instance depths may be `null`, but the keys stay
 /// required. A file without one fails to load, naming the instance and
 /// the missing key.
 #[test]
@@ -384,7 +384,7 @@ fn v_bit_cutter_round_trips_as_a_keyed_object() {
     assert_eq!(loaded.project, p);
 }
 
-// Format 28 (sub-phase 3.6, #677): the tapered ball nose.
+// Format 28 (sub-phase 3.6): the tapered ball nose.
 
 /// The sample with the bench's Ultra-High Detail bit as tool `t1`.
 fn tapered_sample() -> crate::model::Project {
@@ -537,7 +537,7 @@ fn top_level_offset(text: &str, key: &str) -> usize {
         .unwrap_or_else(|| panic!("{key} is a top-level key: {text}"))
 }
 
-/// #76: everything a user fills in comes before the geometry.
+/// Everything a user fills in comes before the geometry.
 #[test]
 fn settings_are_written_before_geometry() {
     let text = save(&sample_project()).unwrap();
@@ -549,7 +549,7 @@ fn settings_are_written_before_geometry() {
     assert!(rest.windows(2).all(|w| w[0] < w[1]), "{text}");
 }
 
-/// #76: each vertex object is on one line; the rest of the file is the
+/// Each vertex object is on one line; the rest of the file is the
 /// committed pretty layout.
 #[test]
 fn vertices_are_one_per_line() {
@@ -567,7 +567,7 @@ fn vertices_are_one_per_line() {
     assert_eq!(text, CURRENT_FIXTURE);
 }
 
-/// #76: the compact layout loses nothing: every `f64` comes back
+/// The compact layout loses nothing: every `f64` comes back
 /// bit-for-bit, and saving again gives the same bytes.
 #[test]
 fn compact_output_round_trips() {
@@ -644,13 +644,13 @@ const POST_OPTION_KEYS: &[&[&str]] = &[
     &["coolant"],
 ];
 
-/// #65: an `Option` is required, `null` when unset, so a
+/// An `Option` is required, `null` when unset, so a
 /// post-processor definition with a field left out fails rather than
 /// reading as `None`.
 #[test]
 fn every_missing_post_option_fails() {
     let mut post: Value = serde_json::from_str(GRBLHAL).unwrap();
-    // The fixture predates the phase 2 definition fields (#117).
+    // The fixture predates the phase 2 definition fields.
     post["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
     post["use_canned_cycles"] = Value::from(false);
     // And the one #283 added.
@@ -692,7 +692,7 @@ fn line_of(text: &str, needle: &str) -> usize {
         + 1
 }
 
-/// #65: an unknown key in a file at the current version is reported at
+/// An unknown key in a file at the current version is reported at
 /// its line and column, also inside an internally tagged enum.
 #[test]
 fn schema_error_has_line_and_column() {
@@ -731,7 +731,7 @@ fn schema_error_has_line_and_column() {
     }
 }
 
-/// #65: after a migration the error still names where the bad value is.
+/// After a migration the error still names where the bad value is.
 #[test]
 fn schema_error_after_migration_has_path() {
     let text = V2_FIXTURE.replacen("\"count\": 4", "\"count\": 4,\n          \"bogus\": 1", 1);
@@ -748,9 +748,9 @@ fn schema_error_after_migration_has_path() {
     );
 }
 
-/// #712: serde reads an internally tagged enum whole, so the path to a
+/// Serde reads an internally tagged enum whole, so the path to a
 /// wrong value inside an operation comes from `operation_error`. An
-/// Inlay's names the field and its line, as every other kind's (#65).
+/// Inlay's names the field and its line, as every other kind's.
 #[test]
 fn inlay_schema_error_names_its_field() {
     let mut p = sample_project();
@@ -794,7 +794,7 @@ fn sample_after(op: &Operation) -> Option<Operation> {
     }
 }
 
-/// #712, #65: a wrong value inside an operation is reported at its
+/// A wrong value inside an operation is reported at its
 /// field, whatever the operation's kind. One sample of every
 /// `Operation` variant (`sample_after`) has its `enabled`, which every
 /// kind has, set to a string; the schema error stops the load before
@@ -822,7 +822,7 @@ fn every_operation_kind_reports_its_field() {
     }
 }
 
-/// #65: a `decimal_places` of the wrong form says where it is and what
+/// A `decimal_places` of the wrong form says where it is and what
 /// it may be.
 #[test]
 fn bad_decimal_places_message() {
@@ -839,7 +839,7 @@ fn bad_decimal_places_message() {
     assert!(shown.contains("`mm` and `inch`"), "{shown}");
 }
 
-// Phase 2, #117: the new types and fields in the file.
+// Phase 2: the new types and fields in the file.
 
 /// Functional spec, capability 21a: a tool's number is `null` until
 /// set, and a set one is written as the integer.
@@ -896,7 +896,7 @@ fn bore_round_trips() {
     assert_eq!(load(text.as_bytes()).unwrap().project, p);
 }
 
-/// #394 (format 19): a Pocket, a Bore and a Profile's last pass save
+/// Format 19: a Pocket, a Bore and a Profile's last pass save
 /// the stock they leave as `stock_to_leave_mm`, never `allowance_mm`,
 /// and load back.
 #[test]
@@ -1145,7 +1145,7 @@ fn inlay_round_trips() {
     }
 }
 
-/// Format 23 (#443): a male Inlay's `cut_out` saves after `safe_z_mm`
+/// Format 23: a male Inlay's `cut_out` saves after `safe_z_mm`
 /// as `{ "tool", "tabs", "through_cut_allowance_mm" }`, its tabs a
 /// Profile's tab request or `null`, and loads back the same; `null`
 /// when there is none; every field required, a length may carry its
@@ -1255,7 +1255,7 @@ fn inlay_cut_out_round_trips() {
     }
 }
 
-/// Format 24 (#448): an Inlay's `outline_rounding_mm` saves right after
+/// Format 24: an Inlay's `outline_rounding_mm` saves right after
 /// `margin_mm`, a number or `null`, and loads back the same; it may
 /// carry its unit, and it is required, `null` included.
 #[test]
@@ -1314,7 +1314,7 @@ fn inlay_outline_rounding_round_trips() {
     assert!(err.contains("outline_rounding_mm"), "{err}");
 }
 
-/// Format 25 (#498): an Inlay's `male_board` saves right after `tool`,
+/// Format 25: an Inlay's `male_board` saves right after `tool`,
 /// in the place `side` held, as `{ "width_mm", "height_mm",
 /// "thickness_mm" }`, each a length or `null`, and loads back the
 /// same; a length may carry its unit; every field is required, `null`
@@ -1388,7 +1388,7 @@ fn inlay_male_board_round_trips() {
     }
 }
 
-/// Format 26 (#449, #602): the Inlay's `boundary` is a list of
+/// Format 26: the Inlay's `boundary` is a list of
 /// instance ids, saved right after `outline_rounding_mm` as `[]` or
 /// `["i3"]`, and read back unchanged; every field is required, so a
 /// file without it is not format 26.
@@ -1430,7 +1430,7 @@ fn inlay_boundary_round_trips() {
     assert!(err.contains("boundary"), "{err}");
 }
 
-/// Format 26 (#602): `boundary` comes right after
+/// Format 26: `boundary` comes right after
 /// `outline_rounding_mm`, before `clearing`.
 #[test]
 fn boundary_is_an_array_after_outline_rounding() {
@@ -1950,7 +1950,7 @@ fn clearance_strategy_raster_carries_angle() {
     assert_eq!(loaded.project, p);
 }
 
-/// #117, #65: a current-version file without a phase 2 field is
+/// A current-version file without a phase 2 field is
 /// rejected, naming the field at the operation. Only an older file
 /// gets it, from the migration.
 #[test]

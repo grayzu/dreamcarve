@@ -6,12 +6,12 @@
 //!
 //! [`save`] writes pretty-printed JSON with keys in declaration order, the
 //! settings first and the geometry last, each vertex on one line
-//! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes, reads `version`, migrates to
-//! [`crate::CURRENT_VERSION`], deserializes strictly (unknown fields and missing
-//! fields both fail), checks that each bitmap's picture is base64 holding a
-//! PNG header (format 27; no image data is decoded), and then validates. A schema error names the path to
-//! the bad value and, when the file has a value there, its line and column
-//! (#65).
+//! ([`crate::layout`]), and a trailing newline. [`load`] parses bytes,
+//! reads `version`, migrates to [`crate::CURRENT_VERSION`], deserializes
+//! strictly (unknown fields and missing fields both fail), checks that each
+//! bitmap's picture is base64 holding a PNG header (format 27; no image
+//! data is decoded), and then validates. A schema error names the path to
+//! the bad value and, when the file has a value there, its line and column.
 //!
 //! `load` fails only when the bytes cannot become a [`Project`]. Validation
 //! problems, errors included, come back beside the project in [`Loaded`] so
@@ -138,8 +138,8 @@ pub struct Loaded {
     pub project: Project,
     /// Validation problems, errors and warnings.
     pub problems: Vec<Problem>,
-    /// What migrating the file changed that the user should hear about
-    /// (#498); empty for a file of the current version.
+    /// What migrating the file changed that the user should hear about;
+    /// empty for a file of the current version.
     pub notes: Vec<MigrationNote>,
 }
 
@@ -189,11 +189,11 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
         migrate_with_notes(root, version).map_err(|err| locate_migration(err, bytes))?;
     let project = deserialize_project(&root, bytes)?;
     check_post_processor(&project, bytes)?;
-    // Format 27 (#644): each picture's text is base64 and starts with a
+    // Format 27: each picture's text is base64 and starts with a
     // PNG header, or the file does not load. The header's contents, and
     // the image data behind it, are not `load`'s: validation reads the
     // header and `Bitmap::pixels` the data, so opening a file costs
-    // nothing per pixel (phase 3 security review M4).
+    // nothing per pixel.
     for bitmap in &project.bitmaps {
         bitmap.check_stored()?;
     }
@@ -212,7 +212,7 @@ pub fn load(bytes: &[u8]) -> Result<Loaded, LoadError> {
 
 /// `err` with the position of the first field its message names, in
 /// backquotes as `operations[0].last_pass`, when it is a
-/// [`LoadError::Migration`] and `bytes` has a value there (#310 review),
+/// [`LoadError::Migration`] and `bytes` has a value there,
 /// as [`LoadError::Schema`] gives one.
 fn locate_migration(err: LoadError, bytes: &[u8]) -> LoadError {
     let LoadError::Migration {
@@ -242,7 +242,7 @@ fn locate_migration(err: LoadError, bytes: &[u8]) -> LoadError {
 type PathError = serde_path_to_error::Error<serde_json::Error>;
 
 /// Deserializes the migrated `root` strictly. On a mismatch, says where it
-/// is (#65): the path from serde_path_to_error, and the line and column of
+/// is: the path from serde_path_to_error, and the line and column of
 /// that path in `bytes`, the file as the user has it, found with
 /// [`SourceMap`]. The same lookup serves a file at the current version and
 /// a migrated one; a path only the migration created has no position.
@@ -269,7 +269,7 @@ fn deserialize_project(root: &Value, bytes: &[u8]) -> Result<Project, LoadError>
 }
 
 /// A `post_processor` that names no bundled definition version is a
-/// schema error at its `id` or `definition_version` (#106): the file is
+/// schema error at its `id` or `definition_version`: the file is
 /// well formed, but nothing can export it. The message lists what is
 /// bundled.
 fn check_post_processor(project: &Project, bytes: &[u8]) -> Result<(), LoadError> {
@@ -330,10 +330,10 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
 }
 
 /// Builds `variant_error` from [`Operation`]'s variants, each listed as
-/// `Variant(Struct) = "kind"`. The list cannot fall behind the enum
-/// (#712): the `match` on an `Operation` below has no wildcard arm, so a
-/// variant the list lacks does not compile, nor does a struct that is not
-/// its variant's. That each `kind` is the tag serde writes is the test
+/// `Variant(Struct) = "kind"`. The list cannot fall behind the enum: the
+/// `match` on an `Operation` below has no wildcard arm, so a variant the
+/// list lacks does not compile, nor does a struct that is not its
+/// variant's. That each `kind` is the tag serde writes is the test
 /// `every_operation_kind_reports_its_field`'s to hold.
 macro_rules! operation_variants {
     ($($variant:ident($fields:ty) = $kind:literal),+ $(,)?) => {
@@ -433,9 +433,8 @@ fn read_version(root: &Value) -> Result<u32, LoadError> {
 fn first_non_finite(problems: &[Problem]) -> Option<String> {
     problems.iter().find_map(|p| match p {
         Problem::NonFinite { field } => Some(field.clone()),
-        // A tapered ball nose's values are checked by their own rule
-        // (#677); a NaN there must not be saved as `null`, which reads
-        // back as unset.
+        // A tapered ball nose's values are checked by their own rule; a NaN
+        // there must not be saved as `null`, which reads back as unset.
         Problem::TaperedBallNoseRange { value, .. } if !value.is_finite() => p.field(),
         _ => None,
     })

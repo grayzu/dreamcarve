@@ -169,7 +169,7 @@ impl DecimalPlaces {
     /// One unit in the last place a program in `units` writes, mm:
     /// `10^−places` mm, or `10^−places` in (25.4 times as many mm). The
     /// safety pass compares written numbers within it, and an entry helix
-    /// whose moves are shorter is not cut (#265).
+    /// whose moves are shorter is not cut.
     #[must_use]
     pub fn quantum_mm(self, units: Units) -> f64 {
         let (places, mm_per_unit) = match units {
@@ -190,7 +190,7 @@ struct DecimalPlacesPerUnit {
 
 /// Reads either form of [`DecimalPlaces`]. A visitor rather than an
 /// untagged enum, so a value of neither form is reported as what was
-/// expected (#65), and an error inside the object keeps its key.
+/// expected, and an error inside the object keeps its key.
 struct DecimalPlacesVisitor;
 
 impl<'de> de::Visitor<'de> for DecimalPlacesVisitor {
@@ -269,7 +269,7 @@ pub struct WorkCoordinates {
     pub select_command: Option<String>,
     /// The non-modal command that makes one move in machine coordinates,
     /// `G53`, where the controller's documentation or source shows it
-    /// (#283; `definitions/README.md`, "Machine-coordinate moves"). The
+    /// (`definitions/README.md`, "Machine-coordinate moves"). The
     /// program writes it only as `G53 G0 Z…`, for a project's
     /// `heights.tool_change_machine_z_mm`; `None` refuses that height.
     #[serde(deserialize_with = "Option::deserialize")]
@@ -387,8 +387,8 @@ pub struct ToolChange {
     pub pause_after_change: bool,
     /// Pause command, for example `M0`.
     pub pause_command: String,
-    /// How a project whose operations use more than one tool is exported
-    /// (#95). Added in `.dcv` version 5.
+    /// How a project whose operations use more than one tool is exported.
+    /// Added in `.dcv` version 5.
     pub mode: ToolChangeMode,
 }
 
@@ -420,7 +420,7 @@ pub fn is_m6_line(line: &str) -> bool {
         .any(|w| w.eq_ignore_ascii_case("M6") || w.eq_ignore_ascii_case("M06"))
 }
 
-/// How a project whose operations use more than one tool is exported (#95).
+/// How a project whose operations use more than one tool is exported.
 /// A machine setting, so it is a post-processor setting
 /// ([`PostProcessorRef::tool_change_mode`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -502,7 +502,7 @@ pub struct Stop {
     pub program_end_command: String,
 }
 
-/// What a project stores about its post-processor (#106, ADR-0004): which
+/// What a project stores about its post-processor (ADR-0004): which
 /// bundled definition version it uses, and the user's settings. Everything
 /// else in the effective [`PostProcessor`] comes from that definition
 /// version, which is compiled in and never changes once released, so a
@@ -527,8 +527,7 @@ pub struct PostProcessorRef {
     /// Seconds to wait after every spindle start, so the spindle reaches
     /// speed before it cuts. `0` emits no dwell.
     pub spindle_on_dwell_s: f64,
-    /// How a project whose operations use more than one tool is exported
-    /// (#95).
+    /// How a project whose operations use more than one tool is exported.
     pub tool_change_mode: ToolChangeMode,
     /// Decimal places per output unit.
     pub decimal_places: DecimalPlaces,
@@ -581,7 +580,7 @@ impl PostProcessorRef {
 /// `default_settings`, and its path in the full definition. Up to `.dcv`
 /// version 6 a project held its whole definition, with the first
 /// [`V6_SETTING_COUNT`] settings at these paths; `use_canned_cycles`
-/// came with version 8 (#117).
+/// came with version 8.
 pub(crate) const SETTING_PATHS: [(&str, &[&str]); 6] = [
     ("file_extension", &["file_extension"]),
     ("spindle_control", &["feed_speed", "spindle_control"]),
@@ -679,8 +678,8 @@ const SOURCES: [Source; 16] = [
 /// into the binary, written once and read-only after. It is not state a
 /// caller can change, and every call sees the same value, so results stay
 /// pure functions of their inputs. It lets [`bundled_definitions`] hand
-/// out `&'static` definitions without parsing six files on every project
-/// load (#71).
+/// out `&'static` definitions without parsing every bundled file on each
+/// project load.
 static BUNDLED: OnceLock<Vec<BundledDefinition>> = OnceLock::new();
 
 /// One version of a bundled definition: `definitions/<id>/v<version>.json`.

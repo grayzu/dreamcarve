@@ -20,7 +20,7 @@ use dc_geometry::{
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ClearedPlane<'p> {
     /// The operation whose cut left the plane: an enabled Pocket, or an
-    /// enabled V-Carve with a flat depth (its floor, #426).
+    /// enabled V-Carve with a flat depth (its floor).
     pub by: &'p Operation,
 }
 
@@ -35,8 +35,8 @@ impl ClearedPlane<'_> {
 
     /// Whether the plane is `start_depth_mm` below the stock top, within
     /// [`EPS_MM`]: then it is the start plane of the operation it holds,
-    /// and that operation's flank is engaged from it (security review
-    /// H4). At another depth it is `start_depth_mismatch`.
+    /// and that operation's flank is engaged from it. At another depth it
+    /// is `start_depth_mismatch`.
     #[must_use]
     pub fn is_at(&self, start_depth_mm: f64) -> bool {
         self.depth_mm()
@@ -50,7 +50,7 @@ impl ClearedPlane<'_> {
 ///
 /// - **an enabled Pocket** whose regions (its targets' closed outlines,
 ///   nested) hold the whole footprint of `op`; the plane is its depth; or
-/// - **an enabled V-Carve with a flat depth `F`** (#426) whose floor
+/// - **an enabled V-Carve with a flat depth `F`** whose floor
 ///   regions hold it: its targets' regions inset by `F · tan(α/2)` with
 ///   its own V-bit ([`dc_geometry::floor_regions`], less the pieces too
 ///   thin to cut, as the generator's floor and the safety pass derive
@@ -78,7 +78,7 @@ impl ClearedPlane<'_> {
 ///   flatten tolerance times the outlines' length). The second catches an
 ///   outline whose vertices are all inside but whose edges cross a gap or
 ///   an island; an outline crossing a region boundary does not count.
-/// - **A countersink Drill** (format 21, #425): the disc of its tool's
+/// - **A countersink Drill** (format 21): the disc of its tool's
 ///   radius at the centre of each target circle (closed profiles that
 ///   are circles within the flatten tolerance, as the Drill finds its
 ///   holes), not the hole circle. That is the bit's widest section above
@@ -131,20 +131,20 @@ fn target_regions(project: &Project, targets: &[InstanceId]) -> Option<Vec<Regio
     Some(regions)
 }
 
-/// The floor regions of V-Carve `carve` (#426): its targets' regions
-/// inset by its own bit's half-width at the flat depth, `w(F)` (`F ·
-/// tan(α/2)` for a V-bit; #679), less those too thin to cut (area at most
-/// `tolerance_mm` times the perimeter, the generator's noise rule).
-/// `None` without a flat depth above 0, without a usable V-bit or tapered
-/// ball nose ([`crate::Tool::carve_profile`]), with a start depth that is not 0 or more,
-/// or when the targets do not resolve.
+/// The floor regions of V-Carve `carve`: its targets' regions inset by its
+/// own bit's half-width at the flat depth, `w(F)` (`F · tan(α/2)` for a
+/// V-bit), less those too thin to cut (area at most `tolerance_mm`
+/// times the perimeter, the generator's noise rule). `None` without a flat
+/// depth above 0, without a usable V-bit or tapered ball nose
+/// ([`crate::Tool::carve_profile`]), with a start depth that is not 0 or
+/// more, or when the targets do not resolve.
 fn v_carve_floor(project: &Project, carve: &VCarveOp, tolerance_mm: f64) -> Option<Vec<Region>> {
     let flat_depth_mm = carve.flat_depth_mm.filter(|f| f.is_finite() && *f > 0.0)?;
     if !(carve.start_depth_mm.is_finite() && carve.start_depth_mm >= 0.0) {
         return None;
     }
     let tool = project.tools.iter().find(|t| t.id == carve.tool)?;
-    // Slice 27c (#679): the bit's half-width at the flat depth, `w(F)`,
+    // The bit's half-width at the flat depth, `w(F)`,
     // which for a V-bit is `F · tan(α/2)`.
     let inset_mm = tool.carve_profile()?.half_width_mm(flat_depth_mm);
     if !(inset_mm.is_finite() && inset_mm > 0.0) {

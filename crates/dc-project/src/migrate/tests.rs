@@ -18,7 +18,7 @@ const V4_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v4/sample.dcv
 const V5_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v5/sample.dcv");
 
 /// The sample Pocket as raw JSON of `version`: before version 19 its
-/// `stock_to_leave_mm` is `allowance_mm` (#394).
+/// `stock_to_leave_mm` is `allowance_mm`.
 fn pocket_root_at(version: u32) -> Value {
     let pocket =
         serde_json::to_value(Operation::Pocket(crate::test_support::sample_pocket())).unwrap();
@@ -46,8 +46,8 @@ fn stock_board() -> crate::model::MaleBoard {
 
 /// `op` (an operation as the current version writes it) as version 24
 /// wrote it, when it is an Inlay: `side` in place of `male_board`,
-/// `"male"` when the board has a thickness, else `"female"` (#498),
-/// and no `boundary` (#449).
+/// `"male"` when the board has a thickness, else `"female"`,
+/// and no `boundary`.
 fn as_v24(op: &mut Value) {
     let Some(fields) = op.as_object_mut() else {
         return;
@@ -573,7 +573,7 @@ fn version_0_fixture_gets_default_flatten_tolerance() {
 }
 
 /// Every file before version 2 was exported with the spindle switched by
-/// the program, so the migration keeps that (#34).
+/// the program, so the migration keeps that.
 #[test]
 fn version_1_fixture_gets_automatic_spindle_control() {
     let loaded = load(V1_FIXTURE).unwrap();
@@ -589,7 +589,7 @@ fn version_1_fixture_gets_automatic_spindle_control() {
     );
 }
 
-/// #95: a file before version 5 has no tool-change mode. The migration
+/// A file before version 5 has no tool-change mode. The migration
 /// sets `"separate_programs"`, the new default, at the end of
 /// `tool_change`. A file that changed tools exported with `M6` before;
 /// it now exports one program per tool run, which every sender runs
@@ -609,7 +609,7 @@ fn version_4_fixture_gets_separate_programs() {
     );
 }
 
-/// #99: version 6 lets the instance depths be unset, but the migration
+/// Version 6 lets the instance depths be unset, but the migration
 /// never changes a value the user may have set. A version 5 file's
 /// numbers, including `init`'s old 12 mm placeholder, carry over.
 #[test]
@@ -648,7 +648,7 @@ fn v5_with_null_instance_depth_fails() {
     }
 }
 
-/// #64: version 4 lets thickness and depth be unset, but a version 3
+/// Version 4 lets thickness and depth be unset, but a version 3
 /// file always had numbers, and they carry over unchanged.
 #[test]
 fn v3_to_v4_keeps_thickness_and_depth() {
@@ -675,7 +675,7 @@ fn v3_with_null_thickness_fails() {
 }
 
 /// Unit variants become strings; a variant with data becomes a one-key
-/// object (#46).
+/// object.
 #[test]
 fn v2_to_v3_rewrites_origin_and_cutters() {
     let mut root = sample_root_at(2);
@@ -748,7 +748,7 @@ fn migrate_sets_current_version() {
 
 const V6_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v6/sample.dcv");
 
-/// #106: the migrated block is the reference, in the order a version 7
+/// The migrated block is the reference, in the order a version 7
 /// file writes it.
 #[test]
 fn v6_to_v7_writes_the_reference() {
@@ -760,7 +760,7 @@ fn v6_to_v7_writes_the_reference() {
     assert_eq!(Value::Object(migrated), sample_root_at(7));
 }
 
-/// #106: a version 6 file with no embedded post-processor is broken,
+/// A version 6 file with no embedded post-processor is broken,
 /// not one to give a default.
 #[test]
 fn v6_without_post_processor_fails() {
@@ -778,7 +778,7 @@ fn v6_without_post_processor_fails() {
 /// time, with the router switched by hand and a 5 s spin-up dwell.
 const V6_GRBLHAL_MANUAL: &str = include_str!("../../tests/fixtures/dcv/v6/grblhal-manual.dcv");
 
-/// #106: a version 6 copy that matches the bundled definition becomes a
+/// A version 6 copy that matches the bundled definition becomes a
 /// reference to its version 1, keeping the user's settings.
 #[test]
 fn v6_with_bundled_copy_migrates_to_reference() {
@@ -799,7 +799,7 @@ fn v6_with_bundled_copy_migrates_to_reference() {
     );
 }
 
-/// #117: a version 6 copy predates `spindle_on_dwell.units` and
+/// A version 6 copy predates `spindle_on_dwell.units` and
 /// `canned_cycles.reentry_gap_mm`, which every bundled definition now
 /// has. The step gives the copy the values of the time (seconds; no
 /// gap) before comparing, so the copy still matches version 1.
@@ -816,7 +816,7 @@ fn v6_copy_gains_dwell_units_before_comparison() {
     assert!(!loaded.project.post_processor.use_canned_cycles);
 }
 
-/// #117: a version 6 copy that already names a dwell unit is not a
+/// A version 6 copy that already names a dwell unit is not a
 /// version 6 file.
 #[test]
 fn v6_with_dwell_units_already_present_fails() {
@@ -864,7 +864,7 @@ fn assert_has_replacement_block(message: &str, id: &str) {
     assert!(message.contains("\"version\": 7"), "{message}");
 }
 
-/// #106: a copy whose dialect differs from the bundled version 1 is
+/// A copy whose dialect differs from the bundled version 1 is
 /// never replaced by it, which would change the G-code: loading fails,
 /// naming each differing field with both values, and shows the
 /// reference block to use instead.
@@ -881,7 +881,7 @@ fn v6_with_edited_dialect_fails_to_load() {
     assert_has_replacement_block(&message, "grblhal");
 }
 
-/// #106: a post-processor that was never bundled cannot become a
+/// A post-processor that was never bundled cannot become a
 /// reference either.
 #[test]
 fn v6_with_unbundled_id_fails_to_load() {
@@ -892,12 +892,12 @@ fn v6_with_unbundled_id_fails_to_load() {
     assert_has_replacement_block(&message, "grblhal");
 }
 
-// Phase 2, #117: version 7 → 8 adds the phase 2 fields with the values
+// Phase 2: version 7 → 8 adds the phase 2 fields with the values
 // that keep a phase 1 project cutting the same.
 
 const V7_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v7/sample.dcv");
 
-/// Design spec, "Migration v6 → v7" (version 7 → 8 here, #117): each
+/// Design spec, "Migration v6 → v7" (version 7 → 8 here): each
 /// Profile plunges, cuts each shape to full depth first, has no lead
 /// and no corner relief, exactly as phase 1 cut it; arc fitting is on
 /// at 0.01 mm; tools have no number; canned cycles are off.
@@ -939,12 +939,12 @@ fn v7_to_v8_writes_the_defaults() {
     );
 }
 
-// Version 8 → 9 (#109): holes get no tabs unless `tabs.on_holes` is
+// Version 8 → 9: holes get no tabs unless `tabs.on_holes` is
 // set, so a project from before keeps them on its holes.
 
 const V8_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v8/sample.dcv");
 
-/// #109: a version 8 Profile put its tabs on every outline it cut,
+/// A version 8 Profile put its tabs on every outline it cut,
 /// holes included. The migration writes `on_holes: true` into every
 /// Profile's tabs, so the project cuts the same; a Profile with no
 /// tabs stays `null`. The key lands where a version 9 file writes it.
@@ -968,13 +968,13 @@ fn v8_tabs_keep_their_holes_tabbed() {
     assert_eq!(migrated["operations"][0]["tabs"], Value::Null);
 }
 
-// Version 10 → 11 (#105): placed tabs. The tab setting stays as a
+// Version 10 → 11: placed tabs. The tab setting stays as a
 // request, which `dreamcarve` places when it loads the project.
 
 const V9_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v9/sample.dcv");
 const V10_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v10/sample.dcv");
 
-/// #105: a version 10 project gains an empty list of placed tabs right
+/// A version 10 project gains an empty list of placed tabs right
 /// after its operations; each Profile keeps its tab setting, now a
 /// request, so the project cuts the same.
 #[test]
@@ -983,7 +983,7 @@ fn v10_project_gains_an_empty_tab_list() {
     let mut tabs_before = root["operations"][0]["tabs"].clone();
     let migrated = migrate(root, 10).unwrap();
     assert_eq!(migrated["tabs"], json!([]));
-    // Version 14 (#285) adds `avoid_corners: false` to the request.
+    // Version 14 adds `avoid_corners: false` to the request.
     tabs_before["avoid_corners"] = json!(false);
     assert_eq!(migrated["operations"][0]["tabs"], tabs_before);
     let keys: Vec<&String> = migrated.as_object().unwrap().keys().collect();
@@ -995,7 +995,7 @@ fn v10_project_gains_an_empty_tab_list() {
     );
 }
 
-/// #207: version 10 only adds the `left` and `right` sides, so the
+/// Version 10 only adds the `left` and `right` sides, so the
 /// migration changes nothing but the version: every version 9 file
 /// cuts the same. The bump makes a reader of version 9 refuse a file
 /// that uses the new sides, instead of failing on an unknown side.
@@ -1016,7 +1016,7 @@ fn v9_to_v10_changes_only_the_version() {
     );
 }
 
-/// #207: the new sides save as `"left"` and `"right"` and load back.
+/// The new sides save as `"left"` and `"right"` and load back.
 #[test]
 fn left_and_right_sides_round_trip() {
     for (side, text) in [(Side::Left, "\"left\""), (Side::Right, "\"right\"")] {
@@ -1028,11 +1028,11 @@ fn left_and_right_sides_round_trip() {
     }
 }
 
-// Version 11 → 12 (#283): the clearance, tool-change and park heights.
+// Version 11 → 12: the clearance, tool-change and park heights.
 
 const V11_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v11/sample.dcv");
 
-/// #283, design addendum A7: a version 11 project gains `heights`
+/// Design addendum A7: a version 11 project gains `heights`
 /// right after `origin`, with its three fields `null`, which exports
 /// what the file did; everything else is unchanged.
 #[test]
@@ -1076,11 +1076,11 @@ fn v11_to_v12_adds_null_heights() {
     );
 }
 
-// Version 12 → 13 (#284): the Profile last pass allowance.
+// Version 12 → 13: the Profile last pass allowance.
 
 const V12_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v12/sample.dcv");
 
-/// #284: every Profile of a version 12 file gains `last_pass: null`
+/// Every Profile of a version 12 file gains `last_pass: null`
 /// right after `corner_relief`, so each pass cuts on the line as
 /// before; other operations are unchanged. The fixture then loads as
 /// the sample, whose program `dreamcarve`'s migration corpus test
@@ -1102,7 +1102,7 @@ fn v12_to_v13_adds_null_last_pass() {
         let keys: Vec<&String> = op.as_object().unwrap().keys().collect();
         let at = |key: &str| keys.iter().position(|k| *k == key).unwrap();
         assert_eq!(at("last_pass"), at("corner_relief") + 1, "{keys:?}");
-        // Version 14 (#285) adds `start` after it.
+        // Version 14 adds `start` after it.
         assert_eq!(keys.len(), at("last_pass") + 2, "{keys:?}");
     }
     assert_eq!(
@@ -1126,7 +1126,7 @@ fn v12_to_v13_adds_null_last_pass() {
     );
 }
 
-/// #310 review: loaded from a file, a migration that fails on a key
+/// Loaded from a file, a migration that fails on a key
 /// the file should not have says where that key is, as a schema error
 /// does.
 #[test]
@@ -1154,7 +1154,7 @@ fn v12_with_last_pass_says_where() {
     );
 }
 
-/// #284: a last pass saves with every field and loads back.
+/// A last pass saves with every field and loads back.
 #[test]
 fn last_pass_round_trips() {
     let mut p = sample_project();
@@ -1173,11 +1173,11 @@ fn last_pass_round_trips() {
     assert_eq!(load(text.as_bytes()).unwrap().project, p);
 }
 
-// Version 13 → 14 (#285): tabs off corners, and the start point.
+// Version 13 → 14: tabs off corners, and the start point.
 
 const V13_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v13/sample.dcv");
 
-/// #285: every Profile of a version 13 file gains `start: "auto"`
+/// Every Profile of a version 13 file gains `start: "auto"`
 /// right after `last_pass`, and its tab request, when it has one,
 /// `avoid_corners: false` at its end, so its tabs are laid and its
 /// cuts start where they were; a Profile without a request and other
@@ -1231,7 +1231,7 @@ fn v13_to_v14_adds_corner_and_start_defaults() {
     assert!(!op.tabs.as_ref().unwrap().avoid_corners);
 }
 
-/// #285: each start saves as the spec writes it and loads back; a
+/// Each start saves as the spec writes it and loads back; a
 /// `near` point takes inch input as every length does.
 #[test]
 fn start_round_trips() {
@@ -1276,7 +1276,7 @@ fn start_round_trips() {
     );
 }
 
-// Version 14 → 15 (#302): whether a placed tab holds its slug.
+// Version 14 → 15: whether a placed tab holds its slug.
 
 const V14_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v14/sample.dcv");
 
@@ -1310,11 +1310,11 @@ fn v14_root_with_tabs() -> Value {
     root
 }
 
-/// #302: every placed tab of a version 14 file gains `holds_slug:
+/// Every placed tab of a version 14 file gains `holds_slug:
 /// null` at its end, and nothing else changes. A migration step
 /// rewrites JSON only, so it cannot tell whether a tab sits on the
 /// tool path a Profile cuts round a hole, which is how format 14 told
-/// a hole tab placed with `on_holes` from one placed by hand (#300).
+/// a hole tab placed with `on_holes` from one placed by hand.
 /// `null` keeps that rule for the tab, so the file warns and cuts as
 /// it did (`dc-cam`'s
 /// `placed_tabs::v14_hole_tabs_on_the_path_hold_their_slugs`, and
@@ -1353,7 +1353,7 @@ fn v14_placed_tabs_migrate_with_holds_slug_unset() {
     assert_eq!(migrated, sample_root_at(CURRENT_VERSION));
 }
 
-/// #302: loaded from a file, the version 14 file with a
+/// Loaded from a file, the version 14 file with a
 /// `holds_slug` it should not have says where that key is.
 #[test]
 fn v14_with_holds_slug_says_where() {
@@ -1378,7 +1378,7 @@ fn v14_with_holds_slug_says_where() {
     );
 }
 
-/// #302: each value saves as written, at the end of the tab, and
+/// Each value saves as written, at the end of the tab, and
 /// loads back.
 #[test]
 fn holds_slug_round_trips() {
@@ -1401,7 +1401,7 @@ fn holds_slug_round_trips() {
     }
 }
 
-/// #302: a hand-edited `holds_slug` that is not `true`, `false` or
+/// A hand-edited `holds_slug` that is not `true`, `false` or
 /// `null`, or one left out, fails to load, naming the field and
 /// where it is in the file.
 #[test]
@@ -1447,7 +1447,7 @@ fn invalid_holds_slug_says_where() {
     );
 }
 
-// Version 15 → 16 (maintainer decision 2026-10-24): a tool's vendor
+// Version 15 → 16: a tool's vendor
 // and product id.
 
 const V15_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v15/sample.dcv");
@@ -1522,7 +1522,7 @@ fn vendor_and_product_id_round_trip() {
     assert_eq!(crate::save(&loaded.project).unwrap(), text);
 }
 
-// Version 16 → 17 (maintainer decision 2026-10-24): a Drill's
+// Version 16 → 17: a Drill's
 // `allow_tool_wider_than_hole`.
 
 const V16_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v16/sample.dcv");
@@ -1598,7 +1598,7 @@ fn allow_tool_wider_than_hole_round_trips() {
 
 const V17_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v17/sample.dcv");
 
-/// Format 18 (maintainer decision 2026-10-24): the Bore is a new
+/// Format 18: the Bore is a new
 /// operation kind no version 17 file holds, so the step changes only
 /// the version, with a Drill too.
 #[test]
@@ -1617,7 +1617,7 @@ fn v17_to_v18_changes_only_the_version() {
     );
 }
 
-// Version 18 → 19 (#394): `allowance_mm` is `stock_to_leave_mm` on a
+// Version 18 → 19: `allowance_mm` is `stock_to_leave_mm` on a
 // Pocket, a Bore and a Profile's last pass.
 
 const V18_STOCK_TO_LEAVE_FIXTURE: &[u8] =
@@ -1815,7 +1815,7 @@ fn v21_to_v22_bumps_the_version_only() {
     );
 }
 
-// Version 22 → 23 (#443): a male Inlay's cut-out.
+// Version 22 → 23: a male Inlay's cut-out.
 
 const V22_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v22/sample.dcv");
 
@@ -1859,7 +1859,7 @@ fn v22_to_v23_adds_a_null_cut_out() {
         as_v24(&mut old);
         if let Some(fields) = old.as_object_mut() {
             fields.shift_remove("cut_out");
-            // Format 24 (#448) adds it after.
+            // Format 24 adds it after.
             fields.shift_remove("outline_rounding_mm");
         }
         root["operations"].as_array_mut().unwrap().push(old);
@@ -1893,7 +1893,7 @@ fn v22_to_v23_adds_a_null_cut_out() {
     );
 }
 
-// Version 23 → 24 (#448): a male Inlay's outline rounding.
+// Version 23 → 24: a male Inlay's outline rounding.
 
 const V23_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v23/sample.dcv");
 
@@ -1983,7 +1983,7 @@ fn current_version_is_unchanged() {
     assert_eq!(migrate(root.clone(), CURRENT_VERSION).unwrap(), root);
 }
 
-// Version 24 → 25 (#498): one-file Inlay, both boards from one project.
+// Version 24 → 25: one-file Inlay, both boards from one project.
 
 const V24_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v24/sample.dcv");
 
@@ -2009,7 +2009,7 @@ fn v24_root_with_inlay(inlay: &crate::model::InlayOp, side: &str) -> Value {
     root
 }
 
-/// Format 25 (#498): a version 24 female Inlay gains an unset male
+/// Format 25: a version 24 female Inlay gains an unset male
 /// board, `{ "width_mm": null, "height_mm": null, "thickness_mm":
 /// null }`, in the place its `side` held, after `tool`; nothing else
 /// changes and the keys keep their order. Its male is not cut until
@@ -2066,7 +2066,7 @@ fn v24_to_v25_female_gets_an_unset_male_board() {
     );
 }
 
-/// Format 25 (#498): a version 24 male Inlay gains a male board the
+/// Format 25: a version 24 male Inlay gains a male board the
 /// size of the stock, its width, height and thickness, so its male
 /// programs are cut on the same board as before, byte for byte; the
 /// project keeps its stock, on which the female is now cut too. The
@@ -2145,7 +2145,7 @@ fn v24_to_v25_male_gets_the_stock_as_its_male_board() {
     );
 }
 
-// Version 25 → 26 (#449, #602): the Inlay's drawn boundary.
+// Version 25 → 26: the Inlay's drawn boundary.
 
 const V25_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v25/sample.dcv");
 const V26_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v26/sample.dcv");
@@ -2159,7 +2159,7 @@ fn v25_inlay(inlay: &crate::model::InlayOp) -> Value {
     op
 }
 
-/// Format 26 (#449): every Inlay gains `"boundary": []` right after
+/// Format 26: every Inlay gains `"boundary": []` right after
 /// `outline_rounding_mm`, and nothing else changes, keys in order.
 /// Other operations are untouched. An Inlay that already has a
 /// `boundary` is not a version 25 one.
@@ -2302,7 +2302,7 @@ fn a_v25_project_exports_the_same_programs() {
     );
 }
 
-// Version 26 → 27 (sub-phase 3.5, #644): bitmaps and the Photo V-Carve.
+// Version 26 → 27 (sub-phase 3.5): bitmaps and the Photo V-Carve.
 
 const V27_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v27/sample.dcv");
 const V27_PHOTO_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v27/photo.dcv");
@@ -2431,7 +2431,7 @@ fn a_v26_project_loads_as_the_same_project() {
     }
 }
 
-// Version 27 → 28 (sub-phase 3.6, #677): the tapered ball nose.
+// Version 27 → 28 (sub-phase 3.6): the tapered ball nose.
 
 const V28_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v28/sample.dcv");
 const V28_TAPERED_FIXTURE: &[u8] = include_bytes!("../../tests/fixtures/dcv/v28/tapered.dcv");
@@ -2513,8 +2513,7 @@ fn version_27_fixture_loads() {
 
 /// The version 28 fixtures load as they are: the plain sample, and the
 /// sample with the Ultra-High Detail bit and a V-Carve using it, which
-/// validation accepts since carving with a tapered ball nose was built
-/// (27c, #679).
+/// validation accepts since carving with a tapered ball nose was built.
 #[test]
 fn version_28_fixtures_load() {
     use crate::test_support::tapered_project;

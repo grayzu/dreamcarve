@@ -25,7 +25,7 @@ use serde_json::{Map, Value};
 pub const CURRENT_VERSION: u32 = 28;
 
 /// Something a migration changed that the user should hear about, though
-/// the file loads (#498).
+/// the file loads.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigrationNote {
     /// A version 24 (or earlier) male Inlay, one side of a two-file

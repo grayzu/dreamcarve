@@ -238,7 +238,7 @@ fn colour_png_is_an_error() {
     );
 }
 
-/// Security review M4: a picture with a side of 0, or one above
+/// A picture with a side of 0, or one above
 /// `MAX_BITMAP_SIDE_PX`, is refused from the bitmap's numbers and the
 /// PNG's header. The PNGs here are a header and nothing else, so a
 /// refusal that names the size shows no image data was asked for.
@@ -306,7 +306,7 @@ fn empty_or_oversized_bitmap_is_refused_from_the_header() {
     ));
 }
 
-/// Security review M4: a small file must not make the decoder allocate
+/// A small file must not make the decoder allocate
 /// without bound. A 4 × 4 picture carries a colour-profile chunk whose
 /// zlib stream inflates to twice 8192 × 8192 bytes, from a string
 /// under 1 MB, and the same stream in a text chunk. `pixels` skips
@@ -317,7 +317,7 @@ fn empty_or_oversized_bitmap_is_refused_from_the_header() {
 ///
 /// The design's name for this test ended `…_is_refused_by_the_decoder_
 /// limit`. `png` 0.18 never fails a picture for its profile (it drops
-/// one it cannot hold), so the bomb is bounded, not refused (#644).
+/// one it cannot hold), so the bomb is bounded, not refused.
 #[test]
 fn decompression_bomb_is_bounded_by_the_decoder_limit() {
     let small = decoded(&gray_png_base64(4, 4, &[9; 16]));
@@ -362,7 +362,7 @@ fn decompression_bomb_is_bounded_by_the_decoder_limit() {
     assert_eq!(profile_of(&payload), None);
 }
 
-/// Security review M4: a header that says more than the image data
+/// A header that says more than the image data
 /// holds. Under numbers that disagree it is refused before decoding;
 /// under numbers that agree the decoder runs out of data and says so.
 /// Even at the largest size a picture may claim, the cost is that

@@ -135,7 +135,7 @@ fn dwell_units_round_trip_as_snake_case() {
     assert!(err.to_string().contains("units"), "{err}");
 }
 
-/// #117, design spec "Canned cycles": the re-entry gap of a chip-break
+/// Design spec "Canned cycles": the re-entry gap of a chip-break
 /// cycle is a definition fact, `null` where the controller retracts
 /// fully, and required like every `Option` field.
 #[test]
@@ -159,7 +159,7 @@ fn reentry_gap_is_required_and_null_when_unset() {
     assert!(err.to_string().contains("reentry_gap_mm"), "{err}");
 }
 
-/// #117: whether Drill writes canned cycles is the user's choice per
+/// Whether Drill writes canned cycles is the user's choice per
 /// project (functional spec, open question 2: off everywhere), so it
 /// is a setting in the reference block and in `default_settings`, and
 /// `resolve` carries it onto the definition.
@@ -196,7 +196,7 @@ fn spindle_control_round_trips_as_snake_case() {
     }
 }
 
-/// #95: the tool-change mode is a snake_case string in the file.
+/// The tool-change mode is a snake_case string in the file.
 #[test]
 fn tool_change_mode_round_trips_as_snake_case() {
     let mut post = sample();
@@ -212,7 +212,7 @@ fn tool_change_mode_round_trips_as_snake_case() {
     }
 }
 
-/// #95, #65: a definition without `tool_change.mode` is rejected, like
+/// A definition without `tool_change.mode` is rejected, like
 /// any other missing field.
 #[test]
 fn missing_tool_change_mode_is_rejected() {
@@ -289,7 +289,7 @@ fn quantum_is_one_unit_in_the_last_place_in_mm() {
     assert!((places.quantum_mm(Units::Inch) - 0.002_54).abs() < 1e-15);
 }
 
-// #106: a project stores a reference to a bundled definition version
+// A project stores a reference to a bundled definition version
 // and the user's settings, not the definition.
 
 /// A current-version project whose `post_processor` is the GRBL
@@ -386,7 +386,7 @@ fn unknown_definition_version_fails_to_load() {
 
 /// The definition that `id`.json on main parsed to, before #106, kept as
 /// a fixture, plus the fields the schema has gained since with the
-/// values the migration gives a file of that time (#117): the dwell
+/// values the migration gives a file of that time: the dwell
 /// in seconds, canned cycles off, no re-entry gap.
 fn old_embedded(id: &str) -> PostProcessor {
     let text = match id {
@@ -397,7 +397,7 @@ fn old_embedded(id: &str) -> PostProcessor {
     let mut value: Value = serde_json::from_str(text).unwrap();
     value["feed_speed"]["spindle_on_dwell"]["units"] = Value::from("seconds");
     value["use_canned_cycles"] = Value::from(false);
-    // #283: both document `G53` (`definitions/README.md`,
+    // Both document `G53` (`definitions/README.md`,
     // "Machine-coordinate moves"); nothing writes it unless a project
     // sets the height.
     value["work_coordinates"]["machine_command"] = Value::from("G53");
@@ -461,7 +461,7 @@ fn definition_default_settings_are_strict() {
     assert!(err.contains("default_settings.line_numbers"), "{err}");
 }
 
-// #277, functional capability 27: `export --post` keeps the settings
+// Functional capability 27: `export --post` keeps the settings
 // the user changed.
 
 /// The default reference of `id` at `version`.
@@ -615,23 +615,23 @@ fn released_definition_versions_are_unchanged() {
     // Z, which both versions refused before.
     const PINNED: [(&str, u64); 16] = [
         ("grblhal/v1.json", 0x4069_e336_d88c_fe81),
-        // #171: the project name no longer opens a comment.
+        // The project name no longer opens a comment.
         ("grblhal/v2.json", 0xabe7_6c89_c5f8_6bf8),
-        // #279: the header cancels canned-cycle motion and cutter
+        // The header cancels canned-cycle motion and cutter
         // compensation (`G80`, `G40`).
         ("grblhal/v3.json", 0x341b_511e_68ea_cdde),
-        // #316: the header cancels scaling (`G50`).
+        // The header cancels scaling (`G50`).
         ("grblhal/v4.json", 0xeb50_edfd_1a5d_8aa4),
         ("grbl/v1.json", 0xfa5f_26f9_ddd0_790f),
         ("grbl/v2.json", 0x3970_4e64_8e3c_4d04),
         ("grbl/v3.json", 0x5696_f0ba_8779_d54e),
-        // Slice 17 (#164).
+        // Slice 17.
         ("linuxcnc/v1.json", 0x155d_d13d_9406_23a9),
-        // #286: no `G49` in the header.
+        // No `G49` in the header.
         ("linuxcnc/v2.json", 0x0622_7196_706c_b93f),
         ("mach3/v1.json", 0xeff3_be07_97a2_28bf),
         ("mach3/v2.json", 0x7604_07ca_afcf_53d5),
-        // #312: the header cancels scaling and rotation (`G50`, `G69`).
+        // The header cancels scaling and rotation (`G50`, `G69`).
         ("mach3/v3.json", 0xc840_8d2b_7fd4_33a9),
         ("uccnc/v1.json", 0x1c80_d6fb_1d78_ab36),
         ("uccnc/v2.json", 0xfae6_efe4_6cee_ccbc),

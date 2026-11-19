@@ -2,58 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Project validation (`docs/specs/phase-1/design.md`, "Data model →
-//! dc-project"). [`validate`] reports every problem it finds rather than
-//! stopping at the first, so the CLI `check` command can print them all.
+//! dc-project"; the "Validation" sections of the phase 2 and phase 3 design
+//! specs for the later operations). [`validate`] reports every problem it
+//! finds rather than stopping at the first, so the CLI `check` command can
+//! print them all.
 //!
-//! Error-class problems make a project unsafe or impossible to machine
-//! (dangling ids, non-positive dimensions, non-finite numbers, coordinates,
-//! transforms and stock sides beyond [`MAX_COORDINATE_MM`], and every value
-//! the user must supply that is unset: the stock thickness, each operation's
-//! depth, each tool's feed, plunge rate and, under automatic spindle control,
-//! RPM; nothing may default them, #64, #76). A tool's rates count only when
-//! an enabled operation uses it: an unused tool is one warning instead, and
-//! its unset rates come back as errors once an operation that uses it is
-//! enabled. Warning-class problems still allow a correct result but need the
-//! user's attention (disabled operations, unused tools, open paths).
+//! An error makes a project unsafe or impossible to machine: a dangling
+//! id, a number out of range or not finite, a coordinate beyond
+//! [`MAX_COORDINATE_MM`], and every value the user must supply that is
+//! unset, since nothing may default one. A warning still allows a correct
+//! result but needs the user's attention. Each [`Problem`] variant says
+//! which it is and why.
 //!
-//! Sanity checks (#67) catch values that are valid but dangerous, and look
-//! only at enabled operations and the tools they use. Errors: a feed or
-//! plunge rate above [`MAX_RATE_MM_MIN`], an Outside, Inside, Left or
-//! Right Profile cut with a cutter other than a flat end mill, and an
-//! enabled operation with
-//! no targets. Warnings: a step-down deeper than the
-//! tool's diameter, a plunge rate above the feed rate, a spindle speed
-//! above [`MAX_RPM`], and a diameter above [`MAX_TOOL_DIAMETER_MM`]. None
-//! changes a value; they only report.
-//!
-//! Phase 2 (#117; `docs/specs/phase-2/design.md`, "Tool numbers" and
-//! "Validation") adds the rules for tool numbers and for the Pocket, Drill
-//! and Engrave operations, entries, leads and corner relief. Errors: two
-//! used tools resolving to one `T` number, or a number of 0; a `rest_of`
-//! that is not an earlier enabled Pocket with the same targets; a
-//! step-over fraction outside (0, 1]; a Pocket, Engrave or peck Drill with
-//! no step-down anywhere; lead, entry and raster values out of range; a
-//! helix on an On line, Left or Right Profile; canned cycles on a definition without
-//! them; a Pocket with a cutter that is not a flat end mill. Warnings: a
-//! Drill with a cutter other than a drill or end mill; corner relief on a
-//! tool with no step-down; a V-bit engraving deeper than its cone.
-//!
-//! #283 (design addendum A7) adds the heights. Errors: a clearance height
-//! below an enabled operation's safe Z; a tool-change machine Z of 0 or
-//! more, or on a definition that documents no `G53`; a park point beyond
-//! the coordinate limit.
-//!
-//! Format 20 (`docs/specs/phase-3/design.md`, "Validation") adds the
-//! V-Carve. Errors: a V-Carve whose tool is not a V-bit, or whose V-bit's
-//! angle is not in (0, 180); a flat depth (plus the start depth, unless an
-//! enabled earlier Pocket at that depth contains the targets) deeper than
-//! the bit's cone; clearing passes without a flat depth, or naming a
-//! missing tool or one that is not a flat end mill; a negative start
-//! depth; a start depth below the stock top that no earlier Pocket (nor,
-//! since #426, an earlier V-Carve's flat floor) clears and the user does
-//! not vouch for; a flatten tolerance above
-//! [`MAX_FLATTEN_TOLERANCE_MM`]. Warning: a clearing pass wider than the
-//! one before.
+//! A tool's rates, and the checks for values that are valid but dangerous,
+//! count only for enabled operations and the tools they use: an unused
+//! tool is one warning instead, and its unset rates come back as errors
+//! once an operation that uses it is enabled. No check changes a value;
+//! they only report.
 //!
 //! [`Problem::field`] names where in the file each problem is, so the CLI
 //! can turn it into a `file:line:column` with [`crate::SourceMap`].
@@ -91,9 +56,9 @@ pub enum Severity {
 pub enum StartFootprint {
     /// A V-Carve's targets.
     Targets,
-    /// A countersink's V-bit, its whole diameter, at each hole (#425).
+    /// A countersink's V-bit, its whole diameter, at each hole.
     BitAtEachHole,
-    /// A Photo V-Carve's picture's footprint rectangle (#646).
+    /// A Photo V-Carve's picture's footprint rectangle.
     Picture,
 }
 
@@ -161,13 +126,13 @@ pub enum Problem {
         /// The missing instance.
         instance: InstanceId,
     },
-    /// Two placed tabs share an id (#105).
+    /// Two placed tabs share an id.
     #[error("two tabs have the id `{id}`")]
     DuplicateTabId {
         /// The repeated id.
         id: TabId,
     },
-    /// A placed tab is on an instance that does not exist (#105).
+    /// A placed tab is on an instance that does not exist.
     #[error("tab `{tab}` is on instance `{instance}`, which does not exist")]
     TabDanglingInstance {
         /// The tab.
@@ -176,7 +141,7 @@ pub enum Problem {
         instance: InstanceId,
     },
     /// A placed tab is on a profile its instance's definition does not
-    /// have (#105).
+    /// have.
     #[error(
         "tab `{tab}` is on profile {profile} of instance `{instance}`, whose definition has {count} profile(s), numbered from 0"
     )]
@@ -213,8 +178,8 @@ pub enum Problem {
         operation: OperationId,
     },
     /// A tool has no value for a field export needs (feed, plunge or RPM),
-    /// or no step-down while an enabled operation sets none either (#98).
-    /// An error since #76, so `check` lists every unset value in one run.
+    /// or no step-down while an enabled operation sets none either.
+    /// An error, so `check` lists every unset value in one run.
     #[error(
         "tools[{tool}].{field} is not set ({}) for tool `{name}`",
         unset_unit(.field)
@@ -227,8 +192,8 @@ pub enum Problem {
         /// The unset field, such as `feed_mm_min`.
         field: &'static str,
     },
-    /// A tool no enabled operation uses. Its unset rates are not reported
-    /// (#84): nothing cuts with it, and they are never defaulted.
+    /// A tool no enabled operation uses. Its unset rates are not reported:
+    /// nothing cuts with it, and they are never defaulted.
     #[error("tool `{tool}` (`{name}`) is defined but not used by any enabled operation")]
     UnusedTool {
         /// The tool.
@@ -237,7 +202,7 @@ pub enum Problem {
         name: String,
     },
     /// The stock thickness is unset. It sets depth, tab heights and, with
-    /// Z zero at the stock bottom, safe Z, so it is never defaulted (#64).
+    /// Z zero at the stock bottom, safe Z, so it is never defaulted.
     #[error("{STOCK_THICKNESS} is not set (mm)")]
     StockThicknessUnset,
     /// An operation has no value for a field export needs (its depth).
@@ -271,7 +236,7 @@ pub enum Problem {
     /// Profile cut only closed shapes, so it is never cut (functional
     /// spec, capability 8). Not reported for a definition an enabled
     /// Engrave or an On line, Left or Right Profile targets, since those
-    /// cut it (#175, #207).
+    /// cut it.
     #[error(
         "`{name}` (definition `{definition}`, profile {profile}) is an open path and no operation cuts it; only an On line, Left or Right Profile or an Engrave cuts an open path"
     )]
@@ -303,8 +268,8 @@ pub enum Problem {
         /// The post-processor's id.
         post: String,
     },
-    /// An enabled operation cuts deeper per pass than its tool is wide
-    /// (#67). A warning: the program is still what was asked for.
+    /// An enabled operation cuts deeper per pass than its tool is wide. A
+    /// warning: the program is still what was asked for.
     #[error(
         "operation `{name}` (`{operation}`) cuts {step_down_mm} mm per pass, deeper than the {diameter_mm} mm diameter of tool `{tool_name}`; passes that deep can break the bit, so use a step-down of at most {diameter_mm} mm"
     )]
@@ -324,11 +289,11 @@ pub enum Problem {
         diameter_mm: f64,
     },
     /// An enabled Outside, Inside, Left or Right Profile cuts with a tool
-    /// that is not a flat end mill (#67, #207). Those sides offset by half
+    /// that is not a flat end mill. Those sides offset by half
     /// the diameter, so any
     /// other cutter makes the part the wrong size: an error. On the line the
     /// tool centre follows the line, so any cutter is allowed. So is a male
-    /// Inlay's cut-out (format 23, #443), at `cut_out.tool`.
+    /// Inlay's cut-out (format 23), at `cut_out.tool`.
     #[error(
         "operation `{name}` (`{operation}`) {} tool `{tool_name}` (`{tool}`), {cutter}; {}. Use an end mill",
         flat_cut(.field).0,
@@ -350,7 +315,7 @@ pub enum Problem {
         field: &'static str,
     },
     /// An enabled operation targets nothing, so its program would start
-    /// and stop the spindle without moving (#67). An error.
+    /// and stop the spindle without moving. An error.
     #[error(
         "operation `{name}` (`{operation}`) is enabled but has no targets, so it would cut nothing; add targets or disable it"
     )]
@@ -374,7 +339,7 @@ pub enum Problem {
         /// The speed set, RPM.
         rpm: u32,
     },
-    /// A used tool plunges faster than it cuts (#67), which usually means
+    /// A used tool plunges faster than it cuts, which usually means
     /// the two rates are swapped. A warning.
     #[error(
         "tool `{name}` (`{tool}`) plunges at {plunge_mm_min} mm/min, faster than it cuts ({feed_mm_min} mm/min); a plunge rate is usually well below the feed rate, so check the two are not swapped"
@@ -389,7 +354,7 @@ pub enum Problem {
         /// The feed rate, mm/min.
         feed_mm_min: f64,
     },
-    /// A used tool's diameter is above [`MAX_TOOL_DIAMETER_MM`] (#67). A
+    /// A used tool's diameter is above [`MAX_TOOL_DIAMETER_MM`]. A
     /// warning: a shape such a bit does not fit is already skipped with a
     /// warning, and around a part it cuts valid geometry.
     #[error(
@@ -404,7 +369,7 @@ pub enum Problem {
         diameter_mm: f64,
     },
     /// Two tools of enabled operations resolve to the same `T` number,
-    /// set or positional (#117, functional spec capability 21a): the
+    /// set or positional (functional spec capability 21a): the
     /// program would change to the wrong bit. An error at the later tool.
     #[error(
         "tool `{name}` (`{tool}`) and tool `{other}` would both be T{number} in the program; a tool with no `number` is its position in the list, so give one of them another number"
@@ -420,7 +385,7 @@ pub enum Problem {
         other: ToolId,
     },
     /// A Pocket's `rest_of` is not an earlier enabled Pocket with the same
-    /// targets (#117, functional spec capability 13). An error.
+    /// targets (functional spec capability 13). An error.
     #[error(
         "operation `{name}` (`{operation}`) rests on `{rest_of}`, which is not an earlier enabled Pocket with the same targets; rest machining clears what such a Pocket left"
     )]
@@ -432,9 +397,9 @@ pub enum Problem {
         /// The operation named.
         rest_of: OperationId,
     },
-    /// An On line, Left or Right Profile asks for a helix entry (#117,
-    /// functional spec capability 16; #207). A helix sits in material the
-    /// operation removes, and those cuts remove only their kerf. An error.
+    /// An On line, Left or Right Profile asks for a helix entry (functional
+    /// spec capability 16). A helix sits in material the operation removes,
+    /// and those cuts remove only their kerf. An error.
     #[error(
         "operation `{name}` (`{operation}`) cuts on the line or beside an open path but asks for a helix entry; a helix sits in material the cut removes, and such a cut removes only its kerf. Use \"plunge\" or a ramp"
     )]
@@ -445,7 +410,7 @@ pub enum Problem {
         name: String,
     },
     /// Canned cycles are on, but the post-processor definition has none
-    /// (#117, functional spec capability 14), so the choice could only be
+    /// (functional spec capability 14), so the choice could only be
     /// ignored. An error.
     #[error(
         "use_canned_cycles is true, but post-processor `{post}` has no canned cycles, so Drill cannot write them; set it to false"
@@ -455,7 +420,7 @@ pub enum Problem {
         post: String,
     },
     /// An enabled Drill cuts with a cutter other than a drill or flat end
-    /// mill (#117): a V-bit or ball nose makes a cone, not a hole. A
+    /// mill: a V-bit or ball nose makes a cone, not a hole. A
     /// warning.
     #[error(
         "operation `{name}` (`{operation}`) drills with tool `{tool_name}` (`{tool}`), {cutter}, which makes a cone rather than a flat-bottomed hole; a drill or an end mill is usual"
@@ -473,7 +438,7 @@ pub enum Problem {
         cutter: &'static str,
     },
     /// An enabled Pocket or Profile asks for corner relief on a tool whose
-    /// step-down is unset (#117): the relief pass steps down at the
+    /// step-down is unset: the relief pass steps down at the
     /// tool's step-down, so it is skipped. A warning.
     #[error(
         "operation `{name}` (`{operation}`) asks for corner relief, but tool `{tool_name}` (`{tool}`) has no step_down_mm, which the relief pass steps down at; the relief is skipped until it is set"
@@ -488,7 +453,7 @@ pub enum Problem {
         /// The tool's display name.
         tool_name: String,
     },
-    /// The clearance height is below an enabled operation's safe Z (#283):
+    /// The clearance height is below an enabled operation's safe Z:
     /// a link between parts would run lower than that operation's links
     /// between passes. An error.
     #[error(
@@ -518,7 +483,7 @@ pub enum Problem {
     },
     /// `heights.tool_change_machine_z_mm` is set, but the post-processor
     /// documents no machine-coordinate move (`work_coordinates.
-    /// machine_command` is `null`), so the lift cannot be written (#283).
+    /// machine_command` is `null`), so the lift cannot be written.
     /// An error.
     #[error(
         "{MACHINE_Z} is set, but post-processor `{post}` does not document a machine-coordinate move (G53), so the lift cannot be written; set it to null"
@@ -528,7 +493,7 @@ pub enum Problem {
         post: String,
     },
     /// An enabled Engrave with a V-bit cuts deeper than the bit's cone is
-    /// tall (#117), so the shank, not the cone, would cut. A warning.
+    /// tall, so the shank, not the cone, would cut. A warning.
     #[error(
         "operation `{name}` (`{operation}`) engraves {depth_mm} mm deep with tool `{tool_name}`, whose cone is only {cone_height_mm:.3} mm tall; below that the shank cuts, so use a shallower depth or a wider bit"
     )]
@@ -545,8 +510,8 @@ pub enum Problem {
         /// half the included angle.
         cone_height_mm: f64,
     },
-    /// An enabled Profile's last pass stock to leave is not more than 0 and at
-    /// most a third of its bit's diameter (#284; VCarve advises keeping it
+    /// An enabled Profile's last pass stock to leave is not more than 0 and
+    /// at most a third of its bit's diameter (VCarve advises keeping it
     /// well below a third). An error.
     #[error(
         "operation `{name}` (`{operation}`) has last_pass.stock_to_leave_mm {stock_to_leave_mm} mm with tool `{tool_name}` ({diameter_mm} mm); it must be more than 0 and at most {limit_mm:.3} mm, a third of the bit's diameter, as VCarve advises"
@@ -565,10 +530,10 @@ pub enum Problem {
         /// The largest stock to leave allowed, mm: a third of the diameter.
         limit_mm: f64,
     },
-    /// A Profile has a last pass but cuts On line (#284): it cuts with
+    /// A Profile has a last pass but cuts On line: it cuts with
     /// both flanks of the bit, so it leaves no wall for the last pass to
-    /// take the stock to leave off. An error. (changed in #311: Left and Right,
-    /// which cut one flank against the part, take a last pass.)
+    /// take the stock to leave off. An error. (Left and Right, which cut
+    /// one flank against the part, take a last pass.)
     #[error(
         "operation `{name}` (`{operation}`) cuts {} but has a last_pass; a last pass takes the stock to leave off a wall the other passes leave, so it needs an Inside, Outside, Left or Right Profile. Set last_pass to null, or cut on one side of the line",
         side_cut(*.side)
@@ -582,7 +547,7 @@ pub enum Problem {
         side: Side,
     },
     /// An enabled Profile's last pass is thicker than its step-down in
-    /// effect, the operation's or else the tool's (#310 review): it would
+    /// effect, the operation's or else the tool's: it would
     /// cut that much in one pass, where every other pass steps down less.
     /// An error.
     #[error(
@@ -602,7 +567,7 @@ pub enum Problem {
         step_down_field: String,
     },
     /// An enabled Bore's `pitch_mm` is more than its tool's step-down
-    /// (format 18; maintainer decision 2026-10-24): one turn of the helix
+    /// (format 18): one turn of the helix
     /// would cut deeper than a pass. An error.
     #[error(
         "operation `{name}` (`{operation}`) has pitch_mm {pitch_mm} mm, more than its tool's {step_down_mm} mm step-down; each turn of the helix would cut deeper than a pass. Make it at most the step-down, or set it to null to use the step-down"
@@ -618,7 +583,7 @@ pub enum Problem {
         step_down_mm: f64,
     },
     /// `flatten_tolerance_mm` is above [`MAX_FLATTEN_TOLERANCE_MM`]
-    /// (format 20; phase 3 security review L6): the safety checks' slack
+    /// (format 20): the safety checks' slack
     /// and the medial axis's chords scale with it. An error.
     #[error(
         "{FLATTEN_TOLERANCE} is {flatten_tolerance_mm} mm, above the {MAX_FLATTEN_TOLERANCE_MM} mm limit; the safety checks allow the program that far off the true curves, so a coarser tolerance could hide a cut through a wall. Use at most {MAX_FLATTEN_TOLERANCE_MM} mm"
@@ -629,7 +594,7 @@ pub enum Problem {
     },
     /// An enabled V-Carve or Inlay (format 22) cuts with a tool that is
     /// neither a V-bit (format 20; functional spec, capability 38) nor a
-    /// tapered ball nose (format 28, slice 27c, #679): its depth follows
+    /// tapered ball nose (format 28): its depth follows
     /// the bit's profile. A Photo V-Carve (format 27) needs a V-bit, for
     /// good. An error.
     #[error(
@@ -650,7 +615,7 @@ pub enum Problem {
         /// Whether the operation is a Photo V-Carve.
         photo: bool,
     },
-    /// A tapered ball nose's value is out of range (format 28, #677): a
+    /// A tapered ball nose's value is out of range (format 28): a
     /// tip diameter not above 0, a taper per side not in (0, 45], flutes
     /// not finite or ending inside the ball, or a cutting diameter not
     /// above the tip. Reported instead of `tool_out_of_range` or
@@ -718,7 +683,7 @@ pub enum Problem {
         /// `depth_mm`, and a male's `plug_depth_mm`, its engagement
         /// counted from the stock top (format 22).
         field: &'static str,
-        /// What sets `cone_height_mm` (slice 27c, #679): a V-bit's cone,
+        /// What sets `cone_height_mm`: a V-bit's cone,
         /// or a tapered ball nose's flutes or cutting diameter, its cutting
         /// height ([`Tool::cutting_height_mm`]).
         limit: CuttingLimit,
@@ -806,9 +771,9 @@ pub enum Problem {
     },
     /// An enabled V-Carve, countersink Drill or Photo V-Carve starts below
     /// the stock top, no enabled earlier Pocket, nor the flat floor of an
-    /// enabled earlier V-Carve (#426), holds its footprint, and it does not
-    /// say another program cleared the start plane (format 20; capability
-    /// 41; phase 3 security review M2). An error.
+    /// enabled earlier V-Carve, holds its footprint, and it does not say
+    /// another program cleared the start plane (format 20; capability 41).
+    /// An error.
     #[error(
         "operation `{name}` (`{operation}`) starts {start_depth_mm} mm below the stock top, but no enabled Pocket, nor the flat floor of an enabled V-Carve, before it contains {}; add a Pocket of that depth before it or, if another program clears the start plane, set start_plane_cleared_externally to true",
         .footprint.in_words()
@@ -823,7 +788,7 @@ pub enum Problem {
         /// The field, under the operation, as for
         /// [`Problem::StartDepthNegative`].
         field: &'static str,
-        /// What a floor must hold for it (#646).
+        /// What a floor must hold for it.
         footprint: StartFootprint,
     },
     /// An enabled countersink Drill cuts with a tool that is not a V-bit
@@ -919,7 +884,7 @@ pub enum Problem {
         margin_mm: f64,
     },
     /// An Inlay's `outline_rounding_mm` is set and not a number above 0
-    /// (format 24, #448): it is the radius the male's band is closed by,
+    /// (format 24): it is the radius the male's band is closed by,
     /// so 0 or less rounds nothing and is written `null`. An error.
     #[error(
         "operation `{name}` (`{operation}`) has outline_rounding_mm {rounding_mm} mm; the male's band is rounded by that radius, so it must be above 0. Set it to null for no rounding, or to a radius such as 10"
@@ -953,7 +918,7 @@ pub enum Problem {
         base_mm: f64,
     },
     /// An Inlay cut with a tapered ball nose has a `glue_gap_mm` below the
-    /// bit's tangent height `h_t` (slice 27e, #681): the plug's top edge
+    /// bit's tangent height `h_t`: the plug's top edge
     /// rides on the pocket's floor fillet, so it stands `lift_mm` proud
     /// and its walls open by `wall_gap_mm` at the surface. A warning.
     #[error(
@@ -974,7 +939,7 @@ pub enum Problem {
         wall_gap_mm: f64,
     },
     /// An Inlay cut with a tapered ball nose has a `plug_depth_mm` below
-    /// the bit's tangent height `h_t` (slice 27e, #681): the plug's wall
+    /// the bit's tangent height `h_t`: the plug's wall
     /// just below the surface is the ball's, narrower than the pocket by up
     /// to `wall_gap_mm`. A warning.
     #[error(
@@ -993,7 +958,7 @@ pub enum Problem {
         wall_gap_mm: f64,
     },
     /// An Inlay's male board has a width or height set that is not above 0
-    /// (format 25, #498): `null` is the stock's, a number is the board's
+    /// (format 25): `null` is the stock's, a number is the board's
     /// size. An error.
     #[error(
         "operation `{name}` (`{operation}`) has male_board.{field} {value_mm} mm; the male board's size must be above 0. Set it to null to use the stock's"
@@ -1009,7 +974,7 @@ pub enum Problem {
         value_mm: f64,
     },
     /// An Inlay's male board has a thickness set that is not above 0
-    /// (format 25, #498). An error.
+    /// (format 25). An error.
     #[error(
         "operation `{name}` (`{operation}`) has male_board.thickness_mm {thickness_mm} mm; measure the male board and set its thickness, above 0"
     )]
@@ -1021,9 +986,9 @@ pub enum Problem {
         /// The thickness set, mm.
         thickness_mm: f64,
     },
-    /// Two enabled Inlays that cut their males name different male boards
-    /// (#498): every male program of a project is cut on the one male
-    /// board, the first such Inlay's. An error, on the later Inlay.
+    /// Two enabled Inlays that cut their males name different male boards:
+    /// every male program of a project is cut on the one male board, the
+    /// first such Inlay's. An error, on the later Inlay.
     #[error(
         "operation `{name}` (`{operation}`) cuts its male on a male_board other than operation `{first}`'s; every Inlay of a project cuts its male on the one male board, so give them the same male_board"
     )]
@@ -1037,11 +1002,11 @@ pub enum Problem {
         first: OperationId,
     },
     /// A male Inlay's cut-out tool does not fit the band's flat floor
-    /// (format 23, #443; #448): the floor ring, from the mirrored design
+    /// (format 23): the floor ring, from the mirrored design
     /// grown by `P·tan(α/2)` out to the band's edge (`M` out when a
     /// clearing pass cuts the edge, `M − P·tan(α/2)` with a V-walled
     /// edge), is narrower than the tool, so a cut-out along its outer edge
-    /// (#461) would cut into the plug's wall. An error.
+    /// would cut into the plug's wall. An error.
     #[error(
         "operation `{name}` (`{operation}`) cuts its plug out with tool `{tool_name}`, {diameter_mm} mm across, along the outer edge of the band's flat floor; {}, or use a narrower end mill",
         cut_out_room(*.margin_mm, *.needed_mm, *.at_boundary)
@@ -1061,13 +1026,13 @@ pub enum Problem {
         /// with an open edge, `2·P·tan(α/2)` plus it with a V wall
         /// ([`crate::MaleBand::cut_out_margin_needed_mm`]).
         needed_mm: f64,
-        /// Whether the band is a drawn boundary (format 26, #449): `margin_mm`
+        /// Whether the band is a drawn boundary (format 26): `margin_mm`
         /// is then the narrowest band, and the problem is located at
         /// `boundary`.
         at_boundary: bool,
     },
     /// A male Inlay with a drawn boundary has `margin_mm` or
-    /// `outline_rounding_mm` set (format 26, #449): the boundary replaces
+    /// `outline_rounding_mm` set (format 26): the boundary replaces
     /// both, so the value does nothing. A warning, at the field.
     #[error(
         "operation `{name}` (`{operation}`) draws its male's edge with a boundary, so {field} does nothing; the boundary replaces both margin_mm and outline_rounding_mm. Set {field} to null, or empty the boundary list to use it"
@@ -1080,8 +1045,8 @@ pub enum Problem {
         /// `margin_mm` or `outline_rounding_mm`.
         field: &'static str,
     },
-    /// An Inlay's `boundary` lists an id that is no instance (format 26,
-    /// #449). An error, at the entry.
+    /// An Inlay's `boundary` lists an id that is no instance (format 26).
+    /// An error, at the entry.
     #[error(
         "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is no instance of the project; list the id of a drawn shape that is in it"
     )]
@@ -1096,7 +1061,7 @@ pub enum Problem {
         instance: InstanceId,
     },
     /// An Inlay's boundary instance has a profile that is not a closed
-    /// outline (format 26, #449): an open profile is an error, not
+    /// outline (format 26): an open profile is an error, not
     /// skipped. At the entry.
     #[error(
         "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, whose profile {profile} is not a closed outline; a boundary must be closed, so close that profile or list another shape"
@@ -1113,8 +1078,8 @@ pub enum Problem {
         /// The profile's place in its definition.
         profile: usize,
     },
-    /// An Inlay's boundary instance is also one of its targets (format 26,
-    /// #449). An error, at the entry.
+    /// An Inlay's boundary instance is also one of its targets (format 26).
+    /// An error, at the entry.
     #[error(
         "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}`, which is also one of its targets; the design cannot be its own boundary, so draw a separate shape round it"
     )]
@@ -1129,7 +1094,7 @@ pub enum Problem {
         instance: InstanceId,
     },
     /// An Inlay's drawn edge touches or crosses its design, or part of
-    /// the design lies outside it (format 26, #449): the plug's wall would
+    /// the design lies outside it (format 26): the plug's wall would
     /// have no band beyond it. The point is the worst one, on the design
     /// after near parts are merged. An error, at `boundary`.
     #[error(
@@ -1148,7 +1113,7 @@ pub enum Problem {
         distance_mm: f64,
     },
     /// A boundary instance none of whose shapes holds any part of the
-    /// design (format 26, #449). It still counts in the union. A warning,
+    /// design (format 26). It still counts in the union. A warning,
     /// at the entry.
     #[error(
         "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), but no part of the design is inside it; it still widens the band, so remove it if you did not mean that"
@@ -1165,8 +1130,8 @@ pub enum Problem {
         /// The instance's display name.
         instance_name: String,
     },
-    /// A boundary shape has a hole (format 26, #449): board standing in
-    /// the band would hold the plug off the female (#484), so the band
+    /// A boundary shape has a hole (format 26): board standing in
+    /// the band would hold the plug off the female, so the band
     /// ignores it. A warning, at the entry.
     #[error(
         "operation `{name}` (`{operation}`) lists boundary[{index}] `{instance}` (`{instance_name}`), whose profile {profile} is a hole; the band ignores holes, since board left standing in it would hold the plug off the female, so the hole is cut as band too"
@@ -1339,7 +1304,7 @@ pub enum Problem {
         height_px: u32,
     },
     /// A bitmap's `width_px` or `height_px` is above
-    /// [`MAX_BITMAP_SIDE_PX`] (format 27; phase 3 security review M4). An
+    /// [`MAX_BITMAP_SIDE_PX`] (format 27). An
     /// error.
     #[error(
         "bitmap `{name}` (`{bitmap}`) is {width_px} × {height_px} px; a picture is at most {limit_px} px on a side, so scale it down before adding it"
@@ -1356,8 +1321,8 @@ pub enum Problem {
         /// [`MAX_BITMAP_SIDE_PX`].
         limit_px: u32,
     },
-    /// A bitmap's `width_mm` or `height_mm` is not above 0 (format 27;
-    /// security review M4). An error.
+    /// A bitmap's `width_mm` or `height_mm` is not above 0 (format 27). An
+    /// error.
     #[error(
         "bitmap `{name}` (`{bitmap}`) has {field} {value} mm; a picture's footprint has a width and a height above 0"
     )]
@@ -1372,7 +1337,7 @@ pub enum Problem {
         value: f64,
     },
     /// A bitmap's `png_base64` is not base64 or does not start with a PNG
-    /// header (format 27, #644). [`crate::load`] refuses such a file, so
+    /// header (format 27). [`crate::load`] refuses such a file, so
     /// only a project built in code gets here. An error.
     #[error("the picture of bitmap `{name}` (`{bitmap}`) cannot be read: {reason}")]
     BitmapUnreadable {
@@ -1385,15 +1350,15 @@ pub enum Problem {
     },
 }
 
-/// The fastest feed or plunge rate a used tool may have, mm/min (#67).
+/// The fastest feed or plunge rate a used tool may have, mm/min.
 /// Above it export fails: no hobby machine moves that fast, so the value is
 /// almost surely a typo. Raise it if users report real machines beyond it.
 pub const MAX_RATE_MM_MIN: f64 = 20_000.0;
 
-/// Above this spindle speed a used tool gets a warning, RPM (#67).
+/// Above this spindle speed a used tool gets a warning, RPM.
 pub const MAX_RPM: u32 = 60_000;
 
-/// Above this diameter a used tool gets a warning, mm (#67).
+/// Above this diameter a used tool gets a warning, mm.
 pub const MAX_TOOL_DIAMETER_MM: f64 = 50.0;
 
 /// The thinnest board a male Inlay may leave under its surround's floor
@@ -1401,9 +1366,8 @@ pub const MAX_TOOL_DIAMETER_MM: f64 = 50.0;
 /// "Algorithms → Inlay", step 4): `inlay_plug_base_thin` below it.
 pub const INLAY_MIN_PLUG_BASE_MM: f64 = 6.0;
 
-/// The coarsest `flatten_tolerance_mm` a project may set, mm (format 20;
-/// phase 3 security review L6): the safety checks' slack and the medial
-/// axis's chords scale with it.
+/// The coarsest `flatten_tolerance_mm` a project may set, mm (format 20):
+/// the safety checks' slack and the medial axis's chords scale with it.
 pub const MAX_FLATTEN_TOLERANCE_MM: f64 = 0.1;
 
 /// `name`, a variant's CamelCase name, in snake case, and how many bytes
@@ -1551,7 +1515,7 @@ impl Problem {
     }
 
     /// Whether this problem is a value the user must supply and has not:
-    /// the list `init` prints (#76).
+    /// the list `init` prints.
     pub fn is_unset_value(&self) -> bool {
         matches!(
             self,
@@ -1964,7 +1928,7 @@ struct Validator {
 impl Validator {
     fn project(&mut self, p: &Project) {
         self.positive(FLATTEN_TOLERANCE, p.flatten_tolerance_mm);
-        // Format 20 (security review L6): the safety checks' slack scales
+        // Format 20: the safety checks' slack scales
         // with the tolerance, so it has a ceiling.
         if p.flatten_tolerance_mm.is_finite() && p.flatten_tolerance_mm > MAX_FLATTEN_TOLERANCE_MM {
             self.problems.push(Problem::FlattenToleranceRange {
@@ -1983,7 +1947,7 @@ impl Validator {
         }
         self.heights(p);
 
-        // In the order the file holds them (#76): settings, then geometry.
+        // In the order the file holds them: settings, then geometry.
         // Tools an enabled operation cuts with; only their rates are required.
         // A V-Carve's clearing passes cut with their own tools (format 20).
         let clearing_tools = || {
@@ -2029,7 +1993,7 @@ impl Validator {
                 _ => None,
             })
             .collect();
-        // Tools an enabled operation takes its step-down from (#98): a
+        // Tools an enabled operation takes its step-down from: a
         // Profile, Pocket or Engrave with no step-down of its own, a peck
         // Drill with no peck depth (functional spec, capability 14), and a
         // V-Carve's clearing pass (format 20). The V-bit cuts in one pass.
@@ -2054,7 +2018,7 @@ impl Validator {
             .map(Operation::tool)
             .chain(clearing_tools())
             .collect();
-        // #117: the `T` number each used tool resolves to, set or
+        // The `T` number each used tool resolves to, set or
         // positional, and the first tool with it.
         let mut numbers: BTreeMap<u32, &ToolId> = BTreeMap::new();
         let mut seen = BTreeSet::new();
@@ -2072,7 +2036,7 @@ impl Validator {
                 });
             }
             let at = format!("tools[{}]", tool.id);
-            // #117: `T0` is no tool; a set number must be positive, used
+            // `T0` is no tool; a set number must be positive, used
             // or not. Only used tools are written, so only they clash.
             match tool.number {
                 Some(0) => self.tool_out_of_range(tool, "number", 0.0, POSITIVE),
@@ -2126,7 +2090,7 @@ impl Validator {
                 );
             }
             self.tool_positive(tool, "diameter_mm", tool.diameter_mm);
-            // #67: the sanity limits apply only to a tool something cuts
+            // The sanity limits apply only to a tool something cuts
             // with; an unused tool is one warning already.
             if in_use && tool.diameter_mm.is_finite() && tool.diameter_mm > MAX_TOOL_DIAMETER_MM {
                 self.problems.push(Problem::LargeDiameter {
@@ -2141,7 +2105,7 @@ impl Validator {
             self.required_positive(tool, in_use, "feed_mm_min", tool.feed_mm_min);
             self.required_positive(tool, in_use, "plunge_mm_min", tool.plunge_mm_min);
             // With the router switched by hand the speed is only a hint in
-            // the pause message (#34), so it may be unset.
+            // the pause message, so it may be unset.
             let rpm_required =
                 in_use && p.post_processor.spindle_control == SpindleControl::Automatic;
             match tool.rpm {
@@ -2175,7 +2139,7 @@ impl Validator {
                 });
             }
             // Unset is an error only when an enabled operation falls back on
-            // it; one error per tool, however many operations do (#98).
+            // it; one error per tool, however many operations do.
             match tool.step_down_mm {
                 Some(step) => self.tool_positive(tool, "step_down_mm", step),
                 None if step_down_from_tool.contains(&tool.id) => {
@@ -2269,7 +2233,7 @@ impl Validator {
             }
         }
 
-        // #105: placed tabs, after the operations as the file holds them.
+        // Placed tabs, after the operations as the file holds them.
         let mut seen_tabs = BTreeSet::new();
         for tab in &p.tabs {
             if !seen_tabs.insert(&tab.id) {
@@ -2282,10 +2246,9 @@ impl Validator {
         // Definitions with a coordinate out of range; their instances are
         // not checked again, so each mistake is reported once.
         let mut out_of_range = BTreeSet::new();
-        // Engrave and On line, Left and Right Profile cut open paths
-        // (#175, #207), so a
-        // definition an enabled one targets is not reported as having
-        // paths that are never cut.
+        // Engrave and On line, Left and Right Profile cut open paths, so a
+        // definition an enabled one targets is not reported as having paths
+        // that are never cut.
         let engraved: BTreeSet<&DefinitionId> = p
             .operations
             .iter()
@@ -2318,7 +2281,7 @@ impl Validator {
                 let mut ok = true;
                 for (j, vertex) in profile.vertices().iter().enumerate() {
                     // Every load and save checks every vertex: name the
-                    // fields only for one that fails (#71).
+                    // fields only for one that fails.
                     let in_range = |v: f64| v.is_finite() && v.abs() <= MAX_COORDINATE_MM;
                     if in_range(vertex.x) && in_range(vertex.y) && vertex.bulge.is_finite() {
                         continue;
@@ -2382,14 +2345,14 @@ impl Validator {
                     self.out_of_range(format!("{at}.transform"), reach_mm, REACH);
                 }
             }
-            // Unset depths are fine: phase 1 does not use them (#99).
+            // Unset depths are fine: phase 1 does not use them.
             if let Some(z_top_mm) = inst.z_top_mm {
                 self.coordinate(&format!("{at}.z_top_mm"), z_top_mm);
             }
             if let Some(z_bottom_mm) = inst.z_bottom_mm {
                 let field = format!("{at}.z_bottom_mm");
                 // Nothing reads them yet, but a top below the bottom is
-                // never meant (#71).
+                // never meant.
                 if self.coordinate(&field, z_bottom_mm)
                     && inst
                         .z_top_mm
@@ -2419,7 +2382,7 @@ impl Validator {
         }
 
         // The definition's own values are checked by tests on every
-        // bundled version, since a project cannot change them (#106). A
+        // bundled version, since a project cannot change them. A
         // reference that names no bundled definition fails to load, so
         // only a project built in code gets here without one; export
         // refuses it.
@@ -2434,7 +2397,7 @@ impl Validator {
         }
 
         self.non_negative("post_processor.spindle_on_dwell_s", post.spindle_on_dwell_s);
-        // #117: canned cycles can only be written where the definition
+        // Canned cycles can only be written where the definition
         // has them; asking elsewhere would be ignored, so it is an error.
         let definition_has_cycles = post
             .definition()
@@ -2447,7 +2410,7 @@ impl Validator {
     }
 
     /// The sanity checks of an enabled operation `op` at `at`, cutting
-    /// with `tool` when it exists (#67, #117): it has targets; a Pocket, a
+    /// with `tool` when it exists: it has targets; a Pocket, a
     /// Bore or an Inside or Outside Profile cuts with a flat end mill; a
     /// Bore's pitch is at most the tool's step-down; a Drill
     /// cuts with a drill or end mill (a warning otherwise); the step-down
@@ -2538,7 +2501,7 @@ impl Validator {
             (None, Some(step)) => Some((step, format!("tools[{}].step_down_mm", tool.id))),
             (None, None) => None,
         };
-        // #310 review: the last pass is at most one step-down thick.
+        // The last pass is at most one step-down thick.
         if let Operation::Profile(profile) = op
             && let Some(thickness_mm) = profile.last_pass.as_ref().and_then(|l| l.thickness_mm)
             && thickness_mm.is_finite()
@@ -2595,7 +2558,7 @@ impl Validator {
                 tool_name: tool.name.clone(),
             });
         }
-        // #284: VCarve advises a stock to leave well below a third of the bit.
+        // VCarve advises a stock to leave well below a third of the bit.
         if let Operation::Profile(profile) = op
             && let Some(last_pass) = &profile.last_pass
             && last_pass.stock_to_leave_mm.is_finite()
@@ -2671,9 +2634,9 @@ impl Validator {
             self.tab_spec(tabs, &format!("{at}.tabs"));
         }
         self.entry(&op.entry, at);
-        // #117: a helix needs removed material to sit in (functional spec,
+        // A helix needs removed material to sit in (functional spec,
         // capability 16); an On line, Left or Right cut removes only its
-        // kerf (#207).
+        // kerf.
         if !op.side.has_waste_area() && matches!(op.entry, Entry::Helix { .. }) {
             self.problems.push(Problem::HelixNeedsWasteSide {
                 operation: op.id.clone(),
@@ -2688,7 +2651,7 @@ impl Validator {
         }
     }
 
-    /// A last pass's values that need no tool (#284): a finite stock to leave
+    /// A last pass's values that need no tool: a finite stock to leave
     /// (its range needs the bit, [`Self::enabled_operation`]), a thickness
     /// in (0, depth], and an Inside or Outside side.
     fn last_pass(&mut self, op: &ProfileOp, last_pass: &LastPass, at: &str) {
@@ -2733,7 +2696,7 @@ impl Validator {
             }
         }
         self.non_negative(&format!("{at}.stock_to_leave_mm"), op.stock_to_leave_mm);
-        // #117: rest machining clears what an earlier Pocket of the same
+        // Rest machining clears what an earlier Pocket of the same
         // shapes left (functional spec, capability 13).
         if let Some(rest_of) = &op.rest_of {
             let earlier = operations
@@ -2820,16 +2783,15 @@ impl Validator {
         }
     }
 
-    /// The rules of an enabled countersink Drill that need its tool and
-    /// the project (format 21; `docs/specs/phase-3/design.md`,
-    /// "Validation"): it cuts with a V-bit; its mouth is no wider than the
-    /// bit; a start depth below the stock top is cleared by an earlier
-    /// floor that holds the bit at every hole, a Pocket's or a V-Carve's
-    /// flat floor (#426; [`cleared_start_plane`]), or vouched for; and the
-    /// bit's flanks engage no deeper than its cone, counting the start
-    /// depth unless such a floor at that depth clears the plane (security
-    /// review H4). `op` is `drill` as the project holds it. A
-    /// Drill of another cycle has none of these.
+    /// The rules of an enabled countersink Drill that need its tool and the
+    /// project (format 21; `docs/specs/phase-3/design.md`, "Validation"):
+    /// it cuts with a V-bit; its mouth is no wider than the bit; a start
+    /// depth below the stock top is cleared by an earlier floor that holds
+    /// the bit at every hole, a Pocket's or a V-Carve's flat floor
+    /// ([`cleared_start_plane`]), or vouched for; and the bit's flanks
+    /// engage no deeper than its cone, counting the start depth unless such
+    /// a floor at that depth clears the plane. `op` is `drill` as the
+    /// project holds it. A Drill of another cycle has none of these.
     fn enabled_countersink(
         &mut self,
         p: &Project,
@@ -2879,7 +2841,7 @@ impl Validator {
         }
 
         // The start plane (capability 41), as for a V-Carve; the footprint
-        // is the bit's disc at each hole (#425).
+        // is the bit's disc at each hole.
         if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0) {
             return;
         }
@@ -3054,7 +3016,7 @@ impl Validator {
         self.carving_tools(p, &carve.id, &carve.name, tool, &carve.clearing);
 
         // The start plane (capability 41): an earlier floor that holds the
-        // targets clears it, a Pocket's or a V-Carve's flat floor (#426);
+        // targets clears it, a Pocket's or a V-Carve's flat floor;
         // otherwise, below the stock top, the user must vouch for it.
         let start_depth_mm = carve.start_depth_mm;
         if !(start_depth_mm.is_finite() && start_depth_mm >= 0.0) {
@@ -3075,17 +3037,17 @@ impl Validator {
                 footprint: StartFootprint::Targets,
             });
         }
-        // The flanks engage from the start plane only when a floor at
-        // that depth clears it (design spec, "V-Carve generator", step 3;
-        // security review H4); from the stock top otherwise.
+        // The flanks engage from the start plane only when a floor at that
+        // depth clears it (design spec, "V-Carve generator", step 3); from
+        // the stock top otherwise.
         let cleared_at_start = cleared.is_some_and(|plane| plane.is_at(start_depth_mm));
         let from_stock_top = below_top && !cleared_at_start;
         let Some(tool) = tool else {
             return;
         };
-        // A V-bit's cone height, or a tapered ball nose's cutting height
-        // (slice 27c, #679); `None` for any other cutter or a value out of
-        // range, which other rules name.
+        // A V-bit's cone height, or a tapered ball nose's cutting height;
+        // `None` for any other cutter or a value out of range, which other
+        // rules name.
         let (Some(cone_height_mm), Some(limit)) = (tool.cutting_height_mm(), tool.cutting_limit())
         else {
             return;
@@ -3278,13 +3240,12 @@ impl Validator {
     }
 
     /// A bitmap's fields, in file order (format 27;
-    /// `docs/specs/phase-3/design.md`, "Validation"; security review M4):
-    /// a size of at least one pixel each way and at most
-    /// [`MAX_BITMAP_SIDE_PX`]; a footprint above 0 each way, on the
-    /// coordinate range at both corners, with the picture's proportions;
-    /// and a PNG that is 8-bit grayscale of that size. Only the PNG's
-    /// header is read, never its image data, so the checks cost nothing
-    /// per pixel.
+    /// `docs/specs/phase-3/design.md`, "Validation"): a size of at least
+    /// one pixel each way and at most [`MAX_BITMAP_SIDE_PX`]; a footprint
+    /// above 0 each way, on the coordinate range at both corners, with the
+    /// picture's proportions; and a PNG that is 8-bit grayscale of that
+    /// size. Only the PNG's header is read, never its image data, so the
+    /// checks cost nothing per pixel.
     fn bitmap(&mut self, bitmap: &Bitmap) {
         let at = format!("bitmaps[{}]", bitmap.id);
         let (id, name) = (&bitmap.id, &bitmap.name);
@@ -3396,7 +3357,7 @@ impl Validator {
             .operations
             .iter()
             .any(|o| matches!(o, Operation::PhotoVCarve(photo) if &photo.id == operation));
-        // Slice 27c (#679): a V-Carve and an Inlay carve with a tapered
+        // A V-Carve and an Inlay carve with a tapered
         // ball nose too; a Photo V-Carve only with a V-bit.
         if let Some(tool) = tool
             && !(matches!(tool.cutter, ToolKind::VBit { .. })
@@ -3450,10 +3411,9 @@ impl Validator {
     /// `docs/specs/phase-3/design.md`, "Validation" and "Algorithms →
     /// Inlay", steps 1 and 4). The depth, glue gap and plug depth are
     /// required on both boards; the margin, and the male's cone, cut-out
-    /// and plug base, once the male is cut, its board's thickness set
-    /// (#498). An Inlay has no start depth, so no `start_depth_*` rule
-    /// applies, and it always has a flat depth, so its clearing passes
-    /// always have a floor.
+    /// and plug base, once the male is cut, its board's thickness set. An
+    /// Inlay has no start depth, so no `start_depth_*` rule applies, and it
+    /// always has a flat depth, so its clearing passes always have a floor.
     fn inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>, at: &str) {
         let male = inlay.cuts_male();
         self.male_board(p, inlay, at);
@@ -3493,7 +3453,7 @@ impl Validator {
             }
             None => unset(self, INLAY_PLUG_DEPTH),
         }
-        // Format 26 (#449): a drawn boundary replaces the margin and the
+        // Format 26: a drawn boundary replaces the margin and the
         // rounding, so the male needs no margin and ignores one.
         let drawn = male && inlay.has_boundary();
         match (male, inlay.margin_mm) {
@@ -3515,7 +3475,7 @@ impl Validator {
             (true, None) if drawn => {}
             (true, None) => unset(self, "margin_mm"),
         }
-        // Format 24 (#448): on either side, so a pair shares it.
+        // Format 24: on either side, so a pair shares it.
         if let Some(rounding_mm) = inlay.outline_rounding_mm
             && !(rounding_mm.is_finite() && rounding_mm > 0.0)
         {
@@ -3547,7 +3507,7 @@ impl Validator {
             inlay.safe_z_mm,
             at,
         );
-        // Format 23 (#443): the cut-out's own fields.
+        // Format 23: the cut-out's own fields.
         if let Some(cut_out) = &inlay.cut_out {
             if !p.tools.iter().any(|t| t.id == cut_out.tool) {
                 self.problems.push(Problem::DanglingTool {
@@ -3570,10 +3530,10 @@ impl Validator {
     }
 
     /// The rules of an enabled Inlay's cut-out that need its tools
-    /// (format 23, #443), once its male is cut (#498): its tool is a flat
+    /// (format 23), once its male is cut: its tool is a flat
     /// end mill; and the band's flat floor ring holds the tool's diameter:
     /// `M − P·tan(α/2)` wide when a clearing pass cuts the band's edge, `M
-    /// − 2·P·tan(α/2)` with a V-walled edge (#448, [`crate::male_band`]).
+    /// − 2·P·tan(α/2)` with a V-walled edge ([`crate::male_band`]).
     /// The ring is compared only when the values it uses passed their own
     /// checks.
     fn enabled_cut_out(&mut self, p: &Project, inlay: &InlayOp, v_bit: Option<&Tool>) {
@@ -3621,14 +3581,13 @@ impl Validator {
         }
     }
 
-    /// A male Inlay's drawn boundary (format 26, #449; design spec,
-    /// "Validation", "Drawn boundary"): each entry resolves (an instance,
-    /// not a target, closed outlines only), and its holes are ignored
-    /// with a warning; then, if every entry resolved, the design lies
-    /// strictly inside the union of the entries (`inlay_boundary_
-    /// crosses_design`, with the worst point), and an entry that holds no
-    /// part of the design warns. Nothing is checked before the male is
-    /// cut, or without a boundary.
+    /// A male Inlay's drawn boundary (format 26; design spec, "Validation",
+    /// "Drawn boundary"): each entry resolves (an instance, not a target,
+    /// closed outlines only), and its holes are ignored with a warning;
+    /// then, if every entry resolved, the design lies strictly inside the
+    /// union of the entries (`inlay_boundary_crosses_design`, with the
+    /// worst point), and an entry that holds no part of the design warns.
+    /// Nothing is checked before the male is cut, or without a boundary.
     fn boundary(&mut self, p: &Project, inlay: &InlayOp) {
         let mut resolved = true;
         for (index, id) in inlay.boundary.iter().enumerate() {
@@ -3716,14 +3675,13 @@ impl Validator {
     }
 
     /// The rules of an enabled Inlay that need its tools and the project
-    /// (format 22): its tools as a V-Carve's; each board's flank
-    /// engagement from its top ([`InlayOp::engagement_mm`]; security
-    /// review H4) within the V-bit's cone, the female's `D` at
-    /// `depth_mm` and, once the male is cut (#498), the male's `D − G + P`
-    /// at `plug_depth_mm`; and the male board under its surround's floor
-    /// at least [`INLAY_MIN_PLUG_BASE_MM`] thick (a warning; the male
-    /// board's thickness, not the stock's). Only values that passed their
-    /// own checks are compared.
+    /// (format 22): its tools as a V-Carve's; each board's flank engagement
+    /// from its top ([`InlayOp::engagement_mm`]) within the V-bit's cone,
+    /// the female's `D` at `depth_mm` and, once the male is cut, the male's
+    /// `D − G + P` at `plug_depth_mm`; and the male board under its
+    /// surround's floor at least [`INLAY_MIN_PLUG_BASE_MM`] thick (a
+    /// warning; the male board's thickness, not the stock's). Only values
+    /// that passed their own checks are compared.
     fn enabled_inlay(&mut self, p: &Project, inlay: &InlayOp, tool: Option<&Tool>) {
         self.carving_tools(p, &inlay.id, &inlay.name, tool, &inlay.clearing);
         let depth_ok = inlay.depth_mm.is_some_and(|d| d.is_finite() && d > 0.0);
@@ -3734,8 +3692,7 @@ impl Validator {
         let plug_depth_ok = inlay
             .plug_depth_mm
             .is_some_and(|p| p.is_finite() && p > 0.0);
-        // A V-bit's cone height, or a tapered ball nose's cutting height
-        // (slice 27c, #679).
+        // A V-bit's cone height, or a tapered ball nose's cutting height.
         let cone_height_mm =
             tool.and_then(|tool| Some((tool, tool.cutting_height_mm()?, tool.cutting_limit()?)));
         let mut boards = vec![(Board::Female, depth_ok)];
@@ -3761,7 +3718,7 @@ impl Validator {
                     limit,
                 });
             }
-            // #681: a tapered ball nose's glue gap and plug depth below its
+            // A tapered ball nose's glue gap and plug depth below its
             // tangent height (warnings), once, with the female.
             if !male && let Some(profile) = tool.and_then(Tool::carve_profile) {
                 self.inlay_ball(inlay, &profile, glue_gap_ok, plug_depth_ok);
@@ -3786,7 +3743,7 @@ impl Validator {
         }
     }
 
-    /// An Inlay cut with a tapered ball nose of `profile` (slice 27e, #681):
+    /// An Inlay cut with a tapered ball nose of `profile`:
     /// a `glue_gap_mm` below the bit's tangent height is
     /// `inlay_glue_gap_below_ball`, and a `plug_depth_mm` below it
     /// `inlay_plug_depth_below_ball`, each a warning naming what it costs.
@@ -3823,7 +3780,7 @@ impl Validator {
         }
     }
 
-    /// An Inlay's male board (format 25, #498): its width and height,
+    /// An Inlay's male board (format 25): its width and height,
     /// when set, above 0 (`inlay_male_board_size`) and within
     /// [`MAX_COORDINATE_MM`]; its thickness, when set, above 0
     /// (`inlay_male_board_thickness`) and within it too. An enabled Inlay
@@ -3945,7 +3902,7 @@ impl Validator {
         self.non_negative(&format!("{at}.lead.overcut_mm"), lead.overcut_mm);
     }
 
-    /// #283, design addendum A7: the clearance height is positive and at
+    /// Design addendum A7: the clearance height is positive and at
     /// least every enabled operation's safe Z; the tool-change machine Z is
     /// below 0 and only on a definition that documents `G53`; the park
     /// point is within the coordinate limit.
@@ -3973,7 +3930,7 @@ impl Validator {
             && self.coordinate(MACHINE_Z, machine_z_mm)
         {
             // Below 0 as the program writes it: not one that rounds to 0
-            // in its decimal places (#304 review).
+            // in its decimal places.
             let half_quantum_mm = p.post_processor.decimal_places.quantum_mm(p.display_units) / 2.0;
             if machine_z_mm >= -half_quantum_mm {
                 self.problems
@@ -4092,7 +4049,7 @@ impl Validator {
             }),
             Some(v) => {
                 self.tool_positive(tool, field, v);
-                // #67: far past any hobby machine, so almost surely a typo.
+                // Far past any hobby machine, so almost surely a typo.
                 if in_use && v.is_finite() && v > MAX_RATE_MM_MIN {
                     self.tool_out_of_range(tool, field, v, RATE);
                 }
@@ -4100,9 +4057,9 @@ impl Validator {
         }
     }
 
-    /// A tapered ball nose's values, `[tip, taper, flutes]` (format 28,
-    /// #677): each unset one is `tool_value_unset` when the tool is
-    /// `in_use`, and each set one out of range, or not a number, is
+    /// A tapered ball nose's values, `[tip, taper, flutes]` (format 28):
+    /// each unset one is `tool_value_unset` when the tool is `in_use`, and
+    /// each set one out of range, or not a number, is
     /// `tapered_ball_nose_range` at its field, used or not, as is a cutting
     /// diameter not above the tip. A cutting diameter not above 0 is left
     /// to the rule every tool has.
