@@ -61,7 +61,7 @@ use dc_project::{Board, Operation, OperationId, Project, Tool};
 /// these, so the screen and this file agree (acceptance 79). Distinct on
 /// white and from the black shapes.
 pub const PALETTE: [&str; 8] = [
-    "#1f77b4", "#d62728", "#2a8f2a", "#8e5fb8", "#d96a00", "#0e98a8", "#8c564b", "#c94fa8",
+    "#1f77b4", "#d62728", "#4a930d", "#8e5fb8", "#d36500", "#0b90b1", "#8c564b", "#c94fa8",
 ];
 /// The stock outline, as PureCutCNC draws it: grey, dashed.
 const STOCK_COLOUR: &str = "#7f7f7f";

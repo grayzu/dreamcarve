@@ -352,23 +352,22 @@ none depends on its colour alone.
 
 The CLI's `PALETTE` (`crates/dc-job/src/preview.rs`) is Matplotlib's
 tab10 hues in their order, darkened for the light Viewport (design open
-question 5, accepted). The redesign moves three of the eight on screen:
+question 5, accepted). The redesign moves three of the eight:
 green goes yellower and cyan bluer, so no toolpath sits near the accent's
 hue (159°), and orange a shade deeper for the new background. The order
-and the names stay, so the CLI's preview and the quick-start pictures
-still match the screen by eye; dark mode has its own set, as before. The
-CLI column is `dc_job::preview::PALETTE` as it stands; if the CLI adopts
-the light column, the two are one table again (`tests/theme.rs` holds the
-two columns to exactly this difference).
+and the names stay. The CLI adopted the light column on 2026-11-18, so
+`dc_job::preview::PALETTE` and the light Viewport are one table
+(`tests/theme.rs` and the CLI's `palette_matches_the_app_light_set` hold
+them together); dark mode has its own set, as before.
 
 | # | Name | CLI | Light | on `#F6F7F7` | Dark | on `#0F1214` |
 | --- | --- | --- | --- | --- | --- | --- |
 | 1 | Blue | `#1F77B4` | `#1F77B4` | 4.5 | `#5BA6EA` | 7.2 |
 | 2 | Red | `#D62728` | `#D62728` | 4.7 | `#F0605A` | 5.8 |
-| 3 | Green | `#2A8F2A` | `#4A930D` | 3.6 | `#9AD64B` | 10.8 |
+| 3 | Green | `#4A930D` | `#4A930D` | 3.6 | `#9AD64B` | 10.8 |
 | 4 | Purple | `#8E5FB8` | `#8E5FB8` | 4.4 | `#B48FE0` | 7.1 |
-| 5 | Orange | `#D96A00` | `#D36500` | 3.5 | `#FFA046` | 9.3 |
-| 6 | Cyan | `#0E98A8` | `#0B90B1` | 3.5 | `#4FC3F0` | 9.3 |
+| 5 | Orange | `#D36500` | `#D36500` | 3.5 | `#FFA046` | 9.3 |
+| 6 | Cyan | `#0B90B1` | `#0B90B1` | 3.5 | `#4FC3F0` | 9.3 |
 | 7 | Brown | `#8C564B` | `#8C564B` | 5.5 | `#C8907F` | 6.9 |
 | 8 | Pink | `#C94FA8` | `#C94FA8` | 3.8 | `#F08FD2` | 8.6 |
 

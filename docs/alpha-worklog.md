@@ -43,13 +43,27 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 
 | Slice | What | Status |
 | --- | --- | --- |
-| A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | doing |
-| A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | doing |
-| A3 | The safety pass fails closed on a lookup miss (#711; review 1.1) | todo |
+| A1 | An Inlay's schema error names its field (GitHub #712; review 1.3) | done |
+| A2 | A clipped Inlay cut-out places the tabs it was asked for (#710; review 1.13) | done |
+| A3 | The safety pass fails closed on a lookup miss (#711; review 1.1) | doing |
 | A4 | Boundary sweep: the plug 0.182 mm proud at lettering seed 0x47 (#713) | doing |
-| A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | doing |
-| A6 | The digest hashes bitmaps; `Rates` keeps feed and plunge; cuts outside a span refused; wall-clock assertions removed (review 1.4, 1.7, 1.10, 1.11) | todo |
-| A7 | A generator's lookup miss is an internal-defect error, not a skipped pass (review 1.2) | todo |
+| A5 | Import robustness: DXF stitch and dedupe budget, warning names, read caps, control characters, `init` no-overwrite (review 1.5, 1.6, 1.8, 1.9, 1.12) | done |
+| A6 | `Rates` keeps feed and plunge; cuts outside a span refused (review 1.7, 1.10; with A3). The digest hashing bitmaps (1.4) and the wall-clock assertions in dc-import and photo (1.11) are done; dc-gcode's `s17_check_is_fast_on_the_sign` and `s9_check_is_fast_*` still assert time | doing |
+| A7 | A generator's lookup miss is an internal-defect error, not a skipped pass (review 1.2): the 2.5D generators first, then V-carve, Inlay and dc-geometry | doing |
+
+Notes from the fixes:
+
+- A2: the cut-out's request is per outline (per plug), shared among that
+  outline's open pieces by length. `at_distances` had the same defect and
+  the same fix. No expected program changed.
+- A5: control characters from a DXF are replaced with U+FFFD at the
+  reader. Still open: SVG ids and `.dcv` names are not sanitised before
+  the CLI prints them; one filter in `crates/dreamcarve/src/output.rs`
+  would cover every source.
+- A1/A6: the digest hashes the whole bitmap record, base64 included, per
+  operation that reads it on every snapshot. Not measured on a large
+  picture; revisit with review item 3.3.
+- D2: the CLI's preview palette now equals the light Viewport set.
 
 ### B. Phase 3
 
@@ -63,16 +77,16 @@ Status is one of: todo, doing, done, owner (waits for the maintainer).
 
 | Slice | What | Status |
 | --- | --- | --- |
-| C1 | Import drawings and pictures (#535) | todo |
+| C1 | Import drawings and pictures (#535) | doing |
 | C2 | Photo V-Carve editor and bitmaps (#544) | todo |
-| C3 | Tapered ball nose in the app (#685) | todo |
+| C3 | Tapered ball nose in the app (#685) | doing |
 
 ### D. UI redesign
 
 | Slice | What | Status |
 | --- | --- | --- |
 | D1 | The redesign brief, `docs/specs/phase-4/redesign.md`: principles, the window, the steps, tokens, components | done |
-| D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | todo |
+| D2 | Theme tokens and widgets: dark default, teal accent, cards, pills | done |
 | D3 | The shell: icon rail, steps, start screen | todo |
 | D4 | The steps' panels (Design, Stock, Tools, Operations, Export), warnings, viewport overlays | todo |
 | D5 | Window tests and snapshots for the new shell | todo |

@@ -239,11 +239,9 @@ fn hex_in(cell: &str) -> Color32 {
 /// Section 5, "Operation colours" and "Depth ramp" (design open question
 /// 5, accepted; #545; the redesign, `redesign.md`, "Operation colours"):
 /// the light and dark sets are the table's, the table's CLI column is
-/// `dc_job::preview::PALETTE`, and the light set is the CLI's but for the
-/// three the redesign moved (green and cyan off the accent's hue, orange
-/// for the new background), so `--preview` matches the light Viewport by
-/// eye: the same eight names in the same order. The ramp's five stops are
-/// the spec's in both modes.
+/// `dc_job::preview::PALETTE`, and the light set is the CLI's, so
+/// `--preview` matches the light Viewport: the same eight colours in the
+/// same order. The ramp's five stops are the spec's in both modes.
 #[test]
 fn operation_colours_and_depth_ramp_match_experience_md() {
     let operations = numbered_rows("### Operation colours");
@@ -260,10 +258,9 @@ fn operation_colours_and_depth_ramp_match_experience_md() {
         assert_eq!(theme::LIGHT.operation(k + 8), theme::LIGHT.operation(k));
         assert_eq!(theme::DARK.operation(k + 8), theme::DARK.operation(k));
     }
-    assert_eq!(
-        moved,
-        ["Green", "Orange", "Cyan"],
-        "the light set is the preview's but for the three the redesign moved"
+    assert!(
+        moved.is_empty(),
+        "the light set is the preview's, but these differ: {moved:?}"
     );
     let ramp = numbered_rows("### Depth ramp");
     assert_eq!(ramp.len(), 5, "{ramp:?}");
