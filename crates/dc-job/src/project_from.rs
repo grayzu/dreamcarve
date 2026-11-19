@@ -301,22 +301,7 @@ pub fn picture(
     post_processor: PostProcessorRef,
     display_units: Units,
 ) -> Result<Project, JobError> {
-    let (width_mm, height_mm) = size.footprint_mm(pixels.width_px, pixels.height_px)?;
-    let fit = fit_stock(
-        Rect {
-            min: Point::new(0.0, 0.0),
-            max: Point::new(width_mm, height_mm),
-        },
-        STOCK_MARGIN_MM,
-    );
-    if fit.width_mm > MAX_COORDINATE_MM || fit.height_mm > MAX_COORDINATE_MM {
-        return Err(JobError::StockTooLarge {
-            width_mm: fit.width_mm,
-            height_mm: fit.height_mm,
-            margin_mm: STOCK_MARGIN_MM,
-            limit_mm: MAX_COORDINATE_MM,
-        });
-    }
+    let fit = picture_stock(pixels.width_px, pixels.height_px, size)?;
     let corner = fit.shift.apply(Point::new(0.0, 0.0));
     let bitmap = crate::picture::bitmap(BitmapId::new(BITMAP_ID), name, pixels, size, corner)?;
     let tool = photo_v_bit();
@@ -345,6 +330,42 @@ pub fn picture(
         tabs: Vec::new(),
         post_processor,
     })
+}
+
+/// The stock [`picture`] sizes round a `width_px × height_px` picture at
+/// `size`, and the shift that puts the picture's bottom-left corner
+/// [`STOCK_MARGIN_MM`] in from the stock's, checked as [`picture`] checks
+/// it, from the pixel counts alone: no picture is encoded, so the app's
+/// *New from picture* sheet can ask on every change of the size
+/// (functional spec, phase 4, capability 51).
+///
+/// # Errors
+///
+/// [`JobError::PictureSize`] for a size that is not a positive length and
+/// [`JobError::StockTooLarge`] when the footprint with the margin is past
+/// [`MAX_COORDINATE_MM`].
+pub fn picture_stock(
+    width_px: u32,
+    height_px: u32,
+    size: PictureSize,
+) -> Result<StockFit, JobError> {
+    let (width_mm, height_mm) = size.footprint_mm(width_px, height_px)?;
+    let fit = fit_stock(
+        Rect {
+            min: Point::new(0.0, 0.0),
+            max: Point::new(width_mm, height_mm),
+        },
+        STOCK_MARGIN_MM,
+    );
+    if fit.width_mm > MAX_COORDINATE_MM || fit.height_mm > MAX_COORDINATE_MM {
+        return Err(JobError::StockTooLarge {
+            width_mm: fit.width_mm,
+            height_mm: fit.height_mm,
+            margin_mm: STOCK_MARGIN_MM,
+            limit_mm: MAX_COORDINATE_MM,
+        });
+    }
+    Ok(fit)
 }
 
 /// The id of the bitmap `init` writes for a picture.
