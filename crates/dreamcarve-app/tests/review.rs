@@ -22,6 +22,10 @@
 //! cargo test -p dreamcarve-app --test review redesign_d3 -- --ignored
 //! ```
 //!
+//! `redesign_d6_screenshots` writes slice D6's set (pictures, Photo
+//! V-Carve and the tapered ball nose in the window) into `review/d6/` the
+//! same way.
+//!
 //! The slice D2 set beside it, `review/d2/`, shows the tokens and the
 //! components in the layout before the steps; the test that wrote it was
 //! this one's earlier form.
@@ -617,26 +621,14 @@ fn tapered_like(
     }
 }
 
-/// The tapered ball nose's part of the slice D6 set (#685; the pictures'
-/// half of the worklog's "What the window must draw for slice C3"), each
-/// in dark and light at 1×, on the tapered ball nose test part
-/// (`tests/fixtures/dc-tbn.dcv`): the Tools step with a tapered ball nose
+/// The tapered ball nose's part of the slice D6 set (#685), on the
+/// tapered ball nose test part (`tests/fixtures/dc-tbn.dcv`): the Tools step with a tapered ball nose
 /// whose values are still unset, its three fields and its rates marked
 /// required; the Tool Library with tapered ball nose rows (the Tip
 /// column, the angle per side, the unset mark); and an Inlay cut with a
 /// tapered ball nose, its editor showing the bit's cutting height and the
 /// seat line.
-///
-/// ```sh
-/// cargo test -p dreamcarve-app --test review redesign_d6_tools -- --ignored
-/// ```
-#[test]
-#[ignore = "writes the committed D6 review pictures; run by hand"]
-fn redesign_d6_tools() {
-    let out = d6_dir();
-    std::fs::create_dir_all(&out).unwrap();
-    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
-    SCALE.set(1.0);
+fn d6_tools(out: &Path, looks: &[dc_app::Theme]) {
     let dir = scratch("review-d6-tools");
 
     // A library to show: the Fusion fixtures as `tools import` writes
@@ -701,7 +693,7 @@ fn redesign_d6_tools() {
         .click();
     h.run();
     park_pointer(&mut h);
-    shoot_in(&mut h, &out, "04-tools-tapered-ball-nose-unset", &looks);
+    shoot_in(&mut h, out, "04-tools-tapered-ball-nose-unset", looks);
 
     // The Tool Library: the first vendor's group closed, so the tapered
     // ball noses' group stands beside V-bits and drills; the measured
@@ -722,7 +714,7 @@ fn redesign_d6_tools() {
         .click();
     h.run();
     park_pointer(&mut h);
-    shoot_in(&mut h, &out, "05-tool-library-tapered-ball-nose", &looks);
+    shoot_in(&mut h, out, "05-tool-library-tapered-ball-nose", looks);
     h.key_press(egui::Key::Escape);
     h.run();
 
@@ -738,7 +730,141 @@ fn redesign_d6_tools() {
     h.run();
     settle(&mut h);
     park_pointer(&mut h);
-    shoot_in(&mut h, &out, "06-inlay-tapered-ball-nose-seat-line", &looks);
+    shoot_in(&mut h, out, "06-inlay-tapered-ball-nose-seat-line", looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The pictures' part of the slice D6 set, on a project made round a
+/// picture (a landscape drawn here, with a sun in its top right and a
+/// hill rising to its left, so a picture turned or mirrored shows): the
+/// Add picture sheet over the Design step; the Design step with the
+/// picture in the tree and on the Viewport, selected, its Properties in
+/// the Inspector; and the Operations step with its Photo V-Carve in the
+/// editor and the grooves over the picture.
+///
+/// The project is also written to `target/review/d6-landscape.dcv`, for
+/// `dreamcarve preview` to draw the same picture and grooves.
+fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
+    let dir = scratch("review-d6-pictures");
+    let picture = common::write_colour_png(&dir, "landscape.png", &common::landscape(480, 320));
+
+    // What File ▸ New Project from Picture… makes of it, 120 mm wide,
+    // then what its Photo V-Carve needs to cut: a thickness, the V-bit's
+    // rates and a max depth.
+    let mut model = dc_app::import::PictureImport::open(
+        dc_import::ImageFormat::Png,
+        "landscape.png",
+        &std::fs::read(&picture).unwrap(),
+        dc_app::import::Purpose::New,
+    );
+    model.set_width_mm(120.0);
+    let mut app = dc_app::App::new(
+        dc_app::App::new_project().unwrap(),
+        dc_app::Strings::english(),
+        dc_app::Prefs::default(),
+    );
+    app.new_from_picture(&model).unwrap();
+    let mut stock = app.project().stock.clone();
+    stock.thickness_mm = Some(18.0);
+    app.run(dc_app::Command::SetStock(stock)).unwrap();
+    let mut tool = app.project().tools[0].clone();
+    tool.feed_mm_min = Some(1200.0);
+    tool.plunge_mm_min = Some(400.0);
+    tool.rpm = Some(18000);
+    app.run(dc_app::Command::UpdateTool(tool)).unwrap();
+    let mut op = app.project().operations[0].clone();
+    let dc_project::Operation::PhotoVCarve(photo) = &mut op else {
+        panic!("a project from a picture has its Photo V-Carve");
+    };
+    photo.max_depth_mm = Some(2.0);
+    let carve = photo.name.clone();
+    app.run(dc_app::Command::UpdateOperation(op)).unwrap();
+    let project = dir.join("landscape.dcv");
+    std::fs::write(&project, app.serialize().unwrap()).unwrap();
+    let kept = common::repo_root().join("target/review");
+    std::fs::create_dir_all(&kept).unwrap();
+    std::fs::copy(&project, kept.join("d6-landscape.dcv")).unwrap();
+
+    let dialogs = QueuedDialogs::default();
+    let Some(mut h) = window_with(&dir, Some(project), 1280.0, 800.0, &dialogs) else {
+        return;
+    };
+
+    // The Design step shows the picture itself: the Photo V-Carve's eye
+    // is closed, as its row's eye closes it, so no groove lies over it.
+    let op = h.state().app().project().operations[0].id().clone();
+    h.state_mut().app_mut().toggle_hidden(&op);
+    go_to(&mut h, "Design");
+
+    // The Add picture sheet, over the Design step: a second copy of the
+    // picture, its width typed and its height following. The click on
+    // the title leaves the field, as a click anywhere does.
+    dialogs.answer(&picture);
+    h.get_by_role_and_label(Role::Button, "Add picture").click();
+    h.run();
+    common::settle_picture(&mut h);
+    h.get_by_role_and_label(Role::TextInput, "Width").focus();
+    h.run();
+    h.event(egui::Event::Text("90".to_owned()));
+    h.run();
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Add picture to project")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "01-add-picture-sheet", looks);
+    h.get_by_role(Role::Dialog).get_by_label("Close").click();
+    h.run();
+
+    // The picture selected on the Design step: its row, its outline and
+    // handles on the Viewport, its Properties in the Inspector.
+    h.get_by_role_and_label(Role::TreeItem, "landscape").click();
+    h.run();
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "02-design-picture-selected", looks);
+
+    // The Photo V-Carve in the editor, its grooves over the picture. The
+    // toolpath view shows the cuts alone: a Photo V-Carve lifts and
+    // re-enters all along its grooves, and a start point's circle at each
+    // of some 450 descents hides the grooves this picture is of.
+    h.state_mut().app_mut().toggle_hidden(&op);
+    h.state_mut().app_mut().select(dc_app::Selection::Nothing);
+    let cuts = dc_app::Visibility {
+        rapids: false,
+        plunges: false,
+        start_points: false,
+        tab_marks: false,
+        ..h.state().app().view().visibility
+    };
+    h.state_mut().app_mut().set_visibility(cuts);
+    open_operation(&mut h, &carve);
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "03-operations-photo-v-carve", looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The slice D6 set (`docs/alpha-worklog.md`, slice D6): the features
+/// built headless, drawn in the window. Pictures ([`d6_pictures`]): the
+/// Add picture sheet; a picture selected on the Design step; a Photo
+/// V-Carve in the editor. The tapered ball nose ([`d6_tools`]): its
+/// fields unset on the Tools step; its rows in the Tool Library; an Inlay
+/// cut with one. Each in dark and light at 1×, written to
+/// `docs/specs/phase-4/review/d6/`, where they are committed.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_d6 -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed D6 review pictures; run by hand"]
+fn redesign_d6_screenshots() {
+    let out = d6_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    d6_pictures(&out, &looks);
+    d6_tools(&out, &looks);
 }
