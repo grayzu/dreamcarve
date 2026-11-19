@@ -5,6 +5,8 @@
 //! reach, and that each lookup fails closed when the project does not
 //! give what it needs.
 
+mod stock_to_leave_band;
+
 use super::*;
 use crate::parse::{ArcWords, MachinePosition};
 use dc_cam::Toolpath;
