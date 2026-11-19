@@ -799,8 +799,8 @@ fn s17_uses_no_generator() {
     ];
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     // Every source file, in submodules too (`material/cone.rs`,
-    // `material/countersink.rs`, #427), but the `tests` directories,
-    // which hold test-only modules.
+    // `material/countersink.rs`, #427), but the `tests` directories and
+    // the `tests.rs` files, which hold test-only modules.
     let mut files = Vec::new();
     let mut dirs = vec![dir.clone()];
     while let Some(at) = dirs.pop() {
@@ -809,7 +809,7 @@ fn s17_uses_no_generator() {
                 if !path.ends_with("tests") {
                     dirs.push(path);
                 }
-            } else if path.extension().is_some_and(|x| x == "rs") {
+            } else if path.extension().is_some_and(|x| x == "rs") && !path.ends_with("tests.rs") {
                 files.push(path);
             }
         }
