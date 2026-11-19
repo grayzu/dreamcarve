@@ -475,61 +475,43 @@ pub enum Operation {
     PhotoVCarve(PhotoVCarveOp),
 }
 
+/// `$value` of the operation inside `$operation`, whatever its kind,
+/// bound to `$op`: for a field every kind has. One arm per kind, so a new
+/// kind without the field does not compile.
+macro_rules! each_kind {
+    ($operation:expr, $op:ident => $value:expr) => {
+        match $operation {
+            Operation::Profile($op) => $value,
+            Operation::Pocket($op) => $value,
+            Operation::Drill($op) => $value,
+            Operation::Bore($op) => $value,
+            Operation::Engrave($op) => $value,
+            Operation::VCarve($op) => $value,
+            Operation::Inlay($op) => $value,
+            Operation::PhotoVCarve($op) => $value,
+        }
+    };
+}
+
 impl Operation {
     /// This operation's id.
     pub fn id(&self) -> &OperationId {
-        match self {
-            Self::Profile(op) => &op.id,
-            Self::Pocket(op) => &op.id,
-            Self::Drill(op) => &op.id,
-            Self::Bore(op) => &op.id,
-            Self::Engrave(op) => &op.id,
-            Self::VCarve(op) => &op.id,
-            Self::Inlay(op) => &op.id,
-            Self::PhotoVCarve(op) => &op.id,
-        }
+        each_kind!(self, op => &op.id)
     }
 
     /// This operation's display name.
     pub fn name(&self) -> &str {
-        match self {
-            Self::Profile(op) => &op.name,
-            Self::Pocket(op) => &op.name,
-            Self::Drill(op) => &op.name,
-            Self::Bore(op) => &op.name,
-            Self::Engrave(op) => &op.name,
-            Self::VCarve(op) => &op.name,
-            Self::Inlay(op) => &op.name,
-            Self::PhotoVCarve(op) => &op.name,
-        }
+        each_kind!(self, op => &op.name)
     }
 
     /// Whether the operation is included in export.
     pub fn enabled(&self) -> bool {
-        match self {
-            Self::Profile(op) => op.enabled,
-            Self::Pocket(op) => op.enabled,
-            Self::Drill(op) => op.enabled,
-            Self::Bore(op) => op.enabled,
-            Self::Engrave(op) => op.enabled,
-            Self::VCarve(op) => op.enabled,
-            Self::Inlay(op) => op.enabled,
-            Self::PhotoVCarve(op) => op.enabled,
-        }
+        each_kind!(self, op => op.enabled)
     }
 
     /// The tool the operation cuts with.
     pub fn tool(&self) -> &ToolId {
-        match self {
-            Self::Profile(op) => &op.tool,
-            Self::Pocket(op) => &op.tool,
-            Self::Drill(op) => &op.tool,
-            Self::Bore(op) => &op.tool,
-            Self::Engrave(op) => &op.tool,
-            Self::VCarve(op) => &op.tool,
-            Self::Inlay(op) => &op.tool,
-            Self::PhotoVCarve(op) => &op.tool,
-        }
+        each_kind!(self, op => &op.tool)
     }
 
     /// The tools the operation cuts with, in the order it cuts with them
@@ -597,16 +579,7 @@ impl Operation {
 
     /// Retract height above the stock top, millimetres.
     pub fn safe_z_mm(&self) -> f64 {
-        match self {
-            Self::Profile(op) => op.safe_z_mm,
-            Self::Pocket(op) => op.safe_z_mm,
-            Self::Drill(op) => op.safe_z_mm,
-            Self::Bore(op) => op.safe_z_mm,
-            Self::Engrave(op) => op.safe_z_mm,
-            Self::VCarve(op) => op.safe_z_mm,
-            Self::Inlay(op) => op.safe_z_mm,
-            Self::PhotoVCarve(op) => op.safe_z_mm,
-        }
+        each_kind!(self, op => op.safe_z_mm)
     }
 
     /// Final depth below the stock top, millimetres; `None` until set. A
@@ -637,16 +610,7 @@ impl Operation {
 
     /// How far below the stock bottom the cut may go, millimetres (S1).
     pub fn through_cut_allowance_mm(&self) -> f64 {
-        match self {
-            Self::Profile(op) => op.through_cut_allowance_mm,
-            Self::Pocket(op) => op.through_cut_allowance_mm,
-            Self::Drill(op) => op.through_cut_allowance_mm,
-            Self::Bore(op) => op.through_cut_allowance_mm,
-            Self::Engrave(op) => op.through_cut_allowance_mm,
-            Self::VCarve(op) => op.through_cut_allowance_mm,
-            Self::Inlay(op) => op.through_cut_allowance_mm,
-            Self::PhotoVCarve(op) => op.through_cut_allowance_mm,
-        }
+        each_kind!(self, op => op.through_cut_allowance_mm)
     }
 
     /// The operation's kind as the file tags it: `profile`, `pocket`,
