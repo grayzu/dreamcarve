@@ -7,8 +7,10 @@
 //! **Stock** step ([`stock_step`], which Project ▸ Project Settings…
 //! opens) is Units first, a `mm` / `in` segmented control (#615), then
 //! the stock's width, height and thickness with *Fit to shapes*, and the
-//! Origin section. The **Export** step's settings half ([`output`]) is
-//! the Heights, Tolerances (folded away) and Post-processor sections.
+//! Origin section. The **Export** step's output settings ([`output`]) are
+//! the Post-processor, Heights and Tolerances sections, each closed until
+//! it is wanted, with one line of its values on its header
+//! (`dc_app::project::Group::summary`).
 //! Every row edits the project in place and applies when it is left, one
 //! undo step, with no OK or Cancel (`experience.md`, section 1); every
 //! field shows the file's validation message under itself. What each row
@@ -20,7 +22,7 @@
 //! state is the window's view state, kept in egui's memory so the
 //! Viewport reads it without the panel holding project data.
 
-use dc_app::project::{self, Choice, Field, FieldStatus, Offer, OriginPreset};
+use dc_app::project::{self, Choice, Field, FieldStatus, Group, Offer, OriginPreset};
 use dc_app::{Command, StrKey, Strings};
 use dc_job::{Finding, Tier};
 use dc_project::{OriginZ, Project, SpindleControl, ToolChangeMode, Units};
@@ -32,7 +34,7 @@ use crate::widgets::button::{ButtonSpec, Kind, button};
 use crate::widgets::checkbox::checkbox;
 use crate::widgets::icon::Icon;
 use crate::widgets::row::{self, GAP_PX, LABEL_PX};
-use crate::widgets::section::section;
+use crate::widgets::section::{Header, section_with};
 use crate::widgets::segmented::segmented;
 use crate::widgets::toggle::toggle;
 use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
@@ -40,13 +42,34 @@ use crate::widgets::unit_field::{Required, UnitField, field as unit_field};
 /// The panel's content margin, px (`experience.md`, section 3).
 const MARGIN_PX: i8 = 16;
 
+/// The Stock step's Origin section, by its `gui.toml` name.
+const ORIGIN: &str = "project.origin";
+
 /// The sections, by their `gui.toml` name, and whether each starts open.
+/// The Export step's three start closed, their values on their headers,
+/// so the whole export shows without scrolling.
 const SECTIONS: [(&str, bool); 4] = [
-    ("project.origin", true),
-    ("project.heights", true),
+    (ORIGIN, true),
+    ("project.post", false),
+    ("project.heights", false),
     ("project.tolerances", false),
-    ("project.post", true),
 ];
+
+/// An output group's `gui.toml` name.
+const fn section_name(group: Group) -> &'static str {
+    match group {
+        Group::Post => "project.post",
+        Group::Heights => "project.heights",
+        Group::Tolerances => "project.tolerances",
+    }
+}
+
+/// The `gui.toml` name of the Export step's group that holds the field at
+/// `path`, as validation names it: a Warnings row about an output setting
+/// opens it, besides the step. `None` for another step's field.
+pub(crate) fn group_section(path: &str) -> Option<&'static str> {
+    Group::of_field(path).map(section_name)
+}
 
 /// Where the Viewport's park pick is armed.
 fn park_pick_id() -> Id {
@@ -117,14 +140,14 @@ pub(crate) fn stock_step(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Acti
         });
 }
 
-/// The Export step's settings half: the Heights, Tolerances and
-/// Post-processor sections, laid out where the step puts them.
+/// The Export step's output settings: the Post-processor, Heights and
+/// Tolerances sections, laid out where the step puts them.
 pub(crate) fn output(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let cx = cx(state);
     ui.spacing_mut().item_spacing = egui::vec2(GAP_PX, 4.0);
+    post(ui, state, &cx, out);
     heights(ui, &cx, out);
     tolerances(ui, &cx, out);
-    post(ui, state, &cx, out);
 }
 
 /// **Units**, the first row (capability 53): a `mm` / `in` segmented
@@ -156,17 +179,22 @@ fn units_row(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     });
 }
 
-/// A section with its header's located count; the action that flips it
-/// when its header was clicked.
+/// A section with its header's located count and, for an output group,
+/// its values while it is closed; the action that flips it when its
+/// header was clicked.
 fn group(
     ui: &mut Ui,
     cx: &Cx<'_>,
-    name: &str,
+    (name, summarised): (&str, Option<Group>),
     title: StrKey,
     rows: (&[Field], &[Choice]),
     body: impl FnOnce(&mut Ui),
 ) -> Option<Action> {
     let open = cx.open(name);
+    let summary = summarised
+        .filter(|_| !open)
+        .map(|group| group.summary(cx.strings, cx.project))
+        .unwrap_or_default();
     let statuses: Vec<FieldStatus<'_>> = rows
         .0
         .iter()
@@ -177,12 +205,16 @@ fn group(
         .into_iter()
         .find(|tier| statuses.iter().any(|s| s.tier == *tier));
     let located = worst.map(|tier| (tier, statuses.len()));
-    section(
+    section_with(
         ui,
         Id::unique(name),
         cx.strings.get(title),
-        open,
-        located,
+        Header {
+            open,
+            located,
+            summary: &summary,
+            collapses: true,
+        },
         body,
     )
     .then(|| Action::SetSection {
@@ -384,7 +416,7 @@ fn origin(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     let toggled = group(
         ui,
         cx,
-        "project.origin",
+        (ORIGIN, None),
         StrKey::ProjectOriginTitle,
         (fields, &[Choice::OriginXy, Choice::OriginZ]),
         |ui| {
@@ -439,7 +471,7 @@ fn heights(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     let toggled = group(
         ui,
         cx,
-        "project.heights",
+        (section_name(Group::Heights), Some(Group::Heights)),
         StrKey::ProjectHeightsTitle,
         (&fields, &[]),
         |ui| {
@@ -485,7 +517,7 @@ fn tolerances(ui: &mut Ui, cx: &Cx<'_>, out: &mut Vec<Action>) {
     let toggled = group(
         ui,
         cx,
-        "project.tolerances",
+        (section_name(Group::Tolerances), Some(Group::Tolerances)),
         StrKey::ProjectTolerancesTitle,
         (&fields, &[]),
         |ui| {
@@ -521,7 +553,7 @@ fn post(ui: &mut Ui, state: &FrameState<'_>, cx: &Cx<'_>, out: &mut Vec<Action>)
     let toggled = group(
         ui,
         cx,
-        "project.post",
+        (section_name(Group::Post), Some(Group::Post)),
         StrKey::ProjectPostTitle,
         (&fields, &choices),
         |ui| {

@@ -111,11 +111,7 @@ fn opens_plaque_renders_and_exports() {
     command_key(&harness, egui::Key::E);
     harness.run();
     settle_export(&mut harness);
-    harness
-        .get_by_role(Role::Dialog)
-        .get_by_label("Export")
-        .click();
-    harness.run();
+    press_export(&mut harness);
     let options = dc_app::export::Options::new(
         &dreamcarve_shell::clock::today_utc(),
         dc_job::EstimateConfig::default(),
@@ -128,11 +124,6 @@ fn opens_plaque_renders_and_exports() {
         let written = std::fs::read_to_string(dir.join(&name)).expect("program written");
         assert!(written == text, "{name} is the plan's program");
     }
-    harness
-        .get_by_role(Role::Dialog)
-        .get_by_label("Close")
-        .click();
-    harness.run();
 
     // Closing a clean project closes at once and remembers the session.
     press_close(&mut harness);
@@ -1240,6 +1231,10 @@ fn park_point_click_on_the_viewport() {
         "the Export step has the Heights"
     );
     assert_eq!(h.state().app().project().heights.park, None);
+    // The group is closed until it is wanted.
+    assert!(h.query_by_label("Click on the view").is_none());
+    h.get_by_role_and_label(Role::Button, "Heights").click();
+    h.run();
 
     h.get_by_label("Click on the view").scroll_to_me();
     h.run();
@@ -2254,7 +2249,49 @@ fn warnings_drawer_selects_and_copies() {
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Waits until generation is over and the export sheet's plan is ready,
+/// The Export step's panel: the card the plan, the blocking findings and
+/// the result are drawn in.
+fn export_panel(h: &Harness<'_, dreamcarve_app::Shell>) -> egui::Rect {
+    assert_eq!(h.state().step(), dc_app::steps::Step::Export);
+    h.state().layout().step_panel.expect("the step panel shows")
+}
+
+/// The nodes labelled exactly `label` in the Export step's panel.
+fn in_export_step(h: &Harness<'_, dreamcarve_app::Shell>, label: &str) -> usize {
+    let panel = export_panel(h);
+    h.query_all_by_label(label)
+        .filter(|node| panel.contains_rect(node.rect()))
+        .count()
+}
+
+/// The nodes whose label contains `text` in the Export step's panel.
+fn in_export_step_containing(h: &Harness<'_, dreamcarve_app::Shell>, text: &str) -> usize {
+    let panel = export_panel(h);
+    h.query_all_by_label_contains(text)
+        .filter(|node| panel.contains_rect(node.rect()))
+        .count()
+}
+
+/// Clicks the Warnings drawer's row whose line is `line`. On the Export
+/// step a finding that blocks export is listed in the step's panel too,
+/// under the same name: the drawer's is the one outside the panel.
+fn click_drawer_row(h: &mut Harness<'_, dreamcarve_app::Shell>, line: &str) {
+    let panel = h.state().layout().step_panel;
+    h.query_all_by_label(line)
+        .find(|node| panel.is_none_or(|panel| !panel.contains_rect(node.rect())))
+        .expect("the drawer's row")
+        .click();
+    h.run();
+}
+
+/// Presses the header's *Export G-code*, the export command.
+fn press_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+}
+
+/// Waits until generation is over and the Export step's plan is ready,
 /// stepping the window.
 fn settle_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(180);
@@ -2269,14 +2306,15 @@ fn settle_export(h: &mut Harness<'_, dreamcarve_app::Shell>) {
     h.run();
 }
 
-/// Capability 77 and acceptance 84 in the window (#547): ⌘E opens the
-/// export sheet, which lists the programs `dc_app::export::plan` builds
-/// and writes them beside the project. A program whose destination
-/// cannot be replaced (a folder is in the way) stops the export with
-/// nothing written: every file or none. Cleared, *Export* writes them all,
-/// and the result sheet lists them with *Show in folder*; the project
-/// file is never written. A tool without a feed shows the CLI's error and
-/// a disabled *Export*.
+/// Capability 77 and acceptance 84 in the window (#547; redesign slice
+/// D4): ⌘E opens the Export step, which lists the programs
+/// `dc_app::export::plan` builds; the header's *Export G-code* writes
+/// them beside the project. A program whose destination cannot be
+/// replaced (a folder is in the way) stops the export with nothing
+/// written: every file or none. Cleared, *Export G-code* writes them
+/// all, and the result takes the plan's place, listing them with *Show in
+/// folder*; the project file is never written. A tool without a feed
+/// disables *Export G-code*, and the step lists the CLI's error.
 #[test]
 fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     use egui_kittest::kittest::NodeT as _;
@@ -2291,14 +2329,12 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         900.0,
     );
     settle_export(&mut h);
+    go_to(&mut h, "Design");
     command_key(&h, egui::Key::E);
     h.run();
     settle_export(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label_contains("Export G-code").is_some(),
-        "the title"
-    );
+    assert_eq!(current_step(&h), "Export", "⌘E opens the Export step");
+    assert!(h.query_by_role(Role::Dialog).is_none(), "and no sheet");
 
     let date = dreamcarve_shell::clock::today_utc();
     let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
@@ -2309,51 +2345,43 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     assert!(names.len() > 1, "the plaque writes a program per tool");
     open_program_details(&mut h);
     for name in &names {
-        assert!(
-            h.get_by_role(Role::Dialog).query_by_label(name).is_some(),
-            "the sheet lists {name}"
-        );
+        assert!(in_export_step(&h, name) > 0, "the step lists {name}");
     }
 
     // A folder where the last program goes: nothing is written.
     let blocker = dir.join(names.last().unwrap());
     std::fs::create_dir_all(blocker.join("keep")).unwrap();
     let naming = |h: &Harness<'_, dreamcarve_app::Shell>| {
-        h.get_by_role(Role::Dialog)
-            .query_all_by_label_contains(names.last().unwrap())
-            .count()
+        in_export_step_containing(h, names.last().unwrap())
     };
     let named = naming(&h);
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
     for name in &names[..names.len() - 1] {
         assert!(!dir.join(name).exists(), "{name} was not written");
     }
     assert!(blocker.join("keep").is_dir(), "the folder is untouched");
     assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Nothing was written")
-            .is_some(),
-        "the sheet says nothing was written"
+        in_export_step_containing(&h, "Nothing was written") > 0,
+        "the step says nothing was written"
     );
     assert_eq!(naming(&h), named + 1, "the failure names the file");
 
     std::fs::remove_dir_all(&blocker).unwrap();
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
     for ((name, text), program) in ready.files("plaque").iter().zip(&names) {
         assert_eq!(name, program);
         let written = std::fs::read_to_string(dir.join(name)).expect("program written");
         assert!(written == *text, "{name} is the plan's program");
     }
-    let result = h.get_by_role(Role::Dialog);
-    assert!(result.query_by_label("Show in folder").is_some());
+    assert!(in_export_step(&h, "Show in folder") > 0);
     assert!(
-        result
-            .query_all_by_label_contains(&names[0])
-            .next()
-            .is_some(),
+        in_export_step_containing(&h, &names[0]) > 0,
         "the result names the files"
+    );
+    assert_eq!(
+        in_export_step(&h, "Program Details"),
+        0,
+        "the result takes the plan's place"
     );
     assert_eq!(
         std::fs::read(&plaque).unwrap(),
@@ -2366,9 +2394,10 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         Some(&dir),
         "the folder is remembered for this project"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
+    h.get_by_label("Done").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert_eq!(in_export_step(&h, "Show in folder"), 0, "Done lets it go");
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
 
     // A tool without a feed: the CLI's error, and Export disabled.
     // The first operation's tool: the plaque has one tool it never uses.
@@ -2381,9 +2410,6 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
         .run(Command::UpdateTool(tool))
         .unwrap();
     settle_export(&mut h);
-    command_key(&h, egui::Key::E);
-    h.run();
-    settle_export(&mut h);
     let built = dc_job::build(
         h.state().app().project(),
         dc_job::ProgramSplit::ProjectDefault,
@@ -2391,43 +2417,121 @@ fn export_sheet_disabled_on_errors_and_writes_all_or_none() {
     );
     assert_eq!(built.findings.errors.len(), 1, "one tool lacks a feed");
     let error = built.findings.errors[0].message.clone();
-    // One line above the footer says so, and Export is disabled; the
-    // error itself is the drawer's (capability 77).
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label("1 error blocks export").is_some(),
+    // One line says so and Export G-code is disabled; the step lists the
+    // finding under the line, as the drawer does (redesign slice D4).
+    assert_eq!(
+        in_export_step(&h, "1 error blocks export"),
+        1,
         "the blocking line"
     );
-    assert!(
-        sheet.query_by_label_contains(&error).is_none(),
-        "the sheet lists no finding: {error}"
+    assert_eq!(
+        in_export_step_containing(&h, &error),
+        1,
+        "the step lists the finding: {error}"
     );
     assert!(
-        sheet.get_by_label("Export").accesskit_node().is_disabled(),
-        "Export is disabled"
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
+        "Export G-code is disabled"
     );
-    // Show closes the sheet and opens the drawer at the error.
+    // Show opens the drawer at the error.
     assert!(!h.state().warnings_open());
-    h.get_by_role(Role::Dialog).get_by_label("Show").click();
+    h.get_by_role_and_label(Role::Button, "Show").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none(), "the sheet closed");
     assert!(h.state().warnings_open(), "the drawer is open");
     assert!(
-        h.query_all_by_label_contains(&error).next().is_some(),
-        "the drawer lists the error: {error}"
+        h.query_all_by_label_contains(&error).count() > 1,
+        "the drawer lists the error too: {error}"
+    );
+    // The finding in the step opens the step that fixes it: the tool's,
+    // with the tool in the Inspector.
+    let panel = export_panel(&h);
+    h.query_all_by_label_contains(&error)
+        .find(|node| panel.contains_rect(node.rect()))
+        .expect("the finding's row")
+        .click();
+    h.run();
+    assert_eq!(current_step(&h), "Tools", "the row opens the Tools step");
+    assert!(
+        h.state().layout().inspector.is_some(),
+        "with the tool in the Inspector"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Clicks the export sheet's *Program Details* disclosure.
+/// Redesign slice D4: a project never saved has no folder to export to,
+/// so *Export G-code* asks for one first with the folder dialog. With the
+/// dialog cancelled nothing is written and the step still shows the plan;
+/// with a folder picked the programs go there, under the project's name,
+/// and the step shows the folder. The step's *Choose…* asks the same
+/// dialog.
+#[test]
+fn export_asks_for_a_folder_when_none_is_chosen() {
+    let dir = scratch("export-folder");
+    let out = dir.join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(options(&dir.join("config"), None, &dialogs), 1280.0, 900.0);
+    // The plaque example opens untitled: no file, so no folder.
+    h.get_by_role_and_label(Role::Button, "Plaque").click();
+    h.run();
+    settle_export(&mut h);
+    assert_eq!(h.state().app().source(), None);
+    assert_eq!(current_step(&h), "Export", "a finished project opens here");
+    settle_export(&mut h);
+    assert_eq!(in_export_step(&h, "Not chosen yet"), 1, "no folder yet");
+
+    // Cancelled: asked, and nothing written.
+    press_export(&mut h);
+    assert_eq!(dialogs.asked(), ["export_folder"]);
+    assert_eq!(
+        std::fs::read_dir(&out).unwrap().count(),
+        0,
+        "nothing written"
+    );
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "still the plan");
+    assert_eq!(in_export_step_containing(&h, "written"), 0);
+
+    // A folder picked: the programs are written there.
+    dialogs.answer(&out);
+    press_export(&mut h);
+    assert_eq!(dialogs.asked(), ["export_folder", "export_folder"]);
+    let date = dreamcarve_shell::clock::today_utc();
+    let options = dc_app::export::Options::new(&date, dc_job::EstimateConfig::default());
+    let dc_app::export::Plan::Ready(ready) = dc_app::export::plan(h.state().app(), &options) else {
+        panic!("the plaque has generated");
+    };
+    let stem = h.state().app().project().name.clone();
+    let files = ready.files(&stem);
+    assert!(files.len() > 1, "a program per tool");
+    for (name, text) in &files {
+        let written = std::fs::read_to_string(out.join(name)).expect("program written");
+        assert!(written == *text, "{name} is the plan's program");
+    }
+    assert_eq!(in_export_step(&h, "2 programs written"), 1, "the result");
+    assert_eq!(in_export_step(&h, &out.display().to_string()), 1);
+
+    // Choose… asks the same dialog, and the plan shows the folder picked.
+    h.get_by_label("Done").click();
+    h.run();
+    let other = dir.join("other");
+    std::fs::create_dir_all(&other).unwrap();
+    dialogs.answer(&other);
+    h.get_by_role_and_label(Role::Button, "Choose…").click();
+    h.run();
+    assert_eq!(dialogs.asked().len(), 3);
+    assert_eq!(in_export_step(&h, &other.display().to_string()), 1);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Clicks the Export step's *Program Details* disclosure.
 fn open_program_details(h: &mut Harness<'_, dreamcarve_app::Shell>) {
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Program Details")
-        .click();
+    h.get_by_label("Program Details").click();
     h.run();
 }
 
-/// Opens the export sheet on the plaque, generated and planned.
+/// Opens the Export step on the plaque, generated and planned.
 fn plaque_export_sheet(
     name: &str,
 ) -> (std::path::PathBuf, Harness<'static, dreamcarve_app::Shell>) {
@@ -2443,17 +2547,12 @@ fn plaque_export_sheet(
     command_key(&h, egui::Key::E);
     h.run();
     settle_export(&mut h);
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Export G-code")
-            .is_some(),
-        "the sheet is open"
-    );
+    assert_eq!(current_step(&h), "Export", "the step is open");
     (dir, h)
 }
 
-/// Capability 77 and acceptance 102 (#624): the trimmed export sheet has
-/// no toolpath preview tick, no warnings list, no estimated total and no
+/// Capability 77 and acceptance 102 (#624): the trimmed export has no
+/// toolpath preview tick, no warnings list, no estimated total and no
 /// note about how files are written; whatever warnings the plan found
 /// are the status bar's and the drawer's, not listed here.
 #[test]
@@ -2462,7 +2561,6 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
 
     let (dir, mut h) = plaque_export_sheet("export-trimmed");
     open_program_details(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
     for gone in [
         "toolpath preview",
         "preview.svg",
@@ -2470,8 +2568,9 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
         "Estimated total",
         "Every file is written",
     ] {
-        assert!(
-            sheet.query_all_by_label_contains(gone).next().is_none(),
+        assert_eq!(
+            in_export_step_containing(&h, gone),
+            0,
             "no node labelled with `{gone}`"
         );
     }
@@ -2481,35 +2580,29 @@ fn export_sheet_has_no_preview_warnings_total_or_note() {
         panic!("the plaque has generated");
     };
     for finding in &ready.findings.warnings {
-        assert!(
-            sheet
-                .query_all_by_label_contains(&finding.message)
-                .next()
-                .is_none(),
+        assert_eq!(
+            in_export_step_containing(&h, &finding.message),
+            0,
             "the warning is not listed: {}",
             finding.message
         );
     }
     assert!(
-        sheet
-            .query_all_by_label_contains("blocks export")
-            .next()
-            .is_none()
-            && sheet
-                .query_all_by_label_contains("block export")
-                .next()
-                .is_none(),
+        in_export_step_containing(&h, "blocks export") == 0
+            && in_export_step_containing(&h, "block export") == 0,
         "no error, no blocking line"
     );
     assert!(
-        !sheet.get_by_label("Export").accesskit_node().is_disabled(),
+        !h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled(),
         "warnings do not block"
     );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
 /// Capability 77 and acceptance 102 (#624): *Program Details* is closed
-/// when the sheet opens, its rows hidden; opened, its rows are the
+/// until the user opens it, its rows hidden; opened, its rows are the
 /// plan's, in run order: file name, estimate and the step before each.
 #[test]
 fn program_details_start_closed() {
@@ -2525,33 +2618,29 @@ fn program_details_start_closed() {
     let names = ready.names("plaque");
     assert!(names.len() > 1);
 
-    let header = h.get_by_role(Role::Dialog).get_by_label("Program Details");
+    let header = h.get_by_label("Program Details");
     assert_eq!(
         header.accesskit_node().toggled(),
         Some(Toggled::False),
         "closed"
     );
     for name in &names {
-        assert!(
-            h.get_by_role(Role::Dialog).query_by_label(name).is_none(),
+        assert_eq!(
+            in_export_step(&h, name),
+            0,
             "{name} is hidden while the disclosure is closed"
         );
     }
     let summary = format!("{} programs, run in this order", names.len());
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label(&summary)
-            .is_some(),
+    assert_eq!(
+        in_export_step(&h, &summary),
+        1,
         "the closed disclosure says how many: {summary}"
     );
 
     open_program_details(&mut h);
-    let sheet = h.get_by_role(Role::Dialog);
     assert_eq!(
-        sheet
-            .get_by_label("Program Details")
-            .accesskit_node()
-            .toggled(),
+        h.get_by_label("Program Details").accesskit_node().toggled(),
         Some(Toggled::True),
         "open"
     );
@@ -2559,7 +2648,7 @@ fn program_details_start_closed() {
     let mut tops: Vec<(f64, &String)> = names
         .iter()
         .map(|name| {
-            let node = sheet.get_by_label(name);
+            let node = h.get_by_label(name);
             let top = node.accesskit_node().bounding_box().expect("laid out").y0;
             (top, name)
         })
@@ -2570,30 +2659,35 @@ fn program_details_start_closed() {
     for (k, summary) in ready.programs.iter().enumerate() {
         let estimate = ready.estimate(k).expect("the plaque's programs estimate");
         assert!(
-            sheet.query_all_by_label(&estimate).next().is_some(),
+            in_export_step(&h, &estimate) > 0,
             "{}: its estimate {estimate}",
             names[k]
         );
         assert!(
-            sheet
-                .query_all_by_label_contains(&summary.before)
-                .next()
-                .is_some(),
+            in_export_step_containing(&h, &summary.before) > 0,
             "{}: the step before it",
             names[k]
         );
     }
+    // Opened, it stays open: the step is no sheet that opens anew.
+    go_to(&mut h, "Design");
+    go_to(&mut h, "Export");
+    assert_eq!(
+        h.get_by_label("Program Details").accesskit_node().toggled(),
+        Some(Toggled::True),
+        "still open on coming back"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
-/// Capabilities 77a and 77b, acceptance 102 (#625): after *Export* the
-/// sheet's content is the result: `2 programs written`, the files in run
-/// order and the folder with *Show in folder*, and *Run instructions*
-/// closed, whose steps and notes show once it is opened. *Save setup
-/// sheet…* asks where, suggesting `plaque-setup.html` beside the
-/// programs, and writes the page the plan renders; nothing else is
-/// written and the project is unchanged. *Done* closes the sheet, and the
-/// sheet can still be saved from the File menu.
+/// Capabilities 77a and 77b, acceptance 102 (#625): after *Export
+/// G-code* the result is in the plan's place: `2 programs written`, the
+/// files in run order and the folder with *Show in folder*, and *Run
+/// instructions* closed, whose steps and notes show once it is opened.
+/// *Save setup sheet…* asks where, suggesting `plaque-setup.html` beside
+/// the programs, and writes the page the plan renders; nothing else is
+/// written and the project is unchanged. *Done* brings the plan back, and
+/// the setup sheet can still be saved from the File menu.
 #[test]
 fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     use eframe::egui::accesskit::Toggled;
@@ -2603,10 +2697,11 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     let plaque = copy_fixture("plaque.dcv", &dir);
     let project_bytes = std::fs::read(&plaque).unwrap();
     let dialogs = QueuedDialogs::default();
+    // Tall, so the result with its instructions open shows whole.
     let mut h = harness(
         options(&dir.join("config"), Some(plaque.clone()), &dialogs),
         1280.0,
-        900.0,
+        1500.0,
     );
     settle_export(&mut h);
     command_key(&h, egui::Key::E);
@@ -2618,54 +2713,44 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
         panic!("the plaque has generated");
     };
     let names = ready.names("plaque");
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
+    press_export(&mut h);
 
     let strings = dc_app::Strings::english();
     let result = ready.result(&names, &dir, &strings);
-    let sheet = h.get_by_role(Role::Dialog);
-    assert!(
-        sheet.query_by_label("2 programs written").is_some(),
-        "Status"
-    );
+    assert_eq!(in_export_step(&h, "2 programs written"), 1, "Status");
     for name in &names {
-        assert!(sheet.query_by_label(name).is_some(), "Files lists {name}");
+        assert_eq!(in_export_step(&h, name), 1, "Files lists {name}");
     }
-    assert!(
-        sheet.query_by_label(&dir.display().to_string()).is_some(),
+    assert_eq!(
+        in_export_step(&h, &dir.display().to_string()),
+        1,
         "the folder"
     );
-    assert!(sheet.query_by_label("Show in folder").is_some());
-    assert!(sheet.query_by_label("Copy path").is_some());
-    let header = sheet.get_by_label("Run instructions");
+    assert_eq!(in_export_step(&h, "Show in folder"), 1);
+    assert_eq!(in_export_step(&h, "Copy path"), 1);
+    let header = h.get_by_label("Run instructions");
     assert_eq!(header.accesskit_node().toggled(), Some(Toggled::False));
     let first_step = &result.instructions.steps[0].before;
-    assert!(
-        sheet.query_by_label(first_step).is_none(),
+    assert_eq!(
+        in_export_step(&h, first_step),
+        0,
         "the steps are hidden while closed"
     );
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Run instructions")
-        .click();
+    h.get_by_label("Run instructions").click();
     h.run();
-    let sheet = h.get_by_role(Role::Dialog);
     for step in &result.instructions.steps {
-        assert!(
-            sheet.query_by_label(&step.before).is_some(),
-            "{}",
-            step.before
-        );
+        assert_eq!(in_export_step(&h, &step.before), 1, "{}", step.before);
     }
     for note in &result.instructions.notes {
-        assert!(sheet.query_by_label(note).is_some(), "the note {note}");
+        assert_eq!(in_export_step(&h, note), 1, "the note {note}");
     }
 
     // Save setup sheet…: the dialog suggests the page beside the programs.
     let page = dir.join("plaque-setup.html");
     dialogs.answer(&page);
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Save setup sheet…")
-        .click();
+    h.get_by_label("Save setup sheet…").scroll_to_me();
+    h.run();
+    h.get_by_label("Save setup sheet…").click();
     h.run();
     assert_eq!(
         dialogs.asked().last().cloned(),
@@ -2689,9 +2774,14 @@ fn export_result_shows_three_parts_and_saves_the_setup_sheet() {
     assert_eq!(std::fs::read(&plaque).unwrap(), project_bytes);
     assert!(!h.state().app().is_dirty(), "saving it changes nothing");
 
-    h.get_by_role(Role::Dialog).get_by_label("Done").click();
+    h.get_by_label("Done").click();
     h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none(), "Done closes it");
+    assert_eq!(
+        in_export_step(&h, "2 programs written"),
+        0,
+        "Done lets the result go"
+    );
+    assert_eq!(in_export_step(&h, "Program Details"), 1, "the plan is back");
     h.get_by_label("File").click();
     h.run();
     assert!(
@@ -3461,8 +3551,7 @@ fn warnings_row_focuses_its_field() {
         .flat_map(|g| g.rows)
         .find(|r| r.field.as_deref() == Some("operations[op4].depth_mm"))
         .expect("validation locates the unset depth");
-    h.get_by_label(&row.line).click();
-    h.run();
+    click_drawer_row(&mut h, &row.line);
     assert_eq!(
         h.state()
             .app()
@@ -4663,17 +4752,20 @@ fn keyboard_shortcuts_reach_their_commands() {
         ["save_project plaque.dcv", "open_project", "open_drawing"],
         "Shift Ctrl S, Ctrl O and Ctrl I ask"
     );
+    assert_ne!(h.state().step(), dc_app::steps::Step::Export);
     command_key(&h, egui::Key::E);
     h.run();
-    assert!(
-        h.get_by_role(Role::Dialog)
-            .query_by_label_contains("Export G-code")
-            .is_some(),
-        "Ctrl E opens the export sheet (#547)"
+    assert_eq!(
+        h.state().step(),
+        dc_app::steps::Step::Export,
+        "Ctrl E opens the Export step (#547)"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
-    h.run();
-    assert!(h.query_by_role(Role::Dialog).is_none());
+    assert!(
+        h.query_by_role_and_label(Role::Button, "Export G-code")
+            .is_some(),
+        "where Export G-code is the primary button"
+    );
+    assert!(h.query_by_role(Role::Dialog).is_none(), "and no sheet");
     reached.extend([Key::SaveAs, Key::Open, Key::Import, Key::Export]);
 
     command_key(&h, egui::Key::N);
@@ -5072,8 +5164,7 @@ fn warnings_row_opens_the_step_that_owns_it() {
 
     let feed = format!("tools[{used}].feed_mm_min");
     let line = row_about(&h, &feed);
-    h.get_by_label(&line).click();
-    h.run();
+    click_drawer_row(&mut h, &line);
     assert_eq!(h.state().step(), Step::Tools);
     assert!(
         h.state().layout().inspector.is_some(),
@@ -5087,8 +5178,7 @@ fn warnings_row_opens_the_step_that_owns_it() {
     );
 
     let line = row_about(&h, "stock.thickness_mm");
-    h.get_by_label(&line).click();
-    h.run();
+    click_drawer_row(&mut h, &line);
     assert_eq!(h.state().step(), Step::Stock);
     assert!(
         h.query_by_role_and_label(Role::TextInput, "Thickness")
@@ -5238,8 +5328,8 @@ fn painted_at(h: &Harness<'_, dreamcarve_app::Shell>, needle: &str) -> Option<us
 
 /// `experience.md` section 8, "Sheets" (#549 review): a sheet sits above
 /// everything on the Viewport, the depth legend included. In *By depth*,
-/// with the export sheet open, the legend's labels paint before (under)
-/// the sheet's title and its scrim.
+/// with the Tool Library sheet open, the legend's labels paint before
+/// (under) the sheet's title and its scrim.
 #[test]
 fn depth_legend_paints_under_a_sheet() {
     let dir = scratch("legend-under-sheet");
@@ -5256,11 +5346,13 @@ fn depth_legend_paints_under_a_sheet() {
     h.run();
     close_toolpath_view(&mut h);
     assert!(painted_at(&h, "stock top").is_some(), "the legend is drawn");
-    command_key(&h, egui::Key::E);
+    h.get_by_label("Project").click();
     h.run();
-    settle_export(&mut h);
+    h.get_by_label("Tool Library…").click();
+    h.run();
+    assert!(h.query_by_role(Role::Dialog).is_some(), "the sheet is open");
     let legend = painted_at(&h, "stock top").expect("the legend is still drawn");
-    let sheet = painted_at(&h, "Export G-code ·").expect("the sheet's title");
+    let sheet = painted_at(&h, "Tool Library").expect("the sheet's title");
     assert!(
         legend < sheet,
         "the legend ({legend}) paints under the sheet ({sheet})"
@@ -5763,16 +5855,32 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
             .is_none(),
         "one primary button"
     );
+    // Export G-code is the export command: it waits for the programs to
+    // be built, then writes them beside the project, and the step shows
+    // what was written.
+    assert!(
+        h.get_by_role_and_label(Role::Button, "Export G-code")
+            .accesskit_node()
+            .is_disabled()
+            || !h.state().export_planning(),
+        "disabled while the programs are still being built"
+    );
+    settle_export(&mut h);
     let export = h.get_by_role_and_label(Role::Button, "Export G-code");
     assert!(!export.accesskit_node().is_disabled());
     export.click();
     h.run();
+    assert!(h.query_by_role(Role::Dialog).is_none(), "no sheet opens");
     assert!(
-        h.query_by_role(Role::Dialog).is_some(),
-        "Export G-code opens the export sheet"
+        h.query_by_label("2 programs written").is_some(),
+        "Export G-code writes the programs"
     );
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
-    h.run();
+    assert_eq!(h.state().step_states().of(Step::Export), State::Complete);
+    assert!(
+        h.query_by_label("Exported. Nothing has changed since.")
+            .is_some(),
+        "and the step says so"
+    );
 
     // A tool an operation cuts with loses its feed: export is blocked.
     let project = h.state().app().project();
@@ -5798,10 +5906,16 @@ fn continue_goes_to_the_next_step_and_export_is_the_primary_on_export() {
         h.query_by_label("1 error blocks export.").is_some(),
         "the step says why"
     );
-    // The sheet still opens from the step, to show what blocks it.
-    h.get_by_label("Review programs…").click();
-    h.run();
-    assert!(h.query_by_role(Role::Dialog).is_some());
+    // The step shows what blocks it: the finding, where the result was.
+    assert!(
+        h.query_by_label("2 programs written").is_none(),
+        "the result goes when the project changes"
+    );
+    assert_eq!(
+        in_export_step_containing(&h, "feed_mm_min is not set"),
+        1,
+        "the blocking finding is listed"
+    );
     std::fs::remove_dir_all(&dir).unwrap();
 }
 

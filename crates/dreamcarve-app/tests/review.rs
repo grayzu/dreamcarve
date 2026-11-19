@@ -406,24 +406,18 @@ fn scenes(dir: &Path) -> bool {
     command_key(&h, egui::Key::E);
     h.run();
     settle(&mut h);
-    shoot(&mut h, "20-export-sheet");
-    // Program Details opened (#624): closed whenever the sheet opens.
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Program Details")
+    shoot(&mut h, "20-export-step");
+    // Program Details opened (#624): closed until the user opens it.
+    click(&mut h, "Program Details");
+    shoot(&mut h, "20-export-step-details");
+    h.get_by_role_and_label(Role::Button, "Export G-code")
         .click();
     h.run();
-    shoot(&mut h, "20-export-sheet-details");
-    h.get_by_role(Role::Dialog).get_by_label("Export").click();
-    h.run();
-    shoot(&mut h, "21-export-result-sheet");
+    shoot(&mut h, "21-export-result");
     // Run instructions opened (#625): closed whenever the result shows.
-    h.get_by_role(Role::Dialog)
-        .get_by_label("Run instructions")
-        .click();
-    h.run();
+    click(&mut h, "Run instructions");
     shoot(&mut h, "21-export-result-instructions");
-    h.get_by_role(Role::Dialog).get_by_label("Close").click();
-    h.run();
+    click(&mut h, "Done");
     // The unsaved-changes sheet.
     let mut stock = h.state().app().project().stock.clone();
     stock.width_mm += 10.0;
@@ -845,6 +839,66 @@ fn d6_pictures(out: &Path, looks: &[dc_app::Theme]) {
     shoot_in(&mut h, out, "03-operations-photo-v-carve", looks);
     drop(h);
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Where the slice D4 pictures are committed.
+fn d4_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-4/review/d4"),
+        PathBuf::from,
+    )
+}
+
+/// The Export step's part of the slice D4 set, on a copy of the plaque
+/// (export writes beside it): the step ready to export, its programs
+/// listed and its folder chosen; blocked by a tool without its feed, the
+/// finding listed; and after an export, the result in the plan's place.
+fn d4_export(out: &Path, looks: &[dc_app::Theme]) {
+    // A short path, so the folder reads whole in the pictures.
+    let dir = std::env::temp_dir().join("dreamcarve-plaque");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let copy = copy_fixture("plaque.dcv", &dir);
+    let Some(mut h) = window(&dir, Some(copy), 1280.0, 800.0) else {
+        return;
+    };
+    go_to(&mut h, "Export");
+    settle(&mut h);
+    click(&mut h, "Program Details");
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "01-export-ready", looks);
+
+    h.get_by_role_and_label(Role::Button, "Export G-code")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "03-export-result", looks);
+    click(&mut h, "Done");
+
+    delete_a_feed(&mut h);
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, out, "02-export-blocked", looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// The slice D4 set (`docs/specs/phase-4/redesign.md`, "Slices"): Export
+/// as a step, the Viewport's floating controls, the Warnings drawer and
+/// the sheets, and the status bar's pills. Each in dark and light at 1×,
+/// written to `docs/specs/phase-4/review/d4/`, where they are committed.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_d4 -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed D4 review pictures; run by hand"]
+fn redesign_d4_screenshots() {
+    let out = d4_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    d4_export(&out, &looks);
 }
 
 /// The slice D6 set (`docs/alpha-worklog.md`, slice D6): the features

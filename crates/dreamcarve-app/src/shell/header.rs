@@ -10,8 +10,9 @@
 //! view's one primary button, a 34-px accent pill. On every step but
 //! Export it reads *Continue* and opens the next step that is not
 //! complete ([`dc_app::steps::next`]); on Export it reads *Export G-code*
-//! and opens the export sheet, disabled with the reason in its tooltip
-//! while an error blocks export.
+//! and writes the programs the step plans, asking for a folder first when
+//! none is chosen; it is disabled with the reason in its tooltip while an
+//! error blocks export or the programs are not yet built.
 
 use dc_app::StrKey;
 use dc_app::steps::{self, Step};
@@ -190,18 +191,19 @@ fn generation(ui: &mut Ui, state: &FrameState<'_>) {
 fn primary(ui: &mut Ui, state: &FrameState<'_>, out: &mut Vec<Action>) {
     let strings = state.app.strings();
     if state.step == Step::Export {
-        // Disabled while an error blocks export, saying which: the CLI's
-        // refusal (S20), as for an unset thickness (#536).
-        let refusal = dc_app::project::export_refusal(state.app);
+        // Disabled while it cannot run, saying why: an error that blocks
+        // export, as the CLI refuses it (S20; an unset thickness, #536),
+        // or the toolpaths or the programs still on their way.
+        let refusal = state.export.refusal(state.app);
         let mut export = ButtonSpec::new(Kind::Primary, strings.get(StrKey::HeaderExport))
             .icon(Icon::Download, theme::ICON_LARGE_PX)
             .height(theme::HEADER_PRIMARY_PX)
             .enabled(refusal.is_none());
-        if let Some(refusal) = refusal {
-            export = export.tooltip(refusal.message.as_str());
+        if let Some(refusal) = &refusal {
+            export = export.tooltip(refusal);
         }
         if button(ui, export).clicked() {
-            out.push(Action::OpenExport);
+            out.push(Action::Export(crate::panels::export::Request::Export));
         }
         return;
     }

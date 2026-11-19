@@ -79,6 +79,8 @@ units = "Units"
 units_help = "The units every length and feed is shown and typed in. The file stores millimetres either way."
 units_mm = "mm"
 units_in = "in"
+# Between the parts of a closed group's one-line summary.
+summary_separator = " · "
 
 [project.stock]
 width = "Width"
@@ -120,9 +122,16 @@ park = "Park point"
 park_help = "Where the program ends in XY, typed as X, Y. Empty ends where the last cut ends."
 pick = "Click on the view"
 picking = "Click the Viewport to set the park point. Esc cancels."
+# The group's header while it is closed, on the Export step.
+summary_clearance = "Clearance {clearance} {unit}"
+summary_safe_z = "Each operation's safe Z"
+summary_park = "park {park}"
 
 [project.tolerances]
 title = "Tolerances"
+summary_flatten = "Flatten {flatten} {unit}"
+summary_arcs = "arcs {arc} {unit}"
+summary_lines = "lines only"
 flatten = "Flatten"
 flatten_help = "How far a flattened curve may stray from the true curve."
 arc_fit = "Arc fitting"
@@ -130,6 +139,7 @@ arc_fit_help = "How far a fitted arc may stray from the lines it replaces. Off w
 
 [project.post]
 title = "Post-processor"
+summary = "{post} · .{extension}"
 controller = "Controller"
 controller_help = "The bundled post-processor that writes G-code for your controller."
 version = "{name} v{version}"
@@ -283,13 +293,11 @@ export_done = "Exported. Nothing has changed since."
 add_drawing = "Add drawing"
 add_picture = "Add picture"
 
-# The Export step's readiness card and its button.
+# The Export step's readiness card.
 [steps.export]
 readiness = "Readiness: {counts}"
 estimate = "Estimated time"
 z_range = "Z range, tool centre"
-review = "Review programs…"
-review_help = "Choose the folder and see each program before it is written."
 
 # The status bar (slice 24, #616; functional spec, capability 50b): the
 # units button and its menu, the counts, and the Toolpaths button.
@@ -1190,23 +1198,20 @@ disabled_pictures = "A picture cannot be rotated or flipped"
 locked_one = "“{name}” is locked, so it stayed where it was"
 locked_many = "{count} locked shapes stayed where they were: {names}"
 
-# Slice 18 (#547): the export sheet and its result (capability 77,
-# mock-up 11), and the estimates outside it (capability 78).
+# Slice 18 (#547), redesign slice D4: the Export step's plan and its
+# result (capability 77, mock-up 11), and the estimates outside it
+# (capability 78).
 [export]
-title = "Export G-code · {name}"
-close = "Close"
 destination = "Destination"
 destination_help = "The folder the programs are written to, remembered for this project. The project's own folder unless you choose another."
 choose = "Choose…"
 choose_title = "Export to folder"
 no_folder = "Choose a folder: the project has not been saved yet."
+no_folder_yet = "Not chosen yet"
 stem = "File name"
 stem_help = "What each program's name starts with; the post-processor gives the extension."
 stem_empty = "Type a file name."
 names = "Writes {names}"
-post = "Post-processor"
-post_help = "The controller the programs are written for: the Export step's setting."
-post_note = "Changing it here changes the project (undoable) and keeps your settings."
 split = "Programs"
 split_help = "How a project with several tools is divided into programs. An override applies to this export only and is not saved."
 split_project = "As the project says: {mode}"
@@ -1230,24 +1235,21 @@ blocked_one = "1 error blocks export"
 blocked_many = "{count} errors block export"
 show = "Show"
 show_help = "Open the Warnings drawer at the errors."
-export = "Export"
 waiting = "Waiting for the toolpaths to finish generating…"
 building = "Building the programs…"
 nothing = "Nothing to export."
 no_board = "Tick a board to export."
 failed = "Nothing was written: {reason}"
 over_project = "Refusing to write {name} over the project file."
-result_title = "Exported · {name}"
 show_in_folder = "Show in folder"
 written = "Exported {count} file(s) to {dir}"
 status_total = "Est. {time}"
 status_total_help = "The estimated time of every program, as export prints it (capability 30)"
 operation_estimate = "{name}: {time}"
 # The export result (functional spec, capability 77a): Status, Files and
-# Run instructions, in place of the sheet's content.
+# Run instructions, in the plan's place on the Export step.
 result_written_one = "1 program written"
 result_written_many = "{count} programs written"
-result_files = "Files"
 result_column_number = "#"
 result_column_file = "File"
 result_column_tool = "Tool"
@@ -1257,6 +1259,7 @@ result_copy_path = "Copy path"
 result_copied = "Copied {path}"
 result_instructions = "Run instructions"
 result_done = "Done"
+result_done_help = "Back to the plan, to export again or somewhere else."
 # The setup sheet (capability 77b): an HTML page printed from a browser.
 save_setup_sheet = "Save setup sheet…"
 save_setup_sheet_help = "Write a page with the setup and every program's tool, zero, extents and time, to open and print from a browser."

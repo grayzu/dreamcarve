@@ -794,6 +794,100 @@ pub fn set_park(project: &Project, at_mm: Point) -> Option<Command> {
     changes(project, Command::SetHeights(heights))
 }
 
+/// One of the Export step's groups of output settings (functional spec,
+/// capabilities 60 and 62; `redesign.md`, "The steps"). Each is a section
+/// that starts closed, with one line of its values on its header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Group {
+    /// The post-processor: the controller, the file extension, the
+    /// spindle, the tool change and the number formats.
+    Post,
+    /// The clearance, the tool-change machine Z and the park point.
+    Heights,
+    /// The flatten and the arc-fitting tolerance.
+    Tolerances,
+}
+
+impl Group {
+    /// Every group, in the step's order.
+    pub const ALL: [Self; 3] = [Self::Post, Self::Heights, Self::Tolerances];
+
+    /// The group that edits the field at `path`, as validation names a
+    /// field; `None` for a field of another step.
+    #[must_use]
+    pub fn of_field(path: &str) -> Option<Self> {
+        let under = |root: &str| {
+            path.strip_prefix(root)
+                .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+        };
+        if under("post_processor") {
+            Some(Self::Post)
+        } else if under("heights") {
+            Some(Self::Heights)
+        } else if matches!(path, "flatten_tolerance_mm" | "arc_fit_tolerance_mm") {
+            Some(Self::Tolerances)
+        } else {
+            None
+        }
+    }
+
+    /// One line of the group's values for `project`, in its display
+    /// units: what its header shows while it is closed. `grblHAL v4
+    /// (latest) · .nc`; `Clearance 12 mm · park 20, 30`, or what an unset
+    /// clearance means; `Flatten 0.01 mm · arcs 0.01 mm`.
+    #[must_use]
+    pub fn summary(self, strings: &Strings, project: &Project) -> String {
+        let unit = units::suffix(project.display_units);
+        let separator = strings.get(StrKey::ProjectSummarySeparator);
+        match self {
+            Self::Post => strings.fmt(
+                StrKey::ProjectPostSummary,
+                &[
+                    ("post", &post_label(strings, project)),
+                    ("extension", &Field::FileExtension.text(project)),
+                ],
+            ),
+            Self::Heights => {
+                let clearance = Field::Clearance.text(project);
+                let mut parts = vec![if clearance.is_empty() {
+                    strings.get(StrKey::ProjectHeightsSummarySafeZ).to_owned()
+                } else {
+                    strings.fmt(
+                        StrKey::ProjectHeightsSummaryClearance,
+                        &[("clearance", &clearance), ("unit", unit)],
+                    )
+                }];
+                let park = Field::Park.text(project);
+                if !park.is_empty() {
+                    parts.push(strings.fmt(StrKey::ProjectHeightsSummaryPark, &[("park", &park)]));
+                }
+                parts.join(separator)
+            }
+            Self::Tolerances => {
+                let flatten = strings.fmt(
+                    StrKey::ProjectTolerancesSummaryFlatten,
+                    &[
+                        ("flatten", &Field::FlattenTolerance.text(project)),
+                        ("unit", unit),
+                    ],
+                );
+                let arc = Field::ArcFitTolerance.text(project);
+                let arcs = if arc.is_empty() {
+                    strings
+                        .get(StrKey::ProjectTolerancesSummaryLines)
+                        .to_owned()
+                } else {
+                    strings.fmt(
+                        StrKey::ProjectTolerancesSummaryArcs,
+                        &[("arc", &arc), ("unit", unit)],
+                    )
+                };
+                [flatten, arcs].join(separator)
+            }
+        }
+    }
+}
+
 /// Whether a Project Settings field has an error (the thickness unset is
 /// one), so the panel opens (functional spec, capability 60). Errors
 /// about an operation, a tool or a shape are not the panel's.

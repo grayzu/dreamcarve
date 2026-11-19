@@ -552,6 +552,9 @@ pub const RAIL_BUTTON_HEIGHT_PX: f32 = 52.0;
 pub const STEP_PANEL_PX: f32 = 312.0;
 /// The step panel's minimum width.
 pub const STEP_PANEL_MIN_PX: f32 = 280.0;
+/// The Export step's panel, wider than the other steps': the step has no
+/// Inspector, and a program's name, tool and time read on one line.
+pub const EXPORT_PANEL_PX: f32 = 440.0;
 /// The Inspector's default width, a card's.
 pub const INSPECTOR_PX: f32 = 328.0;
 /// The Inspector's minimum width.

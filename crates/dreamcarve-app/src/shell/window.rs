@@ -434,13 +434,11 @@ pub(crate) enum Action {
     CommitTargets,
     /// The target-editing bar's *Cancel* (Escape).
     CancelTargets,
-    /// Open the export sheet (File ▸ Export G-code…, the header's
-    /// *Export G-code*, the Export step, ⌘E; #547).
-    OpenExport,
     /// Open the toolpath view's popover (View ▸ Toolpaths…, capability
     /// 79a), as the status bar's *Toolpaths* button does.
     OpenToolpaths,
-    /// Something the export sheet asked for.
+    /// Something the Export step asked for: the header's *Export G-code*
+    /// among them (#547). File ▸ Export G-code… and ⌘E open the step.
     Export(panels::export::Request),
     /// Save the last export's setup sheet (the result's footer, File ▸
     /// Save Setup Sheet…; capability 77b).
@@ -524,8 +522,9 @@ pub struct Shell {
     picture: Option<panels::picture::Sheet>,
     /// The picture being decoded for that sheet, until it lands.
     picture_opening: Option<PictureOpening>,
-    /// The export sheet, while open (#547).
-    export: Option<panels::export::Sheet>,
+    /// The Export step's choices, plan and last result, for the project
+    /// that is open (#547).
+    export: panels::export::Export,
     /// The setup sheet of this project's last export, for File ▸ Save
     /// Setup Sheet… (capability 77b); gone when another project opens.
     setup_sheet: Option<panels::export::SetupSheet>,
@@ -624,6 +623,8 @@ impl Shell {
             viewport::renderer::install(render_state);
         }
         let app = App::new(App::new_project()?, Strings::english(), prefs);
+        let export =
+            panels::export::Export::new(&app, dreamcarve_shell::clock::today_utc(), estimate);
         let mut shell = Self {
             app,
             config: options.config,
@@ -634,7 +635,7 @@ impl Shell {
             import: None,
             picture: None,
             picture_opening: None,
-            export: None,
+            export,
             setup_sheet: None,
             estimate,
             thumbnails: Vec::new(),
@@ -712,13 +713,11 @@ impl Shell {
         self.worker.busy()
     }
 
-    /// Whether the export sheet is building its plan, or will once
-    /// generation is over (#547).
+    /// Whether the Export step is building its plan, or will once
+    /// generation is over (#547): only while the step shows.
     #[must_use]
     pub fn export_planning(&self) -> bool {
-        self.export
-            .as_ref()
-            .is_some_and(|sheet| sheet.planning(&self.app))
+        self.step == Step::Export && self.export.planning(&self.app)
     }
 
     /// Whether a picture is being decoded for the Add picture sheet,
@@ -806,12 +805,20 @@ impl Shell {
         if self.seen_project == Some(replaced) {
             let generating = self.app.generation().busy();
             self.states = steps::settle(&self.states, now, generating);
+            // A project saved under another name exports beside it.
+            self.export.follow(&self.app);
         } else {
             self.seen_project = Some(replaced);
             self.states = now;
             self.step = steps::opening(&now);
             panels::tools::select(ctx, None);
-            // The last export, and its setup sheet, are the old project's.
+            // The export's choices, the last export and its setup sheet
+            // are the old project's.
+            self.export = panels::export::Export::new(
+                &self.app,
+                dreamcarve_shell::clock::today_utc(),
+                self.estimate,
+            );
             self.setup_sheet = None;
             self.exported = None;
         }
@@ -1157,7 +1164,7 @@ impl Shell {
                 }
                 // A sheet opened meanwhile (the unsaved-changes one, the
                 // library) keeps the window: the picture is dropped.
-                if self.sheet.is_none() && self.library.is_none() && self.export.is_none() {
+                if self.sheet.is_none() && self.library.is_none() {
                     self.import = None;
                     self.picture = Some(panels::picture::Sheet::new(&opening.path, model));
                 }
@@ -1306,7 +1313,7 @@ impl Shell {
         // Import drawing sheet or the Add picture sheet, and nothing is
         // taken while the unsaved-changes sheet or the Tool Library is
         // open.
-        let other_sheet = self.sheet.is_some() || self.library.is_some() || self.export.is_some();
+        let other_sheet = self.sheet.is_some() || self.library.is_some();
         for path in dropped {
             if other_sheet {
                 continue;
@@ -1324,8 +1331,7 @@ impl Shell {
         let sheet_open = self.sheet.is_some()
             || self.library.is_some()
             || self.import.is_some()
-            || self.picture.is_some()
-            || self.export.is_some();
+            || self.picture.is_some();
         focus::begin(ctx, sheet_open);
         if self.app.target_editing().is_some() {
             // Target editing has two keys, Enter for Done and Escape for
@@ -1533,6 +1539,11 @@ impl Shell {
                             let tool = panels::tools::tool_in_field(self.app.project(), &field);
                             panels::tools::select(ctx, tool.as_ref());
                         }
+                        // An output setting's group opens, so the field
+                        // is in view.
+                        if let Some(name) = panels::project::group_section(&field) {
+                            self.app.prefs_mut().sections.insert(name.to_owned(), true);
+                        }
                         self.go_to(step);
                     }
                     (None, _, None) => {}
@@ -1610,14 +1621,6 @@ impl Shell {
                 self.app.cancel_targets();
                 ctx.request_repaint();
             }
-            Action::OpenExport => {
-                self.export = Some(panels::export::Sheet::open(
-                    &self.app,
-                    dreamcarve_shell::clock::today_utc(),
-                    self.estimate,
-                ));
-                ctx.request_repaint();
-            }
             Action::Export(request) => self.export_request(request),
             Action::SaveSetupSheet => self.save_setup_sheet(),
             Action::PlaceTabs(op) => {
@@ -1661,29 +1664,46 @@ impl Shell {
         });
     }
 
-    /// What the export sheet asked for.
+    /// Asks for the folder to export to with the native dialog, starting
+    /// in the one chosen; whether one was picked.
+    fn choose_export_folder(&mut self) -> bool {
+        let title = self.strings().get(StrKey::ExportChooseTitle).to_owned();
+        let start = self.export.dir().map(Path::to_path_buf);
+        match self.dialogs.export_folder(&title, start.as_deref()) {
+            Some(dir) => {
+                self.export.set_dir(dir);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// What the Export step asked for.
     fn export_request(&mut self, request: panels::export::Request) {
         use panels::export::Request;
         match request {
-            Request::Close => self.export = None,
+            Request::Done => self.export.dismiss(),
             Request::ChooseFolder => {
-                let title = self.strings().get(StrKey::ExportChooseTitle).to_owned();
-                let start = self
-                    .export
-                    .as_ref()
-                    .and_then(|s| s.dir().map(Path::to_path_buf));
-                if let Some(dir) = self.dialogs.export_folder(&title, start.as_deref())
-                    && let Some(sheet) = self.export.as_mut()
-                {
-                    sheet.set_dir(dir);
-                }
+                self.choose_export_folder();
             }
+            Request::SetStem(stem) => self.export.set_stem(stem),
+            Request::SetSplit(split) => self.export.set_split(split),
+            Request::SetBoards(boards) => self.export.set_boards(boards),
+            Request::ToggleInstructions => self.export.toggle_instructions(),
             Request::Export => {
-                if let Some(sheet) = self.export.as_mut()
-                    && let Some(message) = panels::export::export(sheet, &mut self.app)
-                {
+                // The command of the header's button, which the step's
+                // refusal disables: nothing runs past it another way.
+                if self.export.refusal(&self.app).is_some() {
+                    return;
+                }
+                // A project never saved has no folder yet: ask first, and
+                // write nothing when the dialog is cancelled.
+                if self.export.dir().is_none() && !self.choose_export_folder() {
+                    return;
+                }
+                if let Some(message) = panels::export::export(&mut self.export, &mut self.app) {
                     self.message = Some(message);
-                    self.setup_sheet = sheet.setup_sheet().cloned();
+                    self.setup_sheet = self.export.setup_sheet().cloned();
                     self.exported = Some(self.app.snapshot());
                 }
             }
@@ -1699,15 +1719,10 @@ impl Shell {
                     self.message = Some(message);
                 }
             }
-            Request::ShowInFolder => {
-                if let Some(sheet) = &self.export {
-                    panels::export::show_in_folder(sheet);
-                }
-            }
+            Request::ShowInFolder => panels::export::show_in_folder(&self.export),
             // The drawer at the first error: open, and what that row
             // names selected, as clicking the row would.
             Request::ShowErrors => {
-                self.export = None;
                 self.warnings_open = true;
                 let first = dc_app::warnings::panel(&self.app)
                     .into_iter()
@@ -1866,7 +1881,8 @@ pub(crate) fn shortcut_action(app: &App, command: Shortcut) -> Option<Action> {
         Shortcut::Save => Some(Action::Save),
         Shortcut::SaveAs => Some(Action::SaveAs),
         Shortcut::Import => Some(Action::ImportDrawing),
-        Shortcut::Export => Some(Action::OpenExport),
+        // The export is the Export step's: the command opens it.
+        Shortcut::Export => Some(Action::GoTo(Step::Export)),
         Shortcut::Quit => Some(Action::Quit),
         Shortcut::Undo => app.can_undo().then_some(Action::Undo),
         Shortcut::Redo => app.can_redo().then_some(Action::Redo),
@@ -1959,6 +1975,8 @@ pub(crate) struct FrameState<'a> {
     /// Whether this project has been exported, so File ▸ Save Setup
     /// Sheet… has a sheet to save.
     pub setup_sheet: bool,
+    /// The Export step's choices, plan and last result.
+    pub export: &'a panels::export::Export,
 }
 
 impl FrameState<'_> {
@@ -1994,6 +2012,15 @@ impl eframe::App for Shell {
         self.disarm_hidden_picks(&ctx);
         let mut actions = Vec::new();
         self.read_input(&ctx, &mut actions);
+        // The export's plan is built while its step shows, off this
+        // thread; look again soon while it is on its way.
+        if self.step == Step::Export
+            && self
+                .export
+                .tick(&self.app, dreamcarve_shell::clock::today_utc())
+        {
+            ctx.request_repaint_after(panels::export::POLL);
+        }
 
         let size = ctx.content_rect().size();
         let pointer = self
@@ -2050,6 +2077,7 @@ impl eframe::App for Shell {
             note_target: note_target.as_ref(),
             estimate: &self.estimate,
             setup_sheet: self.setup_sheet.is_some(),
+            export: &self.export,
         };
         focus::mark(ui, Region::Header);
         regions.push((Region::Header, header::bar(ui, &state, &mut actions)));
@@ -2112,13 +2140,12 @@ impl eframe::App for Shell {
                 sheet,
                 &mut actions,
             );
-        } else if let Some(sheet) = self.export.as_mut() {
-            panels::export::show(&ctx, &self.app, &state.display_name, sheet, &mut actions);
         }
         self.focus = focus::finish(ui, regions);
 
-        // The widths the user dragged the panels to are preferences.
-        if let Some(shown) = step_panel {
+        // The widths the user dragged the panels to are preferences. The
+        // Export step's wider panel is its own, kept for the session.
+        if let Some(shown) = step_panel.filter(|shown| !shown.export) {
             self.app.prefs_mut().panels.left_width = f64::from(shown.width);
         }
         if let Some(shown) = docked {

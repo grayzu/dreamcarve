@@ -2,21 +2,22 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! The export plan (`docs/specs/phase-4/design.md`, "Architecture →
-//! Export"; functional spec, capability 77 and S20): what the export sheet
+//! Export"; functional spec, capability 77 and S20): what the Export step
 //! lists and writes.
 //!
 //! [`plan`] waits while any operation is pending, generating or stale
 //! (the Viewport's drawing is then not the snapshot's), then builds the
 //! current snapshot afresh with [`dc_job::build_board`], the call
 //! `dreamcarve export` makes, rather than reusing the incremental results,
-//! so the bytes the sheet writes are `build`'s. The program split
+//! so the bytes the step writes are `build`'s. The program split
 //! override and the board ticks are this export's only (`--one-program`,
 //! `--programs-per-tool`, `--board`): they are arguments of the build and
 //! never touch the project. Errors are the CLI's and block the export,
-//! counted in one line ([`Ready::blocking_line`]); warnings do not, and
-//! the sheet leaves them to the status bar and the drawer. A project validation rejects is built
-//! at once, since nothing generates for it, so its errors show without
-//! waiting.
+//! counted in one line ([`Ready::blocking_line`]) over the findings
+//! themselves ([`crate::warnings::blocking`]); warnings do not, and the
+//! step leaves them to the status bar and the drawer. A project
+//! validation rejects is built at once, since nothing generates for it,
+//! so its errors show without waiting.
 //!
 //! The plan is pure. The shell runs [`Request::run`] off the UI thread,
 //! names the files under the stem the user chose ([`Ready::files`]), and
@@ -37,7 +38,7 @@ use crate::generation::SnapshotId;
 use crate::strings::{StrKey, Strings};
 
 /// Which boards of a project with an Inlay this export writes (#498): the
-/// sheet's per-board ticks, for this export only. A project without an
+/// step's per-board ticks, for this export only. A project without an
 /// enabled Inlay has one board and ignores them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Boards {
@@ -69,7 +70,7 @@ impl Boards {
     }
 }
 
-/// What the export sheet asks for.
+/// What the Export step asks for.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
     /// The program split: as the project says, or overridden for this
@@ -129,7 +130,7 @@ impl Request {
     }
 
     /// Builds the snapshot as `dreamcarve export` does, and summarizes
-    /// each program as the sheet lists it.
+    /// each program as the step lists it.
     #[must_use]
     pub fn run(self) -> Ready {
         let Self {
@@ -252,7 +253,7 @@ impl Ready {
             .collect()
     }
 
-    /// The one line above the sheet's footer when errors block export
+    /// The one line the Export step heads its blocking findings with
     /// (capability 77): `1 error blocks export`, `3 errors block export`;
     /// `None` when the build found no error.
     #[must_use]
@@ -425,8 +426,8 @@ impl Ready {
     }
 }
 
-/// The export result (functional spec, capability 77a): the sheet's
-/// content once the programs are written, in three parts.
+/// The export result (functional spec, capability 77a): what the Export
+/// step shows once the programs are written, in three parts.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExportResult {
     /// What was written.
@@ -626,6 +627,22 @@ pub fn waits(app: &App) -> bool {
             .iter()
             .filter(|op| op.enabled())
             .any(|op| generation.is_stale(op.id()))
+}
+
+/// Whether `project`'s enabled operations cut with two tools or more, so
+/// the program split (one program per tool, or one with tool changes)
+/// changes what is written: the Export step offers it only then.
+#[must_use]
+pub fn several_tools(project: &Project) -> bool {
+    let mut tools: Vec<&dc_project::ToolId> = project
+        .operations
+        .iter()
+        .filter(|op| op.enabled())
+        .flat_map(dc_project::Operation::run_tools)
+        .collect();
+    tools.sort();
+    tools.dedup();
+    tools.len() > 1
 }
 
 /// The build request for `app`'s current snapshot with `options`; `None`
