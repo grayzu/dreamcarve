@@ -30,6 +30,10 @@
 use std::path::Path;
 use std::process::ExitCode;
 
+use crate::cli::{Failure, InitArgs, UnitsArg, lookup_post, output_exists, read_file, write_new};
+use crate::config;
+use crate::image::{import_picture, picture_format, picture_name, picture_size, placement_failure};
+use crate::output::{errln, outln};
 use dc_import::{
     DxfImportOptions, ImportError, ImportWarning, JOIN_TOLERANCE_DEFAULT_MM, SvgImportOptions,
     import_dxf, import_svg, prep,
@@ -38,12 +42,6 @@ use dc_job::JobError;
 use dc_job::import::Drawing;
 use dc_job::project_from;
 use dc_project::{Project, SourceMap, validate};
-use dreamcarve_shell::StagedFile;
-
-use crate::cli::{Failure, InitArgs, UnitsArg, lookup_post, read_file};
-use crate::config;
-use crate::image::{import_picture, picture_format, picture_name, picture_size, placement_failure};
-use crate::output::{errln, outln};
 
 /// Runs `init`.
 pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
@@ -76,10 +74,10 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         .unwrap_or_else(|| args.drawing.with_extension("dcv"));
     if output.exists() {
         // The .dcv is where the user's edits live; never overwrite one.
-        return Err(Failure::error(format!(
-            "{} already exists; remove it or choose another file with -o",
-            output.display()
-        )));
+        // Said here before the drawing is imported; what keeps the
+        // promise is `write_new`, which will not replace a file that
+        // appears after this check.
+        return Err(output_exists(&output));
     }
     if let (Some(format), Some(size)) = (picture, size) {
         let pixels = import_picture(&args.drawing, format)?;
@@ -99,7 +97,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
         )
         .map_err(placement_failure)?;
         let text = dc_project::save(&project).map_err(Failure::error)?;
-        StagedFile::write(&output, text.as_bytes())?.commit()?;
+        write_new(&output, text.as_bytes())?;
         report_picture(&project, &output, &text)?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -144,7 +142,7 @@ pub fn run(args: &InitArgs) -> Result<ExitCode, Failure> {
             other => Failure::error(other),
         })?;
     let text = dc_project::save(&project).map_err(Failure::error)?;
-    StagedFile::write(&output, text.as_bytes())?.commit()?;
+    write_new(&output, text.as_bytes())?;
 
     report(&project, &output, &text)?;
     Ok(ExitCode::SUCCESS)

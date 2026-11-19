@@ -55,6 +55,14 @@ pub enum ShellError {
         /// What the file system said.
         source: std::io::Error,
     },
+    /// Something is already at a destination that must be new
+    /// ([`crate::StagedFile::commit_new`]; review 1.9). It was left as it
+    /// was.
+    #[error("{} already exists", path.display())]
+    AlreadyExists {
+        /// The file's destination.
+        path: PathBuf,
+    },
     /// A destination with no file name, such as `/` or `..`.
     #[error("{} is not a file path", path.display())]
     NotAFilePath {

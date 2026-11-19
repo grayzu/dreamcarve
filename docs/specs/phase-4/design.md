@@ -39,7 +39,13 @@ added and one is made thin:
   preferences file. It owns every `std::fs`, thread and `eframe` type.
 - **`dreamcarve-shell`** (library): the file I/O both binaries share and
   `dc-*` crates may not do: the staged write (`StagedFile`, `commit_all`),
-  the config directory, `config.toml`, and `gui.toml`. Every file either
+  the config directory, `config.toml`, and `gui.toml`. A staged file
+  goes into place by `commit` (a rename, which replaces) or, for the
+  commands that promise never to overwrite (`init`, `image-prep`), by
+  `commit_new` (a hard link to the destination, which the file system
+  refuses when anything is there; `ShellError::AlreadyExists`; review
+  1.9), so a file that appears after the command's own check is not
+  replaced. Every file either
   binary reads whole is read by `read_capped(path, limit)` under
   `MAX_FILE_BYTES` (256 MiB; review 1.6): the size is checked before
   the read and the read stops a byte past the limit, and a larger file
