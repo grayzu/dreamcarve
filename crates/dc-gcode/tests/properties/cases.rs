@@ -1216,9 +1216,9 @@ fn right_open_path_smooth_tab_at_its_start_exports() {
     );
 }
 
-/// The same tab on the same line cut On line, plunged: S9 has held a tab
-/// on an open path of an On line Profile since #495, and refused this
-/// plunge at the tab's centre.
+/// The same tab on the same line cut On line, plunged: S9 already held a
+/// tab on an open path of an On line Profile, and refused this plunge at
+/// the tab's centre.
 #[test]
 fn on_line_open_path_smooth_tab_at_its_start_exports() {
     let project = open_line_smooth_tab_at_its_first_vertex(Side::OnLine, Entry::Plunge);

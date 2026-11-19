@@ -137,7 +137,8 @@
 //!   along that outline and its open offsets, its span never wrapping
 //!   from one end to the other: each open piece of a clipped cut-out
 //!   holds its own tabs. A tab on an open path of a Left or Right Profile
-//!   is not held yet ([`tab_spine`]).
+//!   (#207) is held along that path's offset to the cut side alone, where
+//!   its request centres it and the bit runs ([`tab_spine`]).
 //! - **Trenches** (#352): an inside or outside Profile cuts only a trench,
 //!   its kerf, and the lines its entries ramp on; the waste beside them
 //!   stands full height. So a ramp below the stock top must run where
@@ -1822,15 +1823,17 @@ pub(crate) struct TabSpine {
     outline_id: (InstanceId, usize),
     /// The bit's paths round the tab's outline a lap runs on: the outline
     /// and the outline offset by the tool radius both ways, project space.
-    /// Closed on a closed outline, open on an open one.
+    /// Closed on a closed outline, open on an open one. For an open path
+    /// of a Left or Right Profile, its offset to the cut side alone.
     paths: Vec<Polyline>,
     /// The laps among [`TabSpine::paths`]: the outline offset by the tool
-    /// radius both ways, project space. Empty for an On line Profile,
-    /// whose lap is the outline.
+    /// radius both ways (to the cut side alone beside an open path of a
+    /// Left or Right Profile), project space. Empty for an On line
+    /// Profile, whose lap is the outline.
     laps: Vec<Polyline>,
     /// The paths of the passes before a last pass (#284): the outline
-    /// offset by the radius plus the last pass's stock to leave both ways,
-    /// project space. Empty without a last pass.
+    /// offset by the radius plus the last pass's stock to leave, the ways
+    /// the laps are, project space. Empty without a last pass.
     stock_paths: Vec<Polyline>,
     /// The tab's point, project space.
     point: Point,
@@ -2007,9 +2010,8 @@ fn cut_out_profile(
 /// board's edge leaves of a male Inlay's cut-out (#495). A tab on an open
 /// outline of an inside or outside Profile, which cuts closed outlines
 /// only, is no tab of that Profile. A tab on an open outline of a Left or
-/// Right Profile (#207) has no spine yet, so S9 does not hold a plunge
-/// off it (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out", says
-/// what that needs).
+/// Right Profile (#207) has its spine along the path offset to the cut
+/// side (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out").
 ///
 /// `None` when a tab cannot be laid out (#711), and the run is then
 /// unresolved ([`Material::held_run`]): the request cannot be placed, the
@@ -2059,9 +2061,8 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Option<Vec<TabSpi
 
 /// The spine of `tab`, one of Profile `profile`'s, cut with a tool of
 /// `radius_mm` to `floor_z_mm` above the stock bottom ([`tab_spines`]).
-/// `Some(None)` for a tab with no spine: on an open outline of a Profile
-/// that is not On line (an inside or outside Profile does not cut it; a
-/// Left or Right one is not held to it yet), or on a closed outline that
+/// `Some(None)` for a tab with no spine: on an open outline of an inside
+/// or outside Profile, which does not cut it, or on a closed outline that
 /// is no contour of a Left or Right Profile, which cuts open paths only.
 /// `None` when the tab's outline does not resolve.
 ///
@@ -2070,7 +2071,13 @@ pub(crate) fn tab_spines(project: &Project, op: &Operation) -> Option<Vec<TabSpi
 /// cuts they are the same, each offset the open paths beside it
 /// ([`offset_open`]): a spine was built on a closed outline only, so a
 /// plunge into a tab on a piece of a cut-out the board's edge had left
-/// open was not held.
+/// open was not held. On an open one a Left or Right Profile cuts (#207)
+/// they are its offset by the radius to that side alone, to the left or
+/// the right looking from its first vertex to its last, as the generator
+/// cuts it and [`side_profile`] holds it; with a last pass, the stock
+/// path the same way. The bit runs nowhere else beside such a path, and a
+/// tab its request lays is centred on that offset, so its span is
+/// measured along the path the generator laid it on.
 fn tab_spine(
     project: &Project,
     profile: &ProfileOp,
@@ -2093,14 +2100,21 @@ fn tab_spine(
             Err(_) if matches!(profile.side, Side::Left | Side::Right) => return Some(None),
             Err(_) => return None,
         }
-    } else if profile.side == Side::OnLine {
+    } else if matches!(profile.side, Side::OnLine | Side::Left | Side::Right) {
         None
     } else {
         return Some(None);
     };
+    // The sides of the outline a lap runs on: both, but for an open path
+    // of a Left or Right Profile, which is cut to that side of it only.
+    let (signs, cut_beside): (&[f64], bool) = match (&contour, profile.side) {
+        (None, Side::Left) => (&[1.0], true),
+        (None, Side::Right) => (&[-1.0], true),
+        _ => (&[1.0, -1.0], false),
+    };
     let offsets = |delta_mm: f64| -> Vec<Polyline> {
-        [1.0, -1.0]
-            .into_iter()
+        signs
+            .iter()
             .flat_map(|sign| match &contour {
                 Some(contour) => offset(contour, sign * delta_mm)
                     .into_iter()
@@ -2116,7 +2130,11 @@ fn tab_spine(
         .as_ref()
         .map(|l| offsets(radius_mm + l.stock_to_leave_mm))
         .unwrap_or_default();
-    let mut paths = vec![outline];
+    let mut paths = if cut_beside {
+        Vec::new()
+    } else {
+        vec![outline]
+    };
     paths.extend(laps.iter().cloned());
     let (hold_mm, slope_mm) = match tab.shape {
         TabShape::Rect => (radius_mm + tab.width_mm / 2.0, 0.0),
@@ -3564,9 +3582,9 @@ mod tests {
 
     /// A tab on an open outline has a spine for an On line Profile, which
     /// cuts along it (#175): the outline and its open offsets by the tool
-    /// radius either side. An inside or outside Profile does not cut an
-    /// open outline, and a Left or Right Profile's tab there is not held
-    /// yet (`docs/specs/phase-3/design.md`, "S9, an Inlay cut-out"). A
+    /// radius either side. A Left or Right Profile's has one too
+    /// (`tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side`).
+    /// An inside or outside Profile does not cut an open outline. A
     /// closed outline that is no contour (a bow tie) leaves an On line
     /// Profile's tabs unresolved; a Left Profile, which cuts open paths
     /// only, has no tab on it.
@@ -3597,7 +3615,10 @@ mod tests {
         assert_eq!(spine.paths.len(), 3, "the line and an offset either side");
         assert!(spine.paths.iter().all(|p| !p.is_closed()));
         assert!(spine.laps.is_empty());
-        for side in [Side::Left, Side::Right, Side::Inside, Side::Outside] {
+        for side in [Side::Left, Side::Right] {
+            assert_eq!(spines(&open, side).map(|t| t.len()), Some(1), "{side:?}");
+        }
+        for side in [Side::Inside, Side::Outside] {
             assert_eq!(spines(&open, side).map(|t| t.len()), Some(0), "{side:?}");
         }
 
@@ -3609,6 +3630,115 @@ mod tests {
         );
         assert!(spines(&bow_tie, Side::OnLine).is_none());
         assert_eq!(spines(&bow_tie, Side::Left).map(|t| t.len()), Some(0));
+    }
+
+    /// A tab on an open path of a Left or Right Profile (#207) is measured
+    /// as the generator lays it: along the path offset by the tool radius
+    /// to the cut side, from the point of that offset nearest the tab. The
+    /// sample's 6.35 mm bit and a 40 mm line from (10, 10) in project
+    /// space, with one smooth tab 6 mm wide and 2 mm tall asked for at
+    /// distance 0: cut Left the spine's one path is the line 3.175 mm to
+    /// its left (Y 13.175), Right to its right (Y 6.825), with no path on
+    /// the line or on the other side, and with a 0.5 mm last pass stock to
+    /// leave its stock path is 3.675 mm off. The tab is centred on the
+    /// offset's first point, where its request puts it. The top is held
+    /// for the radius along the offset from there, then slopes to the
+    /// floor over half the tab's width: a cut at the centre or 2.5 mm
+    /// along may not go below the top; one 5.175 mm along, 2 mm down the
+    /// 3 mm slope and the margin (0.1 of the radius) further, may go to
+    /// 0.455 mm above the floor and no lower; one 6.5 mm along is clear.
+    /// A cut on the line itself or on the other side is on no path of
+    /// the tab's.
+    #[test]
+    fn tab_spine_on_an_open_path_of_a_left_or_right_profile_is_on_its_cut_side() {
+        const R_MM: f64 = 6.35 / 2.0;
+        let (mut project, _, _, _) = sample();
+        project
+            .definitions
+            .get_mut(&DefinitionId::new("d1"))
+            .unwrap()
+            .profiles = vec![Polyline::new(
+            vec![Vertex::line(0.0, 0.0), Vertex::line(40.0, 0.0)],
+            false,
+        )];
+        {
+            let op = profile_mut(&mut project);
+            op.direction = dc_project::CutDirection::Conventional;
+            let tabs = op.tabs.as_mut().unwrap();
+            tabs.placement = dc_project::TabPlacement::AtDistances {
+                distances_mm: vec![0.0],
+            };
+            tabs.shape = TabShape::Smooth;
+        }
+        let spines = |project: &Project, side: Side| {
+            let mut project = project.clone();
+            profile_mut(&mut project).side = side;
+            tab_spines(&project, &project.operations.first().cloned().unwrap()).unwrap()
+        };
+        let line_at = |path: &Polyline, y_mm: f64| {
+            let ends: Vec<Point> = path.vertices().iter().map(|v| v.point()).collect();
+            assert_eq!(ends.len(), 2, "{path:?}");
+            assert!(!path.is_closed());
+            for (end, x_mm) in ends.iter().zip([10.0, 50.0]) {
+                assert!(
+                    end.distance_to(Point::new(x_mm, y_mm)) < 1e-9,
+                    "{end:?} is not ({x_mm}, {y_mm})"
+                );
+            }
+        };
+        for (side, sign) in [(Side::Left, 1.0), (Side::Right, -1.0)] {
+            let found = spines(&project, side);
+            assert_eq!(found.len(), 1, "{side:?}");
+            let spine = found.first().unwrap();
+            let y_mm = 10.0 + sign * R_MM;
+            assert_eq!(
+                spine.paths.len(),
+                1,
+                "{side:?}: the cut side's offset alone"
+            );
+            line_at(&spine.paths[0], y_mm);
+            assert_eq!(spine.laps, spine.paths);
+            assert!(spine.stock_paths.is_empty());
+            assert!(
+                spine.point.distance_to(Point::new(10.0, y_mm)) < 1e-9,
+                "{side:?}: the tab is centred at {:?}",
+                spine.point
+            );
+
+            let cuts = |x_mm: f64, y_mm: f64, z_mm: f64| {
+                spine.cuts_into(Point::new(x_mm, y_mm), z_mm, 0.01, &found)
+            };
+            // The top is held for the radius from the centre, less the
+            // margin.
+            for along_mm in [0.0, 2.5] {
+                assert!(cuts(10.0 + along_mm, y_mm, 1.9), "{side:?}, {along_mm} mm");
+                assert!(!cuts(10.0 + along_mm, y_mm, 2.0), "{side:?}, {along_mm} mm");
+            }
+            // On the slope: (5.175 + 0.3175 − 3.175) / 3 of the way down.
+            let allowed_mm = 2.0 * (1.0 - (2.0 + 0.1 * R_MM) / 3.0);
+            assert!((allowed_mm - 0.455).abs() < 1e-3);
+            assert!(cuts(15.175, y_mm, allowed_mm - 0.02), "{side:?}");
+            assert!(!cuts(15.175, y_mm, allowed_mm), "{side:?}");
+            // Clear of the span, and off the tab's path.
+            assert!(!cuts(16.5, y_mm, 0.0), "{side:?}");
+            assert!(!cuts(10.0, 10.0, 0.0), "{side:?}: on the line");
+            assert!(
+                !cuts(10.0, 10.0 - sign * R_MM, 0.0),
+                "{side:?}: the other side"
+            );
+
+            let mut with_last_pass = project.clone();
+            profile_mut(&mut with_last_pass).last_pass = Some(dc_project::LastPass {
+                stock_to_leave_mm: 0.5,
+                thickness_mm: None,
+                reverse: false,
+            });
+            let found = spines(&with_last_pass, side);
+            let spine = found.first().unwrap();
+            assert_eq!(spine.paths.len(), 1);
+            assert_eq!(spine.stock_paths.len(), 1);
+            line_at(&spine.stock_paths[0], 10.0 + sign * (R_MM + 0.5));
+        }
     }
 
     /// A tab's span on an open path runs along it only. A rect tab 4 mm
