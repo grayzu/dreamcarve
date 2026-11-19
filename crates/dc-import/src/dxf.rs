@@ -337,10 +337,22 @@ pub struct DxfLayer {
 ///
 /// [`ImportError`] when the bytes are not a readable DXF, the units are
 /// unknown and not overridden, a coordinate is not finite or beyond
-/// [`dc_geometry::MAX_COORDINATE_MM`], or an option is out of range.
+/// [`dc_geometry::MAX_COORDINATE_MM`], an option is out of range, or the
+/// drawing is past a work limit: the vertex limit, the block-insert limit
+/// ([`ImportError::TooMuchWork`]), or the comparisons joining and deduping
+/// may make ([`ImportError::DxfJoinTooMuchWork`]).
 pub fn import_dxf(
     bytes: &[u8],
     options: &DxfImportOptions,
+) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
+    import_within(bytes, options, &mut stitch::JoinBudget::new())
+}
+
+/// [`import_dxf`], its dedupe and stitching charged to `joins`.
+fn import_within(
+    bytes: &[u8],
+    options: &DxfImportOptions,
+    joins: &mut stitch::JoinBudget,
 ) -> Result<(DxfImport, Vec<ImportWarning>), ImportError> {
     let tolerance_mm = options.flatten_tolerance_mm;
     if !(tolerance_mm.is_finite() && tolerance_mm >= MIN_FLATTEN_TOLERANCE_MM) {
@@ -423,7 +435,7 @@ pub fn import_dxf(
             .as_ref()
             .is_none_or(|layers| layers.iter().any(|l| l == layer))
     };
-    let shapes = stitch::stitch(stitch::dedupe(walker.shapes), join_mm);
+    let shapes = stitch::stitch(stitch::dedupe(walker.shapes, joins)?, join_mm, joins)?;
     // Rounded once stitching has decided closure (#389). A chain that
     // closed on itself can enclose nothing (collinear lines), and rounding
     // can leave a shape too few points.
@@ -2940,6 +2952,117 @@ mod tests {
                 "{err:?}"
             );
         }
+    }
+
+    /// A DXF, in millimetres, of one LINE on layer `0` per pair of ends.
+    fn lines_dxf(lines: impl IntoIterator<Item = ((f64, f64), (f64, f64))>) -> String {
+        let entities: String = lines
+            .into_iter()
+            .map(|((x0, y0), (x1, y1))| {
+                format!("0\nLINE\n8\n0\n10\n{x0}\n20\n{y0}\n11\n{x1}\n21\n{y1}\n")
+            })
+            .collect();
+        dxf_entities(&entities)
+    }
+
+    /// Review 1.5: a file of 100 000 separate 1 mm LINEs that make 100
+    /// chains of 1000 imports as those 100 chains, and its dedupe and
+    /// stitching take at most 4 comparisons a line (400 000), where
+    /// comparing every line with every line took 10¹⁰. Row `c` runs along
+    /// y = 10c mm; every third line is drawn backwards; the file's line
+    /// `i` is line `7919 i mod n` of the rows, a stride that visits each
+    /// once and puts no two neighbours together, so every chain grows
+    /// from its middle at both ends.
+    #[test]
+    fn hundred_thousand_lines_import_within_the_join_budget() {
+        let (chains, per_chain) = (100, 1000);
+        let n = chains * per_chain;
+        let lines = (0..n).map(|i| {
+            let k = i * 7919 % n;
+            let (c, j) = (k / per_chain, k % per_chain);
+            let (a, b) = (
+                (j as f64, 10.0 * c as f64),
+                ((j + 1) as f64, 10.0 * c as f64),
+            );
+            if j % 3 == 0 { (b, a) } else { (a, b) }
+        });
+        let mut joins = stitch::JoinBudget::new();
+        let (result, warnings) = import_within(
+            lines_dxf(lines).as_bytes(),
+            &DxfImportOptions::new(),
+            &mut joins,
+        )
+        .expect("import succeeds");
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(
+            joins.comparisons() <= 4 * n,
+            "{} comparisons for {n} lines",
+            joins.comparisons()
+        );
+        assert_eq!(result.definitions.len(), chains);
+        for definition in &result.definitions {
+            let [chain] = definition.profiles.as_slice() else {
+                panic!(
+                    "{} has {} profiles",
+                    definition.name,
+                    definition.profiles.len()
+                );
+            };
+            assert!(!chain.is_closed(), "{}", definition.name);
+            assert_eq!(chain.vertices().len(), per_chain + 1, "{}", definition.name);
+            assert_approx_eq!(chain.length_mm(), per_chain as f64, TOL_MM);
+        }
+    }
+
+    /// `n` LINEs from the origin to a circle of 100 mm.
+    fn star_dxf(n: usize) -> String {
+        lines_dxf((0..n).map(|i| {
+            let angle = TAU * i as f64 / n as f64;
+            ((0.0, 0.0), (100.0 * angle.cos(), 100.0 * angle.sin()))
+        }))
+    }
+
+    /// Review 1.5: lines that all start on one point cannot be told apart
+    /// by where their ends are, so each chain's search looks at every free
+    /// end there: a quarter of n² comparisons. Past the budget the import
+    /// is refused with the typed error, not left running; here 2000 lines
+    /// (a million comparisons) against a budget of 200 000.
+    #[test]
+    fn lines_crowded_on_one_point_past_the_join_budget_are_refused() {
+        let dxf = star_dxf(2000);
+        let mut joins = stitch::JoinBudget::with_limit(200_000);
+        let error = import_within(dxf.as_bytes(), &DxfImportOptions::new(), &mut joins)
+            .expect_err("past the budget");
+        assert!(
+            matches!(error, ImportError::DxfJoinTooMuchWork { limit: 200_000 }),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "joining the drawing's lines takes more than 200000 comparisons: too many of them \
+             end at one point, or too many shapes lie on one another; simplify the drawing in \
+             the CAD program, or lower the join tolerance"
+        );
+        // Within the budget, the same lines join in pairs at the centre.
+        let (result, _) = import(dxf.as_bytes());
+        assert_eq!(result.definitions.len(), 1000);
+    }
+
+    /// The same refusal from `import_dxf` itself, at the limit it is
+    /// built with: 21 000 such lines pass [`stitch::MAX_JOIN_COMPARISONS`].
+    #[test]
+    fn a_star_of_lines_past_the_import_limit_is_refused() {
+        let result = import_dxf(star_dxf(21_000).as_bytes(), &DxfImportOptions::new());
+        assert!(
+            matches!(
+                result,
+                Err(ImportError::DxfJoinTooMuchWork {
+                    limit: stitch::MAX_JOIN_COMPARISONS
+                })
+            ),
+            "{:?}",
+            result.map(|(import, _)| import.definitions.len())
+        );
     }
 
     /// The duplicate rule's work is bounded (#668 security review): 300

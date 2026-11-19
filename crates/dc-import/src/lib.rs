@@ -90,6 +90,17 @@ pub enum ImportError {
         /// The entity-visit cap that was exceeded.
         limit: usize,
     },
+    /// Joining a DXF's open shapes end to end, and dropping its repeated
+    /// shapes, would take more than `limit` comparisons (review 1.5):
+    /// thousands of line ends crowd within the join tolerance of one
+    /// point, or thousands of different shapes have the same corners.
+    #[error(
+        "joining the drawing's lines takes more than {limit} comparisons: too many of them end at one point, or too many shapes lie on one another; simplify the drawing in the CAD program, or lower the join tolerance"
+    )]
+    DxfJoinTooMuchWork {
+        /// The comparison cap that was exceeded.
+        limit: usize,
+    },
     /// A DXF HATCH declares more boundary paths than
     /// [`dxf::MAX_HATCH_BOUNDARIES`], or more edges, polyline vertices and
     /// spline knots and control points than [`dxf::MAX_HATCH_EDGES`];

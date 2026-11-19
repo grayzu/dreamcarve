@@ -2715,6 +2715,26 @@ Option<Vec<String>> }`.
    piece translated by the gap), repeated to a fixed point; a chain whose
    ends meet within the tolerance is snapped closed. Identical shapes on
    one layer (same vertices within 1e-6, either direction) are deduped.
+   A chain grows from its first shape in file order: each step joins the
+   free shape with the nearest end, the earliest in the file among
+   equally near ones, and among one shape's ends in the order chain end
+   to its start, chain end to its end, chain start to its end, chain
+   start to its start. A piece joined at the chain's end moves by the
+   gap; one joined at the chain's start stays and the chain moves.
+   **Bounded work (review 1.5):** neither step compares every shape with
+   every shape. The stitch finds the free ends near a chain's end in a
+   grid of cells twice the tolerance wide, per layer, and builds a chain
+   in place (the gaps of the joins at its start are summed and added to
+   each vertex once, when the chain is done, so a vertex moved by several
+   of them can differ in its last bits from one moved by each in turn;
+   the joins made, and their order, do not). The dedupe looks a shape up
+   by layer, hatch or not, loop count, closure, vertex count and the cell
+   of its lower-left vertex corner. Every end and shape looked at is
+   charged to `MAX_JOIN_COMPARISONS` (100 million) per import, about 2.5
+   a line for chains of lines; past it the import fails with
+   `ImportError::DxfJoinTooMuchWork { limit }`, which takes thousands of
+   ends within the tolerance of one point or thousands of different
+   shapes with the same corners.
 6. **Definitions:** one per shape, named `<layer>` (numbered when a layer
    has several), one instance each with identity transform, as SVG.
    Coordinate limit (`MAX_COORDINATE_MM`) as SVG.

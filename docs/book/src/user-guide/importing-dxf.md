@@ -189,7 +189,12 @@ place at most 500 000 block entities in all; a drawing of arrays nested
 in arrays that places more is refused (explode the arrays in the CAD
 program, or simplify them). A hatch may have at most 10 000 boundary
 loops and 100 000 edges and vertices; a file whose hatch says it has more
-is refused before any of them is read. An ellipse that reaches past the
+is refused before any of them is read. Joining and the removal of
+repeated shapes may make at most 100 million comparisons; an ordinary
+drawing takes a few for each line, and only one with tens of thousands
+of lines ending on a single point, or of different shapes drawn on the
+same spot, takes more and is refused (simplify it in the CAD program, or
+lower `--join-tolerance`). An ellipse that reaches past the
 6 m limit is refused before it is drawn, and one whose minor axis is
 longer than its major is skipped and counted as `ELLIPSE (malformed)`. A
 spline of a degree above 11, which AutoCAD never writes, is read as its
