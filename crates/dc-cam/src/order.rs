@@ -2138,4 +2138,136 @@ mod tests {
             "{message}"
         );
     }
+
+    /// A 3.175 mm end mill `t3` and a clearing pass with it, as capability
+    /// 40 lists one in a carve.
+    fn clearing_with_t3(project: &mut Project) -> dc_project::ClearingPass {
+        let mut t3 = tool_6_35_upcut();
+        t3.id = ToolId::new("t3");
+        t3.name = "3.175 mm end mill".into();
+        t3.diameter_mm = 3.175;
+        project.tools.push(t3);
+        dc_project::ClearingPass {
+            tool: ToolId::new("t3"),
+            strategy: dc_project::ClearanceStrategy::Offset,
+            direction: dc_project::CutDirection::Climb,
+            entry: dc_project::Entry::Plunge,
+        }
+    }
+
+    /// The design spec's test plan, "dc-cam — order". The name is from the
+    /// first design, where a Pocket naming a carve cleared its floor and
+    /// the rule read "the last enabled Pocket earlier in the list (not a
+    /// clearing Pocket)". Since capability 40 the clearing passes are
+    /// listed in the carve, each a run of its own end mill before the
+    /// V-bit's, and the rule is the same: a carve's own clearing pass cuts
+    /// its floor, at the start depth plus the flat depth, and is no floor
+    /// the carve starts from. So with a pass the start plane is what it is
+    /// without one: the stock top, uncleared, or the earlier Pocket's, at
+    /// the Pocket's depth. A later countersink reads the carve's flat
+    /// floor as the V-Carve's (#426), with or without a pass.
+    #[test]
+    fn clearing_pockets_are_not_containing_pockets() {
+        // The carve's floor is at 0 + 1 mm and 2 + 1 mm in turn.
+        for (pocket_depth_mm, start_depth_mm, expected) in [
+            (None, 0.0, ("stock_top", None)),
+            (None, 2.0, ("uncleared", None)),
+            (Some(2.0), 2.0, ("cleared", Some("o2".to_string()))),
+            (Some(1.0), 2.0, ("mismatch", Some("o2".to_string()))),
+        ] {
+            let case = format!("Pocket {pocket_depth_mm:?}, start depth {start_depth_mm}");
+            let mut project = carve_in_pocket(pocket_depth_mm, start_depth_mm);
+            let without = plane_of(&project);
+            let pass = clearing_with_t3(&mut project);
+            carve_of(&mut project).clearing = vec![pass];
+            assert_eq!(plane_of(&project), Some(expected), "{case}");
+            assert_eq!(plane_of(&project), without, "{case}: the pass changes it");
+        }
+
+        let mut project = carve_in_pocket(None, 2.0);
+        let pass = clearing_with_t3(&mut project);
+        carve_of(&mut project).clearing = vec![pass];
+        assert_eq!(
+            uncleared(&project).len(),
+            1,
+            "the pass clears no start plane"
+        );
+        assert_eq!(mismatches(&project), vec![]);
+
+        // The mismatch names the Pocket and its 1 mm, not the pass's 3 mm.
+        let mut project = carve_in_pocket(Some(1.0), 2.0);
+        let pass = clearing_with_t3(&mut project);
+        carve_of(&mut project).clearing = vec![pass];
+        assert_eq!(
+            mismatches(&project),
+            vec![Warning::StartDepthMismatch {
+                op: OperationId::new("o6"),
+                cleared_by: OperationId::new("o2"),
+                floor: FloorKind::Pocket,
+                footprint: StartFootprint::Targets,
+                start_depth_mm: 2.0,
+                floor_depth_mm: Some(1.0),
+            }]
+        );
+
+        // An earlier carve's floor is the V-Carve's, pass or no pass.
+        let mut project = countersink_on_v_carve_floor(2.0);
+        let before = mismatches(&project);
+        let pass = clearing_with_t3(&mut project);
+        carve_of(&mut project).clearing = vec![pass];
+        let after = mismatches(&project);
+        assert_eq!(after, before);
+        assert!(
+            matches!(
+                after.as_slice(),
+                [Warning::StartDepthMismatch {
+                    floor: FloorKind::VCarve,
+                    ..
+                }]
+            ),
+            "{after:?}"
+        );
+    }
+
+    /// The design spec, "Start depth": an Inlay is exempt from the
+    /// start-plane checks, since the female starts at the stock top and
+    /// the male at the plug's own design. The square as an Inlay inside a
+    /// Pocket 1 mm deep that runs before it has no start plane, so `check`
+    /// warns no `start_depth_mismatch` and validation reports no
+    /// `start_depth_uncleared`, with the male board unset and set. The
+    /// same square as a V-Carve from the stock top is a mismatch.
+    #[test]
+    fn inlay_is_exempt() {
+        let as_v_carve = carve_in_pocket(Some(1.0), 0.0);
+        assert_eq!(mismatches(&as_v_carve).len(), 1, "the V-Carve is checked");
+
+        for thickness_mm in [None, Some(6.0)] {
+            let mut project = as_v_carve.clone();
+            project
+                .operations
+                .retain(|op| !matches!(op, Operation::VCarve(_)));
+            project
+                .operations
+                .push(Operation::Inlay(dc_project::InlayOp {
+                    targets: vec![InstanceId::new("i2")],
+                    male_board: dc_project::MaleBoard {
+                        width_mm: None,
+                        height_mm: None,
+                        thickness_mm,
+                    },
+                    depth_mm: Some(1.0),
+                    glue_gap_mm: Some(0.25),
+                    plug_depth_mm: Some(0.5),
+                    margin_mm: Some(2.0),
+                    ..dc_project::test_support::sample_inlay()
+                }));
+            let inlay = project.operations.last().expect("the Inlay");
+            assert!(
+                start_plane(&project, inlay).is_none(),
+                "male board {thickness_mm:?}: an Inlay has no start plane"
+            );
+            assert_eq!(mismatches(&project), vec![], "male board {thickness_mm:?}");
+            assert_eq!(uncleared(&project), vec![], "male board {thickness_mm:?}");
+        }
+    }
 }
