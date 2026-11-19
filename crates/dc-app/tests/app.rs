@@ -170,3 +170,121 @@ fn new_from_drawing_equals_init_without_defaults() {
     assert!(!harness.app.can_undo(), "a new project has no history");
     assert_eq!(harness.app.source(), None, "and no file yet");
 }
+
+/// Capability 51: *New from picture* on `fixtures/photo/gradient.png` at
+/// width 100 yields the project `dreamcarve init gradient.png --width 100`
+/// writes: the stock sized round the picture with `init`'s margin, the
+/// bitmap `b1` placed that margin in, the 60° V-bit and one Photo V-Carve
+/// with `init`'s defaults. It replaces the open project and its history,
+/// has no file yet, and carries the importer's notes.
+#[test]
+fn new_from_picture_equals_init() {
+    use dc_app::import::{PictureImport, Purpose};
+    use dc_import::ImageFormat;
+    use dc_job::picture::PictureSize;
+
+    let strings = Strings::default();
+    let bytes = read(&common::fixture("photo/gradient.png"));
+    let mut sheet = PictureImport::open(ImageFormat::Png, "gradient.png", &bytes, Purpose::New);
+    assert_eq!(sheet.purpose(), Purpose::New);
+    let mut harness = Harness::open(&plaque_bytes()).expect("the plaque opens");
+    harness
+        .run(Command::SetDisplayUnits(Units::Inch))
+        .expect("units");
+    let edited = harness.app.project().clone();
+    let replaced = harness.app.replaced();
+
+    // No size yet: nothing is made, the open project stays.
+    assert!(sheet.blocked(&strings).is_some());
+    assert!(harness.app.new_from_picture(&sheet).is_err());
+    assert_eq!(harness.app.project(), &edited);
+    assert!(harness.app.can_undo());
+
+    sheet.set_width_mm(100.0);
+    assert_eq!(sheet.blocked(&strings), None);
+    harness
+        .app
+        .new_from_picture(&sheet)
+        .expect("a project from the gradient");
+
+    // What `init gradient.png --width 100` builds
+    // (`crates/dreamcarve/src/init.rs`).
+    let (pixels, warnings) = dc_import::bitmap::import(&bytes, ImageFormat::Png).unwrap();
+    assert!(warnings.is_empty());
+    let post = dc_project::latest_definition("grblhal")
+        .unwrap()
+        .default_ref();
+    let init = dc_job::project_from::picture(
+        "gradient",
+        &pixels,
+        PictureSize::Width { width_mm: 100.0 },
+        post,
+        Units::Mm,
+    )
+    .unwrap();
+    let project = harness.app.project();
+    assert_eq!(project, &init);
+    assert_eq!(
+        dc_project::save(project).unwrap(),
+        dc_project::save(&init).unwrap()
+    );
+    assert_eq!(project.name, "gradient");
+    assert_eq!(
+        (project.stock.width_mm, project.stock.height_mm),
+        (120.0, 70.0),
+        "the picture's 100 × 50 mm with a 10 mm margin all round"
+    );
+    let bitmap = &project.bitmaps[0];
+    assert_eq!((bitmap.x_mm, bitmap.y_mm), (10.0, 10.0));
+    assert_eq!((project.tools.len(), project.operations.len()), (1, 1));
+    assert!(matches!(
+        &project.operations[0],
+        dc_project::Operation::PhotoVCarve(photo) if photo.image == bitmap.id
+    ));
+    assert!(project.instances.is_empty());
+    assert!(!harness.app.can_undo(), "a new project has no history");
+    assert!(!harness.app.is_dirty());
+    assert_eq!(harness.app.source(), None, "and no file yet");
+    assert_eq!(harness.app.replaced(), replaced + 1);
+    assert!(harness.app.notes().is_empty(), "a gray picture has no note");
+
+    // A colour picture's conversion is noted in the new project.
+    let jpg = read(&common::fixture("photo/colour.jpg"));
+    let mut colour = PictureImport::open(ImageFormat::Jpeg, "colour.jpg", &jpg, Purpose::New);
+    colour.set_height_mm(25.0);
+    harness
+        .app
+        .new_from_picture(&colour)
+        .expect("a project from the colour picture");
+    assert_eq!(harness.app.project().name, "colour");
+    assert_eq!(
+        harness.app.notes(),
+        [format!(
+            "colour.jpg: image_colour_converted: {}",
+            dc_import::ImportWarning::ImageColourConverted
+        )]
+    );
+
+    // A picture whose stock would pass the coordinate limit is `init`'s
+    // refusal, in the sheet and from the app; the project stays.
+    let kept = harness.app.project().clone();
+    colour.set_width_mm(dc_geometry::MAX_COORDINATE_MM);
+    let refusal = dc_job::project_from::picture(
+        "colour",
+        &dc_import::bitmap::import(&jpg, ImageFormat::Jpeg)
+            .unwrap()
+            .0,
+        PictureSize::Width {
+            width_mm: dc_geometry::MAX_COORDINATE_MM,
+        },
+        dc_project::latest_definition("grblhal")
+            .unwrap()
+            .default_ref(),
+        Units::Mm,
+    )
+    .unwrap_err()
+    .to_string();
+    assert_eq!(colour.blocked(&strings), Some(refusal));
+    assert!(harness.app.new_from_picture(&colour).is_err());
+    assert_eq!(harness.app.project(), &kept);
+}
