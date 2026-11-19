@@ -36,16 +36,17 @@
 //! in Z at each centre, and distances are symmetric under the flip.
 
 use crate::block::CutBlock;
-use crate::error::{CamError, FeedField, ShapeRef, at};
+use crate::context::{self, OpContext, check_diameter, check_safe_z, plunge_rate_of, tool_of};
+use crate::error::{CamError, ShapeRef, at};
 use crate::passes::pass_z_mm;
-use crate::sequence::{SequenceInput, clearance_z_mm, plan, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
+use crate::sequence::{SequenceInput, plan, sequence};
+use crate::tabs::LapRates;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::Warning;
 use dc_geometry::{Point, Point3, as_circle};
 use dc_project::{
-    COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, InstanceId, MachiningOrder, Operation,
-    OperationId, PeckRetract, Project, Tool, ToolKind, cleared_start_plane, countersink_depth_mm,
+    COUNTERSINK_TOLERANCE_MM, DrillCycle, DrillOp, InstanceId, Operation, OperationId, PeckRetract,
+    Project, Tool, ToolKind, cleared_start_plane, countersink_depth_mm,
 };
 
 /// How far above the depth already drilled a full-retract peck re-enters
@@ -172,35 +173,10 @@ pub fn generate_drill(
 /// [`generate_drill`], before a defect it finds ([`CamError::Internal`])
 /// names `op`.
 fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>), CamError> {
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == op.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: op.id.clone(),
-            tool: op.tool.clone(),
-        })?;
-    let plunge_mm_min = tool
-        .plunge_mm_min
-        .filter(|r| r.is_finite() && *r > 0.0)
-        .ok_or_else(|| CamError::MissingFeed {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            field: FeedField::Plunge,
-        })?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
-    if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-        return Err(CamError::InvalidSafeZ {
-            op: op.id.clone(),
-            safe_z_mm: op.safe_z_mm,
-        });
-    }
+    let tool = tool_of(project, &op.id, &op.tool)?;
+    let plunge_mm_min = plunge_rate_of(tool)?;
+    check_diameter(tool)?;
+    check_safe_z(&op.id, op.safe_z_mm)?;
     if !(op.dwell_s.is_finite() && op.dwell_s >= 0.0) {
         return Err(CamError::InvalidDrillSetting {
             op: op.id.clone(),
@@ -208,20 +184,13 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
             value: op.dwell_s,
         });
     }
-    let thickness_mm = project
-        .stock
-        .thickness_mm
-        .ok_or(CamError::MissingThickness)?;
+    let thickness_mm = context::thickness_mm(project)?;
     let cycle = Cycle::of(project, op, tool, thickness_mm)?;
     // The hole's top and its depth below it: the stock top and the
     // operation's depth, or a countersink's start plane and derived depth.
     let (top_z_mm, depth_mm) = match &cycle.countersink {
         Some(sink) => (thickness_mm - sink.start_depth_mm, sink.depth_mm),
-        None => (
-            thickness_mm,
-            op.depth_mm
-                .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?,
-        ),
+        None => (thickness_mm, context::depth_mm(&op.id, op.depth_mm)?),
     };
     // The hole bottom, with the depth checked against the stock bottom
     // plus the allowance (S1) as for every generator.
@@ -236,7 +205,14 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
     .last()
     .copied()
     .ok_or_else(|| CamError::internal("a hole's checked depth has no pass"))?;
-    let safe_z_mm = thickness_mm + op.safe_z_mm;
+    // Holes have no cleared area, so no stay-down link is ever cut at the
+    // feed rate; the plunge rate is the only rate a Drill uses.
+    let rates = LapRates {
+        feed_mm_min: plunge_mm_min,
+        plunge_mm_min,
+    };
+    let ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+    let safe_z_mm = ctx.safe_z_mm;
     let mut warnings = Vec::new();
     if op.retract_mm < 0.0 {
         warnings.push(Warning::DrillRetractBelowStockTop {
@@ -334,22 +310,7 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
             }
         })
         .collect();
-    let input = SequenceInput {
-        blocks,
-        order: MachiningOrder::FullDepthFirst,
-        containment: &[],
-        safe_z_mm,
-        clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-        stock_top_mm: thickness_mm,
-        tool_diameter_mm: tool.diameter_mm,
-        stepover_mm: 0.0,
-        // Holes have no cleared area, so no stay-down link is ever cut at
-        // this rate; the plunge rate is the only rate a Drill uses.
-        feed_mm_min: plunge_mm_min,
-        plunge_mm_min,
-        cut_before: &[],
-        groove_link_z_mm: None,
-    };
+    let input = SequenceInput::new(&ctx, blocks);
     let records = plan(&input)?
         .into_iter()
         .map(|i| {
@@ -371,14 +332,7 @@ fn drill(project: &Project, op: &DrillOp) -> Result<(DrillToolpath, Vec<Warning>
         .collect::<Result<_, CamError>>()?;
     let toolpath = sequence(&input)?;
     // #62: the cutter must stay on the stock.
-    if let Some(overhang) = swept_bounds(&toolpath, tool.cut_radius_mm())
-        .and_then(|swept| stock_overhang(&project.stock, swept))
-    {
-        return Err(CamError::OffStock {
-            op: op.id.clone(),
-            overhang,
-        });
-    }
+    ctx.check_on_stock(&toolpath, tool.cut_radius_mm())?;
     Ok((
         DrillToolpath {
             toolpath,
@@ -545,13 +499,7 @@ impl Cycle {
                         value: *gap_mm,
                     });
                 }
-                let peck_mm = peck_depth_mm.or(tool.step_down_mm).ok_or_else(|| {
-                    CamError::MissingStepDown {
-                        op: op.id.clone(),
-                        tool: tool.name.clone(),
-                        tool_id: tool.id.clone(),
-                    }
-                })?;
+                let peck_mm = context::step_down_mm(&op.id, *peck_depth_mm, tool)?;
                 Ok(Self {
                     peck_mm: Some(peck_mm),
                     retract: retract.clone(),
