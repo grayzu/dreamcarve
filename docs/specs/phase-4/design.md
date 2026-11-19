@@ -223,7 +223,9 @@ frame.
 
 `Generation::digest(project, op)` hashes, in a fixed order: the operation's
 record; every tool it names (its own, its clearing passes', its cut-out's);
-every target instance and the definition each names; `stock`, `origin`,
+every target instance and the definition each names; the bitmap a Photo
+V-Carve's `image` names, its picture and its footprint, and no other
+bitmap; `stock`, `origin`,
 `heights`, `flatten_tolerance_mm`, `arc_fit_tolerance_mm`; the placed tabs
 on its targets; and, when the operation reads an earlier operation (a
 Pocket's `rest_of`; any operation with a start plane or a countersink,

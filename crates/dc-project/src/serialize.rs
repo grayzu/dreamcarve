@@ -24,7 +24,8 @@ use crate::layout::DcvFormatter;
 use crate::locate::{PathSegment, SourceMap, TextPosition};
 use crate::migrate::{MigrationNote, migrate_with_notes};
 use crate::model::{
-    BoreOp, DrillOp, EngraveOp, PhotoVCarveOp, PocketOp, ProfileOp, Project, VCarveOp,
+    BoreOp, DrillOp, EngraveOp, InlayOp, Operation, PhotoVCarveOp, PocketOp, ProfileOp, Project,
+    VCarveOp,
 };
 use crate::post_processor::PostProcessorError;
 use crate::validate::{Problem, validate};
@@ -325,18 +326,44 @@ fn operation_error(root: &Value, path: &[PathSegment]) -> Option<PathError> {
     }
     let mut fields = root.get(key)?.get(*i)?.as_object()?.clone();
     let kind = fields.shift_remove("kind")?;
-    let fields = Value::Object(fields);
-    // One arm per `Operation` variant, by its `kind`.
-    match kind.as_str()? {
-        "profile" => serde_path_to_error::deserialize::<_, ProfileOp>(&fields).err(),
-        "pocket" => serde_path_to_error::deserialize::<_, PocketOp>(&fields).err(),
-        "drill" => serde_path_to_error::deserialize::<_, DrillOp>(&fields).err(),
-        "bore" => serde_path_to_error::deserialize::<_, BoreOp>(&fields).err(),
-        "engrave" => serde_path_to_error::deserialize::<_, EngraveOp>(&fields).err(),
-        "v_carve" => serde_path_to_error::deserialize::<_, VCarveOp>(&fields).err(),
-        "photo_v_carve" => serde_path_to_error::deserialize::<_, PhotoVCarveOp>(&fields).err(),
-        _ => None,
-    }
+    variant_error(kind.as_str()?, &Value::Object(fields))
+}
+
+/// Builds `variant_error` from [`Operation`]'s variants, each listed as
+/// `Variant(Struct) = "kind"`. The list cannot fall behind the enum
+/// (#712): the `match` on an `Operation` below has no wildcard arm, so a
+/// variant the list lacks does not compile, nor does a struct that is not
+/// its variant's. That each `kind` is the tag serde writes is the test
+/// `every_operation_kind_reports_its_field`'s to hold.
+macro_rules! operation_variants {
+    ($($variant:ident($fields:ty) = $kind:literal),+ $(,)?) => {
+        /// The error of reading `fields`, an operation's without its
+        /// `kind`, as the struct of the variant `kind` tags. `None` when
+        /// they read, or no variant has that tag.
+        fn variant_error(kind: &str, fields: &Value) -> Option<PathError> {
+            match kind {
+                $($kind => serde_path_to_error::deserialize::<_, $fields>(fields).err(),)+
+                _ => None,
+            }
+        }
+
+        const _: fn(&Operation) = |operation| match operation {
+            $(Operation::$variant(fields) => {
+                let _: &$fields = fields;
+            })+
+        };
+    };
+}
+
+operation_variants! {
+    Profile(ProfileOp) = "profile",
+    Pocket(PocketOp) = "pocket",
+    Drill(DrillOp) = "drill",
+    Bore(BoreOp) = "bore",
+    Engrave(EngraveOp) = "engrave",
+    VCarve(VCarveOp) = "v_carve",
+    Inlay(InlayOp) = "inlay",
+    PhotoVCarve(PhotoVCarveOp) = "photo_v_carve",
 }
 
 /// Where the value at `path` starts in the file. An unknown field inside
@@ -1159,6 +1186,82 @@ mod tests {
             err.to_string().contains("`operations[0].tabs.placement`"),
             "{err}"
         );
+    }
+
+    /// #712: serde reads an internally tagged enum whole, so the path to a
+    /// wrong value inside an operation comes from `operation_error`. An
+    /// Inlay's names the field and its line, as every other kind's (#65).
+    #[test]
+    fn inlay_schema_error_names_its_field() {
+        let mut p = sample_project();
+        p.tools.push(tool_v_bit_90());
+        p.operations
+            .push(Operation::Inlay(crate::test_support::sample_inlay()));
+        let mut root = serde_json::to_value(&p).unwrap();
+        root["operations"][1]["step_over_fraction"] = json!("wide");
+        let text = serde_json::to_string_pretty(&root).unwrap();
+        let line = line_of(&text, "\"step_over_fraction\": \"wide\"");
+        let err = load(text.as_bytes()).unwrap_err();
+        assert!(
+            matches!(&err, LoadError::Schema { path, at: Some(at), message }
+                if path == "operations[1].step_over_fraction"
+                    && at.line == line
+                    && message.contains("wide")),
+            "{err:?}"
+        );
+        let shown = err.to_string();
+        assert!(
+            shown.contains("`operations[1].step_over_fraction`"),
+            "{shown}"
+        );
+    }
+
+    /// The sample of the `Operation` variant declared after `op`'s; `None`
+    /// after the last. The `match` has no wildcard arm, so a new variant
+    /// does not compile until it has a place in the chain, and
+    /// `every_operation_kind_reports_its_field` then reads it.
+    fn sample_after(op: &Operation) -> Option<Operation> {
+        use crate::test_support::{
+            sample_bore, sample_inlay, sample_photo_v_carve, sample_v_carve,
+        };
+        match op {
+            Operation::Profile(_) => Some(Operation::Pocket(sample_pocket())),
+            Operation::Pocket(_) => Some(Operation::Drill(sample_drill())),
+            Operation::Drill(_) => Some(Operation::Bore(sample_bore())),
+            Operation::Bore(_) => Some(Operation::Engrave(sample_engrave())),
+            Operation::Engrave(_) => Some(Operation::VCarve(sample_v_carve())),
+            Operation::VCarve(_) => Some(Operation::Inlay(sample_inlay())),
+            Operation::Inlay(_) => Some(Operation::PhotoVCarve(sample_photo_v_carve())),
+            Operation::PhotoVCarve(_) => None,
+        }
+    }
+
+    /// #712, #65: a wrong value inside an operation is reported at its
+    /// field, whatever the operation's kind. One sample of every
+    /// `Operation` variant (`sample_after`) has its `enabled`, which every
+    /// kind has, set to a string; the schema error stops the load before
+    /// validation, so the tools and the bitmap the samples name are not
+    /// needed.
+    #[test]
+    fn every_operation_kind_reports_its_field() {
+        let mut p = sample_project();
+        let profile = p.operations[0].clone();
+        p.operations = std::iter::successors(Some(profile), sample_after).collect();
+        let kinds: std::collections::BTreeSet<&str> =
+            p.operations.iter().map(Operation::kind).collect();
+        assert_eq!(kinds.len(), p.operations.len(), "one sample a kind");
+        let root = serde_json::to_value(&p).unwrap();
+        for (i, op) in p.operations.iter().enumerate() {
+            let kind = op.kind();
+            let mut broken = root.clone();
+            broken["operations"][i]["enabled"] = json!("yes");
+            let text = serde_json::to_string_pretty(&broken).unwrap();
+            let err = load(text.as_bytes()).unwrap_err();
+            let LoadError::Schema { path, .. } = &err else {
+                panic!("{kind}: {err:?}");
+            };
+            assert_eq!(path, &format!("operations[{i}].enabled"), "{kind}: {err}");
+        }
     }
 
     /// #65: a `decimal_places` of the wrong form says where it is and what
