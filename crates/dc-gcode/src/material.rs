@@ -35,6 +35,14 @@
 //!   (the tool-centre path's miter point, where a notch starts); the cut
 //!   must also keep its clearance from every other edge. So a notch can
 //!   bite at most `r` past one of its corner's two walls, and nowhere else.
+//!   An arc is held to the same material point by point: every piece of
+//!   it keeps the clearance above or lies in one corner's zone, so it may
+//!   run from clear stock into a notch and nowhere a straight cut may
+//!   not. Arc fitting writes such an arc for an entry's handoff to a
+//!   corner and the notch that starts there when they lie within the
+//!   tolerance of one circle, as they do after a helix a few hundredths
+//!   of a millimetre across (2026-11-18, the Profile property's seed
+//!   `cc 67e54832…`: the rule took straight cuts only and refused it).
 //! - **Profile** (#177): the waste the Profile removes, from its targets'
 //!   closed profiles nested as `dc_cam::generate_profile` nests them, and
 //!   every cutting move is held to it: laps, tab rises, ramp and helix
@@ -604,32 +612,101 @@ struct Notch {
     slack_mm: f64,
 }
 
+/// The shortest piece of an arc the notch rule looks at, in slacks: a
+/// shorter piece that is neither clear of the walls nor in a relief zone
+/// fails the arc. Every point within the slack of a corner's miter point
+/// is both clear and in the zone, and a fitted arc that stands for a
+/// handoff and a notch passes that point within the arc-fit tolerance
+/// and a written unit (S12), the slack less the flatten tolerance. So a
+/// stretch of it is both, 1.7 slacks long at the default tolerances, and
+/// pieces shorter than that stretch are each clear or in the zone.
+const NOTCH_PIECE_SLACKS: f64 = 0.125;
+
 impl Notch {
-    /// Whether straight tool-centre path `path`, which comes nearer a wall
-    /// of `area` than `clearance_mm`, is a relief notch: it lies in the
-    /// relief zone of one of the area's corners (module docs), clear of
-    /// the area's other edges.
+    /// Whether tool-centre path `path`, which comes nearer a wall of
+    /// `area` than `clearance_mm`, is a relief notch (module docs). A
+    /// straight path is one when it lies in the relief zone of one of the
+    /// area's corners, clear of the area's other edges. An arc is one
+    /// when every piece of it is clear of the area's walls or in one
+    /// corner's zone: the fitted arc that stands for a handoff and the
+    /// notch after it (module docs).
     fn allows(self, area: &Area, path: Segment, clearance_mm: f64) -> bool {
-        if !path.is_line() {
-            return false;
+        if path.is_line() {
+            return area
+                .corners
+                .iter()
+                .any(|c| self.in_zone(area, c, path, clearance_mm));
         }
+        let least_mm = (self.slack_mm * NOTCH_PIECE_SLACKS).max(EPS_MM);
+        area.corners
+            .iter()
+            .filter(|c| point_segment_distance_mm(path, c.at) <= self.reach_mm(c))
+            .any(|c| self.arc_allowed(area, c, path, clearance_mm, least_mm))
+    }
+
+    /// The farthest from corner `c` its relief zone reaches: the
+    /// tool-centre path's miter point, and the slack.
+    fn reach_mm(self, c: &Corner) -> f64 {
+        (self.radius_mm + self.stock_to_leave_mm) / c.sin_half + self.slack_mm
+    }
+
+    /// Whether `path` lies in the relief zone of corner `c` of `area`,
+    /// clear of the area's other edges. An arc is held to the zone by its
+    /// ends, with the slack less its bow: every point of it is within the
+    /// bow of its chord, and the wedge and the reach each hold a chord
+    /// whose ends they hold.
+    fn in_zone(self, area: &Area, c: &Corner, path: Segment, clearance_mm: f64) -> bool {
         let (r, slack) = (self.radius_mm, self.slack_mm);
+        let bow_mm = path.arc().map_or(0.0, |arc| {
+            arc.radius_mm * (1.0 - (arc.sweep_rad / 2.0).cos())
+        });
+        let reach_mm = self.reach_mm(c) - bow_mm;
         let bounds = bounds_of(path);
-        area.corners.iter().any(|c| {
-            let reach_mm = (r + self.stock_to_leave_mm) / c.sin_half + slack;
-            c.shorter_mm >= 2.0 * r - slack
-                && c.in_wedge(path.start, slack)
-                && c.in_wedge(path.end, slack)
-                && path.start.distance_to(c.at) <= reach_mm
-                && path.end.distance_to(c.at) <= reach_mm
-                && point_segment_distance_mm(path, c.at) >= r - slack
-                && area
-                    .edges
-                    .iter()
-                    .enumerate()
-                    .filter(|(i, e)| !c.edges.contains(i) && near(bounds, e.bounds, clearance_mm))
-                    .all(|(_, e)| segment_distance_mm(path, e.segment) >= clearance_mm)
-        })
+        c.shorter_mm >= 2.0 * r - slack
+            && c.in_wedge(path.start, slack - bow_mm)
+            && c.in_wedge(path.end, slack - bow_mm)
+            && path.start.distance_to(c.at) <= reach_mm
+            && path.end.distance_to(c.at) <= reach_mm
+            && point_segment_distance_mm(path, c.at) >= r - slack
+            && area
+                .edges
+                .iter()
+                .enumerate()
+                .filter(|(i, e)| !c.edges.contains(i) && near(bounds, e.bounds, clearance_mm))
+                .all(|(_, e)| segment_distance_mm(path, e.segment) >= clearance_mm)
+    }
+
+    /// Whether every piece of arc `piece` is clear of `area`'s walls or
+    /// in corner `c`'s relief zone. A piece that is neither is halved,
+    /// down to `least_mm`, so only the stretch where the arc passes from
+    /// clear stock into the zone is cut small, and an arc that leaves
+    /// both fails at the first such piece.
+    fn arc_allowed(
+        self,
+        area: &Area,
+        c: &Corner,
+        piece: Segment,
+        clearance_mm: f64,
+        least_mm: f64,
+    ) -> bool {
+        if clear_of(area, piece, clearance_mm) || self.in_zone(area, c, piece, clearance_mm) {
+            return true;
+        }
+        let length_mm = piece.length_mm();
+        let half_mm = length_mm / 2.0;
+        // A length that is not a number is not over the least, and fails.
+        let long_enough = length_mm > least_mm;
+        let halves = (
+            sub_segment(piece, length_mm, 0.0, half_mm),
+            sub_segment(piece, length_mm, half_mm, length_mm),
+        );
+        match halves {
+            (Some(first), Some(second)) if long_enough => {
+                self.arc_allowed(area, c, first, clearance_mm, least_mm)
+                    && self.arc_allowed(area, c, second, clearance_mm, least_mm)
+            }
+            _ => false,
+        }
     }
 }
 
@@ -2902,13 +2979,17 @@ pub(crate) fn check(
 /// a range outside them as no wall at all (#711); every caller meant the
 /// whole area, so there is no range now.
 fn walls_allow(area: &Area, path: Segment, clearance_mm: f64, notch: Option<Notch>) -> bool {
+    clear_of(area, path, clearance_mm) || notch.is_some_and(|n| n.allows(area, path, clearance_mm))
+}
+
+/// Whether tool-centre path `path` keeps `clearance_mm` from every edge
+/// of `area`.
+fn clear_of(area: &Area, path: Segment, clearance_mm: f64) -> bool {
     let bounds = bounds_of(path);
-    let clear = area
-        .edges
+    area.edges
         .iter()
         .filter(|e| near(bounds, e.bounds, clearance_mm))
-        .all(|e| segment_distance_mm(path, e.segment) >= clearance_mm);
-    clear || notch.is_some_and(|n| n.allows(area, path, clearance_mm))
+        .all(|e| segment_distance_mm(path, e.segment) >= clearance_mm)
 }
 
 /// Whether tool-centre path `path` lies in one of `areas`, at least

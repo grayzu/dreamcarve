@@ -521,6 +521,20 @@ operation's material from the project, never from the generator. A
 Pocket's tool centre stays in its regions, `r + stock to leave` from their
 walls. A Drill's stays in its holes, and an Engrave's on its lines. A
 Pocket's corner-relief notches may cut into their corners' relief zones.
+An arc is held to that point by point: every piece of it keeps its
+clearance from the walls or lies in one corner's relief zone. (changed
+2026-11-18, found by the Profile property's seed `cc 67e54832…`: the
+notch rule took straight cuts only. A 1 mm bit's 0.05 helix is 0.05 mm
+across, so its last chords, its handoff to the corner the lap starts at
+and that corner's dogbone lie within the arc-fit tolerance of one circle;
+the program wrote them as one arc from clear stock to the notch's end,
+0.005 mm off the moves, and S9 refused it. The arc cuts nothing the two
+straight moves do not, so the rule now judges it by its pieces, each
+clear or in the zone; an arc on to the corner, out of the zone through a
+wall, or into the zone along a wall still fails.
+`safety::arc_from_clear_stock_into_a_notch_passes_s9`,
+`safety::arc_into_a_notch_off_its_zone_fails_s9`,
+`properties::cases::helix_handoff_fitted_into_a_dogbone_notch_exports`.)
 A Bore's stays within `ρ − r − stock to leave` of the centre of one of its
 holes (radius `ρ`, Drill's circle test), the same hole for a move's ends
 and middle (changed: maintainer decision 2026-10-24).

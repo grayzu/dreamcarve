@@ -5774,9 +5774,10 @@ mod tests {
         );
     }
 
-    /// S9's notch rule on an arc (worklog A9): arc fitting may write the
-    /// handoff from an entry and the notch after it as one arc, which runs
-    /// from clear stock into the corner's relief zone. At the sample
+    /// S9's notch rule on an arc (2026-11-18, `crate::material`): arc
+    /// fitting may write the handoff from an entry and the notch after it
+    /// as one arc, which runs from clear stock into the corner's relief
+    /// zone. At the sample
     /// rectangle's corner (10, 10) with the 6.35 mm tool, an arc of radius
     /// 14.835 from (15, 14.6) through the miter point (13.175, 13.175) to
     /// the dogbone's end (12.245, 12.245) passes with relief on and fails
@@ -5797,7 +5798,7 @@ mod tests {
     }
 
     /// S9's notch rule holds an arc to clear stock and the relief zone,
-    /// point by point (worklog A9). From the same start through the same
+    /// point by point. From the same start through the same
     /// miter point, an arc on to the corner itself fails, and so does one
     /// that leaves the zone through a wall, to (12.6, 11.2), 1.2 mm from
     /// the bottom wall and 2.86 mm from the corner. So does an arc that

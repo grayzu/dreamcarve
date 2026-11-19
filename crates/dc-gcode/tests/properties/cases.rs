@@ -2118,8 +2118,8 @@ fn open_line_smooth_tab_at_its_first_vertex(side: Side, entry: Entry) -> Project
     project
 }
 
-/// Worklog A9 (the Profile property, `PROPTEST_RNG_SEED=37`, seed
-/// `cc 67e54832…`), reduced to one shape: a 10 × 8 mm rectangle cut
+/// The Profile property's seed `cc 67e54832…` (`PROPTEST_RNG_SEED=37`,
+/// 2026-11-18, alpha worklog A9), reduced to one shape: a 10 × 8 mm rectangle cut
 /// Inside, or as the hole of a 30 × 20 mm part cut Outside, 1 mm deep
 /// with dogbones by a 1 mm bit, a 0.05 helix at 30° and arc fitting at
 /// 0.01 mm. The helix is 0.05 mm across and sits by the corner the lap
