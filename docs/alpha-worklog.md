@@ -96,7 +96,8 @@ Notes from the fixes:
 | --- | --- | --- |
 | B1 | Image-prep defaults (#599). The calibration was already merged (#638); re-run and confirmed: `min_detail` 0.2, `smooth` 0.05. The maintainer's run on their own art is described under "Still to confirm" in `tests/fixtures/prep/README.md` | owner |
 | B4 | `image-prep`'s report gives a `Narrowest gap` of 0.19 to 3.0 mm for the same letters depending on `--smooth` (dc-geometry) | todo |
-| B2 | Exit-criteria audit and CHANGELOG for 3.7 (#701) | todo |
+| B2 | Exit-criteria audit for 3.7 (#701): `docs/specs/phase-3/audit.md`. All 40 acceptance tests have tests; 21 are covered clause for clause and 19 partly. The CHANGELOG's unreleased section is up to date | done |
+| B5 | Close the audit's gaps: the 20 clauses with no assertion (rows 51, 55, 61, 61d, 61j, 61l to 61p, 61r, 61v to 61x); the two test-plan names with no test (`order::clearing_pockets_are_not_containing_pockets`, `order::inlay_is_exempt`); fixtures for formats 21, 22 and 25 that hold what those formats added; the spec and code disagreeing on names (`v_carve_target_open` against `vcarve_target_open`; four test parts in `docs/plan.md` against five in the functional spec); the two stale cut records in the spec (#429, #438) | todo |
 | B3 | Bench checks 3.4, 3.5, 3.6 (#606, #649, #684) and the `v0.3.0` tag | owner |
 
 ### C. Phase 4 features
