@@ -482,7 +482,7 @@ impl<'p> Setup<'p> {
                         direction: op.direction,
                     };
                     let paths =
-                        raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)
+                        raster::region_paths(&root, root_index, &settings, &keep, &mut anchor)?
                             .ok_or_else(invalid_step_over)?;
                     // Raster lines reach the tool-centre region's edge at every
                     // wall pass, so the whole root is cleared each pass.

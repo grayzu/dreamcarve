@@ -598,17 +598,18 @@ pub(crate) fn reseam(path: &Polyline, distance_mm: f64) -> Polyline {
         )
 }
 
-/// `path` re-seamed `local_mm` along its segment `index`.
+/// `path` re-seamed `local_mm` along its segment `index`; unchanged when
+/// it has no such segment.
 pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polyline {
     let vertices = path.vertices();
     let n = vertices.len();
+    // The vertices from vertex `k` round to it, `k` counted round the path.
     let rotated = |k: usize| {
-        let k = k % n.max(1);
-        let mut out: Vec<Vertex> = vertices.get(k..).unwrap_or_default().to_vec();
-        out.extend_from_slice(vertices.get(..k).unwrap_or_default());
+        let out: Vec<Vertex> = vertices.iter().cycle().skip(k).take(n).copied().collect();
         Polyline::new(out, true)
     };
-    let Some(segment) = path.segments().nth(index) else {
+    // Segment `index` starts at vertex `index`, which carries its bulge.
+    let Some((segment, &own)) = path.segments().zip(vertices).nth(index) else {
         return path.clone();
     };
     let length_mm = segment.length_mm();
@@ -618,11 +619,9 @@ pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polylin
     if local_mm >= length_mm - EPS_MM {
         return rotated(index + 1);
     }
+    // A segment with no length has no point to split it at.
     let Some((split, _)) = segment.point_at(local_mm) else {
         return rotated(index);
-    };
-    let Some(&own) = vertices.get(index) else {
-        return path.clone();
     };
     let fraction = local_mm / length_mm;
     let mut out = Vec::with_capacity(n + 1);
@@ -631,8 +630,8 @@ pub(crate) fn reseam_at(path: &Polyline, index: usize, local_mm: f64) -> Polylin
         split.y,
         part_bulge(own.bulge, 1.0 - fraction),
     ));
-    out.extend_from_slice(vertices.get(index + 1..).unwrap_or_default());
-    out.extend_from_slice(vertices.get(..index).unwrap_or_default());
+    out.extend(vertices.iter().skip(index + 1));
+    out.extend(vertices.iter().take(index));
     out.push(Vertex::new(own.x, own.y, part_bulge(own.bulge, fraction)));
     Polyline::new(out, true)
 }

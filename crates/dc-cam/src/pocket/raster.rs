@@ -44,6 +44,7 @@
 
 use super::rings::{Ring, RingNode, RingTree, WallRings, closest_point, inset_region, shorter_way};
 use super::{MAX_RINGS, ring_path};
+use crate::error::{CamError, at, at_mut};
 use crate::footprint::capsule;
 use crate::sequence::{link_inside_cleared, nearest_first_order, nearest_of};
 use dc_geometry::{
@@ -227,6 +228,14 @@ impl RingEdges {
 /// The edge links [`order_nearest_first`] found, from one end to another.
 type EdgeLinks = BTreeMap<(End, End), Polyline>;
 
+/// The ends a stay-down link reaches from each end of one piece: from
+/// its start, then from its end.
+type EndLinks = [Vec<End>; 2];
+
+/// A path [`region_paths`] cuts, with the tool-centre area it has
+/// cleared when it is cut; `None` for a path that cleared none.
+type ClearedPath = (Polyline, Option<Region>);
+
 /// `pieces` in cut order, nearest-first (upstream `orderOpenSegmentsGreedy`,
 /// #150): from `start`, the next piece is the one with an end nearest
 /// where the tool is, entered at that end, so a piece runs either way.
@@ -263,22 +272,22 @@ type EdgeLinks = BTreeMap<(End, End), Polyline>;
 /// piece comes with the edge link that leads into it from the piece
 /// before, which [`region_paths`] joins into one path; `None` where the
 /// tool links straight or lifts.
-#[must_use]
+///
+/// Every piece comes back once: [`CamError::Internal`] when the walk
+/// cannot reach one or names one twice, where a scan line would be left
+/// uncut.
 pub(super) fn order_nearest_first(
     pieces: Vec<Piece>,
     start: Option<Point>,
     link_max_mm: f64,
     edges: &RingEdges,
-) -> Vec<(Piece, Option<Polyline>)> {
+) -> Result<Vec<(Piece, Option<Polyline>)>, CamError> {
+    // No pieces: nothing to order.
     let Some(start) = start.or_else(|| pieces.first().map(|(l, _)| l.start)) else {
-        return Vec::new();
+        return Ok(Vec::new());
     };
-    let point = |(index, end): End| {
-        pieces
-            .get(index)
-            .map(|(l, _)| if end == 0 { l.start } else { l.end })
-    };
-    let (links, mut edge_links) = stay_down_links(&pieces, link_max_mm, edges);
+    let (links, mut edge_links) = stay_down_links(&pieces, link_max_mm, edges)?;
+    // The stay-down links from an end; an end with none lifts.
     let links_of = |e: End| links.get(e.0).and_then(|l| l.get(e.1));
     let mut done = vec![false; pieces.len()];
     let is_live = |done: &[bool], index: usize| done.get(index).is_some_and(|d| !d);
@@ -295,14 +304,17 @@ pub(super) fn order_nearest_first(
             // end, distance); `false < true`, so live ends come after.
             // Ends within `NEAREST_TIE_MM` of the nearest are a tie, taken
             // in scan order (#215).
-            let ends: Vec<(bool, End, f64)> = (0..pieces.len())
-                .filter(|&j| is_live(&done, j))
-                .flat_map(|j| [(j, 0), (j, 1)])
-                .filter_map(|e| {
-                    let d = point(e)?.distance_to(current);
+            let ends: Vec<(bool, End, f64)> = pieces
+                .iter()
+                .zip(&done)
+                .enumerate()
+                .filter(|(_, (_, cut))| !**cut)
+                .flat_map(|(j, ((line, _), _))| [((j, 0), line.start), ((j, 1), line.end)])
+                .map(|(e, point)| {
+                    let d = point.distance_to(current);
                     let live = exit.is_some()
                         && links_of(e).is_some_and(|l| l.iter().any(|&(k, _)| is_live(&done, k)));
-                    Some((live, e, d))
+                    (live, e, d)
                 })
                 .collect();
             let dead_first = ends.iter().map(|(live, _, _)| *live).min()?;
@@ -312,13 +324,12 @@ pub(super) fn order_nearest_first(
                     .map(|(_, e, d)| (e, d)),
             )
         });
-        let Some(entry) = next else {
-            break;
-        };
-        if let Some(d) = done.get_mut(entry.0) {
-            *d = true;
-        }
-        current = point((entry.0, 1 - entry.1)).unwrap_or(current);
+        let entry =
+            next.ok_or_else(|| CamError::internal("raster lines are left that none leads to"))?;
+        *at_mut(&mut done, entry.0, "the raster order names a line it lacks")? = true;
+        let (line, _) = at(&pieces, entry.0, "the raster order names a line it lacks")?;
+        // The piece is left at the end other than its entry.
+        current = if entry.1 == 0 { line.end } else { line.start };
         order.push(entry);
     }
     // Scan order, each piece entered at its start, when it lifts less.
@@ -339,14 +350,19 @@ pub(super) fn order_nearest_first(
     let mut exit: Option<End> = None;
     order
         .into_iter()
-        .filter_map(|(index, entry)| {
-            let (mut line, strip) = slots.get_mut(index)?.take()?;
+        .map(|(index, entry)| {
+            let (mut line, strip) =
+                at_mut(&mut slots, index, "the raster order names a line it lacks")?
+                    .take()
+                    .ok_or_else(|| CamError::internal("the raster order names a line twice"))?;
             if entry == 1 {
                 std::mem::swap(&mut line.start, &mut line.end);
             }
+            // No edge link into the first piece, nor where the tool
+            // links straight or lifts.
             let edge = exit.and_then(|from| edge_links.remove(&(from, (index, entry))));
             exit = Some((index, 1 - entry));
-            Some(((line, strip), edge))
+            Ok(((line, strip), edge))
         })
         .collect()
 }
@@ -358,32 +374,35 @@ pub(super) fn order_nearest_first(
 /// ring of `edges` no longer than that, measured along it, and
 /// returned from each end to the other. A link is the same either way, so
 /// the lists are symmetric. Ends are swept in X order, so only ends within
-/// the limit in X are compared.
+/// the limit in X are compared. [`CamError::Internal`] for a link found
+/// from an end that has no list to hold it.
 fn stay_down_links(
     pieces: &[Piece],
     link_max_mm: f64,
     edges: &RingEdges,
-) -> (Vec<[Vec<End>; 2]>, EdgeLinks) {
-    let ends: Vec<(Point, End)> = pieces
+) -> Result<(Vec<EndLinks>, EdgeLinks), CamError> {
+    // Every end with its piece's strip, by X; the sort is stable, so
+    // ends at one X keep piece order, start before end.
+    let mut by_x: Vec<(Point, End, Option<&Region>)> = pieces
         .iter()
         .enumerate()
-        .flat_map(|(i, (l, _))| [(l.start, (i, 0)), (l.end, (i, 1))])
+        .flat_map(|(i, (l, strip))| {
+            [
+                (l.start, (i, 0), strip.as_ref()),
+                (l.end, (i, 1), strip.as_ref()),
+            ]
+        })
         .collect();
-    let mut by_x: Vec<usize> = (0..ends.len()).collect();
-    by_x.sort_by(|&a, &b| {
-        let x = |k: usize| ends.get(k).map_or(0.0, |e| e.0.x);
-        x(a).total_cmp(&x(b)).then(a.cmp(&b))
-    });
+    by_x.sort_by(|a, b| a.0.x.total_cmp(&b.0.x));
     let mut found: Vec<[Vec<(f64, End)>; 2]> = vec![[Vec::new(), Vec::new()]; pieces.len()];
+    let mut record = |from: End, d: f64, to: End| -> Result<(), CamError> {
+        let lists = at_mut(&mut found, from.0, "a raster line's end is of no line")?;
+        at_mut(lists, from.1, "a raster line has an end past its two")?.push((d, to));
+        Ok(())
+    };
     let mut edge_links = EdgeLinks::new();
-    for (k, &a) in by_x.iter().enumerate() {
-        let Some(&(p, (i, e))) = ends.get(a) else {
-            continue;
-        };
-        for &b in by_x.iter().skip(k + 1) {
-            let Some(&(q, (j, f))) = ends.get(b) else {
-                continue;
-            };
+    for (k, &(p, (i, e), strip_p)) in by_x.iter().enumerate() {
+        for &(q, (j, f), strip_q) in by_x.iter().skip(k + 1) {
             if q.x - p.x > link_max_mm + EPS_MM {
                 break;
             }
@@ -391,11 +410,13 @@ fn stay_down_links(
             if i == j || d > link_max_mm + EPS_MM {
                 continue;
             }
-            let inside = match (pieces.get(i), pieces.get(j)) {
-                (Some((_, Some(a))), Some((_, Some(b)))) => link_inside_cleared(a, b, p, q),
+            // A line with no strip has cleared nothing to link through.
+            let inside = match (strip_p, strip_q) {
+                (Some(a), Some(b)) => link_inside_cleared(a, b, p, q),
                 _ => false,
             };
             if !inside {
+                // No straight link, and none along a ring: a lift.
                 let Some(link) = edges.link(p, q, link_max_mm) else {
                     continue;
                 };
@@ -403,12 +424,8 @@ fn stay_down_links(
                 edge_links.insert(((j, f), (i, e)), link.reversed());
                 edge_links.insert(((i, e), (j, f)), link);
             }
-            if let Some(list) = found.get_mut(i).and_then(|l| l.get_mut(e)) {
-                list.push((d, (j, f)));
-            }
-            if let Some(list) = found.get_mut(j).and_then(|l| l.get_mut(f)) {
-                list.push((d, (i, e)));
-            }
+            record((i, e), d, (j, f))?;
+            record((j, f), d, (i, e))?;
         }
     }
     let links = found
@@ -422,7 +439,7 @@ fn stay_down_links(
             })
         })
         .collect();
-    (links, edge_links)
+    Ok((links, edge_links))
 }
 
 /// The lowest and highest Y of `points`, `None` for fewer than three.
@@ -511,15 +528,17 @@ pub(super) fn region_paths(
     settings: &RasterSettings,
     keep: &dyn Fn(&Ring) -> bool,
     anchor: &mut Option<Point>,
-) -> Option<Vec<(Polyline, Option<Region>)>> {
-    let lines = raster_lines(
+) -> Result<Option<Vec<ClearedPath>>, CamError> {
+    let Some(lines) = raster_lines(
         root,
         settings.stepover_mm,
         settings.angle_deg,
         settings.tolerance_mm,
         index % 2 == 1,
         MAX_RINGS,
-    )?;
+    ) else {
+        return Ok(None);
+    };
     // The rings cut first start near the first scan line, so the ring that
     // ends there links to it without a lift.
     if settings.wall == WallRings::First {
@@ -536,7 +555,7 @@ pub(super) fn region_paths(
         .collect();
     let link_max_mm = 2.0 * settings.radius_mm + settings.stepover_mm;
     let edges = RingEdges::of(root, settings.wall, settings.tolerance_mm);
-    let pieces = order_nearest_first(pieces, *anchor, link_max_mm, &edges);
+    let pieces = order_nearest_first(pieces, *anchor, link_max_mm, &edges)?;
     let last_end = pieces.last().map(|((l, _), _)| l.end);
     let joined = join_edge_links(root, pieces, settings);
     let line_paths = || joined.iter().cloned();
@@ -567,7 +586,7 @@ pub(super) fn region_paths(
             *anchor = last_end.or(*anchor);
         }
     }
-    Some(out)
+    Ok(Some(out))
 }
 
 /// The ordered `pieces` as open paths, each with the area it has cleared:
@@ -861,6 +880,7 @@ mod tests {
     /// pieces only.
     fn nearest_first(pieces: Vec<Piece>, edges: &RingEdges) -> Vec<Piece> {
         order_nearest_first(pieces, None, 4.0, edges)
+            .unwrap()
             .into_iter()
             .map(|(piece, _)| piece)
             .collect()
@@ -909,7 +929,7 @@ mod tests {
     fn pieces_round_a_circle_link_along_its_edge() {
         let (r, pieces) = circle_pieces();
         let edges = RingEdges::of(&r, WallRings::Last, TOL);
-        let ordered = order_nearest_first(pieces.clone(), None, 4.0, &edges);
+        let ordered = order_nearest_first(pieces.clone(), None, 4.0, &edges).unwrap();
         assert_eq!(ordered.len(), pieces.len());
         let mut links = 0;
         for pair in ordered.windows(2) {
@@ -929,7 +949,10 @@ mod tests {
             }
         }
         assert!(links >= 4, "{ordered:?}");
-        assert_eq!(order_nearest_first(pieces, None, 4.0, &edges), ordered);
+        assert_eq!(
+            order_nearest_first(pieces, None, 4.0, &edges).unwrap(),
+            ordered
+        );
     }
 
     /// #392: from the end of the middle line of a 20 × 10 rect (lines at
@@ -960,7 +983,7 @@ mod tests {
             let mut moved = pieces.clone();
             moved[1].0.start.y += noise_mm;
             moved[1].0.end.y += noise_mm;
-            let (links, _) = stay_down_links(&moved, 4.0, &RingEdges::default());
+            let (links, _) = stay_down_links(&moved, 4.0, &RingEdges::default()).unwrap();
             // The middle line's end (2, 1) reaches the line above's start
             // (1, 0) and the line below's start (3, 0), 2 mm each.
             assert_eq!(
