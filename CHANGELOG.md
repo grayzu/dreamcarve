@@ -424,6 +424,15 @@ phases bump the patch number.
 
 ### Fixed
 
+- **A dogbone beside a very small helix exports.** An Inside or Outside
+  Profile with dogbones, a helix a few hundredths of a millimetre across
+  (a 1 mm bit at a 0.05 helix diameter) and arc fitting on failed to
+  export with `OffMaterial`. The helix sits by the corner the lap starts at, so arc
+  fitting wrote its handoff to that corner and the corner's dogbone as one
+  arc, and the safety pass's corner-relief rule took straight cuts only.
+  The rule now holds an arc point by point to the same material: clear of
+  the walls or in a corner's relief zone. The cut is the one that was
+  generated before, and no committed program changes.
 - **A clipped Inlay cut-out places the tabs it was asked for (#710).**
   Where a male's band runs past the board, its cut-out is cut in several
   stretches, from the board's edge to the board's edge, and each stretch

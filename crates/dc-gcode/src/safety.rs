@@ -5774,6 +5774,58 @@ mod tests {
         );
     }
 
+    /// S9's notch rule on an arc (2026-11-18, `crate::material`): arc
+    /// fitting may write the handoff from an entry and the notch after it
+    /// as one arc, which runs from clear stock into the corner's relief
+    /// zone. At the sample
+    /// rectangle's corner (10, 10) with the 6.35 mm tool, an arc of radius
+    /// 14.835 from (15, 14.6) through the miter point (13.175, 13.175) to
+    /// the dogbone's end (12.245, 12.245) passes with relief on and fails
+    /// with it off.
+    #[test]
+    fn arc_from_clear_stock_into_a_notch_passes_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let arc = "G21 G90\nG54\nG0 Z5\nX15 Y14.6\nG1 Z-3 F300\n\
+                   G3 X12.245 Y12.245 I8.19 J-12.37 F1000\nG0 Z5\n";
+        check_material_text(arc, &project, &relief_pocket(CornerRelief::Dogbone)).unwrap();
+        let err =
+            check_material_text(arc, &project, &relief_pocket(CornerRelief::None)).unwrap_err();
+        assert!(
+            matches!(err, ExportError::OffMaterial { line: 6, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// S9's notch rule holds an arc to clear stock and the relief zone,
+    /// point by point. From the same start through the same
+    /// miter point, an arc on to the corner itself fails, and so does one
+    /// that leaves the zone through a wall, to (12.6, 11.2), 1.2 mm from
+    /// the bottom wall and 2.86 mm from the corner. So does an arc that
+    /// reaches the dogbone's end from (20, 13.175) by way of (16, 11),
+    /// 1 mm from the bottom wall and 6.1 mm from the corner, outside the
+    /// zone.
+    #[test]
+    fn arc_into_a_notch_off_its_zone_fails_s9() {
+        use dc_project::CornerRelief;
+        let project = sample_project();
+        let op = relief_pocket(CornerRelief::Dogbone);
+        let program = |start: &str, arc: &str| {
+            format!("G21 G90\nG54\nG0 Z5\n{start}\nG1 Z-3 F300\n{arc} F1000\nG0 Z5\n")
+        };
+        for (start, arc) in [
+            ("X15 Y14.6", "G3 X10 Y10 I16.187 J-22.612"),
+            ("X15 Y14.6", "G3 X12.6 Y11.2 I1.158 J-3.365"),
+            ("X20 Y13.175", "G2 X12.245 Y12.245 I-4.313 J3.166"),
+        ] {
+            let err = check_material_text(&program(start, arc), &project, &op).unwrap_err();
+            assert!(
+                matches!(err, ExportError::OffMaterial { line: 6, .. }),
+                "{arc}: {err:?}"
+            );
+        }
+    }
+
     /// The sample project's outside Profile (#177).
     fn sample_profile_op() -> Operation {
         sample_project().operations[0].clone()
