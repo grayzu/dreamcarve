@@ -335,7 +335,8 @@ impl Flat {
 /// runs at the feed scaled so its vertical rate is at most the plunge rate
 /// (S10). A run of no more than `0.02·D`, or one that would need more than
 /// [`super::MAX_DESCENT_MOVES`] legs, falls back to a plunge. `max_run_mm`
-/// keeps the ramp short of a tab.
+/// keeps the ramp short of a tab. `None` for a path with no vertex, which
+/// has nowhere to start: the descent was once started at the origin.
 #[must_use]
 pub fn along_path(
     path: &Polyline,
@@ -345,13 +346,10 @@ pub fn along_path(
     z_mm: f64,
     tool: &EntryTool,
     tolerance_mm: f64,
-) -> Descent {
+) -> Option<Descent> {
     let flat = Flat::new(path, tolerance_mm);
-    let from = flat.points.first().copied().unwrap_or_else(|| {
-        path.vertices()
-            .first()
-            .map_or(Point::new(0.0, 0.0), |v| v.point())
-    });
+    // The flattened path has the path's vertices, so its first.
+    let from = *flat.points.first()?;
     let mut descent = Descent {
         from,
         moves: Vec::new(),
@@ -362,7 +360,7 @@ pub fn along_path(
     };
     let depth_mm = start_z_mm - z_mm;
     if depth_mm <= EPS_MM || depth_mm.is_nan() {
-        return descent;
+        return Some(descent);
     }
     let run_mm = (tool.diameter_mm * MAX_RAMP_RUN_DIAMETERS)
         .min(flat.length_mm())
@@ -379,7 +377,7 @@ pub fn along_path(
         Err(reason) => {
             descent.used = EntryKind::Plunge;
             descent.reason = Some(reason);
-            return descent;
+            return Some(descent);
         }
     };
     let mut current = Point3::new(from.x, from.y, start_z_mm);
@@ -405,7 +403,7 @@ pub fn along_path(
         if !merge_unwritable(&mut points, tool.quantum_mm) {
             descent.used = EntryKind::Plunge;
             descent.reason = Some(FallbackReason::TooSmall);
-            return descent;
+            return Some(descent);
         }
         for next in points.into_iter().skip(1) {
             moves.push(Move::linear(next, move_feed_mm_min(tool, current, next)));
@@ -440,7 +438,7 @@ pub fn along_path(
         moves.push(Move::linear(next, tool.feed_mm_min));
     }
     descent.moves = moves;
-    descent
+    Some(descent)
 }
 
 /// The legs of an On line ramp of `legs` legs over `depth_mm`, along a run
@@ -673,7 +671,8 @@ mod tests {
     #[test]
     fn along_a_short_loop_runs_the_whole_loop() {
         let square = Polyline::rect(Point::new(0.0, 0.0), 2.0, 2.0);
-        let d = along_path(&square, 15.0, f64::INFINITY, 4.0, 0.0, &tool(), 0.01);
+        let d = along_path(&square, 15.0, f64::INFINITY, 4.0, 0.0, &tool(), 0.01)
+            .expect("a path with a start");
         assert_eq!(d.used, EntryKind::Ramp);
         // 8 mm loop: legs of 8 mm drop 2.14 mm, so two legs.
         let corners = d
@@ -690,13 +689,14 @@ mod tests {
     #[test]
     fn along_path_stops_short_of_the_limit() {
         let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
-        let d = along_path(&line, 15.0, 5.0, 2.0, 0.0, &tool(), 0.01);
+        let d = along_path(&line, 15.0, 5.0, 2.0, 0.0, &tool(), 0.01).expect("a path with a start");
         assert!(
             d.moves.iter().all(|m| m.to.x <= 5.0 + 1e-9),
             "{:?}",
             d.moves
         );
-        let d = along_path(&line, 15.0, 0.05, 2.0, 0.0, &tool(), 0.01);
+        let d =
+            along_path(&line, 15.0, 0.05, 2.0, 0.0, &tool(), 0.01).expect("a path with a start");
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         assert!(d.moves.is_empty());
@@ -714,7 +714,8 @@ mod tests {
         let line = Polyline::new(vec![Vertex::line(0.0, 0.0), Vertex::line(50.0, 0.0)], false);
         let tan = 5.0_f64.to_radians().tan();
         let depth_mm = 4.0018 * 12.0 * tan;
-        let d = along_path(&line, 5.0, f64::INFINITY, depth_mm, 0.0, &tool(), 0.01);
+        let d = along_path(&line, 5.0, f64::INFINITY, depth_mm, 0.0, &tool(), 0.01)
+            .expect("a path with a start");
         assert_eq!(d.used, EntryKind::Ramp);
         let mut from = Point3::new(d.from.x, d.from.y, depth_mm);
         let mut total = 0.0;
@@ -784,7 +785,8 @@ mod tests {
             ),
         ];
         for (k, (path, angle_deg, depth_mm, t)) in cases.iter().enumerate() {
-            let d = along_path(path, *angle_deg, f64::INFINITY, *depth_mm, 0.0, t, 0.01);
+            let d = along_path(path, *angle_deg, f64::INFINITY, *depth_mm, 0.0, t, 0.01)
+                .expect("a path with a start");
             assert_eq!(d.used, EntryKind::Ramp, "case {k}");
             let mut from = Point3::new(d.from.x, d.from.y, *depth_mm);
             let mut total = 0.0;
@@ -827,7 +829,7 @@ mod tests {
             quantum_mm: 0.0254,
             ..tool()
         };
-        let d = along_path(&line, 15.0, 0.05, 2.0, 0.0, &t, 0.01);
+        let d = along_path(&line, 15.0, 0.05, 2.0, 0.0, &t, 0.01).expect("a path with a start");
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::TooSmall));
         assert!(d.moves.is_empty());
@@ -870,7 +872,8 @@ mod tests {
             z_mm,
             &t,
             0.01,
-        );
+        )
+        .expect("a path with a start");
         assert_eq!(d.used, EntryKind::Ramp);
         let mut from = Point3::new(d.from.x, d.from.y, start_z_mm);
         for (i, mv) in d.moves.iter().enumerate() {
@@ -899,5 +902,14 @@ mod tests {
         }
         assert!(from.xy().distance_to(d.from) <= EPS_MM);
         assert_approx_eq!(from.z, z_mm, EPS_MM);
+    }
+
+    /// Code review finding 1.2: a path with no vertex has no On line ramp,
+    /// where one was once started at the origin.
+    #[test]
+    fn along_path_of_no_vertex_is_none() {
+        let empty = Polyline::new(Vec::new(), false);
+        let d = along_path(&empty, 15.0, f64::INFINITY, 4.0, 0.0, &tool(), 0.01);
+        assert!(d.is_none(), "{d:?}");
     }
 }

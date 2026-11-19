@@ -354,7 +354,8 @@ pub(super) fn tab_seams(
                                 &tool,
                                 setup.tolerance_mm,
                             );
-                            d.used != EntryKind::Plunge
+                            // A path with no vertex has nowhere to ramp.
+                            d.is_some_and(|d| d.used != EntryKind::Plunge)
                         })
                     }
                     None => {
@@ -507,8 +508,8 @@ impl PathEntry {
         pass: &PassEntry<'_>,
         from_z_mm: f64,
         previous: &mut Option<CutEntry>,
-    ) -> (Descent, f64) {
-        match self {
+    ) -> Result<(Descent, f64), CamError> {
+        Ok(match self {
             Self::Along {
                 angle_deg,
                 clear_mm,
@@ -526,7 +527,8 @@ impl PathEntry {
                     pass.z_mm,
                     &pass.tool,
                     pass.tolerance_mm,
-                );
+                )
+                .ok_or_else(|| CamError::internal("a pass's path has no vertex to enter at"))?;
                 *previous = Some(CutEntry::new(pass.below_tabs, d.used));
                 (d, from_z_mm)
             }
@@ -587,7 +589,7 @@ impl PathEntry {
                 });
                 (d, from_z)
             }
-        }
+        })
     }
 
     /// #352: ramp `d`, of a pass after the first planned on `plan` (`key`:
@@ -845,11 +847,13 @@ mod tests {
         let mut previous = None;
         let mut from_z_mm = 13.0;
         for (pass, z_mm, below_tabs) in [(0, 8.0, false), (1, 4.0, true), (2, 0.0, true)] {
-            let (d, _) = wall.descend(
-                &pass_entry(&path, pass, z_mm, below_tabs),
-                from_z_mm,
-                &mut previous,
-            );
+            let (d, _) = wall
+                .descend(
+                    &pass_entry(&path, pass, z_mm, below_tabs),
+                    from_z_mm,
+                    &mut previous,
+                )
+                .expect("a descent");
             assert_eq!(d.used, EntryKind::Ramp, "pass {pass}");
             for p in reached(&d) {
                 assert!(along.cross(p - start).abs() <= 1e-9, "pass {pass}: {p:?}");
@@ -864,9 +868,13 @@ mod tests {
         // The tabbed domain too thin for any run along the line.
         let wall = entry(0.4);
         let mut previous = None;
-        let (d, _) = wall.descend(&pass_entry(&path, 0, 8.0, false), 13.0, &mut previous);
+        let (d, _) = wall
+            .descend(&pass_entry(&path, 0, 8.0, false), 13.0, &mut previous)
+            .expect("a descent");
         assert_eq!(d.used, EntryKind::Ramp);
-        let (d, from_z_mm) = wall.descend(&pass_entry(&path, 1, 4.0, true), 8.0, &mut previous);
+        let (d, from_z_mm) = wall
+            .descend(&pass_entry(&path, 1, 4.0, true), 8.0, &mut previous)
+            .expect("a descent");
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         assert!(d.moves.is_empty());
@@ -885,12 +893,16 @@ mod tests {
         let wall = entry(7.0);
         for previous in [None, Some(CutEntry::new(false, EntryKind::Plunge))] {
             let mut previous = previous;
-            let (d, _) = wall.descend(&pass_entry(&path, 1, 4.0, false), 8.0, &mut previous);
+            let (d, _) = wall
+                .descend(&pass_entry(&path, 1, 4.0, false), 8.0, &mut previous)
+                .expect("a descent");
             assert_eq!(d.used, EntryKind::Plunge, "{previous:?}");
             assert_eq!(d.reason, Some(FallbackReason::NoRoom));
         }
         let mut previous = Some(CutEntry::new(false, EntryKind::Ramp));
-        let (d, _) = wall.descend(&pass_entry(&path, 1, 7.97, false), 8.0, &mut previous);
+        let (d, _) = wall
+            .descend(&pass_entry(&path, 1, 7.97, false), 8.0, &mut previous)
+            .expect("a descent");
         assert_eq!(d.used, EntryKind::Plunge);
         assert_eq!(d.reason, Some(FallbackReason::TooSmall));
     }
