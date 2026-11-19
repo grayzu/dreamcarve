@@ -511,7 +511,7 @@ impl<'p> Setup<'p> {
                     let regions = entry_regions(&tree, wall)?;
                     Some(EntryDomain::new(&regions, tool.diameter_mm, tolerance_mm))
                 };
-                for ring in tree.walk_keeping(wall, &mut anchor, &keep) {
+                for ring in tree.walk_keeping(wall, &mut anchor, &keep)? {
                     let node = at(&tree.nodes, ring.node, "a ring is of no node of its tree")?;
                     let plan = domain
                         .as_ref()

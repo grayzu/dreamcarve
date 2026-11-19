@@ -34,6 +34,7 @@ use crate::error::{CamError, ClearingProblem, ShapeRef};
 use crate::pocket::rest::{self, Reference};
 use crate::pocket::rings::inset_region;
 use crate::pocket::{self};
+use crate::profile::region_outer;
 use crate::run::{RunLabel, ToolRun};
 use crate::warning::Warning;
 use dc_geometry::profile::BitProfile;
@@ -172,16 +173,15 @@ pub(crate) fn runs(
     profile: &BitProfile,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<ToolRun>, CamError> {
-    let Some(flat) = Floor::of(carve, profile) else {
+    // With no flat depth there is no floor to clear.
+    let (Some(flat), Some(flat_depth_mm)) = (Floor::of(carve, profile), carve.flat_depth_mm) else {
         return Ok(Vec::new());
     };
     let tolerance_mm = project.flatten_tolerance_mm;
     // The floor regions of every carved region, each with its region's
     // shape: the same `floor_regions` call the V-bit's floor makes.
     let floors: Vec<(Region, &ShapeRef)> = carve
-        .regions
-        .iter()
-        .zip(&carve.shapes)
+        .named_regions()?
         .flat_map(|(region, shape)| {
             // #448: out to an open band edge.
             flat.regions_of(carve, region, tolerance_mm)
@@ -227,7 +227,7 @@ pub(crate) fn runs(
                 tool: tool.id.clone(),
                 strategy: pass.strategy.clone(),
                 wall_pass: WallPass::Last,
-                depth_mm: Some(passes.start_depth_mm + flat_depth_of(carve)),
+                depth_mm: Some(passes.start_depth_mm + flat_depth_mm),
                 step_down_mm: None,
                 step_over_fraction: None,
                 direction: pass.direction,
@@ -251,11 +251,6 @@ pub(crate) fn runs(
         earlier.push(reference(radius_mm));
     }
     Ok(out)
-}
-
-/// The carve's flat depth, mm; [`runs`] is only reached with one.
-fn flat_depth_of(carve: &Carve<'_>) -> f64 {
-    carve.flat_depth_mm.unwrap_or(0.0)
 }
 
 /// Whether an end mill of `radius_mm` reaches some of `floor` that the
@@ -303,14 +298,18 @@ fn renest(floors: &[&(Region, &ShapeRef)]) -> Result<Resolved, CamError> {
         .chain(floors.iter().flat_map(|(f, _)| f.holes().iter().cloned()))
         .collect();
     let (regions, _) = nest(contours)?;
-    let shape_of = |r: &Region| shapes.get(r.outer_index()).map(|(s, _)| s);
+    // An outer is a floor's outer, which a shape names; a floor's hole is
+    // only ever a hole.
+    let mut names: Vec<&ShapeRef> = Vec::with_capacity(regions.len());
+    for region in &regions {
+        names.push(region_outer(region, &shapes)?);
+    }
     let keys: Vec<(usize, usize)> = regions
         .iter()
-        .map(|r| {
-            let first = regions
-                .iter()
-                .position(|o| shape_of(o) == shape_of(r))
-                .unwrap_or(0);
+        .zip(&names)
+        .map(|(r, name)| {
+            // The first region of this one's shape: itself, or one before.
+            let first = names.iter().take_while(|other| other != &name).count();
             (first, r.depth())
         })
         .collect();

@@ -39,9 +39,9 @@ mod tests;
 mod written;
 
 use crate::block::CutBlock;
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at};
 use crate::pocket::rest::Reference;
-use crate::profile::{crossing_error, outer_shape, rates_of};
+use crate::profile::{crossing_error, rates_of, region_outer};
 use crate::run::{RunLabel, ToolRun};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
 use crate::stock::{stock_overhang, swept_bounds};
@@ -60,6 +60,8 @@ use dc_project::{
 };
 use floor::{Floor, FloorCut, OpenFloor};
 use medial::{Depth, Tolerances};
+use std::iter::Zip;
+use std::slice::Iter;
 use written::WrittenGrid;
 
 /// What a V-bit carve is, independent of which operation asked for it:
@@ -104,6 +106,24 @@ pub struct Carve<'a> {
 }
 
 impl Carve<'_> {
+    /// Each region with the shape its outer came from.
+    ///
+    /// # Errors
+    ///
+    /// [`CamError::Internal`] when the two differ in number: pairing them
+    /// would leave the regions past the shorter list uncut, and name the
+    /// others wrongly.
+    pub(crate) fn named_regions(
+        &self,
+    ) -> Result<Zip<Iter<'_, Region>, Iter<'_, ShapeRef>>, CamError> {
+        if self.regions.len() != self.shapes.len() {
+            return Err(CamError::internal(
+                "a carve's regions and their shapes differ in number",
+            ));
+        }
+        Ok(self.regions.iter().zip(&self.shapes))
+    }
+
     /// Whether material may stand above the start plane where the carve
     /// cuts: the flank is engaged from above it (a male Inlay's plug,
     /// never cleared; a V-Carve whose start plane is cleared by other
@@ -450,6 +470,18 @@ pub fn blocks(
     carve: &Carve<'_>,
     warnings: &mut Vec<Warning>,
 ) -> Result<Vec<CutBlock>, CamError> {
+    carve_blocks(project, op, tool, carve, warnings).map_err(|e| e.for_op(op))
+}
+
+/// [`blocks`], before a defect it finds ([`CamError::Internal`]) names
+/// `op`.
+fn carve_blocks(
+    project: &Project,
+    op: &OperationId,
+    tool: &Tool,
+    carve: &Carve<'_>,
+    warnings: &mut Vec<Warning>,
+) -> Result<Vec<CutBlock>, CamError> {
     let bit = checked_bit(op, tool)?;
     let rates = rates_of(tool)?;
     let operation = project
@@ -528,7 +560,7 @@ pub fn blocks(
             thickness_mm,
         )
     };
-    for (region, shape) in carve.regions.iter().zip(&carve.shapes) {
+    for (region, shape) in carve.named_regions()? {
         if let VCarveStrategy::Offset {
             step_over_mm,
             direction,
@@ -559,7 +591,7 @@ pub fn blocks(
                 deepest(shape, z_mm)?;
             }
             let walls = Walls::new(std::slice::from_ref(region), tolerance_mm);
-            let runs = offset::runs(&levels, direction, &walls, &depth, tolerance_mm);
+            let runs = offset::runs(&levels, direction, &walls, &depth, tolerance_mm)?;
             let mut anchor = runs
                 .last()
                 .map(|run| run.steps.last().map_or(run.start, |s| s.to).xy());
@@ -587,6 +619,7 @@ pub fn blocks(
             }
             continue;
         }
+        // A region with no medial axis is warned of and not carved.
         let Some((mut graph, step_mm)) = medial::region_graph(
             region,
             tolerance_mm,
@@ -656,7 +689,7 @@ pub fn blocks(
             &walls,
             &floors,
             edge_walls.as_ref().filter(|_| band),
-        );
+        )?;
         let mut anchor = runs
             .last()
             .map(|run| run.steps.last().map_or(run.start, |s| s.to).xy());
@@ -765,6 +798,12 @@ pub fn generate_vcarve(
     project: &Project,
     op: &VCarveOp,
 ) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
+    v_carve(project, op).map_err(|e| e.for_op(&op.id))
+}
+
+/// [`generate_vcarve`], before a defect it finds ([`CamError::Internal`])
+/// names `op`.
+fn v_carve(project: &Project, op: &VCarveOp) -> Result<(Vec<ToolRun>, Vec<Warning>), CamError> {
     let tool = project
         .tools
         .iter()
@@ -834,7 +873,7 @@ pub fn generate_vcarve(
         &carve.regions,
         &bit.profile,
         project.flatten_tolerance_mm,
-    ));
+    )?);
     let toolpath = finish(
         project,
         &op.id,
@@ -866,6 +905,20 @@ pub(crate) fn finish(
     containment: &[(ShapeRef, ShapeRef)],
     order: dc_project::MachiningOrder,
 ) -> Result<Toolpath, CamError> {
+    finished(project, op, tool, carve, blocks, containment, order).map_err(|e| e.for_op(op))
+}
+
+/// [`finish`], before a defect it finds ([`CamError::Internal`]) names
+/// `op`.
+fn finished(
+    project: &Project,
+    op: &OperationId,
+    tool: &Tool,
+    carve: &Carve<'_>,
+    blocks: Vec<CutBlock>,
+    containment: &[(ShapeRef, ShapeRef)],
+    order: dc_project::MachiningOrder,
+) -> Result<Toolpath, CamError> {
     let bit = checked_bit(op, tool)?;
     let rates = rates_of(tool)?;
     let operation = project
@@ -882,6 +935,7 @@ pub(crate) fn finish(
         blocks: written_depths(
             blocks,
             project,
+            thickness_mm,
             &bit.profile,
             rates.feed_mm_min,
             rates.plunge_mm_min,
@@ -908,7 +962,7 @@ pub(crate) fn finish(
             overhang,
         });
     }
-    cone_in_material(
+    let cone = cone_in_material(
         &toolpath,
         &carve.regions,
         carve.start_plane_z_mm,
@@ -931,15 +985,15 @@ pub(crate) fn finish(
                 project.flatten_tolerance_mm,
             )
         })
-    })
-    .map_err(|violation| {
+    });
+    if let Err(violation) = cone {
         let at = match violation {
             ConeViolation::Wall { at, .. }
             | ConeViolation::Shank { at, .. }
             | ConeViolation::NotStraight { at } => at,
         };
-        let shape = Box::new(shape_at(carve, at));
-        match violation {
+        let shape = Box::new(shape_at(carve, at)?);
+        return Err(match violation {
             ConeViolation::Shank { engaged_mm, .. } => CamError::VBitConeExceeded {
                 op: op.clone(),
                 shape,
@@ -962,8 +1016,8 @@ pub(crate) fn finish(
                 y_mm: at.y,
                 z_mm: at.z,
             },
-        }
-    })?;
+        });
+    }
     Ok(toolpath)
 }
 
@@ -983,9 +1037,11 @@ pub(crate) fn finish(
 /// generator sets it (a plunge at `plunge_mm_min`, a descent limited to
 /// it, S10, a move across at `feed_mm_min`). A V-bit's disc widens by `s ·
 /// 0.0005`, within the slack, and its blocks are left as they are.
+/// `top_mm` is the stock top, the stock's thickness.
 fn written_depths(
     mut blocks: Vec<CutBlock>,
     project: &Project,
+    top_mm: f64,
     profile: &BitProfile,
     feed_mm_min: f64,
     plunge_mm_min: f64,
@@ -997,9 +1053,10 @@ fn written_depths(
         .post_processor
         .decimal_places
         .quantum_mm(project.display_units);
-    let (Some(top_mm), true) = (project.stock.thickness_mm, quantum_mm > 0.0) else {
+    // With no positive written unit there is no grid to raise onto.
+    if quantum_mm.is_nan() || quantum_mm <= 0.0 {
         return blocks;
-    };
+    }
     let zero_mm = match project.origin.z {
         dc_project::OriginZ::StockTop => top_mm,
         dc_project::OriginZ::StockBottom => 0.0,
@@ -1068,21 +1125,25 @@ fn written_depths(
 /// counted, and the farthest of all is named, with its distance. A piece
 /// with no opening left at all (a stroke narrower than `2 w_t`, which the
 /// ball carves in full) counts its own half-diagonal.
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when the regrown regions do not nest ([`grown`]).
 fn softened_corners(
     op: &OperationId,
     regions: &[Region],
     profile: &BitProfile,
     tolerance_mm: f64,
-) -> Option<Warning> {
+) -> Result<Option<Warning>, CamError> {
     let BitProfile::TaperedBall { .. } = profile else {
-        return None;
+        return Ok(None);
     };
     let w_t = profile.tangent_half_width_mm();
     if !(w_t.is_finite() && w_t > 0.0) {
-        return None;
+        return Ok(None);
     }
     let opened = union(
-        &grown(&floor_regions(regions, w_t, tolerance_mm), w_t),
+        &grown(&floor_regions(regions, w_t, tolerance_mm), w_t)?,
         &[],
         tolerance_mm,
     );
@@ -1123,59 +1184,71 @@ fn softened_corners(
             farthest = Some((change_mm, at));
         }
     }
-    let (change_mm, at) = farthest?;
-    Some(Warning::TaperedCornersSoftened {
+    // Nothing the opening loses is farther off than the tolerance.
+    let Some((change_mm, at)) = farthest else {
+        return Ok(None);
+    };
+    Ok(Some(Warning::TaperedCornersSoftened {
         op: op.clone(),
         count,
         x_mm: at.x,
         y_mm: at.y,
         change_mm,
         radius_mm: w_t,
-    })
+    }))
 }
 
 /// `regions` grown by `distance_mm` with round joins: each outer offset
 /// outward and each hole inward, nested again; the pieces may overlap,
 /// which the caller unites.
-fn grown(regions: &[Region], distance_mm: f64) -> Vec<Region> {
-    regions
-        .iter()
-        .flat_map(|region| {
-            let mut loops = offset(region.outer(), distance_mm);
-            for hole in region.holes() {
-                loops.extend(offset(hole, -distance_mm));
-            }
-            nest(loops).map(|(nested, _)| nested).unwrap_or_default()
-        })
-        .collect()
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when a region's grown loops do not nest: an
+/// outer grown and its holes shrunk cannot cross. The region was once
+/// left out, and the corners it softens not warned of.
+fn grown(regions: &[Region], distance_mm: f64) -> Result<Vec<Region>, CamError> {
+    let mut out = Vec::new();
+    for region in regions {
+        let mut loops = offset(region.outer(), distance_mm);
+        for hole in region.holes() {
+            loops.extend(offset(hole, -distance_mm));
+        }
+        let (nested, _) = nest(loops)
+            .map_err(|_| CamError::internal("a region's grown outline and holes cross"))?;
+        out.extend(nested);
+    }
+    Ok(out)
 }
 
 /// The shape of the region of `carve` that holds `at`, or else the one
 /// whose walls are nearest it.
-fn shape_at(carve: &Carve<'_>, at: Point3) -> ShapeRef {
+///
+/// # Errors
+///
+/// [`CamError::Internal`] for a carve with no region, which has no
+/// toolpath to fail the cone test, or one whose regions and shapes differ
+/// in number.
+fn shape_at(carve: &Carve<'_>, at: Point3) -> Result<ShapeRef, CamError> {
     let p = at.xy();
     let holding = carve
-        .regions
-        .iter()
-        .position(|r| r.contains_point(p))
-        .or_else(|| {
-            carve
-                .regions
-                .iter()
-                .map(|r| Walls::new(std::slice::from_ref(r), EPS_MM).clearance_mm(p))
-                .enumerate()
-                .min_by(|a, b| a.1.total_cmp(&b.1))
-                .map(|(i, _)| i)
-        });
-    holding
-        .and_then(|i| carve.shapes.get(i))
-        .or_else(|| carve.shapes.first())
+        .named_regions()?
+        .find(|(region, _)| region.contains_point(p))
+        .map(|(_, shape)| shape);
+    let nearest = match holding {
+        Some(shape) => Some(shape),
+        None => carve
+            .named_regions()?
+            .map(|(r, shape)| {
+                let clearance_mm = Walls::new(std::slice::from_ref(r), EPS_MM).clearance_mm(p);
+                (clearance_mm, shape)
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(_, shape)| shape),
+    };
+    nearest
         .cloned()
-        .unwrap_or_else(|| ShapeRef {
-            instance: InstanceId::new(""),
-            instance_name: String::new(),
-            profile: 0,
-        })
+        .ok_or_else(|| CamError::internal("a carve with no region failed its cone test"))
 }
 
 /// The start plane of `op` and the Z its flank is engaged from, mm
@@ -1305,26 +1378,32 @@ pub(crate) fn carve_regions_then(
             index,
             duplicate_of,
         } = warning;
-        if let (Some((dropped, _)), Some((kept, _))) = (shapes.get(index), shapes.get(duplicate_of))
-        {
-            warnings.push(Warning::DuplicateShapeDropped {
-                shape: dropped.clone(),
-                duplicate_of: kept.clone(),
-            });
-        }
+        // `nest` numbers the contours as it was given them, one a shape.
+        let (dropped, _) = at(&shapes, index, "a duplicate contour is of no shape")?;
+        let (kept, _) = at(&shapes, duplicate_of, "a duplicated contour is of no shape")?;
+        warnings.push(Warning::DuplicateShapeDropped {
+            shape: dropped.clone(),
+            duplicate_of: kept.clone(),
+        });
     }
-    let region_shapes: Vec<ShapeRef> = regions
-        .iter()
-        .filter_map(|r| outer_shape(r, &shapes).cloned())
-        .collect();
+    // One shape a region, in step: a region left out here would be carved
+    // under the next one's name, and the last not at all.
+    let mut region_shapes: Vec<ShapeRef> = Vec::with_capacity(regions.len());
+    for region in &regions {
+        region_shapes.push(region_outer(region, &shapes)?.clone());
+    }
     let mut containment = Vec::new();
     for (region, inner) in regions.iter().zip(&region_shapes) {
+        // A region at depth 0 is inside no hole.
         let Some(parent_depth) = region.depth().checked_sub(2) else {
             continue;
         };
-        let Some(probe) = region.outer().polyline().vertices().first() else {
-            continue;
-        };
+        let probe = region
+            .outer()
+            .polyline()
+            .vertices()
+            .first()
+            .ok_or_else(|| CamError::internal("a region's outline has no vertex"))?;
         let around = regions
             .iter()
             .zip(&region_shapes)

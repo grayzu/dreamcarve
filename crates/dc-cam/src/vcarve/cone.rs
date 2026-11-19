@@ -41,15 +41,8 @@ const WIDENING_PIECES: u32 = 16;
 /// grid, with the flattened loops for the even-odd inside test.
 #[derive(Debug, Clone)]
 pub(crate) struct Walls {
-    segments: Vec<(Point, Point)>,
-    /// For each segment, its loop's first segment and length: segment
-    /// `k` of a loop runs from the loop's vertex `k` to its vertex `k + 1`.
-    rings: Vec<(usize, usize)>,
-    /// The walls as drawn, arcs as arcs (#481).
-    drawn: Vec<Segment>,
-    /// For each segment, the drawn wall it is a chord of: an index into
-    /// `drawn`.
-    sources: Vec<usize>,
+    /// Every wall, loop after loop and round each loop.
+    walls: Vec<Wall>,
     /// The tolerance the arcs were flattened within, mm.
     tolerance_mm: f64,
     loops: Vec<Polyline>,
@@ -57,7 +50,39 @@ pub(crate) struct Walls {
     cell_mm: f64,
     columns: usize,
     rows: usize,
-    buckets: Vec<Vec<usize>>,
+    /// The grid's cells, row after row, `columns` to a row: each holds the
+    /// walls whose box crosses it, themselves and not their places among
+    /// `walls`, so a search of the grid looks nothing up and can miss
+    /// nothing (code review finding 1.2).
+    buckets: Vec<Vec<Wall>>,
+}
+
+/// One straight wall segment, with what a search needs of it.
+#[derive(Debug, Clone, Copy)]
+struct Wall {
+    /// Where it starts, mm.
+    a: Point,
+    /// Where it ends, mm.
+    b: Point,
+    /// The place among the walls of its loop's first wall.
+    first: usize,
+    /// Its place in its loop: wall `k` of a loop runs from the loop's
+    /// vertex `k` to its vertex `k + 1`.
+    place: usize,
+    /// How many walls its loop has.
+    len: usize,
+    /// The place of the wall as drawn that it is a chord of, among the
+    /// regions' drawn walls.
+    source: usize,
+    /// That wall as drawn, an arc as an arc (#481).
+    drawn: Segment,
+}
+
+impl Wall {
+    /// Its place among the walls.
+    fn index(&self) -> usize {
+        self.first + self.place
+    }
 }
 
 /// Where a straight tip path leaves the regions ([`Walls::excursion`]).
@@ -87,11 +112,9 @@ impl Walls {
     /// `tolerance_mm` as the medial axis flattens them, consecutive
     /// duplicates dropped.
     pub(crate) fn new(regions: &[Region], tolerance_mm: f64) -> Self {
-        let mut segments = Vec::new();
-        let mut rings = Vec::new();
+        let mut walls: Vec<Wall> = Vec::new();
         let mut loops = Vec::new();
-        let mut drawn = Vec::new();
-        let mut sources = Vec::new();
+        let mut drawn_count = 0usize;
         for region in regions {
             for contour in std::iter::once(region.outer()).chain(region.holes()) {
                 // Each drawn segment flattened on its own, which gives the
@@ -100,8 +123,8 @@ impl Walls {
                 // with the drawn segment its chord on stands for.
                 let mut flat = Vec::new();
                 for segment in contour.polyline().segments() {
-                    let source = drawn.len();
-                    drawn.push(segment);
+                    let source = drawn_count;
+                    drawn_count += 1;
                     let alone = Polyline::new(
                         vec![
                             Vertex::new(segment.start.x, segment.start.y, segment.bulge),
@@ -115,19 +138,26 @@ impl Walls {
                         points
                             .iter()
                             .take(points.len().saturating_sub(1))
-                            .map(|v| (v.point(), source)),
+                            .map(|v| (v.point(), (source, segment))),
                     );
                 }
                 let points = clean_loop(flat);
                 if points.len() < 2 {
                     continue;
                 }
-                let first = segments.len();
+                let first = walls.len();
                 let next = points.iter().cycle().skip(1);
-                for (&(a, source), &(b, _)) in points.iter().zip(next) {
-                    segments.push((a, b));
-                    rings.push((first, points.len()));
-                    sources.push(source);
+                for (place, (&(a, (source, drawn)), &(b, _))) in points.iter().zip(next).enumerate()
+                {
+                    walls.push(Wall {
+                        a,
+                        b,
+                        first,
+                        place,
+                        len: points.len(),
+                        source,
+                        drawn,
+                    });
                 }
                 let points: Vec<Point> = points.into_iter().map(|(p, _)| p).collect();
                 loops.push(Polyline::new(
@@ -140,13 +170,14 @@ impl Walls {
             Point::new(f64::INFINITY, f64::INFINITY),
             Point::new(f64::NEG_INFINITY, f64::NEG_INFINITY),
         );
-        for &(a, b) in &segments {
-            for p in [a, b] {
+        for wall in &walls {
+            for p in [wall.a, wall.b] {
                 min = Point::new(min.x.min(p.x), min.y.min(p.y));
                 max = Point::new(max.x.max(p.x), max.y.max(p.y));
             }
         }
-        if segments.is_empty() {
+        // With no walls the grid is one cell, which may be anywhere.
+        if walls.is_empty() {
             min = Point::new(0.0, 0.0);
             max = min;
         }
@@ -154,11 +185,8 @@ impl Walls {
         let cell_mm = (extent_mm / MAX_CELLS).max(1e-3);
         let columns = count_of(((max.x - min.x) / cell_mm).floor()) + 1;
         let rows = count_of(((max.y - min.y) / cell_mm).floor()) + 1;
-        let mut walls = Self {
-            segments,
-            rings,
-            drawn,
-            sources,
+        let mut grid = Self {
+            walls,
             tolerance_mm,
             loops,
             origin: min,
@@ -167,18 +195,27 @@ impl Walls {
             rows,
             buckets: vec![Vec::new(); columns * rows],
         };
-        for (index, &(a, b)) in walls.segments.iter().enumerate() {
-            let (c0, r0) = walls.cell_of(Point::new(a.x.min(b.x), a.y.min(b.y)));
-            let (c1, r1) = walls.cell_of(Point::new(a.x.max(b.x), a.y.max(b.y)));
-            for r in r0..=r1 {
-                for c in c0..=c1 {
-                    if let Some(bucket) = walls.buckets.get_mut(r * columns + c) {
-                        bucket.push(index);
-                    }
+        // Each wall goes into the cells its box crosses: from its low
+        // corner's cell to its high corner's.
+        let boxes: Vec<(Wall, [(usize, usize); 2])> = grid
+            .walls
+            .iter()
+            .map(|&wall| {
+                let (a, b) = (wall.a, wall.b);
+                let low = grid.cell_of(Point::new(a.x.min(b.x), a.y.min(b.y)));
+                let high = grid.cell_of(Point::new(a.x.max(b.x), a.y.max(b.y)));
+                (wall, [low, high])
+            })
+            .collect();
+        for (wall, [(c0, r0), (c1, r1)]) in boxes {
+            let rows = grid.buckets.chunks_mut(columns);
+            for row in rows.skip(r0).take(span(r0, r1)) {
+                for bucket in row.iter_mut().skip(c0).take(span(c0, c1)) {
+                    bucket.push(wall);
                 }
             }
         }
-        walls
+        grid
     }
 
     /// How far a tip may stand outside these walls, mm: the flatten
@@ -198,30 +235,42 @@ impl Walls {
         )
     }
 
-    /// The segments that may come within `margin_mm` of the box `lo`–`hi`,
-    /// ascending, each once.
-    fn near(&self, lo: Point, hi: Point, margin_mm: f64) -> Vec<usize> {
+    /// The walls that may come within `margin_mm` of the box `lo`–`hi`,
+    /// in their order among the walls, each once.
+    fn near(&self, lo: Point, hi: Point, margin_mm: f64) -> Vec<&Wall> {
         let (c0, r0) = self.cell_of(Point::new(lo.x - margin_mm, lo.y - margin_mm));
         let (c1, r1) = self.cell_of(Point::new(hi.x + margin_mm, hi.y + margin_mm));
-        let mut out = Vec::new();
-        for r in r0..=r1 {
-            for c in c0..=c1 {
-                if let Some(bucket) = self.buckets.get(r * self.columns + c) {
-                    out.extend_from_slice(bucket);
-                }
-            }
-        }
-        out.sort_unstable();
-        out.dedup();
+        let rows = self.buckets.chunks(self.columns);
+        let mut out: Vec<&Wall> = rows
+            .skip(r0)
+            .take(span(r0, r1))
+            .flat_map(|row| row.iter().skip(c0).take(span(c0, c1)))
+            .flatten()
+            .collect();
+        out.sort_unstable_by_key(|wall| wall.index());
+        out.dedup_by_key(|wall| wall.index());
         out
+    }
+
+    /// The arcs as drawn that the walls `near` are chords of, in drawn
+    /// order, each once.
+    fn arcs(near: &[&Wall]) -> Vec<Segment> {
+        let mut arcs: Vec<(usize, Segment)> = near
+            .iter()
+            .filter(|wall| wall.drawn.bulge != 0.0)
+            .map(|wall| (wall.source, wall.drawn))
+            .collect();
+        arcs.sort_unstable_by_key(|&(source, _)| source);
+        arcs.dedup_by_key(|&mut (source, _)| source);
+        arcs.into_iter().map(|(_, arc)| arc).collect()
     }
 
     /// The exact distance, mm, from `p` to the nearest wall; infinite with
     /// no walls.
     pub(crate) fn clearance_mm(&self, p: Point) -> f64 {
-        self.segments
+        self.walls
             .iter()
-            .map(|&(a, b)| point_segment(p, a, b))
+            .map(|wall| point_segment(p, wall.a, wall.b))
             .fold(f64::INFINITY, f64::min)
     }
 
@@ -238,9 +287,8 @@ impl Walls {
     /// point is `p` itself, which gives no direction. At a vertex either
     /// wall's.
     pub(crate) fn inward_normal(&self, p: Point) -> Option<Vec2> {
-        let (_, _, index) = self.nearest_segment(p)?;
-        let &(a, b) = self.segments.get(index)?;
-        let along: Vec2 = b - a;
+        let (_, _, wall) = self.nearest_segment(p)?;
+        let along: Vec2 = wall.b - wall.a;
         Vec2::new(-along.y, along.x).normalized()
     }
 
@@ -253,17 +301,16 @@ impl Walls {
         let hi = Point::new(a.x.max(b.x), a.y.max(b.y));
         self.near(lo, hi, margin_mm)
             .into_iter()
-            .filter_map(|i| self.segments.get(i))
-            .filter_map(|&(p, q)| {
-                let along: Vec2 = q - p;
+            .filter_map(|wall| {
+                let along: Vec2 = wall.b - wall.a;
                 let normal = Vec2::new(-along.y, along.x).normalized()?;
-                Some((p + along * 0.5, normal))
+                Some((wall.a + along * 0.5, normal))
             })
             .collect()
     }
 
-    /// [`Walls::nearest`] with the index of the segment it lies on.
-    fn nearest_segment(&self, p: Point) -> Option<(f64, Point, usize)> {
+    /// [`Walls::nearest`] with the wall it lies on.
+    fn nearest_segment(&self, p: Point) -> Option<(f64, Point, Wall)> {
         let foot = |a: Point, b: Point| {
             let ab: Vec2 = b - a;
             let length_sq = ab.dot(ab);
@@ -274,13 +321,12 @@ impl Walls {
             };
             a + ab * t
         };
-        let best_of = |indices: &[usize]| {
-            indices
+        let best_of = |walls: &[&Wall]| {
+            walls
                 .iter()
-                .filter_map(|&i| self.segments.get(i).map(|&s| (i, s)))
-                .map(|(i, (a, b))| {
-                    let q = foot(a, b);
-                    (p.distance_to(q), q, i)
+                .map(|&&wall| {
+                    let q = foot(wall.a, wall.b);
+                    (p.distance_to(q), q, wall)
                 })
                 .min_by(|x, y| x.0.total_cmp(&y.0))
         };
@@ -293,7 +339,7 @@ impl Walls {
             }
             margin_mm *= 2.0;
         }
-        let all: Vec<usize> = (0..self.segments.len()).collect();
+        let all: Vec<&Wall> = self.walls.iter().collect();
         best_of(&all)
     }
 
@@ -308,13 +354,9 @@ impl Walls {
     pub(crate) fn ball_radius_mm(&self, w: Point, u: Vec2, cap_mm: f64) -> f64 {
         let centre = w + u * cap_mm;
         let mut radius_mm = cap_mm;
-        for &(a, b) in self
-            .near(centre, centre, cap_mm + EPS_MM)
-            .iter()
-            .filter_map(|&i| self.segments.get(i))
-        {
-            let d0: Vec2 = a - w;
-            let e: Vec2 = b - a;
+        for wall in self.near(centre, centre, cap_mm + EPS_MM) {
+            let d0: Vec2 = wall.a - w;
+            let e: Vec2 = wall.b - wall.a;
             let ratio = |t: f64| {
                 let d = Vec2::new(d0.x + e.x * t, d0.y + e.y * t);
                 let ahead = 2.0 * d.dot(u);
@@ -366,24 +408,16 @@ impl Walls {
         let near = self.near(lo, hi, reach_mm + self.tolerance_mm.max(0.0));
         let to_chords = near
             .iter()
-            .filter_map(|&i| self.segments.get(i))
-            .map(|&(c, d)| segment_distance(a, b, c, d))
+            .map(|wall| segment_distance(a, b, wall.a, wall.b))
             .fold(reach_mm, f64::min);
-        let mut arcs: Vec<usize> = near
-            .iter()
-            .filter_map(|&i| self.sources.get(i).copied())
-            .filter(|&s| self.drawn.get(s).is_some_and(|w| w.bulge != 0.0))
-            .collect();
-        arcs.sort_unstable();
-        arcs.dedup();
         let path = Segment {
             start: a,
             end: b,
             bulge: 0.0,
         };
-        arcs.into_iter()
-            .filter_map(|s| self.drawn.get(s))
-            .map(|&arc| segment_distance_mm(path, arc))
+        Self::arcs(&near)
+            .into_iter()
+            .map(|arc| segment_distance_mm(path, arc))
             .fold(to_chords, f64::min)
     }
 
@@ -417,47 +451,29 @@ impl Walls {
         }
         let lo = Point::new(g.x.min(q.x), g.y.min(q.y));
         let hi = Point::new(g.x.max(q.x), g.y.max(q.y));
-        let mut arcs: Vec<usize> = self
-            .near(lo, hi, margin_mm + self.tolerance_mm.max(0.0))
-            .iter()
-            .filter_map(|&i| self.sources.get(i).copied())
-            .filter(|&s| self.drawn.get(s).is_some_and(|w| w.bulge != 0.0))
-            .collect();
-        arcs.sort_unstable();
-        arcs.dedup();
+        let arcs = Self::arcs(&self.near(lo, hi, margin_mm + self.tolerance_mm.max(0.0)));
         let along = |t: f64| g + (q - g) * t;
         let pieces = f64::from(WIDENING_PIECES);
-        arcs.into_iter()
-            .filter_map(|s| self.drawn.get(s))
-            .all(|&arc| {
-                (0..WIDENING_PIECES).all(|k| {
-                    let (t0, t1) = (f64::from(k) / pieces, f64::from(k + 1) / pieces);
-                    let piece = Segment {
-                        start: along(t0),
-                        end: along(t1),
-                        bulge: 0.0,
-                    };
-                    segment_distance_mm(piece, arc) >= t1 * margin_mm - EPS_MM
-                })
+        arcs.into_iter().all(|arc| {
+            (0..WIDENING_PIECES).all(|k| {
+                let (t0, t1) = (f64::from(k) / pieces, f64::from(k + 1) / pieces);
+                let piece = Segment {
+                    start: along(t0),
+                    end: along(t1),
+                    bulge: 0.0,
+                };
+                segment_distance_mm(piece, arc) >= t1 * margin_mm - EPS_MM
             })
+        })
     }
 
     /// Whether a chord of a drawn arc lies within `reach_mm` of `p` (#506):
     /// only there do chords drawn at another tolerance put the walls
     /// elsewhere.
     pub(crate) fn arc_within(&self, p: Point, reach_mm: f64) -> bool {
-        self.near(p, p, reach_mm).into_iter().any(|i| {
-            let on_arc = self
-                .sources
-                .get(i)
-                .and_then(|&s| self.drawn.get(s))
-                .is_some_and(|w| w.bulge != 0.0);
-            on_arc
-                && self
-                    .segments
-                    .get(i)
-                    .is_some_and(|&(a, b)| point_segment(p, a, b) <= reach_mm)
-        })
+        self.near(p, p, reach_mm)
+            .into_iter()
+            .any(|wall| wall.drawn.bulge != 0.0 && point_segment(p, wall.a, wall.b) <= reach_mm)
     }
 
     /// Whether `p` lies inside the regions by the even-odd rule, or within
@@ -468,8 +484,7 @@ impl Walls {
             || self
                 .near(p, p, slack_mm)
                 .into_iter()
-                .filter_map(|i| self.segments.get(i))
-                .any(|&(a, b)| point_segment(p, a, b) <= slack_mm)
+                .any(|wall| point_segment(p, wall.a, wall.b) <= slack_mm)
     }
 
     /// Whether the straight tip path `a`–`b` stays inside the regions, or
@@ -509,18 +524,16 @@ impl Walls {
         // Where the path meets a wall: its crossings, each with the
         // segment crossed, and the feet of the wall ends within the slack
         // of it.
-        let mut cuts: Vec<(f64, Option<usize>)> = vec![(0.0, None), (1.0, None)];
-        for index in self.near(lo, hi, slack_mm) {
-            let Some(&(c, d)) = self.segments.get(index) else {
-                continue;
-            };
+        let mut cuts: Vec<(f64, Option<&Wall>)> = vec![(0.0, None), (1.0, None)];
+        for wall in self.near(lo, hi, slack_mm) {
+            let (c, d) = (wall.a, wall.b);
             let cd = d - c;
             let denom = ab.cross(cd);
             if denom.abs() > 1e-12 {
                 let t = (c - a).cross(cd) / denom;
                 let u = (c - a).cross(ab) / denom;
                 if (-1e-9..=1.0 + 1e-9).contains(&u) && (0.0..=1.0).contains(&t) {
-                    cuts.push((t, Some(index)));
+                    cuts.push((t, Some(wall)));
                 }
             }
             for end in [c, d] {
@@ -578,23 +591,38 @@ impl Walls {
         &self,
         a: Point,
         b: Point,
-        (x0, i): (Point, usize),
-        (x1, j): (Point, usize),
+        (x0, i): (Point, &Wall),
+        (x1, j): (Point, &Wall),
     ) -> Option<Corner> {
-        let (&(first, len), &(first_j, _)) = (self.rings.get(i)?, self.rings.get(j)?);
-        if first != first_j || i == j || len == 0 {
+        let (first, len) = (i.first, i.len);
+        if first != j.first || i.place == j.place || len == 0 {
             return None;
         }
-        let vertex = |k: usize| self.segments.get(first + k % len).map(|&(p, _)| p);
-        // Segment `k` ends at vertex `k + 1`: the way on from the exit
-        // visits vertices `i + 1 ..= j`, the way back `j + 1 ..= i`.
-        let way = |from: usize, to: usize| -> Vec<usize> {
+        // The loop's vertices: its wall `k` starts at vertex `k`.
+        let ring: Vec<Point> = self
+            .walls
+            .iter()
+            .skip(first)
+            .take(len)
+            .map(|wall| wall.a)
+            .collect();
+        // Wall `k` ends at vertex `k + 1`: the way on from the exit
+        // visits vertices `i + 1 ..= j`, the way back `j + 1 ..= i`. Each
+        // vertex comes with the one before it and the one after it round
+        // the loop.
+        let way = |from: usize, to: usize| -> Vec<(Point, Point, Point)> {
             let count = (to + len - from) % len;
-            (1..=count).map(|k| (from + k) % len).collect()
+            let round = |skip: usize| ring.iter().copied().cycle().skip(skip);
+            round(from)
+                .zip(round(from + 1))
+                .zip(round(from + 2))
+                .take(count)
+                .map(|((before, p), after)| (before, p, after))
+                .collect()
         };
-        let area = |start: Point, ks: &[usize], end: Point| {
+        let area = |start: Point, way: &[(Point, Point, Point)], end: Point| {
             let ring: Vec<Point> = std::iter::once(start)
-                .chain(ks.iter().filter_map(|&k| vertex(k)))
+                .chain(way.iter().map(|&(_, p, _)| p))
                 .chain(std::iter::once(end))
                 .collect();
             let next = ring.iter().cycle().skip(1);
@@ -604,7 +632,7 @@ impl Walls {
                 .sum::<f64>()
                 .abs()
         };
-        let (i, j) = (i - first, j - first);
+        let (i, j) = (i.place, j.place);
         let on = way(i, j);
         let back = way(j, i);
         let chunk = if area(x0, &on, x1) <= area(x1, &back, x0) {
@@ -617,11 +645,9 @@ impl Walls {
         if length <= EPS_MM {
             return None;
         }
-        let (k, p) = chunk
+        let (prev, p, next) = chunk
             .into_iter()
-            .filter_map(|k| vertex(k).map(|p| (k, p)))
             .max_by(|x, y| (ab.cross(x.1 - a).abs()).total_cmp(&ab.cross(y.1 - a).abs()))?;
-        let (prev, next) = (vertex(k + len - 1)?, vertex(k + 1)?);
         let foot = a + ab * ((p - a).dot(ab) / (length * length));
         let out = (p - foot).normalized()?;
         // The path cuts across `p`, so the region is on the far side of it
@@ -677,12 +703,9 @@ impl Walls {
             )
         };
         let mut best = (reach_mm - radius(a.z).max(radius(b.z)), a);
-        for &(c, d) in self
-            .near(lo, hi, reach_mm)
-            .iter()
-            .filter_map(|&i| self.segments.get(i))
-        {
-            let (room_mm, t) = least_room(a, b, WallPiece::line(c, d), profile, start_plane_z_mm);
+        for wall in self.near(lo, hi, reach_mm) {
+            let piece = WallPiece::line(wall.a, wall.b);
+            let (room_mm, t) = least_room(a, b, piece, profile, start_plane_z_mm);
             if room_mm < best.0 {
                 best = (room_mm, at(t));
             }
@@ -749,8 +772,8 @@ pub(crate) fn point_segment(p: Point, a: Point, b: Point) -> f64 {
 /// as the medial axis cleans its loops. Each point carries the drawn wall
 /// its chord on stands for; a point kept for a dropped duplicate takes the
 /// duplicate's, since the chord from it is now the duplicate's.
-fn clean_loop(points: Vec<(Point, usize)>) -> Vec<(Point, usize)> {
-    let mut out: Vec<(Point, usize)> = Vec::new();
+fn clean_loop<T: Copy>(points: Vec<(Point, T)>) -> Vec<(Point, T)> {
+    let mut out: Vec<(Point, T)> = Vec::new();
     for (p, source) in points {
         if let Some(last) = out.last_mut()
             && last.0.distance_to(p) < 1e-9
@@ -768,6 +791,11 @@ fn clean_loop(points: Vec<(Point, usize)>) -> Vec<(Point, usize)> {
         }
     }
     out
+}
+
+/// How many cells `from..=to` is; none when `to` is before `from`.
+fn span(from: usize, to: usize) -> usize {
+    (to + 1).saturating_sub(from)
 }
 
 /// `v` floored and clamped to `0..len`.

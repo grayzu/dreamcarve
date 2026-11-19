@@ -990,7 +990,7 @@ fn tapered_carve_reaches_a_rounded_point_past_its_centre() {
         written_mm: 0.0,
         grid: None,
     };
-    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]);
+    let runs = medial::runs(&chain, &depth, tolerances, &walls, &[]).expect("runs");
     let mut moves: Vec<(Point3, Point3)> = Vec::new();
     for run in &runs {
         let mut from = run.start;

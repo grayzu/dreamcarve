@@ -42,7 +42,7 @@
 use super::cone::Walls;
 use super::{Carve, FloorRidges, bit, carve_regions};
 use crate::block::CutBlock;
-use crate::error::{CamError, ShapeRef};
+use crate::error::{CamError, ShapeRef, at};
 use crate::pocket::rest::grow_region;
 use crate::pocket::rest::{self, Reference};
 use crate::pocket::rings::{
@@ -132,14 +132,15 @@ impl Floor {
         }
     }
 
-    /// The ring step-over, mm, `step_over_fraction · 2 · inset_mm`.
+    /// The step-over fraction and the ring step-over it gives, mm,
+    /// `step_over_fraction · 2 · inset_mm`.
     ///
     /// # Errors
     ///
     /// [`CamError::MissingStepOver`] when neither the operation nor `tool`
     /// sets a fraction, [`CamError::InvalidStepOver`] for one outside
     /// (0, 1].
-    fn stepover_mm(&self, op: &OperationId, tool: &Tool) -> Result<f64, CamError> {
+    fn stepover(&self, op: &OperationId, tool: &Tool) -> Result<(f64, f64), CamError> {
         let fraction = self
             .step_over_fraction
             .ok_or_else(|| CamError::MissingStepOver {
@@ -153,7 +154,7 @@ impl Floor {
                 step_over_fraction: fraction,
             });
         }
-        Ok(fraction * 2.0 * self.inset_mm)
+        Ok((fraction, fraction * 2.0 * self.inset_mm))
     }
 }
 
@@ -250,11 +251,12 @@ impl OpenFloor {
     /// Whether floor loop `contour` runs along the band's edge rather than
     /// the plug's foot: its first vertex is nearer the edge than the
     /// design. The floor ring's edge loops are `M − P·tan(α/2)` from the
-    /// foot's, so the test is never close.
-    fn is_edge(&self, contour: &Contour) -> bool {
-        contour.polyline().vertices().first().is_some_and(|v| {
-            self.band.clearance_mm(v.point()) < self.design.clearance_mm(v.point())
-        })
+    /// foot's, so the test is never close. A loop has a first vertex:
+    /// [`CamError::Internal`] otherwise, where it would be traced as the
+    /// foot's.
+    fn is_edge(&self, contour: &Contour) -> Result<bool, CamError> {
+        let (first, _) = nearest(contour, None)?;
+        Ok(self.band.clearance_mm(first) < self.design.clearance_mm(first))
     }
 }
 
@@ -292,7 +294,7 @@ pub(crate) fn blocks_open(
             for piece in rest::left_wide_by(region, &reaching, cut.tolerance_mm) {
                 out.extend(rings_clearing(&piece, floor, cut, anchor)?);
             }
-            for ring in rings_of(region, 0, anchor, |_| true) {
+            for ring in rings_of(region, 0, anchor, |_| Ok(true))? {
                 out.push(ring_block(
                     ring,
                     Some(region),
@@ -322,7 +324,7 @@ pub(crate) fn blocks_open(
         for piece in open.within(&left, cut.tolerance_mm, cut.tolerance_mm) {
             out.extend(rings_clearing(&piece, floor, cut, anchor)?);
         }
-        for ring in rings_of(region, 0, anchor, |c| !open.is_edge(c)) {
+        for ring in rings_of(region, 0, anchor, |c| Ok(!open.is_edge(c)?))? {
             let cleared = reachable
                 .iter()
                 .map(|r| (r, distance_to_loops(r, ring.start)))
@@ -359,10 +361,10 @@ fn rings_clearing(
     cut: &FloorCut<'_>,
     anchor: &mut Option<Point>,
 ) -> Result<Vec<CutBlock>, CamError> {
-    let stepover_mm = floor.stepover_mm(cut.op, cut.tool)?;
+    let (step_over_fraction, stepover_mm) = floor.stepover(cut.op, cut.tool)?;
     let too_many = || CamError::InvalidStepOver {
         op: cut.op.clone(),
-        step_over_fraction: floor.step_over_fraction.unwrap_or(0.0),
+        step_over_fraction,
     };
     let tree = RingTree::build(
         region.clone(),
@@ -376,32 +378,32 @@ fn rings_clearing(
         reach_mm: stepover_mm / 2.0,
         tolerance_mm: cut.wall_tolerance_mm,
     };
-    let plan = Leftovers::of(&tree, reach);
+    let plan = Leftovers::of(&tree, reach)?;
     let mut out = Vec::new();
     let mut centred: Vec<usize> = Vec::new();
-    for mut ring in tree.walk(WallRings::Last, anchor) {
-        let Some(node) = tree.nodes.get(ring.node) else {
-            continue;
-        };
+    for mut ring in tree.walk(WallRings::Last, anchor)? {
+        let node = at(&tree.nodes, ring.node, "a ring is of no node of its tree")?;
         if !centred.contains(&ring.node) {
             centred.push(ring.node);
             let mut from = Some(ring.start);
             for (_, piece) in plan.own.iter().filter(|(n, _)| *n == ring.node) {
-                let mut rings = rings_of(piece, ring.node, &mut from, |_| true);
-                nest_leftovers(piece, &mut rings, reach, NEST_DEPTH);
+                let mut rings = rings_of(piece, ring.node, &mut from, |_| Ok(true))?;
+                nest_leftovers(piece, &mut rings, reach, NEST_DEPTH)?;
                 for own in rings {
                     out.push(ring_block(own, Some(piece), floor, cut, cut.tolerance_mm));
                 }
             }
         }
-        if let Some(index) = ring_index(&node.region, &ring) {
-            ring.cleanups.extend(
-                plan.spliced
-                    .iter()
-                    .filter(|(n, i, _)| *n == ring.node && *i == index)
-                    .map(|(_, _, cleanup)| cleanup.clone()),
-            );
-        }
+        // The walk's rings are its nodes' own: one that is none of its
+        // node's would lose the leftover pieces cut from inside its lap.
+        let index = ring_index(&node.region, &ring)
+            .ok_or_else(|| CamError::internal("a ring is none of its node's rings"))?;
+        ring.cleanups.extend(
+            plan.spliced
+                .iter()
+                .filter(|(n, i, _)| *n == ring.node && *i == index)
+                .map(|(_, _, cleanup)| cleanup.clone()),
+        );
         let cleared = node.region.clone();
         // The root's rings run along the floor's outline (the boundary
         // trace, with no clearing pass) or a piece's.
@@ -469,36 +471,51 @@ fn leftover(node: &Region, children: &[Region], reach: Reach) -> Vec<Region> {
 /// twice the flatten tolerance across), and its middle then stands that
 /// much further from its ring: line art `0xa`'s female with the 15° bit,
 /// 0.011 mm, which the cone turned into 0.08 mm.
-fn nest_leftovers(region: &Region, rings: &mut [Ring], reach: Reach, depth: usize) {
+///
+/// `rings` holds every ring of `region`, so each piece's loop has a ring
+/// to go into: [`CamError::Internal`] otherwise, where the piece would be
+/// left standing.
+fn nest_leftovers(
+    region: &Region,
+    rings: &mut [Ring],
+    reach: Reach,
+    depth: usize,
+) -> Result<(), CamError> {
+    // The depth limit: what is left inside the last piece is not looked for.
     let Some(depth) = depth.checked_sub(1) else {
-        return;
+        return Ok(());
     };
+    let node = rings
+        .first()
+        .ok_or_else(|| CamError::internal("a floor region has no ring to cut its leftovers from"))?
+        .node;
     for sub in leftover(region, &[], reach) {
-        let loops: Vec<(&Contour, RingKind)> = loops_of(&sub).collect();
-        let mut placed: Vec<(usize, Cleanup)> = loops
-            .iter()
-            .filter_map(|&(contour, kind)| {
-                let node = rings.first()?.node;
-                let (_, index, cleanup, _) = splice_into(node, region, contour, kind, None)?;
-                Some((index, cleanup))
-            })
-            .collect();
-        if placed.len() == loops.len() {
-            let mut sub_rings: Vec<Ring> = placed.iter().map(|(_, c)| c.ring.clone()).collect();
-            nest_leftovers(&sub, &mut sub_rings, reach, depth);
-            for ((_, cleanup), ring) in placed.iter_mut().zip(sub_rings) {
-                cleanup.ring = ring;
-            }
+        let mut placed: Vec<(usize, Cleanup)> = Vec::new();
+        for (contour, kind) in loops_of(&sub) {
+            // With no root to stay in, every loop is placed.
+            let (_, index, cleanup, _) = splice_into(node, region, contour, kind, None)?
+                .ok_or_else(|| {
+                    CamError::internal("a leftover loop inside a ring was not placed")
+                })?;
+            placed.push((index, cleanup));
+        }
+        let mut sub_rings: Vec<Ring> = placed.iter().map(|(_, c)| c.ring.clone()).collect();
+        nest_leftovers(&sub, &mut sub_rings, reach, depth)?;
+        for ((_, cleanup), ring) in placed.iter_mut().zip(sub_rings) {
+            cleanup.ring = ring;
         }
         for (index, cleanup) in placed {
-            if let Some(ring) = rings
+            rings
                 .iter_mut()
                 .find(|r| ring_index(region, r) == Some(index))
-            {
-                ring.cleanups.push(cleanup);
-            }
+                .ok_or_else(|| {
+                    CamError::internal("a leftover piece is nearest a ring that is not cut")
+                })?
+                .cleanups
+                .push(cleanup);
         }
     }
+    Ok(())
 }
 
 /// The outer and holes of `region`, each with its kind.
@@ -528,19 +545,23 @@ impl Leftovers {
     /// boundary trace (or a piece's outline after clearing passes) and stay
     /// plain laps; those go into the nearest ring of a child, when the
     /// link stays inside the root.
-    fn of(tree: &RingTree, reach: Reach) -> Self {
+    ///
+    /// A node's children are nodes of `tree`, and every loop has a vertex:
+    /// [`CamError::Internal`] otherwise, where a piece would be left
+    /// standing.
+    fn of(tree: &RingTree, reach: Reach) -> Result<Self, CamError> {
         let mut out = Self::default();
         for (index, node) in tree.nodes.iter().enumerate() {
             if node.residual {
                 continue;
             }
-            let children: Vec<(usize, &Region)> = node
-                .children
-                .iter()
-                .filter_map(|&c| Some((c, tree.nodes.get(c)?)))
-                .filter(|(_, c)| !c.residual)
-                .map(|(c, n)| (c, &n.region))
-                .collect();
+            let mut children: Vec<(usize, &Region)> = Vec::with_capacity(node.children.len());
+            for &c in &node.children {
+                let child = at(&tree.nodes, c, "a ring tree's node has a child it lacks")?;
+                if !child.residual {
+                    children.push((c, &child.region));
+                }
+            }
             let regions: Vec<Region> = children.iter().map(|(_, r)| (*r).clone()).collect();
             for piece in leftover(&node.region, &regions, reach) {
                 if children.is_empty() || !piece.holes().is_empty() {
@@ -549,20 +570,15 @@ impl Leftovers {
                 }
                 let outer = piece.outer();
                 let target = if index == 0 {
-                    children
-                        .iter()
-                        .filter_map(|&(c, r)| {
-                            splice_into(
-                                c,
-                                r,
-                                outer,
-                                RingKind::Outer,
-                                Some((&node.region, reach.reach_mm)),
-                            )
-                        })
-                        .min_by(|a, b| a.3.total_cmp(&b.3))
+                    // A child whose link would leave the root offers none.
+                    let mut links = Vec::with_capacity(children.len());
+                    for &(c, r) in &children {
+                        let within = Some((&node.region, reach.reach_mm));
+                        links.extend(splice_into(c, r, outer, RingKind::Outer, within)?);
+                    }
+                    links.into_iter().min_by(|a, b| a.3.total_cmp(&b.3))
                 } else {
-                    splice_into(index, &node.region, outer, RingKind::Outer, None)
+                    splice_into(index, &node.region, outer, RingKind::Outer, None)?
                 };
                 match target {
                     Some((n, ring, mut cleanup, _)) => {
@@ -571,14 +587,15 @@ impl Leftovers {
                             std::slice::from_mut(&mut cleanup.ring),
                             reach,
                             NEST_DEPTH,
-                        );
+                        )?;
                         out.spliced.push((n, ring, cleanup));
                     }
+                    // No ring's lap reaches it: it is cut as its own ring.
                     None => out.own.push((index, piece)),
                 }
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -607,29 +624,37 @@ fn ring_index(region: &Region, ring: &Ring) -> Option<usize> {
 /// rings do. With `within` `Some((root, reach_mm))` (`region` is a child of
 /// the root the loop lies in) the link is kept only when its points,
 /// `reach_mm / 2` apart, each lie inside `root` and at least that far from
-/// its outline, so no part of it leaves the root. `None` for a loop with
-/// no usable vertex or a link that fails that test.
+/// its outline, so no part of it leaves the root. `None` for a link that
+/// fails that test, so never with `within` `None`.
+///
+/// # Errors
+///
+/// [`CamError::Internal`] when no vertex of the loop has a nearest point
+/// on a ring of `region`: both are contours, with vertices and segments.
 fn splice_into(
     node: usize,
     region: &Region,
     contour: &Contour,
     kind: RingKind,
     within: Option<(&Region, f64)>,
-) -> Option<(usize, usize, Cleanup, f64)> {
+) -> Result<Option<(usize, usize, Cleanup, f64)>, CamError> {
     let vertices = contour.polyline().vertices();
-    let (ring, start, at, gap_mm) = loops_of(region)
-        .enumerate()
-        .flat_map(|(ring, (target, _))| {
-            vertices.iter().filter_map(move |v| {
-                let n = nearest_point(target.polyline(), v.point())?;
-                Some((ring, v.point(), n.point, n.gap_mm))
-            })
-        })
-        .min_by(|a, b| a.3.total_cmp(&b.3))?;
+    let mut links = Vec::new();
+    for (ring, (target, _)) in loops_of(region).enumerate() {
+        for v in vertices {
+            let n = nearest_point(target.polyline(), v.point())
+                .ok_or_else(|| CamError::internal("a floor ring has no nearest point"))?;
+            links.push((ring, v.point(), n.point, n.gap_mm));
+        }
+    }
+    let (ring, start, at, gap_mm) = links
+        .into_iter()
+        .min_by(|a, b| a.3.total_cmp(&b.3))
+        .ok_or_else(|| CamError::internal("a leftover loop has no vertex"))?;
     if let Some((root, reach_mm)) = within
         && !link_stays_in(root, at, start, reach_mm / 2.0)
     {
-        return None;
+        return Ok(None);
     }
     let cleanup = Cleanup {
         at,
@@ -641,7 +666,7 @@ fn splice_into(
             cleanups: Vec::new(),
         },
     };
-    Some((node, ring, cleanup, gap_mm))
+    Ok(Some((node, ring, cleanup, gap_mm)))
 }
 
 /// Whether the straight link `from`–`to` lies inside `region`: its points
@@ -665,44 +690,47 @@ fn link_stays_in(region: &Region, from: Point, to: Point, step_mm: f64) -> bool 
 /// The outer and holes of `region` that `keep` keeps, as rings of `node`,
 /// nearest `anchor` first, each starting at its point nearest the end of
 /// the one before.
+///
+/// # Errors
+///
+/// What `keep` returns, and [`CamError::Internal`] for a loop with no
+/// vertex ([`nearest`]).
 fn rings_of(
     region: &Region,
     node: usize,
     anchor: &mut Option<Point>,
-    keep: impl Fn(&Contour) -> bool,
-) -> Vec<Ring> {
-    let mut pending: Vec<(Ring, f64)> = std::iter::once((region.outer(), RingKind::Outer))
-        .chain(region.holes().iter().map(|h| (h, RingKind::Hole)))
-        .filter(|(contour, _)| keep(contour))
-        .map(|(contour, kind)| {
-            (
-                Ring {
-                    contour: contour.clone(),
-                    kind,
-                    node,
-                    start: Point::new(0.0, 0.0),
-                    cleanups: Vec::new(),
-                },
-                0.0,
-            )
-        })
-        .collect();
+    keep: impl Fn(&Contour) -> Result<bool, CamError>,
+) -> Result<Vec<Ring>, CamError> {
+    let mut pending: Vec<(&Contour, RingKind)> = Vec::new();
+    for (contour, kind) in loops_of(region) {
+        if keep(contour)? {
+            pending.push((contour, kind));
+        }
+    }
     let mut out = Vec::with_capacity(pending.len());
     while !pending.is_empty() {
-        for (ring, distance) in &mut pending {
-            *distance = nearest(&ring.contour, *anchor).1;
+        // The loop nearest the anchor, the first of those as near, with
+        // where it starts.
+        let mut pick: Option<(usize, Point, f64)> = None;
+        for (i, (contour, _)) in pending.iter().enumerate() {
+            let (start, distance_mm) = nearest(contour, *anchor)?;
+            if pick.is_none_or(|(_, _, best_mm)| distance_mm.total_cmp(&best_mm).is_lt()) {
+                pick = Some((i, start, distance_mm));
+            }
         }
-        let pick = pending
-            .iter()
-            .enumerate()
-            .min_by(|a, b| a.1.1.total_cmp(&b.1.1))
-            .map_or(0, |(i, _)| i);
-        let (mut ring, _) = pending.remove(pick);
-        ring.start = nearest(&ring.contour, *anchor).0;
-        *anchor = Some(ring.start);
-        out.push(ring);
+        let (i, start, _) =
+            pick.ok_or_else(|| CamError::internal("no loop of a floor region is nearest"))?;
+        let (contour, kind) = pending.remove(i);
+        *anchor = Some(start);
+        out.push(Ring {
+            contour: contour.clone(),
+            kind,
+            node,
+            start,
+            cleanups: Vec::new(),
+        });
     }
-    out
+    Ok(out)
 }
 
 /// One ring as a closed lap at the floor's Z: climb, from its start, arcs
