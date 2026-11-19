@@ -26,7 +26,7 @@ pub mod rest;
 pub mod rings;
 
 use crate::block::CutBlock;
-use crate::context::rates_of;
+use crate::context::{self, OpContext, check_diameter, check_safe_z, rates_of, tool_of};
 use crate::entry::{self, CutSide, EntryDomain, EntryPlan, EntryTool, EntryWarnings};
 use crate::error::{CamError, ShapeRef, at};
 use crate::footprint::footprint_at;
@@ -34,8 +34,7 @@ use crate::passes::pass_z_mm;
 use crate::profile::{contour_contains, crossing_error, region_outer, resolve_targets};
 use crate::relief::{self, Site};
 use crate::sequence::{SequenceInput, clearance_z_mm, sequence};
-use crate::stock::{stock_overhang, swept_bounds};
-use crate::tabs::{LapRates, lap_cuts};
+use crate::tabs::lap_cuts;
 use crate::toolpath::{Move, Toolpath};
 use crate::warning::{IslandNeighbour, Warning};
 use dc_geometry::{
@@ -181,7 +180,7 @@ fn pocket(project: &Project, op: &PocketOp) -> Result<(Toolpath, Vec<Warning>), 
             duplicate_of: kept.clone(),
         });
     }
-    let toolpath = setup.cut(project, op, &regions, &shapes, &mut warnings)?;
+    let toolpath = setup.cut(op, &regions, &shapes, &mut warnings)?;
     Ok((toolpath, warnings))
 }
 
@@ -212,7 +211,7 @@ pub(crate) fn pocket_regions(
     let mut setup = Setup::of(project, op, warnings)?;
     setup.references.extend_from_slice(reached_by);
     setup
-        .cut(project, op, regions, shapes, warnings)
+        .cut(op, regions, shapes, warnings)
         .map_err(|e| e.for_op(&op.id))
 }
 
@@ -220,11 +219,8 @@ pub(crate) fn pocket_regions(
 /// are resolved: the tool, its rates, the pass levels, the step-over, the
 /// relief plan, the entry tool and the references of a rest operation.
 struct Setup<'p> {
-    tool: &'p Tool,
-    rates: LapRates,
-    thickness_mm: f64,
+    ctx: OpContext<'p>,
     pass_z: Vec<f64>,
-    safe_z_mm: f64,
     step_over_fraction: f64,
     stepover_mm: f64,
     radius_mm: f64,
@@ -241,17 +237,10 @@ impl<'p> Setup<'p> {
     /// in the order [`generate_pocket`] always has.
     fn of(
         project: &'p Project,
-        op: &PocketOp,
+        op: &'p PocketOp,
         warnings: &mut Vec<Warning>,
     ) -> Result<Self, CamError> {
-        let tool = project
-            .tools
-            .iter()
-            .find(|t| t.id == op.tool)
-            .ok_or_else(|| CamError::UnknownTool {
-                op: op.id.clone(),
-                tool: op.tool.clone(),
-            })?;
+        let tool = tool_of(project, &op.id, &op.tool)?;
         // The tool-centre region is the pocket inset by half the diameter,
         // right only for a flat end mill (#67).
         if !tool.cutter.is_flat() {
@@ -263,19 +252,8 @@ impl<'p> Setup<'p> {
             });
         }
         let rates = rates_of(tool)?;
-        if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-            return Err(CamError::InvalidToolDiameter {
-                tool: tool.name.clone(),
-                tool_id: tool.id.clone(),
-                diameter_mm: tool.diameter_mm,
-            });
-        }
-        if !(op.safe_z_mm.is_finite() && op.safe_z_mm > 0.0) {
-            return Err(CamError::InvalidSafeZ {
-                op: op.id.clone(),
-                safe_z_mm: op.safe_z_mm,
-            });
-        }
+        check_diameter(tool)?;
+        check_safe_z(&op.id, op.safe_z_mm)?;
         if let ClearanceStrategy::Raster { angle_deg } = op.strategy
             && !(angle_deg.is_finite() && (0.0..180.0).contains(&angle_deg))
         {
@@ -287,21 +265,9 @@ impl<'p> Setup<'p> {
         check_stock_to_leave(&op.id, op.stock_to_leave_mm)?;
         let reference = reference_of(project, op)?;
         entry::check(&op.id, &op.entry)?;
-        let step_down_mm =
-            op.step_down_mm
-                .or(tool.step_down_mm)
-                .ok_or_else(|| CamError::MissingStepDown {
-                    op: op.id.clone(),
-                    tool: tool.name.clone(),
-                    tool_id: tool.id.clone(),
-                })?;
-        let thickness_mm = project
-            .stock
-            .thickness_mm
-            .ok_or(CamError::MissingThickness)?;
-        let depth_mm = op
-            .depth_mm
-            .ok_or_else(|| CamError::MissingDepth { op: op.id.clone() })?;
+        let step_down_mm = context::step_down_mm(&op.id, op.step_down_mm, tool)?;
+        let thickness_mm = context::thickness_mm(project)?;
+        let depth_mm = context::depth_mm(&op.id, op.depth_mm)?;
         let pass_z = pass_z_mm(
             &op.id,
             thickness_mm,
@@ -309,7 +275,8 @@ impl<'p> Setup<'p> {
             step_down_mm,
             op.through_cut_allowance_mm,
         )?;
-        let safe_z_mm = thickness_mm + op.safe_z_mm;
+        let ctx = OpContext::new(project, &op.id, tool, rates, thickness_mm, op.safe_z_mm);
+        let safe_z_mm = ctx.safe_z_mm;
         let step_over_fraction = op
             .step_over_fraction
             .or(tool.step_over_fraction)
@@ -353,11 +320,8 @@ impl<'p> Setup<'p> {
                 .quantum_mm(project.display_units),
         };
         Ok(Self {
-            tool,
-            rates,
-            thickness_mm,
+            ctx,
             pass_z,
-            safe_z_mm,
             step_over_fraction,
             stepover_mm: tool.diameter_mm * step_over_fraction,
             radius_mm: tool.diameter_mm / 2.0,
@@ -376,18 +340,14 @@ impl<'p> Setup<'p> {
     )]
     fn cut(
         &self,
-        project: &Project,
         op: &PocketOp,
         regions: &[Region],
         shapes: &[(ShapeRef, Contour)],
         warnings: &mut Vec<Warning>,
     ) -> Result<Toolpath, CamError> {
         let Self {
-            tool,
-            rates,
-            thickness_mm,
+            ctx,
             ref pass_z,
-            safe_z_mm,
             step_over_fraction,
             stepover_mm,
             radius_mm,
@@ -396,6 +356,13 @@ impl<'p> Setup<'p> {
             entry_tool,
             ref references,
         } = *self;
+        let OpContext {
+            tool,
+            rates,
+            thickness_mm,
+            safe_z_mm,
+            ..
+        } = ctx;
         let invalid_step_over = || CamError::InvalidStepOver {
             op: op.id.clone(),
             step_over_fraction,
@@ -599,18 +566,10 @@ impl<'p> Setup<'p> {
         };
         let containment = nested_pockets(regions, shapes)?;
         let input = SequenceInput {
-            blocks,
             order: op.machining_order,
             containment: &containment,
-            safe_z_mm,
-            clearance_z_mm: clearance_z_mm(project, thickness_mm, safe_z_mm),
-            stock_top_mm: thickness_mm,
-            tool_diameter_mm: tool.diameter_mm,
             stepover_mm,
-            feed_mm_min: rates.feed_mm_min,
-            plunge_mm_min: rates.plunge_mm_min,
-            cut_before: &[],
-            groove_link_z_mm: None,
+            ..SequenceInput::new(&ctx, blocks)
         };
         let mut toolpath = sequence(&input)?;
         // Design step 10: the separate relief pass after all the passes, for
@@ -629,14 +588,7 @@ impl<'p> Setup<'p> {
         }
 
         // #62: the cutter must stay on the stock.
-        if let Some(overhang) = swept_bounds(&toolpath, radius_mm)
-            .and_then(|swept| stock_overhang(&project.stock, swept))
-        {
-            return Err(CamError::OffStock {
-                op: op.id.clone(),
-                overhang,
-            });
-        }
+        ctx.check_on_stock(&toolpath, radius_mm)?;
         check_in_material(
             op,
             &toolpath,
@@ -692,21 +644,8 @@ fn reference_of(project: &Project, op: &PocketOp) -> Result<Option<rest::Referen
     if !rough.enabled || rough.targets != op.targets {
         return Err(invalid());
     }
-    let tool = project
-        .tools
-        .iter()
-        .find(|t| t.id == rough.tool)
-        .ok_or_else(|| CamError::UnknownTool {
-            op: rough.id.clone(),
-            tool: rough.tool.clone(),
-        })?;
-    if !(tool.diameter_mm.is_finite() && tool.diameter_mm > 0.0) {
-        return Err(CamError::InvalidToolDiameter {
-            tool: tool.name.clone(),
-            tool_id: tool.id.clone(),
-            diameter_mm: tool.diameter_mm,
-        });
-    }
+    let tool = tool_of(project, &rough.id, &rough.tool)?;
+    check_diameter(tool)?;
     check_stock_to_leave(&rough.id, rough.stock_to_leave_mm)?;
     Ok(Some(rest::Reference {
         radius_mm: tool.diameter_mm / 2.0,
