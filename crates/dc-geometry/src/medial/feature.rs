@@ -77,6 +77,11 @@ impl Boundary {
         }
     }
 
+    /// The index of the loop `contact` lies on, outer first.
+    pub(super) fn loop_of(&self, contact: &Contact) -> Option<usize> {
+        self.tags.get(contact.segment).map(|tag| tag.loop_index)
+    }
+
     /// The loop and position of `contact`.
     fn locate(&self, contact: &Contact) -> Option<(usize, Position)> {
         let tag = self.tags.get(contact.segment)?;
