@@ -19,6 +19,11 @@
 //! [`ExportError::CutOutsideOperation`]. DreamCarve writes none; only a
 //! definition's header or footer line could be one.
 //!
+//! The pass fails closed (review 1.1, #711; [`crate::material`]'s module
+//! docs, "Fail closed"): a lookup into its own data that misses is
+//! [`ExportError::SafetyCheckDefect`], never an empty answer that an
+//! `all(..)` would read as a pass.
+//!
 //! S11 (`docs/specs/phase-2/functional.md`): a canned-cycle line is checked
 //! as the moves the controller makes for it. The parser expands each one
 //! ([`crate::canned`]) into synthetic blocks that every rule here reads like
@@ -64,6 +69,13 @@ use crate::transform::{MachineTransform, mm_per_unit};
 /// The longest line, in characters, DreamCarve emits. grblHAL's line
 /// buffer holds 256 bytes including the terminator.
 pub const MAX_LINE_CHARS: usize = 255;
+
+/// The error for a lookup into the pass's own data that missed (review
+/// 1.1, #711), naming the `check` that could not be finished: see
+/// [`crate::material`]'s module docs, "Fail closed".
+pub(crate) fn defect(check: &'static str) -> ExportError {
+    ExportError::SafetyCheckDefect { check }
+}
 
 /// One emitted operation and the program lines its moves occupy.
 #[derive(Debug, Clone)]
@@ -1350,9 +1362,10 @@ fn check_descent_rate(
 /// `mv`, from its written numbers alone: its feed times the sine of its
 /// slope, `feed × (drop / length)`, with an arc's length along the arc
 /// its centre words describe. A straight plunge's rate is its feed
-/// exactly. `None` for a rapid, a move that does not fall, or one whose
-/// start is not known. S10 judges every program by it, and the emitter
-/// writes feeds by it (#325).
+/// exactly, and infinite for a cut with no feed (S3 refuses that cut;
+/// S10 must not pass it). `None` for a rapid, a move that does not fall,
+/// or one whose start is not known. S10 judges every program by it, and
+/// the emitter writes feeds by it (#325).
 pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform) -> Option<f64> {
     let (Some(fx), Some(fy), Some(fz), Some(tx), Some(ty), Some(tz)) =
         (mv.from.x, mv.from.y, mv.from.z, mv.to.x, mv.to.y, mv.to.z)
@@ -1377,7 +1390,9 @@ pub(crate) fn descent_rate_mm_min(mv: &MachineMove, transform: &MachineTransform
             arc.radius_mm * arc.sweep_rad.abs() * scale
         }
     };
-    let feed_mm_min = mv.feed.unwrap_or(0.0) * scale;
+    // #711: a falling cut with no feed has no rate S10 could pass, so it
+    // falls faster than any plunge rate. S3 refuses it first.
+    let feed_mm_min = mv.feed.unwrap_or(f64::INFINITY) * scale;
     // `drop / length` first: exactly 1 on a straight plunge.
     Some(feed_mm_min * (drop_mm / run_mm.hypot(drop_mm)))
 }
@@ -1604,16 +1619,20 @@ impl Step {
     }
 }
 
-/// A place a [`Matching`] went on from, with the step it took and, once
-/// it has come back, the steps it has still to try, last first.
-struct Choice {
+/// A place a [`Matching`] went on from and the toolpath move it matched
+/// there, with the step it took and, once it has come back, the steps it
+/// has still to try, last first.
+struct Choice<'m> {
     at: Place,
+    mv: &'m Move,
     taken: Step,
     others: Option<Vec<Step>>,
 }
 
 /// What a [`Matching`] sees at a place.
 struct View<'r, 'a> {
+    /// The motion lines already matched.
+    taken: &'r [ReadMove<'a>],
     /// The motion lines not yet matched.
     rest: &'r [ReadMove<'a>],
     /// One unit in the last written place, mm.
@@ -1624,7 +1643,7 @@ struct View<'r, 'a> {
     previous: Option<Point3>,
 }
 
-impl<'a> Matching<'_, 'a> {
+impl<'m, 'a> Matching<'m, 'a> {
     fn mismatch(&self, index: usize) -> ExportError {
         ExportError::MotionMismatch {
             op: self.op.id().clone(),
@@ -1632,28 +1651,47 @@ impl<'a> Matching<'_, 'a> {
         }
     }
 
+    /// The motion lines a matching at `at` has taken, and those it has
+    /// not.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError::SafetyCheckDefect`] for a place past the last line
+    /// (#711): such a matching has claimed lines the program does not
+    /// have, and reading that as "no line is left" would pass it.
+    fn lines(&self, at: &Place) -> Result<(&'m [ReadMove<'a>], &'m [ReadMove<'a>]), ExportError> {
+        self.motions
+            .split_at_checked(at.cursor)
+            .ok_or(defect("S6: a matching is past the last motion line"))
+    }
+
     /// What the matching sees at `at`, about to match `mv`.
-    fn view(&self, at: &Place, mv: &Move) -> View<'_, 'a> {
-        let motions = self.motions;
-        let rest = motions.get(at.cursor..).unwrap_or_default();
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError::SafetyCheckDefect`] for a place past the last line
+    /// or the last move ([`Self::lines`]).
+    fn view(&self, at: &Place, mv: &Move) -> Result<View<'m, 'a>, ExportError> {
+        let (taken, rest) = self.lines(at)?;
+        let (matched, _) = self
+            .moves
+            .split_at_checked(at.index)
+            .ok_or(defect("S6: a matching is past the last toolpath move"))?;
         // Where the controller is before `rest`.
         let here = rest
             .first()
-            .map_or_else(|| motions.last().and_then(|m| m.to), |m| m.from);
+            .map_or_else(|| taken.last().and_then(|m| m.to), |m| m.from);
         let tolerance_mm = rest
             .first()
-            .or(motions.last())
+            .or(taken.last())
             .map_or(EPS_MM, |m| m.tolerance_mm);
-        View {
+        Ok(View {
+            taken,
             rest,
             tolerance_mm,
             already_there: here.is_some_and(|h| near(h, mv.to, tolerance_mm)),
-            previous: at
-                .index
-                .checked_sub(1)
-                .and_then(|i| self.moves.get(i))
-                .map(|m| m.to),
-        }
+            previous: matched.last().map(|m| m.to),
+        })
     }
 
     /// `Ok` if some matching of the lines to the moves takes them all;
@@ -1667,6 +1705,12 @@ impl<'a> Matching<'_, 'a> {
     /// comes twice on one path, and a place met again on another path has
     /// failed already: each place is tried once. A program the first
     /// matching takes is checked as it was before #483.
+    ///
+    /// # Errors
+    ///
+    /// The furthest matching's, as above; or
+    /// [`ExportError::SafetyCheckDefect`] at once, whatever is left to
+    /// try, when a step leads past the last move or line (#711).
     fn search(&self) -> Result<(), ExportError> {
         let mut at = Place {
             index: 0,
@@ -1678,7 +1722,7 @@ impl<'a> Matching<'_, 'a> {
             next_dwell: 0,
             last_cut: None,
         };
-        let mut choices: Vec<Choice> = Vec::new();
+        let mut choices: Vec<Choice<'m>> = Vec::new();
         let mut tried = HashSet::new();
         // The furthest failure: the move, and why.
         let mut furthest: Option<(usize, ExportError)> = None;
@@ -1687,19 +1731,20 @@ impl<'a> Matching<'_, 'a> {
                 // Failed from here already, on another path.
                 None
             } else if let Some(mv) = self.moves.get(at.index) {
-                match self.first_step(&at, mv) {
+                match self.first_step(&at, mv, self.view(&at, mv)?) {
                     Ok(step) => {
                         choices.push(Choice {
                             at,
+                            mv,
                             taken: step,
                             others: None,
                         });
-                        at = self.advance(&at, step);
+                        at = self.advance(&at, mv, step)?;
                         continue;
                     }
                     Err(error) => Some(error),
                 }
-            } else if self.finished(&at) {
+            } else if self.finished(&at)? {
                 return Ok(());
             } else {
                 Some(self.mismatch(self.moves.len()))
@@ -1714,17 +1759,18 @@ impl<'a> Matching<'_, 'a> {
                 let Some(choice) = choices.last_mut() else {
                     return Err(furthest.map_or_else(|| self.mismatch(at.index), |(_, e)| e));
                 };
-                let others = choice.others.get_or_insert_with(|| {
-                    let mut others = self
-                        .moves
-                        .get(choice.at.index)
-                        .map(|mv| self.other_steps(&choice.at, mv, choice.taken))
-                        .unwrap_or_default();
-                    others.reverse();
-                    others
-                });
+                let others = match &mut choice.others {
+                    Some(others) => others,
+                    untried => {
+                        let view = self.view(&choice.at, choice.mv)?;
+                        let mut others =
+                            self.other_steps(&choice.at, choice.mv, choice.taken, view);
+                        others.reverse();
+                        untried.insert(others)
+                    }
+                };
                 if let Some(step) = others.pop() {
-                    break self.advance(&choice.at, step);
+                    break self.advance(&choice.at, choice.mv, step)?;
                 }
                 choices.pop();
             };
@@ -1733,37 +1779,56 @@ impl<'a> Matching<'_, 'a> {
 
     /// Whether every line after `at`, which has taken every move, is a
     /// retract.
-    fn finished(&self, at: &Place) -> bool {
-        self.motions
-            .get(at.cursor..)
-            .unwrap_or_default()
-            .iter()
-            .all(|m| is_retract(m.mv))
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError::SafetyCheckDefect`] for a place past the last line
+    /// ([`Self::lines`]): it is not "finished".
+    fn finished(&self, at: &Place) -> Result<bool, ExportError> {
+        let (_, rest) = self.lines(at)?;
+        Ok(rest.iter().all(|m| is_retract(m.mv)))
     }
 
-    /// Where `step` from `at` leads.
-    fn advance(&self, at: &Place, step: Step) -> Place {
-        let straight = self
-            .moves
-            .get(at.index)
-            .filter(|mv| step.covered == 1 && mv.kind == MoveKind::Linear);
-        Place {
-            index: at.index + step.covered,
-            cursor: at.cursor + step.lines,
-            next_dwell: step.next_dwell.unwrap_or(at.next_dwell),
-            last_cut: straight.map_or(at.last_cut, |mv| Some(mv.to.xy())),
+    /// Where `step`, which matched `mv` at `at`, leads.
+    ///
+    /// # Errors
+    ///
+    /// [`ExportError::SafetyCheckDefect`] for a step that takes more
+    /// moves than the toolpath has left, or more lines than the span has
+    /// left (#711): past the last move a place reads as "every move
+    /// matched", and past the last line as "no line left".
+    fn advance(&self, at: &Place, mv: &Move, step: Step) -> Result<Place, ExportError> {
+        let index = at.index + step.covered;
+        let cursor = at.cursor + step.lines;
+        if index > self.moves.len() || cursor > self.motions.len() {
+            return Err(defect(
+                "S6: a step takes more moves or motion lines than are left",
+            ));
         }
+        let straight = step.covered == 1 && mv.kind == MoveKind::Linear;
+        Ok(Place {
+            index,
+            cursor,
+            next_dwell: step.next_dwell.unwrap_or(at.next_dwell),
+            last_cut: if straight {
+                Some(mv.to.xy())
+            } else {
+                at.last_cut
+            },
+        })
     }
 
-    /// The first way the rules allow to match `mv`, the move at `at`, and
-    /// what follows it; else why there is none.
-    fn first_step(&self, at: &Place, mv: &Move) -> Result<Step, ExportError> {
+    /// The first way the rules allow to match `mv`, the move at `at`
+    /// (`view` what the matching sees there), and what follows it; else
+    /// why there is none.
+    fn first_step(&self, at: &Place, mv: &Move, view: View<'_, 'a>) -> Result<Step, ExportError> {
         let View {
+            taken,
             rest,
             tolerance_mm,
             already_there,
             previous,
-        } = self.view(at, mv);
+        } = view;
         let index = at.index;
         // Inside a hole: in Z alone, where the last cut was.
         let in_hole = || {
@@ -1787,11 +1852,7 @@ impl<'a> Matching<'_, 'a> {
             MoveKind::Dwell { seconds } => {
                 // A `G4` with these seconds after the last motion matched
                 // and before the next; it moves nothing.
-                let after = at
-                    .cursor
-                    .checked_sub(1)
-                    .and_then(|i| self.motions.get(i))
-                    .map(|m| m.block);
+                let after = taken.last().map(|m| m.block);
                 let before = rest.first().map_or(usize::MAX, |m| m.block);
                 self.dwells
                     .iter()
@@ -1868,14 +1929,15 @@ impl<'a> Matching<'_, 'a> {
     /// at `at`, and what follows it (#483), in the order to try them: by
     /// no lines, where the controller is already at its end and `emit`
     /// writes nothing for such a move; then a fitted arc here, to each
-    /// vertex it may end at, nearest first.
-    fn other_steps(&self, at: &Place, mv: &Move, taken: Step) -> Vec<Step> {
+    /// vertex it may end at, nearest first. `view` is what the matching
+    /// sees at `at`.
+    fn other_steps(&self, at: &Place, mv: &Move, taken: Step, view: View<'_, 'a>) -> Vec<Step> {
         let View {
             rest,
             already_there,
             previous,
             ..
-        } = self.view(at, mv);
+        } = view;
         let mut steps = Vec::new();
         let nothing = already_there
             && match mv.kind {
@@ -5493,8 +5555,12 @@ mod tests {
         let transform = MachineTransform::new(project, &post).unwrap();
         let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
         let tool = project.tools[0].clone();
-        let material = Material::of(project, op);
-        let tabs = material::tab_spines(project, op);
+        // As `Material::held_run`: tabs that do not resolve leave no
+        // material.
+        let (material, tabs) = match material::tab_spines(project, op) {
+            Some(tabs) => (Material::of(project, op), tabs),
+            None => (Material::Unresolved, Vec::new()),
+        };
         let toolpath = Toolpath::default();
         let span = OpSpan {
             op,
@@ -7944,6 +8010,174 @@ mod tests {
             "{err:?}"
         );
         check_heights(stop, 1..7, ProgramHeights::default()).unwrap();
+    }
+
+    /// Review 1.1 (#711): a matching whose place is past the last motion
+    /// line has not taken every line: it has claimed lines the program
+    /// does not have. It is not finished: the pass stops with the
+    /// internal-defect error.
+    #[test]
+    fn matching_is_not_finished_past_the_end() {
+        let (project, op, _) = fixture();
+        let op = Operation::Profile(op);
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let matching = Matching {
+            op: &op,
+            moves: &[],
+            motions: &[],
+            dwells: &[],
+            canned: false,
+            reentry_gap_mm: None,
+            transform: &transform,
+            tolerances: Tolerances {
+                flatten_mm: project.flatten_tolerance_mm,
+                arc_fit_mm: None,
+            },
+        };
+        let place = |cursor: usize| Place {
+            index: 0,
+            cursor,
+            next_dwell: 0,
+            last_cut: None,
+        };
+        assert!(matches!(matching.finished(&place(0)), Ok(true)));
+        let past = matching.finished(&place(1));
+        assert!(
+            matches!(past, Err(ExportError::SafetyCheckDefect { .. })),
+            "{past:?}"
+        );
+    }
+
+    /// A [`Matching`] of `moves` to no motion line.
+    fn matching_of<'m>(
+        op: &'m Operation,
+        moves: &'m [Move],
+        transform: &'m MachineTransform,
+    ) -> Matching<'m, 'static> {
+        Matching {
+            op,
+            moves,
+            motions: &[],
+            dwells: &[],
+            canned: false,
+            reentry_gap_mm: None,
+            transform,
+            tolerances: Tolerances {
+                flatten_mm: 0.01,
+                arc_fit_mm: None,
+            },
+        }
+    }
+
+    /// #711: a place past the last motion line, or past the last move,
+    /// has nothing true to show: no line "left", no move "before". The
+    /// view is the internal-defect error, where it was an empty rest.
+    #[test]
+    fn view_fails_closed_on_a_place_past_the_end() {
+        let (project, op, _) = fixture();
+        let op = Operation::Profile(op);
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let moves = [Move::rapid(Point3::new(0.0, 0.0, 11.0))];
+        let matching = matching_of(&op, &moves, &transform);
+        let place = |index: usize, cursor: usize| Place {
+            index,
+            cursor,
+            next_dwell: 0,
+            last_cut: None,
+        };
+        assert!(matching.view(&place(0, 0), &moves[0]).is_ok());
+        assert!(matching.view(&place(1, 0), &moves[0]).is_ok());
+        for (index, cursor) in [(0, 1), (2, 0)] {
+            let view = matching.view(&place(index, cursor), &moves[0]);
+            assert!(
+                matches!(view, Err(ExportError::SafetyCheckDefect { .. })),
+                "move {index}, line {cursor}"
+            );
+        }
+    }
+
+    /// #711: a step that takes more motion lines than the span has left,
+    /// or more moves than the toolpath has left, leads nowhere. Past the
+    /// last move a place read as "every move matched", and past the last
+    /// line as "no line left": together, a pass.
+    #[test]
+    fn advance_fails_closed_on_a_step_past_the_end() {
+        let (project, op, _) = fixture();
+        let op = Operation::Profile(op);
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let moves = [Move::rapid(Point3::new(0.0, 0.0, 11.0))];
+        let matching = matching_of(&op, &moves, &transform);
+        let start = Place {
+            index: 0,
+            cursor: 0,
+            next_dwell: 0,
+            last_cut: None,
+        };
+        let end = matching.advance(&start, &moves[0], Step::one(0)).unwrap();
+        assert_eq!((end.index, end.cursor), (1, 0));
+        for step in [Step::one(1), Step::run((0, 2))] {
+            let past = matching.advance(&start, &moves[0], step);
+            assert!(
+                matches!(past, Err(ExportError::SafetyCheckDefect { .. })),
+                "{step:?}: {past:?}"
+            );
+        }
+    }
+
+    /// #711: S10 reads a falling cut's vertical rate from its feed. With
+    /// no feed the rate was 0, under every plunge rate; it is now above
+    /// every one. S3 refuses such a cut first, and S10 no longer leans on
+    /// that.
+    #[test]
+    fn check_descent_rate_fails_closed_on_a_cut_without_feed() {
+        let (project, op, tool) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let at = |z: f64| MachinePosition {
+            x: Some(10.0),
+            y: Some(10.0),
+            z: Some(z),
+        };
+        let plunge = |feed: Option<f64>| MachineMove {
+            line: 7,
+            kind: MotionKind::Linear,
+            from: at(5.0),
+            to: at(-1.0),
+            feed,
+            units: Units::Mm,
+            arc: crate::parse::ArcWords::default(),
+        };
+        let op = Operation::Profile(op);
+        check_descent_rate(&plunge(Some(300.0)), &op, &tool, &transform).unwrap();
+        assert_eq!(
+            descent_rate_mm_min(&plunge(None), &transform),
+            Some(f64::INFINITY)
+        );
+        let err = check_descent_rate(&plunge(None), &op, &tool, &transform).unwrap_err();
+        assert!(
+            matches!(err, ExportError::EntryTooSteep { line: 7, .. }),
+            "{err:?}"
+        );
+    }
+
+    /// Review 1.10, #711: S7 widens a cut by its operation's tool radius.
+    /// A cut on a line of no operation was checked as a point; it is
+    /// refused, here too and not only in the modal rules before it.
+    #[test]
+    fn check_on_stock_fails_closed_on_a_cut_outside_every_span() {
+        let (project, _, _) = fixture();
+        let post = project.post_processor.resolve().unwrap();
+        let transform = MachineTransform::new(&project, &post).unwrap();
+        let text = "G21 G90\nG54\nG0 Z5\nG0 X50 Y50\nG1 Z-1 F300\n";
+        let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
+        let err = check_on_stock(&blocks, &post, &transform, &project.stock, 6.0, &[]).unwrap_err();
+        assert!(
+            matches!(err, ExportError::CutOutsideOperation { line: 5 }),
+            "{err:?}"
+        );
     }
 
     mod arc_fit;

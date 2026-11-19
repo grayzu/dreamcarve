@@ -154,8 +154,7 @@ pub(super) fn check_male(text: &str, project: &Project, op: &InlayOp) -> Result<
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(&project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(&project, &op, &RunLabel::Main, &tool, board);
-    let tabs = material::tab_spines(&project, &op);
+    let (material, tabs) = Material::held_run(&project, &op, &RunLabel::Main, &tool, board);
     let toolpath = Toolpath::default();
     let span = OpSpan {
         op: &op,
@@ -600,8 +599,7 @@ pub(super) fn check_run(
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(&project, &post).unwrap();
     let blocks = parse_program_with(text, &CycleModel::of(&post)).unwrap();
-    let material = Material::of_run(&project, &op, label, &tool, board);
-    let tabs = material::run_tab_spines(&project, &op, label, &tool, board);
+    let (material, tabs) = Material::held_run(&project, &op, label, &tool, board);
     let toolpath = Toolpath::default();
     let span = OpSpan {
         op: &op,
@@ -695,7 +693,9 @@ fn cut_out_plunge_into_a_tab_fails() {
         .expect("the end mill");
     let operation = Operation::Inlay(op.clone());
     assert_eq!(
-        material::run_tab_spines(&project, &operation, &label, &tool, Board::Male).len(),
+        material::run_tab_spines(&project, &operation, &label, &tool, Board::Male)
+            .expect("the tabs resolve")
+            .len(),
         7,
         "four round the rectangle; three round the square, whose 45 mm path (#461) is too short for four"
     );
@@ -744,6 +744,54 @@ fn cut_out_plunge_into_a_tab_fails() {
         tab.x_mm + 8.0
     };
     check_run(&plunge(beside, -11.0), &project, &op, &label, "t3").unwrap();
+}
+
+/// #711: a cut-out whose tab request cannot be placed (a width below 0,
+/// which the generator refuses) was held as a cut-out with no tab. Its
+/// tabs do not resolve, so the run has no material: a plunge on its path
+/// that passes with the request as drawn is off the material.
+#[test]
+fn cut_out_placed_fails_closed_on_a_request_that_cannot_be_placed() {
+    let project = two_shapes();
+    let label = RunLabel::CutOut(ToolId::new("t3"));
+    let tool = project
+        .tools
+        .iter()
+        .find(|t| t.id.as_str() == "t3")
+        .cloned()
+        .expect("the end mill");
+    let with = |tabs: dc_project::TabSpec| {
+        let op = InlayOp {
+            cut_out: Some(cut_out(Some(tabs))),
+            ..inlay(Board::Male, "t2", 1.0, 6.0)
+        };
+        let mut project = project.clone();
+        project.operations = vec![Operation::Inlay(op.clone())];
+        (project, op)
+    };
+    // On the cut-out's path below the mirrored rectangle (#461), to 2 mm
+    // below the stock top: above every tab's top.
+    let plunge = program_at(55.0, 16.5875, "G1 Z-2 F300\n");
+
+    let (placed, op) = with(four_tabs());
+    assert!(material::cut_out_placed(&placed, &op, &tool, Board::Male).is_some());
+    check_run(&plunge, &placed, &op, &label, "t3").unwrap();
+
+    let (unplaced, op) = with(dc_project::TabSpec {
+        width_mm: -1.0,
+        ..four_tabs()
+    });
+    assert!(material::cut_out_placed(&unplaced, &op, &tool, Board::Male).is_none());
+    let (held, tabs) = Material::held_run(
+        &unplaced,
+        &Operation::Inlay(op.clone()),
+        &label,
+        &tool,
+        Board::Male,
+    );
+    assert!(matches!(held, Material::Unresolved), "{held:?}");
+    assert!(tabs.is_empty());
+    assert_off(check_run(&plunge, &unplaced, &op, &label, "t3"), 6);
 }
 
 /// #443: a cut-out's S1 floor is its own through-cut allowance, not the

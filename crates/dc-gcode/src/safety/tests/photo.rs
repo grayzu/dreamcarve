@@ -44,14 +44,13 @@ fn check_photo(text: &str, project: &Project) -> Result<(), ExportError> {
         .expect("its tool");
     let post = project.post_processor.resolve().unwrap();
     let transform = MachineTransform::new(project, &post).unwrap();
-    let material = Material::of_run(
+    let (material, tabs) = Material::held_run(
         project,
         &op,
         &RunLabel::Main,
         &tool,
         dc_project::Board::Female,
     );
-    let tabs = material::tab_spines(project, &op);
     assert!(tabs.is_empty());
     let toolpath = Toolpath::default();
     let tolerances = Tolerances {

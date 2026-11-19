@@ -550,6 +550,18 @@ pub enum ExportError {
         /// moves if extra motion follows the last.
         index: usize,
     },
+    /// The safety pass could not finish one of its own checks: a lookup
+    /// into data the pass built itself missed (code review 1.1, #711;
+    /// `crate::material`'s module docs, "Fail closed"). A defect in
+    /// DreamCarve, never in the project. A check that could not be
+    /// finished has not passed, so no program is produced.
+    #[error(
+        "the safety pass could not finish its own check ({check}); this is a defect in DreamCarve, not in the project, and no program was written"
+    )]
+    SafetyCheckDefect {
+        /// The rule and what missed, in words.
+        check: &'static str,
+    },
     /// #283: the project's clearance height is below an operation's safe
     /// Z, so a link between parts would run lower than one between passes.
     /// Validation refuses such a project first.

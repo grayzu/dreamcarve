@@ -83,7 +83,7 @@ use crate::arcfit::{self, EmitOptions, Fitted, SubArc};
 use crate::ascii;
 use crate::canned::{Cycle, CycleWords, Step, steps_at_hole};
 use crate::format::{decimal_places, format_fixed, format_number, read_back};
-use crate::material::{self, Material, TabSpine};
+use crate::material::{Material, TabSpine};
 use crate::parse::{ArcWords, Block, MachineMove, MachinePosition, MotionKind};
 use crate::safety::{self, DWELL_TOLERANCE_S, Extents, OpSpan, Tolerances};
 use crate::transform::MachineTransform;
@@ -996,25 +996,19 @@ fn emit_enabled(
     // may cut (S9, S17) comes from the project, not from the generator,
     // and per tool run: a carve's clearing run is held to its floor
     // (#406, #408), a male Inlay's cut-out to its floor ring (#443).
-    let materials: Vec<Material> = planned
+    // #337: and the tabs each must leave standing, a cut-out's too. A
+    // run whose tabs do not resolve has no material (#711).
+    let held: Vec<(Material, Vec<TabSpine>)> = planned
         .iter()
         .zip(enabled)
         .map(|(&(op, tool, ..), entry)| {
-            Material::of_run(project, op, &entry.label, tool, entry.board)
-        })
-        .collect();
-    // #337: and the tabs each must leave standing, a cut-out's too.
-    let tabs: Vec<Vec<TabSpine>> = planned
-        .iter()
-        .zip(enabled)
-        .map(|(&(op, tool, ..), entry)| {
-            material::run_tab_spines(project, op, &entry.label, tool, entry.board)
+            Material::held_run(project, op, &entry.label, tool, entry.board)
         })
         .collect();
     let spans: Vec<OpSpan<'_>> = planned
         .iter()
         .zip(lines)
-        .zip(materials.iter().zip(&tabs))
+        .zip(&held)
         .map(
             |((&(op, tool, toolpath, ..), lines), (material, tabs))| OpSpan {
                 op,
