@@ -518,6 +518,9 @@ flute_length = "Flute length"
 detail_tip = "tip {value}"
 angle_included = "{angle}°"
 angle_per_side = "{angle}°/side"
+# What a row's red dot means, for assistive tools; its tooltip names the
+# values.
+lacks_value = "Has a value still to set"
 saved = "Saved “{name}” to the library as {id}"
 already_saved = "“{name}” is already in the library as {id}"
 save_failed = "Cannot save “{name}” to the library: {reason}"
@@ -558,6 +561,10 @@ column_feed = "Feed"
 column_plunge = "Plunge"
 column_rpm = "RPM"
 column_product = "Product"
+# What a row's cells say to assistive tools, each under its heading; a
+# value the tool still needs is drawn as a red dash.
+row_cell = "{column} {value}"
+row_cell_unset = "{column} not set"
 no_vendor = "No vendor"
 group = "{vendor} · {count}"
 in_project = "in project"
@@ -608,6 +615,8 @@ status_skipped = "Skipped: {reason}"
 # #685: a tapered ball nose imported with values unset, named by the
 # editor's labels.
 review_unset = "Still to set: {fields}"
+status_unset = "{status} · {unset}"
+review_skipped_item = "{name}: {reason}"
 review_row = "{name} · {status}"
 import_one = "Import 1 tool"
 import_many = "Import {count} tools"

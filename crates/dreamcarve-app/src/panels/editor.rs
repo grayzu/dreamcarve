@@ -487,10 +487,17 @@ fn render(ui: &mut Ui, cx: &Cx<'_>, row: &'static Row, out: &mut Vec<Action>) {
         }
         _ => {}
     }
-    // The lines under it: a V-bit's cone, an Inlay's derived line and the
-    // board under its band, an alert in red with its glyph.
+    // The lines under it (`editor::notes`): under a tool picker a V-bit's
+    // cone height or a tapered ball nose's cutting height (#685), the
+    // board under an Inlay's band, and an Inlay's derived lines, the last
+    // of which is the seat line when a tapered ball nose cuts it; an
+    // alert in red with its glyph. The derived row has no field, so its
+    // lines, which are sentences, take the row's whole width.
+    let whole_width = matches!(row.kind, FieldKind::InlayDerived);
     for note in editor::notes(cx.project, cx.strings, cx.op, &slot) {
-        if note.alert {
+        if whole_width {
+            row::line(ui, note.alert, &note.text);
+        } else if note.alert {
             row::message(ui, Tier::Error, &note.text);
         } else {
             row::hint(ui, &note.text);

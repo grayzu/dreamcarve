@@ -73,17 +73,21 @@ pub enum KindFilter {
     Engraver,
     /// Drills.
     Drill,
+    /// Tapered ball noses (#685).
+    TaperedBallNose,
 }
 
 impl KindFilter {
-    /// The choices, in the dropdown's order.
-    pub const ALL: [Self; 6] = [
+    /// The choices, in the dropdown's order: every type, then the types
+    /// as the editor's dropdown lists them ([`KindChoice::ALL`]).
+    pub const ALL: [Self; 7] = [
         Self::All,
         Self::EndMill,
         Self::BallNose,
         Self::VBit,
         Self::Engraver,
         Self::Drill,
+        Self::TaperedBallNose,
     ];
 
     /// The choice's name in the dropdown.
@@ -96,6 +100,7 @@ impl KindFilter {
             Self::VBit => StrKey::AppKindVBit,
             Self::Engraver => StrKey::AppKindEngraver,
             Self::Drill => StrKey::AppKindDrill,
+            Self::TaperedBallNose => StrKey::AppKindTaperedBallNose,
         }
     }
 
@@ -110,6 +115,7 @@ impl KindFilter {
                 | (Self::VBit, ToolKind::VBit { .. })
                 | (Self::Engraver, ToolKind::Engraver)
                 | (Self::Drill, ToolKind::Drill)
+                | (Self::TaperedBallNose, ToolKind::TaperedBallNose { .. })
         )
     }
 }

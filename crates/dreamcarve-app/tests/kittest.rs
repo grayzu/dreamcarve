@@ -6198,3 +6198,380 @@ fn save_on_untitled_asks_where_and_cancel_cancels_all() {
     }
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// Slice D6, area C (#685; capabilities 63, 66b, 68, 68a): the tapered ball
+// nose in the window.
+
+/// Types `text` into the Inspector's field `label` and leaves it with
+/// Enter.
+fn type_in_field(h: &mut Harness<'_, dreamcarve_app::Shell>, label: &str, text: &str) {
+    h.get_by_role_and_label(Role::TextInput, label).focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, label)
+        .type_text(text);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+}
+
+/// A 90° V-bit `id` named `name`, with the rates of the project's second
+/// tool and no number.
+fn v_bit_90(h: &Harness<'_, dreamcarve_app::Shell>, id: &str, name: &str) -> dc_project::Tool {
+    dc_project::Tool {
+        id: dc_project::ToolId::new(id),
+        name: name.into(),
+        number: None,
+        cutter: dc_project::ToolKind::VBit {
+            included_angle_deg: 90.0,
+        },
+        ..h.state().app().project().tools[1].clone()
+    }
+}
+
+/// How many rows of the Tools list show the red dot, as assistive tools
+/// read it.
+fn rows_lacking_a_value(h: &Harness<'_, dreamcarve_app::Shell>) -> usize {
+    h.query_all_by_label("Has a value still to set").count()
+}
+
+/// Capability 63 and 66b (#685): choosing *Tapered ball nose* in the type
+/// dropdown, the sixth type, writes the cutter with none of its three
+/// values set, one undo step, and the editor draws *Tip diameter*, *Taper
+/// per side* and *Flute length* between the type and *Diameter*, each
+/// with the required-field look and the file's message as its tooltip.
+/// The row keeps its red dot until the last is typed; each value typed is
+/// one more step, nothing is invented, and the row's second line then
+/// names the tip and the taper per side.
+#[test]
+fn tapered_ball_nose_fields_are_required_until_typed() {
+    let dir = scratch("tapered-fields");
+    let plaque = copy_fixture("plaque.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = Harness::builder()
+        .with_size(egui::vec2(1280.0, 800.0))
+        .with_step_dt(0.1)
+        .build_eframe(|cc| {
+            dreamcarve_app::Shell::new(cc, options(&dir.join("config"), Some(plaque), &dialogs))
+                .expect("the shell starts")
+        });
+    h.run();
+    go_to(&mut h, "Tools");
+    let own = ["Tip diameter", "Taper per side", "Flute length"];
+    h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+        .click();
+    h.run();
+    for label in own {
+        assert!(
+            h.query_by_role_and_label(Role::TextInput, label).is_none(),
+            "an end mill has no {label}"
+        );
+    }
+    let lacking = rows_lacking_a_value(&h);
+    let steps = undo_steps(&h);
+
+    // The dropdown lists the six types; the last is the tapered ball nose.
+    h.get_by_label("Type").click();
+    h.run();
+    for kind in [
+        "End mill",
+        "Ball nose",
+        "V-bit",
+        "Engraver",
+        "Drill",
+        "Tapered ball nose",
+    ] {
+        assert!(h.query_all_by_label(kind).next().is_some(), "{kind}");
+    }
+    h.get_by_label("Tapered ball nose").click();
+    h.run();
+    let tool = |h: &Harness<'_, dreamcarve_app::Shell>| {
+        h.state()
+            .app()
+            .project()
+            .tools
+            .iter()
+            .find(|t| t.name == "1/4 end mill")
+            .expect("the tool")
+            .clone()
+    };
+    assert_eq!(
+        tool(&h).cutter,
+        dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: None,
+            taper_angle_deg: None,
+            flute_length_mm: None,
+        },
+        "nothing is invented"
+    );
+    assert_eq!(undo_steps(&h), steps + 1, "the switch is one step");
+    assert_eq!(
+        rows_lacking_a_value(&h),
+        lacking + 1,
+        "the row takes the red dot"
+    );
+
+    // The three fields, in order, between the type and the diameter.
+    let top = |h: &Harness<'_, dreamcarve_app::Shell>, label: &str| {
+        h.get_by_role_and_label(Role::TextInput, label).rect().min.y
+    };
+    let order = ["Name", own[0], own[1], own[2], "Diameter", "Flutes", "Feed"];
+    for pair in order.windows(2) {
+        assert!(
+            top(&h, pair[0]) < top(&h, pair[1]),
+            "{} is above {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    assert!(
+        h.query_by_role_and_label(Role::TextInput, "Angle")
+            .is_none(),
+        "the included angle is a V-bit's"
+    );
+    // Each is required, with the file's message as its tooltip.
+    for (label, field) in own.into_iter().zip([
+        dc_app::tools::ToolField::TipDiameter,
+        dc_app::tools::ToolField::Taper,
+        dc_app::tools::ToolField::FluteLength,
+    ]) {
+        let message = dc_app::tools::required(&tool(&h), field).expect("it is required");
+        assert!(
+            message.contains(field.file_name()),
+            "the file names it: {message}"
+        );
+        assert_required(&mut h, label, &message);
+    }
+    assert_eq!(
+        h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+            .value()
+            .as_deref(),
+        Some("6.35 mm · T1"),
+        "an unset value is the row's red dot, not a made-up figure"
+    );
+
+    // Typed, one step each: the marks go, and the row names what it is.
+    for (n, (label, text)) in own.into_iter().zip(["0.762", "6.7", "19.05"]).enumerate() {
+        assert_eq!(rows_lacking_a_value(&h), lacking + 1, "before {label}");
+        type_in_field(&mut h, label, text);
+        assert_eq!(undo_steps(&h), steps + 2 + n, "{label} is one step");
+        let field = h.get_by_role_and_label(Role::TextInput, label);
+        assert_eq!(field.value().as_deref(), Some(text), "{label}");
+        assert_ne!(
+            field.accesskit_node().placeholder(),
+            Some("Required"),
+            "{label} is no longer required"
+        );
+    }
+    assert_eq!(
+        tool(&h).cutter,
+        dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: Some(0.762),
+            taper_angle_deg: Some(6.7),
+            flute_length_mm: Some(19.05),
+        }
+    );
+    assert_eq!(rows_lacking_a_value(&h), lacking, "the red dot goes");
+    assert_eq!(
+        h.get_by_role_and_label(Role::ListItem, "1/4 end mill")
+            .value()
+            .as_deref(),
+        Some("6.35 mm · tip 0.762 mm · 6.7°/side · T1"),
+        "the cutting diameter, the tip, the taper per side, the number"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Capability 63 (#685): the Tools list's second line is
+/// `tools::row_detail`'s. On the tapered ball nose test part a tapered
+/// ball nose's row names its cutting diameter, its tip and its angle per
+/// side; an end mill's its diameter alone; and a V-bit's included angle
+/// stands unlabelled by *side*, so the two cannot be mixed up.
+#[test]
+fn tools_list_names_the_tip_and_the_angle_per_side() {
+    let dir = scratch("tapered-rows");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        800.0,
+    );
+    let v_bit = v_bit_90(&h, "t9", "90 V");
+    h.state_mut()
+        .app_mut()
+        .run(Command::AddTools(vec![v_bit]))
+        .unwrap();
+    go_to(&mut h, "Tools");
+    let detail = |name: &str| {
+        h.get_by_role_and_label(Role::ListItem, name)
+            .value()
+            .unwrap_or_default()
+    };
+    assert_eq!(
+        detail("0.762 mm tip tapered ball nose"),
+        "6.35 mm · tip 0.762 mm · 6.7°/side · T2"
+    );
+    assert_eq!(
+        detail("2.286 mm tip tapered ball nose"),
+        "6.35 mm · tip 2.286 mm · 6.7°/side · T1"
+    );
+    assert_eq!(detail("1/8 end mill"), "3.175 mm · T3");
+    assert_eq!(detail("90 V"), "6.35 mm · 90°");
+    // Every line is the model's.
+    let app = h.state().app();
+    for tool in &app.project().tools {
+        assert_eq!(
+            detail(&tool.name),
+            dc_app::tools::row_detail(app.strings(), tool, dc_project::Units::Mm),
+            "{}",
+            tool.name
+        );
+    }
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Capabilities 68 and 68a (#685): cut with a tapered ball nose, a
+/// V-Carve's Tool row shows the bit's cutting height under its picker and
+/// an Inlay's says one bit cuts both boards; the Inlay's derived lines
+/// under Depth compare the flank's engagement with that cutting height
+/// and end with the seat line, `check`'s figures, in millimetres. The
+/// lines are the model's (`editor::notes`, `tool_note`, `seat_line`).
+#[test]
+fn carve_editors_show_the_cutting_height_and_the_seat_line() {
+    let dir = scratch("tapered-notes");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        900.0,
+    );
+    let op = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| operation_of(h, id);
+    let tool_of = |h: &Harness<'_, dreamcarve_app::Shell>, id: &str| {
+        let app = h.state().app();
+        let tool = op(h, id).tool().clone();
+        let tool = app.project().tools.iter().find(|t| t.id == tool).unwrap();
+        dc_app::editor::tool_note(app.project(), app.strings(), tool).expect("a cutting height")
+    };
+
+    // The V-Carve, cut with the 2.286 mm tip: its cone reaches the
+    // cutting diameter below the flutes' top.
+    open_operation(&mut h, "DC carve");
+    let carve_note = tool_of(&h, "op1");
+    assert!(
+        carve_note.starts_with("cutting height 18.3") && carve_note.ends_with(" mm"),
+        "{carve_note}"
+    );
+    assert!(h.query_by_label(&carve_note).is_some(), "{carve_note}");
+
+    // The Inlay, cut with the 0.762 mm tip, whose flutes end first.
+    open_operation(&mut h, "DC inlay");
+    let inlay_note = tool_of(&h, "op2");
+    assert_eq!(inlay_note, "cutting height 19.05 mm");
+    assert!(
+        h.query_by_label("one bit for both boards · cutting height 19.05 mm")
+            .is_some(),
+        "under the Inlay's Tool picker"
+    );
+    assert!(
+        h.query_by_label_contains("seat: moves").is_none(),
+        "the derived lines are Depth's, closed until opened"
+    );
+    open_group(&mut h, "Depth");
+    let app = h.state().app();
+    let seat = dc_app::editor::seat_line(app.project(), app.strings(), &op(&h, "op2"))
+        .expect("an Inlay cut with a tapered ball nose has a seat line");
+    assert!(
+        seat.starts_with("seat: moves ")
+            && seat.contains(" mm per 0.5° of taper, ")
+            && seat.ends_with(" mm per 0.05 mm of tip radius; test-fit before gluing"),
+        "{seat}"
+    );
+    assert!(h.query_by_label(&seat).is_some(), "{seat}");
+    assert!(
+        h.query_by_label_contains("of the tapered ball nose's 19.05 mm cutting height")
+            .is_some(),
+        "the engagement is compared with the cutting height"
+    );
+    // The seat line is the third of the derived lines.
+    let engagement = h
+        .get_by_label_contains("of the tapered ball nose's 19.05 mm cutting height")
+        .rect();
+    let seat_at = h.get_by_label(&seat).rect();
+    assert!(engagement.min.y < seat_at.min.y, "the seat line is last");
+    assert!(
+        seat_at.max.x <= h.state().layout().inspector.unwrap().max.x,
+        "the seat line wraps inside the Inspector"
+    );
+    // A V-bit has no seat line.
+    let v_bit = v_bit_90(&h, "t9", "90 V");
+    h.state_mut()
+        .app_mut()
+        .run(Command::AddTools(vec![v_bit]))
+        .unwrap();
+    let dc_project::Operation::Inlay(mut inlay) = op(&h, "op2") else {
+        panic!("op2 is an Inlay");
+    };
+    inlay.tool = dc_project::ToolId::new("t9");
+    h.state_mut()
+        .app_mut()
+        .run(Command::UpdateOperation(dc_project::Operation::Inlay(
+            inlay,
+        )))
+        .unwrap();
+    h.run();
+    assert!(
+        h.query_by_label_contains("seat: moves").is_none(),
+        "a V-bit's Inlay has no seat line"
+    );
+    assert!(
+        h.query_by_label_contains("one bit for both boards · cone height")
+            .is_some(),
+        "a V-bit shows its cone height"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The open item of #685, in the window: on a project whose only carving
+/// bit is a tapered ball nose, *Add ▸ V-Carve* makes a V-Carve that cuts
+/// with it (the first tool its picker offers), not one with no tool.
+#[test]
+fn a_new_carve_takes_the_tapered_ball_nose() {
+    let dir = scratch("tapered-new-carve");
+    let part = copy_fixture("dc-tbn.dcv", &dir);
+    let dialogs = QueuedDialogs::default();
+    let mut h = harness(
+        options(&dir.join("config"), Some(part), &dialogs),
+        1280.0,
+        800.0,
+    );
+    h.state_mut()
+        .app_mut()
+        .select(dc_app::Selection::Instances(vec![
+            dc_project::InstanceId::new("i1"),
+        ]));
+    go_to(&mut h, "Operations");
+    let before = h.state().app().project().operations.len();
+    h.get_by_role_and_label(Role::Button, "Add").click();
+    h.run();
+    h.get_by_role_and_label(Role::MenuItem, "V-Carve").click();
+    h.run();
+    let project = h.state().app().project();
+    assert_eq!(project.operations.len(), before + 1);
+    let added = project.operations.last().unwrap();
+    assert!(matches!(added, dc_project::Operation::VCarve(_)));
+    assert_eq!(
+        added.tool().as_str(),
+        "t2",
+        "the first tapered ball nose, as its picker offers"
+    );
+    assert!(
+        !h.state()
+            .app()
+            .warnings()
+            .iter()
+            .any(|f| f.code.as_deref() == Some("dangling_tool")),
+        "the new carve names a tool"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

@@ -583,3 +583,162 @@ fn redesign_d3_screenshots() {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
+
+/// Where the slice D6 pictures are committed.
+fn d6_dir() -> PathBuf {
+    std::env::var_os("DC_REVIEW_DIR").map_or_else(
+        || common::repo_root().join("docs/specs/phase-4/review/d6"),
+        PathBuf::from,
+    )
+}
+
+/// A tapered ball nose named `name` under vendor *IDC Woodcraft*, with
+/// the rates of `like` and the cutter values given: a 6.35 mm cutting
+/// diameter, the tip, and (with a taper) 19.05 mm of flute.
+fn tapered_like(
+    like: &dc_project::Tool,
+    name: &str,
+    tip_mm: Option<f64>,
+    taper_deg: Option<f64>,
+) -> dc_project::Tool {
+    dc_project::Tool {
+        name: name.into(),
+        vendor: Some("IDC Woodcraft".into()),
+        product_id: None,
+        number: None,
+        cutter: dc_project::ToolKind::TaperedBallNose {
+            tip_diameter_mm: tip_mm,
+            taper_angle_deg: taper_deg,
+            flute_length_mm: taper_deg.map(|_| 19.05),
+        },
+        diameter_mm: 6.35,
+        flutes: 2,
+        ..like.clone()
+    }
+}
+
+/// The tapered ball nose's part of the slice D6 set (#685; the pictures'
+/// half of the worklog's "What the window must draw for slice C3"), each
+/// in dark and light at 1×, on the tapered ball nose test part
+/// (`tests/fixtures/dc-tbn.dcv`): the Tools step with a tapered ball nose
+/// whose values are still unset, its three fields and its rates marked
+/// required; the Tool Library with tapered ball nose rows (the Tip
+/// column, the angle per side, the unset mark); and an Inlay cut with a
+/// tapered ball nose, its editor showing the bit's cutting height and the
+/// seat line.
+///
+/// ```sh
+/// cargo test -p dreamcarve-app --test review redesign_d6_tools -- --ignored
+/// ```
+#[test]
+#[ignore = "writes the committed D6 review pictures; run by hand"]
+fn redesign_d6_tools() {
+    let out = d6_dir();
+    std::fs::create_dir_all(&out).unwrap();
+    let looks = [dc_app::Theme::Dark, dc_app::Theme::Light];
+    SCALE.set(1.0);
+    let dir = scratch("review-d6-tools");
+
+    // A library to show: the Fusion fixtures as `tools import` writes
+    // them, and two tapered ball noses, one measured and one not.
+    let mut library = dc_library::Library::default();
+    for name in ["fusion/sample.tools", "fusion/vendors.json"] {
+        let bytes = std::fs::read(fixture(name)).unwrap();
+        library = dc_app::library::import(&library, &bytes, false)
+            .unwrap()
+            .library;
+    }
+    let like = library
+        .tools
+        .iter()
+        .find(|t| t.tool.name == "1/4 in Flat End Mill")
+        .unwrap()
+        .tool
+        .clone();
+    let measured = dc_project::Tool {
+        product_id: Some("UHD-25".into()),
+        ..tapered_like(&like, "Ultra-High Detail", Some(0.762), Some(6.7))
+    };
+    let unmeasured = dc_project::Tool {
+        feed_mm_min: None,
+        ..tapered_like(&like, "Fine Detail", None, None)
+    };
+    for tool in [measured, unmeasured] {
+        dc_library::add(&mut library, tool, None).unwrap();
+    }
+    std::fs::create_dir_all(dir.join("config")).unwrap();
+    std::fs::write(
+        dir.join("config/tools.json"),
+        dc_library::save(&library).unwrap(),
+    )
+    .unwrap();
+
+    let Some(mut h) = window(&dir, Some(fixture("dc-tbn.dcv")), 1280.0, 800.0) else {
+        return;
+    };
+
+    // The Tools step: a tapered ball nose just made, nothing measured yet.
+    let project = h.state().app().project().clone();
+    let dc_app::Command::NewTool(placeholder) = dc_app::tools::new_tool(&project) else {
+        panic!("New tool makes a tool");
+    };
+    let dc_app::tools::KindSwitch::Update(tapered) =
+        dc_app::tools::set_kind(&placeholder, dc_app::tools::KindChoice::TaperedBallNose)
+    else {
+        panic!("a placeholder becomes a tapered ball nose");
+    };
+    let tapered = dc_project::Tool {
+        name: "New tapered ball nose".into(),
+        ..*tapered
+    };
+    h.state_mut()
+        .app_mut()
+        .run(dc_app::Command::NewTool(tapered))
+        .unwrap();
+    settle(&mut h);
+    go_to(&mut h, "Tools");
+    h.get_by_role_and_label(Role::ListItem, "New tapered ball nose")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "04-tools-tapered-ball-nose-unset", &looks);
+
+    // The Tool Library: the first vendor's group closed, so the tapered
+    // ball noses' group stands beside V-bits and drills; the measured
+    // one selected, the other showing what it still needs.
+    click(&mut h, "Tool Library…");
+    h.get_by_role(Role::Dialog)
+        .get_by_label("Acme Router Bits · 5")
+        .click();
+    h.run();
+    for name in ["Fine Detail", "Ultra-High Detail"] {
+        h.get_by_role(Role::Dialog)
+            .get_by_role_and_label(Role::ListItem, name)
+            .scroll_to_me();
+        h.run();
+    }
+    h.get_by_role(Role::Dialog)
+        .get_by_role_and_label(Role::ListItem, "Ultra-High Detail")
+        .click();
+    h.run();
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "05-tool-library-tapered-ball-nose", &looks);
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // The Inlay cut with the 0.762 mm tip: the cutting height under the
+    // Tool picker, and under Depth the male's planes, the engagement
+    // against the cutting height, and the seat line.
+    open_operation(&mut h, "DC inlay");
+    let depth = h
+        .query_all_by_role_and_label(Role::Button, "Depth")
+        .max_by(|a, b| a.rect().min.x.total_cmp(&b.rect().min.x))
+        .expect("the Depth group");
+    depth.click();
+    h.run();
+    settle(&mut h);
+    park_pointer(&mut h);
+    shoot_in(&mut h, &out, "06-inlay-tapered-ball-nose-seat-line", &looks);
+    drop(h);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

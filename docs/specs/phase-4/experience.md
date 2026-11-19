@@ -272,7 +272,9 @@ the Inspector default 328, min 300; the Viewport min 520 (so 1280 × 768
 holds all four at minimum with the five 8-px gaps, spec 50). Labels in editors take a
 112-px column; the field fills the rest;
 the unit occupies the last 28 px inside the field. Tool-Library sheet
-960 × 640 default, min 800 × 520, its right (editing) pane 320 wide;
+1100 × 640 default (its table's ten columns, a type's name whole among
+them, leave the name 120 px), min 800 × 520, its right (editing) pane
+320 wide;
 Import and Export sheets 560 wide, the export result the same sheet;
 unsaved-changes sheet 420 wide; the start screen's content 624 wide.
 

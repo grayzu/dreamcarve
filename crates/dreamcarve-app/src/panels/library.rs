@@ -11,7 +11,12 @@
 //! product, diameter), a type filter, *New tool*, *Duplicate* and
 //! *Delete*, and the tools grouped by vendor (a collapsible header per
 //! vendor, *No vendor* last), each row ticked for *Add to project* or
-//! *Delete*; rows already in the project are marked. The right edits the
+//! *Delete*; rows already in the project are marked. The table's columns
+//! and cells are the model's (`Column::ALL`, `row`; #685): the Ø column
+//! is the cutting diameter for every type, a tapered ball nose's tip has
+//! the column of its own, the Angle column says which angle it holds
+//! (`90°`, `6.7°/side`), and a value a tool still needs is a red dash in
+//! its cell, never a value. The right edits the
 //! selected tool in place with the project tool editor's rows: selecting
 //! is editing, with no Edit button. A field commits on leave and writes
 //! the library at once (no undo; *Revert changes* puts the tool back as
@@ -25,7 +30,10 @@
 //! import review in place of the panes (slice 31, #623; capability 64b;
 //! never a sheet above a sheet): the counts `tools import` reports, *Keep
 //! mine* / *Replace with imported* (`--replace`) only when a tool is
-//! *Changed*, and the file's tools with their status. Nothing is written
+//! *Changed*, and the file's tools with their status
+//! (`model::review_status`; a skipped tool's says why, and a tapered ball
+//! nose that comes in with values unset names them, *Still to set: Taper
+//! per side, Flute length*). Nothing is written
 //! until *Import*, which merges into the library as it is on disk then,
 //! writes it through the staged write and returns to the table with a
 //! banner whose *Details* reopens the review read-only. *Back* (or
@@ -39,7 +47,7 @@
 
 use std::collections::BTreeSet;
 
-use dc_app::library::{self as model, Filter, KindFilter, LibraryEdit};
+use dc_app::library::{self as model, Cell, Column, Filter, KindFilter, LibraryEdit};
 use dc_app::tools::{self, KindChoice, ToolField};
 use dc_app::{App, Command, StrKey, Strings};
 use dc_library::import::{Incoming, Outcome, Review, ReviewItem, Status};
@@ -57,8 +65,10 @@ use crate::widgets::checkbox::paint_box;
 use crate::widgets::icon::Icon;
 use crate::widgets::segmented::segmented;
 
-/// The sheet's default size, px (`experience.md`, section 3).
-const SIZE: egui::Vec2 = egui::vec2(960.0, 640.0);
+/// The sheet's default size, px (`experience.md`, section 3): wide enough
+/// for the table's ten columns, a type's name whole among them, to leave
+/// the name 120 px beside the editing pane.
+const SIZE: egui::Vec2 = egui::vec2(1100.0, 640.0);
 /// Its margin, px.
 const MARGIN_PX: i8 = 24;
 /// The editing pane's width, px (section 3).
@@ -237,28 +247,9 @@ fn read(paths: &Paths) -> Result<Library, String> {
         .map_err(|e| e.to_string())
 }
 
-/// The type filter's label.
-fn kind_filter_label(strings: &Strings, kind: KindFilter) -> &str {
-    strings.get(match kind {
-        KindFilter::All => StrKey::AppKindAll,
-        KindFilter::EndMill => StrKey::AppKindEndMill,
-        KindFilter::BallNose => StrKey::AppKindBallNose,
-        KindFilter::VBit => StrKey::AppKindVBit,
-        KindFilter::Engraver => StrKey::AppKindEngraver,
-        KindFilter::Drill => StrKey::AppKindDrill,
-    })
-}
-
 /// A cutter type's label.
 pub(crate) fn kind_label(strings: &Strings, choice: KindChoice) -> &str {
-    strings.get(match choice {
-        KindChoice::EndMill => StrKey::AppKindEndMill,
-        KindChoice::BallNose => StrKey::AppKindBallNose,
-        KindChoice::VBit => StrKey::AppKindVBit,
-        KindChoice::Engraver => StrKey::AppKindEngraver,
-        KindChoice::Drill => StrKey::AppKindDrill,
-        KindChoice::TaperedBallNose => StrKey::AppKindTaperedBallNose,
-    })
+    strings.get(choice.label())
 }
 
 /// The units the sheet shows: the library's own once chosen, else the
@@ -540,15 +531,12 @@ fn toolbar(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet, out: &mut Vec<Acti
         ui.add_space(8.0);
         egui::ComboBox::from_id_salt("library_kind")
             .icon(crate::widgets::icon::combo_chevron)
-            .width(ui.available_width().min(150.0))
-            .selected_text(kind_filter_label(strings, sheet.filter.kind))
+            .width(ui.available_width().min(170.0))
+            .height(crate::panels::tools::KIND_MENU_PX)
+            .selected_text(strings.get(sheet.filter.kind.label()))
             .show_ui(ui, |ui| {
                 for kind in KindFilter::ALL {
-                    ui.selectable_value(
-                        &mut sheet.filter.kind,
-                        kind,
-                        kind_filter_label(strings, kind),
-                    );
+                    ui.selectable_value(&mut sheet.filter.kind, kind, strings.get(kind.label()));
                 }
             })
             .response
@@ -641,39 +629,72 @@ fn search_field(ui: &mut Ui, strings: &Strings, search: &mut String, width: f32)
     }
 }
 
-/// The table's columns after the tick: label, width (0 is the rest) and
-/// whether numbers right-align. Vendor is the group, not a column
-/// (capability 64).
-/// The product cell ends with the "in project" mark.
-const COLUMNS: [(StrKey, f32, bool); 9] = [
-    (StrKey::AppLibraryColumnName, 0.0, false),
-    (StrKey::AppLibraryColumnKind, 66.0, false),
-    (StrKey::AppLibraryColumnDiameter, 54.0, true),
-    (StrKey::AppLibraryColumnAngle, 40.0, true),
-    (StrKey::AppLibraryColumnFlutes, 44.0, true),
-    (StrKey::AppLibraryColumnFeed, 48.0, true),
-    (StrKey::AppLibraryColumnPlunge, 50.0, true),
-    (StrKey::AppLibraryColumnRpm, 50.0, true),
-    (StrKey::AppLibraryColumnProduct, 72.0, false),
-];
+/// The width of the table's `column` after the tick, px; 0 is the rest,
+/// which the name takes. The columns are the model's (`Column::ALL`;
+/// capability 64): vendor is the group, not a column. The Type column
+/// holds *Tapered ball nose* whole, the Ø and Tip columns a diameter to
+/// four decimals (`0.0625` in), and the Angle column a taper to two with
+/// its label (`5.63°/side`); the product cell ends with the "in project"
+/// mark.
+const fn column_width(column: Column) -> f32 {
+    match column {
+        Column::Name => 0.0,
+        Column::Kind => 124.0,
+        Column::Diameter => 54.0,
+        Column::Tip => 54.0,
+        Column::Angle => 76.0,
+        Column::Flutes => 42.0,
+        Column::Feed => 46.0,
+        Column::Plunge => 48.0,
+        Column::Rpm => 50.0,
+        Column::Product => 64.0,
+    }
+}
 /// The "in project" mark's width at the product cell's right end, px.
 const MARK_PX: f32 = 18.0;
+/// What a cell shows for a value its tool still needs (mock-up 04): a
+/// dash, in the error colour.
+const UNSET_MARK: &str = "—";
 
-/// Each column's rect across `row` after the tick.
+/// Each column's rect across `row` after the tick, in `Column::ALL`'s
+/// order.
 fn column_rects(row: Rect) -> Vec<Rect> {
-    let fixed: f32 = COLUMNS.iter().map(|(_, w, _)| w).sum();
+    let fixed: f32 = Column::ALL.into_iter().map(column_width).sum();
     let mut x = row.left() + TICK_PX;
     let rest = (row.width() - TICK_PX - fixed).max(80.0);
-    COLUMNS
-        .iter()
-        .map(|(_, w, _)| {
-            let width = if *w > 0.0 { *w } else { rest };
+    Column::ALL
+        .into_iter()
+        .map(|column| {
+            let fixed = column_width(column);
+            let width = if fixed > 0.0 { fixed } else { rest };
             let rect =
                 Rect::from_min_size(egui::pos2(x, row.top()), egui::vec2(width, row.height()));
             x += width;
             rect
         })
         .collect()
+}
+
+/// Where a scrolled table's rows' width is kept between frames.
+fn rows_width_id(table: &str) -> Id {
+    Id::unique(("library_rows_px", table))
+}
+
+/// A table's header row `head` cut to the width its rows had in the last
+/// frame: the rows scroll, and give the scroll bar its room when there is
+/// one, so the headings are laid across the same width and each stands
+/// over its cells.
+fn header_over_rows(ui: &Ui, table: &str, head: Rect) -> Rect {
+    let width = ui
+        .data(|d| d.get_temp::<f32>(rows_width_id(table)))
+        .map_or(head.width(), |rows| rows.min(head.width()));
+    Rect::from_min_size(head.min, egui::vec2(width, head.height()))
+}
+
+/// Keeps the width `rows` of table `table`'s rows for the next frame's
+/// header ([`header_over_rows`]).
+fn remember_rows_width(ui: &Ui, table: &str, rows: f32) {
+    ui.data_mut(|d| d.insert_temp(rows_width_id(table), rows));
 }
 
 /// `text` in `rect`, one line, an ellipsis when it does not fit.
@@ -716,15 +737,24 @@ fn table(
     let palette = Palette::current(ui);
     let (head, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
-    for ((key, _, right), rect) in COLUMNS.iter().zip(column_rects(head)) {
+    let over_rows = header_over_rows(ui, "library", head);
+    for (column, rect) in Column::ALL.into_iter().zip(column_rects(over_rows)) {
+        let heading = strings.get(column.heading());
         cell(
             ui,
             rect,
-            strings.get(*key),
-            *right,
+            heading,
+            column.numeric(),
             palette.text_secondary,
             &TextStyle::Small,
         );
+        // Named for assistive tools, which the painted text is not.
+        ui.interact(
+            rect,
+            Id::unique(("library_column", heading)),
+            Sense::hover(),
+        )
+        .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ColumnHeader, true, heading));
     }
     ui.painter().hline(
         head.x_range(),
@@ -739,7 +769,7 @@ fn table(
         );
         return;
     }
-    egui::ScrollArea::vertical()
+    let rows = egui::ScrollArea::vertical()
         .id_salt("library_table")
         .auto_shrink(false)
         .show(ui, |ui| {
@@ -761,7 +791,10 @@ fn table(
                     table_row(ui, strings, units, n, state, sheet);
                 }
             }
-        });
+            ui.available_width()
+        })
+        .inner;
+    remember_rows_width(ui, "library", rows);
 }
 
 /// A vendor group's 32-px header (section 7, "Vendor group header"): the
@@ -848,8 +881,35 @@ fn paint_group_band(
     );
 }
 
+/// What a row's cells say, for assistive tools (the cells are painted):
+/// each column after the name with its heading, `Type Tapered ball nose,
+/// Ø 6.35, Tip 0.762, Angle 6.7°/side, …`; an empty cell is left out, and
+/// one whose value the tool still needs says so, `Feed not set`.
+fn row_summary(strings: &Strings, cells: &[Cell]) -> String {
+    let parts: Vec<String> = Column::ALL
+        .into_iter()
+        .zip(cells)
+        .skip(1)
+        .filter_map(|(column, cell)| {
+            let heading = strings.get(column.heading());
+            match cell {
+                Cell::Text(value) => Some(strings.fmt(
+                    StrKey::AppLibraryRowCell,
+                    &[("column", heading), ("value", value)],
+                )),
+                Cell::Unset => {
+                    Some(strings.fmt(StrKey::AppLibraryRowCellUnset, &[("column", heading)]))
+                }
+                Cell::Empty => None,
+            }
+        })
+        .collect();
+    parts.join(strings.get(StrKey::AppImportListSeparator))
+}
+
 /// One row: its tick (for *Add to project* and *Delete*) and the row
-/// itself, which selects the tool for the editing pane.
+/// itself, which selects the tool for the editing pane. Its cells are the
+/// model's (`model::row`).
 fn table_row(
     ui: &mut Ui,
     strings: &Strings,
@@ -871,7 +931,12 @@ fn table_row(
         Id::unique(("library_row", entry.id.as_str())),
         Sense::click(),
     );
-    row.widget_info(|| egui::WidgetInfo::selected(egui::Role::ListItem, true, chosen, &tool.name));
+    let cells = model::row(strings, tool, units);
+    row.widget_info(|| {
+        let mut info = egui::WidgetInfo::selected(egui::Role::ListItem, true, chosen, &tool.name);
+        info.current_text_value = Some(row_summary(strings, &cells));
+        info
+    });
     if row.clicked() && !chosen {
         sheet.selected = Some(entry.id.clone());
         sheet.held = None;
@@ -909,32 +974,6 @@ fn table_row(
         palette.text_primary
     };
     let unset = palette.status_error.text;
-    // An unset rate is a red dash in its cell (mock-up 04), never a value.
-    let rate = |v: Option<f64>| {
-        v.map_or_else(
-            || ("—".to_owned(), unset),
-            |v| (model::rate_text(v, units), colour),
-        )
-    };
-    let angle = match tool.cutter {
-        ToolKind::VBit { included_angle_deg } => format!("{included_angle_deg}°"),
-        _ => String::new(),
-    };
-    let cells = [
-        (tool.name.clone(), colour),
-        (
-            kind_label(strings, KindChoice::of(&tool.cutter)).to_owned(),
-            colour,
-        ),
-        (model::diameter_text(tool.diameter_mm, units), colour),
-        (angle, colour),
-        (tool.flutes.to_string(), colour),
-        rate(tool.feed_mm_min),
-        rate(tool.plunge_mm_min),
-        tool.rpm
-            .map_or_else(|| ("—".to_owned(), unset), |r| (r.to_string(), colour)),
-        (tool.product_id.clone().unwrap_or_default(), colour),
-    ];
     let mut rects = column_rects(rect);
     // The product cell gives its right end to the "in project" mark.
     if state.in_project
@@ -947,14 +986,31 @@ fn table_row(
         product.max.x -= MARK_PX;
         mark(ui, strings, mark_rect, &entry.id);
     }
-    for (((value, value_colour), (_, _, right)), r) in cells.iter().zip(COLUMNS.iter()).zip(&rects)
-    {
-        cell(ui, *r, value, *right, *value_colour, &TextStyle::Body);
+    for ((value, column), r) in cells.iter().zip(Column::ALL).zip(&rects) {
+        // A value the tool still needs is a red dash in its cell (mock-up
+        // 04), never a value; a cell its type has no value for is empty.
+        let (text, text_colour) = match value {
+            Cell::Text(text) => (text.as_str(), colour),
+            Cell::Unset => (UNSET_MARK, unset),
+            Cell::Empty => continue,
+        };
+        cell(
+            ui,
+            *r,
+            text,
+            column.numeric(),
+            text_colour,
+            &TextStyle::Body,
+        );
     }
     if row.hovered() {
-        // The whole name (a narrow column cuts it), then what it lacks.
-        let mut lines = vec![tool.name.clone()];
-        lines.extend(tools::unset_rates(tool).into_iter().map(|(_, m)| m));
+        // The whole name and type (narrow columns cut them), then what it
+        // lacks.
+        let mut lines = vec![
+            tool.name.clone(),
+            kind_label(strings, KindChoice::of(&tool.cutter)).to_owned(),
+        ];
+        lines.extend(tools::unset_values(tool).into_iter().map(|(_, m)| m));
         row.on_hover_text(lines.join("\n"));
     }
 }
@@ -1175,25 +1231,37 @@ fn banner(ui: &mut Ui, strings: &Strings, sheet: &mut Sheet) {
         });
 }
 
-/// The review's columns: label, width (0 is the rest) and whether numbers
-/// right-align.
-const REVIEW_COLUMNS: [(StrKey, f32, bool); 5] = [
-    (StrKey::AppLibraryColumnName, 0.0, false),
-    (StrKey::AppLibraryColumnKind, 90.0, false),
-    (StrKey::AppLibraryColumnDiameter, 64.0, true),
-    (StrKey::AppLibraryColumnFeed, 64.0, true),
-    (StrKey::AppLibraryColumnStatus, 320.0, false),
+/// The review's columns before its status, each with its width, px (0
+/// is the rest): the library table's (`model::cell`), less those a look
+/// at an import does not need. The type shows whole, and a tapered ball
+/// nose its tip and its taper per side (#685).
+const REVIEW_COLUMNS: [(Column, f32); 6] = [
+    (Column::Name, 0.0),
+    (Column::Kind, 124.0),
+    (Column::Diameter, 56.0),
+    (Column::Tip, 52.0),
+    (Column::Angle, 76.0),
+    (Column::Feed, 56.0),
 ];
+/// The review's status column, px: room for what a tapered ball nose
+/// still needs after its status.
+const REVIEW_STATUS_PX: f32 = 460.0;
 
-/// Each review column's rect across `row`.
+/// Each review column's rect across `row`: [`REVIEW_COLUMNS`]', then the
+/// status'.
 fn review_rects(row: Rect) -> Vec<Rect> {
-    let fixed: f32 = REVIEW_COLUMNS.iter().map(|(_, w, _)| w).sum();
+    let widths = || {
+        REVIEW_COLUMNS
+            .iter()
+            .map(|(_, w)| *w)
+            .chain([REVIEW_STATUS_PX])
+    };
+    let fixed: f32 = widths().sum();
     let rest = (row.width() - 8.0 - fixed).max(120.0);
     let mut x = row.left() + 8.0;
-    REVIEW_COLUMNS
-        .iter()
-        .map(|(_, w, _)| {
-            let width = if *w > 0.0 { *w } else { rest };
+    widths()
+        .map(|w| {
+            let width = if w > 0.0 { w } else { rest };
             let rect =
                 Rect::from_min_size(egui::pos2(x, row.top()), egui::vec2(width, row.height()));
             x += width;
@@ -1202,26 +1270,20 @@ fn review_rects(row: Rect) -> Vec<Rect> {
         .collect()
 }
 
-/// An item's status as its row shows it under the choice `replace`: a
-/// changed tool kept is added under its stored name; replaced, it
-/// overwrites yours.
+/// What an item's Status cell shows under the choice `replace`
+/// (capability 64b): its status as the model words it
+/// (`model::review_status`: a skipped item's says why), and, for a
+/// tapered ball nose that comes in with values unset, what is still to
+/// set (`model::review_unset`), *New · Still to set: Taper per side,
+/// Flute length*.
 fn status_text(strings: &Strings, item: &ReviewItem, replace: bool) -> String {
-    match item.status {
-        Status::New => strings.get(StrKey::AppLibraryReviewNew).to_owned(),
-        Status::Present => strings.get(StrKey::AppLibraryStatusSame).to_owned(),
-        Status::Changed => match (&item.keep, replace) {
-            (Outcome::Imported { stored_name, .. }, false) => {
-                strings.fmt(StrKey::AppLibraryStatusKept, &[("name", stored_name)])
-            }
-            _ => strings.get(StrKey::AppLibraryStatusReplaced).to_owned(),
-        },
-        Status::Skipped => {
-            let reason = match &item.keep {
-                Outcome::Skipped { reason } => reason.as_str(),
-                _ => "",
-            };
-            strings.fmt(StrKey::AppLibraryStatusSkipped, &[("reason", reason)])
-        }
+    let status = model::review_status(strings, item, replace);
+    match model::review_unset(strings, item) {
+        Some(unset) => strings.fmt(
+            StrKey::AppLibraryStatusUnset,
+            &[("status", &status), ("unset", &unset)],
+        ),
+        None => status,
     }
 }
 
@@ -1257,9 +1319,22 @@ fn review_view(ui: &mut Ui, strings: &Strings, units: Units, pending: &mut Impor
             review.count(Status::Skipped),
         ));
     }
+    // Each skipped tool with why, as `tools import` prints it: the
+    // Skipped count's tooltip (a row's status may be cut short).
+    let skipped: Vec<String> = model::skipped(review)
+        .into_iter()
+        .map(|(name, reason)| {
+            strings.fmt(
+                StrKey::AppLibraryReviewSkippedItem,
+                &[("name", name), ("reason", reason)],
+            )
+        })
+        .collect();
     ui.horizontal(|ui| {
         for (key, count) in counts {
-            count_tile(ui, strings, key, count);
+            let tip = (key == StrKey::AppLibraryReviewSkipped && !skipped.is_empty())
+                .then(|| skipped.join("\n"));
+            count_tile(ui, strings, key, count, tip.as_deref());
             ui.add_space(8.0);
         }
     });
@@ -1323,8 +1398,8 @@ fn review_view(ui: &mut Ui, strings: &Strings, units: Units, pending: &mut Impor
 }
 
 /// One count of the review: the number large, its label under it, named
-/// `13 New` for screen readers.
-fn count_tile(ui: &mut Ui, strings: &Strings, key: StrKey, count: usize) {
+/// `13 New` for screen readers; `tip`, when there is one, on hover.
+fn count_tile(ui: &mut Ui, strings: &Strings, key: StrKey, count: usize, tip: Option<&str>) {
     let palette = Palette::current(ui);
     let label = strings.get(key);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(150.0, 56.0), Sense::hover());
@@ -1360,6 +1435,9 @@ fn count_tile(ui: &mut Ui, strings: &Strings, key: StrKey, count: usize) {
         Sense::hover(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Label, true, &name));
+    if let Some(tip) = tip {
+        response.on_hover_text(tip);
+    }
 }
 
 /// The review's table: a header row, then each vendor's band and its
@@ -1368,12 +1446,17 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
     let palette = Palette::current(ui);
     let (head, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_PX), Sense::hover());
-    for ((key, _, right), rect) in REVIEW_COLUMNS.iter().zip(review_rects(head)) {
+    let headings = REVIEW_COLUMNS
+        .iter()
+        .map(|(column, _)| (column.heading(), column.numeric()))
+        .chain([(StrKey::AppLibraryColumnStatus, false)]);
+    let over_rows = header_over_rows(ui, "review", head);
+    for ((key, right), rect) in headings.zip(review_rects(over_rows)) {
         cell(
             ui,
             rect,
-            strings.get(*key),
-            *right,
+            strings.get(key),
+            right,
             palette.text_secondary,
             &TextStyle::Small,
         );
@@ -1383,11 +1466,12 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
         head.bottom() - 0.5,
         Stroke::new(1.0, palette.border_default),
     );
-    egui::ScrollArea::vertical()
+    let rows = egui::ScrollArea::vertical()
         .id_salt("library_review_table")
         .auto_shrink(false)
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
+            let width = ui.available_width();
             for group in model::review_groups(&pending.review) {
                 let vendor = group
                     .vendor
@@ -1408,12 +1492,16 @@ fn review_table(ui: &mut Ui, strings: &Strings, units: Units, pending: &ImportRe
                     review_row(ui, strings, units, (n, *index), item, pending.replace);
                 }
             }
-        });
+            width
+        })
+        .inner;
+    remember_rows_width(ui, "review", rows);
 }
 
 /// One item of the review, `index` in the file, row `n` of its group:
-/// name, type, diameter, feed and status. Its tooltip is what the file
-/// leaves unset.
+/// its cells under [`REVIEW_COLUMNS`] (a value its tool still needs a red
+/// dash, as in the library's table) and its status. Its tooltip is its
+/// whole status and what the file leaves unset.
 fn review_row(
     ui: &mut Ui,
     strings: &Strings,
@@ -1452,41 +1540,34 @@ fn review_row(
         Status::Present | Status::Skipped => palette.text_secondary,
     };
     let unset = palette.status_error.text;
-    let (kind, diameter, feed) = item.tool.as_ref().map_or_else(
-        || {
-            (
-                "—".to_owned(),
-                (String::new(), colour),
-                (String::new(), colour),
-            )
-        },
-        |tool| {
-            (
-                kind_label(strings, KindChoice::of(&tool.cutter)).to_owned(),
-                (model::diameter_text(tool.diameter_mm, units), colour),
-                tool.feed_mm_min.map_or_else(
-                    || ("—".to_owned(), unset),
-                    |v| (model::rate_text(v, units), colour),
-                ),
-            )
-        },
-    );
-    let cells = [
-        (item.name.clone(), colour),
-        (kind, colour),
-        diameter,
-        feed,
-        (status, status_colour),
-    ];
-    for (((value, value_colour), (_, _, right)), r) in cells
-        .iter()
-        .zip(REVIEW_COLUMNS.iter())
-        .zip(review_rects(rect))
-    {
-        cell(ui, r, value, *right, *value_colour, &TextStyle::Body);
+    let rects = review_rects(rect);
+    for ((column, _), r) in REVIEW_COLUMNS.iter().zip(&rects) {
+        // A skipped item has no tool: its name, a dash for its type.
+        let value = match (&item.tool, column) {
+            (_, Column::Name) => Cell::Text(item.name.clone()),
+            (Some(tool), _) => model::cell(strings, tool, *column, units),
+            (None, Column::Kind) => Cell::Text(UNSET_MARK.to_owned()),
+            (None, _) => Cell::Empty,
+        };
+        let (text, text_colour) = match &value {
+            Cell::Text(text) => (text.as_str(), colour),
+            Cell::Unset => (UNSET_MARK, unset),
+            Cell::Empty => continue,
+        };
+        cell(
+            ui,
+            *r,
+            text,
+            column.numeric(),
+            text_colour,
+            &TextStyle::Body,
+        );
+    }
+    if let Some(r) = rects.last() {
+        cell(ui, *r, &status, false, status_colour, &TextStyle::Body);
     }
     if response.hovered() {
-        let mut lines = vec![item.name.clone()];
+        let mut lines = vec![item.name.clone(), status];
         lines.extend(item.notes.iter().cloned());
         response.on_hover_text(lines.join("\n"));
     }
@@ -2020,16 +2101,34 @@ pub(crate) fn save_to_library(
 mod tests {
     use super::*;
 
-    /// At the sheet's default width (960 px less its margins, the editing
-    /// pane and the gap) the fixed columns leave the name at least 120
-    /// px, and the columns end inside the row.
+    /// At the sheet's default width (1100 px less its margins, the
+    /// editing pane and the gap) the table's ten columns (`Column::ALL`,
+    /// the Tip column among them, #685) leave the name at least 120 px,
+    /// and the columns end inside the row. The name alone takes the rest.
     #[test]
     fn columns_fit_the_default_sheet() {
         let left = SIZE.x - 48.0 - PANE_PX - GAP_PX;
         let row = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(left, ROW_PX));
         let rects = column_rects(row);
-        assert_eq!(rects.len(), COLUMNS.len());
+        assert_eq!(rects.len(), Column::ALL.len());
         assert!(rects[0].width() >= 120.0, "{:?}", rects[0]);
+        let end = rects.last().map_or(0.0, |r| r.right());
+        assert!(end <= row.right() + 0.01, "{end} past {}", row.right());
+        let rest: Vec<Column> = Column::ALL
+            .into_iter()
+            .filter(|c| column_width(*c) <= 0.0)
+            .collect();
+        assert_eq!(rest, [Column::Name]);
+    }
+
+    /// The review's columns and its status fit the sheet's width with at
+    /// least 160 px left for the name.
+    #[test]
+    fn review_columns_fit_the_default_sheet() {
+        let row = Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(SIZE.x - 48.0, ROW_PX));
+        let rects = review_rects(row);
+        assert_eq!(rects.len(), REVIEW_COLUMNS.len() + 1);
+        assert!(rects[0].width() >= 160.0, "{:?}", rects[0]);
         let end = rects.last().map_or(0.0, |r| r.right());
         assert!(end <= row.right() + 0.01, "{end} past {}", row.right());
     }

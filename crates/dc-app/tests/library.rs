@@ -1078,3 +1078,43 @@ fn import_review_names_unset_tapered_values_and_skipped_tapered_mills() {
         .expect("the untouched tool");
     assert_eq!(review_status(&strings, same, false), "Same");
 }
+
+/// #685 (capability 64): the type filter has an entry for tapered ball
+/// noses, last as the editor's type dropdown lists them and named as the
+/// table's Type column names them; it passes those tools alone, and no
+/// other entry but *All types* passes them.
+#[test]
+fn the_type_filter_has_a_tapered_ball_nose_entry() {
+    use dc_app::tools::KindChoice;
+
+    let strings = dc_app::Strings::english();
+    assert_eq!(KindFilter::ALL.last(), Some(&KindFilter::TaperedBallNose));
+    assert_eq!(KindFilter::ALL.len(), KindChoice::ALL.len() + 1);
+    assert_eq!(
+        strings.get(KindFilter::TaperedBallNose.label()),
+        strings.get(KindChoice::TaperedBallNose.label())
+    );
+    let tapered = dc_project::test_support::tool_tbn_ultra().cutter;
+    assert!(KindFilter::TaperedBallNose.matches(&tapered));
+    assert!(KindFilter::All.matches(&tapered));
+    for other in [
+        KindFilter::EndMill,
+        KindFilter::BallNose,
+        KindFilter::VBit,
+        KindFilter::Engraver,
+        KindFilter::Drill,
+    ] {
+        assert!(!other.matches(&tapered), "{other:?}");
+    }
+    for kind in [
+        ToolKind::EndMill,
+        ToolKind::BallNose,
+        ToolKind::VBit {
+            included_angle_deg: 60.0,
+        },
+        ToolKind::Engraver,
+        ToolKind::Drill,
+    ] {
+        assert!(!KindFilter::TaperedBallNose.matches(&kind), "{kind:?}");
+    }
+}

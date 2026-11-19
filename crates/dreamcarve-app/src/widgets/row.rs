@@ -115,7 +115,14 @@ pub(crate) fn message(ui: &mut Ui, tier: Tier, text: &str) {
         Tier::Warning => (Icon::TriangleAlert, palette.status_warning),
         Tier::Hint => (Icon::Info, palette.status_info),
     };
-    note(ui, icon, colours.stroke, colours.text, text);
+    note(
+        ui,
+        FIELD_COLUMN_PX,
+        icon,
+        colours.stroke,
+        colours.text,
+        text,
+    );
 }
 
 /// A note under a row in text.secondary: what a switch kept, why an
@@ -124,6 +131,7 @@ pub(crate) fn hint(ui: &mut Ui, text: &str) {
     let palette = Palette::current(ui);
     note(
         ui,
+        FIELD_COLUMN_PX,
         Icon::Info,
         palette.text_secondary,
         palette.text_secondary,
@@ -131,10 +139,40 @@ pub(crate) fn hint(ui: &mut Ui, text: &str) {
     );
 }
 
-/// `icon` in `glyph` and `text` in `colour`, indented to the field column.
-fn note(ui: &mut Ui, icon: Icon, glyph: egui::Color32, colour: egui::Color32, text: &str) {
+/// A line of a row that has no field, across the row's whole width under
+/// its label (an Inlay's derived lines, which are sentences): in
+/// text.secondary with the `info` glyph, or as an `alert` in the error
+/// colour with its glyph.
+pub(crate) fn line(ui: &mut Ui, alert: bool, text: &str) {
+    let palette = Palette::current(ui);
+    let (icon, glyph, colour) = if alert {
+        (
+            Icon::CircleX,
+            palette.status_error.stroke,
+            palette.status_error.text,
+        )
+    } else {
+        (Icon::Info, palette.text_secondary, palette.text_secondary)
+    };
+    note(ui, 0.0, icon, glyph, colour, text);
+}
+
+/// Where the field column starts, px from the row's left: after the label
+/// and its gap.
+const FIELD_COLUMN_PX: f32 = LABEL_PX + GAP_PX;
+
+/// `icon` in `glyph` and `text` in `colour`, `indent` px in from the row's
+/// left ([`FIELD_COLUMN_PX`] puts it under the field).
+fn note(
+    ui: &mut Ui,
+    indent: f32,
+    icon: Icon,
+    glyph: egui::Color32,
+    colour: egui::Color32,
+    text: &str,
+) {
     ui.horizontal_top(|ui| {
-        ui.add_space(LABEL_PX + GAP_PX);
+        ui.add_space(indent);
         let (rect, _) = ui.allocate_exact_size(
             egui::vec2(theme::ICON_SMALL_PX, theme::ICON_SMALL_PX),
             Sense::hover(),
