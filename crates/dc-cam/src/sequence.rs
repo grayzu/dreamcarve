@@ -21,7 +21,7 @@
 
 use crate::block::CutBlock;
 use crate::entry::{CLEARED_POINT_TOLERANCE_MM, ENTRY_CLEARANCE_MM};
-use crate::error::{BlockProblem, CamError, ShapeRef};
+use crate::error::{BlockProblem, CamError, ShapeRef, at, at_mut};
 use crate::toolpath::{Move, MoveKind, Toolpath};
 use dc_geometry::{
     Arc, EPS_MM, FLATTEN_TOLERANCE_DEFAULT_MM, Point, Point3, Region, Segment,
@@ -205,9 +205,11 @@ pub fn sequence(input: &SequenceInput<'_>) -> Result<Toolpath, CamError> {
         previous: None,
     };
     for index in order {
-        if let Some(block) = input.blocks.get(index) {
-            emitter.emit(block);
-        }
+        emitter.emit(at(
+            &input.blocks,
+            index,
+            "the cut order names a block the sequencer was not given",
+        )?);
     }
     emitter.finish();
     Ok(Toolpath {
@@ -229,6 +231,24 @@ struct Unit {
     frees: bool,
 }
 
+impl Unit {
+    /// The unit of `blocks`, each with its index in
+    /// `SequenceInput::blocks`, in the order they are cut. A unit has a
+    /// block: [`CamError::Internal`] for none, which has no start to
+    /// travel to.
+    fn new(blocks: &[(usize, &CutBlock)]) -> Result<Self, CamError> {
+        let (Some((_, first)), Some((_, last))) = (blocks.first(), blocks.last()) else {
+            return Err(CamError::internal("a pass of a shape has no block to cut"));
+        };
+        Ok(Self {
+            blocks: blocks.iter().map(|(index, _)| *index).collect(),
+            start: first.descent_from,
+            exit: last.exit,
+            frees: blocks.iter().any(|(_, b)| b.frees),
+        })
+    }
+}
+
 /// One shape as the walk sees it.
 #[derive(Debug)]
 struct Shape {
@@ -248,73 +268,62 @@ impl Shapes {
     /// Validates the blocks (spec step 1) and groups them into shapes and
     /// units (step 2).
     fn new(input: &SequenceInput<'_>) -> Result<Self, CamError> {
-        let mut shapes: Vec<Shape> = Vec::new();
-        // Blocks of each shape, by shape index, in generator order.
-        let mut members: Vec<Vec<usize>> = Vec::new();
+        // Each shape with its blocks and their indices, in generator
+        // order; the shapes in drawing order.
+        let mut grouped: Vec<(Shape, Vec<(usize, &CutBlock)>)> = Vec::new();
         for (index, block) in input.blocks.iter().enumerate() {
             validate_block(block)?;
-            let position = shapes
-                .iter()
-                .position(|s| s.reference == block.shape)
-                .unwrap_or_else(|| {
-                    shapes.push(Shape {
+            match grouped
+                .iter_mut()
+                .find(|(shape, _)| shape.reference == block.shape)
+            {
+                Some((_, member)) => member.push((index, block)),
+                None => grouped.push((
+                    Shape {
                         reference: block.shape.clone(),
                         units: Vec::new(),
                         enclosed: Vec::new(),
-                    });
-                    members.push(Vec::new());
-                    shapes.len() - 1
-                });
-            if let Some(list) = members.get_mut(position) {
-                list.push(index);
+                    },
+                    vec![(index, block)],
+                )),
             }
         }
 
-        for (shape, member) in shapes.iter_mut().zip(&members) {
-            let mut passes: Vec<usize> = member
-                .iter()
-                .filter_map(|&i| input.blocks.get(i).map(|b| b.pass))
-                .collect();
+        let mut shapes: Vec<Shape> = Vec::with_capacity(grouped.len());
+        for (mut shape, member) in grouped {
+            let mut passes: Vec<usize> = member.iter().map(|(_, b)| b.pass).collect();
             passes.sort_unstable();
             passes.dedup();
             if passes.iter().enumerate().any(|(k, &pass)| k != pass) {
-                let first = member
-                    .first()
-                    .and_then(|&i| input.blocks.get(i))
-                    .map_or(0, |b| b.pass);
+                let (_, first) = at(&member, 0, "a shape the sequencer grouped has no block")?;
                 return Err(CamError::InvalidBlock {
                     shape: shape.reference.clone(),
-                    pass: first,
+                    pass: first.pass,
                     problem: BlockProblem::PassesNotConsecutive { passes },
                 });
             }
-            let frees = |i: usize| input.blocks.get(i).is_some_and(|b| b.frees);
             for pass in passes {
-                let mut blocks: Vec<usize> = member
+                let mut blocks: Vec<(usize, &CutBlock)> = member
                     .iter()
                     .copied()
-                    .filter(|&i| input.blocks.get(i).is_some_and(|b| b.pass == pass))
+                    .filter(|(_, b)| b.pass == pass)
                     .collect();
                 // #189: nothing of a shape is cut after its freeing pass,
                 // so the unit's freeing blocks go last (stable: generator
                 // order otherwise), after a Profile's relief notches.
-                blocks.sort_by_key(|&i| frees(i));
-                let first = blocks.first().and_then(|&i| input.blocks.get(i));
-                let last = blocks.last().and_then(|&i| input.blocks.get(i));
-                shape.units.push(Unit {
-                    start: first.map_or(Point::new(0.0, 0.0), |b| b.descent_from),
-                    exit: last.map_or(Point::new(0.0, 0.0), |b| b.exit),
-                    frees: blocks.iter().any(|&i| frees(i)),
-                    blocks,
-                });
+                blocks.sort_by_key(|(_, b)| b.frees);
+                shape.units.push(Unit::new(&blocks)?);
             }
+            shapes.push(shape);
         }
 
+        // Pairs naming a shape with no blocks are ignored
+        // (`SequenceInput::containment`).
         for (inner, encloser) in input.containment {
-            let inner = shapes.iter().position(|s| &s.reference == inner);
-            let encloser = shapes.iter().position(|s| &s.reference == encloser);
-            if let (Some(inner), Some(encloser)) = (inner, encloser)
-                && let Some(shape) = shapes.get_mut(encloser)
+            let Some(inner) = shapes.iter().position(|s| &s.reference == inner) else {
+                continue;
+            };
+            if let Some(shape) = shapes.iter_mut().find(|s| &s.reference == encloser)
                 && !shape.enclosed.contains(&inner)
             {
                 shape.enclosed.push(inner);
@@ -342,98 +351,120 @@ impl Shapes {
         let mut current = first.start;
         while out.len() < total {
             let next = match order {
-                MachiningOrder::FullDepthFirst => self.nearest_stack(&done, current),
-                MachiningOrder::PassFirst => self.nearest_unit(&done, current),
+                MachiningOrder::FullDepthFirst => self.nearest_stack(&done, current)?,
+                MachiningOrder::PassFirst => self.nearest_unit(&done, current)?,
             };
             let Some(index) = next else {
                 // Blocks remain, so some shape is unfinished; it is on
                 // the cycle or waits on one.
-                let Some(stuck) = self
+                let stuck = self
                     .shapes
                     .iter()
                     .zip(&done)
                     .find(|(s, d)| **d < s.units.len())
                     .map(|(s, _)| s.reference.clone())
-                else {
-                    break;
-                };
+                    .ok_or_else(|| {
+                        CamError::internal("blocks remain to order, but every shape is finished")
+                    })?;
                 return Err(CamError::ContainmentCycle { shape: stuck });
             };
-            let Some(shape) = self.shapes.get(index) else {
-                break;
-            };
+            let shape = at(&self.shapes, index, "the walk chose a shape it does not have")?;
+            let passes_done = at_mut(&mut done, index, "the walk chose a shape it does not count")?;
+            let from = *passes_done;
             let emitted = match order {
                 MachiningOrder::FullDepthFirst => shape.units.len(),
-                MachiningOrder::PassFirst => done.get(index).copied().unwrap_or(0) + 1,
+                MachiningOrder::PassFirst => from + 1,
             };
-            let from = done.get(index).copied().unwrap_or(0);
             for unit in shape.units.iter().take(emitted).skip(from) {
                 out.extend(unit.blocks.iter().copied());
                 current = unit.exit;
             }
-            if let Some(d) = done.get_mut(index) {
-                *d = emitted;
-            }
+            *passes_done = emitted;
         }
         Ok(out)
     }
 
     /// Full depth first: the nearest unstarted shape whose enclosed shapes
-    /// are all finished.
-    fn nearest_stack(&self, done: &[usize], current: Point) -> Option<usize> {
-        nearest_of(
-            self.shapes
-                .iter()
-                .enumerate()
-                .filter(|(s, shape)| {
-                    done.get(*s).copied().unwrap_or(0) == 0
-                        && shape.enclosed.iter().all(|&e| self.finished(done, e))
-                })
-                .filter_map(|(s, shape)| {
-                    shape
-                        .units
-                        .first()
-                        .map(|u| (s, current.distance_to(u.start)))
-                }),
-        )
+    /// are all finished. `done` counts each shape's passes emitted, in
+    /// the shapes' order.
+    fn nearest_stack(&self, done: &[usize], current: Point) -> Result<Option<usize>, CamError> {
+        let mut candidates = Vec::new();
+        for (s, (shape, &passes_done)) in self.shapes.iter().zip(done).enumerate() {
+            if passes_done != 0 {
+                continue;
+            }
+            let mut free = true;
+            for &e in &shape.enclosed {
+                if !self.finished(done, e)? {
+                    free = false;
+                    break;
+                }
+            }
+            if free && let Some(unit) = shape.units.first() {
+                candidates.push((s, current.distance_to(unit.start)));
+            }
+        }
+        Ok(nearest_of(candidates))
     }
 
     /// Pass first: among the available next units, the shallowest pass,
     /// then the nearest. A unit at pass `k` is available when every
     /// enclosed shape has finished pass `k` (or has no pass `k` and is
     /// finished) and, when the unit frees, has finished entirely.
-    fn nearest_unit(&self, done: &[usize], current: Point) -> Option<usize> {
-        let available: Vec<(usize, usize, Point)> = self
-            .shapes
-            .iter()
-            .enumerate()
-            .filter_map(|(s, shape)| {
-                let k = done.get(s).copied().unwrap_or(0);
-                let unit = shape.units.get(k)?;
-                let available = shape.enclosed.iter().all(|&e| {
-                    let required = self
-                        .shapes
-                        .get(e)
-                        .map_or(0, |enclosed| enclosed.units.len().min(k + 1));
-                    let done_e = done.get(e).copied().unwrap_or(0);
-                    done_e >= required && (!unit.frees || self.finished(done, e))
-                });
-                available.then_some((s, k, unit.start))
-            })
-            .collect();
-        let shallowest = available.iter().map(|(_, k, _)| *k).min()?;
-        nearest_of(
+    fn nearest_unit(&self, done: &[usize], current: Point) -> Result<Option<usize>, CamError> {
+        let mut available: Vec<(usize, usize, Point)> = Vec::new();
+        for (s, (shape, &k)) in self.shapes.iter().zip(done).enumerate() {
+            // A shape with no pass `k` is finished.
+            let Some(unit) = shape.units.get(k) else {
+                continue;
+            };
+            let mut free = true;
+            for &e in &shape.enclosed {
+                let (enclosed, done_e) = self.progress(done, e)?;
+                let required = enclosed.units.len().min(k + 1);
+                if done_e < required || (unit.frees && done_e < enclosed.units.len()) {
+                    free = false;
+                    break;
+                }
+            }
+            if free {
+                available.push((s, k, unit.start));
+            }
+        }
+        let Some(shallowest) = available.iter().map(|(_, k, _)| *k).min() else {
+            return Ok(None);
+        };
+        Ok(nearest_of(
             available
                 .into_iter()
                 .filter(|(_, k, _)| *k == shallowest)
                 .map(|(s, _, start)| (s, current.distance_to(start))),
-        )
+        ))
     }
 
-    fn finished(&self, done: &[usize], shape: usize) -> bool {
-        self.shapes
-            .get(shape)
-            .is_some_and(|s| done.get(shape).copied().unwrap_or(0) >= s.units.len())
+    /// Shape `shape` and how many of its passes `done` counts as emitted.
+    /// A shape's `enclosed` holds indices of `self.shapes`, which `done`
+    /// parallels, so both are there: [`CamError::Internal`] otherwise,
+    /// where taking the shape as finished would cut its encloser free
+    /// before it.
+    fn progress(&self, done: &[usize], shape: usize) -> Result<(&Shape, usize), CamError> {
+        Ok((
+            at(
+                &self.shapes,
+                shape,
+                "a shape encloses one the sequencer does not have",
+            )?,
+            *at(
+                done,
+                shape,
+                "a shape encloses one the sequencer does not count",
+            )?,
+        ))
+    }
+
+    fn finished(&self, done: &[usize], shape: usize) -> Result<bool, CamError> {
+        let (shape, passes_done) = self.progress(done, shape)?;
+        Ok(passes_done >= shape.units.len())
     }
 }
 
@@ -2067,6 +2098,34 @@ mod tests {
                 }
             }
         );
+    }
+
+    /// Code review finding 1.2: a unit with no block has no start to
+    /// travel to. The sequencer refuses it; it used to start it at the
+    /// origin.
+    #[test]
+    fn a_unit_with_no_block_is_an_internal_defect() {
+        assert_eq!(
+            Unit::new(&[]).unwrap_err(),
+            CamError::internal("a pass of a shape has no block to cut")
+        );
+    }
+
+    /// Code review finding 1.2: a shape that encloses an index the
+    /// sequencer has no shape for used to count as finished, which let
+    /// its encloser be cut free first. Both walks refuse it.
+    #[test]
+    fn enclosing_a_shape_that_is_not_there_is_an_internal_defect() {
+        for order in [MachiningOrder::FullDepthFirst, MachiningOrder::PassFirst] {
+            let blocks = squares("s", 0.0, 0.0, 10.0, 1);
+            let mut shapes = Shapes::new(&input(blocks, order, &[])).unwrap();
+            shapes.shapes[0].enclosed.push(7);
+            assert_eq!(
+                shapes.walk(order).unwrap_err(),
+                CamError::internal("a shape encloses one the sequencer does not have"),
+                "{order:?}"
+            );
+        }
     }
 
     #[test]

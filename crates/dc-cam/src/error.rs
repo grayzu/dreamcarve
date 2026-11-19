@@ -733,6 +733,20 @@ pub enum CamError {
         /// What is wrong.
         problem: BlockProblem,
     },
+    /// A generator found its own working data inconsistent: something it
+    /// built itself and looks up cannot be missing, and was (code review
+    /// finding 1.2). A defect in DreamCarve, never in the user's project.
+    /// Generation stops, because carrying on would drop a cutting pass or
+    /// cut from an invented point or depth.
+    #[error("{}", internal_message(op.as_ref(), what))]
+    Internal {
+        /// The operation being generated. `None` only where the code that
+        /// found the defect is not told it (the sequencer) and no
+        /// generator has named it since ([`CamError::for_op`]).
+        op: Option<OperationId>,
+        /// The invariant that did not hold, in words.
+        what: &'static str,
+    },
     /// A V-Carve's tool is not a V-bit (format 20, `v_carve_needs_v_bit`):
     /// its depth follows the bit's angle, which only a V-bit has.
     /// Validation reports this first.
@@ -1115,6 +1129,60 @@ pub enum CamError {
     Geometry(#[from] GeometryError),
 }
 
+impl CamError {
+    /// [`CamError::Internal`] for the invariant `what`, with no operation
+    /// named yet: the generator names it on the way out
+    /// ([`CamError::for_op`]).
+    pub(crate) fn internal(what: &'static str) -> Self {
+        Self::Internal { op: None, what }
+    }
+
+    /// This error with `op` named, when it is a [`CamError::Internal`]
+    /// that names none; any other error as it is.
+    #[must_use]
+    pub(crate) fn for_op(self, op: &OperationId) -> Self {
+        match self {
+            Self::Internal { op: None, what } => Self::Internal {
+                op: Some(op.clone()),
+                what,
+            },
+            other => other,
+        }
+    }
+}
+
+/// `items[index]`, for a lookup the caller's own construction makes sure
+/// of; [`CamError::Internal`] naming `what` when it is missing, where
+/// indexing would panic and `get` with a fallback would cut something
+/// else.
+pub(crate) fn at<'a, T>(
+    items: &'a [T],
+    index: usize,
+    what: &'static str,
+) -> Result<&'a T, CamError> {
+    items.get(index).ok_or_else(|| CamError::internal(what))
+}
+
+/// [`at`], mutably.
+pub(crate) fn at_mut<'a, T>(
+    items: &'a mut [T],
+    index: usize,
+    what: &'static str,
+) -> Result<&'a mut T, CamError> {
+    items.get_mut(index).ok_or_else(|| CamError::internal(what))
+}
+
+/// [`CamError::Internal`]'s text.
+fn internal_message(op: Option<&OperationId>, what: &str) -> String {
+    let subject = op.map_or_else(
+        || "a toolpath".to_owned(),
+        |op| format!("operation `{op}`"),
+    );
+    format!(
+        "{subject} could not be generated because of a defect in DreamCarve, not in the project: {what}; no toolpath was produced; please report this as a bug"
+    )
+}
+
 /// The words [`CamError::EndSegmentHasNoRoom`] adds for a last pass
 /// stock to leave: none without one.
 /// `mm` rounded up to the thousandth a message shows, so a length the
@@ -1150,5 +1218,61 @@ fn cone_exceeded_message(
         CuttingLimit::CuttingDiameter { diameter_mm } => format!(
             "operation `{op}` carves {shape} with its tapered ball nose's flanks engaged {depth_mm:.3} mm deep, past {cone_mm:.3} mm, where it reaches its {diameter_mm:.3} mm cutting diameter and stops being a taper; set a flat depth, use a wider bit, or clear the start depth with a Pocket first"
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The internal-defect error tells the user it is DreamCarve's bug to
+    /// report, and names the operation and the invariant (code review
+    /// finding 1.2).
+    #[test]
+    fn internal_defect_names_the_operation_and_the_invariant() {
+        let err = CamError::internal("a pass has no path").for_op(&OperationId::new("cut-out"));
+        assert_eq!(
+            err.to_string(),
+            "operation `cut-out` could not be generated because of a defect in DreamCarve, not in the project: a pass has no path; no toolpath was produced; please report this as a bug"
+        );
+    }
+
+    /// The sequencer is not told the operation, so its defects read
+    /// without one until a generator names it.
+    #[test]
+    fn internal_defect_without_an_operation_still_reads() {
+        assert_eq!(
+            CamError::internal("a unit has no block").to_string(),
+            "a toolpath could not be generated because of a defect in DreamCarve, not in the project: a unit has no block; no toolpath was produced; please report this as a bug"
+        );
+    }
+
+    /// `for_op` names the operation once: an error that already names
+    /// one, and any other error, pass through.
+    #[test]
+    fn for_op_leaves_other_errors_and_a_named_defect_alone() {
+        let named = CamError::internal("x").for_op(&OperationId::new("first"));
+        assert_eq!(named.clone().for_op(&OperationId::new("second")), named);
+        assert_eq!(
+            CamError::MissingThickness.for_op(&OperationId::new("op")),
+            CamError::MissingThickness
+        );
+    }
+
+    /// A lookup that cannot miss returns the item, and the defect when it
+    /// does miss, never a default.
+    #[test]
+    fn at_is_the_item_or_the_internal_defect() {
+        let mut items = [1, 2];
+        assert_eq!(at(&items, 1, "an item"), Ok(&2));
+        assert_eq!(at(&items, 2, "an item"), Err(CamError::internal("an item")));
+        assert_eq!(
+            at_mut(&mut items, 2, "an item"),
+            Err(CamError::internal("an item"))
+        );
+        if let Ok(slot) = at_mut(&mut items, 0, "an item") {
+            *slot = 5;
+        }
+        assert_eq!(items, [5, 2]);
     }
 }
