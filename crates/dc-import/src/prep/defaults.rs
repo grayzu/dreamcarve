@@ -21,7 +21,7 @@
 )]
 
 use super::{DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT, PrepMode, PrepOptions, Prepared, prepare};
-use dc_geometry::{Point, Region, area_mm2, intersection, union};
+use dc_geometry::{Point, Region, area_mm2, intersection};
 
 const SPECKLED: &str = include_str!("../../../../tests/fixtures/prep/speckled-dc.svg");
 const JAGGED: &str = include_str!("../../../../tests/fixtures/prep/jagged-dc.svg");
@@ -157,21 +157,46 @@ fn gone(marks: &[Mark], prepared: &Prepared, band: Band) -> (usize, usize) {
     )
 }
 
+/// The marks `prepared` decided differently from the contract at
+/// `min_detail_pct`: gone although at or above the threshold, or still
+/// there although under it.
+fn contract_breaks(marks: &[Mark], prepared: &Prepared, min_detail_pct: f64) -> usize {
+    let threshold_mm = min_detail_pct / 100.0 * prepared.report.design_height_mm;
+    marks
+        .iter()
+        .filter(|m| (m.diameter_mm < threshold_mm) == survives(m, prepared))
+        .count()
+}
+
 fn detail_row(min_detail_pct: f64) -> DetailRow {
     let marks = marks(SPECKLED);
     let prepared = run(SPECKLED, min_detail_pct, 0.0);
-    let threshold_mm = min_detail_pct / 100.0 * prepared.report.design_height_mm;
-    let contract_breaks = marks
-        .iter()
-        .filter(|m| (m.diameter_mm < threshold_mm) == survives(m, &prepared))
-        .count();
     DetailRow {
         min_detail_pct,
         noise: gone(&marks, &prepared, Band::Noise),
         small: gone(&marks, &prepared, Band::Small),
         intended: gone(&marks, &prepared, Band::Intended),
-        contract_breaks,
+        contract_breaks: contract_breaks(&marks, &prepared, min_detail_pct),
     }
+}
+
+/// The area in one of `original` and `result` and not in the other, mm².
+fn changed_mm2(original: &[Region], result: &[Region]) -> f64 {
+    let both = intersection(original, result, 1.0e-4);
+    area_mm2(original) + area_mm2(result) - 2.0 * area_mm2(&both)
+}
+
+/// The area of the design's box, mm²: its height by its width.
+fn box_mm2(pieces: &[Region], height_mm: f64) -> f64 {
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for v in pieces
+        .iter()
+        .flat_map(|r| r.outer().polyline().vertices().iter())
+    {
+        lo = lo.min(v.x);
+        hi = hi.max(v.x);
+    }
+    height_mm * (hi - lo)
 }
 
 /// Shortest distance from `p` to the segment `a`-`b`, mm.
@@ -218,8 +243,11 @@ struct SmoothRow {
     /// The furthest an output vertex lies from the input, mm.
     furthest_mm: f64,
     eps_mm: f64,
-    /// Share of the design's box changed.
+    /// Share of the design's box changed: the share that is scored.
     changed: f64,
+    /// Share of the ink's own area changed: reported beside it, not
+    /// scored (the README says what it would decide).
+    changed_of_ink: f64,
 }
 
 impl SmoothRow {
@@ -237,25 +265,41 @@ fn smooth_row(smooth_pct: f64) -> SmoothRow {
     let height_mm = original.report.design_height_mm;
     let before = vertex_count(&original.pieces);
     let after = vertex_count(&smoothed.pieces);
-    let both = intersection(&original.pieces, &smoothed.pieces, 1.0e-4);
-    let changed_mm2 =
-        area_mm2(&original.pieces) + area_mm2(&smoothed.pieces) - 2.0 * area_mm2(&both);
-    // The design's box: its height by its width.
-    let all = union(&original.pieces, &[], 1.0e-4);
-    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-    for v in all
-        .iter()
-        .flat_map(|r| r.outer().polyline().vertices().iter())
-    {
-        lo = lo.min(v.x);
-        hi = hi.max(v.x);
-    }
+    let changed_mm2 = changed_mm2(&original.pieces, &smoothed.pieces);
     SmoothRow {
         smooth_pct,
         reduction: 1.0 - after as f64 / before as f64,
         furthest_mm: furthest_vertex_mm(&original.pieces, &smoothed.pieces),
         eps_mm: smooth_pct / 100.0 * height_mm,
-        changed: changed_mm2 / (height_mm * (hi - lo)),
+        changed: changed_mm2 / box_mm2(&original.pieces, height_mm),
+        changed_of_ink: changed_mm2 / area_mm2(&original.pieces),
+    }
+}
+
+/// A fixture prepared at both defaults together, as `image-prep` runs
+/// them, against itself with both steps off.
+#[derive(Debug, Clone)]
+struct Together {
+    prepared: Prepared,
+    /// Share of the vertices removed, 0 to 1.
+    reduction: f64,
+    /// Share of the design's box changed.
+    changed: f64,
+    /// Share of the ink's own area changed.
+    changed_of_ink: f64,
+}
+
+#[allow(clippy::cast_precision_loss, reason = "counts far below 2^52")]
+fn together(svg: &str) -> Together {
+    let original = run(svg, 0.0, 0.0);
+    let prepared = run(svg, DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT);
+    let changed_mm2 = changed_mm2(&original.pieces, &prepared.pieces);
+    Together {
+        reduction: 1.0
+            - vertex_count(&prepared.pieces) as f64 / vertex_count(&original.pieces) as f64,
+        changed: changed_mm2 / box_mm2(&original.pieces, original.report.design_height_mm),
+        changed_of_ink: changed_mm2 / area_mm2(&original.pieces),
+        prepared,
     }
 }
 
@@ -280,16 +324,26 @@ fn fixtures_keep_their_intent_at_the_defaults() {
     assert_eq!(row.contract_breaks, 0, "{row:?}");
     assert!(row.noise.1 >= 12 && row.intended.1 >= 6, "{row:?}");
 
-    // The serifs and the counter are in the letters, not marks: the D's
-    // counter survives the default run.
-    let kept = run(SPECKLED, DEFAULT_MIN_DETAIL_PCT, DEFAULT_SMOOTH_PCT);
-    let large_holes = kept
+    // Both defaults together, as `image-prep` runs them (the sweep takes
+    // each with the other off). The serifs and the counter are in the
+    // letters, not marks: the D's counter survives, every mark is still
+    // decided by the threshold alone with the smoothing on, and what
+    // changes stays within the allowed area.
+    let specks = together(SPECKLED);
+    let large_holes = specks
+        .prepared
         .pieces
         .iter()
         .flat_map(|r| r.holes())
         .filter(|h| h.signed_area_mm2().abs() > 1.0)
         .count();
     assert_eq!(large_holes, 1, "the D's counter");
+    assert_eq!(
+        contract_breaks(&marks(SPECKLED), &specks.prepared, DEFAULT_MIN_DETAIL_PCT),
+        0,
+        "smoothing moved a mark across the threshold"
+    );
+    assert!(specks.changed <= MAX_CHANGED_AREA, "{}", specks.changed);
 
     // jagged-dc.svg: the jitter goes, the letters stay.
     let smooth = smooth_row(DEFAULT_SMOOTH_PCT);
@@ -299,6 +353,23 @@ fn fixtures_keep_their_intent_at_the_defaults() {
         "a vertex moved more than eps: {smooth:?}"
     );
     assert!(smooth.changed <= MAX_CHANGED_AREA, "{smooth:?}");
+
+    // And with the speck threshold on beside it: the two letters and the
+    // counter, nothing dropped or filled, the same reduction.
+    let jitter = together(JAGGED);
+    let report = &jitter.prepared.report;
+    assert_eq!(
+        (
+            report.pieces,
+            report.holes,
+            report.dropped_pieces,
+            report.filled_holes
+        ),
+        (2, 1, 0, 0),
+        "{report:?}"
+    );
+    assert!(jitter.reduction >= MIN_REDUCTION, "{}", jitter.reduction);
+    assert!(jitter.changed <= MAX_CHANGED_AREA, "{}", jitter.changed);
 }
 
 /// The defaults are what the sweep picks: the smallest grid value that
@@ -340,12 +411,14 @@ fn print_the_sweep() {
         );
     }
     println!();
-    println!("| smooth % | vertices removed | furthest vertex / eps | changed area | pass |");
-    println!("| --- | --- | --- | --- | --- |");
+    println!(
+        "| smooth % | vertices removed | furthest vertex / eps | changed, of the box | of the ink | pass |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- |");
     for s in SMOOTH_GRID_PCT {
         let r = smooth_row(s);
         println!(
-            "| {s} | {:.1} % | {:.3} | {:.4} % | {} |",
+            "| {s} | {:.1} % | {:.3} | {:.4} % | {:.4} % | {} |",
             r.reduction * 100.0,
             if r.eps_mm > 0.0 {
                 r.furthest_mm / r.eps_mm
@@ -353,7 +426,27 @@ fn print_the_sweep() {
                 0.0
             },
             r.changed * 100.0,
+            r.changed_of_ink * 100.0,
             if r.passes() { "yes" } else { "no" }
+        );
+    }
+    println!();
+    println!(
+        "| both defaults | pieces | holes | dropped | filled | vertices removed | changed, of the box | of the ink |"
+    );
+    println!("| --- | --- | --- | --- | --- | --- | --- | --- |");
+    for (name, svg) in [("speckled-dc.svg", SPECKLED), ("jagged-dc.svg", JAGGED)] {
+        let t = together(svg);
+        let r = &t.prepared.report;
+        println!(
+            "| {name} | {} | {} | {} | {} | {:.1} % | {:.4} % | {:.4} % |",
+            r.pieces,
+            r.holes,
+            r.dropped_pieces,
+            r.filled_holes,
+            t.reduction * 100.0,
+            t.changed * 100.0,
+            t.changed_of_ink * 100.0
         );
     }
     println!();

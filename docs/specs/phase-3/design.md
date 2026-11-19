@@ -3385,8 +3385,16 @@ detail is, and the test also checks the contract itself for every mark (gone
 exactly when under the threshold). The smooth criteria are as listed; the
 output-vertex distance holds at every value because simplification keeps a
 subset of the input's vertices, and stays as a guard. The changed-area share
-is taken of the design's box. Result: `min_detail` 0.2 and `smooth` 0.05,
-the proposals; the maintainer's art (step 4) is the remaining check.
+is taken of the design's box (its height by its width), and that reading
+decides the result: of the ink's own area, 43 % of the box, `smooth` 0.05
+changes 0.18 % and no swept value passes, which the README's table reports
+beside the scored share. The sweep takes each value with the other step
+off, so the pinning test also runs both fixtures at both defaults together:
+the marks are still decided by the threshold alone, the threshold drops
+nothing from the jittered letters, and the changed share stays under 0.1 %
+of the box. Result: `min_detail` 0.2 and `smooth` 0.05, the proposals, on
+the synthetic fixtures; the maintainer's art (step 4) has not been run and
+is the remaining check (the README's "Still to confirm").
 
 **Report format and codes.** `render` writes the text of functional 49e,
 one line per fact, in this order, a line omitted when it has nothing to say
