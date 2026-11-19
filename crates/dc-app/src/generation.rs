@@ -32,7 +32,7 @@ use std::io::Write;
 
 use dc_job::preview::Marks;
 use dc_job::{EmitOp, EstimateConfig, Findings, Finished, Generated, ProgramSplit};
-use dc_project::{InstanceId, Operation, OperationId, Project, ToolId};
+use dc_project::{BitmapId, InstanceId, Operation, OperationId, Project, ToolId};
 use serde::Serialize;
 
 /// Identifies one project snapshot: every `run`, `undo`, `redo` and `open`
@@ -215,6 +215,21 @@ fn reads_earlier(op: &Operation) -> bool {
     }
 }
 
+/// The bitmap `op`'s generator reads, pixels and footprint: the one a
+/// Photo V-Carve's `image` names (format 27). No other kind reads one.
+fn bitmap_of(op: &Operation) -> Option<&BitmapId> {
+    match op {
+        Operation::PhotoVCarve(photo) => Some(&photo.image),
+        Operation::Profile(_)
+        | Operation::Pocket(_)
+        | Operation::Drill(_)
+        | Operation::Bore(_)
+        | Operation::Engrave(_)
+        | Operation::VCarve(_)
+        | Operation::Inlay(_) => None,
+    }
+}
+
 /// Pushes `item` unless `list` holds it.
 fn push_once<'a, T: PartialEq + ?Sized>(list: &mut Vec<&'a T>, item: &'a T) {
     if !list.contains(&item) {
@@ -225,10 +240,13 @@ fn push_once<'a, T: PartialEq + ?Sized>(list: &mut Vec<&'a T>, item: &'a T) {
 /// The digest of everything operation `op`'s generator reads in
 /// `project` (design, "Digest and staleness"), in a fixed order: the
 /// operation's record and, when it reads earlier operations
-/// (a rest Pocket, a countersink, a V-Carve or an Inlay), the record of every operation before it; every
+/// (a rest Pocket, a countersink, a V-Carve, an Inlay or a Photo
+/// V-Carve), the record of every operation before it; every
 /// tool those records name (their own, their clearing passes', their
 /// cut-outs'); every instance they target and the definition each
-/// names; `stock`, `origin`, `heights`, `display_units`, the two
+/// names; every bitmap they name (a Photo V-Carve's `image`), its
+/// picture and its footprint, and no other bitmap of the project;
+/// `stock`, `origin`, `heights`, `display_units`, the two
 /// tolerances and the post-processor's decimal places (every generator
 /// snaps to the grid the program is written on); and the placed tabs on
 /// the targets. An operation the project does not have digests its id
@@ -256,6 +274,7 @@ pub fn digest(project: &Project, op: &OperationId) -> u64 {
 
     let mut tools: Vec<&ToolId> = Vec::new();
     let mut targets: Vec<&InstanceId> = Vec::new();
+    let mut bitmaps: Vec<&BitmapId> = Vec::new();
     for record in &records {
         push_once(&mut tools, record.tool());
         for tool in record.run_tools() {
@@ -263,6 +282,9 @@ pub fn digest(project: &Project, op: &OperationId) -> u64 {
         }
         for target in record.targets() {
             push_once(&mut targets, target);
+        }
+        if let Some(bitmap) = bitmap_of(record) {
+            push_once(&mut bitmaps, bitmap);
         }
     }
     for id in tools {
@@ -276,6 +298,10 @@ pub fn digest(project: &Project, op: &OperationId) -> u64 {
         if let Some(instance) = instance {
             hash.put("definition", &project.definitions.get(&instance.definition));
         }
+    }
+    for id in bitmaps {
+        hash.put("bitmap", id);
+        hash.put("is", &project.bitmaps.iter().find(|b| &b.id == id));
     }
     hash.put("stock", &project.stock);
     hash.put("origin", &project.origin);
