@@ -144,4 +144,4 @@ Taken where a slice above already touches the code; the rest after E.
 
 | Slice | What | Status |
 | --- | --- | --- |
-| F1 | dc-project: tests out of the source files (2.25), `Problem` through thiserror with a code macro (2.1), the migration helper and steps array (2.18), the accessor and `SOURCES` macros (2.19), the comment sweep (2.23, 2.24) | doing |
+| F1 | dc-project: tests out of seven source files (2.25); `Problem`'s messages as `#[error]` attributes, `severity()` one `matches!`, `code()` from the variant names (2.1); one migration helper and a `STEPS` array, three test families as tables (2.18); `each_kind!`, `source!`, `id_type!` shared with dc-library (2.19); the comment sweep (2.23, 2.24). `validate.rs` 10,867 → 4,177 lines, `migrate.rs` 4,053 → 985; production code 8,890 → 8,047. Guarded by `problem_snapshot.txt` (147 samples, all 87 codes), unchanged. Not done: folding the eleven range variants into `OutOfRange`, which would change messages | done |
